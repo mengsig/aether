@@ -1,8 +1,6 @@
 //! The turn loop: model steps admitted against the budget, their tool calls
 //! run, and results delivered in order, even after a failed delivery.
 
-use serde_json::Value;
-
 use super::db;
 use super::engine::{Engine, EngineError, Input, Step, ToolResult};
 use super::service::{
@@ -10,7 +8,7 @@ use super::service::{
 };
 use super::{TeachError, question, role_of};
 use crate::budget::Lane;
-use crate::tools::{self, ToolArgs, ToolName};
+use crate::tools;
 
 /// What a step's visible text reads as once it gave away a sealed answer.
 pub const WITHHELD: &str = "<withheld: this message gave away a sealed answer>";
@@ -151,49 +149,22 @@ impl<E: Engine> Teaching<'_, E> {
     }
 }
 
-/// The step's text as it may be shown: withheld when it gives away the key
-/// of a question the step tries to pose (such a pose is always refused).
+/// The step's text as it may be shown: withheld when it holds any sealed
+/// text a call of the step carries, or when a sealed input is unreadable.
 fn shown_text(step: &Step) -> String {
-    let reveals = step
-        .calls
-        .iter()
-        .filter(|call| call.name == ToolName::Ask.as_str())
-        .any(
-            |call| match tools::parse(ToolName::Ask, call.input.clone()) {
-                Ok(ToolArgs::Ask(args)) => question::reveals_key(&args, &step.text),
-                _ => raw_key_shown(&call.input, &step.text),
-            },
-        );
+    let haystack = step.text.to_lowercase();
+    let reveals =
+        step.calls
+            .iter()
+            .any(|call| match tools::sealed_texts(&call.name, &call.input) {
+                None => true,
+                Some(secrets) => secrets.iter().any(|secret| {
+                    question::contains_phrase(&haystack, &secret.trim().to_lowercase())
+                }),
+            });
     if reveals {
         WITHHELD.to_string()
     } else {
         step.text.clone()
     }
-}
-
-/// For an ask that does not parse: whether its raw key (a correct option's
-/// label, or the key text when there are no options) shows in the text.
-fn raw_key_shown(input: &Value, text: &str) -> bool {
-    let key: Vec<&str> = match &input["answer_key"] {
-        Value::String(entry) => vec![entry.as_str()],
-        Value::Array(items) => items.iter().filter_map(Value::as_str).collect(),
-        _ => Vec::new(),
-    };
-    let options = input["options"]
-        .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or_default();
-    let secrets: Vec<&str> = if options.is_empty() {
-        key
-    } else {
-        options
-            .iter()
-            .filter(|option| option["value"].as_str().is_some_and(|v| key.contains(&v)))
-            .filter_map(|option| option["label"].as_str())
-            .collect()
-    };
-    let haystack = text.to_lowercase();
-    secrets
-        .iter()
-        .any(|secret| question::contains_phrase(&haystack, &secret.trim().to_lowercase()))
 }

@@ -117,6 +117,62 @@ pub fn seal_input(tool: &str, input: &Value) -> Value {
     Value::Object(projected)
 }
 
+/// Every sealed text a call carries, read as the parser reads it: the sealed
+/// fields and, for `noesis.ask`, the labels of the keyed options. `None` when
+/// a sealed tool's input is no object, so a caller can fail closed.
+pub fn sealed_texts(tool: &str, input: &Value) -> Option<Vec<String>> {
+    let Some(tool) = ToolName::parse(tool) else {
+        return Some(Vec::new());
+    };
+    if tool.sealed_fields().is_empty() {
+        return Some(Vec::new());
+    }
+    let Value::Object(map) = heal::heal_object(input.clone(), args::fields(tool)) else {
+        return None;
+    };
+    let mut texts = Vec::new();
+    for name in tool.sealed_fields() {
+        if let Some(value) = map.get(*name) {
+            collect_texts(value, &mut texts);
+        }
+    }
+    if tool == ToolName::Ask {
+        texts = keyed_labels(&map, texts);
+    }
+    debug_assert!(texts.iter().all(|text| !text.is_empty()));
+    Some(texts)
+}
+
+/// Swap key entries naming an option for that option's label: the value is
+/// an id the learner never reads, the label is what would give it away.
+fn keyed_labels(map: &serde_json::Map<String, Value>, texts: Vec<String>) -> Vec<String> {
+    let options = map.get("options").and_then(Value::as_array);
+    let options: Vec<(&str, &str)> = options
+        .into_iter()
+        .flatten()
+        .filter_map(|o| Some((o.get("value")?.as_str()?, o.get("label")?.as_str()?)))
+        .collect();
+    let mut shown = Vec::with_capacity(texts.len());
+    for text in texts {
+        match options.iter().find(|(value, _)| *value == text) {
+            Some((_, label)) if !label.trim().is_empty() => shown.push(label.to_string()),
+            Some(_) => {}
+            None => shown.push(text),
+        }
+    }
+    shown
+}
+
+fn collect_texts(value: &Value, texts: &mut Vec<String>) {
+    match value {
+        Value::String(text) if !text.trim().is_empty() => texts.push(text.clone()),
+        Value::Number(number) => texts.push(number.to_string()),
+        Value::Array(items) => items.iter().for_each(|item| collect_texts(item, texts)),
+        Value::Object(map) => map.values().for_each(|item| collect_texts(item, texts)),
+        _ => {}
+    }
+}
+
 /// A tool as offered to a model.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolDef {

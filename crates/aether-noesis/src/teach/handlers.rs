@@ -330,10 +330,13 @@ impl<E: Engine> Teaching<'_, E> {
             miss_class: args.miss_class,
             retest: args.retest,
         };
-        if !db::conclude_problem(self.conn(), &active.problem.id, &conclusion)? {
+        let tx = self.conn().unchecked_transaction()?;
+        if !db::conclude_problem(&tx, &active.problem.id, &conclusion)? {
             return refuse("this problem is already concluded");
         }
-        db::touch(self.conn(), &row.id)?;
+        db::touch(&tx, &row.id)?;
+        tx.commit()?;
+        debug_assert!(db::active_problem(self.conn(), &row.id)?.is_none());
         self.events.push(NoesisEvent::PracticeConcluded {
             session: row.id.clone(),
             problem: active.problem.id.clone(),

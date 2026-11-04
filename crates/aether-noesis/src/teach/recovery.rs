@@ -155,3 +155,55 @@ fn results_kept_back_by_a_failed_delivery_arrive_before_the_answer() {
     );
     assert!(matches!(tail[1], Input::Answer(a) if a["question"] == open.as_str()));
 }
+
+#[test]
+fn step_text_is_withheld_for_every_sealed_text_shape() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Learn cells", Mode::Teach, &[])
+        .unwrap()
+        .id;
+    let leaky = format!("Hint: {SECRET}.");
+    let goal = json!({"kind": "goal", "prompt": "?", "answer_key": SECRET});
+    let stringified = json!({"kind": "riddle", "prompt": "?", "answer_key": [SECRET]}).to_string();
+    let explained = json!({"kind": "recall", "prompt": "Name it", "answer_key": "organelle", "explanation": SECRET});
+    let unreadable = json!("not an object");
+    let prober = t.engine_mut();
+    // The refused shapes come first; the explained pose succeeds and parks.
+    for input in [goal, json!(stringified), unreadable, explained] {
+        prober.script(Agent::Prober, &leaky, vec![(ASK, input)]);
+    }
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer);
+    let texts: Vec<&str> = report.steps.iter().map(|s| s.text.as_str()).collect();
+    assert_eq!(texts, [WITHHELD; 4]);
+    let refused: Vec<bool> = report.steps.iter().map(|s| s.calls[0].is_error).collect();
+    assert_eq!(refused, [true, true, true, false]);
+    assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
+}
+
+#[test]
+fn a_practice_solution_in_the_step_text_is_withheld_until_conclude() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Practise algebra", Mode::Practice, &[])
+        .unwrap()
+        .id;
+    let problem =
+        json!({"statement": "Solve 2x = 8", "mode": "recall", "solution": "x = 4 by halving"});
+    let practitioner = t.engine_mut();
+    practitioner.script(
+        Agent::Practitioner,
+        "Try this: x = 4 by halving",
+        vec![(PROBLEM, problem)],
+    );
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.steps[0].text, WITHHELD);
+    assert!(
+        !report.steps[0].calls[0].is_error,
+        "the problem itself is posed"
+    );
+    assert!(!format!("{report:?}").contains("halving"));
+}

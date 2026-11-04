@@ -8,6 +8,6 @@
   - `rung` (0 to 5) is the highest hint rung used.
   - `miss_class` is `cue`, `discrimination`, `execution`, `careless` or `structural`.
   - `retest` says whether the idea should come back.
-- `noesis.ask` is available for quick structured questions, but practice problems should go through `noesis.problem`.
+- Every exercise goes through `noesis.problem`. Structured questions belong to the Teacher, so you have no question tool.
 
 You may conclude one problem and pose the next in the same turn.
