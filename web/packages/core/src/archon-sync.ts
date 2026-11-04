@@ -114,6 +114,9 @@ function withDependency(graph: ArchonGraph, subject: Json): ArchonGraph {
   return { ...graph, edges };
 }
 
+/** The serial key of protocol 23 summary reads; item ids never start with a colon. */
+const SUMMARIES = ":summaries";
+
 export class ArchonSync {
   private readonly ctx: SyncContext;
   private changeSub: number | null = null;
@@ -151,7 +154,7 @@ export class ArchonSync {
   async start(): Promise<void> {
     if (!this.usesChanges) {
       await this.subscribeFeed();
-      await this.readSummaries();
+      await this.serial.run(SUMMARIES, () => this.readSummaries());
       return;
     }
     this.buffer = [];
@@ -252,7 +255,8 @@ export class ArchonSync {
   /** A timeout on a live link reschedules; after a disconnect the next start reads the summaries. */
   private refreshSummaries(): void {
     invariant(!this.usesChanges, "only protocol 23 refetches summaries on feed items");
-    this.fallback.schedule("summaries", () => void this.readSummaries().catch((error: unknown) => {
+    // Serialized, so an older reply cannot land after a newer one.
+    this.fallback.schedule("summaries", () => void this.serial.run(SUMMARIES, () => this.readSummaries()).catch((error: unknown) => {
       this.fail("summaries", error);
       if (codeOf(error) === "timeout" && this.feedSub !== null) this.refreshSummaries();
     }));

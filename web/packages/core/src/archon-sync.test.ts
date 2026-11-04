@@ -79,6 +79,27 @@ describe("Archon protocol 23 fallback (CONTRACTS.md §5.3.5)", () => {
 });
 
 describe("Archon protocol 23 fallback retries", () => {
+  it("reads summaries one at a time, so an older reply cannot land last", async () => {
+    const running = { ...F.summaries_23, data: F.summaries_23.data.map((row) => ({ ...row, state: { state: "running" } })) };
+    const succeeded = { ...F.summaries_23, data: F.summaries_23.data.map((row) => ({ ...row, state: { state: "succeeded" } })) };
+    const { store, daemon, manager } = setup(archond({
+      hello: (command) => (command.protocol_version === 23 ? { ok: F.welcome_23 } : { frames: [F.incompatible], close: 1008 }),
+      list_item_summaries: () => (daemon.commands("list_item_summaries").length === 2 ? undefined : { ok: daemon.commands("list_item_summaries").length === 1 ? F.summaries_23 : succeeded }),
+    }));
+    manager.start();
+    await vi.advanceTimersByTimeAsync(300);
+    daemon.push(F.feed_item);
+    await vi.advanceTimersByTimeAsync(350);
+    const slow = daemon.commands("list_item_summaries")[1];
+    daemon.push({ ...F.feed_item, item: { ...F.feed_item.item, seq: 12 } });
+    await vi.advanceTimersByTimeAsync(350);
+    expect(daemon.commands("list_item_summaries")).toHaveLength(2);
+    daemon.push({ frame: "reply", id: slow?.req, result: { Ok: running } });
+    await settle();
+    expect(daemon.commands("list_item_summaries")).toHaveLength(3);
+    expect(store.get().archon[CONN]?.items.qi_1?.state).toBe("succeeded");
+  });
+
   it("refetches summaries again after a fallback refresh times out", async () => {
     const { store, daemon, manager } = setup(archond({
       hello: (command) => (command.protocol_version === 23 ? { ok: F.welcome_23 } : { frames: [F.incompatible], close: 1008 }),

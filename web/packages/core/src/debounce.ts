@@ -35,13 +35,16 @@ export class Debouncer {
 export class KeyedSerial {
   private readonly tails = new Map<string, Promise<void>>();
 
-  /** `task` must handle its own failures; a rejection here would be a programming error. */
+  /** Returns `task`'s own outcome; a failed task does not stop the ones queued after it. */
   run(key: string, task: () => Promise<void>): Promise<void> {
     const next = (this.tails.get(key) ?? Promise.resolve()).then(task);
-    this.tails.set(key, next);
+    // The caller gets the failure; later tasks only wait for it to settle.
+    const tail = next.then(() => undefined, () => undefined);
+    this.tails.set(key, tail);
     invariant(this.tails.size <= 10_000, "keyed tasks settle and are forgotten");
-    return next.finally(() => {
-      if (this.tails.get(key) === next) this.tails.delete(key);
+    void tail.then(() => {
+      if (this.tails.get(key) === tail) this.tails.delete(key);
     });
+    return next;
   }
 }
