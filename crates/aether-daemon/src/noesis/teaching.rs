@@ -192,9 +192,14 @@ impl NoesisService {
         }
         let (ran, output) =
             self.with_teaching(&ticket, &mut desk, runtime, |t, _| t.advance(session))?;
-        let published = publish(&desk, runtime, output, &Actor::System, None);
+        publish(&desk, runtime, output, &Actor::System, None)?;
+        // The hook takes the desk itself; holding it here would deadlock
+        // against a stop, which holds the state lock while it waits for the desk.
+        drop(desk);
+        // Whatever prose the turn committed, even one that failed later.
+        let queued = self.after_teaching_turn(runtime, session).await;
         ran.map_err(reply_error)?;
-        published
+        queued.map(|_| ())
     }
 
     /// Start the turn of every session owed an answer, as after a restart.

@@ -21,6 +21,7 @@ mod config_file;
 mod configure;
 mod drain;
 mod engine;
+mod graph;
 mod learner;
 mod routes;
 mod status;
@@ -47,14 +48,15 @@ enum State {
     },
 }
 
-/// A started service, the budget its gate admits through, and what its
-/// teaching loop keeps between calls.
+/// A started service, the budget its gate admits through, what its
+/// teaching loop keeps between calls, and its extraction jobs.
 struct Live {
     /// Locked by one teaching or learner call at a time, outside the state
     /// lock, so a disable never waits for a teaching turn to end.
     desk: Arc<tokio::sync::Mutex<Desk>>,
     settings: NoesisSettings,
     budget: Arc<ServiceBudget>,
+    extraction: Arc<graph::Extraction>,
     /// Cancelled when this service stops, ending a teaching model call.
     cancel: tokio_util::sync::CancellationToken,
 }
@@ -70,9 +72,11 @@ struct Desk {
 }
 
 impl Live {
-    /// Retire the budget, end a teaching model call in flight, and close
-    /// `noesis.db` once the call holding it lets go.
+    /// Retire the budget, stop extraction jobs at their next model-call
+    /// boundary, end a teaching model call in flight, and close `noesis.db`
+    /// once the call holding it lets go.
     async fn stop(self) -> Result<(), aether_noesis::NoesisError> {
+        self.extraction.stop();
         self.cancel.cancel();
         self.budget.retire();
         let noesis = self.desk.lock().await.noesis.take();
@@ -117,6 +121,8 @@ pub enum NoesisStartError {
     Disabled,
     #[error("reading today's Noesis spend: {0}")]
     Spend(#[from] aether_store::StoreError),
+    #[error("ending the extraction jobs a stopped service left: {0}")]
+    Jobs(#[from] aether_noesis::extract::ExtractError),
 }
 
 impl NoesisService {
@@ -197,6 +203,7 @@ impl NoesisService {
             settings,
             self.models.clone(),
         ));
+        let extraction = graph::Extraction::start(&noesis, budget.clone())?;
         self.gate.enable(budget.clone());
         debug_assert!(self.gate.is_enabled());
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -209,6 +216,7 @@ impl NoesisService {
             desk: Arc::new(tokio::sync::Mutex::new(desk)),
             settings: settings.clone(),
             budget,
+            extraction,
             cancel,
         })
     }
@@ -294,10 +302,7 @@ pub(crate) async fn dispatch(
                 .teaching(runtime, command, by, submission.as_ref())
                 .await
         }
-        routes::Group::Graph => Err(ErrorReply::unimplemented(format!(
-            "`{}` (the Noesis graph service)",
-            command.name()
-        ))),
+        routes::Group::Graph => service.graph(runtime, command, submission.as_ref()).await,
     }
 }
 

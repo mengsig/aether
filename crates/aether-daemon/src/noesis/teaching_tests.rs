@@ -442,6 +442,37 @@ async fn a_refused_message_starts_no_turn_and_a_sent_one_starts_one() {
     harness.close().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_committed_turn_queues_the_session_for_extraction_in_auto_mode() {
+    use aether_protocol::noesis::{ExtractionPatch, SessionExtraction};
+    let home = Home::new();
+    let client = Arc::new(ScriptedClient::new());
+    let prose = "A limit describes where a function heads as its input approaches a point. ";
+    client.push(ScriptedClient::text(&prose.repeat(400)));
+    let harness = Harness::open(&home, client).await;
+    harness
+        .configure(teaching_on(|patch| {
+            patch.extraction = Some(ExtractionPatch {
+                sessions: Some(SessionExtraction::Auto),
+                ..Default::default()
+            });
+        }))
+        .await;
+    let created = harness.create(json!({})).await;
+    harness.settled().await;
+    let Reply::NoesisJobs { jobs } = harness
+        .send_json(json!({"cmd": "noesis_jobs"}))
+        .await
+        .expect("jobs")
+    else {
+        panic!("a jobs reply");
+    };
+    assert_eq!(jobs.len(), 1, "{jobs:?}");
+    assert_eq!(jobs[0].kind, aether_core::noesis::JobKind::ExtractSession);
+    assert!(format!("{:?}", jobs[0]).contains(&created.id), "{jobs:?}");
+    harness.close().await;
+}
+
 /// No `tool_input` delta reaches the bus for the agent, and each of its
 /// invocations is numbered 1, 2, 3, … with no gap.
 fn assert_deltas_sealed_and_gapless(
