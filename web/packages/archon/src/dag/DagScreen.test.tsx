@@ -3,6 +3,7 @@ import type { GraphModel, Layout } from "@aether-ui/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { byText } from "../queue/test/harness.tsx";
 import DagScreen from "./DagScreen.tsx";
+import { fauxItem } from "./fixture/graph-world.ts";
 import { click, CONN, graphHarness, stubCanvas, type GraphHarness } from "./test/harness.tsx";
 
 /** A layout function that counts its calls and places nodes on a grid in model order. */
@@ -98,6 +99,33 @@ describe("the task DAG", () => {
     expect(calls[1]?.edges).toContainEqual({ from: "qi_sync_docs", to: "qi_sync_metrics", kind: "depends_on" });
     await h.tick(1_000);
     expect(calls).toHaveLength(2);
+  });
+
+  it("says when a new structure could not be laid out, keeps the last layout, and lays out again on retry", async () => {
+    stubCanvas();
+    h = await graphHarness();
+    let failing = true;
+    const counting = countingLayout();
+    const layout = async (model: GraphModel): Promise<Layout> => {
+      if (failing && model.nodes.some((node) => node.id === "qi_new")) throw new Error("the layout worker stopped");
+      return counting.layout(model);
+    };
+    const root = await h.mount(<DagScreen layout={layout} />);
+    await h.until(() => counting.calls.length === 1 && root.querySelector(".dag-placing") === null, "the first layout");
+    h.faux.world.base.items.set("qi_new", fauxItem({ id: "qi_new", title: "Newly enqueued task", state: { state: "queued" }, minutes: 50 }));
+    h.faux.inner.tell("qi_new", { subject: "item", item: "qi_new", state: "queued" });
+    const alert = () => root.querySelector(".dag-relayout-failed[role='alert']");
+    await h.until(() => alert() !== null, "the relayout failure on screen");
+    expect(alert()?.textContent).toContain("the layout worker stopped");
+    expect(root.querySelector(".dag-canvas canvas")).not.toBeNull();
+    expect(counting.calls).toHaveLength(1);
+
+    failing = false;
+    const retry = [...(alert()?.querySelectorAll("button") ?? [])].find((button) => button.textContent === "Try again");
+    if (!retry) throw new Error("the failure offers a retry");
+    await click(h, retry);
+    await h.until(() => counting.calls.length === 2 && alert() === null, "the retried layout");
+    expect(counting.calls[1]?.nodes.map((node) => node.id)).toContain("qi_new");
   });
 
   it("explains an empty graph instead of showing a blank canvas", async () => {

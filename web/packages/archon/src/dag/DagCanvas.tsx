@@ -2,7 +2,7 @@
 // layout follows the structure only; statuses, titles and the path repaint over the layout it has.
 
 import { GraphCanvas } from "@aether-ui/graph";
-import { ErrorState, Skeleton } from "@aether-ui/ui";
+import { Button, ErrorState, Skeleton } from "@aether-ui/ui";
 import { useCallback, useMemo, useState } from "react";
 import { useDagLayout, type LayoutFn } from "./layout.ts";
 import { dagDisplay, dagStructure, initiativeOfGroup, type CriticalPath, type DagData } from "./model.ts";
@@ -34,7 +34,7 @@ export function DagCanvas({ data, path, layout, label, selected, onSelect }: Dag
   }, []);
   const onActivate = useCallback((id: string) => { if (data.byId.has(id)) onSelect(id); }, [data, onSelect]);
   if (placed.error !== null && placed.layout === undefined) {
-    return <ErrorState title="The graph could not be laid out" message={placed.error} className="dag-state" />;
+    return <ErrorState title="The graph could not be laid out" message={placed.error} onRetry={placed.retry} className="dag-state" />;
   }
   return (
     <div className="dag-canvas" data-pending={placed.pending ? "true" : undefined} aria-busy={placed.layout === undefined}>
@@ -44,6 +44,12 @@ export function DagCanvas({ data, path, layout, label, selected, onSelect }: Dag
         <div className="dag-placing" aria-hidden="true">
           <Skeleton width="12rem" height="var(--space-3)" />
           <span>Laying out {data.nodes.length.toLocaleString("en")} items…</span>
+        </div>
+      ) : null}
+      {placed.error !== null ? (
+        <div className="dag-relayout-failed" role="alert">
+          <span>The graph could not be laid out again, so it shows the last layout: {placed.error}</span>
+          <Button size="sm" onClick={placed.retry}>Try again</Button>
         </div>
       ) : null}
       <p className="dag-hint">Drag to pan · scroll to zoom · 0 fits · click a group to fold it</p>

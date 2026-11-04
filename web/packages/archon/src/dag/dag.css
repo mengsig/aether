@@ -22,6 +22,11 @@
     position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: var(--space-3);
     color: var(--color-text-muted); font-size: var(--text-sm); pointer-events: none;
   }
+  .dag-relayout-failed {
+    position: absolute; inset-inline: var(--space-4); inset-block-start: var(--space-4); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3);
+    padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+    background: var(--color-surface-2); box-shadow: var(--elevation-1); color: var(--color-text); font-size: var(--text-sm);
+  }
   .dag-hint { position: absolute; inset-inline-start: var(--space-4); inset-block-end: var(--space-3); margin: 0; color: var(--color-text-faint); font-size: var(--text-xs); pointer-events: none; }
   .dag-panel {
     display: grid; align-content: start; gap: var(--space-5); padding: var(--space-5); overflow: auto; max-block-size: 48rem;
