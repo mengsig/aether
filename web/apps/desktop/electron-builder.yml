@@ -5,6 +5,13 @@ appId: io.github.mengsig.aether
 productName: Aether
 copyright: Copyright © Aether contributors
 
+# The deb's metadata; build/package.ts adds the version and the signing record.
+extraMetadata:
+  homepage: https://github.com/mengsig/aether
+  author:
+    name: Aether contributors
+    url: https://github.com/mengsig/aether
+
 directories:
   # Outside the desktop package, so its "no UI of its own" test never sees a build.
   output: ../../../target/desktop

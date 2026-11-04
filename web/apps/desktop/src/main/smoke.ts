@@ -17,7 +17,9 @@ const PAGE_PROBE = `({
 
 export async function reportSmoke(desktop: Desktop, build: BuildInfo, app: Pick<App, "isPackaged" | "quit">): Promise<void> {
   const contents = desktop.appWindow.webContents;
-  if (contents.isLoading()) throw new Error("the smoke report runs once the app window has loaded");
+  if (contents.isDestroyed()) throw new Error("the smoke report needs the app window");
+  // The document has loaded; its lazy chunks and service worker may still be loading.
+  if (contents.isLoading()) await new Promise<void>((resolve) => contents.once("did-stop-loading", () => resolve()));
   const page: unknown = await contents.executeJavaScript(PAGE_PROBE, true);
   const report = { url: contents.getURL(), page, packaged: app.isPackaged, build };
   process.stdout.write(`${SMOKE_PREFIX}${JSON.stringify(report)}\n`);

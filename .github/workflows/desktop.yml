@@ -76,8 +76,7 @@ jobs:
         working-directory: target/desktop
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q xvfb ./aether-desktop_*_amd64-unsigned.deb ||
-            sudo apt-get install -y -q xvfb ./Aether-*-linux-amd64-unsigned.deb
+          sudo apt-get install -y -q xvfb ./Aether-*-linux-amd64-unsigned.deb
           dpkg -s aether-desktop | sed -n '1,/^Description/p'
       - name: smoke test the installed deb
         run: xvfb-run -a node build/smoke.ts --exec /opt/Aether/aether-desktop --resources /opt/Aether/resources --signing unsigned

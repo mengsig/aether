@@ -74,9 +74,10 @@ function checkReport(run: Run, signing: string): unknown {
   const report = JSON.parse(line.slice(SMOKE_PREFIX.length)) as {
     url: string; page: { title: string; root: boolean; bridge: unknown }; packaged: boolean; build: { label: string; signed: boolean };
   };
-  const title = /<title>([^<]*)<\/title>/.exec(readFileSync(path.join(WEB_DIST, "index.html"), "utf8"))?.[1];
   assert.equal(report.url, APP_ENTRY, "the app window loaded app://");
-  assert.deepEqual(report.page, { title, root: true, bridge: 1 }, "the shared frontend loaded with window.desktop");
+  // The shared frontend titles the page "<screen> · Aether" once it has rendered.
+  assert.match(report.page.title, /^(.+ · )?Aether$/, "the shared frontend rendered");
+  assert.deepEqual({ root: report.page.root, bridge: report.page.bridge }, { root: true, bridge: 1 }, "window.desktop is there");
   assert.equal(report.packaged, true, "a packaged app ran");
   assert.equal(report.build.label, `${signing} build`, "the build reports its signing");
   assert.equal(report.build.signed, signing === "signed");

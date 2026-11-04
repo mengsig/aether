@@ -60,6 +60,12 @@ xvfb-run -a node build/smoke.ts --exec ../../../target/desktop/linux-unpacked/ae
   --resources ../../../target/desktop/linux-unpacked/resources --signing unsigned
 ```
 
+It needs a display. CI uses `xvfb-run`. Without Xvfb, a headless Wayland
+compositor works too: start `WLR_BACKENDS=headless sway -c /dev/null` with
+its own `XDG_RUNTIME_DIR`, and point `WAYLAND_DISPLAY` at its socket by
+absolute path (`$runtime/wayland-1`). Chromium's own
+`--ozone-platform=headless` crashes Electron, so it is not an option.
+
 The smoke test checks that the package holds exactly the committed
 `web/dist/` and protocol schemas, byte for byte. It then starts the app with
 `AETHER_DESKTOP_SMOKE=1`, in a scratch home, with discovery pointed at
