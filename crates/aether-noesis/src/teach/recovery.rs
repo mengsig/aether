@@ -485,7 +485,7 @@ fn the_record_of_a_choice_never_marks_which_options_are_correct() {
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = teacher_session(&mut t);
     let options = [("a", "Paris"), ("b", "Rome"), ("c", "Madrid")];
-    let single = choice("Which city is a capital in Europe?", &options, &["a"]);
+    let single = choice("Which city is the capital of France?", &options, &["a"]);
     t.engine_mut()
         .script(Agent::Teacher, "", vec![(ASK, single.clone())]);
     let first = t.advance(&id).unwrap().remove(0);

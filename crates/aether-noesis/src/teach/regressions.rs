@@ -188,3 +188,69 @@ fn the_models_option_values_never_reach_a_reader_so_text_cannot_name_the_key() {
     };
     assert_eq!(delivered["chosen"], json!(["Paris"]), "{delivered}");
 }
+
+#[test]
+fn a_choice_whose_prompt_or_labels_show_an_option_value_is_refused() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let labelled = choice(
+        "Capital of France?",
+        &[
+            ("option-a", "option-a: Paris"),
+            ("option-b", "option-b: Rome"),
+        ],
+        &["option-a"],
+    );
+    let listed = choice(
+        "Capital of France: (opt1) Paris or (opt2) Rome?",
+        &[("opt1", "Paris"), ("opt2", "Rome")],
+        &["opt1"],
+    );
+    for pose in [labelled, listed] {
+        let error = error_of(&call(&mut t, &id, ASK, pose, ""));
+        assert!(error.contains("internal ids"), "{error}");
+        assert!(
+            !error.contains("Paris"),
+            "the refusal quotes no option: {error}"
+        );
+    }
+    assert!(
+        session(&t, &id).open_question.is_none(),
+        "nothing was posed"
+    );
+}
+
+#[test]
+fn a_numeric_key_or_solution_followed_by_a_unit_is_still_sealed() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let question = recall("Convert 42000 grams to kilograms; give the number.", "42");
+    let error = error_of(&call(
+        &mut t,
+        &id,
+        ASK,
+        question.clone(),
+        "The answer is 42kg.",
+    ));
+    assert!(error.contains("gives away the answer"), "{error}");
+    assert!(
+        !call(&mut t, &id, ASK, question, "Convert it.")
+            .result
+            .is_error
+    );
+
+    let practice = t
+        .create_session("Practise units", Mode::Practice, &[])
+        .unwrap()
+        .id;
+    let problem = json!({"statement": "Convert 42000 grams to kilograms", "mode": "recall", "solution": "42"});
+    t.engine_mut()
+        .script(Agent::Practitioner, "", vec![(PROBLEM, problem)]);
+    t.engine_mut()
+        .script(Agent::Practitioner, "Hint: about 42kg.", vec![]);
+    let report = t.advance(&practice).unwrap().remove(0);
+    assert_eq!(report.steps[1].text, seal::WITHHELD, "{report:?}");
+    assert!(!format!("{report:?}").contains("42kg"), "{report:?}");
+}

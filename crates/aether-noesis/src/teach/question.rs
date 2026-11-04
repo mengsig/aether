@@ -97,6 +97,12 @@ fn author_choice(args: &AskArgs, problems: &mut Vec<String>) -> Authored {
     if !key.iter().all(|value| values.contains(value)) {
         problems.push("every `answer_key` entry must be one of the option values".to_string());
     }
+    if prose_holds_a_value(args, &values) {
+        problems.push(
+            "option values are internal ids and never appear in the prompt or a label; use opaque values such as `opt1`"
+                .to_string(),
+        );
+    }
     let multi = args.multi.unwrap_or(key.len() > 1);
     if !multi && key.len() > 1 {
         problems.push(
@@ -144,6 +150,17 @@ fn author_goal(args: &AskArgs, problems: &mut Vec<String>) -> Authored {
         answer_key: Vec::new(),
         multi: args.multi.unwrap_or(false),
     }
+}
+
+/// Whether the prompt or a label holds an option value. Readers see re-keyed
+/// values only, so a value they could tie to an option would let text that
+/// names it point at the key.
+fn prose_holds_a_value(args: &AskArgs, values: &BTreeSet<&str>) -> bool {
+    debug_assert_eq!(args.kind, QuestionKind::Choice, "goal options have no key");
+    let values: Vec<String> = values.iter().map(|value| value.to_string()).collect();
+    let mut prose = vec![args.prompt.as_str()];
+    prose.extend(args.options.iter().map(|option| option.label.as_str()));
+    prose.iter().any(|text| seal::holds(text, &values))
 }
 
 /// Whether a field the learner sees repeats a sealed text: the explanation
@@ -205,7 +222,15 @@ pub(super) fn contains_phrase(haystack: &str, phrase: &str) -> bool {
     if phrase.is_empty() {
         return false;
     }
-    let is_word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+    // A neighbour rejects a match only when it continues the phrase's edge
+    // run of letters or digits: "42" stands in "42kg" but not in "420".
+    let class = |c: char| (c.is_alphabetic(), c.is_numeric());
+    let continues = |edge: Option<char>, next: Option<char>| match (edge, next) {
+        (Some(edge), Some(next)) => edge.is_alphanumeric() && class(edge) == class(next),
+        _ => false,
+    };
+    let first_of_phrase = phrase.chars().next();
+    let last_of_phrase = phrase.chars().next_back();
     // Matches may overlap ("had had" in "chad had had"), so a rejected match
     // resumes one character later rather than after the match.
     let mut from = 0;
@@ -213,7 +238,7 @@ pub(super) fn contains_phrase(haystack: &str, phrase: &str) -> bool {
         let start = from + found;
         let before = haystack[..start].chars().next_back();
         let after = haystack[start + phrase.len()..].chars().next();
-        if !is_word(before) && !is_word(after) {
+        if !continues(first_of_phrase, before) && !continues(last_of_phrase, after) {
             return true;
         }
         let first = haystack[start..].chars().next();
@@ -449,5 +474,10 @@ mod tests {
         assert!(contains_phrase("chad had had enough", "had had"));
         assert!(contains_phrase("ééa é", "é"));
         assert!(!contains_phrase("chad hadhad", "had"));
+        assert!(contains_phrase("the answer is 42kg.", "42"));
+        assert!(contains_phrase("so 4x it is", "4"));
+        assert!(!contains_phrase("convert 42000 grams", "42"));
+        assert!(!contains_phrase("x = 45", "x = 4"));
+        assert!(contains_phrase("about 3.5", "3.5"));
     }
 }
