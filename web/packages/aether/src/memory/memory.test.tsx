@@ -2,6 +2,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import type { aether, DesktopBridge } from "@aether-ui/protocol";
 import { connected, click, buttonNamed, type, type Harness } from "../controls/fixture/harness.test-util.tsx";
+import { AGENT_ID, demoAgents } from "../controls/fixture/demo.ts";
 import MemoryScreen from "./MemoryScreen.tsx";
 import { MemoryRow } from "./MemoryRow.tsx";
 let h: Harness;
@@ -99,13 +100,13 @@ test("a blank search omits text, and a repository scope is named by its id", asy
   expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { text: "invariant" } });
 });
 
-test("a lost unkeyed pin is reported unknown, never retried, and not sent to the recovery review", async () => {
+test("a lost unkeyed pin reaches the recovery review and is never retried", async () => {
   h = await connected({ script: { memories: () => ({ tag: "memories", data: [memory] }), pin_memory: () => "hold" } });
   const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
   await click(h, root, "Pin");
   h.daemon.drop(); await h.settle();
-  expect(root.querySelector('[data-state="failed"]')?.textContent).toContain("Check its current state before trying again");
-  expect(root.textContent).not.toContain("Open the recovery review");
+  expect(root.querySelector('[data-state="unconfirmed"]')?.textContent).toContain("It waits in the recovery review");
+  expect(h.app.store.get().aether[h.conn]?.outbox).toEqual([expect.objectContaining({ unkeyed: true, command: expect.objectContaining({ cmd: "pin_memory" }) })]);
   expect(h.daemon.commands("pin_memory")).toHaveLength(1);
 });
 
@@ -130,4 +131,21 @@ test("scope and kind filters and forgotten toggle use exact query fields", async
   await import("react").then(({ act }) => act(async () => checkbox.click()));
   await h.settle();
   expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "repository", id: "/repo" }, kinds: ["decision"], include_forgotten: true, limit: 100 } });
+});
+
+test("an agent-scoped memory is created, filtered and shown by its agent", async () => {
+  const scoped = { ...memory, scope: { scope: "agent", id: AGENT_ID } } as aether.MemoryRecord;
+  h = await connected({ agents: demoAgents(), script: { memories: () => ({ tag: "memories", data: [scoped] }), create_memory: () => ({ tag: "memory", data: scoped }) } });
+  const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
+  expect(root.textContent).toContain(`Agent ${AGENT_ID}`);
+  await click(h, root, "Agent");
+  await type(h, root, "Agent filter", AGENT_ID);
+  expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "agent", id: AGENT_ID } } });
+  await click(h, root, "Create memory");
+  await type(h, document.body, "Memory text", "Agent note");
+  await click(h, document.querySelector('[aria-label="Memory scope"]') as HTMLElement, "Agent");
+  expect(buttonNamed(document.body, "Save memory").disabled).toBe(true);
+  await type(h, document.body, "Agent", AGENT_ID);
+  await click(h, document.body, "Save memory");
+  expect(h.daemon.commands("create_memory")[0]).toMatchObject({ spec: { text: "Agent note", scope: { scope: "agent", id: AGENT_ID } } });
 });

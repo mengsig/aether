@@ -2,10 +2,11 @@ import { useState } from "react";
 import { useApp, useReadPermission, useReread } from "@aether-ui/core";
 import type { aether, RouteProps } from "@aether-ui/protocol";
 import { Button, EmptyState, Field, Tabs } from "@aether-ui/ui";
+import { invariant } from "../fleet/invariant.ts";
 import { Section, StandingNotice } from "../controls/kit.tsx";
 import { CreateMemory, kinds } from "./CreateMemory.tsx";
 import { MemoryRow } from "./MemoryRow.tsx";
-import { records, ReadNote } from "./shared.tsx";
+import { AgentPicker, records, ReadNote } from "./shared.tsx";
 const proposed = { cmd: "memories", query: { proposed: true } };
 export default function MemoryScreen({ params }: RouteProps) {
   const conn = params.conn ?? "";
@@ -13,13 +14,14 @@ export default function MemoryScreen({ params }: RouteProps) {
   const [text, setText] = useState("");
   const [scope, setScope] = useState("all");
   const [repository, setRepository] = useState("");
+  const [agent, setAgent] = useState("");
   const [kind, setKind] = useState("all");
   const [forgotten, setForgotten] = useState(false);
   const [open, setOpen] = useState(false);
   const search = text.trim();
   // A blank text must be omitted: the store orders by FTS rank whenever text is present.
   const command = { cmd: "memories", query: { ...(search === "" ? {} : { text: search }), limit: 100, include_forgotten: forgotten, include_superseded: true,
-    kinds: kind === "all" ? [] : [kind], scope: scope === "all" ? null : scope === "global" ? { scope } : { scope, id: repository } } };
+    kinds: kind === "all" ? [] : [kind], scope: scopeFilter(scope, repository, agent) } };
   const entry = useReread(conn, "memory:list", command, ["memories"]);
   const permission = useReadPermission(conn, proposed);
   const proposals = useReread(conn, "memory:proposals", permission.refusal === null ? proposed : null, ["memories"]);
@@ -32,7 +34,8 @@ export default function MemoryScreen({ params }: RouteProps) {
     <p className="b3-screen-sub">Review what stays with your agents.</p><Button onClick={() => setOpen(true)}>Create memory</Button></header>
     <StandingNotice conn={conn} />
     <Section title="Memories"><Field label="Search memories" value={text} onChange={e => setText(e.target.value)} />
-      <Tabs label="Scope" selected={scope} onSelect={setScope} tabs={[{ id: "all", label: "All scopes", panel: null }, { id: "global", label: "Global", panel: null }, { id: "repository", label: "Repository", panel: <Field label="Repository filter" value={repository} onChange={e => setRepository(e.target.value)} /> }]} />
+      <Tabs label="Scope" selected={scope} onSelect={setScope} tabs={[{ id: "all", label: "All scopes", panel: null }, { id: "global", label: "Global", panel: null }, { id: "repository", label: "Repository", panel: <Field label="Repository filter" value={repository} onChange={e => setRepository(e.target.value)} /> },
+        { id: "agent", label: "Agent", panel: <AgentPicker conn={conn} label="Agent filter" value={agent} onChange={setAgent} /> }]} />
       <Tabs label="Kind" selected={kind} onSelect={setKind} tabs={["all", ...kinds].map(id => ({ id, label: id, panel: null }))} />
       <label className="b3-check"><input type="checkbox" checked={forgotten} onChange={e => setForgotten(e.target.checked)} /><span>Include forgotten</span></label>
       <ReadNote entry={entry} retry={refresh} />
@@ -45,4 +48,12 @@ export default function MemoryScreen({ params }: RouteProps) {
         {proposals?.issued && records(proposals.value).length === 0 ? <EmptyState title="No proposals to review" /> : null}</>}
     </Section><CreateMemory conn={conn} open={open} close={() => setOpen(false)} refresh={refresh} />
   </div>;
+}
+
+function scopeFilter(scope: string, repository: string, agent: string): aether.MemoryScope | null {
+  invariant(["all", "global", "repository", "agent"].includes(scope), "the scope tab is one the screen offers");
+  invariant(typeof repository === "string" && typeof agent === "string", "filter drafts are strings");
+  if (scope === "all") return null;
+  if (scope === "global") return { scope: "global" };
+  return scope === "repository" ? { scope: "repository", id: repository } : { scope: "agent", id: agent };
 }
