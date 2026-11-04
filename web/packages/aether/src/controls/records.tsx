@@ -5,7 +5,7 @@ import { useReread } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
 import { aether } from "@aether-ui/protocol";
 import { Badge, Button } from "@aether-ui/ui";
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import { isList, ReadView, Section } from "./kit.tsx";
 
@@ -14,34 +14,58 @@ const PREVIEW_BYTES = 262_144;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 
-/** Decodes a read_artifact reply into text, or says it is binary; the reply carries base64 bytes. */
-export function previewText(data: Record<string, unknown>): { readonly text: string | null; readonly truncated: boolean; readonly size: number } {
+function artifactContent(data: Record<string, unknown>) {
   invariant(typeof data.base64 === "string", "an artifact read carries its bytes as base64");
+  invariant(data.truncated === undefined || typeof data.truncated === "boolean", "artifact truncation is a boolean when reported");
   const binary = atob(data.base64);
   const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
   invariant(bytes.length <= PREVIEW_BYTES, "the daemon returns no more than the preview asked for");
+  let text: string | null = null;
   try {
-    return { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes), truncated: data.truncated === true, size: bytes.length };
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch (error) {
     if (!(error instanceof TypeError)) throw error;
-    return { text: null, truncated: data.truncated === true, size: bytes.length };
   }
+  return { bytes, text, truncated: data.truncated === true, size: bytes.length };
 }
 
-function Preview({ conn, id }: { readonly conn: ConnId; readonly id: string }) {
+/** Decodes a read_artifact reply into text, or says it is binary; the reply carries base64 bytes. */
+export function previewText(data: Record<string, unknown>): { readonly text: string | null; readonly truncated: boolean; readonly size: number } {
+  const { text, truncated, size } = artifactContent(data);
+  return { text, truncated, size };
+}
+
+function ArtifactPreview({ data, artifact }: { readonly data: Record<string, unknown>; readonly artifact: aether.Artifact }) {
+  invariant(artifact.id.trim() !== "", "an artifact preview identifies its artifact");
+  invariant(artifact.name.trim() !== "", "an artifact download has a filename");
+  const content = useMemo(() => artifactContent(data), [data]);
+  const download = useRef<HTMLAnchorElement>(null);
+  useEffect(() => {
+    const link = download.current;
+    invariant(link !== null, "a download URL belongs to a mounted link");
+    const url = URL.createObjectURL(new Blob([content.bytes], { type: "application/octet-stream" }));
+    link.href = url;
+    return () => URL.revokeObjectURL(url);
+  }, [content]);
+  const filename = artifact.name.replace(/[\\/]/g, "_");
+  return (
+    <div className="b3-stack">
+      <p className="b3-meta">{content.size} bytes.{content.truncated ? " Partial content: only the received bytes will be downloaded; the artifact was truncated." : ""}</p>
+      {content.text === null ? <p className="b3-meta">A binary artifact; it has no text preview.</p> : <pre className="b3-pre">{content.text}</pre>}
+      <a ref={download} className="b3-code" download={filename}>{content.truncated ? "Download (partial)" : "Download"}</a>
+    </div>
+  );
+}
+
+function Preview({ conn, artifact }: { readonly conn: ConnId; readonly artifact: aether.Artifact }) {
+  invariant(conn.trim() !== "", "an artifact preview targets a daemon connection");
+  invariant(artifact.id.trim() !== "", "an artifact read names its artifact");
   const [refresh, setRefresh] = useState(0);
+  const id = artifact.id;
   const read = useReread(conn, `artifact_bytes:${id}`, aether.readArtifact({ id, max_bytes: PREVIEW_BYTES }), ["artifact_bytes"], refresh);
   return (
     <ReadView entry={read} what="the artifact" empty="The artifact is empty" guard={isRecord} isEmpty={() => false} retry={() => setRefresh((n) => n + 1)}>
-      {(data) => {
-        const preview = previewText(data);
-        return (
-          <div className="b3-stack">
-            <p className="b3-meta">{preview.truncated ? "The first 256 KiB." : `${preview.size} bytes.`}</p>
-            {preview.text === null ? <p className="b3-meta">A binary artifact; it has no text preview.</p> : <pre className="b3-pre">{preview.text}</pre>}
-          </div>
-        );
-      }}
+      {(data) => <ArtifactPreview data={data} artifact={artifact} />}
     </ReadView>
   );
 }
@@ -62,7 +86,7 @@ function Artifacts({ conn, agent }: { readonly conn: ConnId; readonly agent: str
                   onClick={() => setOpen((id) => (id === artifact.id ? null : artifact.id))}>{open === artifact.id ? "Hide" : "Preview"}</Button>
               </div>
               <p className="b3-meta">{artifact.summary || artifact.content_type || "No summary"} · {artifact.size_bytes} bytes{artifact.evicted_at ? " · evicted" : ""}</p>
-              {open === artifact.id ? <Preview conn={conn} id={artifact.id} /> : null}
+              {open === artifact.id ? <Preview conn={conn} artifact={artifact} /> : null}
             </li>
           ))}
         </ul>

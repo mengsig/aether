@@ -7,7 +7,7 @@ import { aether } from "@aether-ui/protocol";
 import { Badge, Field } from "@aether-ui/ui";
 import { useState } from "react";
 import { invariant } from "../fleet/invariant.ts";
-import { DraftError, ruleCommand, SIDE_EFFECTS } from "./commands.ts";
+import { DraftError, ruleCommand, SIDE_EFFECTS, type RuleDraft } from "./commands.ts";
 import { Action, isList, ReadView, RunNote, Section, useRun, type Run } from "./kit.tsx";
 
 const EFFECT_LABELS: Readonly<Record<aether.SideEffectClass, string>> = {
@@ -49,11 +49,12 @@ function PolicySection({ conn, agent, run }: { readonly conn: ConnId; readonly a
 }
 
 function scopeLabel(scope: aether.RuleScope, agent: string): string {
-  const record = scope as { scope: string; id?: string; root?: string; run?: string };
-  if (record.scope === "everywhere") return "Everywhere";
-  if (record.scope === "agent") return record.id === agent ? "This agent" : `Agent ${record.id ?? ""}`;
-  if (record.scope === "subtree") return record.root === agent ? "This agent and its delegates" : `Delegates of ${record.root ?? ""}`;
-  return `Run ${record.run ?? ""}`;
+  invariant(agent.trim() !== "", "a rule's scope is shown relative to an agent");
+  invariant(["everywhere", "agent", "subtree", "run"].includes(scope.scope), "a stored rule has a supported scope");
+  if (scope.scope === "everywhere") return "Everywhere";
+  if (scope.scope === "agent") return scope.id === agent ? "This agent" : `Agent ${scope.id}`;
+  if (scope.scope === "subtree") return scope.root === agent ? "This agent and its delegates" : `Delegates of ${scope.root}`;
+  return `Run ${scope.id}`;
 }
 
 function RuleRow({ conn, agent, rule, run, changed }: { readonly conn: ConnId; readonly agent: string; readonly rule: aether.ApprovalRule; readonly run: Run; readonly changed: () => void }) {
@@ -75,17 +76,51 @@ function RuleRow({ conn, agent, rule, run, changed }: { readonly conn: ConnId; r
   );
 }
 
-function NewRule({ conn, agent, run, changed }: { readonly conn: ConnId; readonly agent: string; readonly run: Run; readonly changed: () => void }) {
-  const [tool, setTool] = useState("");
-  const [argument, setArgument] = useState("");
-  const [decision, setDecision] = useState<aether.ApprovalDecision>("approved");
-  const [subtree, setSubtree] = useState(false);
+const EMPTY_RULE: RuleDraft = { tool: "", argument: "", resource: "", note: "", decision: "approved", scope: "agent" };
+
+function RuleFields({ draft, edit, runId }: { readonly draft: RuleDraft; readonly edit: (patch: Partial<RuleDraft>) => void; readonly runId: string }) {
+  invariant(["agent", "subtree", "run"].includes(draft.scope), "the rule form selects a browser scope");
+  invariant(draft.decision === "approved" || draft.decision === "denied", "the rule form selects an approval decision");
+  return (
+    <div className="b3-form">
+      <Field label="Tool" hint="Optional; blank matches any tool." placeholder="shell" value={draft.tool} onChange={(event) => edit({ tool: event.target.value })} />
+      <Field label="Argument (optional)" placeholder="git status" value={draft.argument} onChange={(event) => edit({ argument: event.target.value })} />
+      <Field label="Resource prefix (optional)" value={draft.resource} onChange={(event) => edit({ resource: event.target.value })} />
+      <Field label="Note (optional)" value={draft.note} onChange={(event) => edit({ note: event.target.value })} />
+      <label className="b3-field">
+        <span className="ui-field-label">Scope</span>
+        <select className="b3-select" value={draft.scope} onChange={(event) => edit({ scope: event.target.value as RuleDraft["scope"] })}>
+          <option value="agent">This agent</option>
+          <option value="subtree">This agent and its delegates</option>
+          <option value="run" disabled={runId.trim() === ""}>This run{runId.trim() === "" ? " (this agent has no run)" : ""}</option>
+        </select>
+      </label>
+      <label className="b3-field">
+        <span className="ui-field-label">Decision</span>
+        <select className="b3-select" value={draft.decision} onChange={(event) => edit({ decision: event.target.value as aether.ApprovalDecision })}>
+          <option value="approved">Approve without asking</option>
+          <option value="denied">Deny without asking</option>
+        </select>
+      </label>
+    </div>
+  );
+}
+
+function NewRule({ conn, agent, run, changed }: { readonly conn: ConnId; readonly agent: aether.Agent; readonly run: Run; readonly changed: () => void }) {
+  invariant(agent.id.trim() !== "", "a new rule names its agent");
+  invariant(conn.trim() !== "", "a new rule targets a daemon connection");
+  const [draft, setDraft] = useState<RuleDraft>(EMPTY_RULE);
   const [problem, setProblem] = useState<string | null>(null);
+  const scope: aether.RuleScope = draft.scope === "subtree" ? { scope: "subtree", root: agent.id }
+    : { scope: draft.scope, id: draft.scope === "run" ? agent.run : agent.id };
   const add = async () => {
     try {
-      const command = ruleCommand(agent, { tool, argument, decision, subtree });
+      const command = ruleCommand(agent.id, { ...draft, run: agent.run });
       setProblem(null);
-      if (await run.send(command, "Rule added")) { setTool(""); setArgument(""); changed(); }
+      if (await run.send(command, "Rule added")) {
+        setDraft((old) => ({ ...old, tool: "", argument: "", resource: "", note: "" }));
+        changed();
+      }
     } catch (error) {
       if (!(error instanceof DraftError)) throw error;
       setProblem(error.message);
@@ -93,23 +128,9 @@ function NewRule({ conn, agent, run, changed }: { readonly conn: ConnId; readonl
   };
   return (
     <div className="b3-stack">
-      <div className="b3-form">
-        <Field label="Tool" placeholder="shell" value={tool} onChange={(event) => setTool(event.target.value)} />
-        <Field label="Argument (optional)" placeholder="git status" value={argument} onChange={(event) => setArgument(event.target.value)} />
-        <label className="b3-field">
-          <span className="ui-field-label">Decision</span>
-          <select className="b3-select" value={decision} onChange={(event) => setDecision(event.target.value as aether.ApprovalDecision)}>
-            <option value="approved">Approve without asking</option>
-            <option value="denied">Deny without asking</option>
-          </select>
-        </label>
-      </div>
+      <RuleFields draft={draft} edit={(patch) => setDraft((old) => ({ ...old, ...patch }))} runId={agent.run ?? ""} />
       <div className="b3-row">
-        <label className="b3-check">
-          <input type="checkbox" checked={subtree} onChange={(event) => setSubtree(event.target.checked)} />
-          <span>Also for its delegates</span>
-        </label>
-        <Action conn={conn} command={{ cmd: "add_approval_rule", scope: { scope: "agent", id: agent } }} label="Add rule" busy={run.status.state === "busy"} onRun={add} />
+        <Action conn={conn} command={{ cmd: "add_approval_rule", scope }} label="Add rule" busy={run.status.state === "busy"} onRun={add} />
       </div>
       {problem ? <p className="b3-note" role="alert" data-state="failed">{problem}</p> : null}
     </div>
@@ -135,7 +156,7 @@ export function ApprovalsPanel({ conn, agent }: { readonly conn: ConnId; readonl
             </ul>
           )}
         </ReadView>
-        <NewRule conn={conn} agent={agent.id} run={run} changed={changed} />
+        <NewRule conn={conn} agent={agent} run={run} changed={changed} />
       </Section>
       <RunNote status={run.status} />
     </>

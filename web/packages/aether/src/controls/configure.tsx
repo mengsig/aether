@@ -97,10 +97,13 @@ function BudgetSection({ conn, agent, run }: { readonly conn: ConnId; readonly a
 }
 
 function IdentitySection({ conn, agent, run }: { readonly conn: ConnId; readonly agent: Agent; readonly run: Run }) {
+  invariant(agent.id.trim() !== "", "identity changes name their agent");
+  invariant(conn.trim() !== "", "identity changes target a daemon connection");
   const [name, setName] = useState("");
   const [instructions, setInstructions] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const current = agent.config.instructions ?? "";
+  const clear = aether.updateAgent({ id: agent.id, patch: { instructions: "" } });
   const named = () => {
     if (name.trim() === "") throw new DraftError("Type the new name first");
     return { name: name.trim() };
@@ -125,6 +128,13 @@ function IdentitySection({ conn, agent, run }: { readonly conn: ConnId; readonly
         <Action conn={conn} command={{ cmd: "update_agent", id: agent.id, patch: {} }} label="Replace instructions" busy={run.status.state === "busy"}
           confirm={{ title: "Replace the instructions?", body: "The agent works from the new instructions from its next turn; the old ones are not kept here.", confirmLabel: "Replace" }}
           onRun={async () => { if (await apply(run, agent.id, instructed, setProblem, "Instructions replaced")) setInstructions(""); }} />
+        {current === "" ? null : (
+          <Action conn={conn} command={clear} label="Clear instructions" variant="danger" busy={run.status.state === "busy"}
+            confirm={{ title: "Clear the instructions?", body: "The agent will have no standing instructions from its next turn.", confirmLabel: "Clear instructions" }}
+            onRun={async () => {
+              if (await run.send(clear, "Instructions cleared")) { setInstructions(""); setProblem(null); }
+            }} />
+        )}
       </div>
       {problem ? <p className="b3-note" role="alert" data-state="failed">{problem}</p> : null}
     </Section>

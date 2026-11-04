@@ -54,23 +54,28 @@ export function sendCommand(agent: string, content: string, subtree: boolean): a
   return aether.sendMessage({ to: agent, content: content.trim(), ...(subtree ? { subtree: true } : {}) });
 }
 
-export function ruleCommand(agent: string, draft: { tool: string; argument: string; decision: aether.ApprovalDecision; subtree: boolean }): aether.AddApprovalRuleCommand {
-  invariant(agent !== "", "a rule names its agent");
-  const tool = draft.tool.trim();
-  need(tool !== "", "Name the tool the rule matches");
-  const scope = (draft.subtree ? { scope: "subtree", root: agent } : { scope: "agent", id: agent }) as aether.RuleScope;
-  const argument = draft.argument.trim();
-  return aether.addApprovalRule({ scope, decision: draft.decision, match: { tool, ...(argument ? { argument } : {}) } });
+export interface RuleDraft {
+  readonly tool: string;
+  readonly argument: string;
+  readonly resource: string;
+  readonly note: string;
+  readonly decision: aether.ApprovalDecision;
+  readonly scope: "agent" | "subtree" | "run";
+  readonly run?: string | null;
 }
 
-export interface ScheduleDraft { readonly name: string; readonly seconds: string; readonly message: string }
-
-export function scheduleCommand(agent: string, draft: ScheduleDraft): aether.CreateScheduleCommand {
-  invariant(agent !== "", "a schedule names its target");
-  need(draft.name.trim() !== "", "Name the schedule");
-  const seconds = optionalPositive(draft.seconds, "The interval", true);
-  need(seconds !== null && seconds >= 60, "The interval is at least 60 seconds");
-  need(draft.message.trim() !== "", "Write the message the schedule delivers");
-  const recurrence = { kind: "interval", seconds } as aether.Recurrence;
-  return aether.createSchedule({ spec: { name: draft.name.trim(), target: agent, recurrence, payload: draft.message.trim(), busy: "skip", missed: "coalesce" } });
+export function ruleCommand(agent: string, draft: RuleDraft): aether.AddApprovalRuleCommand {
+  invariant(agent.trim() !== "", "a rule names its agent");
+  invariant(draft.decision === "approved" || draft.decision === "denied", "a rule approves or denies matching calls");
+  invariant(["agent", "subtree", "run"].includes(draft.scope), "browser rules target an agent, subtree or run");
+  const run = draft.run?.trim() ?? "";
+  need(draft.scope !== "run" || run !== "", "This agent has no run to apply a rule to");
+  const scope: aether.RuleScope = draft.scope === "run" ? { scope: "run", id: run }
+    : draft.scope === "subtree" ? { scope: "subtree", root: agent } : { scope: "agent", id: agent };
+  const tool = draft.tool.trim();
+  const argument = draft.argument.trim();
+  const resource = draft.resource.trim();
+  const note = draft.note.trim();
+  return aether.addApprovalRule({ scope, decision: draft.decision, ...(note ? { note } : {}),
+    match: { ...(tool ? { tool } : {}), ...(argument ? { argument } : {}), ...(resource ? { resource_prefix: resource } : {}) } });
 }
