@@ -228,3 +228,29 @@ describe("Archon resync, second review", () => {
   });
 });
 
+describe("Archon resync, third review", () => {
+  const initiative = (n: number, id: string, state: string) => ({ frame: "change", sub: 6, change: { seq: n, at: "2026-11-04T03:00:09Z", subject: { subject: "initiative", initiative: id, state } } });
+  const withInitiative = { ...F.task_graph, data: { ...F.task_graph.data, initiatives: [{ id: "in_1", title: "one", state: "active", atomic: false }] } };
+
+  it("applies an initiative change to the graph it is newer than", async () => {
+    const { store, daemon, manager } = setup(archond({ task_graph: () => ({ ok: withInitiative }) }));
+    manager.start();
+    await settle();
+    daemon.push(initiative(130, "in_1", "completed"));
+    await vi.advanceTimersByTimeAsync(250);
+    expect(store.get().archon[CONN]?.graph?.initiatives).toEqual([{ id: "in_1", title: "one", state: "completed", atomic: false }]);
+    expect(daemon.commands("task_graph")).toHaveLength(1);
+  });
+
+  it("rereads the snapshots when a change names an unknown initiative", async () => {
+    const { store, daemon, manager } = setup(archond({ task_graph: () => ({ ok: withInitiative }) }));
+    manager.start();
+    await settle();
+    daemon.push(initiative(130, "in_new", "active"));
+    expect(store.get().archon[CONN]?.staleSnapshots).toBe(true);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(daemon.commands("task_graph")).toHaveLength(2);
+    expect(store.get().archon[CONN]?.changeCursor).toBe(130);
+  });
+});
+

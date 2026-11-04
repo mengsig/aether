@@ -28,6 +28,8 @@ export function itemFromSummary(summary: Json): ArchonItem {
 export function patchSnapshots(state: ArchonConnState, value: Json): ArchonConnState {
   const at = seq(value.seq, "change.seq");
   const subject = object(value.subject, "change.subject");
+  const graph = state.graph && at > state.graph.asOf ? state.graph : null;
+  if (subject.subject === "initiative") return graph ? { ...state, graph: withInitiative(graph, subject) } : state;
   const item = typeof subject.item === "string" ? subject.item : undefined;
   if (!item) return state;
   let next = state;
@@ -38,16 +40,28 @@ export function patchSnapshots(state: ArchonConnState, value: Json): ArchonConnS
       const patched: ArchonItem = { summary: current.summary, state: live.state, ...(typeof live.stage === "string" ? { stage: live.stage } : {}), ...(typeof live.waitingReason === "string" ? { waitingReason: live.waitingReason } : {}) };
       next = { ...next, items: { ...next.items, [item]: patched } };
     }
-    const node = next.graph?.nodes[item];
-    if (next.graph && node && at > next.graph.asOf) next = { ...next, graph: { ...next.graph, nodes: { ...next.graph.nodes, [item]: { ...node, state: live.state } } } };
+    const node = graph?.nodes[item];
+    if (graph && node) next = { ...next, graph: { ...graph, nodes: { ...graph.nodes, [item]: { ...node, state: live.state } } } };
   }
-  if (subject.subject === "dependency" && next.graph && at > next.graph.asOf) next = { ...next, graph: withDependency(next.graph, subject) };
+  if (subject.subject === "dependency" && graph) next = { ...next, graph: withDependency(graph, subject) };
   return next;
+}
+
+/** The ids a change names that a snapshot should hold; a missing one means the snapshots need rereading. */
+function namedMissing(state: ArchonConnState, subject: Json): boolean {
+  const graph = state.graph;
+  if (subject.subject === "initiative") {
+    const id = string(subject.initiative, "change.initiative");
+    return graph !== null && !graph.initiatives.some((initiative) => initiative.id === id);
+  }
+  if (typeof subject.item !== "string") return false;
+  const named = subject.subject === "dependency" ? [subject.item, string(subject.depends_on, "dependency.depends_on")] : [subject.item];
+  return named.some((id) => !(id in state.items) || (graph !== null && !graph.truncated && !(id in graph.nodes)));
 }
 
 /**
  * Applies one Change past the cursor (§5.3.2-3). `unknown` means it names an
- * item missing from a snapshot, which then needs rereading.
+ * entity missing from a snapshot, which then needs rereading.
  */
 export function applyChange(state: ArchonConnState, value: Json): { state: ArchonConnState; item?: string; unknown: boolean } {
   const at = seq(value.seq, "change.seq");
@@ -56,9 +70,14 @@ export function applyChange(state: ArchonConnState, value: Json): { state: Archo
   const item = typeof subject.item === "string" ? subject.item : undefined;
   const next = patchSnapshots({ ...state, changeCursor: at }, value);
   invariant(next.changeCursor === at, "an applied change advances the change cursor");
-  const named = item === undefined ? [] : subject.subject === "dependency" ? [item, string(subject.depends_on, "dependency.depends_on")] : [item];
-  const unknown = named.some((id) => !(id in next.items) || (next.graph !== null && !next.graph.truncated && !(id in next.graph.nodes)));
-  return { state: next, ...(item ? { item } : {}), unknown };
+  return { state: next, ...(item ? { item } : {}), unknown: namedMissing(next, subject) };
+}
+
+function withInitiative(graph: ArchonGraph, subject: Json): ArchonGraph {
+  const id = string(subject.initiative, "change.initiative");
+  const state = string(subject.state, "change.state");
+  const initiatives = graph.initiatives.map((initiative) => (initiative.id === id ? { ...initiative, state } : initiative));
+  return { ...graph, initiatives };
 }
 
 function withDependency(graph: ArchonGraph, subject: Json): ArchonGraph {

@@ -319,5 +319,15 @@ describe("Aether resync, second review", () => {
     expect(next.noesis).toMatchObject({ enabled: true, effective: { "noesis.enabled": true } });
     expect(next.lastSeq).toBe(2);
   });
-});
 
+  it("rereads attention when an answer or archive resolves an entry, but not for streaming", () => {
+    const base = { ...EMPTY_AETHER, lastSeq: 1 };
+    const at = (n: number, type: string) => ({ seq: n, id: `e${n}`, at: "2026-11-04T03:00:00Z", actor: { actor: "system" }, kind: { type }, agent_id: F.agent }) as never;
+    for (const type of ["message.sent", "inbox.delivered", "agent.archived", "agent.restarted"]) {
+      expect(applyEvent(base, at(2, type)).staleAttention).toBe(true);
+    }
+    for (const type of ["agent.message", "agent.usage_updated", "invocation.completed", "noesis.settings_changed"]) {
+      expect(applyEvent(base, at(2, type)).staleAttention).toBe(false);
+    }
+  });
+});

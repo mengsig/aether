@@ -7,7 +7,8 @@ import type { AetherConnState, StreamState, TranscriptState } from "./store.ts";
 
 const RECENT_EVENTS = 500;
 const MAX_STREAM_CHARS = 2_000_000;
-const ATTENTION_TYPES = /^(approval|question)\.|^agent\.(failed|blocked|completed|cancelled|resumed|waiting)$/;
+/** Streams and accounting never change attention; anything else may (answers, archives, restarts). */
+const NOT_ATTENTION = /^(agent\.message|agent\.usage_updated|invocation\..*|noesis\..*)$/;
 
 /** Applies a durable event if `seq > last_seq`, marking what it made stale; otherwise returns the state unchanged. */
 export function applyEvent(state: AetherConnState, event: aether.Event): AetherConnState {
@@ -31,10 +32,10 @@ export function applyEvent(state: AetherConnState, event: aether.Event): AetherC
   return next;
 }
 
-/** Lifecycle and usage events change the agent row; attention events change the attention snapshot. */
+/** Lifecycle and usage events change the agent row; most others may change the attention snapshot. */
 function markStale(state: AetherConnState, type: string, agent: string | undefined): AetherConnState {
   const agentStale = agent !== undefined && type.startsWith("agent.") && type !== "agent.message" && !state.staleAgents.includes(agent);
-  const attentionStale = ATTENTION_TYPES.test(type) && !state.staleAttention;
+  const attentionStale = !NOT_ATTENTION.test(type) && !state.staleAttention;
   if (!agentStale && !attentionStale) return state;
   return {
     ...state,
