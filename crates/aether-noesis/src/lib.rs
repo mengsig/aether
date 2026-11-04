@@ -10,8 +10,11 @@ use std::path::{Path, PathBuf};
 use chrono::NaiveDate;
 
 pub mod budget;
+pub mod prompts;
 pub mod settings;
 pub mod store;
+pub mod teach;
+pub mod tools;
 
 use budget::{Accountant, LaneSpend};
 use settings::{NoesisSettings, SettingsError};
