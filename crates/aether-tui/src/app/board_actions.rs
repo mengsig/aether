@@ -39,6 +39,8 @@ impl App {
                     self.flash("checking live workers before confirmation");
                     return vec![Effect::Request {
                         command: Command::GetTree {
+                            role_prefix: None,
+                            root: None,
                             run: None,
                             include_archived: true,
                         },

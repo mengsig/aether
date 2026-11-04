@@ -661,6 +661,7 @@ async fn reader_loop(
                 .await;
             }
             ServerFrame::Delta {
+                invocation_seq: _,
                 sub,
                 agent,
                 invocation,

@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::{Result, StoreError};
 
-pub const SCHEMA_VERSION: u32 = 28;
+pub const SCHEMA_VERSION: u32 = 29;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -495,13 +495,55 @@ const V28: &str = r#"
 CREATE INDEX IF NOT EXISTS approvals_agent ON approvals(agent_id);
 "#;
 
+// The subsystem an agent belongs to (`noesis`), written once by the insert
+// that creates the row and refused on any later change; the column itself is
+// added by `add_missing_column`, as a rewound stamp replays this block. Plus
+// the indexes the protocol 26 read models scan: agent pages and spend per run.
+const V29: &str = r#"
+CREATE TRIGGER IF NOT EXISTS agents_subsystem_fixed
+BEFORE UPDATE OF subsystem ON agents
+WHEN old.subsystem IS NOT new.subsystem
+BEGIN
+    SELECT RAISE(ABORT, 'agents.subsystem is set once, at creation');
+END;
+CREATE INDEX IF NOT EXISTS agents_run_id ON agents(run, id);
+CREATE INDEX IF NOT EXISTS events_run_type ON events(run, type, seq);
+"#;
+
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27, V28,
+    V22, V23, V24, V25, V26, V27, V28, V29,
 ];
 
 /// Rewrites that SQL cannot express, run in the same transaction as the
 /// schema block for the version they belong to.
+/// Schema changes a block cannot state idempotently, run before the block.
+fn schema_migration(tx: &Connection, to: u32) -> Result<()> {
+    match to {
+        29 => add_missing_column(tx, "agents", "subsystem", "TEXT"),
+        _ => Ok(()),
+    }
+}
+
+/// `ALTER TABLE … ADD COLUMN`, skipped when a replayed upgrade already added it.
+fn add_missing_column(tx: &Connection, table: &str, column: &str, kind: &str) -> Result<()> {
+    let identifier =
+        |name: &str| !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase() || b == b'_');
+    assert!(
+        identifier(table) && identifier(column),
+        "names are fixed in this file"
+    );
+    let present: bool = tx.query_row(
+        &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1)"),
+        [column],
+        |row| row.get(0),
+    )?;
+    if !present {
+        tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
+    }
+    Ok(())
+}
+
 fn data_migration(tx: &Connection, to: u32) -> Result<()> {
     match to {
         8 => normalize_repository_scopes(tx),
@@ -636,6 +678,7 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         .enumerate()
         .skip(found.unwrap_or(0) as usize)
     {
+        schema_migration(&tx, i as u32 + 1)?;
         tx.execute_batch(statements)?;
         data_migration(&tx, i as u32 + 1)?;
     }

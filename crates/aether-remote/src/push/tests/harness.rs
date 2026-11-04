@@ -40,6 +40,7 @@ impl Drop for Harness {
 
 pub(super) fn settings(push: bool) -> RemoteSettings {
     RemoteSettings {
+        mounts: None,
         enabled: true,
         pairing: false,
         public_origins: vec!["https://box.example.ts.net".into()],

@@ -481,6 +481,7 @@ fn child_spec(
         config.host_context = host_context;
     }
     CreateAgentSpec {
+        subsystem: None,
         role: request.role,
         name: request.name,
         objective: Some(request.objective),

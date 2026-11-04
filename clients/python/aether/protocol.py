@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-PROTOCOL_VERSION = 25
+PROTOCOL_VERSION = 26
 MIN_PROTOCOL_VERSION = 17
 
 from ._protocol_types import *
@@ -102,6 +102,7 @@ from ._protocol_commands.get import (
     get_snapshot,
     get_task,
     get_transcript,
+    get_transcript_page,
     get_tree,
 )
 
@@ -123,6 +124,7 @@ from ._protocol_commands.latest import (
 
 from ._protocol_commands.list import (
     list_agents,
+    list_agents_page,
     list_approval_rules,
     list_approvals,
     list_artifacts,
@@ -288,6 +290,10 @@ from ._protocol_commands.update import (
     update_agent,
     update_device,
     update_schedule,
+)
+
+from ._protocol_commands.usage import (
+    usage_breakdown,
 )
 
 from ._protocol_commands.validate import (

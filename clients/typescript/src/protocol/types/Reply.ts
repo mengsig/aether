@@ -43,6 +43,7 @@ import type {
   SubmissionResolution,
   Task,
   TranscriptEntry,
+  UsageBreakdown,
   Welcome,
   Workspace,
   WorkspaceDiff,
@@ -131,6 +132,17 @@ export interface ReplyAgents {
   "reply": "agents";
 }
 
+/**
+ * Reply to `list_agents_page`. `next_after` is the cursor for the next
+ * page, absent on the last one. Ids are only ordered, not committed in
+ * order, so a walk covers the agents present when it began; a client
+ * subscribes first and applies the buffered events for creations during it.
+ */
+export interface ReplyAgentsPage {
+  "data": Record<string, unknown>;
+  "reply": "agents_page";
+}
+
 export interface ReplyTree {
   "data": AgentTree;
   "reply": "tree";
@@ -217,6 +229,21 @@ export interface ReplyEvents {
 export interface ReplyTranscript {
   "data": Array<TranscriptEntry>;
   "reply": "transcript";
+}
+
+/**
+ * Reply to `get_transcript_page`: entries in ascending `seq`, whether
+ * older or newer ones exist outside it, and the seq of the agent's newest
+ * entry (0 for none).
+ */
+export interface ReplyTranscriptPage {
+  "data": Record<string, unknown>;
+  "reply": "transcript_page";
+}
+
+export interface ReplyUsageBreakdown {
+  "data": UsageBreakdown;
+  "reply": "usage_breakdown";
 }
 
 export interface ReplyInbox {
@@ -443,6 +470,7 @@ export type Reply =
     ReplyPaused |
     ReplyAgent |
     ReplyAgents |
+    ReplyAgentsPage |
     ReplyTree |
     ReplyTask |
     ReplyTasks |
@@ -458,6 +486,8 @@ export type Reply =
     ReplySubscribed |
     ReplyEvents |
     ReplyTranscript |
+    ReplyTranscriptPage |
+    ReplyUsageBreakdown |
     ReplyInbox |
     ReplySnapshot |
     ReplyInvocation |

@@ -46,7 +46,7 @@ first when the order matters.
 
 ## Versions
 
-The protocol is version 25 and the daemon serves versions 17 through 25. The window is
+The protocol is version 26 and the daemon serves versions 17 through 26. The window is
 `MIN_PROTOCOL_VERSION` to `PROTOCOL_VERSION` in `aether-protocol`; the
 `compat` module translates replies for the older versions.
 A hello outside the window is refused with `incompatible`, naming both bounds.
@@ -57,6 +57,16 @@ Only the daemon's answers are rewritten. Every field a newer version added to
 a command is optional, so an older client's requests decode unchanged; the
 test `no_command_requires_a_field_an_older_client_would_not_send` holds that
 against the live schema.
+
+Version 26 adds the read models a web console pages instead of loading
+whole: `list_agents_page`, `get_tree`'s `root` and `role_prefix`,
+`get_transcript_page` and `usage_breakdown` (see
+[read models](#read-models)); the `invocation_seq` and `tool_use_id` of a
+delta (see [delta order](#delta-order)); and `RemoteSettings.mounts` (see
+[remote settings](remote.md#runtime-settings-remotesettings)). Each new
+command and field is behind a feature below. A client on version 25 or older
+receives every frame byte for byte as before: the numbering and the tool id
+are withheld, and so are the mounts in a `remote` reply.
 
 Version 25 adds the `credentials` exhaustion class: an agent suspended because
 the provider refused its engine CLI's sign-in. Clients on versions 17 through 24
@@ -258,6 +268,100 @@ descendant instead.
 `history_expired` is listed by the daemon and, unlike the others, by the
 client too: a client that lists it in `Hello.features` receives the
 `history_expired` error code (see [expired history](#expired-history)).
+
+`agents_paging` means the daemon serves `list_agents_page` and applies
+`get_tree`'s `root` and `role_prefix`; `transcript_paging` means it serves
+`get_transcript_page`; `usage_breakdown` means it serves `usage_breakdown`
+(see [read models](#read-models)). An older daemon refuses the commands as
+unknown and ignores the tree filters, answering with the whole tree; the
+Rust client refuses all of them to such a daemon.
+
+`remote_mounts` means `configure_remote` accepts `settings.mounts` (see
+[remote settings](remote.md#runtime-settings-remotesettings)). An older
+daemon drops the field and saves no mounts; the Rust client refuses such a
+request itself.
+
+`delta_order` is, like `history_expired`, listed by the client as well:
+only a client that lists it in `Hello.features` receives `invocation_seq`
+and `tool_use_id` on its deltas (see [delta order](#delta-order)).
+
+## Read models
+
+These reads answer from the store, run beside a connection's other reads,
+and are open to every context that may observe (see
+[authorization](remote.md#authorization)). A limit out of bounds, `after`
+and `before` together, `since` after `until` or an empty `role_prefix` is
+refused with `invalid_argument`.
+
+`list_agents_page {query, after?, limit?}` answers `agents_page {agents,
+next_after?}`: up to `limit` (1 to 500, default 200) agents matching `query`,
+the same `AgentQuery` as `list_agents`, ordered by id ascending, with ids
+greater than `after`. `next_after` is present when another page follows; send
+it as the next `after`. The cursor is a key, not an offset, so a walk sees
+every agent that exists throughout it exactly once and an agent created
+during it at most once. A stored agent that no longer decodes is quarantined
+and left out, so a page can hold fewer than `limit` agents while `next_after`
+is present: keep paging until it is absent.
+
+`get_tree {run?, include_archived, root?, role_prefix?}`: `root` keeps that
+agent and its descendants, `role_prefix` the agents whose role starts with it.
+An agent whose parent is filtered out is a root of the reply. Spend still rolls
+up over every agent: a filtered-out child's lands in its parent's
+`hidden_usage`. An unknown `root` is `not_found`.
+
+`get_transcript_page {agent, after?, before?, limit?}` answers
+`transcript_page {entries, has_before, has_after, last_seq}`. Entries are the
+agent's own `agent.message` events, in seq order, up to `limit` (1 to 1000,
+default 200). With `after`, the first entries with a seq greater than it; with
+`before`, the newest entries with a seq below it; with neither, the newest
+entries. `has_before` and `has_after` say whether entries lie beyond the page
+on either side, and `last_seq` is the seq of the agent's newest entry, 0 before
+its first. `last_seq` is read after the page, so an entry committed meanwhile
+can put it past the page's last entry with `has_after` still false; ask again
+with `after` to read it. Page backwards with `before` set to the first entry's seq, and
+forwards with `after` set to the last one's.
+
+`usage_breakdown {scope, by, since?, until?, limit?}` answers
+`usage_breakdown {rows, total, truncated}`. It sums the `usage` of
+`invocation.completed` events completed at or after `since` and before
+`until`. `scope` narrows them by `run`, `agent` (that agent's own),
+`subtree` (the agent and every descendant) and `role_prefix`; every field
+given must hold. `by` names the row key:
+
+| `by` | Key |
+| --- | --- |
+| `model` | `provider/model` as the invocation recorded it |
+| `provider` | The provider |
+| `role` | The invoking agent's role |
+| `day` | The UTC completion date, `YYYY-MM-DD` |
+| `run` | The run id |
+
+A key the event does not record reads `unknown`. Rows are ordered by key, so
+the same log always answers with the same rows; each carries its `usage` and
+its count of `invocations`. At most `limit` rows (1 to 1000, default 1000)
+are returned and `truncated` says more groups matched; `total` counts every
+invocation in scope, the cut rows' included. A native engine's message records
+zero usage there, as its spend arrives as `agent.usage_updated`, so the
+breakdown does not include it. A breakdown that may hold invocations history
+retention removed is refused with `history_expired` rather than summed short.
+A `subtree` scope reads only its own agents' invocations, so another run's
+expiry does not affect it. It is refused when its root expired or when any
+agent in it has an expired child, which a child created into a run of its
+own can be; a root that never existed answers with no rows and a zero total. Retention
+removes an expired run's agents with it, so their roles are unknown: a
+`role_prefix` scope without a `subtree` reads its whole `run`, or every run,
+and is refused when any of that history expired.
+
+## Delta order
+
+Each delta the daemon streams for an invocation is numbered when it is
+produced: `invocation_seq` starts at 1 and rises by one per delta of that
+invocation, the same for every subscription and never renumbered by a
+resubscription. A subscriber that sees a number skipped lost a delta, for
+example by lagging behind the stream, and should read the transcript instead
+of trusting its partial text. A `tool_input` delta also carries the
+`tool_use_id` of the call its JSON belongs to. Both fields are sent only to a
+client that listed `delta_order` in its hello.
 
 ## Expired history
 

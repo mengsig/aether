@@ -26,6 +26,8 @@ pub enum DeltaKind {
     ToolInput {
         name: String,
         partial_json: String,
+        /// The tool call's id, when the stream named it.
+        tool_use_id: Option<String>,
     },
     /// Absolute in-memory figures, ahead of the next durable accounting event.
     Accounting {
@@ -48,8 +50,44 @@ pub enum BusMessage {
     Delta {
         agent: AgentId,
         invocation: InvocationId,
+        /// 1 for the invocation's first delta, one more for each after it.
+        /// Assigned once by its producer, before any subscriber sees it.
+        seq: u64,
         delta: DeltaKind,
     },
+}
+
+/// One invocation's deltas, numbered by the one producer that streams them.
+/// The producer owns the count, so it lives exactly as long as the stream can.
+#[derive(Debug)]
+pub struct DeltaStream {
+    invocation: InvocationId,
+    last: u64,
+}
+
+impl DeltaStream {
+    pub fn new(invocation: InvocationId) -> Self {
+        Self {
+            invocation,
+            last: 0,
+        }
+    }
+
+    pub fn invocation(&self) -> InvocationId {
+        self.invocation
+    }
+
+    /// The seq the next delta takes: 1 for the first, one more each after.
+    fn advance(&mut self) -> u64 {
+        assert!(
+            self.last < u64::MAX,
+            "an invocation streams fewer than u64::MAX deltas"
+        );
+        let seq = self.last + 1;
+        debug_assert!(seq >= 1, "the first delta is numbered 1");
+        self.last = seq;
+        seq
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -66,7 +104,12 @@ impl Default for EventBus {
 
 impl EventBus {
     pub fn new() -> Self {
-        let (tx, _) = broadcast::channel(8192);
+        Self::with_capacity(8192)
+    }
+
+    /// A bus whose subscribers lag after `capacity` unread messages.
+    pub fn with_capacity(capacity: usize) -> Self {
+        let (tx, _) = broadcast::channel(capacity);
         Self {
             tx,
             last_seq: Arc::new(AtomicU64::new(0)),
@@ -87,11 +130,122 @@ impl EventBus {
         self.last_seq.load(Ordering::SeqCst)
     }
 
-    pub fn publish_delta(&self, agent: AgentId, invocation: InvocationId, delta: DeltaKind) {
+    /// Number `delta` within its stream and fan it out. One producer owns a
+    /// stream, so the channel carries its deltas in seq order.
+    pub fn publish_delta(&self, agent: AgentId, stream: &mut DeltaStream, delta: DeltaKind) {
+        let seq = stream.advance();
+        // No receivers is not an error: deltas are transient, and the gap a
+        // later subscriber sees is how it knows to read the transcript.
         let _ = self.tx.send(BusMessage::Delta {
             agent,
-            invocation,
+            invocation: stream.invocation,
+            seq,
             delta,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::broadcast::error::TryRecvError;
+
+    fn text(n: usize) -> DeltaKind {
+        DeltaKind::Text {
+            text: n.to_string(),
+        }
+    }
+
+    fn seqs_of(rx: &mut broadcast::Receiver<BusMessage>, invocation: InvocationId) -> Vec<u64> {
+        let mut seen = Vec::new();
+        loop {
+            match rx.try_recv() {
+                Ok(BusMessage::Delta {
+                    invocation: of,
+                    seq,
+                    ..
+                }) if of == invocation => seen.push(seq),
+                Ok(_) => {}
+                Err(TryRecvError::Lagged(_)) => {}
+                Err(TryRecvError::Empty | TryRecvError::Closed) => return seen,
+            }
+        }
+    }
+
+    #[test]
+    fn deltas_are_numbered_gaplessly_per_invocation_across_a_thousand() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let agent = AgentId::new();
+        let mut first = DeltaStream::new(InvocationId::new());
+        let mut second = DeltaStream::new(InvocationId::new());
+        for n in 0..1000 {
+            bus.publish_delta(agent, &mut first, text(n));
+            if n % 3 == 0 {
+                bus.publish_delta(agent, &mut second, text(n));
+            }
+        }
+        assert_eq!(
+            seqs_of(&mut rx, first.invocation()),
+            (1..=1000).collect::<Vec<_>>()
+        );
+        let mut rx = bus.subscribe();
+        bus.publish_delta(agent, &mut second, DeltaKind::TurnFinished);
+        assert_eq!(
+            seqs_of(&mut rx, second.invocation()),
+            vec![335],
+            "334 numbered before it"
+        );
+    }
+
+    #[test]
+    fn two_subscriptions_see_the_same_numbers_and_a_late_one_is_never_renumbered() {
+        let bus = EventBus::new();
+        let agent = AgentId::new();
+        let mut stream = DeltaStream::new(InvocationId::new());
+        let mut early = bus.subscribe();
+        let mut other = bus.subscribe();
+        for n in 0..5 {
+            bus.publish_delta(agent, &mut stream, text(n));
+        }
+        let mut late = bus.subscribe();
+        for n in 5..8 {
+            bus.publish_delta(agent, &mut stream, text(n));
+        }
+        let all: Vec<u64> = (1..=8).collect();
+        let invocation = stream.invocation();
+        assert_eq!(seqs_of(&mut early, invocation), all);
+        assert_eq!(seqs_of(&mut other, invocation), all);
+        assert_eq!(seqs_of(&mut late, invocation), vec![6, 7, 8]);
+    }
+
+    #[test]
+    fn a_delta_lost_to_a_lagging_subscriber_shows_as_a_gap() {
+        let bus = EventBus::with_capacity(4);
+        let mut rx = bus.subscribe();
+        let agent = AgentId::new();
+        let mut stream = DeltaStream::new(InvocationId::new());
+        for n in 0..10 {
+            bus.publish_delta(agent, &mut stream, text(n));
+        }
+        // The channel kept the newest four; the six before them are lost.
+        let seen = seqs_of(&mut rx, stream.invocation());
+        assert_eq!(seen, vec![7, 8, 9, 10]);
+        assert!(seen[0] > 1, "the first one seen says what was missed");
+    }
+
+    #[test]
+    fn a_long_silent_stream_keeps_its_count_however_many_others_ran() {
+        let bus = EventBus::new();
+        let agent = AgentId::new();
+        let mut silent = DeltaStream::new(InvocationId::new());
+        bus.publish_delta(agent, &mut silent, text(0));
+        for n in 0..100_000 {
+            let mut other = DeltaStream::new(InvocationId::new());
+            bus.publish_delta(agent, &mut other, text(n));
+        }
+        let mut rx = bus.subscribe();
+        bus.publish_delta(agent, &mut silent, DeltaKind::TurnFinished);
+        assert_eq!(seqs_of(&mut rx, silent.invocation()), vec![2]);
     }
 }

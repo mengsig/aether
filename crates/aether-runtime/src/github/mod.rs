@@ -504,6 +504,7 @@ impl Runtime {
         );
         let prepared = self.prepare_agent(
             CreateAgentSpec {
+                subsystem: None,
                 role: template.role.clone(),
                 name: template.name.clone(),
                 objective: Some(objective),

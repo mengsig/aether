@@ -142,6 +142,7 @@ pub(super) fn remote_status(enabled: bool, origins: &[&str]) -> RemoteStatus {
     RemoteStatus {
         revision: if enabled { 3 } else { 0 },
         settings: RemoteSettings {
+            mounts: None,
             enabled,
             pairing: enabled,
             public_origins: origins.iter().map(|o| (*o).to_owned()).collect(),

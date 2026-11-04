@@ -518,6 +518,8 @@ impl App {
         self.tree_requests += 1;
         Effect::Request {
             command: Command::GetTree {
+                role_prefix: None,
+                root: None,
                 run: None,
                 include_archived: self.show_archived,
             },

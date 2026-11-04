@@ -32,6 +32,9 @@ impl SqliteStore {
                     ],
                 )?;
             }
+            Mutation::CreateAgent { agent, subsystem } => {
+                Self::insert_agent(tx, &agent, subsystem.as_deref(), tally)?;
+            }
             Mutation::UpsertTask(task) => {
                 tx.execute(
                     "INSERT INTO tasks(id, owner, parent_task, status, run, created_at, updated_at, body)

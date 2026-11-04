@@ -30,6 +30,8 @@ fn heavy_reads_wait_off_the_async_worker_and_ping_still_answers() {
                 agent: AgentId::new(),
             },
             Command::GetTree {
+                role_prefix: None,
+                root: None,
                 run: None,
                 include_archived: false,
             },

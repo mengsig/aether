@@ -334,6 +334,35 @@ fn every_command_survives_the_frame_roundtrip() {
         Command::GetTree {
             run: Some(RunId::new()),
             include_archived: true,
+            role_prefix: None,
+            root: None,
+        },
+        Command::GetTree {
+            run: None,
+            include_archived: false,
+            role_prefix: Some("archon-stage:".into()),
+            root: Some(agent),
+        },
+        Command::ListAgentsPage {
+            query: AgentQuery::default(),
+            after: Some(agent),
+            limit: Some(500),
+        },
+        Command::GetTranscriptPage {
+            agent,
+            after: None,
+            before: Some(40),
+            limit: None,
+        },
+        Command::UsageBreakdown {
+            scope: crate::read_models::UsageScope {
+                subtree: Some(agent),
+                ..Default::default()
+            },
+            by: crate::read_models::UsageGroup::Day,
+            since: Some("2026-01-01T00:00:00Z".parse().unwrap()),
+            until: None,
+            limit: Some(10),
         },
         Command::Archive {
             target: ArchiveTarget::Agent(agent),
@@ -403,9 +432,23 @@ fn server_frames_roundtrip() {
         agent: AgentId::new(),
         invocation: InvocationId::new(),
         delta: Delta::Text { text: "hi".into() },
+        invocation_seq: None,
     };
     let back: ServerFrame = decode(&encode(&delta).expect("e")).expect("d");
     assert_eq!(back, delta);
+    let numbered = ServerFrame::Delta {
+        sub: 3,
+        agent: AgentId::new(),
+        invocation: InvocationId::new(),
+        delta: Delta::ToolInput {
+            name: "bash".into(),
+            partial_json: String::new(),
+            tool_use_id: Some("toolu_1".into()),
+        },
+        invocation_seq: Some(1),
+    };
+    let back: ServerFrame = decode(&encode(&numbered).expect("e")).expect("d");
+    assert_eq!(back, numbered);
 }
 
 #[test]

@@ -24,6 +24,7 @@ struct Site {
 async fn site() -> Site {
     let (server, _devices, shutdown) = testing::server(Tuning::default());
     let settings = RemoteSettings {
+        mounts: None,
         enabled: true,
         pairing: true,
         public_origins: vec![PUBLIC.into()],

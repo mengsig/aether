@@ -42,12 +42,14 @@ import type {
   GetSnapshotCommand,
   GetTaskCommand,
   GetTranscriptCommand,
+  GetTranscriptPageCommand,
   GetTreeCommand,
   HelloCommand,
   ImportRunCommand,
   InterruptCommand,
   LatestCheckpointCommand,
   ListAgentsCommand,
+  ListAgentsPageCommand,
   ListApprovalRulesCommand,
   ListApprovalsCommand,
   ListArtifactsCommand,
@@ -105,6 +107,7 @@ import type {
   UpdateAgentCommand,
   UpdateDeviceCommand,
   UpdateScheduleCommand,
+  UsageBreakdownCommand,
   ValidateWorkspaceCommand,
   WakeCommand,
   WorkspaceDiffCommand,
@@ -153,12 +156,14 @@ export type Command =
   | GetSnapshotCommand
   | GetTaskCommand
   | GetTranscriptCommand
+  | GetTranscriptPageCommand
   | GetTreeCommand
   | HelloCommand
   | ImportRunCommand
   | InterruptCommand
   | LatestCheckpointCommand
   | ListAgentsCommand
+  | ListAgentsPageCommand
   | ListApprovalRulesCommand
   | ListApprovalsCommand
   | ListArtifactsCommand
@@ -216,6 +221,7 @@ export type Command =
   | UpdateAgentCommand
   | UpdateDeviceCommand
   | UpdateScheduleCommand
+  | UsageBreakdownCommand
   | ValidateWorkspaceCommand
   | WakeCommand
   | WorkspaceDiffCommand
