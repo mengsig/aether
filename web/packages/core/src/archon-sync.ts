@@ -467,7 +467,7 @@ export class ArchonSync {
   }
 
   /** Reads an item's transitions into the store; while the item is on screen its rereads keep them current. */
-  readHistory(item: string): Promise<void> {
+  async readHistory(item: string): Promise<void> {
     invariant(this.ctx.features.has("item_history"), "item_history is read only where archond serves it");
     return this.serial.run(item, () => this.readItemHistory(item));
   }
@@ -487,7 +487,7 @@ export class ArchonSync {
   }
 
   /** Reads an initiative's detail into the store, stamped with the change cursor it was asked at. */
-  readInitiative(id: string): Promise<void> {
+  async readInitiative(id: string): Promise<void> {
     invariant(id.length > 0, "an initiative read names its initiative");
     return this.serial.run(`:initiative:${id}`, async () => {
       const asOf = this.state.changeCursor;
@@ -497,7 +497,7 @@ export class ArchonSync {
   }
 
   /** Runs a filtered `list_items` into the store under `searchKey(query)`; the store keeps the newest few. */
-  search(query: ItemSearch): Promise<void> {
+  async search(query: ItemSearch): Promise<void> {
     invariant(this.ctx.features.has("item_filters"), "list_items filters are sent only where archond serves them");
     const key = searchKey(query);
     return this.serial.run(`:search:${key}`, async () => {
