@@ -4,154 +4,15 @@
 use serde_json::{Value, json};
 
 use super::faux::FauxEngine;
-use super::handlers::CallOutcome;
 use super::phase::fold;
 use super::question::shuffle;
 use super::records::*;
+use super::testkit::*;
 use super::*;
 use crate::budget::{LaneSpend, Refusal};
 use crate::prompts::Agent;
 use crate::settings::NoesisSettings;
 use crate::tools::{self, SEALED};
-
-const ASK: &str = "noesis.ask";
-const PROBE_DONE: &str = "noesis.probe_done";
-const PLAN: &str = "noesis.plan";
-const PROBLEM: &str = "noesis.problem";
-const CONCLUDE: &str = "noesis.conclude";
-
-fn start(settings: NoesisSettings) -> (tempfile::TempDir, crate::Noesis) {
-    let dir = tempfile::tempdir().unwrap();
-    let settings = NoesisSettings {
-        enabled: true,
-        ..settings
-    };
-    let today = chrono::Local::now().date_naive();
-    let noesis =
-        crate::Noesis::start_if_enabled(&settings, dir.path(), today, LaneSpend::default());
-    (
-        dir,
-        noesis.unwrap().expect("enabled settings start the service"),
-    )
-}
-
-fn fixture() -> (tempfile::TempDir, crate::Noesis) {
-    start(NoesisSettings::default())
-}
-
-fn choice(prompt: &str, options: &[(&str, &str)], key: &[&str]) -> Value {
-    let options: Vec<Value> = options
-        .iter()
-        .map(|(v, l)| json!({"value": v, "label": l}))
-        .collect();
-    json!({"kind": "choice", "prompt": prompt, "options": options, "answer_key": key, "explanation": "why"})
-}
-
-fn capital_question() -> Value {
-    choice(
-        "Capital of France?",
-        &[("a", "Paris"), ("b", "Rome"), ("c", "Madrid")],
-        &["a"],
-    )
-}
-
-fn recall(prompt: &str, key: &str) -> Value {
-    json!({"kind": "recall", "prompt": prompt, "answer_key": key, "explanation": "why"})
-}
-
-fn strands() -> Value {
-    json!({"strands": [{"strand": "limits", "floor": "knows slopes", "ceiling": "epsilon-delta", "misconceptions": ["a limit is the value at the point"], "start": "limit laws"}]})
-}
-
-fn three_steps() -> Value {
-    json!({"nodes": [{"id": "a", "title": "A"}, {"id": "b", "title": "B"}, {"id": "c", "title": "C"}],
-           "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}]})
-}
-
-fn session(t: &Teaching<'_, FauxEngine>, id: &str) -> SessionView {
-    t.get_session(id).unwrap()
-}
-
-fn kind_of(t: &Teaching<'_, FauxEngine>, agent: &str) -> Agent {
-    t.engine().kind_of(agent).expect("a spawned agent")
-}
-
-/// A direct tool call from the session's current agent.
-fn call(
-    t: &mut Teaching<'_, FauxEngine>,
-    id: &str,
-    name: &str,
-    input: Value,
-    text: &str,
-) -> CallOutcome {
-    let view = session(t, id);
-    let role = role_of(kind_of(t, &view.agent));
-    let caller = Caller {
-        agent: view.agent,
-        role,
-    };
-    let call = ToolCall {
-        id: "call_direct".into(),
-        name: name.into(),
-        input,
-    };
-    t.call_tool(id, &caller, &call, text).unwrap()
-}
-
-fn error_of(outcome: &CallOutcome) -> String {
-    assert!(
-        outcome.result.is_error,
-        "expected a refusal, got {}",
-        outcome.result.content
-    );
-    outcome.result.content["error"]
-        .as_str()
-        .unwrap()
-        .to_string()
-}
-
-fn answer_choice(t: &mut Teaching<'_, FauxEngine>, id: &str, choices: &[&str]) -> QuestionResult {
-    let question = session(t, id).open_question.expect("an open question").id;
-    let answer = Answer {
-        choices: choices.iter().map(|c| c.to_string()).collect(),
-        confidence: Some(70),
-        ..Answer::default()
-    };
-    t.answer(id, &question, &answer).unwrap()
-}
-
-/// A teach session handed to its Teacher, with the three-step plan set.
-fn teacher_session(t: &mut Teaching<'_, FauxEngine>) -> String {
-    let id = t
-        .create_session("Learn derivatives", Mode::Teach, &[])
-        .unwrap()
-        .id;
-    t.engine_mut()
-        .script(Agent::Prober, "", vec![(PROBE_DONE, strands())]);
-    t.engine_mut().script(
-        Agent::Teacher,
-        "Here is the plan.",
-        vec![(PLAN, three_steps())],
-    );
-    let reports = t.advance(&id).unwrap();
-    assert_eq!(reports[0].end, TurnEnd::HandedOff);
-    assert_eq!(session(t, &id).phase, Phase::Plan);
-    id
-}
-
-fn add_proposition(noesis: &crate::Noesis, id: &str, name: &str, alias: &str) {
-    let conn = noesis.store().connection();
-    conn.execute(
-        "INSERT INTO propositions(id, name, statement, created_at) VALUES (?1, ?2, 'a true statement', 'now')",
-        [id, name],
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT INTO proposition_aliases(proposition, alias) VALUES (?1, ?2)",
-        [id, alias],
-    )
-    .unwrap();
-}
 
 #[test]
 fn t01_practice_gets_the_practitioner_and_the_teacher_only_follows_a_successful_probe_done() {

@@ -10,17 +10,23 @@ pub mod plan;
 pub mod question;
 pub mod records;
 mod service;
+mod turn;
 
 #[cfg(test)]
 mod faux;
 #[cfg(test)]
 mod parity;
+#[cfg(test)]
+mod recovery;
+#[cfg(test)]
+mod testkit;
 
 pub use engine::{
     AgentSpec, Engine, EngineError, Input, NOESIS_RUN, SUBSYSTEM, Step, ToolCall, ToolResult,
 };
 pub use handlers::CallOutcome;
 pub use service::{CallRecord, Caller, StepRecord, Teaching, TurnEnd, TurnReport};
+pub use turn::WITHHELD;
 
 use crate::budget::{ModelRefusal, Refusal};
 use crate::prompts::{Agent, PromptError};

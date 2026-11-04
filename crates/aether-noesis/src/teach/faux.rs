@@ -20,6 +20,8 @@ pub struct FauxEngine {
     pub inputs: Vec<(String, Input)>,
     pub steps_run: usize,
     pub fail_spawn: bool,
+    /// Refuse this many next deliveries with `NotSent`.
+    pub fail_deliveries: usize,
     /// Offer only a model billed per request.
     pub api_only: bool,
     scripts: HashMap<Agent, VecDeque<Result<Step, EngineError>>>,
@@ -112,6 +114,12 @@ impl Engine for FauxEngine {
             self.kind_of(agent).is_some(),
             "input for an unknown agent {agent}"
         );
+        if self.fail_deliveries > 0 {
+            self.fail_deliveries -= 1;
+            return Err(EngineError::NotSent(
+                "delivery refused by the script".into(),
+            ));
+        }
         self.inputs.push((agent.to_string(), input));
         Ok(())
     }

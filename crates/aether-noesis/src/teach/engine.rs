@@ -35,11 +35,22 @@ pub struct ModelInfo {
     pub ready: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub input: Value,
+}
+
+/// Debug shows the sealed projection, as every other read path does.
+impl std::fmt::Debug for ToolCall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolCall")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("input", &crate::tools::seal_input(&self.name, &self.input))
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -85,7 +96,8 @@ pub trait Engine {
     fn models(&self) -> Vec<ModelInfo>;
     /// Create an agent; returns its Aether agent id.
     fn spawn(&mut self, spec: AgentSpec) -> Result<String, EngineError>;
-    /// Persist an input for the agent's next step.
+    /// Persist an input for the agent's next step. A failed delivery may be
+    /// repeated, so a tool result or answer seen twice (same id) is ignored.
     fn deliver(&mut self, agent: &str, input: Input) -> Result<(), EngineError>;
     /// The estimated spend of the agent's next step, admitted before it runs.
     fn estimate(&self, agent: &str) -> Spend;

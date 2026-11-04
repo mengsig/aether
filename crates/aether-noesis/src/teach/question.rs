@@ -54,7 +54,7 @@ pub fn author(
         QuestionKind::Recall => author_recall(args, &mut problems),
         QuestionKind::Goal => author_goal(args, &mut problems),
     };
-    if leaks_key(args.kind, &authored, visible_text) {
+    if reveals_key(args, visible_text) {
         problems.push(
             "your visible message gives away the answer; rewrite it without the answer and pose again"
                 .to_string(),
@@ -141,24 +141,25 @@ fn author_goal(args: &AskArgs, problems: &mut Vec<String>) -> Authored {
 
 /// Whether the posing turn's visible text holds a correct option's label or
 /// the recall key, as a whole phrase and ignoring case.
-fn leaks_key(kind: QuestionKind, authored: &Authored, visible_text: &str) -> bool {
-    let secrets: Vec<&str> = match kind {
-        QuestionKind::Choice => authored
+pub fn reveals_key(args: &AskArgs, visible_text: &str) -> bool {
+    let secrets: Vec<&str> = match args.kind {
+        QuestionKind::Choice => args
             .options
             .iter()
-            .filter(|option| authored.answer_key.contains(&option.value))
+            .filter(|option| args.answer_key.contains(&option.value))
             .map(|option| option.label.as_str())
             .collect(),
-        QuestionKind::Recall => authored.answer_key.iter().map(String::as_str).collect(),
+        QuestionKind::Recall => args.answer_key.iter().map(String::as_str).collect(),
         QuestionKind::Goal => Vec::new(),
     };
+    debug_assert!(args.kind != QuestionKind::Goal || secrets.is_empty());
     let haystack = visible_text.to_lowercase();
     secrets
         .iter()
         .any(|secret| contains_phrase(&haystack, &secret.trim().to_lowercase()))
 }
 
-fn contains_phrase(haystack: &str, phrase: &str) -> bool {
+pub(super) fn contains_phrase(haystack: &str, phrase: &str) -> bool {
     if phrase.is_empty() {
         return false;
     }

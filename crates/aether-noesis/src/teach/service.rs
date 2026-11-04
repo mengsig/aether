@@ -1,18 +1,19 @@
 //! [`Teaching`]: sessions, learner input and the turn loop over an engine.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
 use super::db::{self, SessionRow};
-use super::engine::{AgentSpec, Engine, EngineError, Input, NOESIS_RUN, SUBSYSTEM, Step};
+use super::engine::{AgentSpec, Engine, EngineError, Input, NOESIS_RUN, SUBSYSTEM, ToolResult};
 use super::records::{
     Answer, EvidenceDraft, EvidenceOutcome, Mode, NoesisEvent, Phase, QuestionKind, QuestionResult,
     RevealedKey, SessionView,
 };
 use super::{TeachError, phase, plan, question, role_of};
 use crate::Noesis;
-use crate::budget::{Lane, ModelOffer, choose_model};
+use crate::budget::{ModelOffer, choose_model};
 use crate::prompts::{self, Agent};
 use crate::tools;
 
@@ -72,6 +73,8 @@ pub struct Teaching<'a, E: Engine> {
     pub(super) prompt_overrides: Option<PathBuf>,
     pub(super) events: Vec<NoesisEvent>,
     pub(super) evidence: Vec<EvidenceDraft>,
+    /// Tool results whose delivery failed, by agent; delivered before its next input.
+    pub(super) undelivered: HashMap<String, Vec<ToolResult>>,
 }
 
 impl<E: Engine> std::fmt::Debug for Teaching<'_, E> {
@@ -80,6 +83,7 @@ impl<E: Engine> std::fmt::Debug for Teaching<'_, E> {
             .field("prompt_overrides", &self.prompt_overrides)
             .field("pending_events", &self.events.len())
             .field("pending_evidence", &self.evidence.len())
+            .field("undelivered_agents", &self.undelivered.len())
             .finish_non_exhaustive()
     }
 }
@@ -99,6 +103,7 @@ impl<'a, E: Engine> Teaching<'a, E> {
             prompt_overrides: overrides.map(|dir| dir.join("noesis").join("prompts")),
             events: Vec::new(),
             evidence: Vec::new(),
+            undelivered: HashMap::new(),
         }
     }
 
@@ -120,7 +125,7 @@ impl<'a, E: Engine> Teaching<'a, E> {
         std::mem::take(&mut self.evidence)
     }
 
-    pub(super) fn conn(&self) -> &rusqlite::Connection {
+    pub(super) fn conn(&self) -> &'a rusqlite::Connection {
         self.noesis.store().connection()
     }
 
@@ -271,6 +276,7 @@ impl<'a, E: Engine> Teaching<'a, E> {
                 "a question is open; answer it first".into(),
             ));
         }
+        self.flush_undelivered(&row.agent)?;
         self.engine
             .deliver(&row.agent, Input::Learner(text.to_string()))?;
         db::touch(self.conn(), session)?;
@@ -306,18 +312,7 @@ impl<'a, E: Engine> Teaching<'a, E> {
             "confidence": graded.confidence,
             "thinking": answer.thinking,
         });
-        if !db::record_answer(self.conn(), question_id, &recorded, graded.correct)? {
-            return Err(TeachError::Conflict(format!(
-                "question `{question_id}` was already answered"
-            )));
-        }
-        let mut for_agent = recorded;
-        for_agent["question"] = json!(question_id);
-        if let Some(correct) = graded.correct {
-            for_agent["correct"] = json!(correct);
-        }
-        self.engine.deliver(&row.agent, Input::Answer(for_agent))?;
-        db::touch(self.conn(), session)?;
+        self.record_and_deliver(&row, question_id, recorded, graded.correct)?;
         let result = reveal(&open, graded.correct);
         self.events.push(NoesisEvent::AnswerRecorded {
             session: session.to_string(),
@@ -325,6 +320,35 @@ impl<'a, E: Engine> Teaching<'a, E> {
         });
         self.record_answer_evidence(&row, &open.question, answer.dont_know, &graded);
         Ok(result)
+    }
+
+    /// Record the answer and deliver it in one transaction: a failed delivery
+    /// rolls the record back, so the question stays open for a retry.
+    fn record_and_deliver(
+        &mut self,
+        row: &SessionRow,
+        question_id: &str,
+        recorded: Value,
+        correct: Option<bool>,
+    ) -> Result<(), TeachError> {
+        debug_assert!(recorded.is_object(), "an answer record is an object");
+        self.flush_undelivered(&row.agent)?;
+        let tx = self.conn().unchecked_transaction()?;
+        if !db::record_answer(&tx, question_id, &recorded, correct)? {
+            return Err(TeachError::Conflict(format!(
+                "question `{question_id}` was already answered"
+            )));
+        }
+        db::touch(&tx, &row.id)?;
+        let mut for_agent = recorded;
+        for_agent["question"] = json!(question_id);
+        if let Some(correct) = correct {
+            for_agent["correct"] = json!(correct);
+        }
+        self.engine.deliver(&row.agent, Input::Answer(for_agent))?;
+        tx.commit()?;
+        debug_assert!(db::open_question(self.conn(), &row.id)?.is_none());
+        Ok(())
     }
 
     fn record_answer_evidence(
@@ -365,103 +389,6 @@ impl<'a, E: Engine> Teaching<'a, E> {
             miss_class: None,
             note: None,
         });
-    }
-
-    /// Run the session's agent until it waits, and on a hand-off run the new
-    /// Teacher's first turn too. A failed turn leaves its inputs persisted,
-    /// so calling this again recovers.
-    pub fn advance(&mut self, session: &str) -> Result<Vec<TurnReport>, TeachError> {
-        let first = self.run_turn(session)?;
-        let handed_off = first.end == TurnEnd::HandedOff;
-        let mut reports = vec![first];
-        if handed_off {
-            reports.push(self.run_turn(session)?);
-        }
-        debug_assert!(reports.iter().skip(1).all(|r| r.end != TurnEnd::HandedOff));
-        Ok(reports)
-    }
-
-    /// One turn of the session's current agent: model calls, each admitted
-    /// against the interactive budget, until the agent waits.
-    pub fn run_turn(&mut self, session: &str) -> Result<TurnReport, TeachError> {
-        let row = db::session(self.conn(), session)?;
-        let caller = Caller {
-            agent: row.agent.clone(),
-            role: role_of(driving_agent(&row)),
-        };
-        let mut report = TurnReport {
-            agent: caller.agent.clone(),
-            steps: Vec::new(),
-            end: TurnEnd::StepLimit,
-        };
-        for _ in 0..MAX_STEPS {
-            let step = self.model_step(&caller.agent)?;
-            let (record, end, results) = self.run_calls(session, &caller, &step)?;
-            report.steps.push(record);
-            if !results.is_empty() {
-                self.engine
-                    .deliver(&caller.agent, Input::ToolResults(results))?;
-            }
-            if let Some(end) = end {
-                report.end = end;
-                return Ok(report);
-            }
-        }
-        Ok(report)
-    }
-
-    fn run_calls(
-        &mut self,
-        session: &str,
-        caller: &Caller,
-        step: &Step,
-    ) -> Result<(StepRecord, Option<TurnEnd>, Vec<super::ToolResult>), TeachError> {
-        let mut record = StepRecord {
-            text: step.text.clone(),
-            calls: Vec::with_capacity(step.calls.len()),
-        };
-        if step.calls.is_empty() {
-            return Ok((record, Some(TurnEnd::AwaitingLearner), Vec::new()));
-        }
-        let mut end = None;
-        let mut results = Vec::new();
-        for call in &step.calls {
-            let outcome = self.call_tool(session, caller, call, &step.text)?;
-            record.calls.push(CallRecord {
-                id: call.id.clone(),
-                name: call.name.clone(),
-                input: tools::seal_input(&call.name, &call.input),
-                result: outcome.result.content.clone(),
-                is_error: outcome.result.is_error,
-            });
-            match outcome.ends {
-                Some(ends) => end = end.or(Some(ends)),
-                None => results.push(outcome.result),
-            }
-        }
-        Ok((record, end, results))
-    }
-
-    /// One model call, admitted before it is made and settled after.
-    fn model_step(&mut self, agent: &str) -> Result<Step, TeachError> {
-        let today = chrono::Local::now().date_naive();
-        let estimate = self.engine.estimate(agent);
-        let admission = self
-            .noesis
-            .accountant()
-            .admit(Lane::Interactive, estimate, today)?;
-        match self.engine.step(agent) {
-            Ok(step) => {
-                admission.settle(step.usage);
-                Ok(step)
-            }
-            Err(EngineError::NotSent(reason)) => {
-                admission.abandon_unsent();
-                Err(EngineError::NotSent(reason).into())
-            }
-            // Dropping the admission charges the estimate: the call may have run.
-            Err(error) => Err(error.into()),
-        }
     }
 }
 
