@@ -7,7 +7,7 @@ import type { aether, GraphModel, Layout } from "@aether-ui/protocol";
 import { Button, Dialog, EmptyState, ErrorState } from "@aether-ui/ui";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { errorText, useLearn, useNoesisChange, useNoesisRead, useOperateRefusal } from "./data.ts";
-import { knowledgeGraph, knowledgeModel, masteryByProposition, structureKey } from "./graph-model.ts";
+import { knowledgeGraph, knowledgeModel, masteryByProposition, spreadForLabels, structureKey } from "./graph-model.ts";
 import { LearnFrame, type OpenGate } from "./LearnFrame.tsx";
 import { MasteryBadge } from "./Mastery.tsx";
 import { MASTERY_ORDER, type Mastery } from "./model.ts";
@@ -69,7 +69,7 @@ function GraphView({ model, layout, selected, onSelect }: { model: GraphModel; l
   useEffect(() => {
     let live = true;
     layout(structural).then(
-      (next) => { if (live) { setPlaced({ key, layout: next }); setFailure(undefined); } },
+      (next) => { if (live) { setPlaced({ key, layout: spreadForLabels(next) }); setFailure(undefined); } },
       (error: unknown) => { if (live) setFailure(errorText(error)); },
     );
     return () => { live = false; };

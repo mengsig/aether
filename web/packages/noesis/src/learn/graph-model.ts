@@ -1,7 +1,7 @@
 // The knowledge graph as a GraphModel: propositions are nodes, each chain an edge from every premise
 // to its conclusion. A node's status is its mastery, so the canvas draws it with the `--mastery-*` token.
 
-import type { aether, GEdge, GNode, GraphModel } from "@aether-ui/protocol";
+import type { aether, GEdge, GNode, GraphModel, Layout } from "@aether-ui/protocol";
 import { invariant, isMastery, type Mastery } from "./model.ts";
 
 export interface KnowledgeGraph {
@@ -51,4 +51,20 @@ export function knowledgeModel(graph: KnowledgeGraph, mastery: ReadonlyMap<strin
 /** Changes only when propositions or chains come or go, so a mastery change never relayouts. */
 export function structureKey(model: GraphModel): string {
   return `${model.nodes.map((node) => node.id).join(",")}|${model.edges.map((edge) => `${edge.from}>${edge.to}`).join(",")}`;
+}
+
+/**
+ * The force layout keeps 28px dots about 42px apart; labelled boxes are 168×44. Stretching x by 4.5 and
+ * y by 2.3 keeps any two such boxes apart: |dx| ≥ 37.3 or |dy| ≥ 19.1 always holds at that distance.
+ */
+const SPREAD = { x: 4.5, y: 2.3 } as const;
+
+export function spreadForLabels(layout: Layout): Layout {
+  const positions = new Map<string, { x: number; y: number }>();
+  for (const [id, at] of layout.positions) {
+    invariant(Number.isFinite(at.x) && Number.isFinite(at.y), `node ${id} has a finite position`);
+    positions.set(id, { x: at.x * SPREAD.x, y: at.y * SPREAD.y });
+  }
+  invariant(positions.size === layout.positions.size, "every placed node stays placed");
+  return { hash: `${layout.hash}:spread`, positions };
 }
