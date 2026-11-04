@@ -64,6 +64,25 @@ export async function graphHarness(world: GraphWorld = demoGraphWorld(), role: "
   return { app, faux, tick, until, mount, stop };
 }
 
+/** Clicks `element` and lets the store's frames and React settle. */
+export async function click(h: Pick<GraphHarness, "tick">, element: Element): Promise<void> {
+  invariant(element instanceof HTMLElement, "a click lands on an HTML element");
+  await act(async () => { element.click(); });
+  await h.tick();
+}
+
+/** Sets an input's value the way React notices, then fires its input event. */
+export async function type(h: Pick<GraphHarness, "tick">, element: Element, value: string): Promise<void> {
+  invariant(element instanceof HTMLInputElement, "typing lands on an input");
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  invariant(setter !== undefined, "an input has a value setter");
+  await act(async () => {
+    setter.call(element, value);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await h.tick();
+}
+
 /** happy-dom has no 2D canvas: a context that only counts its frames, and a sized element. */
 export function stubCanvas(): { frames: () => number } {
   let frames = 0;

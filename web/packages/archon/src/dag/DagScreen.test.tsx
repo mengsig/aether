@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 import type { GraphModel, Layout } from "@aether-ui/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { byText, click } from "../queue/test/harness.tsx";
+import { byText } from "../queue/test/harness.tsx";
 import DagScreen from "./DagScreen.tsx";
-import { CONN, graphHarness, stubCanvas, type GraphHarness } from "./test/harness.tsx";
+import { click, CONN, graphHarness, stubCanvas, type GraphHarness } from "./test/harness.tsx";
 
 /** A layout function that counts its calls and places nodes on a grid in model order. */
 function countingLayout() {
