@@ -7,6 +7,9 @@ import type { AetherConnState, StreamState, TranscriptState } from "./store.ts";
 
 const RECENT_EVENTS = 500;
 const MAX_STREAM_CHARS = 2_000_000;
+/** Committed tails kept to drop late deltas. The daemon completes an invocation before it commits
+ * the message, so completion cannot clear a tombstone; this cap bounds them instead. */
+const MAX_TOMBSTONES = 64;
 /** Streams and accounting never change attention; anything else may (answers, archives, restarts). */
 const NOT_ATTENTION = /^(agent\.message|agent\.usage_updated|invocation\..*|noesis\..*)$/;
 
@@ -55,14 +58,28 @@ function pick(source: Json, keys: readonly string[]): Json {
 }
 
 /**
- * The committed assistant message replaces its invocation's tail: the stream stays as an
- * empty tombstone until the invocation ends, so a late delta cannot append the text again.
+ * The committed assistant message replaces its invocation's tail: the stream stays as an empty
+ * tombstone, so a late delta cannot append the text again. Only the newest tombstones are kept.
  */
 function commitStream(state: AetherConnState, agent: string, invocation: string): AetherConnState {
   const stream = state.streams[invocation];
   invariant(!stream || stream.agent === agent, "an invocation belongs to one agent");
   const base = stream ?? emptyStream(agent, invocation, null);
-  return withStream(state, invocation, { ...base, text: "", thinking: "", tools: [], recovering: false, partial: false, committed: true });
+  const tombstone: StreamState = { ...base, text: "", thinking: "", tools: [], recovering: false, partial: false, committed: true };
+  // Re-inserting moves the key last, so insertion order is commit order for the pruning below.
+  return pruneTombstones(withStream(withStream(state, invocation, undefined), invocation, tombstone));
+}
+
+/** Drops the oldest committed tails past MAX_TOMBSTONES; live streams are never dropped. */
+function pruneTombstones(state: AetherConnState): AetherConnState {
+  const committed = Object.values(state.streams).filter((stream) => stream.committed);
+  const excess = committed.length - MAX_TOMBSTONES;
+  if (excess <= 0) return state;
+  const dropped = new Set(committed.slice(0, excess).map((stream) => stream.invocation));
+  const streams = Object.fromEntries(Object.entries(state.streams).filter(([invocation]) => !dropped.has(invocation)));
+  invariant(Object.keys(streams).length === Object.keys(state.streams).length - excess, "pruning drops exactly the excess tombstones");
+  invariant(Object.values(streams).every((stream) => !dropped.has(stream.invocation)), "a stream is keyed by its own invocation");
+  return { ...state, streams };
 }
 
 function emptyStream(agent: string, invocation: string, order: number | null): StreamState {

@@ -48,6 +48,22 @@ describe("the streamed tail of an invocation", () => {
     ]);
   });
 
+  it("keeps a bounded number of tombstones when the daemon completes an invocation before committing it", () => {
+    let state = feed(EMPTY_AETHER, [delta(1, { delta: "text", text: "live" })]);
+    for (let n = 1; n <= 100; n += 1) {
+      const invocation = `inv_done_${n}`;
+      const event = (at: number, kind: Json) => ({ seq: at, id: `evt_${at}`, at: "2026-11-04T03:00:00Z", actor: { actor: "system" }, agent_id: AGENT, kind } as unknown as aether.Event);
+      state = applyEvent(state, event(n * 2, { type: "invocation.completed", invocation }));
+      state = applyEvent(state, event(n * 2 + 1, { type: "agent.message", role: "assistant", invocation, content: [] }));
+    }
+    const streams = Object.values(state.streams);
+    expect(streams.filter((stream) => stream.committed)).toHaveLength(64);
+    expect(state.streams[INV]).toMatchObject({ text: "live", committed: false });
+    expect(state.streams.inv_done_1).toBeUndefined();
+    const late = applyDelta(state, { frame: "delta", sub: 2, agent: AGENT, invocation: "inv_done_100", invocation_seq: 1, delta: { delta: "text", text: "late" } });
+    expect(late.outcome).toBe("ignored");
+  });
+
   it("marks text resumed after a gap as partial", () => {
     let state = feed(EMPTY_AETHER, [text(1, "Hello"), text(3, " lost")]);
     expect(state.streams[INV]).toMatchObject({ text: "", recovering: true, partial: true });

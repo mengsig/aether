@@ -25,11 +25,10 @@ export function statusDetail(status: aether.AgentStatus): string | null {
 export function usageFacts(usage: aether.Usage | undefined): Fact[] {
   if (!usage) return [{ label: "Cost", value: "Nothing spent yet" }];
   const caveat = costCaveat(usage);
-  const cache = usage.cache_read_tokens + usage.cache_write_tokens + (usage.cache_write_1h_tokens ?? 0);
   return [
     { label: "Cost", value: formatCost(usage), ...(caveat ? { hint: caveat } : {}) },
     { label: "Tokens", value: `${formatTokens(usage.input_tokens)} in · ${formatTokens(usage.output_tokens)} out` },
-    { label: "Cache", value: `${formatTokens(usage.cache_read_tokens)} read · ${formatTokens(cache - usage.cache_read_tokens)} written` },
+    { label: "Cache", value: `${formatTokens(usage.cache_read_tokens)} read · ${formatTokens(usage.cache_write_tokens)} written` },
     ...(usage.reasoning_tokens ? [{ label: "Reasoning", value: `${formatTokens(usage.reasoning_tokens)} tokens` }] : []),
   ];
 }
