@@ -1013,6 +1013,64 @@
       ],
       "type": "object"
     },
+    "AnswerInput": {
+      "description": "A learner's answer to an open question.",
+      "properties": {
+        "choices": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "confidence": {
+          "description": "One of [`CONFIDENCE_LEVELS`].",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "dont_know": {
+          "type": "boolean"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thinking": {
+          "description": "What the learner reasoned, kept for the teacher; never shown back.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "dont_know"
+      ],
+      "type": "object"
+    },
+    "AnswerKey": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "description": "What an answer revealed: one value for a recall question, several for a\nmultiple choice one."
+    },
     "ApprovalDecision": {
       "enum": [
         "approved",
@@ -1744,6 +1802,41 @@
       ],
       "type": "object"
     },
+    "BackgroundDisable": {
+      "enum": [
+        "cancel_at_model_boundary"
+      ],
+      "type": "string"
+    },
+    "BackgroundPriority": {
+      "enum": [
+        "low",
+        "normal"
+      ],
+      "type": "string"
+    },
+    "BillingPatch": {
+      "properties": {
+        "allow_api": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BillingSettings": {
+      "properties": {
+        "allow_api": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "allow_api"
+      ],
+      "type": "object"
+    },
     "BlockReason": {
       "description": "Why an agent is Blocked. One variant per cause, each carrying what that\ncause needs, so a Blocked agent is never ambiguous about what would clear\nit. An operator pause is not here: it is orthogonal to scheduling state\nand lives in [`Agent::paused`] (VISION §3.1).",
       "oneOf": [
@@ -1858,6 +1951,56 @@
         }
       ]
     },
+    "BudgetPatch": {
+      "properties": {
+        "background_tokens_daily": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "background_usd_daily": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "interactive_usd_daily": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BudgetSettings": {
+      "properties": {
+        "background_tokens_daily": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "background_usd_daily": {
+          "format": "double",
+          "type": "number"
+        },
+        "interactive_usd_daily": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "interactive_usd_daily",
+        "background_usd_daily",
+        "background_tokens_daily"
+      ],
+      "type": "object"
+    },
     "BusyPolicy": {
       "description": "What an occurrence does when the target is busy. Either way at most one\ntrigger from a schedule is ever pending in the target's inbox.",
       "oneOf": [
@@ -1947,6 +2090,40 @@
       "required": [
         "context_window",
         "max_output_tokens"
+      ],
+      "type": "object"
+    },
+    "Chain": {
+      "properties": {
+        "conclusion": {
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "premises": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "provenance": {
+          "items": {
+            "$ref": "#/$defs/NoesisProvenance"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "premises",
+        "conclusion",
+        "provenance",
+        "created_at"
       ],
       "type": "object"
     },
@@ -4553,6 +4730,520 @@
           "type": "object"
         },
         {
+          "description": "Noesis state: whether it is enabled, its settings as stored and as\neffective, running jobs and today's spend. Needs `features::NOESIS`.",
+          "properties": {
+            "cmd": {
+              "const": "noesis_status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Write a subset of the `[noesis]` settings and answer with the new\nstatus. Works while Noesis is disabled. Host only when the patch sets\n`enabled`, a budget, billing or prompt overrides.",
+          "properties": {
+            "cmd": {
+              "const": "noesis_configure",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "description": "Makes the request retryable; see [`CreateAgent::idempotency_key`].",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "patch": {
+              "$ref": "#/$defs/NoesisSettingsPatch"
+            }
+          },
+          "required": [
+            "cmd",
+            "patch"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Start a teaching or practice session. Answered with `noesis_session`.",
+          "properties": {
+            "cmd": {
+              "const": "noesis_create_session",
+              "type": "string"
+            },
+            "context": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EvidenceBundle"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "goal": {
+              "description": "1 to 2000 characters.",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "description": "Makes the request retryable; see [`CreateAgent::idempotency_key`].",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "mode": {
+              "$ref": "#/$defs/SessionMode"
+            },
+            "practice_targets": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "goal",
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Say something to the session's teacher. 1 to 20000 characters.",
+          "properties": {
+            "cmd": {
+              "const": "noesis_send",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "description": "Makes the request retryable; see [`CreateAgent::idempotency_key`].",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "session": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Answer the session's open question.",
+          "properties": {
+            "answer": {
+              "$ref": "#/$defs/AnswerInput"
+            },
+            "cmd": {
+              "const": "noesis_answer",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "description": "Makes the request retryable; see [`CreateAgent::idempotency_key`].",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "question": {
+              "type": "string"
+            },
+            "session": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "question",
+            "answer"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "noesis_get_session",
+              "type": "string"
+            },
+            "session": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "session"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "One page of sessions, from just after `after`. `limit` is 1 to 200.",
+          "properties": {
+            "after": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cmd": {
+              "const": "noesis_list_sessions",
+              "type": "string"
+            },
+            "limit": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "noesis_delete_session",
+              "type": "string"
+            },
+            "graph": {
+              "$ref": "#/$defs/DeleteSessionGraph"
+            },
+            "idempotency_key": {
+              "description": "Makes the request retryable; see [`CreateAgent::idempotency_key`].",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "session": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "session",
+            "graph"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Propositions, chains and clusters, filtered by text, session or\nsource. `limit` is 1 to 5000.",
+          "properties": {
+            "cmd": {
+              "const": "noesis_graph",
+              "type": "string"
+            },
+            "limit": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "query": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "session": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Delete a proposition; its chains go with it.",
+          "properties": {
+            "cmd": {
+              "const": "noesis_delete_proposition",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "description": "Makes the request retryable; see [`CreateAgent::idempotency_key`].",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "proposition": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "proposition"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Refused as a conflict while a job on the source runs.",
+          "properties": {
+            "cmd": {
+              "const": "noesis_delete_source",
+              "type": "string"
+            },
+            "graph": {
+              "$ref": "#/$defs/DeleteSourceGraph"
+            },
+            "idempotency_key": {
+              "description": "Makes the request retryable; see [`CreateAgent::idempotency_key`].",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "source",
+            "graph"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Extract the graph of exactly one of `session` and `source`.",
+          "properties": {
+            "cmd": {
+              "const": "noesis_extract",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "description": "Makes the request retryable; see [`CreateAgent::idempotency_key`].",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "session": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Import an artifact as a source and extract it.",
+          "properties": {
+            "artifact": {
+              "$ref": "#/$defs/ArtifactId"
+            },
+            "cmd": {
+              "const": "noesis_import_source",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "description": "Makes the request retryable; see [`CreateAgent::idempotency_key`].",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "description": "1 to 200 characters.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "name",
+            "artifact"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "noesis_jobs",
+              "type": "string"
+            },
+            "state": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/JobState"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "noesis_cancel_job",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "description": "Makes the request retryable; see [`CreateAgent::idempotency_key`].",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "job": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "job"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Learner state of the named concepts, or of those matching `query`.\n`limit` is 1 to 1000.",
+          "properties": {
+            "cmd": {
+              "const": "noesis_learner",
+              "type": "string"
+            },
+            "concepts": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "limit": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "query": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A concept's evidence, newest first, from before the evidence id\n`before`. `limit` is 1 to 500.",
+          "properties": {
+            "before": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "cmd": {
+              "const": "noesis_learner_evidence",
+              "type": "string"
+            },
+            "concept": {
+              "type": "string"
+            },
+            "limit": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "concept"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Record the operator's correction of a concept's state.",
+          "properties": {
+            "cmd": {
+              "const": "noesis_correct_learner",
+              "type": "string"
+            },
+            "concept": {
+              "type": "string"
+            },
+            "idempotency_key": {
+              "description": "Makes the request retryable; see [`CreateAgent::idempotency_key`].",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "description": "1 to 500 characters.",
+              "type": "string"
+            },
+            "state": {
+              "$ref": "#/$defs/ConceptStateKind"
+            }
+          },
+          "required": [
+            "cmd",
+            "concept",
+            "state",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Ask what became of a keyed command whose acknowledgement was lost.\nRead-only, within the caller's own keys; needs `command`'s standing.",
           "properties": {
             "cmd": {
@@ -4588,6 +5279,28 @@
       },
       "required": [
         "req"
+      ],
+      "type": "object"
+    },
+    "Cluster": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "members": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "session": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "session",
+        "members"
       ],
       "type": "object"
     },
@@ -4707,6 +5420,148 @@
           "type": "object"
         }
       ]
+    },
+    "ConceptKind": {
+      "enum": [
+        "proposition",
+        "plan_node",
+        "topic"
+      ],
+      "type": "string"
+    },
+    "ConceptRef": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ConceptKind"
+        },
+        "ref": {
+          "description": "The id of the proposition, plan node or topic the concept stands for.",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "ref",
+        "title"
+      ],
+      "type": "object"
+    },
+    "ConceptState": {
+      "properties": {
+        "as_of_evidence": {
+          "description": "The id of the newest evidence this state was derived from.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "calibration": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "concept": {
+          "$ref": "#/$defs/ConceptRef"
+        },
+        "last_success_at": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "misconceptions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "review_due_at": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/ConceptStateKind"
+        },
+        "strength": {
+          "description": "0 to 1.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "concept",
+        "state",
+        "strength",
+        "misconceptions",
+        "as_of_evidence"
+      ],
+      "type": "object"
+    },
+    "ConceptStateKind": {
+      "enum": [
+        "unseen",
+        "exposed",
+        "demonstrated",
+        "fragile",
+        "misconception"
+      ],
+      "type": "string"
+    },
+    "ConcurrencyPatch": {
+      "properties": {
+        "background": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "interactive": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ConcurrencySettings": {
+      "properties": {
+        "background": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "interactive": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "interactive",
+        "background"
+      ],
+      "type": "object"
     },
     "ContentBlock": {
       "description": "A block inside a message.",
@@ -5450,6 +6305,22 @@
         }
       ]
     },
+    "DeleteSessionGraph": {
+      "description": "What deleting a session does to the propositions it produced.",
+      "enum": [
+        "preserve",
+        "delete_nodes"
+      ],
+      "type": "string"
+    },
+    "DeleteSourceGraph": {
+      "description": "What deleting a source does to the propositions it produced.",
+      "enum": [
+        "preserve",
+        "delete_unsupported"
+      ],
+      "type": "string"
+    },
     "Delta": {
       "description": "Transient streaming signal. Not persisted; durable events reconcile it.",
       "oneOf": [
@@ -5694,6 +6565,53 @@
         }
       ]
     },
+    "DisablePatch": {
+      "properties": {
+        "grace_seconds": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "DisablePolicy": {
+      "description": "What a disable does to work in flight.",
+      "properties": {
+        "background": {
+          "$ref": "#/$defs/BackgroundDisable"
+        },
+        "grace_seconds": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "grace_seconds",
+        "background"
+      ],
+      "type": "object"
+    },
+    "DisableSettings": {
+      "properties": {
+        "grace_seconds": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "grace_seconds"
+      ],
+      "type": "object"
+    },
     "DroppedItem": {
       "description": "A constraint the compactor decided no longer applies, with its reason.",
       "properties": {
@@ -5860,6 +6778,13 @@
       ],
       "type": "object"
     },
+    "EngineeringExtraction": {
+      "enum": [
+        "off",
+        "auto"
+      ],
+      "type": "string"
+    },
     "ErrorCode": {
       "oneOf": [
         {
@@ -5933,6 +6858,13 @@
         },
         "message": {
           "type": "string"
+        },
+        "reason": {
+          "description": "Why the command was refused, for a client that tells causes of one\ncode apart, e.g. [`NOESIS_DISABLED`].",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -8076,6 +9008,253 @@
           "type": "object"
         },
         {
+          "properties": {
+            "session": {
+              "$ref": "#/$defs/NoesisSession"
+            },
+            "type": {
+              "const": "noesis.session_created",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "from": {
+              "$ref": "#/$defs/Phase"
+            },
+            "session": {
+              "type": "string"
+            },
+            "to": {
+              "$ref": "#/$defs/Phase"
+            },
+            "type": {
+              "const": "noesis.phase_changed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session",
+            "from",
+            "to"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "question": {
+              "$ref": "#/$defs/Question"
+            },
+            "session": {
+              "type": "string"
+            },
+            "type": {
+              "const": "noesis.question_posed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session",
+            "question"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "result": {
+              "$ref": "#/$defs/QuestionResult"
+            },
+            "session": {
+              "type": "string"
+            },
+            "type": {
+              "const": "noesis.answer_recorded",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "plan": {
+              "$ref": "#/$defs/PlanTree"
+            },
+            "session": {
+              "type": "string"
+            },
+            "type": {
+              "const": "noesis.plan_updated",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session",
+            "plan"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "problem": {
+              "$ref": "#/$defs/Problem"
+            },
+            "session": {
+              "type": "string"
+            },
+            "type": {
+              "const": "noesis.problem_posed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session",
+            "problem"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The only place a problem's sealed solution is revealed.",
+          "properties": {
+            "miss_class": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/MissClass"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "outcome": {
+              "$ref": "#/$defs/PracticeOutcome"
+            },
+            "problem": {
+              "type": "string"
+            },
+            "retest": {
+              "type": "boolean"
+            },
+            "rung": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "session": {
+              "type": "string"
+            },
+            "solution": {
+              "type": "string"
+            },
+            "type": {
+              "const": "noesis.practice_concluded",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session",
+            "problem",
+            "outcome",
+            "retest",
+            "solution"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "job": {
+              "$ref": "#/$defs/Job"
+            },
+            "type": {
+              "const": "noesis.job_updated",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "job": {
+              "type": "string"
+            },
+            "stats": {
+              "$ref": "#/$defs/JobStats"
+            },
+            "type": {
+              "const": "noesis.graph_merged",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job",
+            "stats"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "concepts": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "noesis.learner_updated",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "concepts"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "effective": {
+              "$ref": "#/$defs/NoesisSettingsView"
+            },
+            "settings": {
+              "$ref": "#/$defs/NoesisSettingsView"
+            },
+            "type": {
+              "const": "noesis.settings_changed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "settings",
+            "effective"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Escape hatch for orchestration layers to record their own events.",
           "properties": {
             "name": {
@@ -8160,6 +9339,193 @@
         }
       },
       "type": "object"
+    },
+    "Evidence": {
+      "description": "One append-only row of the learner's history.",
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "concept": {
+          "type": "string"
+        },
+        "confidence": {
+          "description": "One of [`CONFIDENCE_LEVELS`].",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "hint_rung": {
+          "description": "0 to [`MAX_HINT_RUNG`].",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/$defs/EvidenceKind"
+        },
+        "miss_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MissClass"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProblemMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outcome": {
+          "$ref": "#/$defs/EvidenceOutcome"
+        },
+        "session": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "concept",
+        "at",
+        "kind",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "EvidenceBundle": {
+      "description": "What the frontend gathered from reads the user can already make, stored\nwith the session that starts from it.",
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/EvidenceItem"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "items"
+      ],
+      "type": "object"
+    },
+    "EvidenceItem": {
+      "properties": {
+        "excerpt": {
+          "type": "string"
+        },
+        "ref": {
+          "$ref": "#/$defs/EvidenceRef"
+        },
+        "status": {
+          "$ref": "#/$defs/EvidenceStatus"
+        }
+      },
+      "required": [
+        "ref",
+        "excerpt",
+        "status"
+      ],
+      "type": "object"
+    },
+    "EvidenceKind": {
+      "enum": [
+        "probe_answer",
+        "predict_answer",
+        "check_answer",
+        "recall_judged",
+        "practice_conclude",
+        "exposure",
+        "misconception_observed",
+        "operator_correction"
+      ],
+      "type": "string"
+    },
+    "EvidenceOutcome": {
+      "enum": [
+        "correct",
+        "incorrect",
+        "dont_know",
+        "exposed",
+        "observed",
+        "corrected"
+      ],
+      "type": "string"
+    },
+    "EvidenceRef": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/EvidenceRefKind"
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "id"
+      ],
+      "type": "object"
+    },
+    "EvidenceRefKind": {
+      "enum": [
+        "pr",
+        "issue",
+        "item",
+        "run",
+        "stage",
+        "commit",
+        "file",
+        "agent"
+      ],
+      "type": "string"
+    },
+    "EvidenceStatus": {
+      "enum": [
+        "verified",
+        "reviewed",
+        "preliminary"
+      ],
+      "type": "string"
     },
     "ExecutionBackend": {
       "description": "Where an agent's tools actually run.",
@@ -8273,6 +9639,46 @@
         "artifacts",
         "artifact_payloads",
         "bytes_written"
+      ],
+      "type": "object"
+    },
+    "ExtractionPatch": {
+      "properties": {
+        "engineering": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EngineeringExtraction"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sessions": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionExtraction"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ExtractionSettings": {
+      "properties": {
+        "engineering": {
+          "$ref": "#/$defs/EngineeringExtraction"
+        },
+        "sessions": {
+          "$ref": "#/$defs/SessionExtraction"
+        }
+      },
+      "required": [
+        "sessions",
+        "engineering"
       ],
       "type": "object"
     },
@@ -9393,6 +10799,104 @@
       ],
       "type": "object"
     },
+    "Job": {
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/JobKind"
+        },
+        "state": {
+          "$ref": "#/$defs/JobState"
+        },
+        "stats": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JobStats"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target": {
+          "description": "The session or source the job reads.",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "target",
+        "state",
+        "usage",
+        "created_at",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "JobKind": {
+      "enum": [
+        "extract_session",
+        "extract_source",
+        "extract_engineering"
+      ],
+      "type": "string"
+    },
+    "JobState": {
+      "enum": [
+        "queued",
+        "running",
+        "merging",
+        "succeeded",
+        "failed",
+        "cancelled"
+      ],
+      "type": "string"
+    },
+    "JobStats": {
+      "properties": {
+        "chains": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dropped_chains": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "nodes": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "nodes",
+        "chains",
+        "dropped_chains"
+      ],
+      "type": "object"
+    },
     "KindWrites": {
       "description": "Rows and payload bytes written for one kind of record: an event type such\nas `agent.usage_updated`, or a table such as `table:agents`.",
       "properties": {
@@ -10339,6 +11843,16 @@
       ],
       "type": "object"
     },
+    "MissClass": {
+      "enum": [
+        "cue",
+        "discrimination",
+        "execution",
+        "careless",
+        "structural"
+      ],
+      "type": "string"
+    },
     "MissedRunPolicy": {
       "description": "When several occurrences elapsed between scheduler ticks, coalescing\ndelivers one trigger; skipping advances the clock without delivering one.\nA tick that is late by less than one recurrence still delivers normally.",
       "enum": [
@@ -10543,6 +12057,41 @@
       ],
       "type": "object"
     },
+    "ModelSettings": {
+      "description": "Unset means the first ready subscription model.",
+      "properties": {
+        "cheap": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "strong": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ModelsPatch": {
+      "properties": {
+        "cheap": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "strong": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "MountKind": {
       "description": "What a mount forwards to.",
       "enum": [
@@ -10586,6 +12135,282 @@
         "decision",
         "match",
         "scope"
+      ],
+      "type": "object"
+    },
+    "NoesisProvenance": {
+      "description": "Where a proposition or chain came from.",
+      "properties": {
+        "message_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "A [`SessionId`] or a [`SourceId`].",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "type": "object"
+    },
+    "NoesisSession": {
+      "properties": {
+        "active_problem": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Problem"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "agent": {
+          "$ref": "#/$defs/AgentId"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "goal": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/SessionMode"
+        },
+        "open_question": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Question"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "phase": {
+          "$ref": "#/$defs/Phase"
+        },
+        "plan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanTree"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "updated_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "goal",
+        "mode",
+        "phase",
+        "agent",
+        "created_at",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "NoesisSettingsPatch": {
+      "description": "A subset of the `[noesis]` table to write. Absent keys keep their value.",
+      "properties": {
+        "billing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BillingPatch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "budget": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BudgetPatch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "concurrency": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConcurrencyPatch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "disable": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DisablePatch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "engineering_context": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "extraction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExtractionPatch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "models": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelsPatch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "priority": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PriorityPatch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prompts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PromptsPatch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "NoesisSettingsView": {
+      "description": "The `[noesis]` config table (§6.1) as one JSON object of the same shape.",
+      "properties": {
+        "billing": {
+          "$ref": "#/$defs/BillingSettings"
+        },
+        "budget": {
+          "$ref": "#/$defs/BudgetSettings"
+        },
+        "concurrency": {
+          "$ref": "#/$defs/ConcurrencySettings"
+        },
+        "disable": {
+          "$ref": "#/$defs/DisableSettings"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "engineering_context": {
+          "type": "boolean"
+        },
+        "extraction": {
+          "$ref": "#/$defs/ExtractionSettings"
+        },
+        "models": {
+          "$ref": "#/$defs/ModelSettings"
+        },
+        "priority": {
+          "$ref": "#/$defs/PrioritySettings"
+        },
+        "prompts": {
+          "$ref": "#/$defs/PromptSettings"
+        }
+      },
+      "required": [
+        "enabled",
+        "engineering_context",
+        "extraction",
+        "budget",
+        "concurrency",
+        "priority",
+        "models",
+        "billing",
+        "disable",
+        "prompts"
+      ],
+      "type": "object"
+    },
+    "NoesisStatus": {
+      "description": "Reply to `noesis_status` and `noesis_configure`.",
+      "properties": {
+        "disable_policy": {
+          "$ref": "#/$defs/DisablePolicy"
+        },
+        "effective": {
+          "$ref": "#/$defs/NoesisSettingsView",
+          "description": "After prerequisites: a switch whose prerequisite is off reads off."
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "jobs_running": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "prompt_overrides": {
+          "description": "The prompt segments a file under the data dir currently replaces.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "settings": {
+          "$ref": "#/$defs/NoesisSettingsView",
+          "description": "As stored."
+        },
+        "spend_today": {
+          "$ref": "#/$defs/SpendToday"
+        }
+      },
+      "required": [
+        "enabled",
+        "settings",
+        "effective",
+        "jobs_running",
+        "spend_today",
+        "disable_policy",
+        "prompt_overrides"
       ],
       "type": "object"
     },
@@ -11410,6 +13235,95 @@
       ],
       "type": "object"
     },
+    "Phase": {
+      "enum": [
+        "probe",
+        "plan",
+        "teach",
+        "practice"
+      ],
+      "type": "string"
+    },
+    "PlanEdge": {
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "PlanNode": {
+      "properties": {
+        "id": {
+          "description": "A slug, unique within the plan.",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/PlanNodeStatus"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "status"
+      ],
+      "type": "object"
+    },
+    "PlanNodeStatus": {
+      "enum": [
+        "upcoming",
+        "current",
+        "visited"
+      ],
+      "type": "string"
+    },
+    "PlanTree": {
+      "properties": {
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/PlanEdge"
+          },
+          "type": "array"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/PlanNode"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "revision",
+        "nodes",
+        "edges"
+      ],
+      "type": "object"
+    },
+    "PracticeOutcome": {
+      "enum": [
+        "solved",
+        "solved_with_hints",
+        "moved_on",
+        "surrendered",
+        "dismissed"
+      ],
+      "type": "string"
+    },
     "Priority": {
       "enum": [
         "low",
@@ -11418,6 +13332,132 @@
         "critical"
       ],
       "type": "string"
+    },
+    "PriorityPatch": {
+      "properties": {
+        "background": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BackgroundPriority"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "PrioritySettings": {
+      "properties": {
+        "background": {
+          "$ref": "#/$defs/BackgroundPriority"
+        }
+      },
+      "required": [
+        "background"
+      ],
+      "type": "object"
+    },
+    "Problem": {
+      "description": "A practice problem. Its solution is revealed only by\n`noesis.practice_concluded`.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/ProblemMode"
+        },
+        "posed_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "statement": {
+          "type": "string"
+        },
+        "targets": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "statement",
+        "mode",
+        "targets",
+        "posed_at"
+      ],
+      "type": "object"
+    },
+    "ProblemMode": {
+      "enum": [
+        "recall",
+        "discrimination",
+        "composition"
+      ],
+      "type": "string"
+    },
+    "PromptSettings": {
+      "properties": {
+        "overrides": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "overrides"
+      ],
+      "type": "object"
+    },
+    "PromptsPatch": {
+      "properties": {
+        "overrides": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Proposition": {
+      "properties": {
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "provenance": {
+          "items": {
+            "$ref": "#/$defs/NoesisProvenance"
+          },
+          "type": "array"
+        },
+        "statement": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "statement",
+        "aliases",
+        "provenance",
+        "created_at"
+      ],
+      "type": "object"
     },
     "Provenance": {
       "description": "Where an imported run came from. Absent on a run this daemon ran itself.",
@@ -11859,6 +13899,117 @@
         "endpoint",
         "p256dh",
         "auth"
+      ],
+      "type": "object"
+    },
+    "Question": {
+      "description": "A question put to the learner. The answer key is never part of it: it\nis revealed in a [`QuestionResult`] once the answer is recorded.",
+      "properties": {
+        "collapsed": {
+          "type": "boolean"
+        },
+        "concepts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/QuestionKind"
+        },
+        "multi": {
+          "type": "boolean"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/QuestionOption"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "plan_node": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "posed_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "prompt",
+        "multi",
+        "collapsed",
+        "concepts",
+        "posed_at"
+      ],
+      "type": "object"
+    },
+    "QuestionKind": {
+      "enum": [
+        "choice",
+        "recall",
+        "goal"
+      ],
+      "type": "string"
+    },
+    "QuestionOption": {
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "label"
+      ],
+      "type": "object"
+    },
+    "QuestionResult": {
+      "properties": {
+        "answer_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnswerKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "correct": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "explanation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "question": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "question"
       ],
       "type": "object"
     },
@@ -13807,6 +15958,276 @@
             "data"
           ],
           "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/NoesisStatus"
+            },
+            "reply": {
+              "const": "noesis_status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/NoesisSession"
+            },
+            "reply": {
+              "const": "noesis_session",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`next_after` is the cursor for the next page, absent on the last one.",
+          "properties": {
+            "data": {
+              "properties": {
+                "next_after": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "sessions": {
+                  "items": {
+                    "$ref": "#/$defs/NoesisSession"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "sessions"
+              ],
+              "type": "object"
+            },
+            "reply": {
+              "const": "noesis_sessions",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`truncated` is set when `limit` cut the graph short.",
+          "properties": {
+            "data": {
+              "properties": {
+                "chains": {
+                  "items": {
+                    "$ref": "#/$defs/Chain"
+                  },
+                  "type": "array"
+                },
+                "clusters": {
+                  "items": {
+                    "$ref": "#/$defs/Cluster"
+                  },
+                  "type": "array"
+                },
+                "nodes": {
+                  "items": {
+                    "$ref": "#/$defs/Proposition"
+                  },
+                  "type": "array"
+                },
+                "truncated": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "nodes",
+                "chains",
+                "clusters",
+                "truncated"
+              ],
+              "type": "object"
+            },
+            "reply": {
+              "const": "noesis_graph",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "properties": {
+                "job": {
+                  "$ref": "#/$defs/Job"
+                }
+              },
+              "required": [
+                "job"
+              ],
+              "type": "object"
+            },
+            "reply": {
+              "const": "noesis_job",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "properties": {
+                "job": {
+                  "$ref": "#/$defs/Job"
+                },
+                "source": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source",
+                "job"
+              ],
+              "type": "object"
+            },
+            "reply": {
+              "const": "noesis_import",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "properties": {
+                "jobs": {
+                  "items": {
+                    "$ref": "#/$defs/Job"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "jobs"
+              ],
+              "type": "object"
+            },
+            "reply": {
+              "const": "noesis_jobs",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "properties": {
+                "concepts": {
+                  "items": {
+                    "$ref": "#/$defs/ConceptState"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "concepts"
+              ],
+              "type": "object"
+            },
+            "reply": {
+              "const": "noesis_learner",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`next_before` is the cursor for the next page, absent on the last one.",
+          "properties": {
+            "data": {
+              "properties": {
+                "evidence": {
+                  "items": {
+                    "$ref": "#/$defs/Evidence"
+                  },
+                  "type": "array"
+                },
+                "next_before": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "evidence"
+              ],
+              "type": "object"
+            },
+            "reply": {
+              "const": "noesis_evidence",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/ConceptState"
+            },
+            "reply": {
+              "const": "concept_state",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -15031,6 +17452,20 @@
         }
       ]
     },
+    "SessionExtraction": {
+      "enum": [
+        "manual",
+        "auto"
+      ],
+      "type": "string"
+    },
+    "SessionMode": {
+      "enum": [
+        "teach",
+        "practice"
+      ],
+      "type": "string"
+    },
     "SideEffectClass": {
       "description": "What a tool does to the world. Drives retry policy, idempotency tracking\nand approval requirements.",
       "oneOf": [
@@ -15182,6 +17617,22 @@
       "required": [
         "role",
         "objective"
+      ],
+      "type": "object"
+    },
+    "SpendToday": {
+      "description": "What Noesis spent today, split by who asked for the work.",
+      "properties": {
+        "background": {
+          "$ref": "#/$defs/Usage"
+        },
+        "interactive": {
+          "$ref": "#/$defs/Usage"
+        }
+      },
+      "required": [
+        "interactive",
+        "background"
       ],
       "type": "object"
     },
