@@ -41,12 +41,15 @@ describe("ConnectionsPage", () => {
     expect(h.daemon.sent).toHaveLength(before);
   });
 
-  test("Forget this device asks first, then removes the saved identity, reconnects and opens pairing", async () => {
+  test("Forget this device asks first, closes the signed-in link, removes the identity, reconnects and opens pairing", async () => {
     const identities = { load: vi.fn(async () => undefined), save: vi.fn(async () => {}), remove: vi.fn(async () => {}) };
     const h = current = await connected({ role: "operator", identities });
     const connection = h.app.manager.get(h.conn);
     if (connection === undefined) throw new Error("the harness connection is known to the manager");
-    const retry = vi.spyOn(connection, "retryNow");
+    const states: string[] = [];
+    identities.remove.mockImplementation(async () => { states.push(connection.current.state); });
+    const stop = vi.spyOn(connection, "stop");
+    const start = vi.spyOn(connection, "start");
     const root = await h.mount(<ConnectionsPage />);
     await click(h, root, "Forget this device");
     await click(h, document.querySelector("dialog[open]") ?? document.body, "Keep it");
@@ -54,7 +57,9 @@ describe("ConnectionsPage", () => {
     await click(h, root, "Forget this device");
     await click(h, document.querySelector("dialog[open]") ?? document.body, "Forget this device");
     expect(identities.remove).toHaveBeenCalledTimes(1);
-    expect(retry).toHaveBeenCalledTimes(1);
+    expect(states).toEqual(["closed"]);
+    expect(stop.mock.invocationCallOrder[0]).toBeLessThan(identities.remove.mock.invocationCallOrder[0] ?? 0);
+    expect(start.mock.invocationCallOrder[0]).toBeGreaterThan(identities.remove.mock.invocationCallOrder[0] ?? Infinity);
     expect(globalThis.location.hash).toBe("#/pair/aether");
   });
 

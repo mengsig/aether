@@ -8,7 +8,7 @@ import { Badge, Field } from "@aether-ui/ui";
 import { useState } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import { DraftError, ruleCommand, SIDE_EFFECTS, type RuleDraft } from "./commands.ts";
-import { Action, isList, ReadView, RunNote, Section, useRun, type Run } from "./kit.tsx";
+import { Action, isList, ReadView, RunNote, Section, useRun, type Confirm, type Run } from "./kit.tsx";
 
 const EFFECT_LABELS: Readonly<Record<aether.SideEffectClass, string>> = {
   read_only: "Reads", idempotent_mutation: "Repeatable changes", mutation: "Changes", external: "External effects",
@@ -106,6 +106,26 @@ function RuleFields({ draft, edit, runId }: { readonly draft: RuleDraft; readonl
   );
 }
 
+const SCOPE_TEXT: Readonly<Record<RuleDraft["scope"], string>> = {
+  agent: "this agent", subtree: "this agent and the agents it delegates to", run: "every agent in this run",
+};
+
+/** The confirm step says exactly what the rule will answer; an unrestricted approval is called out. */
+function ruleConfirm(draft: RuleDraft): Confirm {
+  invariant(draft.decision === "approved" || draft.decision === "denied", "a rule approves or denies");
+  invariant(draft.scope in SCOPE_TEXT, "a rule has a known scope");
+  const tool = draft.tool.trim(), argument = draft.argument.trim(), resource = draft.resource.trim();
+  const matches = [tool ? `tool ${tool}` : "any tool", argument ? `argument "${argument}"` : "", resource ? `resources under ${resource}` : ""].filter(Boolean).join(", ");
+  const verb = draft.decision === "approved" ? "approves" : "denies";
+  const everything = draft.decision === "approved" && !tool && !argument && !resource;
+  const warning = everything ? " It matches every tool call, so nothing in this scope asks for approval until the rule is revoked." : "";
+  return {
+    title: draft.decision === "approved" ? "Approve matching calls without asking?" : "Deny matching calls without asking?",
+    body: `The rule ${verb} calls to ${matches} for ${SCOPE_TEXT[draft.scope]}.${warning}`,
+    confirmLabel: "Add rule",
+  };
+}
+
 function NewRule({ conn, agent, run, changed }: { readonly conn: ConnId; readonly agent: aether.Agent; readonly run: Run; readonly changed: () => void }) {
   invariant(agent.id.trim() !== "", "a new rule names its agent");
   invariant(conn.trim() !== "", "a new rule targets a daemon connection");
@@ -130,7 +150,8 @@ function NewRule({ conn, agent, run, changed }: { readonly conn: ConnId; readonl
     <div className="b3-stack">
       <RuleFields draft={draft} edit={(patch) => setDraft((old) => ({ ...old, ...patch }))} runId={agent.run ?? ""} />
       <div className="b3-row">
-        <Action conn={conn} command={{ cmd: "add_approval_rule", scope }} label="Add rule" busy={run.status.state === "busy"} onRun={add} />
+        <Action conn={conn} command={{ cmd: "add_approval_rule", scope }} label="Add rule" busy={run.status.state === "busy"} onRun={add}
+          confirm={ruleConfirm(draft)} variant={draft.decision === "approved" && !draft.tool.trim() && !draft.argument.trim() && !draft.resource.trim() ? "danger" : "secondary"} />
       </div>
       {problem ? <p className="b3-note" role="alert" data-state="failed">{problem}</p> : null}
     </div>

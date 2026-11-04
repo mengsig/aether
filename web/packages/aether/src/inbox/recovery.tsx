@@ -48,7 +48,8 @@ function Unconfirmed({ conn, submission, names }: { readonly conn: ConnId; reado
   invariant(submission.state === "unknown" && submission.key !== "", "the review shows unconfirmed, keyed submissions");
   const app = useApp();
   const run = useRun(conn);
-  const key = `submission:${submission.key}`;
+  // Bound to this attempt: a lost resend must be checked again, not judged by an older answer.
+  const key = `submission:${submission.key}:${submission.attempt ?? 1}`;
   const check = useMemo(() => ({ cmd: "resolve_submission", command: submission.command, ...(submission.horizon ? { horizon: submission.horizon } : {}) }),
     [submission.command, submission.horizon]);
   const read = useSelector(useMemo(() => selectRead(conn, key), [conn, key]));

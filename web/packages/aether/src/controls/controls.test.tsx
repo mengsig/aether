@@ -137,6 +137,9 @@ describe("ControlsScreen", () => {
     await type(h, root, "Tool", "shell");
     await type(h, root, "Argument (optional)", "npm test");
     await click(h, root, "Add rule");
+    expect(sent(h, "add_approval_rule")).toEqual([]);
+    expect(openDialog().textContent).toContain("approves calls to tool shell, argument \"npm test\" for this agent");
+    await click(h, openDialog(), "Add rule");
     expect(sent(h, "add_approval_rule")).toEqual([{ cmd: "add_approval_rule", decision: "approved", scope: { scope: "agent", id: AGENT_ID }, match: { tool: "shell", argument: "npm test" } }]);
     await click(h, root, "Revoke");
     await click(h, openDialog(), "Revoke rule");

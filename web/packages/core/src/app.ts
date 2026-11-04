@@ -108,8 +108,13 @@ export function createApp(host: HostAdapter, options: AppOptions = {}): App {
       const connection = manager.get(conn);
       invariant(connection !== undefined, `connection ${conn} is known to the manager`);
       if (connection.endpoint.transport.id !== "ws-aether") throw new RefusedError("Only a browser paired with an Aether daemon has a saved device to forget");
-      await identities().remove();
-      connection.retryNow();
+      // Close the signed-in link first: it must not outlive the identity it authenticated.
+      connection.stop();
+      try {
+        await identities().remove();
+      } finally {
+        connection.start();
+      }
     },
     noteUnconfirmed(conn, command, error) {
       invariant(typeof command.cmd === "string" && !isKeyed(command), "only an unkeyed change is noted here; core tracks keyed ones");

@@ -98,6 +98,20 @@ describe("recovery review", () => {
     expect(h.app.store.get().aether[h.conn]?.outbox).toEqual([]);
   });
 
+  test("a lost resend is not judged by the earlier check: it must be checked again", async () => {
+    const { h, root } = await open({ script: { cancel: timedOut, resolve_submission: () => ({ tag: "submission_resolved", data: { outcome: "absent_safe", horizon: stamp(1), retained_since: stamp(0) } }) } });
+    const key = await loseCancel(h);
+    await click(h, root, "Check what happened");
+    await click(h, root, "Send again");
+    await click(h, openDialog(), "Send again");
+    expect(h.daemon.commands("cancel").map((c) => c.idempotency_key)).toEqual([key, key]);
+    expect(h.app.store.get().aether[h.conn]?.outbox).toEqual([expect.objectContaining({ key, state: "unknown", attempt: 2 })]);
+    expect(root.textContent).not.toContain("It never reached the daemon");
+    expect(() => buttonNamed(root, "Send again")).toThrow();
+    expect(buttonNamed(root, "Check what happened").disabled).toBe(false);
+    expect(h.daemon.commands("resolve_submission")).toHaveLength(1);
+  });
+
   test("an executed change is cleared without being sent again", async () => {
     const { h, root } = await open({ script: { cancel: timedOut, resolve_submission: () => ({ tag: "submission_resolved", data: { outcome: "executed", horizon: stamp(1), reply: { reply: "ok", data: null } } }) } });
     await loseCancel(h);

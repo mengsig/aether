@@ -298,9 +298,9 @@ describe("submission horizon", () => {
     await expect(first).rejects.toMatchObject({ code: "disconnected" });
     await vi.advanceTimersByTimeAsync(300);
     const lost = store.get().aether[CONN_A]?.outbox[0];
-    expect(lost).toMatchObject({ state: "unknown", horizon: "hz_first" });
+    expect(lost).toMatchObject({ state: "unknown", horizon: "hz_first", attempt: 1 });
     const again = manager.send(CONN_A, lost?.command ?? {});
-    expect(store.get().aether[CONN_A]?.outbox[0]).toMatchObject({ key: lost?.key, horizon: "hz_first" });
+    expect(store.get().aether[CONN_A]?.outbox[0]).toMatchObject({ key: lost?.key, horizon: "hz_first", attempt: 2 });
     daemon.drop(1006);
     await expect(again).rejects.toMatchObject({ code: "disconnected" });
   });

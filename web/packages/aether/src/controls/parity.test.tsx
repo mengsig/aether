@@ -50,12 +50,28 @@ function download(root: HTMLElement): HTMLAnchorElement {
   return link;
 }
 
+function confirmDialog(): HTMLElement {
+  const dialog = document.querySelector<HTMLElement>("dialog[open]");
+  if (dialog === null) throw new Error("a confirm dialog is open");
+  return dialog;
+}
+
 describe("approval rule parity", () => {
+  test("the untouched form would approve everything, so it asks first and warns", async () => {
+    const { h, root } = await open("Approvals");
+    await click(h, root, "Add rule");
+    expect(confirmDialog().textContent).toContain("It matches every tool call");
+    await click(h, confirmDialog(), "Keep it");
+    expect(sent(h, "add_approval_rule")).toEqual([]);
+    expect(document.querySelector("dialog[open]")).toBeNull();
+  });
+
   test("a rule can target the run from the store's agent record", async () => {
     const { h, root } = await open("Approvals");
     await type(h, root, "Scope", "run");
     await type(h, root, "Tool", "shell");
     await click(h, root, "Add rule");
+    await click(h, confirmDialog(), "Add rule");
     expect(sent(h, "add_approval_rule")).toEqual([{
       cmd: "add_approval_rule", decision: "approved", scope: { scope: "run", id: demoAgents()[0]?.run }, match: { tool: "shell" },
     }]);
@@ -71,6 +87,7 @@ describe("approval rule parity", () => {
     await type(h, root, "Decision", "denied");
     await type(h, root, "Scope", "subtree");
     await click(h, root, "Add rule");
+    await click(h, confirmDialog(), "Add rule");
     expect(sent(h, "add_approval_rule")).toEqual([{
       cmd: "add_approval_rule", decision: "denied", scope: { scope: "subtree", root: AGENT_ID },
       match: { resource_prefix: "/private/" }, note: "Keep credentials private",
@@ -82,6 +99,7 @@ describe("approval rule parity", () => {
     const { h, root } = await open("Approvals");
     await type(h, root, "Decision", "denied");
     await click(h, root, "Add rule");
+    await click(h, confirmDialog(), "Add rule");
     expect(sent(h, "add_approval_rule")).toEqual([{
       cmd: "add_approval_rule", decision: "denied", scope: { scope: "agent", id: AGENT_ID }, match: {},
     }]);

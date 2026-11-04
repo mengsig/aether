@@ -79,8 +79,10 @@ export class ConnectionManager {
     checkAllowed(access, connection.current.standing);
     const command = aether ? withIdempotencyKey(input) : input;
     const key = typeof command.idempotency_key === "string" ? command.idempotency_key : null;
-    const horizon = key ? this.horizonOf(conn, key, connection.horizon) : null;
-    const submission = { conn, key: key ?? "", command, ...(horizon === null ? {} : { horizon }) };
+    const held = key ? this.heldSubmission(conn, key) : undefined;
+    const horizon = held === undefined ? connection.horizon : held.horizon ?? null;
+    const attempt = (held?.attempt ?? 0) + 1;
+    const submission = { conn, key: key ?? "", command, attempt, ...(key && horizon !== null ? { horizon } : {}) };
     if (key) this.track(conn, aether, { ...submission, state: "pending" });
     try {
       const reply = await connection.request({ ...command, cmd: string(command.cmd, "command.cmd") });
@@ -93,13 +95,16 @@ export class ConnectionManager {
     }
   }
 
-  /** A resend under the same key keeps the first send's horizon: a later one would vouch for dropped receipts. */
-  private horizonOf(conn: ConnId, key: string, current: string | null): string | null {
-    invariant(key !== "", "only keyed submissions carry a horizon");
+  /**
+   * The earlier send under this key, if any: a resend keeps its horizon (a later one would vouch for
+   * dropped receipts) and counts one more attempt.
+   */
+  private heldSubmission(conn: ConnId, key: string): Submission | undefined {
+    invariant(key !== "", "only keyed submissions are held");
     const state = this.options.store.get();
-    const held = [...(state.aether[conn]?.outbox ?? []), ...state.review].find((s) => s.key === key);
-    if (held === undefined) return current;
-    return held.horizon ?? null;
+    const held = [...(state.aether[conn]?.outbox ?? []), ...state.review.filter((s) => s.conn === conn)].find((s) => s.key === key);
+    invariant(held === undefined || held.command.idempotency_key === key, "a held submission carries its own key");
+    return held;
   }
 
   private track(conn: ConnId, aether: boolean, submission: Submission): void {
