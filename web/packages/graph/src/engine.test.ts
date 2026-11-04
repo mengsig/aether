@@ -43,6 +43,21 @@ describe("LayoutEngine", () => {
     expect(positionBytes(f.positions)).not.toBe(positionBytes(a.positions));
   });
 
+  it("relays out when a group moves under another, matching a fresh engine", async () => {
+    const roots: GraphModel = {
+      nodes: [{ id: "a", label: "A", group: "g" }, { id: "b", label: "B", group: "h" }, { id: "c", label: "C", group: "k" }],
+      edges: [], groups: [{ id: "g", label: "G" }, { id: "h", label: "H" }, { id: "k", label: "K" }], collapsed: new Set(),
+    };
+    const nested: GraphModel = { ...roots, groups: [{ id: "g", label: "G" }, { id: "h", label: "H" }, { id: "k", label: "K", parent: "g" }] };
+    const engine = new LayoutEngine({ createWorker: fakeWorker() });
+    const before = await engine.layout(roots, "layered");
+    const after = await engine.layout(nested, "layered");
+    expect(engine.stats).toEqual({ computed: 2, cacheHits: 0 });
+    expect(after.hash).not.toBe(before.hash);
+    const fresh = await new LayoutEngine({ createWorker: fakeWorker() }).layout(nested, "layered");
+    expect(positionBytes(after.positions)).toBe(positionBytes(fresh.positions));
+  });
+
   it("evicts the least recently used layout beyond its cache size", async () => {
     const engine = new LayoutEngine({ createWorker: fakeWorker(), cacheSize: 1 });
     await engine.layout(model, "layered");

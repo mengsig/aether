@@ -107,7 +107,9 @@ export function visibleGraph(model: GraphModel): VisibleGraph {
   const sorted = [...nodes.values()].sort((a, b) => byString(a.id, b.id));
   const groups = visibleGroups(sorted, chains);
   invariant(sorted.length <= model.nodes.length, "a projection never adds nodes");
-  const key = JSON.stringify([sorted.map((n) => [n.id, n.group ?? null]), edges.map((e) => [e.from, e.to])]);
+  // Group parents are structure too: the layered layout gives each group path its own band.
+  const key = JSON.stringify([sorted.map((n) => [n.id, n.group ?? null]), groups.map((g) => [g.id, g.parent ?? null]),
+    edges.map((e) => [e.from, e.to])]);
   return { nodes: sorted, edges, groups, droppedEdges: dropped, key, hash: structureHash(key) };
 }
 

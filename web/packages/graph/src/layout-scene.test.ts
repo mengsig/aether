@@ -45,6 +45,19 @@ describe("layered layout in a scene", () => {
     }
   });
 
+  it("keeps a reparented group's box off the nodes of other groups", () => {
+    const { scene } = layeredScene({
+      nodes: [{ id: "a", label: "A", group: "g" }, { id: "b", label: "B", group: "h" }, { id: "c", label: "C", group: "k" }],
+      edges: [], groups: [{ id: "g", label: "G" }, { id: "h", label: "H" }, { id: "k", label: "K", parent: "g" }], collapsed: new Set(),
+    });
+    const g = scene.groups.find((group) => group.id === "g");
+    const b = scene.byId.get("b");
+    const c = scene.byId.get("c");
+    if (g === undefined || b === undefined || c === undefined) throw new Error("the fixture places g, b and c");
+    expect(overlaps(g, b)).toBe(false);
+    expect(overlaps(g, c)).toBe(true);
+  });
+
   it("fits whole curves, including a backward edge's bend", () => {
     const nodes = Array.from({ length: 10 }, (_, i) => ({ id: `n${i}`, label: `N${i}` }));
     const edges = [...nodes.slice(1).map((n, i) => ({ from: `n${i}`, to: n.id, kind: "x" })), { from: "n9", to: "n0", kind: "x" }];

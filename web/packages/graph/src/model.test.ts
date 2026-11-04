@@ -52,6 +52,8 @@ describe("visibleGraph", () => {
     expect(base.hash).toMatch(/^[0-9a-f]{16}$/);
     expect(visibleGraph(toggleCollapsed(model, "inner")).hash).not.toBe(base.hash);
     expect(visibleGraph({ ...model, edges: model.edges.slice(1) }).hash).not.toBe(base.hash);
+    const reparented = model.groups.map((g) => (g.parent === undefined ? g : { id: g.id, label: g.label }));
+    expect(visibleGraph({ ...model, groups: reparented }).hash).not.toBe(base.hash);
   });
 
   it("refuses inconsistent models with a GraphModelError", () => {
