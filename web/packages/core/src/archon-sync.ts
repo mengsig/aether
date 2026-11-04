@@ -4,6 +4,7 @@
 import { Debouncer, KeyedSerial } from "./debounce.ts";
 import { codeOf } from "./errors.ts";
 import { array, errorText, invariant, object, omit, seq, string, type Json } from "./guards.ts";
+import { HISTORY_LIMIT, historyValue, initiativeValue, searchCommand, SEARCHES_KEPT, searchKey, searchValue, withStamped, type ItemSearch } from "./archon-reads.ts";
 import { LINK_LOST, replyData, replyObject, subscriptionId } from "./replies.ts";
 import type { SyncContext } from "./aether-sync.ts";
 import { EMPTY_ARCHON, replaces, type ArchonConnState, type ArchonGraph, type ArchonItem, type ArchonPlan } from "./store.ts";
@@ -15,6 +16,8 @@ const SUMMARY_REFETCH_MS = 500;
 /** A plan read changes keep overtaking is asked this many times before it is installed anyway. */
 const PLAN_READ_ATTEMPTS = 3;
 const FEED_KEEP = 200;
+/** The most nodes `task_graph` serves (CONTRACTS.md §1.3); the default is 500. */
+export const GRAPH_LIMIT = 2000;
 
 /** A queue state is a bare kind or an object tagged by `state`. */
 function stateKind(value: unknown): string {
@@ -146,9 +149,9 @@ function withDependency(graph: ArchonGraph, subject: Json): ArchonGraph {
 /** Drops what an off-screen item's change made old; its screen reads them again when shown. */
 function withoutItem(state: ArchonConnState, item: string): ArchonConnState {
   const runs = Object.entries(state.plans).filter(([, plan]) => plan.item === item).map(([run]) => run);
-  if (!(item in state.details) && !(item in state.links) && runs.length === 0) return state;
+  if (!(item in state.details) && !(item in state.links) && !(item in state.histories) && runs.length === 0) return state;
   const plans = runs.reduce<Readonly<Record<string, ArchonPlan>>>((rest, run) => omit(rest, run), state.plans);
-  return { ...state, details: omit(state.details, item), links: omit(state.links, item), plans };
+  return { ...state, details: omit(state.details, item), links: omit(state.links, item), histories: omit(state.histories, item), plans };
 }
 
 /** The serial key of summary reads; item ids never start with a colon. */
@@ -219,7 +222,7 @@ export class ArchonSync {
   /** §5.3.4: a fresh task_graph, then changes after its as_of; skipped changes may have moved any detail. */
   private async expired(): Promise<void> {
     const onScreen = [...this.onScreen];
-    this.set((s) => ({ ...s, changeCursor: null, details: {}, links: {}, plans: {}, staleItems: [...new Set([...s.staleItems, ...onScreen])] }));
+    this.set((s) => ({ ...s, changeCursor: null, details: {}, links: {}, plans: {}, histories: {}, staleItems: [...new Set([...s.staleItems, ...onScreen])] }));
     await this.readSnapshots();
     const asOf = this.state.changeCursor;
     this.changeSub = subscriptionId(await this.ctx.request({ cmd: "subscribe_changes", after: asOf }));
@@ -368,13 +371,15 @@ export class ArchonSync {
 
   private async readGraph(): Promise<void> {
     if (!this.ctx.features.has("task_graph")) return;
-    const graph = replyObject(await this.ctx.request({ cmd: "task_graph", filter: {} }), "task_graph");
+    const graph = replyObject(await this.ctx.request({ cmd: "task_graph", filter: {}, limit: GRAPH_LIMIT }), "task_graph");
     const nodes = Object.fromEntries(array(graph.nodes, "task_graph.nodes").map((node) => [string(object(node, "node").id, "node.id"), node as Json]));
     const snapshot: ArchonGraph = {
       nodes, edges: array(graph.edges, "task_graph.edges") as Json[], initiatives: array(graph.initiatives ?? [], "initiatives") as Json[],
       asOf: seq(graph.as_of, "task_graph.as_of"), truncated: graph.truncated === true,
     };
-    this.set((s) => ({ ...s, graph: snapshot }));
+    invariant(Object.keys(nodes).length <= GRAPH_LIMIT, `task_graph sent more than ${GRAPH_LIMIT} nodes`);
+    // A read older than the graph held, e.g. one a concurrent reread overtook, never replaces it.
+    this.set((s) => (replaces(snapshot.asOf, s.graph?.asOf ?? null) ? { ...s, graph: snapshot } : s));
   }
 
   /** Protocol 24 asks `with_as_of` and gets `item_summaries_at`; protocol 23 answers the bare list. */
@@ -458,6 +463,48 @@ export class ArchonSync {
       links: links === null ? s.links : { ...s.links, [item]: { value: links, asOf } },
     }));
     await this.readItemPlans(item, version);
+    if (this.ctx.features.has("item_history") && item in this.state.histories) await this.readItemHistory(item);
+  }
+
+  /** Reads an item's transitions into the store; while the item is on screen its rereads keep them current. */
+  async readHistory(item: string): Promise<void> {
+    invariant(this.ctx.features.has("item_history"), "item_history is read only where archond serves it");
+    return this.serial.run(item, () => this.readItemHistory(item));
+  }
+
+  /** As readPlan: a read a change overtook is asked again, and the last one is stamped when it was asked. */
+  private async readItemHistory(item: string): Promise<void> {
+    for (let attempt = 1; attempt <= PLAN_READ_ATTEMPTS; attempt += 1) {
+      const version = this.changed.get(item) ?? 0;
+      const asked = this.state.changeCursor;
+      const value = historyValue(await this.ctx.request({ cmd: "item_history", item, limit: HISTORY_LIMIT }), item);
+      const fresh = !this.overtaken(item, version);
+      if (fresh || attempt === PLAN_READ_ATTEMPTS) {
+        const stamped = { value, asOf: fresh ? this.state.changeCursor : asked };
+        return this.set((s) => ({ ...s, histories: withStamped(s.histories, item, stamped) }));
+      }
+    }
+  }
+
+  /** Reads an initiative's detail into the store, stamped with the change cursor it was asked at. */
+  async readInitiative(id: string): Promise<void> {
+    invariant(id.length > 0, "an initiative read names its initiative");
+    return this.serial.run(`:initiative:${id}`, async () => {
+      const asOf = this.state.changeCursor;
+      const value = initiativeValue(await this.ctx.request({ cmd: "get_initiative", initiative: id }), id);
+      this.set((s) => ({ ...s, initiatives: withStamped(s.initiatives, id, { value, asOf }) }));
+    });
+  }
+
+  /** Runs a filtered `list_items` into the store under `searchKey(query)`; the store keeps the newest few. */
+  async search(query: ItemSearch): Promise<void> {
+    invariant(this.ctx.features.has("item_filters"), "list_items filters are sent only where archond serves them");
+    const key = searchKey(query);
+    return this.serial.run(`:search:${key}`, async () => {
+      const asOf = this.state.changeCursor;
+      const value = searchValue(await this.ctx.request(searchCommand(query)));
+      this.set((s) => ({ ...s, searches: withStamped(s.searches, key, { value, asOf }, SEARCHES_KEPT) }));
+    });
   }
 
   /** Rereads the plans held for `item`; one the daemon refuses is reported and dropped from the store. */
