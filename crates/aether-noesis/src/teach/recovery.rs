@@ -90,35 +90,40 @@ fn a_parked_session_makes_no_model_call_until_the_answer_arrives() {
 }
 
 #[test]
-fn a_failed_answer_delivery_leaves_the_question_open_for_a_retry() {
+fn a_failed_answer_delivery_is_queued_after_the_commit_and_sent_before_the_next_step() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = posed_session(&mut t);
-    t.take_events();
     let open = session(&t, &id).open_question.expect("posed").id;
     let answer = Answer {
         choices: vec!["a".into()],
         ..Answer::default()
     };
     t.engine_mut().fail_deliveries = 1;
-    let failed = t.answer(&id, &open, &answer);
-    assert!(matches!(failed, Err(TeachError::Engine(_))), "{failed:?}");
-    assert_eq!(
-        session(&t, &id).open_question.map(|q| q.id),
-        Some(open.clone())
-    );
-    assert!(t.take_events().is_empty() && t.take_evidence().is_empty());
-
     let result = t.answer(&id, &open, &answer).unwrap();
-    assert_eq!(result.correct, Some(true));
+    assert_eq!(result.correct, Some(true), "the record and reveal stand");
+    assert!(session(&t, &id).open_question.is_none());
     let agent = session(&t, &id).agent;
-    let answers = t.engine().inputs_of(&agent);
-    let delivered = answers
-        .iter()
-        .filter(|i| matches!(i, Input::Answer(_)))
-        .count();
-    assert_eq!(delivered, 1, "the answer reached the agent once");
-    assert_eq!(t.take_evidence().len(), 1);
+    let answers = |t: &Teaching<'_, FauxEngine>| {
+        let inputs = t.engine().inputs_of(&agent);
+        inputs
+            .iter()
+            .filter(|i| matches!(i, Input::Answer(_)))
+            .count()
+    };
+    assert_eq!(answers(&t), 0, "the failed delivery reached nothing");
+    let retry = t.answer(&id, &open, &answer);
+    assert!(
+        matches!(retry, Err(TeachError::Conflict(_))),
+        "one answer per question"
+    );
+
+    let steps_before = t.engine().steps_run;
+    t.advance(&id).unwrap();
+    assert_eq!(answers(&t), 1, "the queued answer arrived exactly once");
+    assert_eq!(t.engine().steps_run, steps_before + 1);
+    let inputs = t.engine().inputs_of(&agent);
+    assert!(matches!(inputs.last(), Some(Input::Answer(a)) if a["question"] == open.as_str()));
 }
 
 #[test]

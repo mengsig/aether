@@ -118,8 +118,8 @@ pub fn seal_input(tool: &str, input: &Value) -> Value {
 }
 
 /// Every sealed text a call carries, read as the parser reads it: the sealed
-/// fields and, for `noesis.ask`, the labels of the keyed options. `None` when
-/// a sealed tool's input is no object, so a caller can fail closed.
+/// fields, with a choice key shown as its options' labels (values are ids the
+/// learner sees anyway). `None` when a sealed input is no object: fail closed.
 pub fn sealed_texts(tool: &str, input: &Value) -> Option<Vec<String>> {
     let Some(tool) = ToolName::parse(tool) else {
         return Some(Vec::new());
@@ -132,34 +132,42 @@ pub fn sealed_texts(tool: &str, input: &Value) -> Option<Vec<String>> {
     };
     let mut texts = Vec::new();
     for name in tool.sealed_fields() {
-        if let Some(value) = map.get(*name) {
+        let Some(value) = map.get(*name) else {
+            continue;
+        };
+        if *name == "answer_key" {
+            texts.extend(shown_key(&map, value));
+        } else {
             collect_texts(value, &mut texts);
         }
     }
-    if tool == ToolName::Ask {
-        texts = keyed_labels(&map, texts);
-    }
-    debug_assert!(texts.iter().all(|text| !text.is_empty()));
+    debug_assert!(texts.iter().all(|text| !text.trim().is_empty()));
     Some(texts)
 }
 
-/// Swap key entries naming an option for that option's label: the value is
-/// an id the learner never reads, the label is what would give it away.
-fn keyed_labels(map: &serde_json::Map<String, Value>, texts: Vec<String>) -> Vec<String> {
+/// The key as the learner would recognise it: an entry naming an option (by
+/// its trimmed value, as the parser compares) is that option's label.
+fn shown_key(map: &serde_json::Map<String, Value>, key: &Value) -> Vec<String> {
+    let mut entries = Vec::new();
+    collect_texts(key, &mut entries);
     let options = map.get("options").and_then(Value::as_array);
-    let options: Vec<(&str, &str)> = options
+    let labels: Vec<(&str, &str)> = options
         .into_iter()
         .flatten()
-        .filter_map(|o| Some((o.get("value")?.as_str()?, o.get("label")?.as_str()?)))
+        .filter_map(|o| Some((o.get("value")?.as_str()?.trim(), o.get("label")?.as_str()?)))
         .collect();
-    let mut shown = Vec::with_capacity(texts.len());
-    for text in texts {
-        match options.iter().find(|(value, _)| *value == text) {
-            Some((_, label)) if !label.trim().is_empty() => shown.push(label.to_string()),
-            Some(_) => {}
-            None => shown.push(text),
-        }
-    }
+    let count = entries.len();
+    let shown: Vec<String> = entries
+        .into_iter()
+        .map(|entry| {
+            let label = labels.iter().find(|(value, _)| *value == entry.trim());
+            match label {
+                Some((_, label)) if !label.trim().is_empty() => label.to_string(),
+                _ => entry,
+            }
+        })
+        .collect();
+    debug_assert_eq!(shown.len(), count, "each key entry is shown once");
     shown
 }
 
@@ -351,6 +359,26 @@ mod tests {
         let plan = json!({"nodes": []});
         assert_eq!(seal_input("noesis.plan", &plan), plan);
         assert_eq!(seal_input("shell", &input), input);
+    }
+
+    #[test]
+    fn sealed_texts_show_keyed_labels_by_trimmed_value_and_keep_every_other_text() {
+        let input = json!({"kind": "choice", "prompt": "?", "answer_key": ["a"], "explanation": "b",
+            "options": [{"value": " a ", "label": "Paris"}, {"value": "b", "label": "Rome"}]});
+        assert_eq!(
+            sealed_texts("noesis.ask", &input),
+            Some(vec!["Paris".into(), "b".into()])
+        );
+        let stringified = Value::String(r#"{"solution": "x = 4"}"#.into());
+        assert_eq!(
+            sealed_texts("noesis.problem", &stringified),
+            Some(vec!["x = 4".into()])
+        );
+        assert_eq!(sealed_texts("noesis.problem", &json!("x = 4")), None);
+        assert_eq!(
+            sealed_texts("noesis.plan", &json!("anything")),
+            Some(vec![])
+        );
     }
 
     #[test]

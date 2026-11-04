@@ -1,12 +1,12 @@
 //! [`Teaching`]: sessions, learner input and the turn loop over an engine.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
 use super::db::{self, SessionRow};
-use super::engine::{AgentSpec, Engine, EngineError, Input, NOESIS_RUN, SUBSYSTEM, ToolResult};
+use super::engine::{AgentSpec, Engine, EngineError, Input, NOESIS_RUN, SUBSYSTEM};
 use super::records::{
     Answer, EvidenceDraft, EvidenceOutcome, Mode, NoesisEvent, Phase, QuestionKind, QuestionResult,
     RevealedKey, SessionView,
@@ -73,8 +73,9 @@ pub struct Teaching<'a, E: Engine> {
     pub(super) prompt_overrides: Option<PathBuf>,
     pub(super) events: Vec<NoesisEvent>,
     pub(super) evidence: Vec<EvidenceDraft>,
-    /// Tool results whose delivery failed, by agent; delivered before its next input.
-    pub(super) undelivered: HashMap<String, Vec<ToolResult>>,
+    /// Inputs whose delivery failed, in order, by agent; delivered before
+    /// anything new reaches that agent.
+    pub(super) undelivered: HashMap<String, VecDeque<Input>>,
 }
 
 impl<E: Engine> std::fmt::Debug for Teaching<'_, E> {
@@ -276,7 +277,7 @@ impl<'a, E: Engine> Teaching<'a, E> {
                 "a question is open; answer it first".into(),
             ));
         }
-        self.flush_undelivered(&row.agent)?;
+        self.deliver_queued(&row.agent, None)?;
         self.engine
             .deliver(&row.agent, Input::Learner(text.to_string()))?;
         db::touch(self.conn(), session)?;
@@ -322,8 +323,8 @@ impl<'a, E: Engine> Teaching<'a, E> {
         Ok(result)
     }
 
-    /// Record the answer and deliver it in one transaction: a failed delivery
-    /// rolls the record back, so the question stays open for a retry.
+    /// Commit the answer, then deliver it. A failed delivery keeps the answer
+    /// queued, in order, for the next turn: the record and the agent agree.
     fn record_and_deliver(
         &mut self,
         row: &SessionRow,
@@ -332,7 +333,6 @@ impl<'a, E: Engine> Teaching<'a, E> {
         correct: Option<bool>,
     ) -> Result<(), TeachError> {
         debug_assert!(recorded.is_object(), "an answer record is an object");
-        self.flush_undelivered(&row.agent)?;
         let tx = self.conn().unchecked_transaction()?;
         if !db::record_answer(&tx, question_id, &recorded, correct)? {
             return Err(TeachError::Conflict(format!(
@@ -340,14 +340,18 @@ impl<'a, E: Engine> Teaching<'a, E> {
             )));
         }
         db::touch(&tx, &row.id)?;
+        tx.commit()?;
+        debug_assert!(db::open_question(self.conn(), &row.id)?.is_none());
         let mut for_agent = recorded;
         for_agent["question"] = json!(question_id);
         if let Some(correct) = correct {
             for_agent["correct"] = json!(correct);
         }
-        self.engine.deliver(&row.agent, Input::Answer(for_agent))?;
-        tx.commit()?;
-        debug_assert!(db::open_question(self.conn(), &row.id)?.is_none());
+        let input = Input::Answer(for_agent);
+        if let Err(error) = self.deliver_queued(&row.agent, Some(input)) {
+            // The answer stays queued; the next turn delivers it or fails visibly.
+            debug_assert!(self.undelivered.contains_key(&row.agent), "{error}");
+        }
         Ok(())
     }
 

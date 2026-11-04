@@ -42,7 +42,7 @@ impl<E: Engine> Teaching<'_, E> {
             steps: Vec::new(),
             end: TurnEnd::StepLimit,
         };
-        self.flush_undelivered(&caller.agent)?;
+        self.deliver_queued(&caller.agent, None)?;
         if db::open_question(self.conn(), session)?.is_some() {
             report.end = TurnEnd::AwaitingAnswer;
             return Ok(report);
@@ -51,7 +51,10 @@ impl<E: Engine> Teaching<'_, E> {
             let step = self.model_step(&caller.agent)?;
             let (record, end, results) = self.run_calls(session, &caller, &step)?;
             report.steps.push(record);
-            self.deliver_results(&caller.agent, results)?;
+            if !results.is_empty() {
+                let input = Input::ToolResults(results);
+                self.deliver_queued(&caller.agent, Some(input))?;
+            }
             if let Some(end) = end {
                 report.end = end;
                 return Ok(report);
@@ -94,35 +97,23 @@ impl<E: Engine> Teaching<'_, E> {
         Ok((record, end, results))
     }
 
-    /// Deliver a step's results; on failure keep them for the agent's next
-    /// input, so a retry neither loses nor reorders them.
-    fn deliver_results(&mut self, agent: &str, results: Vec<ToolResult>) -> Result<(), TeachError> {
-        debug_assert!(
-            !self.undelivered.contains_key(agent),
-            "flushed at turn start"
-        );
-        if results.is_empty() {
-            return Ok(());
+    /// Deliver what is queued for `agent`, then `input`. On a failure the
+    /// failed input and everything after it stay queued, in order.
+    pub(super) fn deliver_queued(
+        &mut self,
+        agent: &str,
+        input: Option<Input>,
+    ) -> Result<(), TeachError> {
+        let mut queue = self.undelivered.remove(agent).unwrap_or_default();
+        queue.extend(input);
+        while let Some(next) = queue.pop_front() {
+            if let Err(error) = self.engine.deliver(agent, next.clone()) {
+                queue.push_front(next);
+                self.undelivered.insert(agent.to_string(), queue);
+                return Err(error.into());
+            }
         }
-        let input = Input::ToolResults(results.clone());
-        if let Err(error) = self.engine.deliver(agent, input) {
-            self.undelivered.insert(agent.to_string(), results);
-            return Err(error.into());
-        }
-        Ok(())
-    }
-
-    /// Deliver tool results an earlier failure kept back, before anything new.
-    pub(super) fn flush_undelivered(&mut self, agent: &str) -> Result<(), TeachError> {
-        let Some(results) = self.undelivered.remove(agent) else {
-            return Ok(());
-        };
-        debug_assert!(!results.is_empty(), "only a non-empty batch is kept");
-        let input = Input::ToolResults(results.clone());
-        if let Err(error) = self.engine.deliver(agent, input) {
-            self.undelivered.insert(agent.to_string(), results);
-            return Err(error.into());
-        }
+        debug_assert!(!self.undelivered.contains_key(agent), "all delivered");
         Ok(())
     }
 
