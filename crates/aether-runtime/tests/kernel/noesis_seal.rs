@@ -416,3 +416,67 @@ async fn an_ordinary_agent_keeps_its_thinking_and_only_the_sealed_tool_is_sealed
     );
     assert!(!records.contains("four is B"));
 }
+
+/// Settled later from the sealed transcript, a parked call would run on
+/// `"<sealed>"`: a sealed tool that needs an approval fails instead.
+#[tokio::test]
+async fn a_sealed_tool_that_needs_an_approval_fails_rather_than_parks() {
+    let gate = NoesisGate::new();
+    gate.enable(Recording::new(Answer::Admit));
+    let asked = Inputs::default();
+    let seen = asked.clone();
+    let h = noesis_harness(
+        vec![
+            ScriptedClient::tool_call("noesis_ask", ask_input()),
+            ScriptedClient::tool_call("complete_task", json!({"summary": "done"})),
+        ],
+        &gate,
+        |_| {},
+        move |registry| {
+            registry.register(Arc::new(RecordInput {
+                name: "noesis_ask",
+                seen,
+            }));
+        },
+    )
+    .await;
+    let mut tutor = noesis_spec("noesis.tutor", "ask");
+    tutor.approval = Some(aether_core::agent::ApprovalPolicy {
+        require_for: [SideEffectClass::ReadOnly].into(),
+    });
+    let (agent, _) = h
+        .runtime
+        .create_agent(tutor, Actor::user())
+        .expect("created");
+    assert_eq!(
+        h.store.agent_subsystem(agent.id).unwrap().as_deref(),
+        Some(aether_runtime::noesis_guard::NOESIS_SUBSYSTEM)
+    );
+    let failed = |events: &[aether_core::event::Event]| {
+        events.iter().find_map(|e| match &e.kind {
+            EventKind::ToolFailed { error, .. } => Some(error.clone()),
+            _ => None,
+        })
+    };
+    let read = || h.store.events(0, 10_000, &EventFilter::default()).unwrap();
+    h.wait_for("the sealed call's failure", || failed(&read()).is_some())
+        .await;
+    let events = read();
+    assert!(
+        asked.lock().unwrap().is_empty(),
+        "the sealed call never ran"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(
+            &e.kind,
+            EventKind::ApprovalRequested { tool, .. } if tool == "noesis_ask"
+        )),
+        "the sealed call was not parked for approval"
+    );
+    assert!(failed(&events).is_some_and(|error| error.contains("sealed")));
+    let text = serde_json::to_string(&events).unwrap();
+    assert!(
+        !text.contains("four is B"),
+        "the answer is nowhere in the log"
+    );
+}

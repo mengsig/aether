@@ -70,7 +70,8 @@ impl Harness {
     }
 
     async fn send(&self, command: Command) -> Result<Reply, aether_protocol::ErrorReply> {
-        super::dispatch(&self.daemon, command, Actor::user()).await
+        let submission = crate::authz::AuthContext::Local.submission(&command)?;
+        super::dispatch(&self.daemon, command, Actor::user(), submission).await
     }
 
     async fn configure(&self, patch: NoesisSettingsPatch) -> aether_protocol::noesis::NoesisStatus {
@@ -380,14 +381,11 @@ async fn an_api_billed_link_is_refused_unless_api_billing_is_allowed() {
         ModelRef::new("claude-code", "opus"),
     );
     let state = harness.daemon.noesis.state.lock().await;
-    let super::State::Running(noesis) = &*state else {
+    let super::State::Running(live) = &*state else {
         panic!("running");
     };
-    let mut budget = ServiceBudget {
-        accountant: noesis.accountant().clone(),
-        allow_api: false,
-        models: harness.daemon.models.clone(),
-    };
+    let accountant = live.noesis.accountant().clone();
+    let budget = ServiceBudget::new(accountant.clone(), false, harness.daemon.models.clone());
     let refused = budget
         .admit(&api, NoesisLane::Interactive)
         .err()
@@ -397,8 +395,8 @@ async fn an_api_billed_link_is_refused_unless_api_billing_is_allowed() {
         "{refused:?}"
     );
     assert!(budget.admit(&subscription, NoesisLane::Interactive).is_ok());
-    budget.allow_api = true;
-    assert!(budget.admit(&api, NoesisLane::Interactive).is_ok());
+    let allowed = ServiceBudget::new(accountant, true, harness.daemon.models.clone());
+    assert!(allowed.admit(&api, NoesisLane::Interactive).is_ok());
     drop(state);
     let status = harness
         .configure(NoesisSettingsPatch {
@@ -409,4 +407,108 @@ async fn an_api_billed_link_is_refused_unless_api_billing_is_allowed() {
         })
         .await;
     assert!(status.settings.billing.allow_api);
+}
+
+#[tokio::test]
+async fn a_closed_budget_admits_nothing_and_counts_what_it_admitted() {
+    let harness = Harness::new().await;
+    harness.configure(enable(true)).await;
+    let tutor = noesis_agent(
+        &harness,
+        "noesis.tutor",
+        ModelRef::new("claude-code", "opus"),
+    );
+    let state = harness.daemon.noesis.state.lock().await;
+    let super::State::Running(live) = &*state else {
+        panic!("running");
+    };
+    let charge = live
+        .budget
+        .admit(&tutor, NoesisLane::Interactive)
+        .expect("admitted");
+    assert_eq!(live.budget.close(), 1, "the unsettled admission is counted");
+    let refused = live
+        .budget
+        .admit(&tutor, NoesisLane::Interactive)
+        .err()
+        .expect("closed");
+    assert!(matches!(refused, NoesisRefusal::Busy(_)), "{refused:?}");
+    charge.settle(&Usage::default());
+    assert_eq!(live.budget.outstanding(), 0);
+    live.budget.reopen();
+    assert!(live.budget.admit(&tutor, NoesisLane::Interactive).is_ok());
+}
+
+#[tokio::test]
+async fn a_settings_change_waits_for_turns_in_flight_and_writes_nothing() {
+    let harness = Harness::new().await;
+    harness.configure(enable(true)).await;
+    let tutor = noesis_agent(
+        &harness,
+        "noesis.tutor",
+        ModelRef::new("claude-code", "opus"),
+    );
+    let charge = {
+        let state = harness.daemon.noesis.state.lock().await;
+        let super::State::Running(live) = &*state else {
+            panic!("running");
+        };
+        live.budget
+            .admit(&tutor, NoesisLane::Interactive)
+            .expect("admitted")
+    };
+    let before = harness.daemon.noesis.config.read_noesis().expect("read");
+    let raise = NoesisSettingsPatch {
+        budget: Some(BudgetPatch {
+            interactive_usd_daily: Some(9.0),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let error = harness
+        .send(Command::NoesisConfigure {
+            patch: raise.clone(),
+            idempotency_key: None,
+        })
+        .await
+        .expect_err("a turn is in flight");
+    assert_eq!(error.reason.as_deref(), Some("conflict"), "{error:?}");
+    assert_eq!(
+        harness.daemon.noesis.config.read_noesis().expect("read"),
+        before
+    );
+    assert!(
+        harness.daemon.noesis.gate().is_enabled(),
+        "the running service still admits"
+    );
+    charge.settle(&Usage::default());
+    let status = harness.configure(raise).await;
+    assert_eq!(status.settings.budget.interactive_usd_daily, 9.0);
+}
+
+#[tokio::test]
+async fn a_keyed_configure_replays_its_first_outcome() {
+    let harness = Harness::new().await;
+    let keyed = |enabled: bool, key: &str| Command::NoesisConfigure {
+        patch: enable(enabled),
+        idempotency_key: Some(key.into()),
+    };
+    let Reply::NoesisStatus(first) = harness.send(keyed(true, "k1")).await.expect("first") else {
+        panic!("status");
+    };
+    assert!(first.enabled);
+    harness.configure(enable(false)).await;
+    let Reply::NoesisStatus(again) = harness.send(keyed(true, "k1")).await.expect("replay") else {
+        panic!("status");
+    };
+    assert_eq!(again, first, "the retry answers with the recorded outcome");
+    assert!(
+        !harness.daemon.noesis.gate().is_enabled(),
+        "and does not enable again"
+    );
+    let other = harness
+        .send(keyed(false, "k1"))
+        .await
+        .expect_err("same key, other request");
+    assert_ne!(other.code, ErrorCode::Unavailable, "{other:?}");
 }

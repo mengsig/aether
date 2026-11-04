@@ -91,28 +91,63 @@ pub(crate) fn spent_today(store: &dyn Store, day: NaiveDate) -> aether_store::Re
 
 /// The runtime's view of a running service's [`Accountant`], plus the
 /// billing rule: an API-billed link is refused unless `billing.allow_api`.
+/// Closed, it admits nothing, so its outstanding charges can be counted.
 #[derive(Debug)]
 pub(crate) struct ServiceBudget {
-    pub(crate) accountant: Accountant,
-    pub(crate) allow_api: bool,
-    pub(crate) models: Arc<Models>,
+    accountant: Accountant,
+    allow_api: bool,
+    models: Arc<Models>,
+    /// Held across each admission, so a close sees every reservation made.
+    open: parking_lot::Mutex<bool>,
 }
 
 impl ServiceBudget {
-    /// The first link a turn could run on that is billed per request, when
-    /// API billing is not allowed: a fallback must not reach it silently.
-    fn forbidden_link(&self, agent: &Agent) -> Option<String> {
+    pub(crate) fn new(accountant: Accountant, allow_api: bool, models: Arc<Models>) -> Self {
+        Self {
+            accountant,
+            allow_api,
+            models,
+            open: parking_lot::Mutex::new(true),
+        }
+    }
+
+    /// Admit nothing more; the turns admitted so far and not yet settled.
+    pub(crate) fn close(&self) -> u32 {
+        let mut open = self.open.lock();
+        *open = false;
+        self.outstanding()
+    }
+
+    pub(crate) fn reopen(&self) {
+        *self.open.lock() = true;
+    }
+
+    /// Admissions not yet settled, started or not.
+    pub(crate) fn outstanding(&self) -> u32 {
+        u32::from(self.accountant.running(Lane::Interactive))
+            + u32::from(self.accountant.running(Lane::Background))
+    }
+
+    /// The first model a turn could call that is billed per request, when
+    /// API billing is not allowed: each link and the compactor it would use.
+    fn forbidden_model(&self, agent: &Agent) -> Option<String> {
         if self.allow_api {
             return None;
         }
         let registry = self.models.registry();
-        let chain = agent.chain();
-        let found = chain.links().find(|link| {
+        let billed = |model: &aether_core::model::ModelRef| {
             !registry
-                .provider(&link.provider)
+                .provider(&model.provider)
                 .is_some_and(|provider| provider.protocol.is_engine())
-        });
-        found.map(|link| format!("{}/{}", link.provider, link.model))
+        };
+        let chain = agent.chain();
+        for link in chain.links() {
+            let compactor = self.models.compactor_for(link);
+            if let Some(model) = [link, &compactor].into_iter().find(|model| billed(model)) {
+                return Some(format!("{}/{}", model.provider, model.model));
+            }
+        }
+        None
     }
 }
 
@@ -122,7 +157,13 @@ impl NoesisBudget for ServiceBudget {
         agent: &Agent,
         lane_kind: NoesisLane,
     ) -> Result<Box<dyn NoesisCharge>, NoesisRefusal> {
-        if let Some(model) = self.forbidden_link(agent) {
+        let open = self.open.lock();
+        if !*open {
+            return Err(NoesisRefusal::Busy(
+                "Noesis is switching its settings".into(),
+            ));
+        }
+        if let Some(model) = self.forbidden_model(agent) {
             return Err(NoesisRefusal::Exhausted(format!(
                 "`{model}` is billed per request; set noesis.billing.allow_api = true to use it"
             )));
@@ -130,6 +171,7 @@ impl NoesisBudget for ServiceBudget {
         let admitted = self
             .accountant
             .admit(lane(lane_kind), Spend::default(), today());
+        drop(open);
         match admitted {
             Ok(admission) => Ok(Box::new(Charge { admission })),
             Err(refusal @ aether_noesis::budget::Refusal::ConcurrencyFull { .. }) => {

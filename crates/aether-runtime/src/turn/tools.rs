@@ -363,6 +363,21 @@ pub(super) async fn run_tool_calls(
                         }
                     }
                 }
+                Gate::Ungated | Gate::AskPerson
+                    if crate::noesis_seal::sealed_fields(&name).is_some() =>
+                {
+                    // Settled later from the sealed transcript, it would run on
+                    // "<sealed>"; fail it now rather than run the wrong input.
+                    commit.push_event(ctx.draft(EventKind::ToolFailed {
+                        call: call.id,
+                        error: format!(
+                            "{name} cannot wait for an approval: its input is sealed; \
+                             allow it in the agent's approval policy"
+                        ),
+                        retryable: false,
+                        duration_ms: None,
+                    }));
+                }
                 Gate::Ungated | Gate::AskPerson => {
                     commit.push_event(ctx.draft(EventKind::ApprovalRequested {
                         approval: approval.id,

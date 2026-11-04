@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use aether_core::agent::Agent;
 use aether_core::event::Actor;
 use aether_core::id::AgentId;
+use aether_core::idempotency::{Submission, SubmissionOutcome};
 use aether_core::model::Usage;
 use tokio_util::sync::CancellationToken;
 
@@ -114,6 +115,11 @@ impl NoesisGate {
         matches!(*self.mode.read(), Mode::Enabled(_))
     }
 
+    /// Neither admitting nor draining: no Noesis turn may start at all.
+    pub fn is_disabled(&self) -> bool {
+        matches!(*self.mode.read(), Mode::Disabled)
+    }
+
     /// The budget that admits turns, only while the gate is Enabled.
     fn budget(&self) -> Option<Arc<dyn NoesisBudget>> {
         match &*self.mode.read() {
@@ -177,6 +183,12 @@ impl Runtime {
         if is_noesis_role(role) && !into_noesis {
             return Err(RuntimeError::Invalid(format!(
                 "role {role} is reserved for agents of subsystem {NOESIS_SUBSYSTEM}"
+            )));
+        }
+        // Spend is read back by role, so membership and role must agree.
+        if into_noesis && !is_noesis_role(role) {
+            return Err(RuntimeError::Invalid(format!(
+                "an agent of subsystem {NOESIS_SUBSYSTEM} needs a {NOESIS_ROLE_PREFIX}* role, not {role}"
             )));
         }
         if into_noesis && !self.config.noesis.is_enabled() {
@@ -283,6 +295,30 @@ impl Runtime {
             tokio::time::sleep(CANCEL_POLL).await;
         }
     }
+}
+
+impl Runtime {
+    /// The receipt a keyed daemon-side Noesis command recorded, if any; a
+    /// replay-only submission with none left is an error, as for any command.
+    pub fn noesis_receipt(
+        &self,
+        submission: Option<&Submission>,
+    ) -> Result<Option<serde_json::Value>> {
+        match self.recorded_submission(submission)? {
+            None => Ok(None),
+            Some(SubmissionOutcome::Receipt { value }) => Ok(Some(value)),
+            Some(other) => Err(crate::submission::wrong_shape(&other, "receipt")),
+        }
+    }
+}
+
+/// Add `submission`'s receipt to `commit`, so the record lands with the work.
+pub fn record_noesis_receipt(
+    commit: &mut aether_store::Commit,
+    submission: Option<&Submission>,
+    receipt: &impl serde::Serialize,
+) -> Result<()> {
+    crate::submission::record_receipt(commit, submission, receipt)
 }
 
 /// Whether a turn in `lane` must end before its next model call: a Noesis

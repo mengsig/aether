@@ -541,6 +541,10 @@ async fn only_an_enabled_gate_creates_into_noesis_and_reserved_roles_need_it() {
         h.store.agent_subsystem(tutor.id).unwrap().as_deref(),
         Some(NOESIS_SUBSYSTEM)
     );
+    invalid(
+        noesis_spec("worker", "spend unseen"),
+        "a Noesis agent without a noesis.* role",
+    );
     let mut child = spec("escape the gate");
     child.parent = Some(tutor.id);
     invalid(child, "a child outside Noesis under a Noesis parent");

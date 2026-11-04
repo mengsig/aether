@@ -6,18 +6,19 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_core::event::{Actor, EventDraft, EventKind};
+use aether_core::event::Actor;
+use aether_core::idempotency::Submission;
 use aether_model::Models;
 use aether_noesis::Noesis;
 use aether_noesis::settings::NoesisSettings;
-use aether_protocol::noesis::{NoesisSettingsPatch, NoesisSettingsView, NoesisStatus};
+use aether_protocol::noesis::NoesisSettingsView;
 use aether_protocol::{Command, ErrorReply, Reply};
-use aether_runtime::Runtime;
 use aether_runtime::noesis_guard::NoesisGate;
-use aether_store::{Commit, Store};
+use aether_store::Store;
 
 mod budget;
 mod config_file;
+mod configure;
 mod drain;
 mod status;
 #[cfg(test)]
@@ -31,13 +32,26 @@ const DRAIN_POLL: Duration = Duration::from_millis(200);
 
 enum State {
     Off,
-    Running(Noesis),
+    Running(Live),
     /// Disabled while turns were in flight; `generation` names this drain so
     /// a re-enable can call it off.
     Draining {
-        noesis: Noesis,
+        live: Live,
         generation: u64,
     },
+}
+
+/// A started service and the budget its gate admits through.
+struct Live {
+    noesis: Noesis,
+    budget: Arc<ServiceBudget>,
+}
+
+impl Live {
+    fn stop(self) -> Result<(), aether_noesis::NoesisError> {
+        self.budget.close();
+        self.noesis.stop()
+    }
 }
 
 /// The daemon's one Noesis service, dormant unless `noesis.enabled`.
@@ -91,7 +105,7 @@ impl NoesisService {
     /// A stopped service on `runtime`'s gate whose config lives nowhere, so
     /// a configure fails loudly: for daemons assembled in tests.
     #[cfg(test)]
-    pub(crate) fn detached(runtime: &Runtime, models: &Arc<Models>) -> Arc<Self> {
+    pub(crate) fn detached(runtime: &aether_runtime::Runtime, models: &Arc<Models>) -> Arc<Self> {
         let nowhere = Path::new("/nonexistent/aether-noesis-test");
         Arc::new(Self::new(
             nowhere,
@@ -126,7 +140,7 @@ impl NoesisService {
         &self,
         settings: &NoesisSettings,
         store: &Arc<dyn Store>,
-    ) -> Result<Noesis, NoesisStartError> {
+    ) -> Result<Live, NoesisStartError> {
         debug_assert!(settings.enabled, "only an enabled service starts");
         let day = budget::today();
         let reader = store.clone();
@@ -137,115 +151,14 @@ impl NoesisService {
             })??;
         let noesis = Noesis::start_if_enabled(settings, &self.data_dir, day, spent)?
             .ok_or(NoesisStartError::Disabled)?;
-        self.gate.enable(Arc::new(ServiceBudget {
-            accountant: noesis.accountant().clone(),
-            allow_api: settings.billing_allow_api,
-            models: self.models.clone(),
-        }));
-        Ok(noesis)
-    }
-
-    /// `noesis_configure`: validate, write `[noesis]`, then start, restart or
-    /// drain the service to match. The write always comes first.
-    pub async fn configure(
-        self: &Arc<Self>,
-        runtime: &Arc<Runtime>,
-        patch: &NoesisSettingsPatch,
-        by: Actor,
-    ) -> Result<NoesisStatus, ErrorReply> {
-        aether_protocol::noesis::validate_patch(patch).map_err(ErrorReply::invalid)?;
-        let mut state = self.state.lock().await;
-        let stored = self.config.read_noesis().map_err(ErrorReply::internal)?;
-        let current =
-            NoesisSettings::from_table(&stored).map_err(|e| ErrorReply::invalid(e.to_string()))?;
-        let next_view = aether_protocol::noesis::apply_patch(&view_of(&current)?, patch);
-        let next = settings_of(&next_view)?;
-        let table = next
-            .to_table()
-            .map_err(|e| ErrorReply::invalid(e.to_string()))?;
-        self.config
-            .write_noesis(&table)
-            .map_err(ErrorReply::internal)?;
-        let transition = self.transition(&mut state, &next, runtime).await;
-        drop(state);
-        if current.enabled || next.enabled {
-            self.announce(runtime, &next, by)?;
-        }
-        transition?;
-        self.status(runtime).await
-    }
-
-    async fn transition(
-        self: &Arc<Self>,
-        state: &mut State,
-        next: &NoesisSettings,
-        runtime: &Arc<Runtime>,
-    ) -> Result<(), ErrorReply> {
-        let previous = std::mem::replace(state, State::Off);
-        if !next.enabled {
-            *state = match previous {
-                State::Running(noesis) => self.begin_drain(noesis, next, runtime),
-                other => other,
-            };
-            return Ok(());
-        }
-        let running = match previous {
-            State::Off => None,
-            State::Running(noesis) | State::Draining { noesis, .. } => Some(noesis),
-        };
-        if let Some(noesis) = running {
-            if noesis.settings() == next {
-                self.reopen_gate(&noesis);
-                *state = State::Running(noesis);
-                return Ok(());
-            }
-            noesis.stop().map_err(ErrorReply::internal)?;
-        }
-        let started = self.start(next, runtime.store()).await;
-        match started {
-            Ok(noesis) => {
-                *state = State::Running(noesis);
-                Ok(())
-            }
-            Err(error) => {
-                self.gate.disable();
-                Err(ErrorReply::internal(format!(
-                    "Noesis did not start: {error}"
-                )))
-            }
-        }
-    }
-
-    fn reopen_gate(&self, noesis: &Noesis) {
-        self.drains
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.gate.enable(Arc::new(ServiceBudget {
-            accountant: noesis.accountant().clone(),
-            allow_api: noesis.settings().billing_allow_api,
-            models: self.models.clone(),
-        }));
-    }
-
-    /// Record `noesis.settings_changed` with the stored and effective settings.
-    fn announce(
-        &self,
-        runtime: &Runtime,
-        next: &NoesisSettings,
-        by: Actor,
-    ) -> Result<(), ErrorReply> {
-        let settings = view_of(next)?;
-        let effective = view_of(&self.effective(next))?;
-        let event = EventDraft::new(
-            by,
-            EventKind::NoesisSettingsChanged {
-                settings,
-                effective,
-            },
-        );
-        runtime
-            .apply(Commit::new().event(event))
-            .map_err(crate::connection::map_err)?;
-        Ok(())
+        let budget = Arc::new(ServiceBudget::new(
+            noesis.accountant().clone(),
+            settings.billing_allow_api,
+            self.models.clone(),
+        ));
+        self.gate.enable(budget.clone());
+        debug_assert!(self.gate.is_enabled());
+        Ok(Live { noesis, budget })
     }
 
     /// The settings in effect: their prerequisites applied, and off while
@@ -265,11 +178,11 @@ impl NoesisService {
     pub async fn shutdown(&self) {
         self.gate.disable();
         let previous = std::mem::replace(&mut *self.state.lock().await, State::Off);
-        let noesis = match previous {
+        let live = match previous {
             State::Off => return,
-            State::Running(noesis) | State::Draining { noesis, .. } => noesis,
+            State::Running(live) | State::Draining { live, .. } => live,
         };
-        if let Err(error) = noesis.stop() {
+        if let Err(error) = live.stop() {
             tracing::error!(%error, "closing noesis.db failed");
         }
     }
@@ -302,13 +215,16 @@ pub(crate) async fn dispatch(
     daemon: &crate::Daemon,
     command: Command,
     by: Actor,
+    submission: Option<Submission>,
 ) -> Result<Reply, ErrorReply> {
     debug_assert!(command.is_noesis(), "only noesis commands reach here");
     let service = &daemon.noesis;
     match command {
         Command::NoesisStatus => Ok(Reply::NoesisStatus(service.status(&daemon.runtime).await?)),
         Command::NoesisConfigure { patch, .. } => {
-            let status = service.configure(&daemon.runtime, &patch, by).await?;
+            let status = service
+                .configure(&daemon.runtime, &patch, by, submission.as_ref())
+                .await?;
             Ok(Reply::NoesisStatus(status))
         }
         other => {

@@ -94,10 +94,12 @@ impl ConfigFile {
         }
     }
 
+    /// The reason never quotes the file: a line elsewhere in it may hold a
+    /// credential, and this error reaches logs and observers.
     fn parse(&self, text: &str) -> Result<Table, ConfigFileError> {
         text.parse::<Table>().map_err(|e| ConfigFileError::Parse {
             path: self.path.clone(),
-            reason: e.to_string(),
+            reason: source_free_reason(&e, text),
         })
     }
 
@@ -146,6 +148,23 @@ fn replace_section(text: &str, noesis: &Table) -> Result<String, toml::ser::Erro
         return Ok(section);
     }
     Ok(format!("{trimmed}\n\n{section}"))
+}
+
+/// A parse error as its message and line, without the source excerpt that
+/// the error's `Display` includes.
+fn source_free_reason(error: &toml::de::Error, text: &str) -> String {
+    let message = error.message().trim();
+    debug_assert!(!message.is_empty(), "a parse error says what went wrong");
+    let Some(span) = error.span() else {
+        return message.to_owned();
+    };
+    let start = span.start.min(text.len());
+    let line = text.as_bytes()[..start]
+        .iter()
+        .filter(|byte| **byte == b'\n')
+        .count()
+        + 1;
+    format!("{message} (line {line})")
 }
 
 /// The table name of a `[name]` or `[[name]]` header line.
@@ -227,5 +246,9 @@ mod tests {
         ));
         assert!(file.write_noesis(&Table::new()).is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "[model\n");
+        std::fs::write(&path, "[mcp]\ntoken = \"sk-secret-value\" oops\n").unwrap();
+        let error = file.read_noesis().unwrap_err().to_string();
+        assert!(!error.contains("sk-secret-value"), "{error}");
+        assert!(error.contains("line 2"), "{error}");
     }
 }
