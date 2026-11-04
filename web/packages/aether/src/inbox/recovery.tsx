@@ -37,6 +37,12 @@ const OUTCOME_TEXT: Readonly<Record<Resolution["outcome"], string>> = {
   unknown: "The daemon cannot tell whether it happened. Sending it again is safe only if doing it twice is harmless.",
 };
 
+/** What the resend confirmation promises: only a proven absence rules out doing it twice. */
+const RESEND_TEXT: Readonly<Record<"absent_safe" | "unknown", string>> = {
+  absent_safe: "It never reached the daemon, and it goes with the same key, so it cannot run twice.",
+  unknown: "If it did run and the daemon has since forgotten its receipt, sending it again does it a second time.",
+};
+
 /** One unconfirmed submission on a live connection: check, then send again or discard. */
 function Unconfirmed({ conn, submission, names }: { readonly conn: ConnId; readonly submission: Submission; readonly names: Readonly<Record<string, string>> }) {
   invariant(submission.state === "unknown" && submission.key !== "", "the review shows unconfirmed, keyed submissions");
@@ -51,7 +57,7 @@ function Unconfirmed({ conn, submission, names }: { readonly conn: ConnId; reado
   useEffect(() => {
     if (resolution?.outcome === "executed") app.settle(conn, submission.key);
   }, [app, conn, resolution?.outcome, submission.key]);
-  const again = resolution !== null && resolution.outcome !== "executed";
+  const again = resolution !== null && resolution.outcome !== "executed" ? resolution.outcome : null;
   return (
     <li className="b3-item">
       <div className="b3-item-head">
@@ -65,8 +71,8 @@ function Unconfirmed({ conn, submission, names }: { readonly conn: ConnId; reado
         <Action conn={conn} command={check} label={resolution ? "Check again" : "Check what happened"} busy={read !== undefined && read.requested > read.issued && read.error === null}
           onRun={() => app.reread(conn, key, check, ["submission_resolved"])} />
         {again ? (
-          <Action conn={conn} command={submission.command} label="Send again" variant={resolution.outcome === "unknown" ? "danger" : "primary"} busy={run.status.state === "busy"}
-            confirm={{ title: `Send ${title} again?`, body: `${OUTCOME_TEXT[resolution.outcome]} It goes with the same key, so a daemon that did run it does not run it twice.`, confirmLabel: "Send again" }}
+          <Action conn={conn} command={submission.command} label="Send again" variant={again === "unknown" ? "danger" : "primary"} busy={run.status.state === "busy"}
+            confirm={{ title: `Send ${title} again?`, body: RESEND_TEXT[again], confirmLabel: "Send again" }}
             onRun={() => run.send(submission.command, "Sent again and confirmed")} />
         ) : null}
         <Discard conn={conn} submission={submission} title={title} />
@@ -81,7 +87,21 @@ function ConnectionOutbox({ conn }: { readonly conn: ConnId }) {
   const agents = useSelector(useMemo(() => selectAgents(conn), [conn]));
   const names = useMemo(() => Object.fromEntries(Object.values(agents).map((a) => [a.id, a.name])), [agents]);
   const lost = outbox.filter((s) => s.state === "unknown");
-  return <>{lost.map((s) => <Unconfirmed key={s.key} conn={conn} submission={s} names={names} />)}</>;
+  return <>{lost.map((s) => (s.unkeyed ? <Unkeyed key={s.key} submission={s} names={names} /> : <Unconfirmed key={s.key} conn={conn} submission={s} names={names} />))}</>;
+}
+
+/** A change sent without a key: the daemon cannot say what became of it, so it can only be discarded. */
+function Unkeyed({ submission, names }: { readonly submission: Submission; readonly names: Readonly<Record<string, string>> }) {
+  invariant(submission.unkeyed === true && submission.state === "unknown", "only unkeyed, unconfirmed changes render here");
+  const { title, detail } = describeCommand(submission.command, names);
+  return (
+    <li className="b3-item">
+      <div className="b3-item-head"><p className="b3-item-title">{title}</p><span className="b3-meta">{submission.error ?? "No reply"}</span></div>
+      {detail ? <p className="b3-prose">{detail}</p> : null}
+      <p className="b3-note" data-state="unconfirmed">It was sent without a key, so the daemon cannot say whether it happened. Look at its current state before doing it again.</p>
+      <div className="b3-row"><Discard conn={submission.conn} submission={submission} title={title} /></div>
+    </li>
+  );
 }
 
 /** A submission from a daemon identity that is gone: it cannot be checked, only discarded. */

@@ -1,7 +1,7 @@
 // Mounts a B3 screen under a real core app connected to the scripted daemon (happy-dom). The store
 // commits only when a test settles, so each step's screen is the one a browser would paint.
 
-import { AppProvider, createApp, type App } from "@aether-ui/core";
+import { AppProvider, createApp, type App, type IdentityStore } from "@aether-ui/core";
 import type { DesktopBridge } from "@aether-ui/protocol";
 import { ThemeProvider } from "@aether-ui/ui";
 import { act, type ReactNode } from "react";
@@ -20,7 +20,7 @@ export interface Harness {
   unmount(): void;
 }
 
-export async function connected(options: ScriptOptions & { readonly desktop?: DesktopBridge } = {}): Promise<Harness> {
+export async function connected(options: ScriptOptions & { readonly desktop?: DesktopBridge; readonly identities?: IdentityStore } = {}): Promise<Harness> {
   const frames: (() => void)[] = [];
   const daemon = new ScriptedDaemon(options);
   const storage = { get: async () => undefined, set: async () => {} };
@@ -28,6 +28,7 @@ export async function connected(options: ScriptOptions & { readonly desktop?: De
   const app = createApp(host, {
     scheduler: (flush) => frames.push(flush),
     endpoints: [{ daemon: "aether", transport: daemon.transport, target: "faux-aetherd", label: "studio" }],
+    ...(options.identities ? { identities: options.identities } : {}),
   });
   let root: Root | null = null;
   const settle = async () => act(async () => {

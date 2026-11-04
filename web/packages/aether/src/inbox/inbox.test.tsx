@@ -114,6 +114,10 @@ describe("recovery review", () => {
     await click(h, root, "Check what happened");
     expect(root.textContent).toContain("cannot tell whether it happened");
     expect(buttonNamed(root, "Send again").getAttribute("data-variant") ?? buttonNamed(root, "Send again").className).toMatch(/danger/);
+    await click(h, root, "Send again");
+    expect(openDialog().textContent).toContain("sending it again does it a second time");
+    expect(openDialog().textContent).not.toContain("cannot run twice");
+    await click(h, openDialog(), "Keep it");
     await click(h, root, "Discard");
     await click(h, openDialog(), "Keep it");
     expect(h.app.store.get().aether[h.conn]?.outbox).toHaveLength(1);
@@ -134,6 +138,20 @@ describe("recovery review", () => {
     await click(h, openDialog(), "Discard");
     expect(h.app.store.get().review).toEqual([]);
     expect(h.daemon.commands("pause")).toHaveLength(0);
+  });
+
+  test("a lost unkeyed change is reviewed without a check or resend, and discarding sends nothing", async () => {
+    const { h, root } = await open();
+    await act(async () => { h.app.noteUnconfirmed(h.conn, { cmd: "wake", agent: AGENT_ID }, "disconnected"); });
+    await h.settle();
+    const review = root.querySelector('[aria-label="Recovery review"]');
+    expect(review?.textContent).toContain("sent without a key");
+    expect(() => buttonNamed(review ?? root, "Check what happened")).toThrow();
+    expect(() => buttonNamed(review ?? root, "Send again")).toThrow();
+    await click(h, review ?? root, "Discard");
+    await click(h, openDialog(), "Discard");
+    expect(h.app.store.get().aether[h.conn]?.outbox).toEqual([]);
+    expect(h.daemon.sent.filter((c) => c.cmd === "wake" || c.cmd === "resolve_submission")).toEqual([]);
   });
 
   test("an observer sees a lost change but cannot check or resend it", async () => {

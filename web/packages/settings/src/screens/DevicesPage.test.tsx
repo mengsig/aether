@@ -3,7 +3,7 @@
 // confirmation, with the list reread into core's store after a revoke.
 
 import { afterEach, describe, expect, test } from "vitest";
-import { connected, click, buttonNamed, type, type Harness } from "../kit/fixture/harness.test-util.tsx";
+import { connected, click, buttonNamed, type Harness } from "../kit/fixture/harness.test-util.tsx";
 import { fakeDesktop } from "../kit/fixture/desktop.test-util.ts";
 import { DevicesPage } from "./DevicesPage.tsx";
 
@@ -29,19 +29,17 @@ describe("DevicesPage", () => {
     const h = current = await connected({ role: "operator", script: { list_devices: () => ({ tag: "devices", data: [tablet] }) } });
     const root = await h.mount(<DevicesPage conn={h.conn} />);
     expect(buttonNamed(root, "Revoke").disabled).toBe(true);
-    expect(buttonNamed(root, "Pair a new device").disabled).toBe(true);
     expect(root.textContent).toContain("Host only");
     expect(root.textContent).toContain("Only the daemon's own host can do this");
     expect(root.textContent).not.toContain("Show revoked devices");
   });
 
-  test("an observer reads nothing, and every control is disabled with its reason", async () => {
+  test("an observer reads nothing, is told why, and has no control to press", async () => {
     const h = current = await connected({ role: "observer" });
     const root = await h.mount(<DevicesPage conn={h.conn} />);
     expect(h.daemon.commands("list_devices")).toHaveLength(0);
     expect(root.textContent).toContain("Observer devices cannot change daemon state");
-    expect(buttonNamed(root, "Pair a new device").disabled).toBe(true);
-    expect(root.querySelector(".st-reason")?.textContent).toBe("Only the daemon's own host can do this");
+    expect(root.querySelectorAll("button:not([disabled])")).toHaveLength(0);
   });
 
   test("the host is not offered revoked devices, since that listing is host-only and not passed through", async () => {
@@ -68,19 +66,14 @@ describe("DevicesPage", () => {
     expect(root.querySelector(".st-note")?.textContent).toBe("Kitchen tablet was revoked");
   });
 
-  test("pairing goes through the desktop and renders nothing the pairing returns", async () => {
-    const desktop = fakeDesktop({ code: "482913", phrase: "amber-otter-lime", token: "sk-secret-credential" });
+  test("pairing points to the host's CLI and starts nothing from here", async () => {
+    const desktop = fakeDesktop();
     const h = current = await connected({ role: "local", desktop: desktop.bridge, script: { list_devices: () => ({ tag: "devices", data: [] }) } });
     const root = await h.mount(<DevicesPage conn={h.conn} />);
-    expect(buttonNamed(root, "Pair a new device").disabled).toBe(true);
-    await type(h, root, "Device name", "  Hall   display ");
-    await type(h, root, "Role", "operator");
-    await click(h, root, "Pair a new device");
-    expect(desktop.actions).toHaveLength(0);
-    await click(h, document.body, "Start pairing");
-    expect(desktop.actions).toEqual([{ kind: "device.pair", name: "Hall display", role: "operator", conn: "bridge-1" }]);
-    expect(document.body.textContent).toContain("Pairing started; finish it in the desktop dialog");
-    for (const secret of ["482913", "amber-otter-lime", "sk-secret-credential"]) expect(document.body.textContent).not.toContain(secret);
+    expect(root.textContent).toContain("aether remote pair --role operator");
+    expect(() => buttonNamed(root, "Pair a new device")).toThrow();
+    expect(h.daemon.commands("start_pairing")).toHaveLength(0);
+    expect(desktop.actions).toEqual([]);
   });
 
   test("a failed read shows the error with a retry that rereads", async () => {

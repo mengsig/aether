@@ -48,6 +48,8 @@ export interface Submission {
   readonly error?: string;
   /** The daemon's submission horizon when first sent; never rewritten by a resend. */
   readonly horizon?: string;
+  /** Sent without an idempotency key: it cannot be checked or safely resent, only reviewed. */
+  readonly unkeyed?: true;
 }
 
 export interface AetherConnState {

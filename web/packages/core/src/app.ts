@@ -2,6 +2,7 @@
 // host can reach, command sending with error reporting, and pairing flows.
 
 import type { HostAdapter, PrivilegedAction } from "@aether-ui/protocol";
+import { isKeyed } from "./commands.ts";
 import type { Endpoint } from "./connection.ts";
 import { codeOf, RefusedError } from "./errors.ts";
 import { array, errorText, invariant, object, type Json } from "./guards.ts";
@@ -9,8 +10,8 @@ import { ConnectionManager } from "./manager.ts";
 import { aetherPairing, archonPairing, PairingFlow } from "./pairing.ts";
 import { applyRead, failRead, markRequested, settleSubmission } from "./reads.ts";
 import { registry, type Registry } from "./registry.ts";
-import { Store, INITIAL_STATE, type FrameScheduler } from "./store.ts";
-import { indexedDbIdentity } from "./transports/identity.ts";
+import { Store, INITIAL_STATE, type FrameScheduler, type Submission } from "./store.ts";
+import { indexedDbIdentity, type IdentityStore } from "./transports/identity.ts";
 import { ipcTransport } from "./transports/ipc.ts";
 import { ARCHON_MOUNT, archonSocketTransport } from "./transports/ws-archon.ts";
 import { aetherSocketTransport } from "./transports/ws-aether.ts";
@@ -26,6 +27,8 @@ export interface AppOptions {
   readonly endpoints?: readonly Endpoint[];
   readonly scheduler?: FrameScheduler;
   readonly fetch?: typeof fetch;
+  /** Where this browser keeps its Aether device identity; IndexedDB for the page's origin by default. */
+  readonly identities?: IdentityStore;
 }
 
 export interface App {
@@ -47,6 +50,13 @@ export interface App {
   privileged(conn: string, action: LocalAction): Promise<unknown>;
   /** Drops a submission from the outbox and the review once the operator settled its outcome. */
   settle(conn: string, key: string): void;
+  /**
+   * Removes this browser's saved Aether device identity and reconnects, which then asks to pair.
+   * The daemon keeps the device until it is revoked there.
+   */
+  forgetDevice(conn: string): Promise<void>;
+  /** Puts an unkeyed change whose reply was lost in the recovery review; returns its local key. */
+  noteUnconfirmed(conn: string, command: Json, error: string): string;
   pairing(daemon: "aether" | "archon"): PairingFlow;
   start(): Promise<void>;
   stop(): void;
@@ -58,6 +68,7 @@ export function createApp(host: HostAdapter, options: AppOptions = {}): App {
   const store = new Store(INITIAL_STATE, options.scheduler);
   const manager = new ConnectionManager({ store, host, clientVersion: CLIENT_VERSION });
   const fetcher = options.fetch ?? globalThis.fetch?.bind(globalThis);
+  const identities = () => options.identities ?? indexedDbIdentity(globalThis.location.origin);
   let issued = 0;
   const app: App = {
     host, store, manager, registry,
@@ -93,13 +104,28 @@ export function createApp(host: HostAdapter, options: AppOptions = {}): App {
     settle(conn, key) {
       store.update((state) => settleSubmission(state, conn, key));
     },
+    async forgetDevice(conn) {
+      const connection = manager.get(conn);
+      invariant(connection !== undefined, `connection ${conn} is known to the manager`);
+      if (connection.endpoint.transport.id !== "ws-aether") throw new RefusedError("Only a browser paired with an Aether daemon has a saved device to forget");
+      await identities().remove();
+      connection.retryNow();
+    },
+    noteUnconfirmed(conn, command, error) {
+      invariant(typeof command.cmd === "string" && !isKeyed(command), "only an unkeyed change is noted here; core tracks keyed ones");
+      invariant(store.get().connections[conn]?.daemon === "aether", "lost changes are noted on an Aether connection");
+      const key = `unkeyed:${crypto.randomUUID()}`;
+      const submission: Submission = { conn, key, command, state: "unknown", error, unkeyed: true };
+      store.updateAether(conn, (s) => ({ ...s, outbox: [...s.outbox, submission] }));
+      return key;
+    },
     pairing(daemon) {
       const retry = () => { for (const c of manager.all()) if (c.endpoint.daemon === daemon) c.retryNow(); };
       if (daemon === "archon") return new PairingFlow(archonPairing(fetcher), retry);
-      return new PairingFlow(aetherPairing(indexedDbIdentity(globalThis.location.origin), fetcher), retry);
+      return new PairingFlow(aetherPairing(identities(), fetcher), retry);
     },
     async start() {
-      const endpoints = options.endpoints ?? (await discover(host, store, fetcher));
+      const endpoints = options.endpoints ?? (await discover(host, store, fetcher, identities()));
       for (const endpoint of endpoints) manager.add(endpoint);
       if (host.desktop) manager.setManagedStart((await host.desktop.getPreference("desktop.managed_start")) === true);
       manager.start();
@@ -127,7 +153,7 @@ async function runPrivileged(host: HostAdapter, manager: ConnectionManager, conn
   }
 }
 
-async function discover(host: HostAdapter, store: Store, fetcher: typeof fetch): Promise<Endpoint[]> {
+async function discover(host: HostAdapter, store: Store, fetcher: typeof fetch, identities: IdentityStore): Promise<Endpoint[]> {
   if (host.desktop) {
     const transport = ipcTransport(host.desktop, (message) => store.report(message));
     const daemons = await host.desktop.discover();
@@ -137,7 +163,7 @@ async function discover(host: HostAdapter, store: Store, fetcher: typeof fetch):
   const socketOrigin = `${protocol === "https:" ? "wss:" : "ws:"}//${hostLabel}`;
   const endpoints: Endpoint[] = [{
     daemon: "aether", label: hostLabel, target: `${socketOrigin}/ws`,
-    transport: aetherSocketTransport({ identity: indexedDbIdentity(origin), origin }),
+    transport: aetherSocketTransport({ identity: identities, origin }),
   }];
   if (await archonMounted(fetcher)) {
     endpoints.push({ daemon: "archon", label: hostLabel, target: `${socketOrigin}${ARCHON_MOUNT}/ws`, transport: archonSocketTransport({ fetch: fetcher }) });

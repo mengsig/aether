@@ -1,22 +1,16 @@
-// Paired devices: listed from core's store, revoked and paired through the desktop's native
-// confirmation (host only). Whatever a pairing returns is never shown, as it may be a credential.
+// Paired devices: listed from core's store and revoked through the desktop's native confirmation
+// (host only). Pairing shows a code and a phrase to compare, so it stays with the host's CLI.
 
-import { normalizeDeviceName, useApp, usePermission, useReadPermission, useReread } from "@aether-ui/core";
+import { useApp, usePermission, useReadPermission, useReread } from "@aether-ui/core";
 import type { aether, ConnId } from "@aether-ui/protocol";
-import { Badge, EmptyState, Field } from "@aether-ui/ui";
+import { Badge, EmptyState } from "@aether-ui/ui";
 import { useState } from "react";
 import { invariant } from "../kit/invariant.ts";
-import { SelectField } from "../kit/select.tsx";
 import { Action, RunNote, Section, StandingNotice, useRun, type Run } from "../kit/kit.tsx";
 import { formatTime } from "./format.ts";
 import { listOf, ReadView, Unexpected } from "./read.tsx";
 
 const KEY = "settings.devices";
-const ROLES = [
-  { value: "observer", label: "Observer: can watch, not change" },
-  { value: "operator", label: "Operator: can send and approve" },
-];
-const PAIRED = "Pairing started; finish it in the desktop dialog";
 
 export const devicesCommand = (includeRevoked: boolean) => (includeRevoked ? { cmd: "list_devices", include_revoked: true } : { cmd: "list_devices" });
 
@@ -45,31 +39,13 @@ function DeviceRow({ conn, device, run, reread }: { readonly conn: ConnId; reado
   );
 }
 
-/** The device name as it will be sent, or why it cannot be (an expected input error, shown beside the button). */
-function checkName(name: string): { readonly name: string; readonly problem: string | null } {
-  if (name.trim() === "") return { name: "", problem: "Name the device first" };
-  try {
-    return { name: normalizeDeviceName(name), problem: null };
-  } catch (error) {
-    return { name: "", problem: error instanceof Error ? error.message : String(error) };
-  }
-}
-
-function PairSection({ conn, run }: { readonly conn: ConnId; readonly run: Run }) {
-  const [name, setName] = useState("");
-  const [role, setRole] = useState<aether.DeviceRole>("observer");
-  const checked = checkName(name);
-  const clean = checked.name;
-  const pair = async () => {
-    invariant(clean !== "", "a pairing names its device");
-    if (await run.privileged({ kind: "device.pair", name: clean, role }, PAIRED)) setName("");
-  };
+/** Pairing needs the code shown and the claimant's phrase compared on the host; the desktop has no such flow yet. */
+function PairSection() {
   return (
-    <Section title="Pair a new device" hint="Starts pairing on the host. The code and phrase appear only in the desktop dialog.">
-      <Field label="Device name" value={name} maxLength={64} onChange={(event) => setName(event.target.value)} placeholder="Kitchen tablet" />
-      <SelectField label="Role" value={role} onChange={(next) => setRole(next as aether.DeviceRole)} options={ROLES} />
-      <Action conn={conn} command={{ cmd: "start_pairing" }} label="Pair a new device" variant="primary" blocked={checked.problem} onRun={pair}
-        confirm={{ title: `Pair ${clean || "a new device"} as ${role}?`, body: "The desktop app asks you to confirm before pairing starts.", confirmLabel: "Start pairing" }} />
+    <Section title="Pair a new device" hint="Pairing is done on the daemon's host, where the code and the phrase to compare are shown.">
+      <p className="st-prose">Run this on the host, scan the code with the new device, then compare the phrase on both screens before confirming:</p>
+      <p className="st-code">aether remote pair --role operator</p>
+      <p className="st-meta">Use <span className="st-code">--role observer</span> for a device that may only watch.</p>
     </Section>
   );
 }
@@ -104,7 +80,7 @@ export function DevicesPage({ conn }: { readonly conn: ConnId }) {
         ) : null}
         <RunNote status={run.status} />
       </Section>
-      <PairSection conn={conn} run={run} />
+      <PairSection />
     </div>
   );
 }

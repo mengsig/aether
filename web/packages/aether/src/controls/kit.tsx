@@ -30,13 +30,20 @@ export function useRun(conn: ConnId): Run {
   const app = useApp();
   const command = useCommand(conn);
   const [status, setStatus] = useState<RunStatus>({ state: "idle" });
-  /** `tracked` says whether core keeps the command for the recovery review when its reply is lost. */
-  const fail = useCallback((error: unknown, tracked: boolean) => {
+  /** A lost reply waits in the recovery review; core keeps keyed commands, an unkeyed one is noted there. */
+  const fail = useCallback((error: unknown, command: Json | null) => {
     const message = error instanceof Error ? error.message : String(error);
-    if (!UNCONFIRMED.has(codeOf(error) ?? "")) setStatus({ state: "failed", message });
-    else if (tracked) setStatus({ state: "unconfirmed", message: "The reply never arrived, so it is not known whether this happened. It waits in the recovery review." });
-    else setStatus({ state: "failed", message: "The reply never arrived, so it is not known whether this happened. Check its current state before trying again." });
-  }, []);
+    if (!UNCONFIRMED.has(codeOf(error) ?? "")) {
+      setStatus({ state: "failed", message });
+      return;
+    }
+    if (command === null) {
+      setStatus({ state: "failed", message: "The reply never arrived, so it is not known whether this happened. Check its current state before trying again." });
+      return;
+    }
+    if (!isKeyed(command)) app.noteUnconfirmed(conn, command, message || "No reply");
+    setStatus({ state: "unconfirmed", message: "The reply never arrived, so it is not known whether this happened. It waits in the recovery review." });
+  }, [app, conn]);
   const send = useCallback(async (input: CommandInput, done = "Done") => {
     const json = input as Json;
     invariant(typeof json.cmd === "string", "a control sends a named command");
@@ -46,7 +53,7 @@ export function useRun(conn: ConnId): Run {
       setStatus({ state: "done", message: done });
       return reply;
     } catch (error) {
-      fail(error, isKeyed(json));
+      fail(error, json);
       return null;
     }
   }, [command, fail]);
@@ -57,7 +64,7 @@ export function useRun(conn: ConnId): Run {
       setStatus({ state: "done", message: done });
       return true;
     } catch (error) {
-      fail(error, false);
+      fail(error, null);
       return false;
     }
   }, [app, conn, fail]);
