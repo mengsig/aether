@@ -316,5 +316,17 @@ describe("Archon resync, third review", () => {
     expect(daemon.commands("get_item")).toHaveLength(2);
     expect(store.get().archon[CONN]?.details.qi_1).toEqual({ id: "qi_1", state: "succeeded" });
   });
+
+  it("keeps a feed replay that arrives with the subscribe answer", async () => {
+    const replayed = { ...F.feed_item, item: { ...F.feed_item.item, seq: 11 } };
+    const { store, daemon, manager } = setup(archond({ subscribe_feed: (command) => ({ ok: F.subscribed_feed, then: command.after === 10 && daemon.commands("subscribe_feed").length === 2 ? [replayed] : [] }) }));
+    manager.start();
+    await settle();
+    daemon.drop(1006);
+    await vi.advanceTimersByTimeAsync(300);
+    daemon.push({ ...F.feed_item, item: { ...F.feed_item.item, seq: 12 } });
+    expect(store.get().archon[CONN]?.feed.map((item) => (item as Json).seq).slice(-2)).toEqual([11, 12]);
+    expect(store.get().archon[CONN]?.feedSeq).toBe(12);
+  });
 });
 

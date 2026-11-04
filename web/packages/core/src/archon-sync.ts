@@ -107,6 +107,8 @@ export class ArchonSync {
   private changeSub: number | null = null;
   private feedSub: number | null = null;
   private buffer: Json[] | null = null;
+  /** Feed frames that arrive before `subscribe_feed`'s answer is read. */
+  private feedBuffer: Json[] | null = null;
   private readonly refetch = new Debouncer(ENTITY_REFETCH_MS);
   private readonly fallback = new Debouncer(FALLBACK_REFETCH_MS);
   private readonly structure = new Debouncer(ENTITY_REFETCH_MS);
@@ -174,6 +176,7 @@ export class ArchonSync {
     this.changeSub = null;
     this.feedSub = null;
     this.buffer = null;
+    this.feedBuffer = null;
     this.refetch.cancelAll();
     this.fallback.cancelAll();
     this.structure.cancelAll();
@@ -220,6 +223,10 @@ export class ArchonSync {
   }
 
   onFeed(frame: Json): void {
+    if (this.feedBuffer) {
+      this.feedBuffer.push(frame);
+      return;
+    }
     if (frame.sub !== this.feedSub) return;
     const item = object(frame.item, "feed item");
     const at = seq(item.seq, "feed item seq");
@@ -239,7 +246,16 @@ export class ArchonSync {
       const last = after;
       this.set((s) => ({ ...s, feed: items.slice(-FEED_KEEP), feedSeq: last }));
     }
-    this.feedSub = subscriptionId(await this.ctx.request({ cmd: "subscribe_feed", after, verbose: true }));
+    // A replay may arrive before the continuation below assigns the subscription id.
+    const buffered: Json[] = [];
+    this.feedBuffer = buffered;
+    try {
+      this.feedSub = subscriptionId(await this.ctx.request({ cmd: "subscribe_feed", after, verbose: true }));
+    } finally {
+      if (this.feedBuffer === buffered) this.feedBuffer = null;
+    }
+    invariant(this.feedBuffer === null, "feed frames are buffered only while subscribing");
+    for (const frame of buffered) this.onFeed(frame);
   }
 
   private async readSnapshots(): Promise<void> {
