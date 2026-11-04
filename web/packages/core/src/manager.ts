@@ -9,6 +9,8 @@ import { aetherAccess, archonAccess, checkAllowed, withIdempotencyKey } from "./
 import { Connection, type Endpoint } from "./connection.ts";
 import { codeOf, DaemonError, RefusedError } from "./errors.ts";
 import { errorText, invariant, omit, string, type Json } from "./guards.ts";
+import { nextTicket } from "./noesis-cache.ts";
+import { installNoesisChange, installNoesisRead, noesisReadCommand, type NoesisReadRequest } from "./noesis-reads.ts";
 import { dropConnection, type State, type Store, type Submission } from "./store.ts";
 
 export interface ManagerOptions {
@@ -157,6 +159,34 @@ export class ConnectionManager {
   /** Runs a filtered item search into the store, under `searchKey(query)`. */
   searchItems(conn: ConnId, query: ItemSearch): Promise<void> {
     return this.archonSync(conn).search(query);
+  }
+
+  /** Reads one Noesis entity into the store (noesis-reads.ts); the caller sees the failure. */
+  async readNoesis(conn: ConnId, read: NoesisReadRequest): Promise<void> {
+    const ticket = this.noesisTicket(conn);
+    const reply = await this.send(conn, noesisReadCommand(read));
+    this.options.store.updateAether(conn, (s) => installNoesisRead(s, read, reply, ticket));
+    if (read.kind === "status") this.refreshCapabilities();
+  }
+
+  /** Lands the reply of a Noesis change a screen sent through useCommand, so the screen derives it from the store. */
+  noesisChanged(conn: ConnId, command: Json, reply: Json): void {
+    const ticket = this.noesisTicket(conn);
+    this.options.store.updateAether(conn, (s) => installNoesisChange(s, command, reply, ticket));
+    if (command.cmd === "noesis_configure") this.refreshCapabilities();
+  }
+
+  /** Hands out the connection's next Noesis read ticket from the store, so it keeps growing across reconnects. */
+  private noesisTicket(conn: ConnId): number {
+    invariant(this.get(conn)?.endpoint.daemon === "aether", `${conn} is not an Aether connection`);
+    let ticket = 0;
+    this.options.store.updateAether(conn, (s) => {
+      const learn = nextTicket(s.learn);
+      ticket = learn.ticket;
+      return { ...s, learn };
+    });
+    invariant(ticket > 0, "a ticket was handed out");
+    return ticket;
   }
 
   private archonSync(conn: ConnId): ArchonSync {
