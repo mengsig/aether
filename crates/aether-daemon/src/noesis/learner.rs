@@ -16,16 +16,6 @@ use aether_store::Commit;
 use super::{NoesisService, State};
 use crate::connection::map_err;
 
-/// Whether `command` is one [`NoesisService::learner`] answers.
-pub(super) fn is_learner(command: &Command) -> bool {
-    matches!(
-        command,
-        Command::NoesisLearner { .. }
-            | Command::NoesisLearnerEvidence { .. }
-            | Command::NoesisCorrectLearner { .. }
-    )
-}
-
 impl NoesisService {
     /// Answer a validated learner command. Reads derive each state afresh, so
     /// decay is current; a correction appends evidence and announces it.
@@ -36,12 +26,23 @@ impl NoesisService {
         by: Actor,
         submission: Option<&Submission>,
     ) -> Result<Reply, ErrorReply> {
-        debug_assert!(is_learner(&command), "only learner commands reach here");
-        let state = self.state.lock().await;
-        let State::Running(live) = &*state else {
+        debug_assert_eq!(
+            super::routes::group_of(&command),
+            super::routes::Group::Learner,
+            "only learner commands reach here"
+        );
+        let desk = {
+            let state = self.state.lock().await;
+            let State::Running(live) = &*state else {
+                return Err(ErrorReply::noesis_disabled());
+            };
+            live.desk.clone()
+        };
+        let desk = desk.lock().await;
+        let Some(noesis) = &desk.noesis else {
             return Err(ErrorReply::noesis_disabled());
         };
-        let store = live.noesis.store();
+        let store = noesis.store();
         let now = chrono::Utc::now();
         match command {
             Command::NoesisCorrectLearner {

@@ -107,8 +107,13 @@ fn a_failed_answer_delivery_is_queued_after_the_commit_and_sent_before_the_next_
         ..Answer::default()
     };
     t.engine_mut().fail_deliveries = 1;
-    let result = t.answer(&id, &open, &answer).unwrap();
-    assert_eq!(result.correct, Some(true), "the record and reveal stand");
+    let failed = t.answer(&id, &open, &answer);
+    assert!(
+        matches!(failed, Err(TeachError::Engine(_))),
+        "the failed delivery is returned, not dropped"
+    );
+    let correct = recorded_correctness(&mut t);
+    assert_eq!(correct, Some(true), "the record and reveal stand");
     assert!(session(&t, &id).open_question.is_none());
     let agent = session(&t, &id).agent;
     let answers = |t: &Teaching<'_, FauxEngine>| {
@@ -501,4 +506,14 @@ fn the_record_of_a_choice_never_marks_which_options_are_correct() {
         assert_eq!(call.input, json!(crate::tools::SEALED), "{call:?}");
     }
     assert!(!format!("{second:?}").contains("Paris"), "{second:?}");
+}
+
+/// The correctness the last `noesis.answer_recorded` event revealed.
+fn recorded_correctness(t: &mut Teaching<'_, FauxEngine>) -> Option<bool> {
+    let events = t.take_events();
+    let result = events.into_iter().rev().find_map(|event| match event {
+        crate::teach::records::NoesisEvent::AnswerRecorded { result, .. } => Some(result),
+        _ => None,
+    });
+    result.expect("the answer is announced").correct
 }

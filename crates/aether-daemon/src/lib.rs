@@ -496,6 +496,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             status_reads: Default::default(),
             noesis: noesis.clone(),
         });
+        noesis.resume_teaching(&runtime);
         // Supervised with the connections: it opens the listener the stored
         // settings ask for, and closes it when the daemon stops.
         let remote_control = remote::attach(&daemon, remote_config, shutdown.clone()).await?;

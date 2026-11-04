@@ -117,7 +117,13 @@ fn an_answer_whose_delivery_failed_is_delivered_after_a_restart() {
     assert_eq!(t.advance(&id).unwrap()[0].end, TurnEnd::AwaitingAnswer);
     let open = session(&t, &id).open_question.expect("posed").id;
     t.engine_mut().fail_deliveries = 1;
-    assert_eq!(answer_choice(&mut t, &id, &["Paris"]).correct, Some(true));
+    let answer = Answer {
+        choices: shown_values(&t, &id, &["Paris"]),
+        ..Answer::default()
+    };
+    let failed = t.answer(&id, &open, &answer);
+    assert!(matches!(failed, Err(TeachError::Engine(_))), "{failed:?}");
+    assert!(session(&t, &id).open_question.is_none(), "still recorded");
 
     let engine = std::mem::replace(t.engine_mut(), FauxEngine::new());
     drop(t);

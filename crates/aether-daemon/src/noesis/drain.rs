@@ -44,9 +44,14 @@ impl NoesisService {
         {
             tokio::time::sleep(DRAIN_POLL.min(grace)).await;
         }
+        if self.current_drain(generation) {
+            // A teaching turn in flight ends at its model call now.
+            self.teaching_cancel.lock().cancel();
+        }
         let mut state = self.state.lock().await;
         let ours = matches!(&*state, State::Draining { generation: g, .. } if *g == generation);
         if !ours || !self.current_drain(generation) {
+            self.renew_cancel(&mut state);
             return;
         }
         // Retired and disabled first: a turn admitted earlier and registered
@@ -69,15 +74,32 @@ impl NoesisService {
             debug_assert!(false, "checked to be draining above");
             return;
         };
-        if let Err(error) = live.stop() {
+        if let Err(error) = live.stop().await {
             tracing::error!(%error, "closing noesis.db after the disable failed");
         }
         debug_assert!(matches!(*state, State::Off) && !self.gate.is_enabled());
     }
 
+    /// A drain called off after it cancelled teaching calls: the service
+    /// that runs on gets a fresh token, or its every model call would end.
+    fn renew_cancel(&self, state: &mut State) {
+        let (State::Running(live) | State::Draining { live, .. }) = state else {
+            return;
+        };
+        if live.cancel.is_cancelled() {
+            live.cancel = tokio_util::sync::CancellationToken::new();
+            *self.teaching_cancel.lock() = live.cancel.clone();
+        }
+        debug_assert!(!live.cancel.is_cancelled());
+    }
+
     /// Whether a Noesis turn still runs, or an admission is not yet settled.
     async fn turns_left(&self, runtime: &Runtime) -> bool {
         if !runtime.noesis_turns_running().is_empty() {
+            return true;
+        }
+        // Teaching calls run outside the state lock; they count themselves.
+        if self.teaching_calls.load(Ordering::SeqCst) > 0 {
             return true;
         }
         match &*self.state.lock().await {

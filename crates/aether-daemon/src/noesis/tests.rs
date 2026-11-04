@@ -382,8 +382,10 @@ async fn an_api_billed_link_is_refused_unless_api_billing_is_allowed() {
     let super::State::Running(live) = &*state else {
         panic!("running");
     };
-    let accountant = live.noesis.accountant().clone();
-    let mut settings = live.noesis.settings().clone();
+    let desk = live.desk.lock().await;
+    let noesis = desk.noesis.as_ref().expect("open");
+    let accountant = noesis.accountant().clone();
+    let mut settings = noesis.settings().clone();
     settings.billing_allow_api = false;
     let budget = ServiceBudget::new(accountant.clone(), &settings, harness.daemon.models.clone());
     // Admission reads a snapshot of the row; the rule binds the chain the turn runs.
@@ -413,6 +415,7 @@ async fn an_api_billed_link_is_refused_unless_api_billing_is_allowed() {
     settings.billing_allow_api = true;
     let allowed = ServiceBudget::new(accountant, &settings, harness.daemon.models.clone());
     assert!(allowed.admit(&api, NoesisLane::Interactive).is_ok());
+    drop(desk);
     drop(state);
     let status = harness
         .configure(NoesisSettingsPatch {
@@ -702,7 +705,8 @@ async fn seed_concept(harness: &Harness, title: &str) -> String {
     let super::State::Running(live) = &*state else {
         panic!("the service runs");
     };
-    let conn = live.noesis.store().connection();
+    let desk = live.desk.lock().await;
+    let conn = desk.noesis.as_ref().expect("open").store().connection();
     let now = chrono::Utc::now();
     let concept = learner::ensure_concept(conn, ConceptKind::Topic, title, title, now).unwrap();
     let exposure = NewEvidence {
