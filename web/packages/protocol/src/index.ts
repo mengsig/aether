@@ -3,3 +3,4 @@
 
 export * from "./app.ts";
 export * as aether from "./aether.ts";
+export * as archon from "./archon.ts";

@@ -96,11 +96,17 @@ function unionLines(name: string, members: readonly string[]): string[] {
     `  | ${member}${index === members.length - 1 ? ";" : ""}`), ""];
 }
 
+// A variant named like a definition (Archon's Request + status = RequestStatus) takes a Variant suffix.
+function memberName(union: string, tag: string, defs: ProtocolSchema["defs"]): string {
+  const plain = union + pascal(tag);
+  return plain in defs ? `${plain}Variant` : plain;
+}
+
 function variantLines(name: string, schema: Schema, discriminant: string, defs: ProtocolSchema["defs"]): string[] {
   const lines = documented([...describe(schema), `Tagged by \`${discriminant}\`.`]);
   const members: string[] = [];
   for (const [tag, variant] of taggedUnion(schema, discriminant)) {
-    const member = name + pascal(tag);
+    const member = memberName(name, tag, defs);
     members.push(member);
     const fields = mergedFields(defs, variant, discriminant);
     fields.properties[discriminant] = { const: tag };
