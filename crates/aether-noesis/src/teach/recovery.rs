@@ -484,15 +484,15 @@ fn the_record_of_a_choice_never_marks_which_options_are_correct() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = teacher_session(&mut t);
-    let options = [("a", "Paris"), ("b", "Rome"), ("c", "Madrid")];
-    let single = choice("Which city is the capital of France?", &options, &["a"]);
+    let options = [("opt1", "Paris"), ("opt2", "Rome"), ("opt3", "Madrid")];
+    let single = choice("Which city is the capital of France?", &options, &["opt1"]);
     t.engine_mut()
         .script(Agent::Teacher, "", vec![(ASK, single.clone())]);
     let first = t.advance(&id).unwrap().remove(0);
     assert_eq!(first.steps[0].calls[0].input, json!(crate::tools::SEALED));
     answer_choice(&mut t, &id, &["Paris"]);
 
-    let mut multi = choice("Which cities are capitals?", &options, &["a", "c"]);
+    let mut multi = choice("Which cities are capitals?", &options, &["opt1", "opt3"]);
     multi["multi"] = json!(true);
     t.engine_mut()
         .script(Agent::Teacher, "", vec![(ASK, multi), (ASK, single)]);

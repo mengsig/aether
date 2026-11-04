@@ -163,6 +163,19 @@ fn prose_holds_a_value(args: &AskArgs, values: &BTreeSet<&str>) -> bool {
     prose.iter().any(|text| values.holds(text))
 }
 
+/// The model's own values of a choice's correct options; posing re-keys
+/// them, so a plan that shows one would point at the key.
+pub(super) fn model_key_values(args: &AskArgs) -> Vec<String> {
+    if args.kind != QuestionKind::Choice {
+        return Vec::new();
+    }
+    args.options
+        .iter()
+        .filter(|option| args.answer_key.contains(&option.value))
+        .map(|option| option.value.clone())
+        .collect()
+}
+
 /// Whether a field the learner sees repeats a sealed text: the explanation
 /// anywhere, a recall key in the prompt or a label, any key in a tag.
 fn shown_fields_reveal(args: &AskArgs) -> bool {
@@ -176,14 +189,13 @@ fn shown_fields_reveal(args: &AskArgs) -> bool {
             .collect(),
         _ => args.answer_key.clone(),
     };
-    let prose_key = if args.kind == QuestionKind::Choice {
-        Sealer::default()
-    } else {
-        Sealer::new(&key)
-    };
     let key = Sealer::new(&key);
+    // A choice shows its labels, correct ones included, so only its prompt
+    // is held against its key.
     let mut prose = vec![args.prompt.as_str()];
-    prose.extend(args.options.iter().map(|option| option.label.as_str()));
+    if args.kind != QuestionKind::Choice {
+        prose.extend(args.options.iter().map(|option| option.label.as_str()));
+    }
     let in_values = args
         .options
         .iter()
@@ -192,7 +204,11 @@ fn shown_fields_reveal(args: &AskArgs) -> bool {
     tags.extend(args.plan_node.as_deref());
     let in_prose = prose
         .iter()
-        .any(|text| prose_key.holds(text) || explanation.holds(text));
+        .any(|text| key.holds(text) || explanation.holds(text))
+        || args
+            .options
+            .iter()
+            .any(|option| explanation.holds(&option.label));
     let in_tags = tags
         .iter()
         .any(|tag| key.holds(tag) || explanation.holds(tag));

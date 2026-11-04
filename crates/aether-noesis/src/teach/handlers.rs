@@ -163,6 +163,7 @@ impl<E: Engine> Teaching<'_, E> {
         // events not yet published go out with this pose.
         let mut sealed = question::shown_key(&stored);
         sealed.extend(stored.explanation.iter().cloned());
+        sealed.extend(question::model_key_values(args));
         let sealer = Sealer::new(&sealed);
         let shown_plan = plan.as_ref().is_some_and(|plan| plan_holds(plan, &sealer));
         if shown_plan || self.pending_plans_hold(&sealer) {

@@ -14,6 +14,7 @@ use super::service::{
 };
 use super::{TeachError, question, role_of};
 use crate::budget::Lane;
+use crate::tools::SEALED;
 
 impl<E: Engine> Teaching<'_, E> {
     /// Run the session's agent until it waits, and on a hand-off run the new
@@ -99,13 +100,12 @@ impl<E: Engine> Teaching<'_, E> {
         step: Step,
         turn: &mut Turn,
     ) -> Result<(Option<TurnEnd>, Vec<ToolResult>), TeachError> {
-        let own = seal::step_secrets(&step);
+        let (own, unreadable) = seal::step_secrets(&step);
         let mut pending = PendingStep {
-            fail_closed: own.is_none(),
+            fail_closed: unreadable,
             text: step.text,
             calls: Vec::with_capacity(step.calls.len()),
         };
-        let own = own.unwrap_or_default();
         turn.own.extend(own.iter().cloned());
         if step.calls.is_empty() {
             turn.steps.push(pending);
@@ -357,6 +357,15 @@ impl Turn {
                 text,
                 calls: calls.collect(),
             };
+            if pending.fail_closed {
+                // An unreadable sealing input hides which secrets its step carried.
+                for call in &mut record.calls {
+                    call.input = Value::String(SEALED.into());
+                    if !call.is_error {
+                        call.result = Value::String(SEALED.into());
+                    }
+                }
+            }
             sealer.step(&mut record);
             steps.push(record);
         }

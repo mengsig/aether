@@ -246,15 +246,19 @@ fn embedded_json(text: &str) -> Option<Value> {
     (parsed.is_object() || parsed.is_array()).then_some(parsed)
 }
 
-/// The sealed texts the calls of a step carry; `None` when any sealed input
-/// is unreadable, so the caller fails closed.
-pub(super) fn step_secrets(step: &Step) -> Option<Vec<String>> {
+/// The sealed texts the calls of a step carry, and whether any sealing
+/// call's input was unreadable (its secrets unknown, so the step fails closed).
+pub(super) fn step_secrets(step: &Step) -> (Vec<String>, bool) {
     let mut secrets = Vec::new();
+    let mut unreadable = false;
     for call in &step.calls {
-        secrets.extend(tools::sealed_texts(&call.name, &call.input)?);
+        match tools::sealed_texts(&call.name, &call.input) {
+            Some(found) => secrets.extend(found),
+            None => unreadable = true,
+        }
     }
     debug_assert!(secrets.iter().all(|secret| !secret.trim().is_empty()));
-    Some(secrets)
+    (secrets, unreadable)
 }
 
 #[cfg(test)]

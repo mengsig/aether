@@ -158,14 +158,33 @@ fn the_models_option_values_never_reach_a_reader_so_text_cannot_name_the_key() {
     t.take_events();
     let named = "The correct option value is option-a.";
     let leaky_plan = json!({"nodes": [{"id": "pick", "title": named}], "edges": []});
-    let mut pose = choice(
-        "Capital of France?",
-        &[("option-a", "Paris"), ("option-b", "Rome")],
-        &["option-a"],
+    let pose = |plan_node: Option<&str>| {
+        let mut pose = choice(
+            "Capital of France?",
+            &[("option-a", "Paris"), ("option-b", "Rome")],
+            &["option-a"],
+        );
+        if let Some(node) = plan_node {
+            pose["plan_node"] = json!(node);
+        }
+        pose
+    };
+    t.engine_mut().script(
+        Agent::Teacher,
+        "",
+        vec![(PLAN, leaky_plan), (ASK, pose(Some("pick")))],
     );
-    pose["plan_node"] = json!("pick");
-    t.engine_mut()
-        .script(Agent::Teacher, named, vec![(PLAN, leaky_plan), (ASK, pose)]);
+    t.engine_mut().script(Agent::Teacher, "Rethinking.", vec![]);
+    let report = t.advance(&id).unwrap().remove(0);
+    assert!(report.steps[0].calls[1].is_error, "{report:?}");
+    assert!(session(&t, &id).open_question.is_none());
+
+    let clean = json!({"nodes": [{"id": "pick", "title": "Capitals"}], "edges": []});
+    t.engine_mut().script(
+        Agent::Teacher,
+        "",
+        vec![(PLAN, clean), (ASK, pose(Some("pick")))],
+    );
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
     let events = serde_json::to_string(&t.take_events()).unwrap();
@@ -449,4 +468,41 @@ fn a_rekeyed_option_value_named_before_the_pose_is_sealed() {
     let mut values = shown_values(&t, &id, &["Paris", "Rome"]);
     values.sort();
     assert_eq!(values, ["1", "2"], "readers see display positions only");
+}
+
+#[test]
+fn a_choice_prompt_naming_the_correct_label_is_refused() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let pose = choice(
+        "The answer is Paris. Which city is the capital of France?",
+        &[("opt1", "Paris"), ("opt2", "Rome")],
+        &["opt1"],
+    );
+    let error = error_of(&call(&mut t, &id, ASK, pose, ""));
+    assert!(error.contains("gives away"), "{error}");
+    assert!(session(&t, &id).open_question.is_none());
+}
+
+#[test]
+fn a_malformed_sibling_call_does_not_unseal_a_refused_pose_in_its_step() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let leaky = recall("Which organelle, the mitochondria, makes ATP?", SECRET);
+    t.engine_mut().script(
+        Agent::Teacher,
+        "",
+        vec![
+            (ASK, leaky),
+            (ASK, json!(null)),
+            ("noesis.graph_search", json!({"query": SECRET})),
+        ],
+    );
+    t.engine_mut().script(Agent::Teacher, "Again.", vec![]);
+    let report = t.advance(&id).unwrap().remove(0);
+    assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
+    let search = &report.steps[0].calls[2];
+    assert_eq!(search.input, json!(crate::tools::SEALED), "{search:?}");
 }
