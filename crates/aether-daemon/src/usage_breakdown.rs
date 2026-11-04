@@ -8,7 +8,7 @@ use aether_core::id::AgentId;
 use aether_core::model::{ModelRef, Usage};
 use aether_core::time::Timestamp;
 use aether_protocol::read_models::{UsageBreakdown, UsageGroup, UsageRow, UsageScope};
-use aether_store::{AgentFilter, EventFilter, Store};
+use aether_store::{AgentFilter, EventFilter, Store, StoreError};
 
 /// Invocations read from the log at once.
 const PAGE: usize = 2_000;
@@ -170,15 +170,30 @@ fn scoped_agents(store: &dyn Store, request: &UsageRequest) -> aether_store::Res
     Ok(Agents { roles, kept })
 }
 
-/// The root and its descendants. A child shares its parent's run, and
-/// retention removes a run whole, so a root that is gone took its subtree
-/// with it: if that was retention, its own history says so and the read fails.
+/// The root and its descendants still stored. Retention removes an agent with
+/// its run, which may not be its parent's, so any expired history naming a
+/// member as parent, or a root that is gone that way, fails the read.
 fn subtree(store: &dyn Store, root: AgentId) -> aether_store::Result<BTreeSet<AgentId>> {
     let ids = store.subtree_ids(root)?;
-    if !ids.is_empty() {
-        assert!(ids.contains(&root), "a found subtree holds its root");
+    if ids.is_empty() {
+        refuse_an_expired_root(store, root)?;
         return Ok(ids);
     }
+    assert!(ids.contains(&root), "a found subtree holds its root");
+    for id in ids.iter().copied() {
+        if let Some((first_seq, last_seq)) = store.expired_child_span(id)? {
+            return Err(StoreError::HistoryExpired {
+                first_seq,
+                last_seq,
+            });
+        }
+    }
+    Ok(ids)
+}
+
+/// A root no longer stored either never existed or expired; its own history
+/// tells them apart.
+fn refuse_an_expired_root(store: &dyn Store, root: AgentId) -> aether_store::Result<()> {
     let own = EventFilter {
         agent: Some(root),
         exclude_children: true,
@@ -189,7 +204,7 @@ fn subtree(store: &dyn Store, root: AgentId) -> aether_store::Result<BTreeSet<Ag
         left.iter().all(|event| event.agent_id == Some(root)),
         "the probe reads only the root's own history"
     );
-    Ok(ids)
+    Ok(())
 }
 
 fn completed(event: &Event) -> Option<Completed<'_>> {

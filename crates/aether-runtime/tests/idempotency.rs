@@ -174,7 +174,10 @@ impl Work {
             (Work::Trigger(wanted), Mutation::DeliverInbox(item)) => {
                 item.agent_id == wanted && matches!(&item.kind, InboxKind::ExternalTrigger { .. })
             }
-            (Work::Agent(wanted), Mutation::UpsertAgent(agent)) => agent.id == wanted,
+            (
+                Work::Agent(wanted),
+                Mutation::UpsertAgent(agent) | Mutation::CreateAgent { agent, .. },
+            ) => agent.id == wanted,
             (Work::Task(wanted), Mutation::UpsertTask(task)) => task.id == wanted,
             (Work::Schedule(wanted), Mutation::UpsertSchedule(job)) => job.id == wanted,
             _ => false,
@@ -414,6 +417,9 @@ impl Store for CommitLog {
     }
     fn subtree_ids(&self, root: AgentId) -> StoreResult<std::collections::BTreeSet<AgentId>> {
         self.inner.subtree_ids(root)
+    }
+    fn expired_child_span(&self, parent: AgentId) -> StoreResult<Option<(u64, u64)>> {
+        self.inner.expired_child_span(parent)
     }
     fn subtree_agents(&self, root: AgentId) -> StoreResult<Vec<Agent>> {
         self.inner.subtree_agents(root)

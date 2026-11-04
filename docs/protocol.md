@@ -345,8 +345,9 @@ zero usage there, as its spend arrives as `agent.usage_updated`, so the
 breakdown does not include it. A breakdown that may hold invocations history
 retention removed is refused with `history_expired` rather than summed short.
 A `subtree` scope reads only its own agents' invocations, so another run's
-expiry does not affect it, but a root whose run expired is refused; a root
-that never existed answers with no rows and a zero total. Retention
+expiry does not affect it. It is refused when its root expired or when any
+agent in it has an expired child, which a child created into a run of its
+own can be; a root that never existed answers with no rows and a zero total. Retention
 removes an expired run's agents with it, so their roles are unknown: a
 `role_prefix` scope without a `subtree` reads its whole `run`, or every run,
 and is refused when any of that history expired.

@@ -467,6 +467,24 @@ impl Store for SqliteStore {
         Ok(ids)
     }
 
+    fn expired_child_span(&self, parent: AgentId) -> Result<Option<(u64, u64)>> {
+        let (first, last): (Option<i64>, Option<i64>) = self.read_conn()?.query_row(
+            "SELECT MIN(first_seq), MAX(last_seq) FROM expired_event_spans WHERE parent_agent_id = ?1",
+            [parent.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let (Some(first), Some(last)) = (first, last) else {
+            debug_assert!(first.is_none() && last.is_none(), "both aggregate one set");
+            return Ok(None);
+        };
+        if first <= 0 || last < first {
+            return Err(StoreError::Corrupt(format!(
+                "expired span {first}..={last} under {parent} is out of order"
+            )));
+        }
+        Ok(Some((first as u64, last as u64)))
+    }
+
     fn subtree_agents(&self, root: AgentId) -> Result<Vec<Agent>> {
         // CROSS JOIN pins the walk as the outer loop; left to itself the
         // planner scans every agent through `agents_created` instead.

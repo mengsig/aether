@@ -198,7 +198,18 @@ fn create(store: &SqliteStore, agent: &Agent) {
 }
 
 /// Retention removes a run's events and its agents together, as
-/// `expire_run_history` does; a scope that may hold any of it refuses.
+/// `expire_run_history` does.
+fn expire(path: &std::path::Path, run: RunId) {
+    let conn = rusqlite::Connection::open(path).expect("expire");
+    conn.execute_batch(&format!(
+        "INSERT INTO expired_event_spans SELECT run, COALESCE(agent_id,''), COALESCE(parent_agent_id,''), COALESCE(task_id,''), type, family, MIN(seq), MAX(seq) FROM events WHERE run = '{run}' GROUP BY run, agent_id, parent_agent_id, task_id, type, family;
+         DELETE FROM events WHERE run = '{run}';
+         DELETE FROM agents WHERE run = '{run}';"
+    ))
+    .expect("expire the run");
+}
+
+/// A scope that may hold expired history refuses rather than sum short.
 #[test]
 fn history_expired_elsewhere_fails_only_a_scope_that_may_hold_it() {
     let dir = tempfile::tempdir().expect("tmp");
@@ -220,14 +231,7 @@ fn history_expired_elsewhere_fails_only_a_scope_that_may_hold_it() {
         create(&store, agent);
         complete(&store, agent.id, agent.run, &model, usage(spent, 0.0));
     }
-    let conn = rusqlite::Connection::open(&path).expect("expire");
-    conn.execute_batch(&format!(
-        "INSERT INTO expired_event_spans SELECT run, COALESCE(agent_id,''), COALESCE(parent_agent_id,''), COALESCE(task_id,''), type, family, MIN(seq), MAX(seq) FROM events WHERE run = '{gone_run}' GROUP BY run, agent_id, parent_agent_id, task_id, type, family;
-         DELETE FROM events WHERE run = '{gone_run}';
-         DELETE FROM agents WHERE run = '{gone_run}';"
-    ))
-    .expect("expire the other run");
-    drop(conn);
+    expire(&path, gone_run);
 
     let subtree = |root: AgentId| UsageScope {
         subtree: Some(root),
@@ -266,4 +270,46 @@ fn history_expired_elsewhere_fails_only_a_scope_that_may_hold_it() {
         matches!(fleet, Err(StoreError::HistoryExpired { .. })),
         "{fleet:?}"
     );
+}
+
+/// A child created into a run of its own can expire while its parent stays:
+/// the parent's subtree refuses, and a subtree beside the child still answers.
+#[test]
+fn a_subtree_whose_child_expired_in_another_run_refuses() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().join("aether.db");
+    let store = SqliteStore::open(&path).expect("open");
+    let model = ModelRef::new("anthropic", "opus");
+    let (run, far_run) = (RunId::new(), RunId::new());
+    let lead = agent(None, run, "lead");
+    let worker = agent(Some(lead.id), run, "worker");
+    let far = agent(Some(lead.id), far_run, "worker");
+    for member in [&lead, &worker, &far] {
+        create(&store, member);
+        let ready = EventDraft::new(Actor::System, EventKind::AgentReady)
+            .agent(member.id)
+            .parent(member.parent)
+            .run(member.run);
+        store.commit(Commit::new().event(ready)).expect("ready");
+    }
+    complete(&store, worker.id, run, &model, usage(10, 0.0));
+    complete(&store, far.id, far_run, &model, usage(500, 0.0));
+    expire(&path, far_run);
+    assert!(
+        store.agent(lead.id).expect("read").is_some(),
+        "the parent stays"
+    );
+
+    let subtree = |root: AgentId| UsageScope {
+        subtree: Some(root),
+        ..UsageScope::default()
+    };
+    let refused = usage_breakdown(&store, &request(subtree(lead.id), UsageGroup::Model));
+    assert!(
+        matches!(refused, Err(StoreError::HistoryExpired { .. })),
+        "the far child's spend is gone, not zero: {refused:?}"
+    );
+    let beside = usage_breakdown(&store, &request(subtree(worker.id), UsageGroup::Model))
+        .expect("a subtree without the expired child");
+    assert_eq!(beside.total.input_tokens, 10);
 }

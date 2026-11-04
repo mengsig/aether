@@ -179,6 +179,9 @@ impl Store for CountingStore {
     fn subtree_ids(&self, root: AgentId) -> StoreResult<std::collections::BTreeSet<AgentId>> {
         self.inner.subtree_ids(root)
     }
+    fn expired_child_span(&self, parent: AgentId) -> StoreResult<Option<(u64, u64)>> {
+        self.inner.expired_child_span(parent)
+    }
     fn subtree_agents(&self, root: AgentId) -> StoreResult<Vec<Agent>> {
         let agents = self.inner.subtree_agents(root)?;
         let mut reads = self.reads.lock().expect("reads");

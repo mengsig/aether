@@ -697,6 +697,9 @@ pub trait Store: Send + Sync {
     fn is_descendant(&self, root: AgentId, id: AgentId) -> Result<bool>;
     /// `root` and every descendant of it; empty when `root` is unknown.
     fn subtree_ids(&self, root: AgentId) -> Result<BTreeSet<AgentId>>;
+    /// The seq span of expired history whose events named `parent` as their
+    /// parent: a child retention removed, perhaps with a run of its own.
+    fn expired_child_span(&self, parent: AgentId) -> Result<Option<(u64, u64)>>;
     /// `root` and every descendant of it, decoded, in the order `agents` lists the
     /// whole fleet (`created_at`, then insertion); empty when `root` is unknown.
     fn subtree_agents(&self, root: AgentId) -> Result<Vec<Agent>>;
