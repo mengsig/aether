@@ -52,6 +52,7 @@ class Surface {
 
   resize(canvas: HTMLCanvasElement): void {
     const dpr = devicePixelRatio;
+    invariant(Number.isFinite(dpr) && dpr > 0, `devicePixelRatio ${dpr} is not a usable scale`);
     this.width = canvas.clientWidth;
     this.height = canvas.clientHeight;
     canvas.width = Math.round(this.width * dpr);
@@ -89,6 +90,21 @@ class Surface {
   }
 }
 
+/** Calls `onChange` when devicePixelRatio changes, as when the window moves to another monitor. */
+function watchPixelRatio(onChange: () => void): () => void {
+  invariant(typeof matchMedia === "function", "GraphCanvas needs matchMedia to follow the pixel ratio");
+  let query: MediaQueryList | undefined;
+  // A resolution query matches one ratio only, so it is rearmed at the new ratio after each change.
+  const arm = (): void => {
+    query?.removeEventListener("change", changed);
+    query = matchMedia(`(resolution: ${devicePixelRatio}dppx)`);
+    query.addEventListener("change", changed);
+  };
+  const changed = (): void => { arm(); onChange(); };
+  arm();
+  return () => query?.removeEventListener("change", changed);
+}
+
 /** Creates the surface for the canvas and keeps its backing store sized to the element. */
 function useSurface(canvasRef: RefObject<HTMLCanvasElement | null>): RefObject<Surface | null> {
   const surface = useRef<Surface | null>(null);
@@ -99,8 +115,9 @@ function useSurface(canvasRef: RefObject<HTMLCanvasElement | null>): RefObject<S
     const observer = new ResizeObserver(() => current.resize(canvas));
     observer.observe(canvas);
     const unwatch = watchTheme(canvas, () => current.retheme(canvas));
+    const unwatchPixels = watchPixelRatio(() => current.resize(canvas));
     surface.current = current;
-    return () => { observer.disconnect(); unwatch(); current.renderer.dispose(); surface.current = null; };
+    return () => { observer.disconnect(); unwatch(); unwatchPixels(); current.renderer.dispose(); surface.current = null; };
   }, [canvasRef]);
   return surface;
 }

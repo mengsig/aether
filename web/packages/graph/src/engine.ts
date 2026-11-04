@@ -79,6 +79,11 @@ export class LayoutEngine {
     return { ...this.counts };
   }
 
+  /** Requests sent to the worker and not yet answered. */
+  get waiting(): number {
+    return this.pending.size;
+  }
+
   /** Async so a GraphModelError rejects; it runs synchronously up to the cache decision. */
   async layout(model: GraphModel, algorithm: Algorithm): Promise<Layout> {
     const graph = visibleGraph(model);
@@ -109,18 +114,26 @@ export class LayoutEngine {
     const request: LayoutRequest = { id: this.nextId++, algorithm, ...layoutInput(graph) };
     return new Promise<Layout>((resolve, reject) => {
       this.pending.set(request.id, { graph, resolve, reject });
-      this.ensureWorker().postMessage(request);
+      try {
+        this.ensureWorker().postMessage(request);
+      } catch (cause) {
+        // A worker that cannot be started or take a request is not trusted again; failAll also
+        // withdraws this request, so a failed send keeps nothing waiting.
+        const reason = cause instanceof Error ? cause.message : String(cause);
+        this.failAll(new Error(`the layout worker could not take a request: ${reason}`, { cause }));
+      }
     });
   }
 
   private ensureWorker(): LayoutWorker {
     if (this.worker !== undefined) return this.worker;
     const worker = this.createWorker();
+    // Installed before its listeners, so a failure while wiring them still terminates it.
+    this.worker = worker;
     worker.onReply((reply) => this.settle(reply));
     worker.onFailure((error) => {
       if (this.worker === worker) this.failAll(new Error(`the layout worker failed: ${error.message}`, { cause: error }));
     });
-    this.worker = worker;
     return worker;
   }
 

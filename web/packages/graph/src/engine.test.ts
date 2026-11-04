@@ -116,6 +116,35 @@ describe("LayoutEngine", () => {
     await expect(next).rejects.toThrow(/disposed/);
   });
 
+  it("withdraws a request when the worker cannot start, keeping nothing waiting", async () => {
+    let attempts = 0;
+    const working = fakeWorker();
+    const engine = new LayoutEngine({ createWorker: () => { if (++attempts <= 2) throw new Error("no workers"); return working(); } });
+    const first = engine.layout(model, "layered");
+    await expect(first).rejects.toThrow(/could not take a request: no workers/);
+    await expect(first.catch((e: Error) => e.cause)).resolves.toHaveProperty("message", "no workers");
+    await expect(engine.layout(model, "layered")).rejects.toThrow(/no workers/);
+    expect(engine.waiting).toBe(0);
+    await expect(engine.layout(model, "layered")).resolves.toHaveProperty("positions");
+    expect(engine.stats).toEqual({ computed: 3, cacheHits: 0 });
+  });
+
+  it("replaces a worker whose postMessage throws, keeping nothing waiting", async () => {
+    let started = 0, terminated = 0;
+    const working = fakeWorker();
+    const engine = new LayoutEngine({
+      createWorker: () => {
+        if (++started > 1) return working();
+        return { postMessage: () => { throw new Error("worker gone"); }, onReply: () => undefined, onFailure: () => undefined, terminate: () => { terminated++; } };
+      },
+    });
+    await expect(engine.layout(model, "layered")).rejects.toThrow(/could not take a request: worker gone/);
+    expect(engine.waiting).toBe(0);
+    expect(terminated).toBe(1);
+    await expect(engine.layout(model, "layered")).resolves.toHaveProperty("positions");
+    expect(started).toBe(2);
+  });
+
   it("rejects an inconsistent model instead of throwing synchronously", async () => {
     const engine = new LayoutEngine({ createWorker: fakeWorker() });
     await expect(engine.layout({ ...model, nodes: [{ id: "x", label: "x", group: "nowhere" }] }, "layered")).rejects.toThrow(/unknown group/);
