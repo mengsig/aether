@@ -261,6 +261,17 @@ impl TurnCtx {
         crate::noesis_seal::StreamSeal::of(self.noesis.is_some())
     }
 
+    /// A Noesis turn's absolute usage as a durable record, written with every
+    /// usage it adds (API invoke, failed invocation, compaction, engine), so
+    /// the day's spend can be rebuilt from the log alone.
+    pub(crate) fn noesis_usage_record(&self) -> Option<aether_core::event::EventDraft> {
+        self.noesis.as_ref()?;
+        Some(self.draft(EventKind::AgentUsageUpdated {
+            total: self.agent.stats.usage,
+            turn_usage: self.turn_usage,
+        }))
+    }
+
     pub(crate) fn add_usage(&mut self, usage: aether_core::model::Usage) {
         self.agent.stats.usage += usage;
         self.turn_usage += usage;

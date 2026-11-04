@@ -23,6 +23,9 @@ pub(super) struct Recording {
     answer: Answer,
     /// Drained as a turn is admitted: the gate leaves Enabled before its model call.
     drain_on_admit: Option<NoesisGate>,
+    /// Disabled and re-enabled with another budget as a turn is admitted: a
+    /// whole disable (grace 0) and restart lands between admission and start.
+    cycle_on_admit: Option<(NoesisGate, Arc<Recording>)>,
     pub(super) admits: std::sync::Mutex<Vec<(AgentId, NoesisLane)>>,
     pub(super) settled: Arc<std::sync::Mutex<Vec<(AgentId, Usage)>>>,
     /// Cleared as the service that admitted the charges retires.
@@ -36,6 +39,7 @@ impl Recording {
         Arc::new(Self {
             answer,
             drain_on_admit: None,
+            cycle_on_admit: None,
             admits: Default::default(),
             settled: Default::default(),
             current: Arc::new(true.into()),
@@ -48,6 +52,7 @@ impl Recording {
         Arc::new(Self {
             answer: Answer::Admit,
             drain_on_admit: None,
+            cycle_on_admit: None,
             admits: Default::default(),
             settled: Default::default(),
             current: Arc::new(true.into()),
@@ -60,6 +65,7 @@ impl Recording {
         Arc::new(Self {
             answer: Answer::Admit,
             drain_on_admit: None,
+            cycle_on_admit: None,
             admits: Default::default(),
             settled: Default::default(),
             current: Arc::new(false.into()),
@@ -72,6 +78,20 @@ impl Recording {
         Arc::new(Self {
             answer: Answer::Admit,
             drain_on_admit: Some(gate.clone()),
+            cycle_on_admit: None,
+            admits: Default::default(),
+            settled: Default::default(),
+            current: Arc::new(true.into()),
+            refuse_models: false,
+        })
+    }
+
+    /// Admits every turn, then disables `gate` and enables it again with `next`.
+    pub(super) fn cycling(gate: &NoesisGate, next: Arc<Recording>) -> Arc<Self> {
+        Arc::new(Self {
+            answer: Answer::Admit,
+            drain_on_admit: None,
+            cycle_on_admit: Some((gate.clone(), next)),
             admits: Default::default(),
             settled: Default::default(),
             current: Arc::new(true.into()),
@@ -100,7 +120,7 @@ impl NoesisCharge for Charge {
         self.current.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    fn record(&self, _spent: &Usage) -> Option<String> {
+    fn before_invocation(&self, _spent: &Usage) -> Option<String> {
         None
     }
 
@@ -131,6 +151,10 @@ impl NoesisBudget for Recording {
         }
         if let Some(gate) = &self.drain_on_admit {
             gate.drain();
+        }
+        if let Some((gate, next)) = &self.cycle_on_admit {
+            gate.disable();
+            gate.enable(next.clone());
         }
         Ok(Box::new(Charge {
             agent: agent.id,
@@ -497,6 +521,36 @@ async fn an_admission_from_a_retired_service_starts_no_turn() {
     assert!(
         budget
             .settled()
+            .iter()
+            .all(|(id, usage)| *id == tutor.id && usage.total_tokens() == 0),
+        "released with nothing spent"
+    );
+    assert!(h.runtime.noesis_turns_running().is_empty());
+}
+
+#[tokio::test]
+async fn an_admission_from_before_a_disable_and_re_enable_does_not_run() {
+    let gate = NoesisGate::new();
+    let next = Recording::new(Answer::Exhausted);
+    let old = Recording::cycling(&gate, next.clone());
+    gate.enable(old.clone());
+    let h = noesis_harness(vec![ScriptedClient::text("unused")], &gate, |_| {}, |_| {}).await;
+    let (tutor, _) = h
+        .runtime
+        .create_agent(noesis_spec("noesis.tutor", "teach"), Actor::user())
+        .expect("created");
+    h.wait_for(
+        "the old admission was released and the agent re-offered",
+        || !old.settled().is_empty() && !next.admits().is_empty(),
+    )
+    .await;
+    assert!(gate.is_enabled(), "the new generation runs");
+    assert!(
+        h.client.requests().is_empty(),
+        "the old admission made no call"
+    );
+    assert!(
+        old.settled()
             .iter()
             .all(|(id, usage)| *id == tutor.id && usage.total_tokens() == 0),
         "released with nothing spent"

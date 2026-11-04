@@ -202,11 +202,13 @@ async fn summarize(
     cancel: &CancellationToken,
 ) -> Result<Option<ModelResponse>> {
     for attempt in 0..2 {
-        if cancel.is_cancelled() {
+        if cancel.is_cancelled()
+            || super::compaction::stopped_before_compaction_attempt(runtime, ctx)
+        {
             return Ok(None);
         }
         let (response, error) = invoke(client, request.clone(), cancel).await;
-        record_compaction_usage(
+        let flow = record_compaction_usage(
             runtime,
             ctx,
             &aether_context::CompactionAttempt {
@@ -216,6 +218,9 @@ async fn summarize(
                 error: error.clone(),
             },
         )?;
+        if flow.is_break() {
+            return Ok(None);
+        }
         if cancel.is_cancelled()
             || error
                 .as_ref()

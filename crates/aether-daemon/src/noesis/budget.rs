@@ -1,27 +1,25 @@
 //! The Noesis budgets as the runtime's admission guard sees them, and the
 //! day's spend read back from Aether's own usage records.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use aether_core::agent::Agent;
+use aether_core::event::EventKind;
+use aether_core::id::AgentId;
 use aether_core::model::{ModelRef, Usage};
 use aether_model::Models;
 use aether_noesis::budget::{Accountant, Admission, Lane, LaneSpend, Spend};
 use aether_noesis::settings::NoesisSettings;
-use aether_protocol::read_models::{UsageGroup, UsageScope};
 use aether_runtime::noesis_guard::{
-    NoesisBudget, NoesisCharge, NoesisLane, NoesisRefusal, lane_of,
+    NoesisBudget, NoesisCharge, NoesisLane, NoesisRefusal, lane_of, usage_spent,
 };
-use aether_store::Store;
+use aether_store::{AgentFilter, EventFilter, Store};
 use chrono::{NaiveDate, Utc};
-
-use crate::usage_breakdown::{UsageRequest, usage_breakdown};
 
 /// Every Noesis role starts with this; creation refuses it to other agents.
 const ROLE_PREFIX: &str = "noesis.";
-/// More Noesis roles than this would mean the role scheme changed.
-const MAX_ROLES: usize = 64;
 
 pub(crate) fn today() -> NaiveDate {
     Utc::now().date_naive()
@@ -44,39 +42,70 @@ fn lane(lane: NoesisLane) -> Lane {
     }
 }
 
-/// Today's Noesis usage per lane (interactive, background), from the
-/// `invocation.completed` records of `noesis.*` agents since UTC midnight.
+/// Events read per page when rebuilding the day.
+const PAGE: usize = 2_000;
+
+/// Today's Noesis usage per lane (interactive, background), rebuilt from the
+/// `agent.usage_updated` records of `noesis.*` agents since UTC midnight.
+/// Each record's absolute total is turned into a charge by the same
+/// [`usage_spent`] a turn settles with, so completed and failed invocations
+/// and compaction attempts count here exactly as they were charged.
 pub(crate) fn usage_today(
     store: &dyn Store,
     day: NaiveDate,
 ) -> aether_store::Result<(Usage, Usage)> {
     let midnight = day.and_hms_opt(0, 0, 0).map(|time| time.and_utc());
     debug_assert!(midnight.is_some(), "midnight exists on every day");
-    let request = UsageRequest {
-        scope: UsageScope {
-            role_prefix: Some(ROLE_PREFIX.into()),
-            ..UsageScope::default()
-        },
-        by: UsageGroup::Role,
-        since: midnight,
-        until: None,
-        limit: MAX_ROLES,
+    let lanes = noesis_lanes(store)?;
+    let filter = EventFilter {
+        types: vec!["agent.usage_updated".into()],
+        ..EventFilter::default()
     };
-    let breakdown = usage_breakdown(store, &request)?;
+    let mut last_total: HashMap<AgentId, Usage> = HashMap::new();
     let (mut interactive, mut background) = (Usage::default(), Usage::default());
-    for row in &breakdown.rows {
-        debug_assert!(row.key.starts_with(ROLE_PREFIX), "{}", row.key);
-        match lane_of(&row.key) {
-            NoesisLane::Interactive => interactive += row.usage,
-            NoesisLane::Background => background += row.usage,
+    let mut after = 0u64;
+    loop {
+        let page = store.events(after, PAGE, &filter)?;
+        let Some(last) = page.last() else { break };
+        assert!(last.seq > after, "the log pages forwards");
+        after = last.seq;
+        for event in &page {
+            let (Some(agent), EventKind::AgentUsageUpdated { total, .. }) =
+                (event.agent_id, &event.kind)
+            else {
+                continue;
+            };
+            let Some(lane_kind) = lanes.get(&agent) else {
+                continue;
+            };
+            let before = last_total.insert(agent, *total).unwrap_or_default();
+            if midnight.is_some_and(|midnight| event.at < midnight) {
+                continue;
+            }
+            let charge = usage_spent(&before, total);
+            match lane_kind {
+                NoesisLane::Interactive => interactive += charge,
+                NoesisLane::Background => background += charge,
+            }
+        }
+        if page.len() < PAGE {
+            break;
         }
     }
-    if breakdown.truncated {
-        // Rows cut by the limit are still in the total: charge them to both lanes.
-        interactive = breakdown.total;
-        background = breakdown.total;
-    }
     Ok((interactive, background))
+}
+
+/// The lane of every Noesis agent, by its role.
+fn noesis_lanes(store: &dyn Store) -> aether_store::Result<HashMap<AgentId, NoesisLane>> {
+    let agents = store.agents(&AgentFilter {
+        exclude_archived: false,
+        ..AgentFilter::default()
+    })?;
+    Ok(agents
+        .iter()
+        .filter(|agent| agent.role.as_str().starts_with(ROLE_PREFIX))
+        .map(|agent| (agent.id, lane_of(agent.role.as_str())))
+        .collect())
 }
 
 /// Today's spend per lane as the accountant is seeded with it, so a restart
@@ -93,6 +122,8 @@ pub(crate) fn spent_today(store: &dyn Store, day: NaiveDate) -> aether_store::Re
 
 /// The runtime's view of a running service's [`Accountant`], plus the
 /// billing rule: an API-billed link is refused unless `billing.allow_api`.
+/// The rule is applied by the turn on the chain it actually executes
+/// ([`NoesisCharge::refuses_model`]), never on the row admission read.
 /// Closed, it admits nothing, so its outstanding charges can be counted;
 /// retired, the charges it gave out start no turn.
 #[derive(Debug)]
@@ -110,7 +141,9 @@ struct Book {
     models: Arc<Models>,
     usd_daily: [f64; 2],
     background_tokens_daily: u64,
-    /// Spend turns still running have reported, not yet in the accountant.
+    /// The one lock over settled and unsettled spend. Every read, charge,
+    /// settle and move of spend happens while it is held, so no reader sees
+    /// a half-moved state. It is always taken before the accountant's own.
     unsettled: parking_lot::Mutex<[Spend; 2]>,
     retired: AtomicBool,
 }
@@ -200,17 +233,13 @@ impl Book {
             })
     }
 
-    /// The first link of the agent's chain the billing rule refuses.
-    fn forbidden_chain(&self, agent: &Agent) -> Option<String> {
-        agent.chain().links().find_map(|link| self.billed(link))
-    }
-
     /// Why `lane` admits nothing more today, counting what running turns
-    /// have reported as well as what the accountant has settled.
-    fn spent_out(&self, lane_kind: NoesisLane) -> Option<String> {
+    /// have reported as well as what the accountant has settled. The caller
+    /// holds the book's lock.
+    fn spent_out(&self, unsettled: &[Spend; 2], lane_kind: NoesisLane) -> Option<String> {
         let i = index(lane_kind);
         let settled = self.accountant.spent_today(lane(lane_kind), today());
-        let unsettled = self.unsettled.lock()[i];
+        let unsettled = unsettled[i];
         let usd = settled.usd + unsettled.usd;
         debug_assert!(usd.is_finite() && usd >= 0.0, "spend is a real amount");
         if usd >= self.usd_daily[i] {
@@ -228,24 +257,22 @@ impl Book {
         }
         None
     }
+}
 
-    /// Replace one charge's reported spend `before` with `after`.
-    fn move_unsettled(&self, lane_kind: NoesisLane, before: Spend, after: Spend) {
-        let mut unsettled = self.unsettled.lock();
-        let slot = &mut unsettled[index(lane_kind)];
-        slot.usd = (slot.usd - before.usd + after.usd).max(0.0);
-        slot.tokens = slot
-            .tokens
-            .saturating_sub(before.tokens)
-            .saturating_add(after.tokens);
-        debug_assert!(slot.usd.is_finite(), "unsettled spend stays a real amount");
-    }
+/// Replace one charge's reported spend `before` with `after` in `slot`.
+fn move_spend(slot: &mut Spend, before: Spend, after: Spend) {
+    slot.usd = (slot.usd - before.usd + after.usd).max(0.0);
+    slot.tokens = slot
+        .tokens
+        .saturating_sub(before.tokens)
+        .saturating_add(after.tokens);
+    debug_assert!(slot.usd.is_finite(), "unsettled spend stays a real amount");
 }
 
 impl NoesisBudget for ServiceBudget {
     fn admit(
         &self,
-        agent: &Agent,
+        _agent: &Agent,
         lane_kind: NoesisLane,
     ) -> Result<Box<dyn NoesisCharge>, NoesisRefusal> {
         let open = self.open.lock();
@@ -254,16 +281,15 @@ impl NoesisBudget for ServiceBudget {
                 "Noesis is switching its settings".into(),
             ));
         }
-        if let Some(reason) = self.book.forbidden_chain(agent) {
-            return Err(NoesisRefusal::Exhausted(reason));
-        }
-        if let Some(reason) = self.book.spent_out(lane_kind) {
-            return Err(NoesisRefusal::Exhausted(reason));
-        }
-        let admitted = self
-            .book
-            .accountant
-            .admit(lane(lane_kind), Spend::default(), today());
+        let admitted = {
+            let unsettled = self.book.unsettled.lock();
+            if let Some(reason) = self.book.spent_out(&unsettled, lane_kind) {
+                return Err(NoesisRefusal::Exhausted(reason));
+            }
+            self.book
+                .accountant
+                .admit(lane(lane_kind), Spend::default(), today())
+        };
         drop(open);
         match admitted {
             Ok(admission) => Ok(Box::new(Charge {
@@ -306,11 +332,11 @@ impl Charge {
             lane(self.lane),
             "settled on the lane it was admitted on"
         );
-        // Charged before the report is withdrawn: briefly counted twice, never zero.
-        admission.settle(spent);
         let reported = std::mem::take(&mut state.reported);
-        self.book
-            .move_unsettled(self.lane, reported, Spend::default());
+        // Charge and withdraw the report in one hold of the book's lock.
+        let mut unsettled = self.book.unsettled.lock();
+        admission.settle(spent);
+        move_spend(&mut unsettled[index(self.lane)], reported, Spend::default());
     }
 }
 
@@ -319,16 +345,18 @@ impl NoesisCharge for Charge {
         !self.book.retired.load(Ordering::SeqCst)
     }
 
-    fn record(&self, spent: &Usage) -> Option<String> {
-        let now = spend_of(spent);
-        {
-            let mut state = self.state.lock();
-            // Settled: the turn has nothing more to report.
-            state.admission.as_ref()?;
-            let before = std::mem::replace(&mut state.reported, now);
-            self.book.move_unsettled(self.lane, before, now);
+    fn before_invocation(&self, spent: &Usage) -> Option<String> {
+        if !self.is_current() {
+            return Some("the Noesis service that admitted this turn has been replaced".into());
         }
-        self.book.spent_out(self.lane)
+        let now = spend_of(spent);
+        let mut state = self.state.lock();
+        // Settled: the turn has nothing more to report.
+        state.admission.as_ref()?;
+        let before = std::mem::replace(&mut state.reported, now);
+        let mut unsettled = self.book.unsettled.lock();
+        move_spend(&mut unsettled[index(self.lane)], before, now);
+        self.book.spent_out(&unsettled, self.lane)
     }
 
     fn refuses_model(&self, model: &ModelRef) -> Option<String> {

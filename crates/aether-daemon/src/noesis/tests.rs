@@ -2,13 +2,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aether_core::event::{Actor, EventDraft, EventKind};
-use aether_core::id::{InvocationId, RunId, SnapshotId};
+use aether_core::id::RunId;
 use aether_core::model::{ModelRef, Usage};
 use aether_protocol::noesis::{BillingPatch, BudgetPatch, DisablePatch, NoesisSettingsPatch};
 use aether_protocol::{Command, ErrorCode, Reply};
 use aether_runtime::CreateAgentSpec;
 use aether_runtime::noesis_guard::{
-    NOESIS_SUBSYSTEM, NoesisBudget, NoesisGate, NoesisLane, NoesisRefusal,
+    NOESIS_SUBSYSTEM, NoesisBudget, NoesisGate, NoesisLane, NoesisRefusal, usage_spent,
 };
 use aether_store::{Commit, Store};
 
@@ -283,14 +283,12 @@ async fn a_re_enable_during_the_grace_keeps_the_service() {
     ));
 }
 
-fn complete(store: &dyn Store, agent: aether_core::id::AgentId, usage: Usage) {
-    let kind = EventKind::InvocationCompleted {
-        invocation: InvocationId::new(),
-        snapshot: SnapshotId::new(),
-        model: ModelRef::new("claude-code", "opus"),
-        usage,
-        stop_reason: None,
-        duration_ms: 1,
+/// The record a Noesis turn writes with each usage it adds: the agent's
+/// absolute total after it.
+fn complete(store: &dyn Store, agent: aether_core::id::AgentId, total: Usage) {
+    let kind = EventKind::AgentUsageUpdated {
+        total,
+        turn_usage: total,
     };
     let draft = EventDraft::new(Actor::System, kind)
         .agent(agent)
@@ -388,15 +386,16 @@ async fn an_api_billed_link_is_refused_unless_api_billing_is_allowed() {
     let mut settings = live.noesis.settings().clone();
     settings.billing_allow_api = false;
     let budget = ServiceBudget::new(accountant.clone(), &settings, harness.daemon.models.clone());
-    let refused = budget
+    // Admission reads a snapshot of the row; the rule binds the chain the turn runs.
+    let on_snapshot = budget
         .admit(&api, NoesisLane::Interactive)
-        .err()
-        .expect("refused");
+        .expect("admission does not judge the snapshot's chain");
     assert!(
-        matches!(&refused, NoesisRefusal::Exhausted(why) if why.contains("allow_api")),
-        "{refused:?}"
+        on_snapshot
+            .refuses_model(&ModelRef::new("anthropic", "claude-sonnet-5-5"))
+            .is_some_and(|why| why.contains("allow_api"))
     );
-    assert!(budget.admit(&subscription, NoesisLane::Interactive).is_ok());
+    on_snapshot.settle(&Usage::default());
     let charge = budget
         .admit(&subscription, NoesisLane::Interactive)
         .expect("admitted");
@@ -565,12 +564,16 @@ async fn a_running_turn_s_spend_counts_against_the_budget_before_it_settles() {
     let first = budget
         .admit(&tutor, NoesisLane::Interactive)
         .expect("admitted");
-    assert_eq!(first.record(&costing(0.4)), None, "under the limit");
+    assert_eq!(
+        first.before_invocation(&costing(0.4)),
+        None,
+        "under the limit"
+    );
     let second = budget
         .admit(&tutor, NoesisLane::Interactive)
         .expect("room left");
     let spent = first
-        .record(&costing(1.0))
+        .before_invocation(&costing(1.0))
         .expect("the limit is reached mid-turn");
     assert!(spent.contains("budget"), "{spent}");
     let refused = budget
@@ -582,7 +585,7 @@ async fn a_running_turn_s_spend_counts_against_the_budget_before_it_settles() {
         "{refused:?}"
     );
     assert!(
-        second.record(&Usage::default()).is_some(),
+        second.before_invocation(&Usage::default()).is_some(),
         "the other turn stops too"
     );
     first.settle(&costing(1.0));
@@ -620,4 +623,73 @@ async fn a_retired_budget_s_admissions_start_nothing() {
     assert!(matches!(refused, NoesisRefusal::Busy(_)), "{refused:?}");
     charge.settle(&Usage::default());
     assert_eq!(budget.outstanding(), 0);
+}
+
+#[tokio::test]
+async fn settling_one_turn_never_shows_a_reader_less_than_the_spend_of_both() {
+    let harness = Harness::new().await;
+    harness.configure(enable(true)).await;
+    let tutor = noesis_agent(
+        &harness,
+        "noesis.tutor",
+        ModelRef::new("claude-code", "opus"),
+    );
+    let budget = Arc::new(one_dollar_budget(&harness));
+    let a = budget
+        .admit(&tutor, NoesisLane::Interactive)
+        .expect("admitted");
+    let b = budget
+        .admit(&tutor, NoesisLane::Interactive)
+        .expect("admitted");
+    assert_eq!(
+        a.before_invocation(&costing(0.6)),
+        None,
+        "A is under the limit"
+    );
+    assert!(
+        b.before_invocation(&costing(0.4)).is_some(),
+        "A + B reach $1"
+    );
+
+    let reader_budget = Arc::clone(&budget);
+    let reader_agent = tutor.clone();
+    let reader = std::thread::spawn(move || {
+        for _ in 0..2_000 {
+            let admitted = reader_budget.admit(&reader_agent, NoesisLane::Interactive);
+            assert!(
+                matches!(admitted, Err(NoesisRefusal::Exhausted(_))),
+                "a reader saw less than $1 spent while A settled"
+            );
+        }
+    });
+    a.settle(&costing(0.6));
+    b.settle(&costing(0.4));
+    reader
+        .join()
+        .expect("the reader never saw a half-moved state");
+    assert_eq!(budget.outstanding(), 0);
+}
+
+#[tokio::test]
+async fn a_rebuild_counts_a_failed_invocation_and_a_compaction_as_settlement_did() {
+    let harness = Harness::new().await;
+    harness.configure(enable(true)).await;
+    let tutor = noesis_agent(
+        &harness,
+        "noesis.tutor",
+        ModelRef::new("claude-code", "opus"),
+    );
+    let store = harness.daemon.runtime.store().clone();
+    let (failed, compaction) = (costing(0.3), costing(0.2));
+    let after_failure = failed;
+    let mut after_compaction = failed;
+    after_compaction += compaction;
+    complete(store.as_ref(), tutor.id, after_failure);
+    complete(store.as_ref(), tutor.id, after_compaction);
+
+    let settled = budget::spend_of(&usage_spent(&Usage::default(), &after_compaction));
+    let rebuilt = budget::spent_today(store.as_ref(), budget::today()).expect("spend");
+    assert_eq!(settled.usd, 0.5, "the turn charged both");
+    assert_eq!(rebuilt.interactive.usd, settled.usd, "so does the rebuild");
+    assert_eq!(rebuilt.background.usd, 0.0);
 }

@@ -102,11 +102,11 @@ fn start_turns(
     while let Some(index) = pick(runtime, &remaining, &sched, lineage, &limits, &engines) {
         // Not swap_remove: `pick`'s index tiebreak is the ready order.
         let Runnable { agent, addressed } = remaining.remove(index);
-        // Admitted before this lock: once the gate is fully disabled, or the
-        // service that admitted it retired, it must not start - a cancel
-        // that read `running` already went past it.
+        // Admitted before this lock: once the gate has left Enabled, or an
+        // older generation's admission meets a newer service, it must not
+        // start - a cancel that read `running` already went past it.
         if let Some(turn) = admitted.get(&agent.id)
-            && (runtime.config.noesis.is_disabled() || !turn.is_current())
+            && !turn.may_start(runtime)
         {
             continue;
         }

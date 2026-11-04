@@ -126,6 +126,9 @@ pub(super) async fn record_failure(
         partial: partial.content,
     }));
     commit.push_mutation(Mutation::PutInvocation(invocation));
+    if let Some(record) = ctx.noesis_usage_record() {
+        commit.push_event(record);
+    }
     // The partial usage is spent either way; a locked database is waited out.
     super::contention::write_through_lock(runtime, ctx.agent.id, "the failed invocation", || {
         let hold = runtime.hold();

@@ -14,6 +14,7 @@ use crate::problems::Subject;
 /// A Noesis turn the budget admitted, carried into the task that runs it.
 pub(crate) struct AdmittedTurn {
     pub(crate) lane: NoesisLane,
+    generation: u64,
     charge: Arc<dyn NoesisCharge>,
 }
 
@@ -23,15 +24,17 @@ impl AdmittedTurn {
         self.charge.settle(&Usage::default());
     }
 
-    /// Whether the service that admitted it still runs.
-    pub(crate) fn is_current(&self) -> bool {
-        self.charge.is_current()
+    /// Whether it may still start: the gate is Enabled, the generation it
+    /// was granted under is the current one, and its service still runs.
+    pub(crate) fn may_start(&self, runtime: &Runtime) -> bool {
+        runtime.config.noesis.admits(self.generation) && self.charge.is_current()
     }
 
     /// What the running turn carries: its lane and the charge it spends.
     pub(crate) fn turn(&self) -> NoesisTurn {
         NoesisTurn {
             lane: self.lane,
+            generation: self.generation,
             charge: self.charge.clone(),
         }
     }
@@ -68,7 +71,7 @@ impl Runtime {
                 return Dispatch::Withheld;
             }
         };
-        let Some(budget) = admission.budget else {
+        let Some((budget, generation)) = admission.budget else {
             self.park_reporting(agent.id, "Noesis is not enabled");
             return Dispatch::Withheld;
         };
@@ -78,6 +81,7 @@ impl Runtime {
         match budget.admit(agent, admission.lane) {
             Ok(charge) => Dispatch::Admitted(AdmittedTurn {
                 lane: admission.lane,
+                generation,
                 charge: Arc::from(charge),
             }),
             Err(NoesisRefusal::Busy(reason)) => {
@@ -144,8 +148,12 @@ fn spent_by_turn(
 }
 
 /// What an agent's usage grew by between two readings. Saturating: closing
-/// accounting may replace a provisional figure with a smaller one.
-pub(crate) fn usage_spent(before: &Usage, after: &Usage) -> Usage {
+/// accounting may replace a provisional figure with a smaller one. This is
+/// the one conversion from usage records to a Noesis charge: a turn settles
+/// with it, and the day's spend is rebuilt from the `agent.usage_updated`
+/// records with it, so both count the same completed invocations, failed
+/// invocations and compaction attempts.
+pub fn usage_spent(before: &Usage, after: &Usage) -> Usage {
     debug_assert!(before.cost_usd.is_finite() && after.cost_usd.is_finite());
     debug_assert!(after.cache_write_1h_tokens <= after.cache_write_tokens);
     let estimated = after

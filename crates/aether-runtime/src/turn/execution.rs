@@ -523,6 +523,10 @@ pub(super) async fn run_link(
     }
 
     // ---- 4. invoke the model -------------------------------------------------
+    // The hook runs before this request, whatever awaited since the last check.
+    if stopped_at_model_boundary(runtime, ctx) {
+        return Ok(LinkOutcome::Done(Next::Interrupted));
+    }
     let mut deltas = DeltaStream::new(InvocationId::new(), ctx.stream_seal());
     let invocation_id = deltas.invocation();
     let started_at = now();
@@ -702,6 +706,9 @@ pub(super) async fn run_link(
             duration_ms: (finished_at - started_at).num_milliseconds().max(0) as u64,
         }))
         .mutate(Mutation::PutInvocation(invocation));
+    if let Some(record) = ctx.noesis_usage_record() {
+        commit.push_event(record);
+    }
     if !response.content.is_empty() {
         commit.push_event(ctx.draft(EventKind::AgentMessage {
             role: MessageRole::Assistant,

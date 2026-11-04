@@ -11,7 +11,7 @@ impl NoesisCharge for Free {
         true
     }
 
-    fn record(&self, _spent: &Usage) -> Option<String> {
+    fn before_invocation(&self, _spent: &Usage) -> Option<String> {
         None
     }
 
@@ -56,9 +56,29 @@ fn a_gate_starts_disabled_and_its_clones_share_one_switch() {
     daemon_side.disable();
     daemon_side.drain();
     assert!(
-        matches!(*gate.mode.read(), Mode::Disabled),
+        matches!(gate.state.read().mode, Mode::Disabled),
         "draining a disabled gate leaves it disabled"
     );
+}
+
+#[test]
+fn every_enable_and_disable_starts_a_new_generation() {
+    let gate = NoesisGate::new();
+    gate.enable(Arc::new(Unlimited));
+    let first = gate.generation();
+    assert!(gate.admits(first));
+    gate.drain();
+    assert!(
+        gate.admits(first),
+        "a draining gate lets its admissions start"
+    );
+    gate.disable();
+    assert!(!gate.admits(first), "a disabled gate admits nothing");
+    gate.disable();
+    gate.enable(Arc::new(Unlimited));
+    assert!(gate.is_enabled());
+    assert!(!gate.admits(first), "an older generation is never admitted");
+    assert!(gate.admits(gate.generation()));
 }
 
 #[test]

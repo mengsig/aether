@@ -107,7 +107,10 @@ impl StreamSeal {
         match delta {
             DeltaKind::ToolInput { name, .. } => sealed_fields(name).is_none(),
             DeltaKind::Thinking { .. } => self == Self::Ordinary,
-            _ => true,
+            DeltaKind::TurnStarted { .. }
+            | DeltaKind::Text { .. }
+            | DeltaKind::Accounting { .. }
+            | DeltaKind::TurnFinished => true,
         }
     }
 }
@@ -183,7 +186,103 @@ fn seal_event(
             seal_content(agents, agent, content)?;
             Ok(had_content && content.is_empty())
         }
-        _ => Ok(false),
+        EventKind::InvocationFailed { partial, .. } => {
+            seal_content(agents, agent, partial)?;
+            Ok(false)
+        }
+        // Decided variant by variant, never by `_`: a new event kind does not
+        // compile until someone says whether it carries model content.
+        EventKind::AgentCreated { .. }
+        | EventKind::AgentReady
+        | EventKind::AgentStarted { .. }
+        | EventKind::AgentTurnCompleted { .. }
+        | EventKind::AgentInterrupted { .. }
+        | EventKind::AgentWaiting { .. }
+        | EventKind::AgentResumed { .. }
+        | EventKind::AgentPaused { .. }
+        | EventKind::AgentArchived { .. }
+        | EventKind::AgentBlocked { .. }
+        | EventKind::AgentCompleted { .. }
+        | EventKind::AgentFailed { .. }
+        | EventKind::AgentRestarted { .. }
+        | EventKind::AgentCancelled { .. }
+        | EventKind::AgentConfigUpdated { .. }
+        | EventKind::AgentUsageUpdated { .. }
+        | EventKind::TaskCreated { .. }
+        | EventKind::TaskAssigned { .. }
+        | EventKind::TaskStarted
+        | EventKind::TaskBlocked { .. }
+        | EventKind::TaskUnblocked
+        | EventKind::TaskRequeued { .. }
+        | EventKind::TaskCompleted { .. }
+        | EventKind::TaskFailed { .. }
+        | EventKind::TaskCancelled { .. }
+        | EventKind::ToolStarted { .. }
+        | EventKind::ToolSucceeded { .. }
+        | EventKind::ToolFailed { .. }
+        | EventKind::ToolCancelled { .. }
+        | EventKind::ToolDenied { .. }
+        | EventKind::ToolReplayed { .. }
+        | EventKind::ToolRetried { .. }
+        | EventKind::SnapshotCreated { .. }
+        | EventKind::InvocationCompleted { .. }
+        | EventKind::CompactionRequested { .. }
+        | EventKind::CheckpointCreated { .. }
+        | EventKind::CompactionCompleted { .. }
+        | EventKind::CompactionNative { .. }
+        | EventKind::CompactionFailed { .. }
+        | EventKind::ContextHandoff { .. }
+        | EventKind::MemoryCandidate { .. }
+        | EventKind::MemoryAccepted { .. }
+        | EventKind::MemoryRejected { .. }
+        | EventKind::MemoryForgotten { .. }
+        | EventKind::MemoryRestored { .. }
+        | EventKind::MemoryPinned { .. }
+        | EventKind::MemorySuperseded { .. }
+        | EventKind::MessageSent { .. }
+        | EventKind::InboxDelivered { .. }
+        | EventKind::InboxConsumed { .. }
+        | EventKind::QuestionAsked { .. }
+        | EventKind::ApprovalRequested { .. }
+        | EventKind::ApprovalRuleAdded { .. }
+        | EventKind::ApprovalRuleRevoked { .. }
+        | EventKind::ApprovalResolved { .. }
+        | EventKind::ArtifactCreated { .. }
+        | EventKind::ArtifactDeduplicated { .. }
+        | EventKind::ArtifactEvicted { .. }
+        | EventKind::McpServerConnected { .. }
+        | EventKind::McpServerFailed { .. }
+        | EventKind::RunImported { .. }
+        | EventKind::LeaseGranted { .. }
+        | EventKind::LeaseRenewed { .. }
+        | EventKind::LeaseReleased
+        | EventKind::LeaseExpired { .. }
+        | EventKind::ResourceAcquired { .. }
+        | EventKind::ResourceReleased { .. }
+        | EventKind::ResourceWaiting { .. }
+        | EventKind::ProviderBackoff { .. }
+        | EventKind::ProviderRecovered { .. }
+        | EventKind::ProviderFallback { .. }
+        | EventKind::ProviderQuota { .. }
+        | EventKind::RecoveryClassified { .. }
+        | EventKind::BudgetWarning { .. }
+        | EventKind::DeadlinePassed { .. }
+        | EventKind::BudgetExceeded { .. }
+        | EventKind::RunHardStop { .. }
+        | EventKind::DaemonStarted { .. }
+        | EventKind::DaemonStopped { .. }
+        | EventKind::NoesisSessionCreated { .. }
+        | EventKind::NoesisPhaseChanged { .. }
+        | EventKind::NoesisQuestionPosed { .. }
+        | EventKind::NoesisAnswerRecorded { .. }
+        | EventKind::NoesisPlanUpdated { .. }
+        | EventKind::NoesisProblemPosed { .. }
+        | EventKind::NoesisPracticeConcluded { .. }
+        | EventKind::NoesisJobUpdated { .. }
+        | EventKind::NoesisGraphMerged { .. }
+        | EventKind::NoesisLearnerUpdated { .. }
+        | EventKind::NoesisSettingsChanged { .. }
+        | EventKind::Custom { .. } => Ok(false),
     }
 }
 
@@ -196,7 +295,30 @@ fn seal_mutations(agents: &mut NoesisAgents<'_>, mutations: &mut [Mutation]) -> 
             Mutation::PutInvocation(invocation) => {
                 seal_content(agents, Some(invocation.agent_id), &mut invocation.content)?;
             }
-            _ => {}
+            // Decided variant by variant, never by `_`, as for events.
+            Mutation::RecordEngineSessionOwnership(..)
+            | Mutation::UpsertSchedule(..)
+            | Mutation::RecordScheduleOccurrence(..)
+            | Mutation::UpsertAgent(..)
+            | Mutation::CreateAgent { .. }
+            | Mutation::UpsertTask(..)
+            | Mutation::DeliverInbox(..)
+            | Mutation::SetLease(..)
+            | Mutation::ClearLease(..)
+            | Mutation::PutCheckpoint(..)
+            | Mutation::PutApproval(..)
+            | Mutation::PutApprovalRule(..)
+            | Mutation::RecordToolOutcome(..)
+            | Mutation::RecordSubmission(..)
+            | Mutation::PutMemory(..)
+            | Mutation::RecordMemoryFeedback(..)
+            | Mutation::RetractMemoryFeedback { .. }
+            | Mutation::PutArtifact(..)
+            | Mutation::SetMeta { .. }
+            | Mutation::PutDevice(..)
+            | Mutation::TouchDevice { .. }
+            | Mutation::PutNotification(..)
+            | Mutation::PruneResolvedNotifications { .. } => {}
         }
     }
     Ok(())

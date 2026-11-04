@@ -20,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{Result, Runtime, RuntimeError};
 
 mod admission;
+pub use admission::usage_spent;
 pub(crate) use admission::{AdmittedTurn, Dispatch, run_admitted};
 
 /// The `agents.subsystem` value of every Noesis agent.
@@ -66,9 +67,17 @@ pub trait NoesisCharge: Send + Sync {
     /// Whether the service that admitted the turn still runs; a claim on a
     /// retired one must start nothing.
     fn is_current(&self) -> bool;
-    /// The turn's spend so far, reported at a model boundary so concurrent
-    /// admissions see it; `Some` names the budget it has now spent.
-    fn record(&self, spent: &Usage) -> Option<String>;
+    /// The one hook before every model request of the turn (an API invoke,
+    /// each compaction attempt, each native usage report or bridge request).
+    /// It reports the turn's spend so far so concurrent admissions see it,
+    /// and returns `Some(reason)` (Stop) once the budget is spent or the
+    /// service that admitted the turn is closed or retired.
+    ///
+    /// A native engine (Claude Code, Codex) may finish at most ONE model
+    /// request already in flight when the budget runs out or a disable
+    /// starts: the next usage report or bridge request reaches this hook,
+    /// which interrupts the engine.
+    fn before_invocation(&self, spent: &Usage) -> Option<String>;
     /// Why `model`, or the compactor it would use, may not carry the turn.
     fn refuses_model(&self, model: &ModelRef) -> Option<String>;
     /// Charge what the turn spent and free its slot; later calls do nothing.
@@ -79,6 +88,8 @@ pub trait NoesisCharge: Send + Sync {
 #[derive(Clone)]
 pub(crate) struct NoesisTurn {
     pub(crate) lane: NoesisLane,
+    /// The service generation the turn was admitted under.
+    pub(crate) generation: u64,
     pub(crate) charge: Arc<dyn NoesisCharge>,
 }
 
@@ -86,6 +97,7 @@ impl std::fmt::Debug for NoesisTurn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NoesisTurn")
             .field("lane", &self.lane)
+            .field("generation", &self.generation)
             .finish_non_exhaustive()
     }
 }
@@ -107,11 +119,19 @@ enum Mode {
     Draining,
 }
 
+#[derive(Debug, Clone, Default)]
+struct GateState {
+    mode: Mode,
+    /// Counts the service's lifetimes: every `enable` and `disable` starts a
+    /// new one, and an admission is only good under the one it was granted in.
+    generation: u64,
+}
+
 /// Whether Noesis agents may take new work. Clones share one switch, so the
 /// daemon keeps a clone and the runtime reads the same state.
 #[derive(Debug, Clone, Default)]
 pub struct NoesisGate {
-    mode: Arc<parking_lot::RwLock<Mode>>,
+    state: Arc<parking_lot::RwLock<GateState>>,
 }
 
 impl NoesisGate {
@@ -121,34 +141,53 @@ impl NoesisGate {
     }
 
     pub fn enable(&self, budget: Arc<dyn NoesisBudget>) {
-        *self.mode.write() = Mode::Enabled(budget);
+        let mut state = self.state.write();
+        state.mode = Mode::Enabled(budget);
+        state.generation += 1;
     }
 
     /// Refuse new work; turns already running continue. A disabled gate stays disabled.
     pub fn drain(&self) {
-        let mut mode = self.mode.write();
-        if matches!(*mode, Mode::Enabled(_)) {
-            *mode = Mode::Draining;
+        let mut state = self.state.write();
+        if matches!(state.mode, Mode::Enabled(_)) {
+            state.mode = Mode::Draining;
         }
     }
 
     pub fn disable(&self) {
-        *self.mode.write() = Mode::Disabled;
+        let mut state = self.state.write();
+        state.mode = Mode::Disabled;
+        state.generation += 1;
     }
 
     pub fn is_enabled(&self) -> bool {
-        matches!(*self.mode.read(), Mode::Enabled(_))
+        matches!(self.state.read().mode, Mode::Enabled(_))
     }
 
     /// Neither admitting nor draining: no Noesis turn may start at all.
     pub fn is_disabled(&self) -> bool {
-        matches!(*self.mode.read(), Mode::Disabled)
+        matches!(self.state.read().mode, Mode::Disabled)
     }
 
-    /// The budget that admits turns, only while the gate is Enabled.
-    fn budget(&self) -> Option<Arc<dyn NoesisBudget>> {
-        match &*self.mode.read() {
-            Mode::Enabled(budget) => Some(budget.clone()),
+    /// The current service generation.
+    pub fn generation(&self) -> u64 {
+        self.state.read().generation
+    }
+
+    /// Whether an admission granted under `generation` may still start work:
+    /// the gate has not been disabled, and no disable or restart has begun
+    /// a newer generation. A draining gate lets what it already admitted start.
+    pub fn admits(&self, generation: u64) -> bool {
+        let state = self.state.read();
+        !matches!(state.mode, Mode::Disabled) && state.generation == generation
+    }
+
+    /// The budget that admits turns and the generation it admits under, read
+    /// together, only while the gate is Enabled.
+    fn budget(&self) -> Option<(Arc<dyn NoesisBudget>, u64)> {
+        let state = self.state.read();
+        match &state.mode {
+            Mode::Enabled(budget) => Some((budget.clone(), state.generation)),
             Mode::Disabled | Mode::Draining => None,
         }
     }
@@ -157,8 +196,9 @@ impl NoesisGate {
 /// A Noesis agent as the guard found it.
 pub(crate) struct NoesisAdmission {
     pub(crate) lane: NoesisLane,
-    /// Present only while the gate is Enabled; `None` refuses new work.
-    pub(crate) budget: Option<Arc<dyn NoesisBudget>>,
+    /// Present only while the gate is Enabled, with the generation it was
+    /// read under; `None` refuses new work.
+    pub(crate) budget: Option<(Arc<dyn NoesisBudget>, u64)>,
 }
 
 impl Runtime {
@@ -364,7 +404,21 @@ pub(crate) fn boundary_stop(runtime: &Runtime, ctx: &crate::turn::TurnCtx) -> Op
     if stops_at_model_boundary(runtime, Some(turn.lane)) {
         return Some("Noesis is not enabled".to_owned());
     }
-    turn.charge.record(&ctx.turn_usage)
+    turn.charge.before_invocation(&ctx.turn_usage)
+}
+
+/// Why a Noesis turn may not start its engine now: it is not admitted under
+/// the current generation of an Enabled gate, or the hook says stop. Asked
+/// right before the engine starts, after every await that preceded it.
+pub(crate) fn engine_start_refusal(
+    runtime: &Runtime,
+    ctx: &crate::turn::TurnCtx,
+) -> Option<String> {
+    let turn = ctx.noesis.as_ref()?;
+    if !runtime.config.noesis.admits(turn.generation) {
+        return Some("Noesis was disabled or restarted since this turn was admitted".to_owned());
+    }
+    boundary_stop(runtime, ctx)
 }
 
 /// At a native engine's model boundary: interrupt the turn when

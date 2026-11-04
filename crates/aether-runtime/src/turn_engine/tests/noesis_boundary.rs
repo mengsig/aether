@@ -14,7 +14,7 @@ impl NoesisCharge for Metered {
         true
     }
 
-    fn record(&self, spent: &aether_core::model::Usage) -> Option<String> {
+    fn before_invocation(&self, spent: &aether_core::model::Usage) -> Option<String> {
         let micros = (spent.cost_usd * 1e6).round() as u64;
         self.reported_micros.store(micros, Ordering::SeqCst);
         (micros >= self.limit_micros).then(|| "the Noesis budget is spent".to_owned())
@@ -54,6 +54,7 @@ async fn noesis_turn(
     });
     let turn = NoesisTurn {
         lane,
+        generation: 1,
         charge: charge.clone(),
     };
     ctx.noesis = Some(turn.clone());

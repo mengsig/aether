@@ -480,3 +480,108 @@ async fn a_sealed_tool_that_needs_an_approval_fails_rather_than_parks() {
         "the answer is nowhere in the log"
     );
 }
+
+/// A response whose two tool calls share one id: the invocation fails after
+/// its whole `noesis_ask` block was streamed, and the failure keeps it as the partial.
+fn ask_then_failed_invocation() -> aether_model::testing::ScriptedResponse {
+    let mut events = thinking_then_calls().expect("scripted");
+    for event in &mut events {
+        if let StreamEvent::BlockStart {
+            block: BlockStart::ToolUse { id, .. },
+            ..
+        } = event
+        {
+            *id = "call_dup".into();
+        }
+    }
+    Ok(events)
+}
+
+#[tokio::test]
+async fn a_stream_that_fails_after_a_sealed_block_leaks_nothing_anywhere() {
+    let gate = NoesisGate::new();
+    gate.enable(Recording::new(Answer::Admit));
+    let h = noesis_harness(vec![ask_then_failed_invocation()], &gate, |_| {}, |_| {}).await;
+    let mut bus = h.runtime.subscribe();
+    let (agent, _) = h
+        .runtime
+        .create_agent(noesis_spec("noesis.tutor", "ask"), Actor::user())
+        .expect("created");
+    h.wait_until(agent.id, |_| true).await;
+    h.wait_for("the invocation failed", || {
+        h.store
+            .events(0, 10_000, &EventFilter::for_agent(agent.id))
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e.kind, EventKind::InvocationFailed { .. }))
+    })
+    .await;
+
+    let events = h.store.events(0, 10_000, &EventFilter::default()).unwrap();
+    let failed = events
+        .iter()
+        .find_map(|e| match &e.kind {
+            EventKind::InvocationFailed { partial, .. } => Some(partial.clone()),
+            _ => None,
+        })
+        .expect("failed");
+    assert_eq!(
+        tool_use_input(&failed, "noesis_ask"),
+        &json!({"question": "2+2?", "answer_key": SEALED, "explanation": SEALED}),
+        "the partial keeps the shape and seals the values"
+    );
+
+    let mut published = String::new();
+    let mut deltas = Vec::new();
+    while let Ok(message) = bus.try_recv() {
+        match message {
+            BusMessage::Event(event) => {
+                published.push_str(&serde_json::to_string(&*event).unwrap());
+            }
+            BusMessage::Delta {
+                agent: of,
+                invocation,
+                seq,
+                delta,
+            } if of == agent.id => {
+                published.push_str(&format!("{delta:?}"));
+                deltas.push((invocation, seq, delta));
+            }
+            _ => {}
+        }
+    }
+    assert_gapless(&deltas);
+    let replay = serde_json::to_string(&aether_core::replay::build(agent.id, &events)).unwrap();
+    let stored = serde_json::to_string(&events).unwrap();
+    for (place, text) in [
+        ("events", stored),
+        ("subscription", published),
+        ("replay", replay),
+    ] {
+        for secret in ["four is B", "the secret reasoning", "\"answer_key\":\"B\""] {
+            assert!(!text.contains(secret), "{place} leaked {secret}");
+        }
+    }
+    assert!(records_leak_free(&h, agent.id));
+}
+
+/// No stored snapshot or invocation holds a sealed value or Noesis thinking.
+fn records_leak_free(h: &Harness, agent: AgentId) -> bool {
+    let text = records_text_any(h, agent);
+    !text.contains("four is B") && !text.contains("the secret reasoning")
+}
+
+fn records_text_any(h: &Harness, agent: AgentId) -> String {
+    let mut records = Vec::new();
+    for event in h
+        .store
+        .events(0, 10_000, &EventFilter::for_agent(agent))
+        .unwrap()
+    {
+        if let EventKind::SnapshotCreated { snapshot, .. } = event.kind {
+            let found = h.store.snapshot(snapshot).unwrap().expect("snapshot");
+            records.push(serde_json::to_value(found.messages).unwrap());
+        }
+    }
+    serde_json::to_string(&records).unwrap()
+}
