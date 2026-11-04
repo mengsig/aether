@@ -243,8 +243,12 @@ export class Connection {
     if (idle == null) return;
     const seconds = seq(idle, "welcome.idle_timeout_secs");
     invariant(seconds >= 1, "an idle timeout is at least a second");
+    const generation = this.generation;
     this.heartbeat = setInterval(() => {
-      this.request(aether.ping()).catch((error: unknown) => this.failed(error));
+      this.request(aether.ping()).catch((error: unknown) => {
+        // A ping failed by the teardown of its own link is already handled.
+        if (generation === this.generation) this.failed(error);
+      });
     }, Math.max(250, Math.min(20_000, seconds * 500)));
   }
 

@@ -17,4 +17,7 @@ export function subscriptionId(reply: Json): number {
   return seq(replyObject(reply, "subscribed").id, "subscribed.id");
 }
 
+/** Failures that say nothing about the entity asked for: whatever needed it still does. */
+export const LINK_LOST: ReadonlySet<string> = new Set(["disconnected", "not_connected", "timeout"]);
+
 export const RESYNC_CODES: ReadonlySet<string> = new Set(["history_expired", "not_found"]);

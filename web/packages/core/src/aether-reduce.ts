@@ -26,7 +26,7 @@ export function applyEvent(state: AetherConnState, event: aether.Event): AetherC
     if (invocation && stream) next = withStream(next, invocation, { ...stream, text: "", thinking: "" });
   }
   if ((type === "invocation.completed" || type === "invocation.failed") && invocation) next = withStream(next, invocation, undefined);
-  if (type === "noesis.settings_changed") next = { ...next, noesis: { ...(next.noesis ?? {}), ...pick(kind, ["settings", "effective"]) } };
+  if (type === "noesis.settings_changed") next = { ...next, noesis: withNoesisSettings(next.noesis, kind) };
   invariant(next.lastSeq === at, "an applied event advances last_seq to its own seq");
   return next;
 }
@@ -41,6 +41,14 @@ function markStale(state: AetherConnState, type: string, agent: string | undefin
     ...(agentStale ? { staleAgents: [...state.staleAgents, agent] } : {}),
     ...(attentionStale ? { staleAttention: true } : {}),
   };
+}
+
+/** `noesis_status.enabled` is the effective master switch, so a settings event carries it too. */
+function withNoesisSettings(status: Json | null, kind: Json): Json {
+  const changed = pick(kind, ["settings", "effective"]);
+  const effective = object(changed.effective ?? status?.effective ?? {}, "noesis effective settings");
+  const enabled = effective["noesis.enabled"];
+  return { ...(status ?? {}), ...changed, ...(typeof enabled === "boolean" ? { enabled } : {}) };
 }
 
 function pick(source: Json, keys: readonly string[]): Json {

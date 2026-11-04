@@ -30,3 +30,18 @@ export class Debouncer {
     return this.timers.size;
   }
 }
+
+/** Runs tasks of one key one after another, so an older reply never lands after a newer one. */
+export class KeyedSerial {
+  private readonly tails = new Map<string, Promise<void>>();
+
+  /** `task` must handle its own failures; a rejection here would be a programming error. */
+  run(key: string, task: () => Promise<void>): Promise<void> {
+    const next = (this.tails.get(key) ?? Promise.resolve()).then(task);
+    this.tails.set(key, next);
+    invariant(this.tails.size <= 10_000, "keyed tasks settle and are forgotten");
+    return next.finally(() => {
+      if (this.tails.get(key) === next) this.tails.delete(key);
+    });
+  }
+}

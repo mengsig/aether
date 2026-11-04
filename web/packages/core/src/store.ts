@@ -72,6 +72,9 @@ export interface ArchonConnState {
   readonly details: Readonly<Record<string, Json>>;
   readonly feed: readonly Json[];
   readonly outbox: readonly Submission[];
+  /** Refreshes an applied change asked for; they survive reconnects until done. */
+  readonly staleSnapshots: boolean;
+  readonly staleItems: readonly string[];
 }
 
 export interface Report { readonly id: number; readonly conn?: ConnId; readonly message: string; readonly code?: string }
@@ -93,6 +96,7 @@ export const EMPTY_AETHER: AetherConnState = Object.freeze({
 
 export const EMPTY_ARCHON: ArchonConnState = Object.freeze({
   changeCursor: null, feedSeq: null, items: {}, itemsAsOf: null, graph: null, details: {}, feed: [], outbox: [],
+  staleSnapshots: false, staleItems: [],
 });
 
 export const INITIAL_STATE: State = Object.freeze({

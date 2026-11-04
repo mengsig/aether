@@ -180,3 +180,51 @@ describe("Archon change cursor (CONTRACTS.md §5.3)", () => {
     expect(daemon.commands("get_item")).toEqual([expect.objectContaining({ item: "qi_2" })]);
   });
 });
+
+describe("Archon resync, second review", () => {
+  const change = (n: number, item: string, state: string) => ({ frame: "change", sub: 6, change: { seq: n, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item, state } } });
+
+  it("rereads snapshots after a reconnect when an unknown item's change preceded it", async () => {
+    const { daemon, manager } = setup(archond());
+    manager.start();
+    await settle();
+    daemon.push(change(130, "qi_new", "queued"));
+    daemon.drop(1006);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(daemon.commands("subscribe_changes").map((c) => c.after)).toEqual([null, 130]);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(daemon.commands("task_graph")).toHaveLength(2);
+  });
+
+  it("refetches an on-screen item after a reconnect when its change preceded it", async () => {
+    const { daemon, manager } = setup(archond());
+    manager.start();
+    await settle();
+    manager.showItems(CONN, ["qi_1"]);
+    daemon.push(change(130, "qi_1", "running"));
+    daemon.drop(1006);
+    await vi.advanceTimersByTimeAsync(300 + 250);
+    expect(daemon.commands("get_item")).toEqual([expect.objectContaining({ item: "qi_1" })]);
+  });
+
+  it("replays collected changes onto the graph even when the summaries reread fails", async () => {
+    const graphAt125 = { ...F.task_graph, data: { ...F.task_graph.data, as_of: 125 } };
+    const { store, daemon, manager } = setup(archond({
+      task_graph: () => {
+        if (daemon.commands("task_graph").length === 1) return { ok: F.task_graph };
+        daemon.push(change(131, "qi_1", "failed"));
+        return { ok: graphAt125 };
+      },
+      list_item_summaries: () => (daemon.commands("list_item_summaries").length === 1 ? { ok: F.summaries_24 } : { err: { code: "internal", message: "boom" } }),
+    }));
+    manager.start();
+    await settle();
+    daemon.push(change(130, "qi_new", "queued"));
+    await vi.advanceTimersByTimeAsync(250);
+    const state = store.get().archon[CONN];
+    expect(state?.graph?.asOf).toBe(125);
+    expect(state?.graph?.nodes.qi_1?.state).toBe("failed");
+    expect(store.get().reports).toEqual([expect.objectContaining({ message: expect.stringContaining("boom") })]);
+  });
+});
+

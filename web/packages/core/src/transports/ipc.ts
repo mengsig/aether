@@ -23,6 +23,7 @@ export function ipcTransport(bridge: DesktopBridge, report: (message: string) =>
         if (!open) return;
         open = false;
         for (const unsubscribe of unsubscribes.splice(0)) unsubscribe();
+        bridge.close(conn).catch((closeError: unknown) => report(`Could not close local connection ${conn}: ${errorText(closeError)}`));
         onClose(CLOSE_BRIDGE_FAILED, `Desktop bridge call failed: ${errorText(error)}`);
       };
       const deliver = (frame: unknown) => { if (open) onFrame(frame); };

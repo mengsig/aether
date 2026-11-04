@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Json } from "./guards.ts";
+import { applyEvent } from "./aether-reduce.ts";
 import { ConnectionManager } from "./manager.ts";
-import { INITIAL_STATE, Store } from "./store.ts";
+import { EMPTY_AETHER, INITIAL_STATE, Store } from "./store.ts";
 import { FakeDaemon, type Handler } from "./fixtures/fake-daemon.ts";
 import F from "./fixtures/aether-frames.json";
 
@@ -269,3 +270,54 @@ describe("Aether resync review regressions", () => {
     expect(store.get().connections[CONN_A]?.state).toBe("pairing");
   });
 });
+
+describe("Aether resync, second review", () => {
+  const event = (n: number, type: string, agent: string, extra: Json = {}) => ({ frame: "event", sub: 1, event: { seq: n, id: `evt_${n}`, at: "2026-11-04T03:02:00Z", actor: { actor: "system" }, kind: { type, ...extra }, agent_id: agent } });
+
+  it("does not fail the connection twice when a ping dies with its link", async () => {
+    const idle = { ...F.welcome_a, data: { ...F.welcome_a.data, idle_timeout_secs: 1 } };
+    const { store, daemon, manager } = setup(healthy({ hello: () => ({ ok: idle }), ping: () => undefined }));
+    manager.start();
+    await settle();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(daemon.commands("ping")).toHaveLength(1);
+    daemon.drop(4401, "revoked");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(store.get().connections[CONN_A]?.state).toBe("pairing");
+    expect(daemon.opens).toBe(1);
+  });
+
+  it("adds a live-created root agent to the root index", async () => {
+    const created = { ...F.tree.data.nodes[F.agent as keyof typeof F.tree.data.nodes].agent, id: "agt_new" };
+    const { store, daemon, manager } = setup(healthy({ get_agent: () => ({ ok: { reply: "agent", data: created } }) }));
+    manager.start();
+    await settle();
+    daemon.push(event(4, "agent.created", "agt_new"));
+    await vi.advanceTimersByTimeAsync(250);
+    expect(store.get().aether[CONN_A]?.roots).toEqual([F.agent, "agt_new"]);
+    expect(store.get().aether[CONN_A]?.agents.agt_new).toEqual(created);
+  });
+
+  it("sends a second refresh of one agent only after the first has answered", async () => {
+    const { daemon, manager } = setup(healthy({ get_agent: () => undefined }));
+    manager.start();
+    await settle();
+    daemon.push(event(4, "agent.started", F.agent));
+    await vi.advanceTimersByTimeAsync(250);
+    daemon.push(event(5, "agent.completed", F.agent));
+    await vi.advanceTimersByTimeAsync(250);
+    expect(daemon.commands("get_agent")).toHaveLength(1);
+    const first = daemon.commands("get_agent")[0];
+    daemon.push({ frame: "reply", id: first?.req, result: { Ok: { reply: "agent", data: F.tree.data.nodes[F.agent as keyof typeof F.tree.data.nodes].agent } } });
+    await settle();
+    expect(daemon.commands("get_agent")).toHaveLength(2);
+  });
+
+  it("derives noesis enabled from the effective settings an event carries", () => {
+    const state = { ...EMPTY_AETHER, lastSeq: 1, noesis: { enabled: false, settings: {}, effective: { "noesis.enabled": false } } };
+    const next = applyEvent(state, { seq: 2, id: "e2", at: "2026-11-04T03:00:00Z", actor: { actor: "system" }, kind: { type: "noesis.settings_changed", settings: { "noesis.enabled": true }, effective: { "noesis.enabled": true } } } as never);
+    expect(next.noesis).toMatchObject({ enabled: true, effective: { "noesis.enabled": true } });
+    expect(next.lastSeq).toBe(2);
+  });
+});
+

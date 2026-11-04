@@ -3,10 +3,10 @@
 
 import { aether, type ConnId } from "@aether-ui/protocol";
 import { applyDelta, applyEvent, discardStreams, endRecovery, mergeEntries } from "./aether-reduce.ts";
-import { Debouncer } from "./debounce.ts";
+import { Debouncer, KeyedSerial } from "./debounce.ts";
 import { codeOf } from "./errors.ts";
 import { array, errorText, invariant, object, seq, string, type Json } from "./guards.ts";
-import { RESYNC_CODES, replyData, replyObject, subscriptionId } from "./replies.ts";
+import { LINK_LOST, RESYNC_CODES, replyData, replyObject, subscriptionId } from "./replies.ts";
 import type { Command } from "./rpc.ts";
 import { EMPTY_AETHER, type AetherConnState, type Store } from "./store.ts";
 
@@ -23,8 +23,6 @@ export interface SyncContext {
 export const MAX_DELTA_AGENTS = 3;
 const REFETCH_MS = 250;
 const MAX_PAGES = 100;
-/** Failures that say nothing about the entity: it stays stale for the next ready connection. */
-const LINK_LOST: ReadonlySet<string> = new Set(["disconnected", "not_connected", "timeout"]);
 /** Bounds one reconciliation of delta subscriptions: each step adds or drops one. */
 const MAX_DELTA_STEPS = 16;
 
@@ -37,6 +35,7 @@ export class AetherSync {
   private readonly rereading = new Map<string, Promise<void>>();
   private readonly again = new Set<string>();
   private readonly refetch = new Debouncer(REFETCH_MS);
+  private readonly serial = new KeyedSerial();
   private reconciling: Promise<void> = Promise.resolve();
   private running = false;
 
@@ -123,8 +122,8 @@ export class AetherSync {
   /** Refetches what applied events made stale; markers live in the store, so a reconnect resumes them. */
   private scheduleStale(): void {
     const { staleAgents, staleAttention } = this.state;
-    for (const agent of staleAgents) this.refetch.schedule(`agent:${agent}`, () => void this.refetchAgent(agent));
-    if (staleAttention) this.refetch.schedule("attention", () => void this.refetchAttention());
+    for (const agent of staleAgents) this.refetch.schedule(`agent:${agent}`, () => void this.serial.run(`agent:${agent}`, () => this.refetchAgent(agent)));
+    if (staleAttention) this.refetch.schedule("attention", () => void this.serial.run("attention", () => this.refetchAttention()));
     invariant(this.refetch.pending >= Math.min(1, staleAgents.length + Number(staleAttention)), "stale entities have a refetch scheduled");
   }
 
@@ -249,7 +248,7 @@ export class AetherSync {
     try {
       const value = replyObject(await this.ctx.request(aether.getAgent({ id: agent })), "agent") as unknown as aether.Agent;
       invariant(value.id === agent, "get_agent answers the agent asked for");
-      this.ctx.store.updateAether(this.ctx.conn, (s) => ({ ...s, agents: { ...s.agents, [value.id]: value } }));
+      this.ctx.store.updateAether(this.ctx.conn, (s) => withAgent(s, value));
     } catch (error) {
       if (!LINK_LOST.has(codeOf(error) ?? "")) return this.ctx.store.report(`Could not refresh agent ${agent}: ${errorText(error)}`, this.ctx.conn, codeOf(error));
       this.ctx.store.updateAether(this.ctx.conn, (s) => (s.staleAgents.includes(agent) ? s : { ...s, staleAgents: [...s.staleAgents, agent] }));
@@ -267,4 +266,14 @@ export class AetherSync {
       this.ctx.store.updateAether(this.ctx.conn, (s) => ({ ...s, staleAttention: true }));
     }
   }
+}
+
+/** Installs a refetched agent row and keeps the root index in step with its parent. */
+function withAgent(state: AetherConnState, agent: aether.Agent): AetherConnState {
+  string(agent.id, "agent.id");
+  const isRoot = !agent.parent;
+  const listed = state.roots.includes(agent.id);
+  const roots = isRoot && !listed ? [...state.roots, agent.id] : !isRoot && listed ? state.roots.filter((id) => id !== agent.id) : state.roots;
+  invariant(roots.includes(agent.id) === isRoot, "an agent is a root exactly when it has no parent");
+  return { ...state, agents: { ...state.agents, [agent.id]: agent }, roots };
 }

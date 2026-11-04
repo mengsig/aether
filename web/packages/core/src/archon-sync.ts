@@ -1,10 +1,10 @@
 // Keeps one archond connection's cache current (CONTRACTS.md §5.3): change and
 // feed cursors never mixed, per-snapshot `as_of`, and the protocol 23 fallback.
 
-import { Debouncer } from "./debounce.ts";
+import { Debouncer, KeyedSerial } from "./debounce.ts";
 import { codeOf } from "./errors.ts";
 import { array, errorText, invariant, object, seq, string, type Json } from "./guards.ts";
-import { replyData, replyObject, subscriptionId } from "./replies.ts";
+import { LINK_LOST, replyData, replyObject, subscriptionId } from "./replies.ts";
 import type { SyncContext } from "./aether-sync.ts";
 import { EMPTY_ARCHON, type ArchonConnState, type ArchonGraph, type ArchonItem } from "./store.ts";
 
@@ -77,6 +77,7 @@ export class ArchonSync {
   private readonly refetch = new Debouncer(ENTITY_REFETCH_MS);
   private readonly fallback = new Debouncer(FALLBACK_REFETCH_MS);
   private readonly structure = new Debouncer(ENTITY_REFETCH_MS);
+  private readonly serial = new KeyedSerial();
   /** Every change applied while snapshots are reread, replayed onto them once installed. */
   private collecting: Json[] | null = null;
   private rereadAgain = false;
@@ -122,6 +123,7 @@ export class ArchonSync {
     this.buffer = null;
     for (const frame of buffered) this.onChange(frame);
     await this.subscribeFeed();
+    this.scheduleStale();
   }
 
   /** §5.3.4: a fresh task_graph, then changes after its as_of. */
@@ -158,10 +160,18 @@ export class ArchonSync {
     const before = this.state;
     const { state, item, unknown } = applyChange(before, change);
     if (state === before) return;
-    this.set(() => state);
+    const detail = item !== undefined && this.onScreen.has(item) && !state.staleItems.includes(item);
+    // Marked with the cursor advance, so a reconnect cannot skip what this change asked for.
+    this.set(() => ({ ...state, ...(unknown ? { staleSnapshots: true } : {}), ...(detail ? { staleItems: [...state.staleItems, item] } : {}) }));
     this.collecting?.push(change);
-    if (unknown) this.structure.schedule("snapshots", () => void this.rereadSnapshots().catch((error: unknown) => this.fail("the queue", error)));
-    if (item && this.onScreen.has(item)) this.refetch.schedule(item, () => void this.refetchItem(item));
+    this.scheduleStale();
+  }
+
+  private scheduleStale(): void {
+    const { staleSnapshots, staleItems } = this.state;
+    if (staleSnapshots) this.structure.schedule("snapshots", () => void this.rereadSnapshots());
+    for (const item of staleItems) this.refetch.schedule(item, () => void this.serial.run(item, () => this.refetchItem(item)));
+    invariant(this.changeSub !== null || (!staleSnapshots && staleItems.length === 0), "stale entities come from a change subscription");
   }
 
   onFeed(frame: Json): void {
@@ -192,7 +202,8 @@ export class ArchonSync {
     await this.readSummaries();
     // Changes at or below every snapshot's as_of are already in all of them.
     const asOfs = [this.state.graph?.asOf, this.state.itemsAsOf].filter((value): value is number => typeof value === "number");
-    if (asOfs.length > 0) this.set((s) => ({ ...s, changeCursor: Math.min(...asOfs) }));
+    // Fresh snapshots supersede a pending reread; buffered changes re-mark what they need.
+    if (asOfs.length > 0) this.set((s) => ({ ...s, changeCursor: Math.min(...asOfs), staleSnapshots: false }));
   }
 
   /** A change named an entity no snapshot holds: reread both, keeping the cursor. */
@@ -202,20 +213,23 @@ export class ArchonSync {
       return;
     }
     invariant(this.changeSub !== null, "snapshots are reread only while changes are subscribed");
+    this.set((s) => ({ ...s, staleSnapshots: false }));
     const collected: Json[] = [];
     this.collecting = collected;
     try {
       await this.readGraph();
       await this.readSummaries();
-      // Changes that arrived while the snapshots were read may be newer than their as_of.
-      this.set((s) => collected.reduce(patchSnapshots, s));
+    } catch (error) {
+      if (LINK_LOST.has(codeOf(error) ?? "")) this.set((s) => ({ ...s, staleSnapshots: true }));
+      else this.fail("the queue", error);
     } finally {
-      this.collecting = null;
+      // Whichever snapshots were installed get the changes that arrived while they were read.
+      this.set((s) => collected.reduce(patchSnapshots, s));
+      if (this.collecting === collected) this.collecting = null;
     }
-    if (this.rereadAgain) {
-      this.rereadAgain = false;
-      await this.rereadSnapshots();
-    }
+    if (!this.rereadAgain || this.changeSub === null) return;
+    this.rereadAgain = false;
+    await this.rereadSnapshots();
   }
 
   private async readGraph(): Promise<void> {
@@ -242,12 +256,15 @@ export class ArchonSync {
     this.set((s) => ({ ...s, items, itemsAsOf: asOf }));
   }
 
+  /** Clears the marker first; a lost link puts it back for the next ready, a daemon answer does not. */
   private async refetchItem(item: string): Promise<void> {
+    this.set((s) => ({ ...s, staleItems: s.staleItems.filter((id) => id !== item) }));
     try {
       const detail = replyObject(await this.ctx.request({ cmd: "get_item", item }), "item");
       this.set((s) => ({ ...s, details: { ...s.details, [item]: detail } }));
     } catch (error) {
-      this.fail(`item ${item}`, error);
+      if (!LINK_LOST.has(codeOf(error) ?? "")) return this.fail(`item ${item}`, error);
+      this.set((s) => (s.staleItems.includes(item) ? s : { ...s, staleItems: [...s.staleItems, item] }));
     }
   }
 

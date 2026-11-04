@@ -195,6 +195,7 @@ describe("ipc", () => {
     link.send({ cmd: "status", req: 1 });
     await tick();
     expect(onClose).toHaveBeenCalledWith(1011, expect.stringContaining("main crashed"));
+    expect(desktop.close).toHaveBeenCalledWith("c1");
     expect(() => link.send({ cmd: "status", req: 2 })).toThrow(/open/);
   });
 
