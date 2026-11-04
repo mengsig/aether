@@ -404,7 +404,6 @@ fn asset<B>(path: &str, request: &Request<B>) -> Result<Response<Body>, Refusal>
         .ok_or_else(|| Refusal::new(HttpErrorCode::NotFound, "no such file"))?;
     let etag = HeaderValue::from_str(&assets::etag(&asset))
         .map_err(|_| Refusal::new(HttpErrorCode::Internal, "could not name the file's version"))?;
-    let caching = assets::cache_control(&asset, request.uri().query());
     let fresh = request
         .headers()
         .get_all(IF_NONE_MATCH)
@@ -414,7 +413,10 @@ fn asset<B>(path: &str, request: &Request<B>) -> Result<Response<Body>, Refusal>
     let mut response = Response::new(Body::default());
     let headers = response.headers_mut();
     headers.insert(ETAG, etag);
-    headers.insert(CACHE_CONTROL, HeaderValue::from_static(caching));
+    headers.insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static(assets::CACHE_CONTROL),
+    );
     if fresh {
         *response.status_mut() = StatusCode::NOT_MODIFIED;
         return Ok(response);

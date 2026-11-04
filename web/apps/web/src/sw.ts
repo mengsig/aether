@@ -18,6 +18,8 @@ const PRECACHE = "__AETHER_PRECACHE__" as unknown as readonly string[];
 const VERSION = "__AETHER_VERSION__";
 if (!Array.isArray(PRECACHE) || VERSION.startsWith("__")) throw new Error("This service worker was not built: it has no precache list");
 const CACHE_PREFIX = "aether-web-";
+// The retired phone app's worker had the same URL and scope; its shell caches are left to clear.
+const LEGACY_CACHE_PREFIX = "aether-shell-";
 const CACHE = `${CACHE_PREFIX}${VERSION}`;
 const LIVE_PREFIXES = ["/api", "/ws", "/archon"];
 
@@ -35,7 +37,7 @@ worker.addEventListener("install", (event) => {
 
 worker.addEventListener("activate", (event) => {
   // Activation comes only once no tab runs an older build, so its caches have no reader left.
-  const stale = (name: string) => name.startsWith(CACHE_PREFIX) && name !== CACHE;
+  const stale = (name: string) => (name.startsWith(CACHE_PREFIX) && name !== CACHE) || name.startsWith(LEGACY_CACHE_PREFIX);
   event.waitUntil(caches.keys().then((names) => Promise.all(names.filter(stale).map((name) => caches.delete(name)))));
 });
 
