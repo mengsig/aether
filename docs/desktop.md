@@ -185,4 +185,5 @@ shown in a dialog.
 
 The workflow's token is read-only except in the publish job, which may write
 release assets. The signing secrets reach only the macOS build step, and only
-on a push or a manual run: never on a pull request, whoever opened it.
+on a push to `main`, `next` or a release tag. A pull request, whoever opened
+it, and a manual run, which can name any branch, build unsigned.

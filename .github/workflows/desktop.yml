@@ -3,7 +3,8 @@ name: desktop
 # Packages the desktop app (docs/desktop.md). Linux: AppImage and deb, then the deb is installed
 # and the app launched headless as a smoke test. macOS: dmg and zip, opt-in like ci-macos (the
 # ci:macos label, a manual run, or a tag when the DESKTOP_MACOS variable is "true"). Signing
-# secrets reach only the macOS job, and only on a push or a manual run, never a pull request.
+# secrets reach only the macOS build step, and only on a push to main, next or a release tag:
+# never on a pull request or a manual run, which can name any branch.
 on:
   pull_request:
     branches: [main, next]
@@ -31,9 +32,9 @@ on:
 permissions:
   contents: read
 
-# As in ci-macos: another label than ci:macos gets a group of its own and cancels nothing.
+# A label run gets a group of its own: it skips the linux job, so it must not cancel one.
 concurrency:
-  group: desktop-${{ github.ref }}-${{ github.event.action == 'labeled' && github.event.label.name != 'ci:macos' && github.run_id || 'run' }}
+  group: desktop-${{ github.ref }}-${{ github.event.action == 'labeled' && github.run_id || 'run' }}
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 defaults:
@@ -119,14 +120,14 @@ jobs:
           (cd ../.. && npm ci --no-audit --no-fund)
           npm ci --no-audit --no-fund
       # Unset secrets are empty, and build/signing.ts treats empty as absent: the build is then
-      # unsigned and named so. A pull request never gets them, whoever opened it.
+      # unsigned and named so. Only a push (main, next or a tag, per `on:`) gets them.
       - name: build the dmg and zip
         env:
-          CSC_LINK: ${{ github.event_name != 'pull_request' && secrets.CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.CSC_KEY_PASSWORD || '' }}
-          APPLE_ID: ${{ github.event_name != 'pull_request' && secrets.APPLE_ID || '' }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ github.event_name != 'pull_request' && secrets.APPLE_TEAM_ID || '' }}
+          CSC_LINK: ${{ github.event_name == 'push' && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ github.event_name == 'push' && secrets.CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ github.event_name == 'push' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ github.event_name == 'push' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ github.event_name == 'push' && secrets.APPLE_TEAM_ID || '' }}
         run: npm run package -- --target mac
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -134,6 +135,7 @@ jobs:
           path: |
             target/desktop/*.dmg
             target/desktop/*.zip
+            target/desktop/*.blockmap
             target/desktop/latest-mac.yml
           if-no-files-found: error
 
