@@ -44,9 +44,12 @@ impl<E: Engine> Teaching<'_, E> {
             Ok((content, ends)) => (content, false, ends),
             Err(problem) => (json!({ "error": problem }), true, None),
         };
-        // A result never repeats a sealed text; refusals are ours and quote none.
-        if !is_error {
-            let mut secrets = self.live_secrets(session)?;
+        // A result never repeats a committed sealed text, even where a refusal
+        // quotes the model; a refused call committed nothing of its own.
+        let mut secrets = self.live_secrets(session)?;
+        if is_error {
+            seal::seal_refusal(&mut content, &secrets);
+        } else {
             secrets.extend(tools::sealed_texts(&call.name, &call.input).unwrap_or_default());
             seal::scrub(&mut content, &secrets);
         }

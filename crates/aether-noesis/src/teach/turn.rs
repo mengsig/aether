@@ -1,6 +1,8 @@
 //! The turn loop: model steps admitted against the budget, their tool calls
 //! run, and results delivered in order, even after a failed delivery.
 
+use serde_json::Value;
+
 use super::db;
 use super::engine::{Engine, EngineError, Input, Step, ToolResult};
 use super::service::{
@@ -107,18 +109,17 @@ impl<E: Engine> Teaching<'_, E> {
     ) -> Result<(), TeachError> {
         let own = seal::step_secrets(step);
         let readable = own.is_some();
-        let mut secrets = self.live_secrets(session)?;
+        let live = self.live_secrets(session)?;
+        let mut secrets = live.clone();
         secrets.extend(own.unwrap_or_default());
         record.text = seal::shown_text(step, readable.then_some(secrets.as_slice()));
         for call in &mut record.calls {
             call.name = seal::sealed_text(&call.name, &secrets);
             seal::scrub(&mut call.input, &secrets);
-            if !call.is_error {
-                seal::scrub(&mut call.result, &secrets);
-            }
+            seal_result(&mut call.result, call.is_error, &secrets, &live);
         }
-        for result in results.iter_mut().filter(|result| !result.is_error) {
-            seal::scrub(&mut result.content, &secrets);
+        for result in results.iter_mut() {
+            seal_result(&mut result.content, result.is_error, &secrets, &live);
         }
         debug_assert!(readable || record.text == seal::WITHHELD);
         Ok(())
@@ -181,5 +182,16 @@ impl<E: Engine> Teaching<'_, E> {
             // Dropping the admission charges the estimate: the call may have run.
             Err(error) => Err(error.into()),
         }
+    }
+}
+
+/// A result as it may be recorded or delivered. A refusal is withheld whole
+/// when it quotes a committed secret; anything else has each secret masked.
+fn seal_result(content: &mut Value, is_error: bool, secrets: &[String], live: &[String]) {
+    debug_assert!(live.iter().all(|secret| secrets.contains(secret)));
+    if is_error {
+        seal::seal_refusal(content, live);
+    } else {
+        seal::scrub(content, secrets);
     }
 }

@@ -26,7 +26,7 @@ pub use engine::{
     AgentSpec, Engine, EngineError, Input, NOESIS_RUN, SUBSYSTEM, Step, ToolCall, ToolResult,
 };
 pub use handlers::CallOutcome;
-pub use seal::WITHHELD;
+pub use seal::{REFUSAL_WITHHELD, WITHHELD};
 pub use service::{CallRecord, Caller, StepRecord, Teaching, TurnEnd, TurnReport};
 
 use crate::budget::{ModelRefusal, Refusal};

@@ -366,3 +366,53 @@ fn a_numeric_argument_cannot_carry_a_numeric_solution() {
     );
     assert!(!format!("{report:?}").contains("9876543210"), "{report:?}");
 }
+
+#[test]
+fn a_refusal_in_the_batch_that_poses_a_question_cannot_quote_its_key() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let twice = json!({"nodes": [{"id": SECRET, "title": "One"}, {"id": SECRET, "title": "Two"}],
+        "edges": []});
+    t.engine_mut().script(
+        Agent::Teacher,
+        "",
+        vec![
+            (PLAN, twice),
+            (ASK, recall("Which organelle makes ATP?", SECRET)),
+        ],
+    );
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer);
+    let refused = &report.steps[0].calls[0];
+    assert!(refused.is_error, "the duplicate ids are refused");
+    assert_eq!(refused.result, json!({"error": seal::REFUSAL_WITHHELD}));
+    assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
+    let agent = session(&t, &id).agent;
+    assert!(!format!("{:?}", t.engine().inputs_of(&agent)).contains(SECRET));
+}
+
+#[test]
+fn a_null_argument_cannot_carry_a_null_solution() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Practise JSON", Mode::Practice, &[])
+        .unwrap()
+        .id;
+    let problem = json!({"statement": "Which JSON literal stands for an absent value?",
+        "mode": "recall", "solution": "null"});
+    let practitioner = t.engine_mut();
+    practitioner.script(Agent::Practitioner, "", vec![(PROBLEM, problem)]);
+    practitioner.script(
+        Agent::Practitioner,
+        "",
+        vec![("noesis.learner_read", json!({"query": null}))],
+    );
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(
+        report.steps[1].calls[0].input,
+        json!({"query": crate::tools::SEALED})
+    );
+    assert!(!format!("{report:?}").contains("null"), "{report:?}");
+}
