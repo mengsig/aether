@@ -36,16 +36,31 @@ pub(super) fn withhold(value: &mut Value, secrets: &[String]) {
 }
 
 /// Whether any scalar or key in `value` holds a secret; the parser reads a
-/// number, boolean or null as its text, so this does too.
+/// number, boolean or null as its text and text holding JSON as that JSON,
+/// so this does too.
 fn reveals(value: &Value, secrets: &[String]) -> bool {
     match value {
-        Value::String(text) => holds(text, secrets),
+        Value::String(text) => {
+            holds(text, secrets) || embedded_json(text).is_some_and(|v| reveals(&v, secrets))
+        }
         Value::Array(items) => items.iter().any(|item| reveals(item, secrets)),
         Value::Object(map) => map
             .iter()
             .any(|(key, item)| holds(key, secrets) || reveals(item, secrets)),
         scalar => holds(&scalar.to_string(), secrets),
     }
+}
+
+/// The JSON object or array `text` holds, as the argument healer parses it;
+/// its escapes (`\u03c0`) decode, so a secret can hide in them. Each nested
+/// level is strictly shorter text, so the recursion ends.
+fn embedded_json(text: &str) -> Option<Value> {
+    let trimmed = text.trim();
+    if !(trimmed.starts_with('[') || trimmed.starts_with('{')) {
+        return None;
+    }
+    let parsed: Value = serde_json::from_str(trimmed).ok()?;
+    (parsed.is_object() || parsed.is_array()).then_some(parsed)
 }
 
 /// A refusal quotes the model's own names and ids, so one that holds a
@@ -110,6 +125,12 @@ mod tests {
         for (mut value, secret) in cases {
             withhold(&mut value, &[secret.to_string()]);
             assert_eq!(value, json!(SEALED), "{secret}");
+        }
+        let escaped = Value::String(r#"{"query":"\u03c0"}"#.into());
+        let nested = json!({"nodes": r#"[{"title": "[\"\\u03c0\"]"}]"#});
+        for mut value in [escaped, nested] {
+            withhold(&mut value, &["π".to_string()]);
+            assert_eq!(value, json!(SEALED));
         }
         let mut kept = json!({"query": "x = 5", "n": 4});
         withhold(&mut kept, &["x = 4".to_string()]);

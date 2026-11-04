@@ -41,7 +41,7 @@ impl<E: Engine> Teaching<'_, E> {
             steps: Vec::new(),
             end: TurnEnd::StepLimit,
         };
-        self.deliver_queued(&caller.agent, None)?;
+        self.deliver_queued(session, &caller.agent, None)?;
         if db::open_question(self.conn(), session)?.is_some() {
             report.end = TurnEnd::AwaitingAnswer;
             return Ok(report);
@@ -52,7 +52,7 @@ impl<E: Engine> Teaching<'_, E> {
             report.steps.push(record);
             if !results.is_empty() {
                 let input = Input::ToolResults(results);
-                self.deliver_queued(&caller.agent, Some(input))?;
+                self.deliver_queued(session, &caller.agent, Some(input))?;
             }
             if let Some(end) = end {
                 report.end = end;
@@ -142,9 +142,43 @@ impl<E: Engine> Teaching<'_, E> {
         Ok(secrets)
     }
 
-    /// Deliver what is queued for `agent`, then `input`. On a failure the
-    /// failed input and everything after it stay queued, in order.
+    /// Deliver what is owed to the session's `agent`: the in-memory queue,
+    /// then answers the store records as owed, then `input`. On a failure
+    /// everything not yet delivered stays owed, in order.
     pub(super) fn deliver_queued(
+        &mut self,
+        session: &str,
+        agent: &str,
+        input: Option<Input>,
+    ) -> Result<(), TeachError> {
+        self.deliver_memory_queue(agent, None)?;
+        self.deliver_owed_answers(session, agent)?;
+        self.deliver_memory_queue(agent, input)
+    }
+
+    /// Deliver answers committed but not yet delivered, oldest first; they
+    /// survive a restart because the store, not memory, records them owed.
+    fn deliver_owed_answers(&mut self, session: &str, agent: &str) -> Result<(), TeachError> {
+        debug_assert!(
+            !self.undelivered.contains_key(agent),
+            "the queue goes first"
+        );
+        for owed in db::owed_answers(self.conn(), session)? {
+            let mut fields = owed.record;
+            fields.remove("delivered");
+            fields.insert("question".into(), Value::String(owed.question.clone()));
+            if let Some(correct) = owed.correct {
+                fields.insert("correct".into(), Value::Bool(correct));
+            }
+            debug_assert!(fields.contains_key("dont_know"), "an answer record");
+            let payload = Value::Object(fields);
+            self.engine.deliver(agent, Input::Answer(payload))?;
+            db::mark_delivered(self.conn(), &owed.question)?;
+        }
+        Ok(())
+    }
+
+    fn deliver_memory_queue(
         &mut self,
         agent: &str,
         input: Option<Input>,

@@ -277,7 +277,7 @@ impl<'a, E: Engine> Teaching<'a, E> {
                 "a question is open; answer it first".into(),
             ));
         }
-        self.deliver_queued(&row.agent, None)?;
+        self.deliver_queued(session, &row.agent, None)?;
         self.engine
             .deliver(&row.agent, Input::Learner(text.to_string()))?;
         db::touch(self.conn(), session)?;
@@ -323,16 +323,18 @@ impl<'a, E: Engine> Teaching<'a, E> {
         Ok(result)
     }
 
-    /// Commit the answer, then deliver it. A failed delivery keeps the answer
-    /// queued, in order, for the next turn: the record and the agent agree.
+    /// Commit the answer as owed to the agent, then deliver it. A failed
+    /// delivery leaves it owed in the store, so the next turn delivers it
+    /// first even after a restart: the record and the agent agree.
     fn record_and_deliver(
         &mut self,
         row: &SessionRow,
         question_id: &str,
-        recorded: Value,
+        mut recorded: Value,
         correct: Option<bool>,
     ) -> Result<(), TeachError> {
         debug_assert!(recorded.is_object(), "an answer record is an object");
+        recorded["delivered"] = json!(false);
         let tx = self.conn().unchecked_transaction()?;
         if !db::record_answer(&tx, question_id, &recorded, correct)? {
             return Err(TeachError::Conflict(format!(
@@ -342,15 +344,12 @@ impl<'a, E: Engine> Teaching<'a, E> {
         db::touch(&tx, &row.id)?;
         tx.commit()?;
         debug_assert!(db::open_question(self.conn(), &row.id)?.is_none());
-        let mut for_agent = recorded;
-        for_agent["question"] = json!(question_id);
-        if let Some(correct) = correct {
-            for_agent["correct"] = json!(correct);
-        }
-        let input = Input::Answer(for_agent);
-        if let Err(error) = self.deliver_queued(&row.agent, Some(input)) {
-            // The answer stays queued; the next turn delivers it or fails visibly.
-            debug_assert!(self.undelivered.contains_key(&row.agent), "{error}");
+        if let Err(error) = self.deliver_queued(&row.id, &row.agent, None) {
+            // Still owed in the store; the next turn delivers it or fails visibly.
+            debug_assert!(
+                !db::owed_answers(self.conn(), &row.id)?.is_empty(),
+                "{error}"
+            );
         }
         Ok(())
     }

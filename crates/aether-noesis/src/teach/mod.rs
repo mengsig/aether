@@ -20,6 +20,8 @@ mod parity;
 #[cfg(test)]
 mod recovery;
 #[cfg(test)]
+mod regressions;
+#[cfg(test)]
 mod testkit;
 
 pub use engine::{

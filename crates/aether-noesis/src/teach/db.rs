@@ -260,6 +260,63 @@ pub(super) fn record_answer(
     Ok(changed == 1)
 }
 
+/// A committed answer whose delivery to the agent is still owed.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct OwedAnswer {
+    pub question: String,
+    pub record: serde_json::Map<String, serde_json::Value>,
+    pub correct: Option<bool>,
+}
+
+/// The session's answers recorded with `"delivered": false`, oldest first.
+/// Rows without the flag predate it and count as delivered.
+pub(super) fn owed_answers(
+    conn: &Connection,
+    session: &str,
+) -> Result<Vec<OwedAnswer>, TeachError> {
+    let mut statement = conn.prepare_cached(
+        "SELECT id, answer, correct FROM questions
+         WHERE session = ?1 AND answered_at IS NOT NULL
+           AND json_extract(answer, '$.delivered') = 0
+         ORDER BY answered_at, rowid",
+    )?;
+    let rows = statement.query_map([session], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<bool>>(2)?,
+        ))
+    })?;
+    let mut owed = Vec::new();
+    for row in rows {
+        let (question, answer, correct) = row?;
+        let serde_json::Value::Object(record) = from_json(&answer, "question answer")? else {
+            return Err(corrupt("question answer"));
+        };
+        owed.push(OwedAnswer {
+            question,
+            record,
+            correct,
+        });
+    }
+    Ok(owed)
+}
+
+/// Mark an owed answer delivered; an answer is delivered once.
+pub(super) fn mark_delivered(conn: &Connection, question: &str) -> Result<(), TeachError> {
+    let changed = conn.execute(
+        "UPDATE questions SET answer = json_set(answer, '$.delivered', json('true'))
+         WHERE id = ?1 AND json_extract(answer, '$.delivered') = 0",
+        [question],
+    )?;
+    if changed != 1 {
+        return Err(TeachError::Conflict(format!(
+            "the answer to `{question}` is not owed to the agent"
+        )));
+    }
+    Ok(())
+}
+
 /// The plan nodes of the session's tagged questions, oldest first.
 pub(super) fn tagged_nodes(conn: &Connection, session: &str) -> Result<Vec<String>, TeachError> {
     let mut statement = conn.prepare_cached(

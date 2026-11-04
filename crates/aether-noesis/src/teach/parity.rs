@@ -284,7 +284,8 @@ fn t05_question_authoring_reports_every_problem() {
 
     let keyless = json!({"kind": "recall", "prompt": "Define a limit"});
     assert!(error_of(&call(&mut t, &id, ASK, keyless, "")).contains("committed `answer_key`"));
-    let two_keys = choice("Pick", &[("a", "A"), ("b", "B")], &["a", "b"]);
+    // Labels differ from the plan's titles, which a pose may not repeat.
+    let two_keys = choice("Pick", &[("a", "Alpha"), ("b", "Beta")], &["a", "b"]);
     let mut single = two_keys.clone();
     single["multi"] = json!(false);
     assert!(error_of(&call(&mut t, &id, ASK, single, "")).contains("exactly one"));

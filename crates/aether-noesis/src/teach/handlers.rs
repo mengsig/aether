@@ -152,6 +152,14 @@ impl<E: Engine> Teaching<'_, E> {
             answer_key: authored.answer_key,
             explanation: args.explanation.clone(),
         };
+        // The plan is shown in full while the question is open.
+        let mut sealed = question::shown_key(&stored);
+        sealed.extend(stored.explanation.iter().cloned());
+        if plan.as_ref().is_some_and(|plan| plan_holds(plan, &sealed)) {
+            return refuse(
+                "the current plan gives away this question's answer or explanation; rewrite the plan or the question",
+            );
+        }
         self.commit_pose(row, stored)?;
         let reply = json!({ "question": id, "status": "posed", "next": "the learner's answer arrives as this call's result" });
         Ok(Ok((reply, Some(TurnEnd::AwaitingAnswer))))
@@ -397,6 +405,14 @@ impl<E: Engine> Teaching<'_, E> {
             None,
         )))
     }
+}
+
+/// Whether a node id or title of `plan` holds any of `secrets`; edges name
+/// only node ids, so the nodes cover everything a plan shows.
+fn plan_holds(plan: &plan::PlanDag, secrets: &[String]) -> bool {
+    plan.nodes
+        .iter()
+        .any(|node| seal::holds(&node.id, secrets) || seal::holds(&node.title, secrets))
 }
 
 fn strand_problems(args: &ProbeDoneArgs) -> Vec<String> {
