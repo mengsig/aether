@@ -68,14 +68,15 @@ export class Rpc {
     return null;
   }
 
-  /** Fails every pending and future request; the link is gone. */
+  /** Fails every pending and future request; a request already sent may or may not have acted. */
   fail(error: Error): void {
     this.closed ??= error;
     for (const entry of this.pending.values()) {
       clearTimeout(entry.timer);
-      entry.reject(error);
+      entry.reject(new DaemonError("disconnected", `The link closed before the answer: ${error.message}`, {}, { cause: error }));
     }
     this.pending.clear();
+    invariant(this.pending.size === 0, "a failed link has nothing pending");
   }
 
   get inFlight(): number {

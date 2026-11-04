@@ -1,6 +1,5 @@
-// The `ipc` transport: a local daemon through Electron main's bridge
-// (CONTRACTS.md §2.4). Requests map to bridge.request, subscriptions to
-// bridge.subscribe; both answer with ordinary server frames.
+// The `ipc` transport over Electron main's bridge (CONTRACTS.md §2.4): requests
+// map to bridge.request, subscriptions to bridge.subscribe; both answer frames.
 
 import type { DesktopBridge, Transport } from "@aether-ui/protocol";
 import { errorText, invariant, object, string, type Json } from "../guards.ts";

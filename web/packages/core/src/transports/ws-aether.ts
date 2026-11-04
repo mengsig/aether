@@ -1,6 +1,5 @@
-// The `ws-aether` transport: aetherd's remote listener, authenticated by the
-// device key. The carrier speaks first with a challenge; the transport signs
-// it and completes the client's hello with the device proof.
+// The `ws-aether` transport: aetherd's remote listener. It signs the carrier's
+// challenge with the device key and adds the proof to the client's hello.
 
 import type { Transport } from "@aether-ui/protocol";
 import { DaemonError } from "../errors.ts";
@@ -92,7 +91,8 @@ class Handshake {
   }
 
   private fail(reason: string): void {
-    this.socket?.close(CLOSE_PROTOCOL_ERROR, "Invalid server frame");
+    // Browsers may send only 1000 or 3000-4999; the app still hears 1002.
+    this.socket?.close(1000, "Invalid server frame");
     this.peer.onClose(CLOSE_PROTOCOL_ERROR, reason);
   }
 }

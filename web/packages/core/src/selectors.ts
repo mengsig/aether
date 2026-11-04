@@ -1,6 +1,5 @@
-// The exported selectors (CONTRACTS.md §2.5): features read the store only
-// through these, so its layout stays core's own. Each returns a reference
-// held by the state, never a fresh copy, so useSelector stays quiet.
+// The exported selectors (CONTRACTS.md §2.5). Each returns a reference held
+// by the state, never a fresh copy, so useSelector stays quiet.
 
 import type { aether, Capabilities, ConnectionInfo, ConnId } from "@aether-ui/protocol";
 import type { ArchonGraph, ArchonItem, Report, State, StreamState, Submission, TranscriptState } from "./store.ts";

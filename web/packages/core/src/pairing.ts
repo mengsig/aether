@@ -1,6 +1,5 @@
-// The pairing flow behind `#/pair/:daemon` (A2 logic, A3 screen). Aether
-// enrolls this browser's device key and waits for the host to confirm the
-// phrase; Archon claims a code and receives its cookie under `/archon`.
+// The pairing flow behind `#/pair/:daemon`: Aether enrolls this browser's key
+// and waits for the host's confirmation; Archon claims a code for its cookie.
 
 import { DaemonError } from "./errors.ts";
 import { errorText, invariant, object, string, type Json } from "./guards.ts";

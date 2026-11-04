@@ -17,7 +17,7 @@ export interface ManagerOptions {
   readonly random?: () => number;
 }
 
-/** Errors after which the daemon may or may not have acted: the submission stays unknown. */
+/** Errors after which a sent command may or may not have acted; any other is its own answer. */
 const UNKNOWN_OUTCOME = new Set(["timeout", "disconnected"]);
 
 export class ConnectionManager {

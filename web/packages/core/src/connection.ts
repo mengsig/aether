@@ -1,6 +1,5 @@
-// One daemon connection's lifecycle: open the transport, greet, read the
-// welcome into a ConnectionInfo, run its sync, and back off and reopen when
-// the link drops. States are those of CONTRACTS.md §2.5.
+// One daemon connection's lifecycle (CONTRACTS.md §2.5): open, greet, read the
+// welcome, run its sync, and back off and reopen when the link drops.
 
 import { aether, type ConnectionInfo, type ConnId, type ConnState, type Standing, type Transport } from "@aether-ui/protocol";
 import { AetherSync, type SyncContext } from "./aether-sync.ts";
@@ -108,7 +107,7 @@ export class Connection {
   }
 
   request(command: Command): Promise<Json> {
-    if (this.info.state !== "ready" || !this.rpc) return Promise.reject(new DaemonError("disconnected", `${this.info.label} is not connected`));
+    if (this.info.state !== "ready" || !this.rpc) return Promise.reject(new DaemonError("not_connected", `${this.info.label} is not connected`));
     return this.rpc.request(command);
   }
 

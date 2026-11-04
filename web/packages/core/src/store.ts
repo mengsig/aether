@@ -6,7 +6,7 @@ import { invariant, omit, type Json } from "./guards.ts";
 
 export interface TranscriptState {
   readonly entries: readonly aether.TranscriptEntry[];
-  /** The highest entry seq read or committed; transcript pages continue after it. */
+  /** The highest seq read from transcript pages; live entries past it leave it alone. */
   readonly lastEntrySeq: number;
 }
 
@@ -16,8 +16,10 @@ export interface StreamState {
   readonly invocation: string;
   readonly text: string;
   readonly thinking: string;
-  /** The last `invocation_seq` applied, or null when the daemon sends none. */
+  /** The last `invocation_seq` seen, or null when the daemon sends none. */
   readonly lastInvocationSeq: number | null;
+  /** Deltas are dropped until the transcript reread this stream waits for succeeds (§5.2.4). */
+  readonly recovering: boolean;
 }
 
 /** A keyed mutation sent and not yet answered. */
@@ -40,6 +42,9 @@ export interface AetherConnState {
   readonly streams: Readonly<Record<string, StreamState>>;
   readonly noesis: Json | null;
   readonly outbox: readonly Submission[];
+  /** Entities an applied event made stale; they survive reconnects until refetched. */
+  readonly staleAgents: readonly string[];
+  readonly staleAttention: boolean;
 }
 
 export interface ArchonItem {
@@ -83,6 +88,7 @@ export interface State {
 
 export const EMPTY_AETHER: AetherConnState = Object.freeze({
   lastSeq: null, agents: {}, roots: [], attention: null, events: [], transcripts: {}, streams: {}, noesis: null, outbox: [],
+  staleAgents: [], staleAttention: false,
 });
 
 export const EMPTY_ARCHON: ArchonConnState = Object.freeze({

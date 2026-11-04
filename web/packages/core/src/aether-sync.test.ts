@@ -29,7 +29,10 @@ function healthy(overrides: Partial<Record<string, (command: Json) => ReturnType
       case "get_attention": return { ok: F.attention };
       case "get_tree": return { ok: F.tree };
       case "get_agent": return { ok: { reply: "agent", data: F.tree.data.nodes[F.agent as keyof typeof F.tree.data.nodes].agent } };
-      case "get_transcript_page": return { ok: F.transcript_page };
+      case "get_transcript_page": {
+        const entries = F.transcript_page.data.entries.filter((entry) => entry.seq > Number(command.after));
+        return { ok: { ...F.transcript_page, data: { ...F.transcript_page.data, entries } } };
+      }
       case "unsubscribe": return { ok: { reply: "ok", data: null } };
       default: throw new Error(`unscripted ${String(command.cmd)} (${daemon.sent.length} sent)`);
     }
@@ -180,5 +183,89 @@ describe("Aether resync (CONTRACTS.md §5.2)", () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(daemon.commands("subscribe").filter((c) => c.deltas === true)).toHaveLength(2);
     expect(daemon.commands("get_transcript_page").length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("Aether resync review regressions", () => {
+  const agentEvent = (n: number, type: string, extra: Json = {}) => ({ frame: "event", sub: 1, event: { seq: n, id: `evt_${n}`, at: "2026-11-04T03:01:00Z", actor: { actor: "system" }, kind: { type, ...extra }, agent_id: F.agent } });
+
+  it("refetches an agent made stale just before a reconnect", async () => {
+    const { daemon, manager } = setup(healthy());
+    manager.start();
+    await settle();
+    daemon.push(agentEvent(4, "agent.completed"));
+    daemon.drop(1006);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(daemon.commands("get_agent")).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(daemon.commands("get_agent")).toEqual([expect.objectContaining({ id: F.agent })]);
+    expect(daemon.commands("get_attention")).toHaveLength(2);
+  });
+
+  it("refetches the agent after a usage update", async () => {
+    const { daemon, manager } = setup(healthy());
+    manager.start();
+    await settle();
+    daemon.push(agentEvent(4, "agent.usage_updated", { total: {}, turn_usage: {} }));
+    await vi.advanceTimersByTimeAsync(250);
+    expect(daemon.commands("get_agent")).toHaveLength(1);
+  });
+
+  it("keeps the read cursor when live messages arrive, so a reread fills the gap", async () => {
+    const { store, daemon, manager } = setup(healthy());
+    manager.start();
+    await settle();
+    await manager.watchAgents(CONN_A, [F.agent]);
+    await settle();
+    daemon.push(agentEvent(50, "agent.message", { role: "assistant", content: [], invocation: "inv_live" }));
+    const transcript = store.get().aether[CONN_A]?.transcripts[F.agent];
+    expect(transcript?.entries.map((e) => e.seq)).toEqual([5, 50]);
+    expect(transcript?.lastEntrySeq).toBe(5);
+    daemon.push(F.deltas_gap[2] as Json);
+    await settle();
+    expect(daemon.commands("get_transcript_page").at(-1)).toMatchObject({ after: 5 });
+  });
+
+  it("drops deltas until the transcript reread they wait for has answered", async () => {
+    const { store, daemon, manager } = setup(healthy());
+    manager.start();
+    await settle();
+    await manager.watchAgents(CONN_A, [F.agent]);
+    await settle();
+    daemon.handler = healthy({ get_transcript_page: () => undefined });
+    daemon.push(F.delta_midway);
+    daemon.push({ ...F.delta_midway, invocation_seq: 8, delta: { delta: "text", text: "dropped" } });
+    expect(store.get().aether[CONN_A]?.streams[F.invocation]).toMatchObject({ text: "", recovering: true, lastInvocationSeq: 8 });
+    const read = daemon.commands("get_transcript_page").at(-1);
+    daemon.push({ frame: "reply", id: read?.req, result: { Ok: { reply: "transcript_page", data: { entries: [], has_before: false, has_after: false } } } });
+    await settle();
+    daemon.push({ ...F.delta_midway, invocation_seq: 9, delta: { delta: "text", text: "kept" } });
+    expect(store.get().aether[CONN_A]?.streams[F.invocation]).toMatchObject({ text: "kept", recovering: false });
+  });
+
+  it("serializes overlapping watch calls into one subscription per watched agent", async () => {
+    const { daemon, manager } = setup(healthy());
+    manager.start();
+    await settle();
+    await Promise.all([manager.watchAgents(CONN_A, [F.agent]), manager.watchAgents(CONN_A, [F.agent])]);
+    await settle();
+    expect(daemon.commands("subscribe").filter((c) => c.deltas === true)).toHaveLength(1);
+    const switching = manager.watchAgents(CONN_A, [F.child]);
+    await Promise.all([switching, manager.watchAgents(CONN_A, [F.child])]);
+    await settle();
+    const deltaSubs = daemon.commands("subscribe").filter((c) => c.deltas === true);
+    expect(deltaSubs.map((c) => (c.query as Json).agent)).toEqual([F.agent, F.child]);
+    expect(daemon.commands("unsubscribe")).toEqual([expect.objectContaining({ id: 2 })]);
+  });
+
+  it("keeps a keyed command unknown when the link is revoked before its answer", async () => {
+    const { store, daemon, manager } = setup(healthy({ send_message: () => undefined }));
+    manager.start();
+    await settle();
+    const sending = manager.send(CONN_A, { cmd: "send_message", to: F.agent, body: "hi" });
+    daemon.drop(4401, "revoked");
+    await expect(sending).rejects.toMatchObject({ code: "disconnected" });
+    expect(store.get().aether[CONN_A]?.outbox).toEqual([expect.objectContaining({ state: "unknown" })]);
+    expect(store.get().connections[CONN_A]?.state).toBe("pairing");
   });
 });

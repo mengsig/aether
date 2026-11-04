@@ -1,6 +1,5 @@
-// The browser's device key: a non-extractable P-256 key in IndexedDB, keyed
-// by origin. Same database, store and record shape as the PWA it replaces,
-// so a device paired with the old app stays paired.
+// The browser's device key: a non-extractable P-256 key in IndexedDB, keyed by
+// origin, in the PWA's database and record shape so old pairings carry over.
 
 import { invariant, object, string } from "../guards.ts";
 

@@ -146,7 +146,16 @@ describe("Archon change cursor (CONTRACTS.md §5.3)", () => {
   });
 
   it("rereads snapshots, keeping the cursor, when a change names an unknown item", async () => {
-    const { store, daemon, manager } = setup(archond());
+    const created = { id: "qi_new", state: "queued", title: "new" };
+    const graphAt125 = { ...F.task_graph, data: { ...F.task_graph.data, nodes: [...F.task_graph.data.nodes, created], as_of: 125 } };
+    const { store, daemon, manager } = setup(archond({
+      task_graph: () => {
+        if (daemon.commands("task_graph").length === 1) return { ok: F.task_graph };
+        // A change committed after the reread's as_of arrives before its answer.
+        daemon.push({ frame: "change", sub: 6, change: { seq: 131, at: "2026-11-04T03:00:10Z", subject: { subject: "item", item: "qi_new", state: "dispatching" } } });
+        return { ok: graphAt125 };
+      },
+    }));
     manager.start();
     await settle();
     daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item: "qi_new", state: "queued" } } });
@@ -154,10 +163,9 @@ describe("Archon change cursor (CONTRACTS.md §5.3)", () => {
     expect(daemon.commands("task_graph")).toHaveLength(2);
     expect(daemon.commands("list_item_summaries")).toHaveLength(2);
     const state = store.get().archon[CONN];
-    expect(state?.changeCursor).toBe(130);
-    // The reread graph (as_of 100) gets the recent changes replayed onto it.
-    expect(state?.graph?.nodes.qi_2?.state).toBe("succeeded");
-    expect(state?.graph?.edges).toHaveLength(1);
+    expect(state?.changeCursor).toBe(131);
+    expect(state?.graph?.nodes.qi_new?.state).toBe("dispatching");
+    expect(state?.graph?.asOf).toBe(125);
   });
 
   it("keeps the on-screen items across a reconnect", async () => {

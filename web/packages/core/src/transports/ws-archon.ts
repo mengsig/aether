@@ -1,6 +1,5 @@
-// The `ws-archon` transport: archond behind Aether's `/archon` mount
-// (ARCHITECTURE.md §d). The device cookie is scoped to `/archon` and rides
-// on the same-origin upgrade; the session endpoint says whether one exists.
+// The `ws-archon` transport: archond behind Aether's `/archon` mount. Its device
+// cookie rides on the same-origin upgrade; /archon/api/session says if one exists.
 
 import type { Transport } from "@aether-ui/protocol";
 import { DaemonError } from "../errors.ts";
@@ -41,7 +40,8 @@ export function archonSocketTransport(options: ArchonSocketOptions = {}): Transp
           try {
             onFrame(parseFrame(raw));
           } catch (error) {
-            socket.close(1002, "Invalid server frame");
+            // Browsers may send only 1000 or 3000-4999; the app still hears 1002.
+            socket.close(1000, "Invalid server frame");
             onClose(1002, `Protocol error: ${error instanceof Error ? error.message : String(error)}`);
           }
         },

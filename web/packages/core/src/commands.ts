@@ -1,6 +1,5 @@
-// What each daemon command needs from its connection, and the idempotency
-// keys useCommand adds. The Aether table mirrors crates/aether-protocol
-// access.rs; a test fails when a generated command is left unclassified.
+// What each daemon command needs from its connection, and its idempotency key.
+// The Aether table mirrors crates/aether-protocol access.rs, checked by a test.
 
 import type { Standing } from "@aether-ui/protocol";
 import { RefusedError } from "./errors.ts";

@@ -1,9 +1,8 @@
-// Keeps one Aether connection's cache current (CONTRACTS.md §5.2): the
-// durable subscription with its cursor, snapshots, deltas for on-screen
-// agents, and transcript rereads whenever a stream cannot be trusted.
+// Keeps one Aether connection's cache current (CONTRACTS.md §5.2): durable
+// cursor, snapshots, deltas for on-screen agents and transcript rereads.
 
 import { aether, type ConnId } from "@aether-ui/protocol";
-import { applyDelta, applyEvent, discardStreams, mergeEntries } from "./aether-reduce.ts";
+import { applyDelta, applyEvent, discardStreams, endRecovery, mergeEntries } from "./aether-reduce.ts";
 import { Debouncer } from "./debounce.ts";
 import { codeOf } from "./errors.ts";
 import { array, errorText, invariant, object, seq, string, type Json } from "./guards.ts";
@@ -24,7 +23,10 @@ export interface SyncContext {
 export const MAX_DELTA_AGENTS = 3;
 const REFETCH_MS = 250;
 const MAX_PAGES = 100;
-const ATTENTION_TYPES = /^(approval|question)\.|^agent\.(failed|blocked|completed|cancelled|resumed|waiting)$/;
+/** Failures that say nothing about the entity: it stays stale for the next ready connection. */
+const LINK_LOST: ReadonlySet<string> = new Set(["disconnected", "not_connected", "timeout"]);
+/** Bounds one reconciliation of delta subscriptions: each step adds or drops one. */
+const MAX_DELTA_STEPS = 16;
 
 export class AetherSync {
   private readonly ctx: SyncContext;
@@ -35,6 +37,7 @@ export class AetherSync {
   private readonly rereading = new Map<string, Promise<void>>();
   private readonly again = new Set<string>();
   private readonly refetch = new Debouncer(REFETCH_MS);
+  private reconciling: Promise<void> = Promise.resolve();
   private running = false;
 
   constructor(ctx: SyncContext) {
@@ -60,6 +63,7 @@ export class AetherSync {
     }
     if (this.state.lastSeq === null) await this.readSnapshots();
     this.drain();
+    this.scheduleStale();
     if (this.ctx.features.has("noesis")) await this.readNoesis();
     await this.syncDeltas();
     await Promise.all(this.watched.map((agent) => this.reread(agent)));
@@ -112,13 +116,16 @@ export class AetherSync {
     this.ctx.store.updateAether(this.ctx.conn, (s) => applyEvent(s, event));
     const after = this.state;
     if (after === before) return;
-    const type = string(object(event.kind, "event.kind").type, "event.kind.type");
-    const agent = event.agent_id;
-    if (agent && type.startsWith("agent.") && type !== "agent.message" && type !== "agent.usage_updated") {
-      this.refetch.schedule(`agent:${agent}`, () => void this.refetchAgent(agent));
-    }
-    if (ATTENTION_TYPES.test(type)) this.refetch.schedule("attention", () => void this.refetchAttention());
+    this.scheduleStale();
     if (after.noesis !== before.noesis) this.ctx.settingsChanged();
+  }
+
+  /** Refetches what applied events made stale; markers live in the store, so a reconnect resumes them. */
+  private scheduleStale(): void {
+    const { staleAgents, staleAttention } = this.state;
+    for (const agent of staleAgents) this.refetch.schedule(`agent:${agent}`, () => void this.refetchAgent(agent));
+    if (staleAttention) this.refetch.schedule("attention", () => void this.refetchAttention());
+    invariant(this.refetch.pending >= Math.min(1, staleAgents.length + Number(staleAttention)), "stale entities have a refetch scheduled");
   }
 
   private drain(): void {
@@ -131,7 +138,8 @@ export class AetherSync {
     const attention = replyObject(await this.ctx.request(aether.getAttention()), "attention") as unknown as aether.Attention;
     const watermark = seq(attention.last_seq, "attention.last_seq");
     const { agents, roots } = await this.readAgents();
-    this.ctx.store.updateAether(this.ctx.conn, (s) => ({ ...s, attention, agents, roots, lastSeq: Math.max(watermark, s.lastSeq ?? 0) }));
+    // Fresh snapshots supersede every stale marker; buffered events re-mark what they change.
+    this.ctx.store.updateAether(this.ctx.conn, (s) => ({ ...s, attention, agents, roots, lastSeq: Math.max(watermark, s.lastSeq ?? 0), staleAgents: [], staleAttention: false }));
   }
 
   private async readAgents(): Promise<{ agents: Record<string, aether.Agent>; roots: string[] }> {
@@ -165,22 +173,35 @@ export class AetherSync {
     this.ctx.settingsChanged();
   }
 
-  private async syncDeltas(): Promise<void> {
-    for (const [agent, sub] of [...this.deltaSubs]) {
-      if (this.watched.includes(agent)) continue;
-      this.deltaSubs.delete(agent);
-      await this.ctx.request(aether.unsubscribe({ id: sub }));
-    }
-    for (const agent of this.watched) {
-      if (this.deltaSubs.has(agent)) continue;
-      const sub = subscriptionId(await this.ctx.request(aether.subscribe({ after: null, query: { agent }, deltas: true })));
-      this.deltaSubs.set(agent, sub);
-      invariant(this.deltaSubs.size <= MAX_DELTA_AGENTS, "at most three delta subscriptions");
-      void this.reread(agent);
-    }
+  /** Runs one reconciliation at a time, so overlapping watch calls cannot open untracked subscriptions. */
+  private syncDeltas(): Promise<void> {
+    const run = this.reconciling.then(() => this.reconcileDeltas());
+    // The caller gets the failure; the chain stays usable for the next call.
+    this.reconciling = run.catch(() => undefined);
+    return run;
   }
 
-  /** Reads the transcript after its last entry; concurrent asks collapse into one more read. */
+  /** Drops unwatched subscriptions before adding any, re-reading the watched set after every await. */
+  private async reconcileDeltas(): Promise<void> {
+    for (let step = 0; step < MAX_DELTA_STEPS && this.running; step += 1) {
+      const stale = [...this.deltaSubs].find(([agent]) => !this.watched.includes(agent));
+      if (stale) {
+        this.deltaSubs.delete(stale[0]);
+        await this.ctx.request(aether.unsubscribe({ id: stale[1] }));
+        continue;
+      }
+      const missing = this.watched.find((agent) => !this.deltaSubs.has(agent));
+      if (missing === undefined) return;
+      const sub = subscriptionId(await this.ctx.request(aether.subscribe({ after: null, query: { agent: missing }, deltas: true })));
+      if (!this.running) return;
+      this.deltaSubs.set(missing, sub);
+      invariant(this.deltaSubs.size <= MAX_DELTA_AGENTS, "at most three delta subscriptions");
+      void this.reread(missing);
+    }
+    invariant(!this.running || this.watched.every((agent) => this.deltaSubs.has(agent)), "delta subscriptions converge on the watched set");
+  }
+
+  /** Reads the transcript after its last read entry; asks during a read collapse into one more read. */
   reread(agent: string): Promise<void> {
     const running = this.rereading.get(agent);
     if (running) {
@@ -188,7 +209,10 @@ export class AetherSync {
       return running;
     }
     const read = this.readTranscript(agent)
-      .catch((error: unknown) => this.ctx.store.report(`Could not read the transcript of ${agent}: ${errorText(error)}`, this.ctx.conn, codeOf(error)))
+      .then(() => {
+        // A read that began before the latest ask cannot end recovery; the next one will.
+        if (!this.again.has(agent)) this.ctx.store.updateAether(this.ctx.conn, (s) => endRecovery(s, agent));
+      }, (error: unknown) => this.ctx.store.report(`Could not read the transcript of ${agent}: ${errorText(error)}`, this.ctx.conn, codeOf(error)))
       .finally(() => {
         this.rereading.delete(agent);
         if (this.again.delete(agent) && this.running) void this.reread(agent);
@@ -197,14 +221,16 @@ export class AetherSync {
     return read;
   }
 
+  /** Pages forward from the read cursor, advancing it by what each page returned. */
   private async readTranscript(agent: string): Promise<void> {
     let after = this.state.transcripts[agent]?.lastEntrySeq ?? 0;
     for (let page = 0; page < MAX_PAGES; page += 1) {
       const { entries, more } = await this.transcriptPage(agent, after);
-      this.ctx.store.updateAether(this.ctx.conn, (s) => ({ ...s, transcripts: { ...s.transcripts, [agent]: mergeEntries(s.transcripts[agent], entries) } }));
-      const next = this.state.transcripts[agent]?.lastEntrySeq ?? after;
-      if (!more || next <= after) return;
-      after = next;
+      const through = entries.reduce((max, entry) => Math.max(max, seq(entry.seq, "transcript entry seq")), after);
+      invariant(entries.every((entry) => entry.seq > after), "a transcript page holds only entries after its cursor");
+      this.ctx.store.updateAether(this.ctx.conn, (s) => ({ ...s, transcripts: { ...s.transcripts, [agent]: mergeEntries(s.transcripts[agent], entries, through) } }));
+      if (!more || through <= after) return;
+      after = through;
     }
   }
 
@@ -217,21 +243,28 @@ export class AetherSync {
     return { entries: array(page.entries, "transcript_page.entries") as aether.TranscriptEntry[], more: page.has_after === true };
   }
 
+  /** Clears the marker first; a lost link puts it back for the next ready, a daemon answer does not. */
   private async refetchAgent(agent: string): Promise<void> {
+    this.ctx.store.updateAether(this.ctx.conn, (s) => ({ ...s, staleAgents: s.staleAgents.filter((id) => id !== agent) }));
     try {
       const value = replyObject(await this.ctx.request(aether.getAgent({ id: agent })), "agent") as unknown as aether.Agent;
+      invariant(value.id === agent, "get_agent answers the agent asked for");
       this.ctx.store.updateAether(this.ctx.conn, (s) => ({ ...s, agents: { ...s.agents, [value.id]: value } }));
     } catch (error) {
-      this.ctx.store.report(`Could not refresh agent ${agent}: ${errorText(error)}`, this.ctx.conn, codeOf(error));
+      if (!LINK_LOST.has(codeOf(error) ?? "")) return this.ctx.store.report(`Could not refresh agent ${agent}: ${errorText(error)}`, this.ctx.conn, codeOf(error));
+      this.ctx.store.updateAether(this.ctx.conn, (s) => (s.staleAgents.includes(agent) ? s : { ...s, staleAgents: [...s.staleAgents, agent] }));
     }
   }
 
   private async refetchAttention(): Promise<void> {
+    this.ctx.store.updateAether(this.ctx.conn, (s) => ({ ...s, staleAttention: false }));
     try {
       const attention = replyObject(await this.ctx.request(aether.getAttention()), "attention") as unknown as aether.Attention;
+      seq(attention.last_seq, "attention.last_seq");
       this.ctx.store.updateAether(this.ctx.conn, (s) => ({ ...s, attention }));
     } catch (error) {
-      this.ctx.store.report(`Could not refresh attention: ${errorText(error)}`, this.ctx.conn, codeOf(error));
+      if (!LINK_LOST.has(codeOf(error) ?? "")) return this.ctx.store.report(`Could not refresh attention: ${errorText(error)}`, this.ctx.conn, codeOf(error));
+      this.ctx.store.updateAether(this.ctx.conn, (s) => ({ ...s, staleAttention: true }));
     }
   }
 }

@@ -144,6 +144,17 @@ describe("ws-archon", () => {
   });
 });
 
+describe("protocol errors on a socket", () => {
+  it("closes with a code a browser may send and tells the app 1002", async () => {
+    const { made, factory } = sockets();
+    const onClose = vi.fn();
+    await archonSocketTransport({ socket: factory, fetch: vi.fn(async () => Response.json({ device: {} })) }).open("wss://h/archon/ws", () => {}, onClose);
+    made[0]?.onmessage?.({ data: "not json" });
+    expect(made[0]?.closedWith).toBe(1000);
+    expect(onClose).toHaveBeenCalledWith(1002, expect.stringContaining("Protocol error"));
+  });
+});
+
 describe("ipc", () => {
   function bridge(overrides: Partial<DesktopBridge> = {}) {
     const unsubscribe = vi.fn();

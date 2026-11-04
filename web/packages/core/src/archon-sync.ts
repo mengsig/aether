@@ -1,6 +1,5 @@
-// Keeps one archond connection's cache current (CONTRACTS.md §5.3): the
-// change cursor and the feed cursor, never mixed; snapshots carrying their
-// own `as_of`; and the protocol 23 fallback of refetching after feed items.
+// Keeps one archond connection's cache current (CONTRACTS.md §5.3): change and
+// feed cursors never mixed, per-snapshot `as_of`, and the protocol 23 fallback.
 
 import { Debouncer } from "./debounce.ts";
 import { codeOf } from "./errors.ts";
@@ -12,7 +11,6 @@ import { EMPTY_ARCHON, type ArchonConnState, type ArchonGraph, type ArchonItem }
 export const FALLBACK_REFETCH_MS = 350;
 const ENTITY_REFETCH_MS = 250;
 const FEED_KEEP = 200;
-const RECENT_CHANGES = 256;
 
 /** A queue state is a bare kind or an object tagged by `state`. */
 function stateKind(value: unknown): string {
@@ -79,8 +77,9 @@ export class ArchonSync {
   private readonly refetch = new Debouncer(ENTITY_REFETCH_MS);
   private readonly fallback = new Debouncer(FALLBACK_REFETCH_MS);
   private readonly structure = new Debouncer(ENTITY_REFETCH_MS);
-  /** Changes applied lately, replayed onto snapshots reread while they arrived. */
-  private recent: Json[] = [];
+  /** Every change applied while snapshots are reread, replayed onto them once installed. */
+  private collecting: Json[] | null = null;
+  private rereadAgain = false;
   private onScreen: ReadonlySet<string> = new Set();
 
   constructor(ctx: SyncContext) {
@@ -140,6 +139,8 @@ export class ArchonSync {
     this.refetch.cancelAll();
     this.fallback.cancelAll();
     this.structure.cancelAll();
+    this.collecting = null;
+    this.rereadAgain = false;
   }
 
   /** Entities on screen are refetched on change; others are updated in place only. */
@@ -158,7 +159,7 @@ export class ArchonSync {
     const { state, item, unknown } = applyChange(before, change);
     if (state === before) return;
     this.set(() => state);
-    this.recent = [...this.recent, change].slice(-RECENT_CHANGES);
+    this.collecting?.push(change);
     if (unknown) this.structure.schedule("snapshots", () => void this.rereadSnapshots().catch((error: unknown) => this.fail("the queue", error)));
     if (item && this.onScreen.has(item)) this.refetch.schedule(item, () => void this.refetchItem(item));
   }
@@ -196,10 +197,25 @@ export class ArchonSync {
 
   /** A change named an entity no snapshot holds: reread both, keeping the cursor. */
   private async rereadSnapshots(): Promise<void> {
-    await this.readGraph();
-    await this.readSummaries();
-    const recent = this.recent;
-    this.set((s) => recent.reduce(patchSnapshots, s));
+    if (this.collecting) {
+      this.rereadAgain = true;
+      return;
+    }
+    invariant(this.changeSub !== null, "snapshots are reread only while changes are subscribed");
+    const collected: Json[] = [];
+    this.collecting = collected;
+    try {
+      await this.readGraph();
+      await this.readSummaries();
+      // Changes that arrived while the snapshots were read may be newer than their as_of.
+      this.set((s) => collected.reduce(patchSnapshots, s));
+    } finally {
+      this.collecting = null;
+    }
+    if (this.rereadAgain) {
+      this.rereadAgain = false;
+      await this.rereadSnapshots();
+    }
   }
 
   private async readGraph(): Promise<void> {
