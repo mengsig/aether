@@ -167,7 +167,8 @@ export function reasonsFor(data: DagData, id: string): string[] {
   if (OPEN_EXCLUDED.has(node.state) || node.state === "failed") return [];
   const reasons: string[] = [];
   if (node.state === "blocked") reasons.push(node.state_detail ? node.state_detail : "Blocked");
-  if (node.waiting_reason) {
+  // A blocked item's `blocked` waiting reason restates its state; its detail already says why.
+  if (node.waiting_reason && !(node.state === "blocked" && node.waiting_reason === "blocked")) {
     const label = reasonLabel(node.waiting_reason);
     if (!reasons.includes(label)) reasons.push(label);
   }

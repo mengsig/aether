@@ -61,7 +61,7 @@ describe("the critical path", () => {
 describe("held-up items", () => {
   it("says why each is held: its state, its waiting reason and its stuck prerequisites", () => {
     const data = dagData(graph([
-      node("a", "failed"), node("b", "queued", { waiting_reason: "dependency_failed" }), node("c", "blocked", { state_detail: "Needs a decision" }),
+      node("a", "failed"), node("b", "queued", { waiting_reason: "dependency_failed" }), node("c", "blocked", { state_detail: "Needs a decision", waiting_reason: "blocked" }),
       node("d", "queued"), node("e", "running"), node("f", "succeeded"),
     ], [edge("a", "b"), edge("e", "d"), edge("c", "d", false, "stacked_on")]));
     const held = heldUp(data);
