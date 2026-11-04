@@ -170,6 +170,8 @@ export class ArchonSync {
   private onScreen: ReadonlySet<string> = new Set();
   /** Changes applied per item, so a detail read that one overtook is not installed. */
   private readonly changed = new Map<string, number>();
+  /** Plans a screen asked for and the store lacks, run to item; the item's rereads read them until installed. */
+  private readonly wantedPlans = new Map<string, string>();
 
   constructor(ctx: SyncContext) {
     this.ctx = ctx;
@@ -408,12 +410,31 @@ export class ArchonSync {
   /** Reads a run's plan into the store; the item's later rereads keep it current. */
   readPlan(item: string, run: string): Promise<void> {
     invariant(this.ctx.features.has("run_plan"), "run_plan is read only where archond serves it");
+    this.wantedPlans.set(run, item);
     return this.serial.run(item, async () => {
+      if (!this.wantedPlans.has(run)) return;
       const version = this.changed.get(item) ?? 0;
-      const plan = await this.fetchPlan(item, run);
+      let plan: ArchonPlan;
+      try {
+        plan = await this.fetchPlan(item, run);
+      } catch (error) {
+        // The screen shows the failure and asks again; the item's rereads stop asking for it.
+        this.wantedPlans.delete(run);
+        throw error;
+      }
+      // The change that overtook it marked the shown item stale, and that reread reads every wanted plan.
       if (this.overtaken(item, version)) return;
-      this.set((s) => ({ ...s, plans: { ...s.plans, [run]: plan } }));
+      this.installPlans([[run, plan]]);
     });
+  }
+
+  private installPlans(plans: readonly (readonly [string, ArchonPlan])[]): void {
+    for (const [run, plan] of plans) {
+      const owner = this.wantedPlans.get(run);
+      invariant(owner === undefined || owner === plan.item, `the plan of ${run} is installed for the item that wanted it`);
+      this.wantedPlans.delete(run);
+    }
+    if (plans.length > 0) this.set((s) => ({ ...s, plans: { ...s.plans, ...Object.fromEntries(plans) } }));
   }
 
   private async fetchPlan(item: string, run: string): Promise<ArchonPlan> {
@@ -437,15 +458,39 @@ export class ArchonSync {
     const version = this.changed.get(item) ?? 0;
     const detail = replyObject(await this.ctx.request({ cmd: "get_item", item }), "item_detail");
     const links = this.ctx.features.has("github_links") ? replyObject(await this.ctx.request({ cmd: "item_links", item }), "item_links") : null;
-    const runs = Object.entries(this.state.plans).filter(([, plan]) => plan.item === item).map(([run]) => run);
-    const plans = await Promise.all(runs.map((run) => this.fetchPlan(item, run)));
     if (this.overtaken(item, version)) return;
     const asOf = this.state.changeCursor;
     this.set((s) => ({
       ...s, details: { ...s.details, [item]: { value: detail, asOf } },
       links: links === null ? s.links : { ...s.links, [item]: { value: links, asOf } },
-      plans: { ...s.plans, ...Object.fromEntries(runs.map((run, index) => [run, plans[index] as ArchonPlan])) },
     }));
+    await this.readItemPlans(item, version);
+  }
+
+  /** Rereads the plans held or wanted for `item`; one the daemon refuses is reported and no longer asked for. */
+  private async readItemPlans(item: string, version: number): Promise<void> {
+    const held = Object.entries(this.state.plans).filter(([, plan]) => plan.item === item).map(([run]) => run);
+    const wanted = [...this.wantedPlans].filter(([, owner]) => owner === item).map(([run]) => run);
+    const runs = [...new Set([...held, ...wanted])];
+    const results = await Promise.allSettled(runs.map((run) => this.fetchPlan(item, run)));
+    invariant(results.length === runs.length, "every plan read is answered");
+    const lost = results.find((result) => result.status === "rejected" && LINK_LOST.has(codeOf(result.reason) ?? ""));
+    if (lost?.status === "rejected") throw lost.reason;
+    if (this.overtaken(item, version)) return;
+    const installed: (readonly [string, ArchonPlan])[] = [];
+    const refused: string[] = [];
+    results.forEach((result, index) => {
+      const run = runs[index] as string;
+      if (result.status === "fulfilled") installed.push([run, result.value]);
+      else {
+        refused.push(run);
+        this.wantedPlans.delete(run);
+        this.fail(`the plan of ${run}`, result.reason);
+      }
+    });
+    // A refused plan is not kept as if current; a screen showing it reads it again and shows why it fails.
+    if (refused.length > 0) this.set((s) => ({ ...s, plans: refused.reduce<Readonly<Record<string, ArchonPlan>>>((rest, run) => omit(rest, run), s.plans) }));
+    this.installPlans(installed);
   }
 
   /** Clears the marker first; a lost link puts it back for the next ready, a daemon answer does not. */
