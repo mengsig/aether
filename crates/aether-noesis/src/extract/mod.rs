@@ -30,6 +30,42 @@ mod tests;
 
 pub use batch::Message;
 pub use run::{JobEvent, JobPorts, Slot, Slots, claim_next, run_job};
+pub use trigger::after_teaching_turn;
+
+/// Who teaches a session, for reading its prose from that agent's transcript.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionOrigin {
+    pub agent: String,
+    /// Practice sessions never write to the graph.
+    pub practice: bool,
+}
+
+/// `session`'s teaching agent and mode, or `None` when there is no such session.
+pub fn session_origin(
+    conn: &rusqlite::Connection,
+    session: &str,
+) -> Result<Option<SessionOrigin>, ExtractError> {
+    use rusqlite::OptionalExtension;
+    let row: Option<(String, String)> = conn
+        .query_row(
+            "SELECT agent, mode FROM sessions WHERE id = ?1",
+            [session],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((agent, mode)) = row else {
+        return Ok(None);
+    };
+    assert!(!agent.is_empty(), "the schema requires a session agent");
+    assert!(
+        matches!(mode.as_str(), "teach" | "practice"),
+        "the schema bounds the mode"
+    );
+    Ok(Some(SessionOrigin {
+        agent,
+        practice: mode == "practice",
+    }))
+}
 
 /// The background agent a model call is made for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

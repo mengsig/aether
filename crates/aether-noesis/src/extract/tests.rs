@@ -293,6 +293,34 @@ fn cancelling_mid_job_keeps_the_last_committed_merge() {
 }
 
 #[test]
+fn a_call_abandoned_for_a_cancel_ends_the_job_cancelled_not_failed() {
+    let (_dir, store) = open();
+    let conn = store.connection();
+    let cancel = CancelFlag::default();
+    let mut model = FauxModel::new(vec![&extractor_reply("m1", &["Alpha holds."])], vec![]);
+    model
+        .extractor
+        .push_back(Err(ModelError::Failed("the job was cancelled".into())));
+    model.cancel_at = Some((1, cancel.clone()));
+    let (job, _) = run(
+        conn,
+        JobKind::ExtractSession,
+        SESSION,
+        &mut model,
+        &mut budget(&settings(1)),
+        &prose(),
+        &cancel,
+    );
+    assert_eq!(job.state, JobState::Cancelled, "{job:?}");
+    assert_eq!(job.error, None);
+    assert_eq!(
+        graph_store::load(conn).unwrap().nodes.len(),
+        1,
+        "unit 1 stays"
+    );
+}
+
+#[test]
 fn a_failing_unit_keeps_the_merges_before_it() {
     let (_dir, store) = open();
     let conn = store.connection();

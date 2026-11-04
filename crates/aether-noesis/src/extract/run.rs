@@ -154,6 +154,10 @@ fn call(job: &mut Job, ports: &mut JobPorts<'_>, role: Role, prompt: &str) -> Re
             ports.budget.settle(Spend::default());
             Err(Stop::Failed(error.to_string()))
         }
+        Err(_) if ports.cancel.is_cancelled() => {
+            ports.budget.settle(estimate);
+            Err(Stop::Cancelled)
+        }
         Err(error @ ModelError::Failed(_)) => {
             ports.budget.settle(estimate);
             Err(Stop::Failed(error.to_string()))

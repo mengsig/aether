@@ -132,6 +132,39 @@ pub fn write_diff(
     now: &str,
 ) -> Result<(), GraphError> {
     assert!(before.nodes.keys().all(|id| after.nodes.contains_key(id)));
+    write_nodes(conn, before, after, now)?;
+    for id in before
+        .chains
+        .keys()
+        .filter(|id| !after.chains.contains_key(*id))
+    {
+        conn.execute("DELETE FROM chains WHERE id = ?1", [id])?;
+    }
+    for (id, chain) in &after.chains {
+        let old = before.chains.get(id);
+        if old.is_none() {
+            insert_chain(conn, id, chain, now)?;
+        }
+        let known = old.map(|o| &o.provenance);
+        insert_origins(
+            conn,
+            "chain_provenance",
+            "chain",
+            id,
+            &chain.provenance,
+            known,
+        )?;
+    }
+    Ok(())
+}
+
+/// Insert the propositions, aliases and provenance `after` adds to `before`.
+fn write_nodes(
+    conn: &Connection,
+    before: &Graph,
+    after: &Graph,
+    now: &str,
+) -> Result<(), GraphError> {
     for (id, node) in &after.nodes {
         let old = before.nodes.get(id);
         if let Some(old) = old {
@@ -159,28 +192,6 @@ pub fn write_diff(
             "proposition",
             id,
             &node.provenance,
-            known,
-        )?;
-    }
-    for id in before
-        .chains
-        .keys()
-        .filter(|id| !after.chains.contains_key(*id))
-    {
-        conn.execute("DELETE FROM chains WHERE id = ?1", [id])?;
-    }
-    for (id, chain) in &after.chains {
-        let old = before.chains.get(id);
-        if old.is_none() {
-            insert_chain(conn, id, chain, now)?;
-        }
-        let known = old.map(|o| &o.provenance);
-        insert_origins(
-            conn,
-            "chain_provenance",
-            "chain",
-            id,
-            &chain.provenance,
             known,
         )?;
     }
@@ -283,6 +294,23 @@ pub fn delete_proposition(conn: &Connection, id: &str) -> Result<bool, GraphErro
     )?;
     assert_eq!(left, 0, "no chain survives its premise");
     Ok(deleted == 1)
+}
+
+/// Run `write` in one immediate write transaction, committed only if it
+/// succeeds, so a job's merge waits for it rather than interleaving.
+pub fn in_write<T>(
+    conn: &Connection,
+    write: impl FnOnce(&Connection) -> Result<T, GraphError>,
+) -> Result<T, GraphError> {
+    assert!(
+        conn.is_autocommit(),
+        "in_write opens the transaction itself"
+    );
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    let written = write(&tx)?;
+    tx.commit()?;
+    debug_assert!(conn.is_autocommit());
+    Ok(written)
 }
 
 pub use snapshot::{Snapshot, SnapshotFilter, snapshot};

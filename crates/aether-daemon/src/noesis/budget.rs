@@ -201,6 +201,17 @@ impl ServiceBudget {
         self.book.retired.store(true, Ordering::SeqCst);
     }
 
+    /// Why an extraction job's next model call must not start: the budget is
+    /// closed or retired, or today's background budget is spent. The turn
+    /// the call runs as is then admitted and charged by the runtime's guard.
+    pub(crate) fn background_refusal(&self) -> Option<String> {
+        if !*self.open.lock() || self.book.retired.load(Ordering::SeqCst) {
+            return Some("Noesis is not taking background work now".into());
+        }
+        let unsettled = self.book.unsettled.lock();
+        self.book.spent_out(&unsettled, NoesisLane::Background)
+    }
+
     /// Admissions not yet settled, started or not.
     pub(crate) fn outstanding(&self) -> u32 {
         u32::from(self.book.accountant.running(Lane::Interactive))
