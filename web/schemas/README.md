@@ -6,8 +6,8 @@ hand. `npm run generate` in `web/` turns them into `web/packages/protocol`.
 ## archon.protocol.schema.json
 
 - Source: https://github.com/mengsig/archon, `crates/archon-core/protocol.schema.json`
-- Commit: `9a8d63d1532e1a26422d28afb644bffb9ba24667`
+- Commit: `6c7397ca33e368af03df19ae7f8e07079f4c5f8a`
 - Protocol: 24 (web clients accepted from 23)
-- SHA-256: `90c3597395464887ab73700074d811eb3d4d3a388d203fe431727feda8a0fa6b`
+- SHA-256: `249cefb63f214b7a4d3c7129f81e0eb48345b37a73ff8db50a043891bb19d1c9`
 
 Check the copy with `sha256sum web/schemas/archon.protocol.schema.json`.
