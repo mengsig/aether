@@ -87,6 +87,39 @@ async fn native_jobs_survive_wait_until_their_completion_event() {
     h.runtime.shutdown().await;
 }
 
+/// A held `wait_for` reports in through the harness, so the bound on a
+/// native call that never returns leaves it alone however long it waits.
+#[tokio::test]
+async fn a_native_wait_held_past_the_tool_call_bound_is_not_cut() {
+    let mut h = harness_configured(
+        Duration::from_millis(100),
+        Script {
+            background: Some("build".into()),
+            ..Default::default()
+        },
+        |config| config.tool_call_bound = Duration::from_millis(300),
+    )
+    .await;
+    let parent = start_coordinator(&h);
+    let turn = turn_of(&mut h, parent).await;
+    let pending = hold(&h, &turn, "wait_for", json!({})).await;
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    assert!(!pending.is_finished(), "the bound cut a held wait");
+    assert!(!turn.observed.stopped() && !turn.observed.cancelled());
+    assert!(custom(h.store.as_ref(), parent, "agent.tool_call_overdue").is_none());
+    turn.events
+        .upgrade()
+        .unwrap()
+        .send(EngineEvent::BackgroundTask {
+            id: "build".into(),
+            running: false,
+        })
+        .await
+        .unwrap();
+    assert!(reply_of(pending).await.contains("build finished"));
+    h.runtime.shutdown().await;
+}
+
 #[tokio::test]
 async fn a_native_wait_deadline_returns_without_killing_its_jobs() {
     let (h, _, turn, pending) = background_wait(json!({"timeout_seconds": 1})).await;

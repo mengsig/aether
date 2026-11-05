@@ -116,6 +116,13 @@ before updating.
   a header that names every screen and one entrance motion. See
   [the before and after report](https://github.com/mengsig/aether/blob/main/docs/design/vnext-polish/index.html).
 
+### Fixed
+
+- **A tool call that never returns (archon#393).** After 15 minutes
+  outstanding with no sign of life from the engine, Aether stops the turn,
+  records `agent.tool_call_overdue` and wakes the agent to read its inbox;
+  Claude Code's shell cap is pinned at 10 minutes.
+
 ## 1.2.11
 
 Released 2026-11-03. A patch release for the TUI and the dependencies.
