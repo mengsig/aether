@@ -104,7 +104,10 @@ export class Bridge {
     const rules = await this.onControlLink(daemon, (_link, read) => read({ cmd: "list_approval_rules", include_revoked: true }));
     if (!Array.isArray(rules)) throw new Error("list_approval_rules answers a list");
     const found = rules.find((entry) => (entry as { id?: unknown }).id === rule) as { scope?: { scope?: unknown } } | undefined;
-    if (found?.scope?.scope === "everywhere") {
+    // aetherd decodes non-canonical spellings (rule_8… is rule_0…), so only an id it listed may pass.
+    if (found === undefined) throw new BridgeRefusal(`${rule} is not one of this host's rules as listed`);
+    if (typeof found.scope?.scope !== "string") throw new Error("list_approval_rules gives each rule a scope");
+    if (found.scope.scope === "everywhere") {
       throw new BridgeRefusal(`${rule} applies to every agent; revoke it at the host`);
     }
   }

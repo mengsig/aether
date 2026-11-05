@@ -189,6 +189,12 @@ test("the app cannot use host standing for the watcher's operators or a rule for
   for (const method of ["request", "subscribe"]) {
     await assert.rejects(bridge.handle(APP_SENDER, 7, method, [conn, revoke(GLOBAL)]), /applies to every agent/);
   }
+  // The ULID overflow spelling aetherd decodes to GLOBAL, and an id aetherd never listed.
+  for (const method of ["request", "subscribe"]) {
+    for (const id of ["rule_81JAAAAAAAAAAAAAAAAAAAAAAA", "rule_01JCCCCCCCCCCCCCCCCCCCCCCC"]) {
+      await assert.rejects(bridge.handle(APP_SENDER, 7, method, [conn, revoke(id)]), /not one of this host's rules/);
+    }
+  }
   const replayed = { cmd: "resolve_submission", req: 5, command: { cmd: "revoke_approval_rule", id: 7 } };
   await assert.rejects(bridge.handle(APP_SENDER, 7, "request", [conn, replayed]), /names its rule in id/);
   const sent = () => recorded.written.map((text) => JSON.parse(text) as Frame).filter((frame) => frame.req === 5);
@@ -196,5 +202,5 @@ test("the app cannot use host standing for the watcher's operators or a rule for
   await bridge.handle(APP_SENDER, 7, "request", [conn, revoke(LOCAL)]);
   assert.deepEqual(sent(), [revoke(LOCAL)], "a rule for one agent is still the app's to revoke");
   const reads = recorded.written.map((text) => (JSON.parse(text) as Frame).cmd).filter((cmd) => cmd === "list_approval_rules");
-  assert.equal(reads.length, 3, "main reads the rule on its own link before each revocation");
+  assert.equal(reads.length, 7, "main reads the rule on its own link before each revocation");
 });

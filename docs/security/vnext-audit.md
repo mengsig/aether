@@ -118,7 +118,7 @@ only for `archon-mcp` and `archon-web` (Archon
 `crates/archon-daemon/src/handlers/control.rs:488-497`), so stage agents
 resume. That is CLI-only (`OperatorChange`) power, reached with no native
 confirmation. The renderer's changes are also recorded as `by: "cli"`.
-(`helloFrame`'s `archon-cli` greeting at `src/bridge/bridge.ts:148` is used
+(`helloFrame`'s `archon-cli` greeting at `src/bridge/bridge.ts:149` is used
 only by health probes and by main's control link for confirmed `privileged`
 actions.)
 
@@ -166,10 +166,15 @@ standing used silently, which §c rules out.
   The frontend never sends it. A watcher change is made at the host.
 - For `revoke_approval_rule` (alone or inside `resolve_submission`),
   `revokedRule` (`:161-167`) names the rule. `refuseGlobalRuleRevocation`
-  (`src/bridge/bridge.ts:98-110`) reads `list_approval_rules` on a control
-  link of main's own (`onControlLink`, `:112-126`) and refuses the revocation
+  (`src/bridge/bridge.ts:98-113`) reads `list_approval_rules` on a control
+  link of main's own (`onControlLink`, `:116-129`) and refuses the revocation
   when that rule's scope is `everywhere`. It does so for `request` and
   `subscribe`. A rule's scope never changes, so the read cannot go stale.
+- The revocation passes only when its id is, exactly, one aetherd listed.
+  aetherd's ULID decoder accepts an overflowing first digit, so
+  `rule_81J…` names the same rule as `rule_01J…` and the schema allows both;
+  a lookup that let an unlisted id through could be skipped that way. Found
+  by this item's review and fixed after it.
   A rule for one agent, subtree or run is still the app's to revoke, as it is
   a device's.
 
@@ -180,12 +185,15 @@ for the watcher's operators or a rule for every agent". Through the real
 - a watcher change, direct and inside `resolve_submission`, is refused;
 - revoking a rule for every agent is refused on `request` and `subscribe`,
   and neither reaches aetherd;
+- the overflow spelling of that rule's id, and an id aetherd never listed,
+  are refused on `request` and `subscribe`;
 - a replayed revocation whose rule id is not a string is refused;
 - revoking a rule for one agent is sent, and main reads the rules before each
   revocation.
 
 Without the fix, it fails with "Missing expected rejection"
-(`.archon/evidence/before-host-policy-fix-test.txt` in the build run).
+(`.archon/evidence/before-host-policy-fix-test.txt` in the build run), and
+without the listed-id rule likewise (`before-ulid-alias-fix-test.txt`).
 
 ## ARCHITECTURE §c: the Electron shell
 
@@ -199,19 +207,19 @@ headless security check"), from `make web`.
 | c1 | `contextIsolation`, `sandbox`, `nodeIntegration: false`, `webviewTag: false`, `webSecurity: true` | ✅ | `src/main/app-window.ts:21-29`; `app.enableSandbox()` at `src/main/index.ts:10`. Test `windows.test.ts` "the app window has exactly the hardened options and the one preload"; headless check "app window preferences". |
 | c2 | The preload exposes one frozen `window.desktop` through `contextBridge`, and nothing else | ✅ | `src/preload/index.cjs:92`. Headless check "window.desktop is the only bridge" pins the exact key list, `frozen: true`, and no `require` or `process`. |
 | c3 | Navigation pinned to `app://`; `setWindowOpenHandler` denies | ✅ | `src/security/navigation.ts:20-30` (`will-navigate`, `will-frame-navigate`, `will-redirect`, webview, window open); every new `webContents` also refuses webviews and new windows (`src/main/start.ts:109-112`). Headless checks "app window navigation is pinned", "app window opens no windows". |
-| c4 | `openExternal` accepts only `https:` | ✅ | `externalUrl` at `src/bridge/bridge.ts:160-166` also refuses userinfo. |
+| c4 | `openExternal` accepts only `https:` | ✅ | `externalUrl` at `src/bridge/bridge.ts:163-169` also refuses userinfo. |
 | c5 | Permission handlers deny by default, notifications only | ✅ | `src/security/navigation.ts:32-36`. Test "the permission handlers allow notifications and nothing else"; headless check "remote window gets no permissions". |
 | c6 | Renderer CSP `default-src 'self'`, `connect-src 'self'`, set by main on every `app://` response | ✅ | `src/security/csp.ts:9-30`; `serveApp` adds `APP_HEADERS` to every response, 404 and 405 included (`src/main/app-protocol.ts`). Headless checks "app CSP blocks the remote origin", "app window has no seen request at the remote origin". |
 | c7 | `app://` serves only the bundle | ✅ | Segment allowlist and containment assertion in `src/main/app-protocol.ts:25-33`. Headless check "app:// refuses paths outside the bundle" tries `..`, `%2e%2e`, a dot file, an encoded slash and another host. |
 | c8 | Each IPC call is checked for the sender frame (top-level `app://` document) | ✅ | `checkSender` at `src/security/validate.ts:196-203`, fed by `senderOf` (`src/main/host.ts:21-28`), which requires a registered app window, the main frame and an `app://aether` URL. Headless checks "subframes get no bridge", "no IPC handler answers a remote window". |
 | c9 | Payload against the generated JSON Schema; frames ≤ 1 MiB, strings ≤ 4 KiB | ✅ | `Validator.check` (`src/security/validate.ts:87-99`) checks sizes before the sender, then re-parses the JSON form, so the bytes it validates are the bytes it sends. Frames go through `FrameSchema` against `clients/protocol.schema.json` and the vendored Archon schema (`src/security/schema.ts`). Limits at `src/security/limits.ts:4-7`. Test `validate.test.ts`; headless check "bridge refuses …" sends a 1 MiB `send_message`. |
 | c10 | Class allowlist: Aether observe/operate and Archon Read/Change (remote allowlist) pass `request`; host_only, remote_admin, OperatorRead and OperatorChange never pass; `shutdown` never sent | ✅ | `passThroughRefusal` (`src/security/classes.ts:132-150`) mirrors the field rules of `Command::access`. Test `classes.test.ts` parses `crates/aether-protocol/src/access.rs` and fails when any schema command lacks a class or a static arm differs. G3's `memory_export`, `memory_import`, `memory_feedback`, `memory_retrieval_explain` and `consolidate_memories` are host_only. `noesis_configure` follows `configure_access`. Archon `pause`/`resume` with `hard` are refused, and a renderer `hello` to archond must declare `archon-web` (H3-X1). aetherd's device-only host-policy guards are kept for the renderer: no watcher change, no revocation of a rule for every agent (H3-A3). See H3-L14. Headless check "bridge refuses shutdown, host-only and remote-admin commands". |
-| c11 | Privileged actions are a closed set, local connections only; main builds the frame and the confirmation; the renderer supplies no frame and no text; confirmation is bound to the exact request | ✅ | The `PrivilegedAction` schema and the connection-kind check (`src/security/validate.ts:136-145`). `planAction` builds each frame from validated fields (`src/bridge/privileged.ts`). Templates are main's own (`src/security/confirm.ts:127-152`) and escape control, format and bidi characters (`:37`). A rendering over 60 lines is refused (`:112`). Remote settings carry `expected_revision`, so a change between confirmation and send is refused (`privileged.ts:60,66`). The confirmed text is sent on main's own control link (`src/bridge/bridge.ts:87-95`, `onControlLink` at `:112-126`). Tests `confirm.test.ts`; headless checks "privileged action sends the confirmed frame", "privileged action refused when cancelled". See H3-L5. |
-| c12 | No raw bytes, socket path, shell command or filesystem path from the renderer; a picked path comes back as an opaque token | ✅ | `discover` returns no socket (`publicDaemon`, `src/bridge/bridge.ts:153-157`); `connect` takes a daemon id pattern (`validate.ts:50`). `pickDirectory` returns a single-use grant redeemed only in main (`src/native/folder-tokens.ts`). `engine.login` runs a fixed argv from `LOGIN_COMMANDS` (`privileged.ts:24-27`), checked as plain words in `openTerminal` (`src/main/host.ts:63-78`). |
+| c11 | Privileged actions are a closed set, local connections only; main builds the frame and the confirmation; the renderer supplies no frame and no text; confirmation is bound to the exact request | ✅ | The `PrivilegedAction` schema and the connection-kind check (`src/security/validate.ts:136-145`). `planAction` builds each frame from validated fields (`src/bridge/privileged.ts`). Templates are main's own (`src/security/confirm.ts:127-152`) and escape control, format and bidi characters (`:37`). A rendering over 60 lines is refused (`:112`). Remote settings carry `expected_revision`, so a change between confirmation and send is refused (`privileged.ts:60,66`). The confirmed text is sent on main's own control link (`src/bridge/bridge.ts:87-95`, `onControlLink` at `:116-129`). Tests `confirm.test.ts`; headless checks "privileged action sends the confirmed frame", "privileged action refused when cancelled". See H3-L5. |
+| c12 | No raw bytes, socket path, shell command or filesystem path from the renderer; a picked path comes back as an opaque token | ✅ | `discover` returns no socket (`publicDaemon`, `src/bridge/bridge.ts:156-160`); `connect` takes a daemon id pattern (`validate.ts:50`). `pickDirectory` returns a single-use grant redeemed only in main (`src/native/folder-tokens.ts`). `engine.login` runs a fixed argv from `LOGIN_COMMANDS` (`privileged.ts:24-27`), checked as plain words in `openTerminal` (`src/main/host.ts:63-78`). |
 | c13 | Credentials never cross IPC | ✅ | No bridge method takes or returns a credential (`ARGUMENTS`, `validate.ts:47-65`). Engine logins run in a terminal. Test `credentials.test.ts`. |
 | c14 | Socket discovery by the CLIs' rules | ✅ | `src/discovery/socket-paths.ts`; test `lifecycle/discovery.test.ts`. |
 | c15 | Managed start off by default, detached, never Electron's child; Electron never sends `shutdown` | ✅ | `ManagedStart.start` refuses unless `desktop.managed_start` is `true` (`src/lifecycle/managed-start.ts:101`). The process is spawned `detached`, stdin closed, output to a log, `unref` (`src/lifecycle/launch.ts:29-49`). `shutdown` is refused on every path (c10). Tests `managed-start.test.ts`, `never-stops.test.ts`, `daemon-survives.test.ts`. See H3-L1. |
-| c16 | Remote daemons only in a remote window, never in `app://` | ✅ | `openRemote` accepts only an entry of `remote.origins` (`bridge.ts:132-137`), normalized by `normalizeOrigin` (`src/security/origins.ts:28-41`). Headless checks "openRemote refuses http, paths, userinfo and unlisted origins", "openRemote opens a listed origin". |
+| c16 | Remote daemons only in a remote window, never in `app://` | ✅ | `openRemote` accepts only an entry of `remote.origins` (`bridge.ts:135-140`), normalized by `normalizeOrigin` (`src/security/origins.ts:28-41`). Headless checks "openRemote refuses http, paths, userinfo and unlisted origins", "openRemote opens a listed origin". |
 | c17 | Remote window: no preload, no bridge, same baseline options | ✅ | `src/remote/remote-window.ts` has no `preload`. Test "a remote window has no preload and its own per-origin partition"; headless checks "remote window preferences", "remote window authenticates with Origin and a SameSite=Strict cookie" (`desktop`, `require` and `process` are undefined). |
 | c18 | Its own partition `persist:remote:<sha256(origin)>`; removing the origin clears it | ✅ | `remotePartition` (`origins.ts:53-56`), with the partition identity asserted (`remote-windows.ts:36`). `forget` clears storage (`remote-windows.ts:54-61`), wired from `PreferenceStore.set` on removal. Headless checks "remote window has its own partition", "app window has no request in the remote session", "removing an origin clears its partition". |
 | c19 | Remote navigation and redirects pinned to the exact origin; window open denied | ✅ | `pinContents(contents, origin)` (`remote-windows.ts:38`). Headless checks "remote navigation is pinned to its origin", "remote redirects are pinned to its origin", "remote window opens no windows". |
