@@ -35,8 +35,8 @@ layout or paint. They are regression guards for the JavaScript work, not absolut
 
 ## Budgets
 
-`budgets.json` holds, per measure, the measured median of three calibration runs (`measured`), the
-run-to-run noise allowed (`noise`, 0 for counts and bytes, at least 10% for wall time and heap),
+`budgets.json` holds, per measure, the measured median of the calibration runs (six on the budget host) (`measured`), the
+run-to-run noise allowed (`noise`, 0 for counts and bytes; for wall time and heap the runs' spread, (max − min) / median, rounded up to 5%, and at least 20% for wall time and 10% for heap, since a few runs on a shared host miss its slowest moments),
 the budget (`measured × (1 + noise)`) and why the measure matters. `run.ts` fails when a measure
 is more than `tolerance` (10%) over its budget, when a budgeted measure was not measured, or when a
 measure has no budget.
@@ -44,7 +44,7 @@ measure has no budget.
 After an intended change, recalibrate on the budget host and review the diff:
 
 ```sh
-sh ../scripts/ci_slot.sh node perf/run.ts --runs 3 --calibrate
+sh ../scripts/ci_slot.sh node perf/run.ts --runs 6 --calibrate
 ```
 
 It prints each measure across the runs and the budgets they support; copy the ones that changed

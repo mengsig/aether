@@ -46,8 +46,8 @@ function calibrated(budgets: Budgets, all: readonly Results[]): Budgets {
   const measures: Record<string, Budget> = {};
   for (const [name, held] of Object.entries(budgets.measures)) {
     const { median, spread } = across(all, name);
-    // Three runs are a small sample: no host margin is set under 10%.
-    const noise = held.enforce === "ci" ? 0 : Math.max(0.1, marginOf(spread));
+    // A few runs on a shared host miss its slowest moments: wall time gets at least 20%, heap 10%.
+    const noise = held.enforce === "ci" ? 0 : Math.max(held.unit === "ms" ? 0.2 : 0.1, marginOf(spread));
     const budget = held.enforce === "ci" ? median : Number((median * (1 + noise)).toPrecision(4));
     measures[name] = { ...held, measured: Number(median.toPrecision(6)), noise, budget };
   }

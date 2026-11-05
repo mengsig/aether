@@ -1,14 +1,14 @@
 {
   "tolerance": 0.1,
-  "host": "Intel(R) Core(TM) 5 210H, 12 threads, Linux, Node v22.22.2: wall and heap budgets (enforce: local) hold on this host only; GitHub runners check the ci measures",
+  "host": "Intel(R) Core(TM) 5 210H, 12 threads, Linux, Node v22.22.2; margins from six runs: wall and heap budgets (enforce: local) hold on this host only; GitHub runners check the ci measures",
   "measures": {
     "fleet.mount.ms": {
-      "budget": 77.52,
+      "budget": 82.5,
       "unit": "ms",
       "enforce": "local",
       "fixture": "5,000 agents",
-      "measured": 70.469,
-      "noise": 0.1,
+      "measured": 68.752,
+      "noise": 0.2,
       "reason": "First render of #/fleet with every agent stored: rows, run names, facets and the virtual list."
     },
     "fleet.mount.commits": {
@@ -39,11 +39,11 @@
       "reason": "Rows rendered on mount: a screenful plus overscan."
     },
     "fleet.mount.heap_bytes": {
-      "budget": 798100,
+      "budget": 810100,
       "unit": "bytes",
       "enforce": "local",
       "fixture": "5,000 agents",
-      "measured": 725520,
+      "measured": 736416,
       "noise": 0.1,
       "reason": "Heap the mounted screen keeps beyond the stored agents: derived rows, facets and the DOM."
     },
@@ -66,12 +66,12 @@
       "reason": "DOM mutations for one filter change: bounded by the rows on screen."
     },
     "fleet.filter.ms": {
-      "budget": 15.49,
+      "budget": 16.96,
       "unit": "ms",
       "enforce": "local",
       "fixture": "5,000 agents",
-      "measured": 14.084,
-      "noise": 0.1,
+      "measured": 14.136,
+      "noise": 0.2,
       "reason": "One filter change over 5,000 agents, then a frame."
     },
     "fleet.scroll.row_renders": {
@@ -93,12 +93,12 @@
       "reason": "DOM mutations for one 12-row scroll step."
     },
     "fleet.scroll.ms": {
-      "budget": 3.821,
+      "budget": 4.141,
       "unit": "ms",
       "enforce": "local",
       "fixture": "5,000 agents",
-      "measured": 3.474,
-      "noise": 0.1,
+      "measured": 3.451,
+      "noise": 0.2,
       "reason": "One 12-row scroll step and its frame."
     },
     "fleet.delta.commits": {
@@ -129,21 +129,21 @@
       "reason": "DOM mutations for one changed agent: the changed row's pill only."
     },
     "fleet.delta.ms": {
-      "budget": 12.45,
+      "budget": 13.89,
       "unit": "ms",
       "enforce": "local",
       "fixture": "5,000 agents",
-      "measured": 11.314,
-      "noise": 0.1,
+      "measured": 11.574,
+      "noise": 0.2,
       "reason": "One get_agent reply applied and committed: the fleet rows, run names and facets are rebuilt over 5,000 agents (O(n log n))."
     },
     "conversation.mount.ms": {
-      "budget": 44.62,
+      "budget": 54.9,
       "unit": "ms",
       "enforce": "local",
       "fixture": "20,000 entries",
-      "measured": 40.564,
-      "noise": 0.1,
+      "measured": 40.669,
+      "noise": 0.35,
       "reason": "First render of a stored 20,000-entry transcript: tool pairing, rows, offsets and the measured list."
     },
     "conversation.mount.commits": {
@@ -174,11 +174,11 @@
       "reason": "Messages rendered on mount: those in view plus overscan."
     },
     "conversation.mount.heap_bytes": {
-      "budget": 9872000,
+      "budget": 9877000,
       "unit": "bytes",
       "enforce": "local",
       "fixture": "20,000 entries",
-      "measured": 8974120,
+      "measured": 8978920,
       "noise": 0.1,
       "reason": "Heap the mounted conversation keeps beyond the stored entries: rows, parts, offsets and the DOM."
     },
@@ -201,12 +201,12 @@
       "reason": "DOM mutations for one 600 px scroll step."
     },
     "conversation.scroll.ms": {
-      "budget": 18.91,
+      "budget": 22.96,
       "unit": "ms",
       "enforce": "local",
       "fixture": "20,000 entries",
-      "measured": 17.192,
-      "noise": 0.1,
+      "measured": 19.131,
+      "noise": 0.2,
       "reason": "One 600 px scroll step: offsets are rebuilt over every row."
     },
     "conversation.delta.commits": {
@@ -237,12 +237,12 @@
       "reason": "A streamed delta changes only the live tail's text."
     },
     "conversation.delta.ms": {
-      "budget": 2.659,
+      "budget": 3.941,
       "unit": "ms",
       "enforce": "local",
       "fixture": "20,000 entries",
-      "measured": 2.417,
-      "noise": 0.1,
+      "measured": 2.718,
+      "noise": 0.45,
       "reason": "One text delta applied by aether-reduce and committed with a 20,000-entry transcript on screen."
     },
     "conversation.commit.row_renders": {
@@ -255,21 +255,21 @@
       "reason": "Messages re-rendered when a message commits: every row in view, since entryRows rebuilds row objects."
     },
     "conversation.commit.ms": {
-      "budget": 23.97,
+      "budget": 28.44,
       "unit": "ms",
       "enforce": "local",
       "fixture": "20,000 entries",
-      "measured": 21.789,
-      "noise": 0.1,
+      "measured": 23.702,
+      "noise": 0.2,
       "reason": "One committed agent.message: mergeEntries sorts and entryRows rebuilds 20,000 rows (O(n log n))."
     },
     "dag.mount.ms": {
-      "budget": 258.5,
+      "budget": 281.1,
       "unit": "ms",
       "enforce": "local",
       "fixture": "2,000 items",
-      "measured": 235.038,
-      "noise": 0.1,
+      "measured": 234.257,
+      "noise": 0.2,
       "reason": "First render of a 2,000-item DAG through its layered layout (run inline) and first paint."
     },
     "dag.mount.layouts": {
@@ -300,11 +300,11 @@
       "reason": "DOM of the DAG screen; most of it is the canvas's accessible node list, one button per item (not virtualized)."
     },
     "dag.mount.heap_bytes": {
-      "budget": 58500000,
+      "budget": 58480000,
       "unit": "bytes",
       "enforce": "local",
       "fixture": "2,000 items",
-      "measured": 53184700,
+      "measured": 53166500,
       "noise": 0.1,
       "reason": "Heap the mounted DAG keeps beyond the stored graph: data, layout, scene and DOM (React dev build)."
     },
@@ -336,12 +336,12 @@
       "reason": "Selecting swaps the overview panel for the inspector."
     },
     "dag.select.ms": {
-      "budget": 33.99,
+      "budget": 37.45,
       "unit": "ms",
       "enforce": "local",
       "fixture": "2,000 items",
-      "measured": 30.904,
-      "noise": 0.1,
+      "measured": 31.208,
+      "noise": 0.2,
       "reason": "Selecting a held-up item from the overview and its frame."
     },
     "dag.delta.layouts": {
@@ -372,12 +372,12 @@
       "reason": "DOM mutations for one item's state change."
     },
     "dag.delta.ms": {
-      "budget": 42.5,
+      "budget": 46.68,
       "unit": "ms",
       "enforce": "local",
       "fixture": "2,000 items",
-      "measured": 38.639,
-      "noise": 0.1,
+      "measured": 38.897,
+      "noise": 0.2,
       "reason": "One item's state change: DAG data, critical path, held list and the 2,000-button node list are rebuilt."
     },
     "deltas.react_commits": {
@@ -408,21 +408,21 @@
       "reason": "DOM mutations over the whole load."
     },
     "deltas.frame_p50_ms": {
-      "budget": 2.021,
+      "budget": 2.293,
       "unit": "ms",
       "enforce": "local",
       "fixture": "10 s: 3 streams x 40 deltas/s, 15 commits, 200 row updates",
-      "measured": 1.837,
-      "noise": 0.1,
+      "measured": 1.911,
+      "noise": 0.2,
       "reason": "Median frame: the frame's ops applied, committed and rendered."
     },
     "deltas.frame_p95_ms": {
-      "budget": 4.374,
+      "budget": 5.363,
       "unit": "ms",
       "enforce": "local",
       "fixture": "10 s: 3 streams x 40 deltas/s, 15 commits, 200 row updates",
-      "measured": 3.976,
-      "noise": 0.1,
+      "measured": 4.469,
+      "noise": 0.2,
       "reason": "95th percentile frame: frames where a message commits or another agent's event rebuilds the rows."
     },
     "bundle.total_bytes": {
