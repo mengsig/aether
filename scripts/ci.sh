@@ -49,8 +49,8 @@ run_lint() {
   step "sh -n install.sh"; sh -n install.sh
   step "scripts/ci_slot_test.sh (host CI slots)"; sh scripts/ci_slot_test.sh
   if command -v shellcheck >/dev/null; then
-    step "shellcheck (installer, release and CI slot scripts)"
-    shellcheck install.sh scripts/release.sh scripts/ci_scope.sh scripts/ci_slot.sh scripts/ci_slot_test.sh
+    step "shellcheck (installer, release, CI slot and e2e scripts)"
+    shellcheck install.sh scripts/release.sh scripts/ci_scope.sh scripts/ci_slot.sh scripts/ci_slot_test.sh scripts/e2e.sh
   else
     printf '\n\033[1;33m==> shellcheck of install.sh skipped (needs shellcheck)\033[0m\n'
   fi

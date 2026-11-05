@@ -28,3 +28,5 @@ node_modules/
 .mypy_cache/
 .ruff_cache/
 *.egg-info/
+# End-to-end suite output (scripts/e2e.sh): reports, traces and screenshots.
+/web/e2e/.out/
