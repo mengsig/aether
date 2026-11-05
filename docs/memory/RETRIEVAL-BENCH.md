@@ -149,11 +149,17 @@ runs of an arm are disturbed.
   never to a pinned memory. Scoring and ordering are otherwise unchanged.
 - **Stale demotion.** A memory with a stale mark (V31 `memory_stale`) ranks at
   half its score; it is never hidden. The seeding sweep marks a pinned note
-  its file no longer states, and clears the mark when the file states it again.
-  The marks of the whole pool are one store read.
-- **Injection holdout.** After retrieval, outside `retrieve`, the turn
-  withholds each unpinned memory whose seeded draw over (task, or agent
-  without one; memory) falls below `holdout_rate`. A memory held out of a task
+  its file no longer states, recording the commit that stopped stating it. An
+  existing mark is kept, and only a checkout whose history contains that
+  commit and whose HEAD states the note again clears it, so an older or
+  divergent checkout of the shared scope never undoes a newer deletion. A mark
+  set by hand has no commit and no sweep clears it. The marks of the whole
+  pool are one store read.
+- **Injection holdout.** After retrieval, outside `retrieve`, the turn first
+  keeps what the model's memory budget would render (the same fit context
+  assembly makes), then withholds each unpinned memory of that set whose
+  seeded draw over (task, or agent without one; memory) falls below
+  `holdout_rate`. A withheld slot is not refilled. A memory held out of a task
   stays held out for all of its turns. Each held-out memory is logged once per
   unit in V31 `memory_holdouts`, in the turn's own commit.
 
@@ -201,3 +207,28 @@ The three guards that moved:
 - Latency is within noise. The profile's stage split is unchanged (lexical
   pages 86% of `retrieve`); the stale-mark read is one batch query inside
   `rank`, which stays at 3.4%.
+
+## After the review fixes and the merge of #414 (G4, F6, D4)
+
+The driver was built at `01eecdf7` (`memory_bench-01eecdf7`, sha256
+`18e885a5…1a31193a9c`), with G4's `--consolidate` off, as by default. It ran
+in one slot session right after five runs of the baseline driver (1-minute
+load 1.5–2.2, no run disturbed). The baseline driver predates G4's plan field
+`consolidate`, so it ran with `evals/` as of `c1da726a`, unchanged otherwise.
+The two fixes do not touch `retrieve`; the holdout's budget fit runs in the
+turn, outside the timed call.
+
+| Metric (5 runs) | none: baseline → G2 | local: baseline → G2 |
+|---|---|---|
+| precision@3 | 0.2564 → **0.4808** | 0.2949 → **0.4808** |
+| precision@6 | 0.1603 → **0.4244** | 0.1731 → **0.4308** |
+| Tokens injected on the 3 queries with nothing relevant | 305.0 → **24.0** | 306.6667 → **24.0** |
+| Retrieval p95, 48 memories, median of runs (us) | 3241 → **3186** | 3337 → **3359** |
+| — per run | 3210, 3185, 3174, 3212, 3175 | 3359, 3338, 3328, 3499, 3368 |
+| Retrieval median, median of runs (us) | 2290 → 2303 | 2453 → 2453 |
+| Retrieval p95, 5,048 memories, median of runs (us) | 12032 → 11925 | 12832 → 12562 |
+
+Every deterministic metric equals the run above. The profile now times the
+stale-mark read as its own stage: 14 store reads per retrieval, the stale read
+8 us (0.4%) on the dataset store and 26 us (0.4%) on the scaled one, and
+`rank` 3.1% and 6.8%.
