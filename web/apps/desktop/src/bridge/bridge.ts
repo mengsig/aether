@@ -2,13 +2,13 @@
 // only then reaches the method that serves it. Electron-specific effects come in through BridgeHost.
 
 import type { LocalDaemon, PreferenceKey, PrivilegedAction } from "@aether-ui/protocol";
-import type { DaemonKind } from "../security/classes.ts";
+import { revokedRule, type DaemonKind } from "../security/classes.ts";
 import type { Confirmation } from "../security/confirm.ts";
 import { normalizeOrigin } from "../security/origins.ts";
 import { BridgeRefusal, Validator, type Sender, type ValidCall } from "../security/validate.ts";
 import { ConnectionTable, type LocalDaemonRecord } from "./connections.ts";
 import { okData, type DaemonLink, type Frame } from "./daemon-link.ts";
-import { planAction } from "./privileged.ts";
+import { planAction, type Read } from "./privileged.ts";
 
 /** What the bridge needs from Electron and the machine; tests hand in fakes. */
 export interface BridgeHost {
@@ -58,8 +58,12 @@ export class Bridge {
     switch (call.method) {
       case "discover": return (await this.host.findDaemons()).map(publicDaemon);
       case "connect": return this.connections.connect(owner, await this.daemon(call.daemon));
-      case "request": return this.connections.request(owner, call.conn, call.frame, call.text);
-      case "subscribe": return this.connections.subscribe(owner, call.conn, call.frame, call.text);
+      case "request":
+        await this.refuseGlobalRuleRevocation(owner, call.conn, call.frame);
+        return this.connections.request(owner, call.conn, call.frame, call.text);
+      case "subscribe":
+        await this.refuseGlobalRuleRevocation(owner, call.conn, call.frame);
+        return this.connections.subscribe(owner, call.conn, call.frame, call.text);
       case "close": return this.connections.close(owner, call.conn);
       case "privileged": return this.privileged(owner, call.action);
       case "startDaemon": return this.host.startDaemon(call.kind);
@@ -82,6 +86,31 @@ export class Bridge {
   /** Builds, confirms and sends one privileged action on a control connection of main's own. */
   private async privileged(owner: number, action: PrivilegedAction): Promise<unknown> {
     const daemon = this.connections.daemonOf(owner, action.conn);
+    return this.onControlLink(daemon, async (link, read) => {
+      const plan = await planAction(action, daemon, ACTION_REQ, read);
+      if (!(await this.host.confirm(owner, plan.confirmation))) throw new BridgeRefusal("Cancelled");
+      if (plan.delivery.kind === "terminal") return await this.host.openTerminal(plan.delivery.argv);
+      return okData(await link.request(plan.delivery.text, plan.delivery.req));
+    });
+  }
+
+  /** A rule for every agent is the host's policy, as aetherd holds it for a device (`authz.rs`). */
+  private async refuseGlobalRuleRevocation(owner: number, conn: string, frame: Frame): Promise<void> {
+    const kind = this.connections.kindOf(conn);
+    if (kind === undefined) throw new BridgeRefusal(`${conn} is not an open local connection`);
+    const rule = revokedRule(kind, frame);
+    if (rule === undefined) return;
+    const daemon = this.connections.daemonOf(owner, conn);
+    const rules = await this.onControlLink(daemon, (_link, read) => read({ cmd: "list_approval_rules", include_revoked: true }));
+    if (!Array.isArray(rules)) throw new Error("list_approval_rules answers a list");
+    const found = rules.find((entry) => (entry as { id?: unknown }).id === rule) as { scope?: { scope?: unknown } } | undefined;
+    if (found?.scope?.scope === "everywhere") {
+      throw new BridgeRefusal(`${rule} applies to every agent; revoke it at the host`);
+    }
+  }
+
+  /** Runs `work` on a control connection of main's own, greeted by main and closed after. */
+  private async onControlLink<T>(daemon: LocalDaemonRecord, work: (link: DaemonLink, read: Read) => Promise<T>): Promise<T> {
     const link = await this.host.openLink(daemon.socket);
     try {
       okData(await link.request(JSON.stringify(this.hello(daemon.kind)), HELLO_REQ));
@@ -90,10 +119,7 @@ export class Bridge {
         const req = next++;
         return okData(await link.request(JSON.stringify({ ...body, req }), req));
       };
-      const plan = await planAction(action, daemon, ACTION_REQ, read);
-      if (!(await this.host.confirm(owner, plan.confirmation))) throw new BridgeRefusal("Cancelled");
-      if (plan.delivery.kind === "terminal") return await this.host.openTerminal(plan.delivery.argv);
-      return okData(await link.request(plan.delivery.text, plan.delivery.req));
+      return await work(link, read);
     } finally {
       link.close();
     }

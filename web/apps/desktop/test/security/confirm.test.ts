@@ -169,3 +169,32 @@ test("the app's archond connections greet as archon-web, and only main's confirm
   assert.deepEqual(control.map((frame) => frame.cmd), ["hello", "merge_item"]);
   assert.equal(control[0]?.client, "archon-cli", "main's own control link keeps the CLI's standing");
 });
+
+test("the app cannot use host standing for the watcher's operators or a rule for every agent", async () => {
+  const GLOBAL = "rule_01JAAAAAAAAAAAAAAAAAAAAAAA";
+  const LOCAL = "rule_01JBBBBBBBBBBBBBBBBBBBBBBB";
+  const rules = [
+    { id: GLOBAL, scope: { scope: "everywhere" } },
+    { id: LOCAL, scope: { scope: "agent", id: "agt_01JAAAAAAAAAAAAAAAAAAAAAAA" } },
+  ];
+  const recorded = recordingLink({ list_approval_rules: rules });
+  Object.assign(recorded.link, { isOpen: true });
+  const bridge = new Bridge(VALIDATOR, fakeHost(recorded, [], true));
+  const conn = await bridge.handle(APP_SENDER, 7, "connect", ["aether:local"]) as string;
+  const watcher = { cmd: "configure_github_watcher", req: 4, config: { operator_users: ["mallory"] }, expected_revision: 1 };
+  for (const frame of [watcher, { cmd: "resolve_submission", req: 4, command: watcher }]) {
+    await assert.rejects(bridge.handle(APP_SENDER, 7, "request", [conn, frame]), /who the watcher obeys/);
+  }
+  const revoke = (id: string) => ({ cmd: "revoke_approval_rule", req: 5, id });
+  for (const method of ["request", "subscribe"]) {
+    await assert.rejects(bridge.handle(APP_SENDER, 7, method, [conn, revoke(GLOBAL)]), /applies to every agent/);
+  }
+  const replayed = { cmd: "resolve_submission", req: 5, command: { cmd: "revoke_approval_rule", id: 7 } };
+  await assert.rejects(bridge.handle(APP_SENDER, 7, "request", [conn, replayed]), /names its rule in id/);
+  const sent = () => recorded.written.map((text) => JSON.parse(text) as Frame).filter((frame) => frame.req === 5);
+  assert.deepEqual(sent(), [], "neither refusal reaches aetherd");
+  await bridge.handle(APP_SENDER, 7, "request", [conn, revoke(LOCAL)]);
+  assert.deepEqual(sent(), [revoke(LOCAL)], "a rule for one agent is still the app's to revoke");
+  const reads = recorded.written.map((text) => (JSON.parse(text) as Frame).cmd).filter((cmd) => cmd === "list_approval_rules");
+  assert.equal(reads.length, 3, "main reads the rule on its own link before each revocation");
+});
