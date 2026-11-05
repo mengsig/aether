@@ -66,13 +66,13 @@
       "reason": "DOM mutations for one filter change: bounded by the rows on screen."
     },
     "fleet.filter.ms": {
-      "budget": 16.96,
+      "budget": 17.67,
       "unit": "ms",
       "enforce": "local",
       "fixture": "5,000 agents",
       "measured": 14.136,
-      "noise": 0.2,
-      "reason": "One filter change over 5,000 agents, then a frame."
+      "noise": 0.25,
+      "reason": "One filter change over 5,000 agents, then a frame. Noise 25%: three later runs spread 20.8%."
     },
     "fleet.scroll.row_renders": {
       "budget": 12,
