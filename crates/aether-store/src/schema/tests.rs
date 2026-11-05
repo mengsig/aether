@@ -1636,6 +1636,7 @@ fn write_v31_tables(store: &crate::SqliteStore, ids: &[MemoryId]) {
                     memory: ids[1],
                     reason: "notes.md no longer states it".into(),
                     since: now(),
+                    revision: Some("0123456789abcdef0123456789abcdef01234567".into()),
                 }))
                 .mutate(Mutation::LogMemoryHoldout(MemoryHoldout {
                     memory: ids[2],

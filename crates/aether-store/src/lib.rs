@@ -472,6 +472,9 @@ pub struct MemoryStaleMark {
     pub memory: MemoryId,
     pub reason: String,
     pub since: Timestamp,
+    /// The commit whose tree stopped stating the memory's source, when a
+    /// repository sweep set the mark; `None` for a mark set by hand.
+    pub revision: Option<String>,
 }
 
 /// A memory a turn withheld from its model, so its lift can be measured as a

@@ -9,7 +9,7 @@ use aether_core::time::Timestamp;
 use rusqlite::{Transaction, params};
 use std::collections::BTreeMap;
 
-const STALE_MARKS: &str = "SELECT memory_id, reason, since FROM memory_stale
+const STALE_MARKS: &str = "SELECT memory_id, reason, since, revision FROM memory_stale
      WHERE memory_id IN (SELECT value FROM json_each(?1))";
 
 const HOLDOUTS: &str = "SELECT memory_id, agent_id, task_id, at, rate, score
@@ -45,11 +45,12 @@ impl SqliteStore {
                 row.get::<_, String>(0)?,
                 row.get(1)?,
                 row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
             ))
         })?;
         let mut marks = BTreeMap::new();
         for row in rows {
-            let (id, reason, since) = row?;
+            let (id, reason, since, revision) = row?;
             let memory: MemoryId = parsed(&id, "stale memory id")?;
             debug_assert!(memories.contains(&memory), "{memory} was not asked for");
             let since = timestamp(&since, "stale mark")?;
@@ -59,6 +60,7 @@ impl SqliteStore {
                     memory,
                     reason,
                     since,
+                    revision,
                 },
             );
         }
@@ -131,12 +133,23 @@ pub(super) fn mark_memory_stale(
             mark.memory
         )));
     }
+    if mark
+        .revision
+        .as_deref()
+        .is_some_and(|r| r.trim().is_empty())
+    {
+        return Err(StoreError::Corrupt(format!(
+            "stale mark for memory {} has a blank revision",
+            mark.memory
+        )));
+    }
     let memory = mark.memory.to_string();
     require_stored(tx, &memory, "stale mark")?;
     let written = tx.execute(
-        "INSERT INTO memory_stale(memory_id, reason, since) VALUES (?1, ?2, ?3)
-         ON CONFLICT(memory_id) DO UPDATE SET reason = excluded.reason, since = excluded.since",
-        params![memory, mark.reason, mark.since.to_rfc3339()],
+        "INSERT INTO memory_stale(memory_id, reason, since, revision) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(memory_id) DO UPDATE SET reason = excluded.reason,
+             since = excluded.since, revision = excluded.revision",
+        params![memory, mark.reason, mark.since.to_rfc3339(), mark.revision],
     )?;
     debug_assert_eq!(written, 1);
     tally.row("memory_stale", mark.reason.len());

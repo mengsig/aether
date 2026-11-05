@@ -529,7 +529,8 @@ const V31: &str = r#"
 CREATE TABLE IF NOT EXISTS memory_stale (
     memory_id TEXT PRIMARY KEY,
     reason    TEXT NOT NULL,
-    since     TEXT NOT NULL
+    since     TEXT NOT NULL,
+    revision  TEXT
 );
 CREATE TABLE IF NOT EXISTS memory_holdouts (
     seq       INTEGER PRIMARY KEY AUTOINCREMENT,

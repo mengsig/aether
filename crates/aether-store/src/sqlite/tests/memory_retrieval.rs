@@ -39,19 +39,34 @@ fn holdout(memory: MemoryId, agent: AgentId, task: Option<TaskId>, rate: f32) ->
 fn a_stale_mark_is_read_for_the_asked_memories_replaced_and_cleared() {
     let store = SqliteStore::open_in_memory().unwrap();
     let (marked, plain) = (stored_memory(&store), stored_memory(&store));
-    let mark = |reason: &str| {
+    let mark = |reason: &str, revision: Option<&str>| {
         Mutation::MarkMemoryStale(MemoryStaleMark {
             memory: marked,
             reason: reason.into(),
             since: now(),
+            revision: revision.map(str::to_owned),
         })
     };
-    store.commit(Commit::new().mutate(mark("first"))).unwrap();
-    store.commit(Commit::new().mutate(mark("second"))).unwrap();
+    store
+        .commit(Commit::new().mutate(mark("first", Some("c2"))))
+        .unwrap();
+    assert_eq!(
+        store.memory_stale_marks(&[marked]).unwrap()[&marked]
+            .revision
+            .as_deref(),
+        Some("c2")
+    );
+    store
+        .commit(Commit::new().mutate(mark("second", None)))
+        .unwrap();
     let marks = store.memory_stale_marks(&[marked, plain]).unwrap();
     assert_eq!(marks.len(), 1);
     assert_eq!(
-        marks[&marked].reason, "second",
+        (
+            marks[&marked].reason.as_str(),
+            marks[&marked].revision.as_deref()
+        ),
+        ("second", None),
         "a mark is replaced, not stacked"
     );
     assert!(store.memory_stale_marks(&[]).unwrap().is_empty());
@@ -74,12 +89,17 @@ fn a_stale_mark_is_read_for_the_asked_memories_replaced_and_cleared() {
 fn a_stale_mark_needs_a_stored_memory_and_a_reason() {
     let store = SqliteStore::open_in_memory().unwrap();
     let stored = stored_memory(&store);
-    for (memory, reason) in [(MemoryId::new(), "gone"), (stored, "  ")] {
+    for (memory, reason, revision) in [
+        (MemoryId::new(), "gone", None),
+        (stored, "  ", None),
+        (stored, "gone", Some(" ")),
+    ] {
         let refused = store.commit(Commit::new().mutate(Mutation::MarkMemoryStale(
             MemoryStaleMark {
                 memory,
                 reason: reason.into(),
                 since: now(),
+                revision: revision.map(str::to_owned),
             },
         )));
         assert!(

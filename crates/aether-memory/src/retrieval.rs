@@ -208,8 +208,8 @@ impl MemoryService {
         Ok(tallies)
     }
 
-    /// Mark a memory as possibly stale, with why, or clear its mark with
-    /// `None`. Committed at once; returns whether anything changed.
+    /// Mark a memory as possibly stale by hand, with why, or clear any mark
+    /// with `None`. Committed at once; returns whether anything changed.
     pub fn set_stale(&self, id: MemoryId, reason: Option<String>) -> Result<bool> {
         if reason.as_deref().is_some_and(|r| r.trim().is_empty()) {
             return Err(MemoryError::Invalid("a stale mark needs a reason".into()));
@@ -226,10 +226,58 @@ impl MemoryService {
                 memory: id,
                 reason,
                 since: now(),
+                revision: None,
             }),
         };
         self.commit(&hold, Commit::new().mutate(mutation))?;
         Ok(true)
+    }
+
+    /// The sweep's mark: `id`'s source stopped stating it at `revision`. An
+    /// existing mark is kept, so the revision a clear must contain stays the
+    /// one that first established it. Returns whether a mark was written.
+    pub(crate) fn mark_source_departed(
+        &self,
+        id: MemoryId,
+        reason: String,
+        revision: &str,
+    ) -> Result<bool> {
+        debug_assert!(!reason.trim().is_empty());
+        debug_assert!(!revision.trim().is_empty());
+        let hold = self.gate.hold();
+        if self.store.memory_stale_marks(&[id])?.contains_key(&id) {
+            return Ok(false);
+        }
+        let mark = MemoryStaleMark {
+            memory: id,
+            reason,
+            since: now(),
+            revision: Some(revision.to_owned()),
+        };
+        self.commit(&hold, Commit::new().mutate(Mutation::MarkMemoryStale(mark)))?;
+        Ok(true)
+    }
+
+    /// Clear `id`'s mark only while it is still the sweep's mark set at
+    /// `revision`, which the caller checked its history contains. A mark
+    /// replaced since, or set by hand, is left alone.
+    pub(crate) fn clear_source_departed(&self, id: MemoryId, revision: &str) -> Result<bool> {
+        let hold = self.gate.hold();
+        let marked = self.store.memory_stale_marks(&[id])?.remove(&id);
+        debug_assert!(marked.as_ref().is_none_or(|m| m.memory == id));
+        if marked.and_then(|m| m.revision).as_deref() != Some(revision) {
+            return Ok(false);
+        }
+        let clear = Commit::new().mutate(Mutation::ClearMemoryStale(id));
+        self.commit(&hold, clear)?;
+        Ok(true)
+    }
+
+    /// The stale mark of `id`, if any.
+    pub(crate) fn stale_mark(&self, id: MemoryId) -> Result<Option<MemoryStaleMark>> {
+        let mark = self.store.memory_stale_marks(&[id])?.remove(&id);
+        debug_assert!(mark.as_ref().is_none_or(|m| m.memory == id));
+        Ok(mark)
     }
 
     /// Stale marks on the pool, in one read, and none for an empty pool. A

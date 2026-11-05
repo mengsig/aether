@@ -130,7 +130,7 @@ impl MemoryService {
     /// HEAD's own content of the file no longer states it. A note whose
     /// commit is unknown is not checkable and is never swept, and neither is
     /// a pinned one, which is a person's decision: it is marked stale
-    /// instead, and the mark is cleared once the file states it again.
+    /// instead ([`Self::sweep_pinned_note`]).
     fn retract_departed_notes(
         &self,
         root: &Path,
@@ -158,10 +158,7 @@ impl MemoryService {
                 .or_insert_with(|| repo::notes_at(root, &head, &source.file))
                 .contains(&record.text);
             if record.pinned {
-                // A person's decision is kept, but a pinned note its file
-                // no longer states is demoted as possibly stale.
-                let reason = (!still_states).then(|| departed(&source.file, &head));
-                self.set_stale(record.id, reason)?;
+                self.sweep_pinned_note(root, &head, record.id, &source.file, still_states)?;
                 continue;
             }
             if still_states {
@@ -179,6 +176,32 @@ impl MemoryService {
             retracted += usize::from(changed);
         }
         Ok(retracted)
+    }
+
+    /// A pinned note its file no longer states is demoted, not retracted, and
+    /// the mark names the commit that first stopped stating it. Only a
+    /// checkout whose history contains that commit, and whose HEAD states the
+    /// note again, clears it: an older or divergent checkout of the shared
+    /// scope never undoes a newer deletion.
+    fn sweep_pinned_note(
+        &self,
+        root: &Path,
+        head: &str,
+        id: MemoryId,
+        file: &str,
+        still_states: bool,
+    ) -> Result<()> {
+        if !still_states {
+            self.mark_source_departed(id, departed(file, head), head)?;
+            return Ok(());
+        }
+        let Some(revision) = self.stale_mark(id)?.and_then(|mark| mark.revision) else {
+            return Ok(());
+        };
+        if repo::contains_commit(root, &revision) {
+            self.clear_source_departed(id, &revision)?;
+        }
+        Ok(())
     }
 
     /// The live notes of `repository` read from a file, at most a page.
