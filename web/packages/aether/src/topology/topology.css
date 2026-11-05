@@ -1,5 +1,5 @@
 @layer app {
-  .topology { display: grid; gap: var(--space-4); }
+  .topology { display: grid; gap: var(--space-4); animation: ui-rise var(--motion-base) var(--ease-standard); }
   .topology-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
   .topology-count { margin-inline-end: auto; color: var(--color-text-muted); font-size: var(--text-sm); }
   .topology-canvas {

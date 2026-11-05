@@ -1,5 +1,5 @@
 @layer app {
-  .queue { display: grid; gap: var(--space-5); }
+  .queue { display: grid; gap: var(--space-5); animation: ui-rise var(--motion-base) var(--ease-standard); }
   .queue-status { display: grid; gap: var(--space-4); }
   .queue-actions, .queue-form-actions, .queue-options { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .queue-form-actions { justify-content: end; }

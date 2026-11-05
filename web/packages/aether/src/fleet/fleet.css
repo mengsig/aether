@@ -1,5 +1,5 @@
 @layer app {
-  .fleet { display: grid; gap: var(--space-5); }
+  .fleet { display: grid; gap: var(--space-5); animation: ui-rise var(--motion-base) var(--ease-standard); }
   .fleet-bar { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-4); }
   .fleet-filters { display: flex; flex-wrap: wrap; gap: var(--space-3); }
   .fleet-filter { min-inline-size: 9rem; max-inline-size: 14rem; }
