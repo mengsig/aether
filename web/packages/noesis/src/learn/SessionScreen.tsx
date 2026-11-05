@@ -117,7 +117,7 @@ function SessionView({ conn, session, reload }: { conn: string; session: aether.
 
 function TimelineEntry({ item, onAnswer }: { item: TimelineItem; onAnswer: ((question: string, input: AnswerInput) => Promise<string | null>) | undefined }) {
   if (item.kind === "message") {
-    return <div className="learn-bubble" data-role={item.role}><span className="learn-visually-hidden">{item.role === "teacher" ? "Teacher:" : "You:"}</span>{item.text}</div>;
+    return <div className="learn-bubble" data-role={item.role}><span className="ui-visually-hidden">{item.role === "teacher" ? "Teacher:" : "You:"}</span>{item.text}</div>;
   }
   if (item.kind === "problem") return <ProblemCard problem={item.problem} conclusion={item.conclusion} active={item.active} />;
   const id = item.question.id;
@@ -147,7 +147,7 @@ function Composer({ session, disabled, onSend }: { session: aether.NoesisSession
   };
   return (
     <form className="learn-composer" onSubmit={(event) => void submit(event)}>
-      <label className="learn-visually-hidden" htmlFor="learn-reply">Message your teacher</label>
+      <label className="ui-visually-hidden" htmlFor="learn-reply">Message your teacher</label>
       <textarea id="learn-reply" className="learn-textarea" rows={2} maxLength={TEXT_MAX} disabled={disabled || waiting}
         placeholder={waiting ? "Answer the question above to go on" : session.active_problem ? "Your answer, or ask for a hint" : "Ask, answer or say what is unclear"}
         value={text} onChange={(e) => setText(e.target.value)} />

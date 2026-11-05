@@ -80,7 +80,7 @@ export function QueueStatus({ access, items, names, settled }: {
       </div>
       {status.error && !status.data ? <ErrorState title="Could not read Archon's status" message={status.error} onRetry={status.reload} /> : null}
       {status.data ? (
-        <div className="queue-summary">
+        <div className="ui-card queue-summary">
           <PauseControl access={access} status={status.data} onDone={status.reload} />
           <div className="queue-counts">
             <Meter label="Agents" value={status.data.running_agents} cap={status.data.caps.max_parallel_agents ?? 0} format={String} />

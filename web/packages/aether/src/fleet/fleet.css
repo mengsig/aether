@@ -6,18 +6,22 @@
   .fleet-filter .ui-field-input { inline-size: 100%; color: var(--color-text); font: inherit; }
   .fleet-count { margin-inline-start: auto; color: var(--color-text-muted); font-size: var(--text-sm); }
   .fleet-table {
-    display: grid; grid-template-rows: auto minmax(0, 1fr);
+    display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden;
     border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1);
   }
-  .fleet-list { block-size: max(18rem, calc(100dvh - 17rem)); }
+  /* The list is as tall as its rows, up to the viewport; the scroller itself is capped, so it still virtualizes. */
+  .fleet-list .ui-vlist { block-size: auto; max-block-size: max(18rem, calc(100dvh - 17rem)); }
   .fleet-row {
     display: grid; grid-template-columns: minmax(10rem, 2fr) minmax(8rem, 1.6fr) 9.5rem minmax(8rem, 1.4fr) minmax(7rem, 1.2fr);
     align-items: center; gap: var(--space-3); inline-size: 100%; block-size: 100%;
     padding-inline: var(--space-4); border-block-end: 1px solid var(--color-border); font-size: var(--text-sm);
+    transition: background-color var(--motion-fast) var(--ease-standard);
   }
+  .ui-vlist-row:last-child .fleet-row { border-block-end: 0; }
+  .ui-vlist-row:hover .fleet-row { background: var(--color-surface-2); }
   .fleet-head {
-    block-size: var(--space-10); color: var(--color-text-muted); font: var(--weight-medium) var(--text-xs) / 1 var(--font-mono);
-    letter-spacing: 0.08em; text-transform: uppercase;
+    block-size: var(--space-10); color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / 1 var(--font-ui);
+    letter-spacing: 0.06em; text-transform: uppercase;
   }
   .fleet-name, .fleet-role, .fleet-model, .fleet-run { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-inline-size: 0; }
   .fleet-name { font-weight: var(--weight-medium); }

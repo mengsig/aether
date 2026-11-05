@@ -19,7 +19,7 @@ import "./item.css";
 function FactCard({ fact }: { readonly fact: Fact }) {
   return (
     <div className="item-fact" aria-label={`${fact.label}: ${fact.text}`}>
-      <span className="item-fact-label">{fact.label}</span>
+      <span className="ui-label item-fact-label">{fact.label}</span>
       {fact.status ? <StatusPill status={fact.status} label={fact.text} /> : <span className="item-fact-none">{fact.text}</span>}
       {fact.detail ? <span className="item-muted">{fact.detail}</span> : null}
     </div>
@@ -69,10 +69,10 @@ function ItemPage({ access, detail, view, stored, reload }: PageProps) {
   const done = () => { reload(); status.reload(); questions.reload(); };
   const pipeline = summary?.switched_to ?? detail.switched_to ?? item.pipeline;
   return (
-    <article className="item" aria-labelledby="item-title">
+    <article className="ui-page item" aria-labelledby="item-title">
       <header className="item-header">
-        <a className="ui-link item-back" href={routeHref("#/archon/queue", {})}>Queue</a>
-        <h1 id="item-title" className="item-title">{item.title}</h1>
+        <a className="ui-link ui-back item-back" href={routeHref("#/archon/queue", {})}>Queue</a>
+        <h1 id="item-title" className="ui-page-title item-title">{item.title}</h1>
         <EntityActionMenu entity={{ kind: "item", conn: access.conn, id: item.id }} />
         <p className="item-muted">{[repoName ?? item.repo ?? "no repository", pipeline, item.id].join(" · ")}{access.live ? "" : " · polled (protocol 23)"}</p>
         <Facts view={view} stored={stored} links={links} />
@@ -107,7 +107,7 @@ function Item({ info, item }: { readonly info: ConnectionInfo; readonly item: st
     if (read.error) return <ErrorState title="Could not load the item" message={read.error} onRetry={read.reload} />;
     const missing = access.ready && stored === undefined && Object.keys(known).length > 0;
     if (missing) return <EmptyState title="Item not found">Archon has no item {item}. <a className="ui-link" href={routeHref("#/archon/queue", {})}>Back to the queue</a></EmptyState>;
-    return <div className="item" aria-busy="true" aria-label="Loading the item"><Skeleton height="2rem" width="60%" /><Skeleton height="6rem" /><Skeleton height="12rem" /></div>;
+    return <div className="ui-page item" aria-busy="true" aria-label="Loading the item"><Skeleton height="2rem" width="60%" /><Skeleton height="6rem" /><Skeleton height="12rem" /></div>;
   }
   const detail = stamped.value as unknown as archon.ItemDetail;
   invariant(detail.item.id === item, `the detail of ${item} describes ${detail.item.id}`);

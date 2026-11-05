@@ -148,9 +148,9 @@ export function Action({ conn, command, label, onRun, confirm, variant = "second
 export function Section({ title, hint, children }: { readonly title: string; readonly hint?: string; readonly children: ReactNode }) {
   invariant(title.trim() !== "", "a section has a title");
   return (
-    <section className="st-section" aria-label={title}>
+    <section className="ui-card st-section" aria-label={title}>
       <header className="st-section-head">
-        <h3 className="st-section-title">{title}</h3>
+        <h3 className="ui-card-title st-section-title">{title}</h3>
         {hint === undefined ? null : <p className="st-section-hint">{hint}</p>}
       </header>
       {children}

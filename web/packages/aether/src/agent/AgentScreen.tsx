@@ -24,7 +24,7 @@ function AgentHeader({ conn, agent }: { readonly conn: ConnId; readonly agent: a
   return (
     <header className="agent-head">
       <div className="agent-title">
-        <h2 className="agent-name">{agent.name}</h2>
+        <h2 className="ui-page-title agent-name">{agent.name}</h2>
         <StatusPill status={status.status} label={status.label} />
         {agent.paused ? <Badge tone="warning">Paused</Badge> : null}
         {agent.archived ? <Badge>Archived</Badge> : null}
@@ -43,7 +43,7 @@ function AgentHeader({ conn, agent }: { readonly conn: ConnId; readonly agent: a
 function AgentFacts({ agent }: { readonly agent: aether.Agent }) {
   const facts = useMemo(() => agentFacts(agent), [agent]);
   return (
-    <dl className="agent-facts">
+    <dl className="ui-card agent-facts">
       {facts.map((fact) => (
         <div key={fact.label} className="agent-fact">
           <dt>{fact.label}</dt>
@@ -62,13 +62,13 @@ export function AgentScreen({ conn, id }: { readonly conn: ConnId; readonly id: 
     return <EmptyState title="Not connected">No connection {conn} is open. <a className="ui-link" href="#/fleet">Back to the fleet</a></EmptyState>;
   }
   if (!agent && info.state !== "ready") {
-    return <section className="agent" aria-busy="true" aria-label="Loading the agent"><Skeleton height="3rem" /><Skeleton height="8rem" /></section>;
+    return <section className="ui-page agent" aria-busy="true" aria-label="Loading the agent"><Skeleton height="3rem" /><Skeleton height="8rem" /></section>;
   }
   if (!agent) {
     return <EmptyState title="No such agent">{info.label} has no agent {id}. <a className="ui-link" href="#/fleet">Back to the fleet</a></EmptyState>;
   }
   return (
-    <section className="agent" aria-label={`Agent ${agent.name}`}>
+    <section className="ui-page agent" aria-label={`Agent ${agent.name}`}>
       <AgentHeader conn={conn} agent={agent} />
       <AgentFacts agent={agent} />
       <Conversation key={`${conn}/${id}`} conn={conn} agent={id} />

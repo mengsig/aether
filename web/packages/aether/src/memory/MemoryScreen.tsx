@@ -33,8 +33,8 @@ export default function MemoryScreen({ params }: RouteProps) {
   };
   const rows = records<aether.MemoryRecord>(entry?.value);
   const known = useMemo(() => new Map(rows.map(memory => [memory.id, memory.text])), [rows]);
-  return <div className="b3-screen mem-screen"><header className="b3-screen-head"><h1 className="b3-screen-title">Memory</h1>
-    <p className="b3-screen-sub">Review what stays with your agents.</p><Button onClick={() => setOpen(true)}>Create memory</Button></header>
+  return <div className="ui-page b3-screen mem-screen"><header className="ui-page-head b3-screen-head"><h1 className="ui-visually-hidden b3-screen-title">Memory</h1>
+    <p className="ui-page-lede b3-screen-sub">Review what stays with your agents.</p><Button onClick={() => setOpen(true)}>Create memory</Button></header>
     <StandingNotice conn={conn} />
     <Section title="Memories"><Field label="Search memories" value={text} onChange={e => setText(e.target.value)} />
       <Tabs label="Scope" selected={scope} onSelect={setScope} tabs={[{ id: "all", label: "All scopes", panel: null }, { id: "global", label: "Global", panel: null }, { id: "repository", label: "Repository", panel: <Field label="Repository filter" value={repository} onChange={e => setRepository(e.target.value)} /> },

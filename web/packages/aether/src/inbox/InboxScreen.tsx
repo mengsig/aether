@@ -13,16 +13,16 @@ export function InboxScreen() {
   const connections = useSelector(selectConnections);
   const daemons = useMemo(() => Object.values(connections).filter((c) => c.daemon === "aether"), [connections]);
   return (
-    <section className="b3-screen" aria-label="Inbox">
-      <header className="b3-screen-head">
-        <h2 className="b3-screen-title">Inbox</h2>
-        <p className="b3-screen-sub">Questions, approvals and agents that need you, newest daemon first.</p>
+    <section className="ui-page b3-screen" aria-label="Inbox">
+      <header className="ui-page-head b3-screen-head">
+        <h2 className="ui-visually-hidden b3-screen-title">Inbox</h2>
+        <p className="ui-page-lede b3-screen-sub">Questions, approvals and agents that need you, newest daemon first.</p>
       </header>
       <RecoveryReview />
       {daemons.length === 0 ? <EmptyState title="No daemon connected">Pair a daemon to see what its agents need. <a className="ui-link" href="#/settings/connections">Connections</a></EmptyState> : null}
       {daemons.map((daemon) => (
         <div key={daemon.id} className="b3-stack">
-          {daemons.length > 1 ? <h3 className="b3-section-title">{daemon.label}</h3> : null}
+          {daemons.length > 1 ? <h3 className="ui-card-title b3-section-title">{daemon.label}</h3> : null}
           <StandingNotice conn={daemon.id} />
           <DaemonAttention conn={daemon.id} label={daemon.label} />
         </div>

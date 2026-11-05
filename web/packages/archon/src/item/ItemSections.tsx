@@ -8,7 +8,7 @@ import { dateTime, invariant, priorityLabel, safeHttpUrl, usd } from "../queue/m
 import { duration, modelOf, objectFor, runPill, stagePill } from "./facts.ts";
 
 export function Section({ title, children }: { readonly title: string; readonly children: ReactNode }) {
-  return <section className="item-section" aria-label={title}><h2 className="item-heading">{title}</h2>{children}</section>;
+  return <section className="ui-card item-section" aria-label={title}><h2 className="ui-card-title item-heading">{title}</h2>{children}</section>;
 }
 
 function Row({ label, children }: { readonly label: string; readonly children: ReactNode }) {

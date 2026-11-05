@@ -15,7 +15,7 @@ import "./github.css";
 
 function Loading({ label }: { readonly label: string }) {
   return (
-    <div className="gh-page" aria-busy="true" aria-label={label}>
+    <div className="ui-page gh-page" aria-busy="true" aria-label={label}>
       <Skeleton height="2rem" width="55%" /><Skeleton height="5rem" /><Skeleton height="10rem" />
     </div>
   );
@@ -38,8 +38,8 @@ function Header({ page, view }: Pick<Body, "page" | "view">) {
   const meta = [kindLabel, `${page.repo}#${page.number}`, object?.author ? `by ${object.author}` : null].filter(Boolean).join(" · ");
   return (
     <header className="gh-header">
-      <p className="gh-eyebrow">{meta}</p>
-      <h1 id="gh-title" className="gh-title">{object?.title ?? `${page.repo}#${page.number}`}</h1>
+      <p className="ui-eyebrow gh-eyebrow">{meta}</p>
+      <h1 id="gh-title" className="ui-page-title gh-title">{object?.title ?? `${page.repo}#${page.number}`}</h1>
       {object && object.labels.length > 0 ? <div className="gh-labels">{object.labels.map((label) => <Badge key={label}>{label}</Badge>)}</div> : null}
     </header>
   );
@@ -68,7 +68,7 @@ function PageBody({ info, page, view, error, reload }: Body) {
   const facts = [githubFact(view.kind, view.object, view.recorded)];
   invariant(facts.every((fact) => fact.status === null || !["succeeded", "failed", "running"].includes(fact.status)), "a GitHub state never takes an item's colour");
   return (
-    <article className="gh-page" aria-labelledby="gh-title">
+    <article className="ui-page gh-page" aria-labelledby="gh-title">
       <Header page={page} view={view} />
       <div className="gh-facts" role="group" aria-label="GitHub state">{facts.map((fact) => <FactCard key={fact.label} fact={fact} />)}</div>
       <Notices info={info} error={error} stale={stale} fetchedAt={view.object?.fetched_at ?? null} />
@@ -107,7 +107,7 @@ function GithubPage({ info, page }: { readonly info: ConnectionInfo; readonly pa
 
 function Unknown({ info, page, view, reload }: Omit<Body, "error">) {
   return (
-    <div className="gh-page">
+    <div className="ui-page gh-page">
       <EmptyState title={`Archon knows nothing of ${page.repo}#${page.number} yet`}>
         Archon's GitHub cache has not read it and no item is linked to it.
       </EmptyState>

@@ -59,10 +59,10 @@ export default function SettingsScreen({ params }: RouteProps) {
   const conn = pickConnection(candidates, chosen)?.id ?? null;
   const tabs: TabItem[] = PAGES.map((id) => ({ id, label: LABELS[id], panel: pagePanel(id, conn) }));
   return (
-    <div className="st-screen">
-      <header className="st-screen-head">
-        <h2 className="st-screen-title">Settings</h2>
-        <p className="st-screen-sub">Connections, devices, remote access, providers and notifications.</p>
+    <div className="ui-page st-screen">
+      <header className="ui-page-head st-screen-head">
+        <h2 className="ui-visually-hidden st-screen-title">Settings</h2>
+        <p className="ui-page-lede st-screen-sub">Connections, devices, remote access, providers and notifications.</p>
       </header>
       {conn !== null && page !== "connections" ? <ConnectionPicker candidates={candidates} value={conn} onPick={setChosen} /> : null}
       <Tabs label="Settings pages" tabs={tabs} selected={page} onSelect={(id) => navigate(`#/settings/${id}`)} />

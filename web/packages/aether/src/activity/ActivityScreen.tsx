@@ -10,8 +10,8 @@ import { StartAgent } from "./StartAgent.tsx";
 
 export default function ActivityScreen() {
   const connections = Object.values(useSelector(selectConnections)).filter(c => c.daemon === "aether");
-  return <div className="b3-screen"><header className="b3-screen-head"><h1 className="b3-screen-title">Activity</h1>
-    <p className="b3-screen-sub">Recent work across your connections.</p></header>
+  return <div className="ui-page b3-screen"><header className="ui-page-head b3-screen-head"><h1 className="ui-visually-hidden b3-screen-title">Activity</h1>
+    <p className="ui-page-lede b3-screen-sub">Recent work across your connections.</p></header>
     {connections.length === 0 && <EmptyState title="Connect an Aether daemon to see activity" />}
     {connections.map(c => <ConnectionActivity key={c.id} conn={c.id} label={c.label} />)}
   </div>;

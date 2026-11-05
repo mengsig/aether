@@ -15,7 +15,7 @@ export interface ReadViewProps {
 
 function Loading({ label }: { readonly label: string }) {
   return (
-    <div className="st-loading" aria-busy="true" aria-label={`Loading ${label}`}>
+    <div className="ui-loading st-loading" aria-busy="true" aria-label={`Loading ${label}`}>
       <Skeleton height="var(--space-10)" />
       <Skeleton height="var(--space-10)" width="70%" />
     </div>

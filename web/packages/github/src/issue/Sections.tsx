@@ -12,7 +12,7 @@ import { invariant } from "./ref.ts";
 export function FactCard({ fact }: { readonly fact: StateFact }) {
   return (
     <div className="gh-fact" aria-label={`${fact.label}: ${fact.text}`} data-fact={fact.label}>
-      <span className="gh-fact-label">{fact.label}</span>
+      <span className="ui-label gh-fact-label">{fact.label}</span>
       {fact.status ? <StatusPill status={fact.status} label={fact.text} /> : <span className="gh-fact-none">{fact.text}</span>}
       {fact.detail ? <span className="gh-muted">{fact.detail}</span> : null}
     </div>
@@ -21,8 +21,8 @@ export function FactCard({ fact }: { readonly fact: StateFact }) {
 
 export function Section({ title, children }: { readonly title: string; readonly children: ReactNode }) {
   return (
-    <section className="gh-section" aria-label={title}>
-      <h2 className="gh-heading">{title}</h2>
+    <section className="ui-card gh-section" aria-label={title}>
+      <h2 className="ui-card-title gh-heading">{title}</h2>
       {children}
     </section>
   );

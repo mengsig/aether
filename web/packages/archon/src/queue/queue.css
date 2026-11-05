@@ -4,17 +4,16 @@
   .queue-actions, .queue-form-actions, .queue-options { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .queue-form-actions { justify-content: end; }
   .queue-summary {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: var(--space-3);
-    padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1);
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: var(--space-4);
   }
   .queue-pause, .queue-counts, .queue-spend-box { display: grid; align-content: start; gap: var(--space-2); }
   .queue-pause[data-paused] strong { color: var(--color-warning); }
+  .queue-pause > .ui-button { justify-self: start; }
   .queue-counts { grid-auto-flow: row; }
   .queue-meter { display: grid; gap: var(--space-1); font-size: var(--text-sm); }
   .queue-meter meter { inline-size: 100%; }
   .queue-meter-label, .queue-muted, .queue-meta, .queue-total { color: var(--color-text-muted); font-size: var(--text-sm); }
   .queue-error { color: var(--color-danger); font-size: var(--text-sm); }
-  .queue-heading { margin: 0; font: var(--weight-medium) var(--text-md) / var(--leading-tight) var(--font-display); }
   .queue-questions { display: grid; gap: var(--space-2); }
   .queue-question-list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
   .queue-question {
@@ -28,8 +27,10 @@
   .queue-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .queue-chip {
     padding: var(--space-1) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-xl);
-    background: var(--color-surface-1); color: var(--color-text); font: inherit; font-size: var(--text-sm); cursor: pointer;
+    background: var(--color-surface-1); color: var(--color-text-muted); font: inherit; font-size: var(--text-sm); cursor: pointer;
+    transition: background-color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
   }
+  .queue-chip:hover { border-color: var(--color-border-strong); color: var(--color-text); }
   .queue-chip[aria-pressed="true"] { border-color: var(--color-accent); background: var(--color-accent); color: var(--color-accent-contrast); }
   .queue-chip:focus-visible { outline: none; box-shadow: var(--focus-ring); }
   .queue-count { font-family: var(--font-mono); }
@@ -38,14 +39,16 @@
   .queue-select .ui-field-input { inline-size: 100%; color: var(--color-text); font: inherit; }
   .queue-search { flex: 1; min-inline-size: 14rem; }
   .queue-form { display: grid; gap: var(--space-3); }
-  .queue-list {
-    block-size: max(18rem, calc(100dvh - 24rem));
-    border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1);
-  }
+  .queue-list { overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1); }
+  /* As tall as its rows, up to the viewport; the scroller itself is capped, so it still virtualizes. */
+  .queue-list .ui-vlist { block-size: auto; max-block-size: max(18rem, calc(100dvh - 24rem)); }
   .queue-row {
     display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
     inline-size: 100%; block-size: 100%; padding-inline: var(--space-4); border-block-end: 1px solid var(--color-border);
+    transition: background-color var(--motion-fast) var(--ease-standard);
   }
+  .ui-vlist-row:last-child .queue-row { border-block-end: 0; }
+  .ui-vlist-row:hover .queue-row { background: var(--color-surface-2); }
   .queue-row-main { display: grid; min-inline-size: 0; }
   .queue-title, .queue-meta, .queue-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .queue-title { font-weight: var(--weight-medium); }

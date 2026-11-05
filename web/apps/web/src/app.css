@@ -1,5 +1,5 @@
 @layer app {
-  .app-eyebrow { color: var(--color-accent); font: var(--weight-medium) var(--text-xs) / 1 var(--font-mono); letter-spacing: 0.14em; text-transform: uppercase; }
+  .app-eyebrow { color: var(--color-accent); }
   .app-pair { display: grid; gap: var(--space-5); max-inline-size: 26rem; margin: var(--space-8) auto; }
   .app-pair-lede { color: var(--color-text-muted); }
   .app-pair-phrase { font: var(--weight-regular) var(--text-3xl) / var(--leading-tight) var(--font-display); letter-spacing: -0.02em; }

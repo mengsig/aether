@@ -66,9 +66,9 @@ function Header({ view }: { readonly view: InitiativeView }) {
   const total = view.members.length;
   return (
     <header className="initiative-header">
-      <a className="ui-link initiative-back" href="#/archon/graph">← Task graph</a>
-      <p className="initiative-eyebrow">Initiative</p>
-      <h1 className="initiative-title">{initiative.title}</h1>
+      <a className="ui-link ui-back initiative-back" href="#/archon/graph">← Task graph</a>
+      <p className="ui-eyebrow initiative-eyebrow">Initiative</p>
+      <h1 className="ui-page-title initiative-title">{initiative.title}</h1>
       <div className="dag-badges">
         <StatusPill status={pill.status} label={pill.label} />
         {initiative.atomic === true ? <Badge tone="accent">Atomic</Badge> : null}
@@ -112,15 +112,15 @@ export function InitiativePage({ detail, access, layout }: InitiativePageProps) 
   const selected = picked !== undefined && view.members.some((row) => row.id === picked) ? picked : undefined;
   const onSelect = useCallback((item: string) => setPicked(item), []);
   return (
-    <article className="initiative" data-initiative={id}>
+    <article className="ui-page initiative" data-initiative={id}>
       <Header view={view} />
       <div className="initiative-body">
-        <section className="initiative-card" aria-label="Contract">
+        <section className="ui-card initiative-card" aria-label="Contract">
           <h2 className="dag-heading">Contract</h2>
           {detail.initiative.contract.trim() === "" ? <p className="dag-muted">No contract was written.</p>
             : <p className="initiative-contract">{detail.initiative.contract}</p>}
         </section>
-        <section className="initiative-card" aria-label="Members">
+        <section className="ui-card initiative-card" aria-label="Members">
           <h2 className="dag-heading">Items <span className="dag-count">{view.members.length}</span></h2>
           <Members view={view} graph={data ?? EMPTY_DATA} selected={selected} onSelect={onSelect} />
         </section>
@@ -147,7 +147,7 @@ function Initiative({ info, id, layout }: { readonly info: ConnectionInfo; reado
   }
   if (stored === undefined) {
     if (failure !== null) return <ErrorState title="The initiative could not be read" message={failure.message} onRetry={reload} />;
-    return <div className="initiative" aria-busy="true" aria-label="Loading the initiative"><Skeleton height="2rem" width="50%" /><Skeleton height="6rem" /><Skeleton height="16rem" /></div>;
+    return <div className="ui-page initiative" aria-busy="true" aria-label="Loading the initiative"><Skeleton height="2rem" width="50%" /><Skeleton height="6rem" /><Skeleton height="16rem" /></div>;
   }
   return (
     <>

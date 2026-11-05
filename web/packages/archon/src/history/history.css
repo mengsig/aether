@@ -1,8 +1,8 @@
 @layer app {
-  .history { display: grid; align-content: start; gap: var(--space-5); animation: dag-in var(--motion-base) var(--ease-standard); }
+  .history { display: grid; align-content: start; gap: var(--space-5); animation: ui-rise var(--motion-base) var(--ease-standard); }
   .history-search {
     display: grid; grid-template-columns: minmax(12rem, 2fr) repeat(2, minmax(9rem, 1fr)) auto; align-items: end; gap: var(--space-3);
-    padding: var(--space-4) var(--space-5); border: 1px solid var(--color-border); border-radius: var(--radius-xl); background: var(--color-surface-1); box-shadow: var(--elevation-1);
+    padding: var(--space-4) var(--space-5); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1);
   }
   .history-search .ui-field { margin: 0; }
   .history-body { display: grid; grid-template-columns: minmax(0, 2fr) minmax(18rem, 3fr); gap: var(--space-4); align-items: start; }
@@ -10,7 +10,7 @@
   .history-list { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
   .history-row[aria-pressed="true"] { border-color: var(--color-accent); background: var(--color-surface-2); }
   .history-panel { max-block-size: none; }
-  .history-detail { display: grid; align-content: start; gap: var(--space-4); animation: dag-in var(--motion-base) var(--ease-standard); }
+  .history-detail { display: grid; align-content: start; gap: var(--space-4); animation: ui-rise var(--motion-base) var(--ease-standard); }
   .history-detail-header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-3); font-size: var(--text-sm); }
   .history-timeline { position: relative; display: grid; gap: var(--space-4); margin: 0; padding: 0 0 0 var(--space-6); list-style: none; }
   .history-timeline::before { content: ""; position: absolute; inset-block: var(--space-2); inset-inline-start: var(--space-2); inline-size: 1px; background: var(--color-border); }
@@ -28,5 +28,5 @@
   .history-arrow { color: var(--color-text-faint); }
   .history-reason { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--color-surface-2); font-size: var(--text-sm); }
   .history-meta { font-size: var(--text-xs); }
-  @media (max-width: 960px) { .history-search, .history-body { grid-template-columns: 1fr; } }
+  @media (max-width: 60rem) { .history-search, .history-body { grid-template-columns: 1fr; } }
 }

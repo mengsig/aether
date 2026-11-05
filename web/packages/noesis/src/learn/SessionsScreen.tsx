@@ -76,7 +76,7 @@ function NewSession({ conn }: { conn: string }) {
   return (
     <form className="learn-new" onSubmit={(event) => void submit(event)} aria-label="Start a session">
       <h2 className="learn-subtitle">What do you want to learn?</h2>
-      <label className="learn-visually-hidden" htmlFor="learn-goal">Your goal</label>
+      <label className="ui-visually-hidden" htmlFor="learn-goal">Your goal</label>
       <textarea id="learn-goal" className="learn-textarea" rows={3} maxLength={GOAL_MAX} placeholder="For example: how TCP congestion control reacts to loss"
         value={goal} onChange={(e) => setGoal(e.target.value)} />
       <div className="learn-segmented" role="radiogroup" aria-label="Kind of session">

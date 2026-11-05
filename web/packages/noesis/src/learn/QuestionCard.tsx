@@ -103,7 +103,7 @@ function AnswerForm({ question, onAnswer }: { question: aether.Question; onAnswe
     <form className="learn-q-form" onSubmit={submit}>
       {question.kind === "choice" ? (
         <fieldset className="learn-options">
-          <legend className="learn-visually-hidden">Options</legend>
+          <legend className="ui-visually-hidden">Options</legend>
           {(question.options ?? []).map((option) => (
             <label key={option.value} className="learn-option">
               <input type={question.multi ? "checkbox" : "radio"} name={`${id}-choice`} value={option.value} checked={choices.includes(option.value)}

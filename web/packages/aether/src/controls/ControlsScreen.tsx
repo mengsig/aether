@@ -52,14 +52,14 @@ function SteerPanel({ conn, agent }: { readonly conn: ConnId; readonly agent: ae
 function ControlsHeader({ conn, agent }: { readonly conn: ConnId; readonly agent: aether.Agent }) {
   const status = agentStatus(agent);
   return (
-    <header className="b3-screen-head">
+    <header className="ui-page-head b3-screen-head">
       <div className="b3-row">
-        <h2 className="b3-screen-title">{agent.name}</h2>
+        <h2 className="ui-page-title b3-screen-title">{agent.name}</h2>
         <StatusPill status={status.status} label={status.label} />
         {agent.paused ? <Badge tone="warning">Paused</Badge> : null}
         {agent.archived ? <Badge>Archived</Badge> : null}
       </div>
-      <p className="b3-screen-sub">
+      <p className="ui-page-lede b3-screen-sub">
         Controls · <code className="b3-code">{agent.id}</code> · <a className="ui-link" href={routeHref("#/agents/:conn/:agent", { conn, agent: agent.id })}>Open the conversation</a>
       </p>
     </header>
@@ -73,7 +73,7 @@ export function ControlsScreen({ conn, id }: { readonly conn: ConnId; readonly i
   const [tab, setTab] = useState("lifecycle");
   if (!info) return <EmptyState title="Not connected">No connection {conn} is open. <a className="ui-link" href="#/fleet">Back to the fleet</a></EmptyState>;
   if (!agent && info.state !== "ready") {
-    return <section className="b3-screen" aria-busy="true" aria-label="Loading the agent"><Skeleton height="3rem" /><Skeleton height="10rem" /></section>;
+    return <section className="ui-page b3-screen" aria-busy="true" aria-label="Loading the agent"><Skeleton height="3rem" /><Skeleton height="10rem" /></section>;
   }
   if (!agent) return <EmptyState title="No such agent">{info.label} has no agent {id}. <a className="ui-link" href="#/fleet">Back to the fleet</a></EmptyState>;
   invariant(agent.id === id, "the store returns the agent the route names");
@@ -86,7 +86,7 @@ export function ControlsScreen({ conn, id }: { readonly conn: ConnId; readonly i
     { id: "records", label: "Records", panel: <div className="b3-panel"><RecordsPanel conn={conn} agent={agent} /></div> },
   ];
   return (
-    <section className="b3-screen" aria-label={`Controls for ${agent.name}`}>
+    <section className="ui-page b3-screen" aria-label={`Controls for ${agent.name}`}>
       <ControlsHeader conn={conn} agent={agent} />
       <StandingNotice conn={conn} />
       <Tabs label="Agent controls" tabs={tabs} selected={tab} onSelect={setTab} />

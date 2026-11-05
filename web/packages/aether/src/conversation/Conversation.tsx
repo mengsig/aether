@@ -74,7 +74,7 @@ export function Conversation({ conn, agent }: { readonly conn: ConnId; readonly 
   }
   if (!loaded) {
     return (
-      <div className="conv-loading" aria-busy="true" aria-label="Reading the transcript">
+      <div className="ui-loading conv-loading" aria-busy="true" aria-label="Reading the transcript">
         <Skeleton height="4rem" /><Skeleton height="6rem" /><Skeleton height="3rem" />
       </div>
     );

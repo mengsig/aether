@@ -51,7 +51,7 @@ function Pairing({ daemon }: { readonly daemon: Daemon }) {
   if (state.phase === "confirm") {
     return (
       <section className="app-pair" aria-live="polite">
-        <p className="app-eyebrow">Confirm on the host</p>
+        <p className="ui-eyebrow app-eyebrow">Confirm on the host</p>
         <p className="app-pair-phrase">{state.phrase}</p>
         <p className="app-pair-fingerprint">Fingerprint <code>{state.fingerprint}</code></p>
         <Button variant="quiet" onClick={() => flow.cancel()}>Cancel</Button>
@@ -61,7 +61,7 @@ function Pairing({ daemon }: { readonly daemon: Daemon }) {
   const busy = state.phase === "claiming";
   return (
     <form className="app-pair" onSubmit={submit} aria-busy={busy}>
-      <p className="app-eyebrow">Pair with {NAMES[daemon]}</p>
+      <p className="ui-eyebrow app-eyebrow">Pair with {NAMES[daemon]}</p>
       <p className="app-pair-lede">Run <code>{daemon} remote pair</code> on the host and type the code it shows.</p>
       <Field label="Pairing code" placeholder="ABCD-1234" value={code} onChange={(event) => setCode(event.currentTarget.value)} required autoComplete="one-time-code" spellCheck={false} />
       <Field label="Name for this device" value={name} onChange={(event) => setName(event.currentTarget.value)} required

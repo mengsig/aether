@@ -1,10 +1,7 @@
 @layer app {
   /* Frame: one calm column, a quiet header, and the body below it. */
-  .learn { display: grid; gap: var(--space-8); max-inline-size: 72rem; margin-inline: auto; padding-block: var(--space-6); }
-  .learn-header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: var(--space-4); }
+  .learn-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-4); }
   .learn-heading { display: grid; gap: var(--space-1); }
-  .learn-eyebrow { margin: 0; color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-normal) var(--font-ui); letter-spacing: 0.08em; text-transform: uppercase; }
-  .learn-title { margin: 0; font: var(--weight-regular) var(--text-3xl) / var(--leading-tight) var(--font-display); }
   .learn-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--color-surface-2); }
   .learn-tab {
     padding: var(--space-2) var(--space-4); border-radius: var(--radius-md); color: var(--color-text-muted); text-decoration: none;
@@ -14,15 +11,13 @@
   .learn-tab:hover { color: var(--color-text); }
   .learn-tab[aria-current="page"] { background: var(--color-surface-1); color: var(--color-text); box-shadow: var(--elevation-1); }
   .learn-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-  .learn-body { display: grid; gap: var(--space-6); min-inline-size: 0; animation: ui-rise var(--motion-base) var(--ease-standard); }
-  .learn-loading { display: grid; gap: var(--space-3); }
+  .learn-body { display: grid; gap: var(--space-6); min-inline-size: 0; }
   .learn-off { display: grid; justify-items: center; padding-block: var(--space-12); }
 
   /* Shared text pieces. */
   .learn-subtitle { margin: 0; font: var(--weight-medium) var(--text-lg) / var(--leading-tight) var(--font-ui); }
   .learn-muted { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); font-weight: var(--weight-regular); }
   .learn-num { font-variant-numeric: tabular-nums; }
-  .learn-visually-hidden { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .learn-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .learn-callout {
     display: grid; gap: var(--space-2); margin: 0; padding: var(--space-4); border-radius: var(--radius-md);
@@ -72,8 +67,8 @@
   .learn-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); color: var(--color-text-muted); font-size: var(--text-sm); }
   .learn-card-next { margin: 0; color: var(--color-accent); font: var(--weight-medium) var(--text-sm) / var(--leading-normal) var(--font-ui); }
   .learn-new {
-    display: grid; gap: var(--space-4); padding: var(--space-6); border-radius: var(--radius-lg);
-    background: var(--color-surface-1); box-shadow: var(--elevation-2);
+    display: grid; gap: var(--space-4); padding: var(--space-5); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+    background: var(--color-surface-1);
   }
 
   /* One session: the conversation, with the plan beside it on wide screens. */

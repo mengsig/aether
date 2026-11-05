@@ -3,6 +3,7 @@
   .mem-screen > *, .mem-screen .b3-section > * { min-inline-size: 0; }
   .mem-screen .ui-tablist { overflow-x: auto; scrollbar-width: none; }
   .mem-tight { gap: var(--space-2); }
+  .mem-screen .b3-screen-head > .ui-button { justify-self: start; }
   .mem-screen .b3-facts { grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr)); }
 
   .mem-standing { display: grid; gap: var(--space-2); }

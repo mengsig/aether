@@ -1,17 +1,13 @@
 @layer app {
-  .item { display: grid; gap: var(--space-4); }
   .item-header { display: grid; gap: var(--space-2); }
-  .item-back { justify-self: start; font-size: var(--text-sm); }
   .item-header > .ui-menu { justify-self: end; }
-  .item-title { margin: 0; font: var(--weight-bold) var(--text-2xl) / var(--leading-tight) var(--font-display); }
   .item-muted { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
   .item-error { margin: 0; color: var(--color-danger); font-size: var(--text-sm); }
   .item-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: var(--space-3); }
   .item-fact {
-    display: grid; align-content: start; justify-items: start; gap: var(--space-1); padding: var(--space-3);
-    border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-1);
+    display: grid; align-content: start; justify-items: start; gap: var(--space-2); padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1);
   }
-  .item-fact-label { color: var(--color-text-muted); font: var(--weight-medium) var(--text-xs) / 1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; }
   .item-fact-none { color: var(--color-text-faint); font-size: var(--text-sm); }
   .item-callout {
     padding: var(--space-3) var(--space-4); border-inline-start: var(--space-1) solid var(--color-border-strong);
@@ -25,11 +21,7 @@
   .item-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .item-confirm { display: flex; justify-content: end; gap: var(--space-2); }
   .item-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr)); gap: var(--space-4); align-items: start; }
-  .item-section {
-    display: grid; gap: var(--space-3); min-inline-size: 0; padding: var(--space-4);
-    border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1);
-  }
-  .item-heading { margin: 0; font: var(--weight-medium) var(--text-md) / var(--leading-tight) var(--font-display); }
+  .item-section { gap: var(--space-3); }
   .item-subheading { margin: 0 0 var(--space-2); color: var(--color-text-muted); font-size: var(--text-sm); }
   .item-facts-list { display: grid; gap: var(--space-2); margin: 0; }
   .item-fact-row { display: grid; grid-template-columns: 8rem 1fr; gap: var(--space-2); font-size: var(--text-sm); }

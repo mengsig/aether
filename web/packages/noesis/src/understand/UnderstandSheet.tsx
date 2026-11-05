@@ -50,7 +50,7 @@ export function UnderstandSheet({ request, onClose }: { readonly request: Unders
 function OffNote({ gate }: { readonly gate: Gate }) {
   switch (gate.state) {
     case "loading":
-      return <div className="understand-loading" aria-busy="true" aria-label="Loading Noesis"><Skeleton height="var(--space-8)" /><Skeleton height="var(--space-12)" /></div>;
+      return <div className="ui-loading understand-loading" aria-busy="true" aria-label="Loading Noesis"><Skeleton height="var(--space-8)" /><Skeleton height="var(--space-12)" /></div>;
     case "disconnected":
       return <EmptyState title="Not connected to Aether">Learning runs on your Aether daemon. This opens once the app reconnects.</EmptyState>;
     case "unsupported":
@@ -74,7 +74,7 @@ function Preview({ conn, request }: { readonly conn: string; readonly request: U
   const read = useSource(request.conn, request.id);
   switch (read.state) {
     case "loading":
-      return <div className="understand-loading" aria-busy="true" aria-label="Gathering the evidence"><Skeleton height="var(--space-6)" width="60%" /><Skeleton height="var(--space-12)" /><Skeleton height="var(--space-12)" /></div>;
+      return <div className="ui-loading understand-loading" aria-busy="true" aria-label="Gathering the evidence"><Skeleton height="var(--space-6)" width="60%" /><Skeleton height="var(--space-12)" /><Skeleton height="var(--space-12)" /></div>;
     case "missing":
       return <EmptyState title={read.title}>{read.message}</EmptyState>;
     case "error":

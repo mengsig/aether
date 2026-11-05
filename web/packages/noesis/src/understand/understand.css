@@ -5,7 +5,6 @@
   }
 
   .understand { display: grid; gap: var(--space-5); animation: ui-rise var(--motion-base) var(--ease-standard); }
-  .understand-loading { display: grid; gap: var(--space-3); }
   .understand-goal { display: grid; gap: var(--space-2); }
   .understand-label { color: var(--color-text-muted); font: var(--weight-medium) var(--text-sm) / var(--leading-normal) var(--font-ui); }
 

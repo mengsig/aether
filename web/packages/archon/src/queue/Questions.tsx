@@ -58,7 +58,7 @@ export function QuestionList({ access, questions, titles, onAnswered }: {
 }) {
   return (
     <section className="queue-questions" aria-label="Open questions">
-      <h2 className="queue-heading">Needs you</h2>
+      <h2 className="ui-card-title queue-heading">Needs you</h2>
       <ul className="queue-question-list">
         {questions.map((question) => (
           <QuestionCard key={question.id} access={access} question={question} onAnswered={onAnswered}

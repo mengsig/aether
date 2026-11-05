@@ -50,11 +50,11 @@ export function LearnFrame({ view, title, children }: { view: LearnView; title?:
   const [settingsOpen, showSettings, hideSettings] = useSettingsOpen();
   const conn = gate.state === "disconnected" ? null : gate.conn;
   return (
-    <section className="learn" aria-labelledby="learn-title">
+    <section className="ui-page learn" aria-labelledby="learn-title">
       <header className="learn-header">
         <div className="learn-heading">
-          <p className="learn-eyebrow">Noesis</p>
-          <h1 id="learn-title" className="learn-title">{title ?? "Learn"}</h1>
+          <p className="ui-eyebrow learn-eyebrow">Noesis</p>
+          <h1 id="learn-title" className="ui-visually-hidden learn-title">{title ?? "Learn"}</h1>
         </div>
         <nav className="learn-tabs" aria-label="Learning views">
           {TABS.map((tab) => (
@@ -76,7 +76,7 @@ function body(gate: ReturnType<typeof useGate>, showSettings: () => void, childr
     case "unsupported":
       return <EmptyState title="This daemon has no Noesis">Noesis arrived in Aether 1.3. Update the daemon to learn here.</EmptyState>;
     case "loading":
-      return <div className="learn-loading" aria-busy="true" aria-label="Loading Noesis"><Skeleton height="var(--space-12)" /><Skeleton height="var(--space-12)" /></div>;
+      return <div className="ui-loading learn-loading" aria-busy="true" aria-label="Loading Noesis"><Skeleton height="var(--space-12)" /><Skeleton height="var(--space-12)" /></div>;
     case "off":
       return <OffState onSettings={showSettings} />;
     case "on":

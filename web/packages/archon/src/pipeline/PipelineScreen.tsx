@@ -72,10 +72,10 @@ function RunView({ access, detail, run, title }: { readonly access: ArchonAccess
   const number = detail.runs.findIndex((entry) => entry.id === run.id) + 1;
   invariant(number > 0, `run ${run.id} is one of the item's runs`);
   return (
-    <article className="pipeline" aria-labelledby="pipeline-title">
+    <article className="ui-page pipeline" aria-labelledby="pipeline-title">
       <header className="pipeline-header">
-        <a className="ui-link item-back" href={routeHref("#/archon/items/:item", { item: detail.item.id })}>{title}</a>
-        <h1 id="pipeline-title" className="item-title">Run {number} · {view.pipeline}</h1>
+        <a className="ui-link ui-back item-back" href={routeHref("#/archon/items/:item", { item: detail.item.id })}>{title}</a>
+        <h1 id="pipeline-title" className="ui-page-title item-title">Run {number} · {view.pipeline}</h1>
         <div className="pipeline-meta">
           <StatusPill status={pill.status} label={pill.label} />
           <span className="item-muted">{[run.branch, usd(run.cost_usd), run.id].join(" · ")}</span>
@@ -99,7 +99,7 @@ function Pipeline({ info, item, run }: { readonly info: ConnectionInfo; readonly
   const detail = read.detail?.value as unknown as archon.ItemDetail | undefined;
   if (!detail) {
     if (read.error) return <ErrorState title="Could not load the run" message={read.error} onRetry={read.reload} />;
-    return <div className="pipeline" aria-busy="true" aria-label="Loading the run"><Skeleton height="2rem" width="50%" /><Skeleton height="10rem" /></div>;
+    return <div className="ui-page pipeline" aria-busy="true" aria-label="Loading the run"><Skeleton height="2rem" width="50%" /><Skeleton height="10rem" /></div>;
   }
   const found = detail.runs.find((entry) => entry.id === run);
   if (!found) return <EmptyState title="Run not found">Item {item} has no run {run}. <a className="ui-link" href={routeHref("#/archon/items/:item", { item })}>Back to the item</a></EmptyState>;

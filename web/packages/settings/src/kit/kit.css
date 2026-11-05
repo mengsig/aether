@@ -1,16 +1,8 @@
 @layer app {
-  .st-screen { display: grid; gap: var(--space-6); max-inline-size: 56rem; animation: ui-rise var(--motion-base) var(--ease-standard); }
-  .st-screen-head { display: grid; gap: var(--space-1); }
-  .st-screen-title { margin: 0; font: var(--weight-bold) var(--text-2xl) / var(--leading-tight) var(--font-display); }
-  .st-screen-sub { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
-
-  .st-section {
-    display: grid; gap: var(--space-4); padding: var(--space-5) var(--space-6);
-    border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1);
-    transition: border-color var(--motion-base) var(--ease-standard);
-  }
+  /* Page, head, title and card come from the kit (.ui-page, .ui-card); these keep the narrower measure. */
+  .st-screen { max-inline-size: 56rem; }
+  .st-section { transition: border-color var(--motion-base) var(--ease-standard); }
   .st-section-head { display: grid; gap: var(--space-1); }
-  .st-section-title { margin: 0; font: var(--weight-medium) var(--text-lg) / var(--leading-tight) var(--font-display); }
   .st-section-hint { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); line-height: var(--leading-normal); }
 
   .st-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
@@ -49,6 +41,6 @@
   .st-prose { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: var(--leading-prose); }
   .st-code { font-family: var(--font-mono); font-size: var(--text-xs); }
   .st-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: var(--space-3) var(--space-5); margin: 0; }
-  .st-facts dt { color: var(--color-text-faint); font-size: var(--text-xs); }
+  .st-facts dt { color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-tight) var(--font-ui); letter-spacing: 0.06em; text-transform: uppercase; }
   .st-facts dd { margin: 0; font-size: var(--text-sm); overflow-wrap: anywhere; }
 }
