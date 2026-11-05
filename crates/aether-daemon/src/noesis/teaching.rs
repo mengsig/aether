@@ -13,9 +13,8 @@ use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::idempotency::Submission;
 use aether_core::noesis::{ConceptId, NoesisSession, SessionMode};
 use aether_noesis::Noesis;
-use aether_noesis::teach::engine::Engine;
 use aether_noesis::teach::records::{Answer, EvidenceDraft, Mode, NoesisEvent, SessionView};
-use aether_noesis::teach::{Input, TeachError, Teaching};
+use aether_noesis::teach::{TeachError, Teaching};
 use aether_protocol::noesis::{AnswerInput, DeleteSessionGraph, EvidenceBundle};
 use aether_protocol::{Command, ErrorReply, Reply};
 use aether_runtime::Runtime;
@@ -30,6 +29,8 @@ use crate::connection::map_err;
 
 /// Sessions per page when the caller names no limit.
 const DEFAULT_PAGE: u32 = 50;
+/// The `unavailable` reason of a bundle sent while engineering context is off.
+pub(crate) const ENGINEERING_CONTEXT_DISABLED: &str = "engineering_context_disabled";
 
 /// What one teaching call produced for the log and the learner model.
 #[derive(Default)]
@@ -38,10 +39,12 @@ struct Output {
     evidence: Vec<EvidenceDraft>,
 }
 
-/// A command's reply, and the session whose turn it starts.
+/// A command's reply, the session whose turn it starts, and whether that
+/// session was created with an evidence bundle.
 struct Done {
     reply: Result<Reply, TeachError>,
     advance: Option<String>,
+    bundled: bool,
 }
 
 /// Counts a teaching call from before it waits for the state until it ends,
@@ -96,24 +99,36 @@ impl NoesisService {
             .await
             .ok_or_else(ErrorReply::noesis_disabled)?;
         let mut desk = ticket.desk.lock().await;
-        if desk.noesis.is_none() {
+        let Some(noesis) = &desk.noesis else {
             return Err(ErrorReply::noesis_disabled());
-        }
+        };
+        refuse_context_while_off(&command, noesis)?;
         if let Some(receipt) = runtime.noesis_receipt(submission).map_err(map_err)? {
             return serde_json::from_value(receipt)
                 .map_err(|e| ErrorReply::internal(format!("decode the teaching receipt: {e}")));
         }
-        let (done, output) = self.with_teaching(&ticket, &mut desk, runtime, |t, noesis| {
-            run_command(t, noesis, command)
-        })?;
+        let (done, output) =
+            self.with_teaching(&ticket, &mut desk, runtime, |t, _| run_command(t, command))?;
         let reply = done.reply.map_err(reply_error);
         let receipt = reply.as_ref().ok().zip(submission);
         publish(&desk, runtime, output, &by, receipt)?;
         drop(desk);
         if let Some(session) = done.advance {
+            if done.bundled {
+                self.engineering_after_create(runtime, &session).await;
+            }
             self.spawn_advance(runtime, session);
         }
         reply
+    }
+
+    /// Queue the new session's engineering extraction when it is automatic;
+    /// a failure leaves the session as created and is logged, not returned.
+    async fn engineering_after_create(&self, runtime: &Arc<Runtime>, session: &str) {
+        debug_assert!(session.starts_with("ns_"), "a created session");
+        if let Err(error) = self.after_bundle_stored(runtime, session).await {
+            tracing::warn!(%session, %error.message, "queueing the engineering extraction failed");
+        }
     }
 
     /// The running service's teaching resources; `None` once it stops.
@@ -272,10 +287,11 @@ fn publish(
 }
 
 /// Answer one teaching command on `t`.
-fn run_command(t: &mut Teaching<'_, AetherEngine<'_>>, noesis: &Noesis, command: Command) -> Done {
+fn run_command(t: &mut Teaching<'_, AetherEngine<'_>>, command: Command) -> Done {
     let replied = |reply: Result<Reply, TeachError>| Done {
         reply,
         advance: None,
+        bundled: false,
     };
     match command {
         Command::NoesisCreateSession {
@@ -286,7 +302,6 @@ fn run_command(t: &mut Teaching<'_, AetherEngine<'_>>, noesis: &Noesis, command:
             ..
         } => create_session(
             t,
-            noesis,
             &goal,
             mode,
             context.as_ref(),
@@ -297,6 +312,7 @@ fn run_command(t: &mut Teaching<'_, AetherEngine<'_>>, noesis: &Noesis, command:
             let sent = t.send(&session, &text);
             Done {
                 advance: sent.is_ok().then_some(session),
+                bundled: false,
                 reply: sent.map(|()| Reply::Ok),
             }
         }
@@ -313,6 +329,7 @@ fn run_command(t: &mut Teaching<'_, AetherEngine<'_>>, noesis: &Noesis, command:
             Done {
                 reply: answered.map(|_| Reply::Ok),
                 advance: recorded.then_some(session),
+                bundled: false,
             }
         }
         Command::NoesisGetSession { session } => replied(
@@ -323,9 +340,7 @@ fn run_command(t: &mut Teaching<'_, AetherEngine<'_>>, noesis: &Noesis, command:
             let limit = usize::try_from(limit.unwrap_or(DEFAULT_PAGE)).unwrap_or(usize::MAX);
             replied(list_sessions(t, after.as_deref(), limit))
         }
-        Command::NoesisDeleteSession { session, .. } => {
-            replied(delete_session(t, noesis, &session))
-        }
+        Command::NoesisDeleteSession { session, .. } => replied(delete_session(t, &session)),
         other => replied(Err(TeachError::Invalid(format!(
             "`{}` is not a teaching command",
             other.name()
@@ -335,7 +350,6 @@ fn run_command(t: &mut Teaching<'_, AetherEngine<'_>>, noesis: &Noesis, command:
 
 fn create_session(
     t: &mut Teaching<'_, AetherEngine<'_>>,
-    noesis: &Noesis,
     goal: &str,
     mode: SessionMode,
     context: Option<&EvidenceBundle>,
@@ -345,24 +359,40 @@ fn create_session(
         SessionMode::Teach => Mode::Teach,
         SessionMode::Practice => Mode::Practice,
     };
-    let created = t.create_session(goal, mode, targets).and_then(|view| {
-        if let Some(bundle) = context {
-            store_bundle(noesis, &view.id, bundle)?;
-            t.engine_mut()
-                .deliver(&view.agent, Input::Learner(bundle_text(bundle)?))?;
-        }
-        Ok(view)
-    });
-    match created {
+    match t.create_session_from(goal, mode, targets, context) {
         Ok(view) => Done {
             reply: session_reply(&view),
             advance: Some(view.id),
+            bundled: context.is_some(),
         },
         Err(error) => Done {
             reply: Err(error),
             advance: None,
+            bundled: false,
         },
     }
+}
+
+/// A bundle is engineering context: refused, before anything is stored or
+/// sent, unless `noesis.engineering_context` is in effect.
+fn refuse_context_while_off(command: &Command, noesis: &Noesis) -> Result<(), ErrorReply> {
+    let Command::NoesisCreateSession {
+        context: Some(_), ..
+    } = command
+    else {
+        return Ok(());
+    };
+    if aether_noesis::evidence::in_effect(&noesis.effective()) {
+        return Ok(());
+    }
+    debug_assert!(noesis.settings().enabled, "a running service is enabled");
+    Err(ErrorReply {
+        reason: Some(ENGINEERING_CONTEXT_DISABLED.into()),
+        ..ErrorReply::new(
+            aether_protocol::ErrorCode::Unavailable,
+            "engineering context is off; turn on noesis.engineering_context to learn from it",
+        )
+    })
 }
 
 fn list_sessions(
@@ -383,27 +413,15 @@ fn list_sessions(
     })
 }
 
-/// The session's Noesis rows and its evidence bundle go; its agent and the
-/// agent's Aether transcript stay, kept and expired by Aether's retention.
+/// The session's Noesis rows and its evidence bundle (N3, by the schema's
+/// cascade) go; its agent and the agent's Aether transcript stay, kept and
+/// expired by Aether's retention.
 fn delete_session(
     t: &mut Teaching<'_, AetherEngine<'_>>,
-    noesis: &Noesis,
     session: &str,
 ) -> Result<Reply, TeachError> {
     let agent = t.delete_session(session)?;
     debug_assert!(!agent.is_empty(), "a session names its agent");
-    let path = bundle_path(noesis, session)?;
-    match std::fs::remove_file(&path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(TeachError::Corrupt(format!(
-                "the session is deleted but its evidence bundle {} is not: {error}",
-                path.display()
-            )));
-        }
-    }
-    debug_assert!(!path.exists());
     Ok(Reply::Ok)
 }
 
@@ -474,47 +492,6 @@ fn prompt_overrides(noesis: &Noesis) -> Option<PathBuf> {
     }
     let dir = noesis.store().path().parent()?;
     Some(dir.join("noesis").join("prompts"))
-}
-
-/// Where a session's evidence bundle is kept: beside `noesis.db`.
-fn bundle_path(noesis: &Noesis, session: &str) -> Result<PathBuf, TeachError> {
-    let safe = session.starts_with("ns_")
-        && session
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-    if !safe {
-        return Err(TeachError::Invalid(format!("session id `{session}`")));
-    }
-    let dir = noesis
-        .store()
-        .path()
-        .parent()
-        .ok_or_else(|| TeachError::Corrupt("noesis.db has no parent directory".into()))?;
-    Ok(dir
-        .join("noesis")
-        .join("bundles")
-        .join(format!("{session}.json")))
-}
-
-fn store_bundle(noesis: &Noesis, session: &str, bundle: &EvidenceBundle) -> Result<(), TeachError> {
-    let path = bundle_path(noesis, session)?;
-    let bytes = serde_json::to_vec(bundle).map_err(|e| TeachError::Invalid(e.to_string()))?;
-    let written = path
-        .parent()
-        .map_or(Ok(()), std::fs::create_dir_all)
-        .and_then(|()| aether_core::private_file::write(&path, &bytes));
-    written.map_err(|e| TeachError::Corrupt(format!("store the evidence bundle: {e}")))?;
-    debug_assert!(path.exists());
-    Ok(())
-}
-
-/// The bundle as the agent reads it: references and excerpts, nothing more.
-fn bundle_text(bundle: &EvidenceBundle) -> Result<String, TeachError> {
-    let json =
-        serde_json::to_string_pretty(bundle).map_err(|e| TeachError::Invalid(e.to_string()))?;
-    Ok(format!(
-        "Engineering context for this session (an evidence bundle; each item is marked verified, reviewed or preliminary):\n{json}"
-    ))
 }
 
 fn reply_error(error: TeachError) -> ErrorReply {

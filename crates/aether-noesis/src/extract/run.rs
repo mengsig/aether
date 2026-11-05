@@ -12,6 +12,7 @@ use rusqlite::{Connection, TransactionBehavior};
 
 use super::batch::{self, Message};
 use super::candidates::{Index, PER_FINDING};
+use super::engineering;
 use super::findings::{self, Submission};
 use super::prompt::{self, AuditItem};
 use super::{
@@ -40,6 +41,8 @@ pub struct JobPorts<'a> {
     pub corpus: &'a dyn Corpus,
     pub cancel: &'a CancelFlag,
     pub events: &'a mut dyn FnMut(JobEvent),
+    /// Both switches of engineering extraction, as the service started.
+    pub engineering_in_effect: bool,
 }
 
 impl std::fmt::Debug for JobPorts<'_> {
@@ -96,7 +99,7 @@ pub fn run_job(conn: &Connection, job: Job, mut ports: JobPorts<'_>) -> Result<J
 }
 
 fn run_units(conn: &Connection, job: &mut Job, ports: &mut JobPorts<'_>) -> Result<(), Stop> {
-    let messages = material(conn, job, ports.corpus)?;
+    let messages = material(conn, job, ports)?;
     let coverage = graph_store::coverage_of(conn, &job.target)?;
     let units = batch::batches(batch::uncovered(messages, &coverage), batch::BATCH_TOKENS);
     for unit in units {
@@ -114,19 +117,26 @@ fn run_units(conn: &Connection, job: &mut Job, ports: &mut JobPorts<'_>) -> Resu
 }
 
 /// The messages the job reads: a session's teacher prose or a source's chunks.
-fn material(conn: &Connection, job: &Job, corpus: &dyn Corpus) -> Result<Vec<Message>, Stop> {
+fn material(conn: &Connection, job: &Job, ports: &JobPorts<'_>) -> Result<Vec<Message>, Stop> {
     match job.kind {
-        JobKind::ExtractSession => corpus.session_prose(&job.target).map_err(Stop::Failed),
+        JobKind::ExtractSession => ports
+            .corpus
+            .session_prose(&job.target)
+            .map_err(Stop::Failed),
         JobKind::ExtractSource => {
             let Some(row) = graph_store::source(conn, &job.target)? else {
                 return Err(Stop::Failed(format!("no source `{}`", job.target)));
             };
-            let text = corpus.source_text(&row.artifact).map_err(Stop::Failed)?;
+            let text = ports
+                .corpus
+                .source_text(&row.artifact)
+                .map_err(Stop::Failed)?;
             Ok(batch::chunks(&text))
         }
-        JobKind::ExtractEngineering => Err(Stop::Failed(
-            "engineering extraction is not part of this service".into(),
-        )),
+        JobKind::ExtractEngineering => {
+            engineering::material(conn, ports.engineering_in_effect, &job.target)
+                .map_err(Stop::Failed)
+        }
     }
 }
 

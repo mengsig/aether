@@ -36,6 +36,8 @@ fn the_migrations_create_every_table_the_contract_names() {
         "concepts",
         "coverage",
         "evidence",
+        "evidence_bundles",
+        "evidence_items",
         "jobs",
         "meta",
         "plans",
@@ -53,7 +55,7 @@ fn the_migrations_create_every_table_the_contract_names() {
 }
 
 #[test]
-fn an_n1_store_upgrades_to_n2_keeping_its_rows() {
+fn an_n1_store_upgrades_to_the_latest_keeping_its_rows() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("noesis.db");
     let conn = Connection::open(&path).unwrap();
@@ -66,9 +68,9 @@ fn an_n1_store_upgrades_to_n2_keeping_its_rows() {
     add_session(&conn, "ns_1");
     drop(conn);
     let store = NoesisStore::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 2);
+    assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
     let conn = store.connection();
-    for table in ["concepts", "evidence", "concept_state"] {
+    for table in ["concepts", "evidence", "concept_state", "evidence_bundles"] {
         assert!(tables(conn).contains(&table.to_string()), "{table}");
     }
     let sessions: i64 = conn
@@ -283,4 +285,95 @@ fn a_symlink_in_place_of_the_file_is_refused() {
     let error = NoesisStore::open(&path).unwrap_err();
     assert!(matches!(error, StoreError::Io { .. }), "{error}");
     assert!(error.to_string().contains("symlink"), "{error}");
+}
+
+/// One row in every N1 and N2 table, through their keys and checks.
+const N2_ROWS: &str = r#"
+INSERT INTO sessions VALUES ('ns_1', 'learn rust', 'teach', 'teach', 'agt_1', 't0', 't1');
+INSERT INTO session_messages VALUES ('ns_1', 0, 'm1', 'tutor', 12, 't0');
+INSERT INTO plans VALUES ('ns_1', 1, '{"nodes":[],"edges":[]}', 't0');
+INSERT INTO questions (id, session, kind, prompt, answer_key, posed_at, answer, correct, answered_at)
+    VALUES ('q_1', 'ns_1', 'recall', 'Why?', '"because"', 't0', '{"text":"x"}', 1, 't1');
+INSERT INTO problems (id, session, statement, mode, solution, posed_at)
+    VALUES ('pr_1', 'ns_1', 'Solve it', 'recall', 'the solution', 't0');
+INSERT INTO sources VALUES ('s_1', 'notes', 'art_1', 't0');
+INSERT INTO propositions VALUES ('p_1', 'Ownership', 'Each value has one owner.', 't0');
+INSERT INTO propositions VALUES ('p_2', 'Drop', 'A value is dropped with its owner.', 't0');
+INSERT INTO proposition_aliases VALUES ('p_1', 'owner rule');
+INSERT INTO proposition_provenance VALUES ('p_1', 'ns_1', 'm1');
+INSERT INTO chains VALUES ('c_1', 'p_2', 't0');
+INSERT INTO chain_premises VALUES ('c_1', 'p_1');
+INSERT INTO chain_provenance VALUES ('c_1', 'ns_1', 'm1');
+INSERT INTO clusters VALUES ('cl_1', 'ns_1');
+INSERT INTO cluster_members VALUES ('cl_1', 'p_1');
+INSERT INTO coverage VALUES ('ns_1', 'm1', printf('%064d', 0), 12, 't0');
+INSERT INTO jobs (id, kind, target, state, created_at, updated_at)
+    VALUES ('j_1', 'extract_session', 'ns_1', 'succeeded', 't0', 't1');
+INSERT INTO concepts VALUES ('k_1', 'proposition', 'p_1', 'Ownership', 't0');
+INSERT INTO evidence (concept, session, at, kind, outcome, confidence)
+    VALUES ('k_1', 'ns_1', 't0', 'check_answer', 'correct', 70);
+INSERT INTO concept_state (concept, state, strength, as_of_evidence, derived_at)
+    VALUES ('k_1', 'exposed', 0.4, 1, 't1');
+"#;
+
+/// Every row of every table, in a stable order, for comparing two stores.
+fn dump(conn: &Connection) -> Vec<(String, Vec<Vec<rusqlite::types::Value>>)> {
+    let mut out = Vec::new();
+    for table in tables(conn) {
+        let sql = format!("SELECT * FROM \"{table}\" ORDER BY 1, 2");
+        let mut statement = conn.prepare(&sql).unwrap();
+        let width = statement.column_count();
+        let rows = statement
+            .query_map([], |row| (0..width).map(|i| row.get(i)).collect())
+            .unwrap();
+        out.push((table, rows.collect::<Result<_, _>>().unwrap()));
+    }
+    out
+}
+
+#[test]
+fn an_n2_store_upgrades_to_n3_keeping_every_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("noesis.db");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON;
+         CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
+         INSERT INTO meta VALUES ('schema_version', '2');",
+    )
+    .unwrap();
+    conn.execute_batch(schema::MIGRATIONS[0]).unwrap();
+    conn.execute_batch(schema::MIGRATIONS[1]).unwrap();
+    conn.execute_batch(N2_ROWS).unwrap();
+    let before = dump(&conn);
+    let empty: Vec<_> = before
+        .iter()
+        .filter(|(table, rows)| rows.is_empty() && table != "sqlite_sequence")
+        .map(|(table, _)| table.as_str())
+        .collect();
+    assert!(
+        empty.is_empty(),
+        "every N1 and N2 table holds a row: {empty:?}"
+    );
+    drop(conn);
+
+    let store = NoesisStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 3);
+    let after = dump(store.connection());
+    let unchanged = |(table, _): &&(String, Vec<Vec<rusqlite::types::Value>>)| {
+        !matches!(
+            table.as_str(),
+            "meta" | "evidence_bundles" | "evidence_items"
+        )
+    };
+    assert_eq!(
+        after.iter().filter(unchanged).collect::<Vec<_>>(),
+        before.iter().filter(unchanged).collect::<Vec<_>>(),
+        "N3 keeps every N1 and N2 row as it was"
+    );
+    for table in ["evidence_bundles", "evidence_items"] {
+        let rows = &after.iter().find(|(t, _)| t == table).unwrap().1;
+        assert!(rows.is_empty(), "{table} starts empty");
+    }
+    store.close().unwrap();
 }

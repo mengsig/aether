@@ -44,6 +44,8 @@ pub(in crate::noesis) struct Extraction {
     flags: parking_lot::Mutex<HashMap<String, CancelFlag>>,
     budget: Arc<ServiceBudget>,
     model: Option<ModelRef>,
+    /// Both switches of engineering extraction, as this service started.
+    engineering_in_effect: bool,
     stopped: AtomicBool,
 }
 
@@ -84,6 +86,7 @@ impl Extraction {
             flags: parking_lot::Mutex::new(HashMap::new()),
             budget,
             model,
+            engineering_in_effect: aether_noesis::evidence::in_effect(&noesis.effective()),
             stopped: AtomicBool::new(false),
         }))
     }
@@ -174,6 +177,7 @@ impl Extraction {
             corpus: &corpus,
             cancel: flag,
             events: &mut events,
+            engineering_in_effect: self.engineering_in_effect,
         };
         run_job(noesis.connection(), job, ports)
             .map(|_| ())

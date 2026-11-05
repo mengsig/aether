@@ -241,10 +241,33 @@ CREATE INDEX concept_state_by_review ON concept_state(review_due_at)
     WHERE review_due_at IS NOT NULL;
 "#;
 
-pub(crate) const MIGRATIONS: &[&str] = &[N1, N2];
+/// N3: evidence bundles (CONTRACTS.md §6.3), one per session at most, kept
+/// with it and deleted with it. Additive: N1 and N2 rows are untouched.
+const N3: &str = r#"
+CREATE TABLE evidence_bundles (
+    session       TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    title         TEXT NOT NULL CHECK (length(title) > 0),
+    excerpt_bytes INTEGER NOT NULL CHECK (excerpt_bytes BETWEEN 0 AND 32768),
+    created_at    TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE evidence_items (
+    session  TEXT NOT NULL REFERENCES evidence_bundles(session) ON DELETE CASCADE,
+    ord      INTEGER NOT NULL CHECK (ord >= 0),
+    ref_kind TEXT NOT NULL CHECK (ref_kind IN
+                 ('pr', 'issue', 'item', 'run', 'stage', 'commit', 'file', 'agent')),
+    ref_id   TEXT NOT NULL CHECK (length(ref_id) > 0),
+    ref_url  TEXT,
+    excerpt  TEXT NOT NULL,
+    status   TEXT NOT NULL CHECK (status IN ('verified', 'reviewed', 'preliminary')),
+    PRIMARY KEY (session, ord)
+) STRICT;
+"#;
+
+pub(crate) const MIGRATIONS: &[&str] = &[N1, N2, N3];
 
 /// The schema version this binary writes and reads.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 const _: () = assert!(MIGRATIONS.len() == SCHEMA_VERSION as usize);
 
