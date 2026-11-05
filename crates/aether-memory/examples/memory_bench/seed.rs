@@ -10,7 +10,7 @@ use aether_core::memory_feedback::{
     MemoryEvidence, MemoryFeedback, MemoryFeedbackSpec, MemoryVerdict,
 };
 use aether_core::time::now;
-use aether_memory::{Admission, MemoryService};
+use aether_memory::{Admission, ClusterOutcome, MemoryService};
 use aether_store::{Commit, MemoryQuery, Mutation, SqliteStore, Store};
 use chrono::Duration;
 use serde::Serialize;
@@ -102,6 +102,29 @@ pub fn seed(store: &SqliteStore, service: &MemoryService, plan: &Plan) -> BenchR
         keys,
         admissions,
     })
+}
+
+/// Merge near-duplicates as an operator's `consolidate_memories` does, then
+/// read back what stays current. Returns the clusters merged.
+pub fn consolidate(
+    store: &SqliteStore,
+    service: &MemoryService,
+    seeded: &mut Seeded,
+) -> BenchResult<usize> {
+    let report = service.consolidate(None, Actor::user(), Default::default())?;
+    let merged = report
+        .clusters
+        .iter()
+        .filter(|c| matches!(c.outcome, ClusterOutcome::Merged { .. }))
+        .count();
+    if merged != report.clusters.len() {
+        return Err(format!("{} clusters skipped", report.clusters.len() - merged).into());
+    }
+    let before = seeded.current;
+    seeded.current_keys = current_keys(store, &seeded.keys)?;
+    seeded.current = seeded.current_keys.len();
+    debug_assert!(seeded.current <= before);
+    Ok(merged)
 }
 
 fn actor(memory: &PlanMemory, agent: AgentId) -> Actor {

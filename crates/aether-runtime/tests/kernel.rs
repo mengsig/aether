@@ -199,6 +199,8 @@ mod held_waits;
 mod lease_reads;
 #[path = "kernel/leases.rs"]
 mod leases;
+#[path = "kernel/memory_consolidation.rs"]
+mod memory_consolidation;
 #[path = "kernel/memory_context.rs"]
 mod memory_context;
 #[path = "kernel/memory_feedback.rs"]

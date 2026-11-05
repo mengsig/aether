@@ -74,3 +74,24 @@ fn a_sandbox_that_is_not_empty_is_refused() {
     let error = run(&plan(), sandbox.path()).unwrap_err().to_string();
     assert!(error.contains("must be an empty directory"), "{error}");
 }
+
+#[test]
+fn a_consolidating_run_merges_restatements_before_it_ranks() {
+    let mut plan = plan();
+    plan.consolidate = true;
+    plan.memories.push(
+        serde_json::from_value(serde_json::json!({
+            "key": "a/restated", "scope": {"scope": "repository", "id": "github.com/example-org/a"},
+            "kind": "lesson", "importance": 0.5, "confidence": 0.8,
+            "text": "By default the service listens on port 9090, so point clients at that port."
+        }))
+        .unwrap(),
+    );
+    let sandbox = tempfile::tempdir().unwrap();
+    let report = run(&plan, sandbox.path()).unwrap();
+    assert_eq!(report.admissions.last().unwrap().outcome, "accepted");
+    assert_eq!(report.consolidated, 1);
+    assert_eq!(report.current, ["a/new"], "the restatement merged into it");
+    assert_eq!(report.storage.records, 3, "and was kept");
+    assert_eq!(report.restart.current_after, 1);
+}

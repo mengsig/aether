@@ -269,3 +269,8 @@ also held the stale fact, the model still answered with the newer one.
   memory API updates the driver, not the dataset or the metrics.
 - After an intended change to the deterministic metrics, record a new baseline
   with `--write-baseline` and state the commit here.
+- Consolidation (`MemoryService::consolidate`, the operator's
+  `consolidate_memories`) runs on demand, not on admission, so the default
+  run leaves it out. `run --consolidate` merges near-duplicates after seeding
+  and before ranking, the way an operator's run would; compare it with a
+  default run to see what consolidation changes.
