@@ -148,18 +148,26 @@ fn every_command_has_an_explicit_role_decision() {
 #[test]
 fn the_documented_matrix_names_every_command_with_its_class() {
     let doc = include_str!("../../../../docs/remote.md");
-    let start = doc.find("### The matrix").expect("docs/remote.md has the matrix");
+    let start = doc
+        .find("### The matrix")
+        .expect("docs/remote.md has the matrix");
     let mut documented = std::collections::BTreeMap::new();
     for line in doc[start..].lines().skip(1) {
         if line.starts_with("### ") {
             break;
         }
         let cells: Vec<&str> = line.split('|').map(str::trim).collect();
-        let Some(cmd) = cells.get(1).and_then(|c| c.strip_prefix('`')?.strip_suffix('`')) else {
+        let Some(cmd) = cells
+            .get(1)
+            .and_then(|c| c.strip_prefix('`')?.strip_suffix('`'))
+        else {
             continue;
         };
         let class = cells.get(2).copied().unwrap_or_default();
-        assert!(documented.insert(cmd, class).is_none(), "{cmd} is documented twice");
+        assert!(
+            documented.insert(cmd, class).is_none(),
+            "{cmd} is documented twice"
+        );
     }
     let cases: serde_json::Value =
         serde_json::from_str(include_str!("command_cases.json")).unwrap();
@@ -168,9 +176,17 @@ fn the_documented_matrix_names_every_command_with_its_class() {
     for case in cases {
         let cmd = case["command"]["cmd"].as_str().unwrap();
         let wanted = case["access"].as_str().unwrap();
-        assert_eq!(documented.get(cmd).copied(), Some(wanted), "docs/remote.md row for {cmd}");
+        assert_eq!(
+            documented.get(cmd).copied(),
+            Some(wanted),
+            "docs/remote.md row for {cmd}"
+        );
     }
-    assert_eq!(documented.len(), cases.len(), "the matrix names no command the daemon lacks");
+    assert_eq!(
+        documented.len(),
+        cases.len(),
+        "the matrix names no command the daemon lacks"
+    );
 }
 
 #[test]

@@ -185,7 +185,10 @@ async fn extraction_objective(harness: &Harness) -> String {
     loop {
         let store = harness.daemon.runtime.store();
         let tasks = store.tasks(&Default::default()).expect("tasks");
-        if let Some(task) = tasks.iter().find(|task| task.objective.contains("Alpha holds")) {
+        if let Some(task) = tasks
+            .iter()
+            .find(|task| task.objective.contains("Alpha holds"))
+        {
             return task.objective.clone();
         }
         assert!(Instant::now() < deadline, "no extraction task was created");
@@ -198,17 +201,26 @@ async fn an_imported_source_reaches_its_extractor_masked_as_read_artifact_shows_
     let harness = running(NoesisSettingsPatch::default()).await;
     let text = format!("Alpha holds.\n\nThe deploy token is {SOURCE_TOKEN}.\n\nBeta follows.");
     let artifact = publish(&harness, &text).await;
-    let import = format!(r#"{{"cmd":"noesis_import_source","name":"Notes","artifact":"{artifact}"}}"#);
-    let Reply::NoesisImport { job, .. } = harness.send(command(&import)).await.expect("import") else {
+    let import =
+        format!(r#"{{"cmd":"noesis_import_source","name":"Notes","artifact":"{artifact}"}}"#);
+    let Reply::NoesisImport { job, .. } = harness.send(command(&import)).await.expect("import")
+    else {
         panic!("an import reply");
     };
     let objective = extraction_objective(&harness).await;
-    assert!(!objective.contains(SOURCE_TOKEN), "the task objective carries the raw token");
+    assert!(
+        !objective.contains(SOURCE_TOKEN),
+        "the task objective carries the raw token"
+    );
     assert!(objective.contains("[REDACTED:github_token]"), "{objective}");
     let store = harness.daemon.runtime.store();
-    let events = store.events(0, 10_000, &aether_store::EventFilter::default()).expect("events");
+    let events = store
+        .events(0, 10_000, &aether_store::EventFilter::default())
+        .expect("events");
     let leaked = events.iter().any(|event| {
-        serde_json::to_string(&event.kind).expect("event json").contains(SOURCE_TOKEN)
+        serde_json::to_string(&event.kind)
+            .expect("event json")
+            .contains(SOURCE_TOKEN)
     });
     assert!(!leaked, "an event carries the raw token");
     let cancel = format!(r#"{{"cmd":"noesis_cancel_job","job":"{}"}}"#, job.id);
