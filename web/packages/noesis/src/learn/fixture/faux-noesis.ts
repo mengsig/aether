@@ -1,7 +1,7 @@
 // A faux aetherd that serves Noesis, behind an in-memory Transport, for the learning-screen tests and
 // the screenshot page. Answer keys stay here until an answer is recorded, as the daemon seals them.
 
-import type { aether, Transport } from "@aether-ui/protocol";
+import type { aether, NoesisSettingsPatch, PrivilegedAction, Transport } from "@aether-ui/protocol";
 import { invariant } from "../model.ts";
 
 type Json = Record<string, unknown>;
@@ -34,6 +34,8 @@ const SERVICE = new Set(["noesis_status", "noesis_configure"]);
 
 export class FauxNoesis {
   readonly sent: Json[] = [];
+  /** The privileged actions the desktop's main ran for the page, confirmed. */
+  readonly privileged: PrivilegedAction[] = [];
   readonly transport: Transport;
   status: aether.NoesisStatus;
   refuse: string | undefined;
@@ -207,6 +209,15 @@ export class FauxNoesis {
     }
   }
 
+  /** What desktop main does with `noesis.configure`: its flat §6.1 keys sent nested, the status back. */
+  runPrivileged(action: PrivilegedAction): unknown {
+    invariant(action.kind === "noesis.configure", `the faux main runs noesis.configure, not ${action.kind}`);
+    invariant(Object.keys(action.patch).length > 0, "a privileged patch names a key");
+    this.privileged.push(structuredClone(action));
+    const reply = this.configure(nestedPatch(action.patch)).reply as { Ok: { data: unknown } };
+    return reply.Ok.data;
+  }
+
   private configure(patch: aether.NoesisSettingsPatch): Result {
     const settings = mergeSettings(this.status.settings, patch);
     this.status = { ...this.status, enabled: settings.enabled, settings, effective: settings };
@@ -249,6 +260,17 @@ export class FauxNoesis {
     this.graph = { nodes: this.graph.nodes.filter((node) => node.id !== id), chains: this.graph.chains.filter((chain) => chain.conclusion !== id && !chain.premises.includes(id)) };
     return before === this.graph.nodes.length ? ERR("not_found", `proposition \`${id}\``) : OK("ok", null);
   }
+}
+
+function nestedPatch(flat: NoesisSettingsPatch): aether.NoesisSettingsPatch {
+  const nested: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(flat)) {
+    const [root, group, leaf] = key.split(".");
+    invariant(root === "noesis" && group !== undefined, `${key} is a Noesis key`);
+    if (leaf === undefined) nested[group] = value;
+    else nested[group] = { ...(nested[group] as Json | undefined), [leaf]: value };
+  }
+  return nested as aether.NoesisSettingsPatch;
 }
 
 function mergeSettings(settings: aether.NoesisSettingsView, patch: aether.NoesisSettingsPatch): aether.NoesisSettingsView {

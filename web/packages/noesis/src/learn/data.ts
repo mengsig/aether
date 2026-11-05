@@ -2,7 +2,7 @@
 // every read off while Noesis is disabled, rereads into core's store and changes through useCommand.
 
 import { noesisKey, selectConnections, selectLearn, selectNoesisStatus, useApp, useCapabilities, useCommand, useSelector, type NoesisCache, type NoesisReadRequest } from "@aether-ui/core";
-import type { aether, ConnectionInfo } from "@aether-ui/protocol";
+import type { aether, ConnectionInfo, NoesisSettingsPatch } from "@aether-ui/protocol";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invariant } from "./model.ts";
 
@@ -94,6 +94,47 @@ export function useNoesisChange(conn: string): (command: Record<string, unknown>
       return { ok: false, error: errorText(error) };
     }
   }, [app, conn, send]);
+}
+
+/** A settings patch split into the host-only keys, as main's flat §6.1 keys, and the rest. */
+export function splitHostPatch(patch: aether.NoesisSettingsPatch): { host: NoesisSettingsPatch; rest: aether.NoesisSettingsPatch } {
+  const { enabled, billing, budget, prompts, ...rest } = patch;
+  const host: NoesisSettingsPatch = {};
+  if (typeof enabled === "boolean") host["noesis.enabled"] = enabled;
+  if (typeof billing?.allow_api === "boolean") host["noesis.billing.allow_api"] = billing.allow_api;
+  if (typeof prompts?.overrides === "boolean") host["noesis.prompts.overrides"] = prompts.overrides;
+  for (const key of ["interactive_usd_daily", "background_usd_daily", "background_tokens_daily"] as const) {
+    const value = budget?.[key];
+    if (typeof value === "number") host[`noesis.budget.${key}`] = value;
+  }
+  const moved = Object.keys(host).length;
+  const named = [enabled, billing?.allow_api, prompts?.overrides, budget?.interactive_usd_daily, budget?.background_usd_daily, budget?.background_tokens_daily]
+    .filter((value) => value !== undefined && value !== null).length;
+  invariant(moved === named, "every host-only key the patch names moves to the host patch");
+  return { host, rest };
+}
+
+/**
+ * Saves a settings patch. Host-only keys go to the desktop's privileged `noesis.configure`, behind
+ * its native confirmation, since the bridge refuses them as a plain change; the rest is a change.
+ */
+export function useNoesisConfigure(conn: string): (patch: aether.NoesisSettingsPatch) => Promise<ChangeResult> {
+  const app = useApp();
+  const change = useNoesisChange(conn);
+  return useCallback(async (patch) => {
+    const { host, rest } = splitHostPatch(patch);
+    const hasRest = Object.keys(rest).length > 0;
+    invariant(Object.keys(host).length > 0 || hasRest, "a save changes something");
+    if (Object.keys(host).length === 0) return change({ cmd: "noesis_configure", patch: rest });
+    try {
+      const data = await app.privileged(conn, { kind: "noesis.configure", patch: host });
+      const reply = { reply: "noesis_status", data };
+      app.manager.noesisChanged(conn, { cmd: "noesis_configure", patch: host }, reply);
+      return hasRest ? await change({ cmd: "noesis_configure", patch: rest }) : { ok: true, reply };
+    } catch (error) {
+      return { ok: false, error: errorText(error) };
+    }
+  }, [app, conn, change]);
 }
 
 /** Why this device may not send an operate change, or null. */

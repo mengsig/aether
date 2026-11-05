@@ -4,7 +4,7 @@
 import type { aether } from "@aether-ui/protocol";
 import { Button, Field, Sheet } from "@aether-ui/ui";
 import { useMemo, useState, type FormEvent } from "react";
-import { useGate, useHostAdmin, useNoesisChange, useNoesisRead, useOperateRefusal } from "./data.ts";
+import { useGate, useHostAdmin, useNoesisConfigure, useNoesisRead, useOperateRefusal } from "./data.ts";
 import { budgetShare, invariant, spentUsd, usd } from "./model.ts";
 
 interface Draft {
@@ -77,7 +77,7 @@ export function SettingsSheet({ open, conn, onClose }: { open: boolean; conn: st
 function SettingsForm({ conn, status, onDone }: { conn: string; status: aether.NoesisStatus; onDone: () => void }) {
   const host = useHostAdmin(conn);
   const refusal = useOperateRefusal(conn);
-  const change = useNoesisChange(conn);
+  const configure = useNoesisConfigure(conn);
   const [draft, setDraft] = useState<Draft>(() => draftOf(status.settings));
   const [saving, setSaving] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -89,7 +89,7 @@ function SettingsForm({ conn, status, onDone }: { conn: string; status: aether.N
     event.preventDefault();
     if (!dirty || Object.keys(errors).length > 0) return;
     setSaving(true);
-    const result = await change({ cmd: "noesis_configure", patch });
+    const result = await configure(patch);
     setSaving(false);
     if (!result.ok) return setFailure(result.error);
     setFailure(null);

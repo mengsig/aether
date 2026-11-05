@@ -164,12 +164,22 @@ describe("settings", () => {
     expect(spend.querySelectorAll("meter").length).toBeGreaterThanOrEqual(2);
   });
 
-  test("saves only what changed", async () => {
+  test("saves only what changed, host-only keys through the desktop's privileged action", async () => {
     const { h, sheet } = await openSettings("ipc");
     const budget = $(byText(sheet, ".ui-field", "Teaching, in dollars"), "input");
     await type(h, budget, "8");
     await click(h, byText(sheet, "button", "Save"));
-    expect(h.daemon.sent.filter((c) => c.cmd === "noesis_configure").map((c) => c.patch)).toEqual([{ budget: { interactive_usd_daily: 8 } }]);
+    expect(h.daemon.privileged).toEqual([{ kind: "noesis.configure", conn: "local:faux-main", patch: { "noesis.budget.interactive_usd_daily": 8 } }]);
+    expect(h.daemon.sent.filter((c) => c.cmd === "noesis_configure"), "the bridge refuses a host-only key as a plain change").toEqual([]);
+    expect(h.daemon.status.settings.budget.interactive_usd_daily).toBe(8);
+  });
+
+  test("a change no host key is in goes as a plain change", async () => {
+    const { h, sheet } = await openSettings("ipc");
+    await type(h, $(byText(sheet, ".ui-field", "Teaching model"), "input"), "faux-strong");
+    await click(h, byText(sheet, "button", "Save"));
+    expect(h.daemon.sent.filter((c) => c.cmd === "noesis_configure").map((c) => c.patch)).toEqual([{ models: { strong: "faux-strong" } }]);
+    expect(h.daemon.privileged).toEqual([]);
   });
 
   test("a remote device sees host-only settings disabled, with the reason", async () => {

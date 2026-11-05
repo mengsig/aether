@@ -2,6 +2,7 @@
 // Store updates commit only when a test settles, and timers advance only when a test says so.
 
 import { AppProvider, createApp, type App } from "@aether-ui/core";
+import type { DesktopBridge, HostAdapter } from "@aether-ui/protocol";
 import { ThemeProvider } from "@aether-ui/ui";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -28,12 +29,26 @@ export interface Harness {
   unmount(): void;
 }
 
+/** On `ipc` the page is the desktop app's: its bridge runs privileged actions, as main would, on the faux daemon. */
+function hostFor(options: FauxNoesisOptions, daemon: FauxNoesis, memory: Map<string, unknown>): HostAdapter {
+  const storage = { get: async (key: string) => memory.get(key), set: async (key: string, value: unknown) => { memory.set(key, value); } };
+  if (options.transport !== "ipc") return { kind: "browser", storage };
+  const desktop: Partial<DesktopBridge> = {
+    version: 1,
+    getPreference: async () => undefined,
+    connect: async () => "local:faux-main",
+    close: async () => undefined,
+    privileged: async (action) => daemon.runPrivileged(action),
+  };
+  return { kind: "electron", storage, desktop: desktop as DesktopBridge };
+}
+
 export async function connected(options: FauxNoesisOptions, timers: TestTimers): Promise<Harness> {
   const frames: (() => void)[] = [];
   const memory = new Map<string, unknown>();
   const daemon = new FauxNoesis(options);
   const app = createApp(
-    { kind: "browser", storage: { get: async (key) => memory.get(key), set: async (key, value) => { memory.set(key, value); } } },
+    hostFor(options, daemon, memory),
     { scheduler: (flush) => frames.push(flush), endpoints: [{ daemon: "aether", transport: daemon.transport, target: "faux://aetherd", label: "faux" }] },
   );
   let root: Root | null = null;
