@@ -346,7 +346,11 @@ the remote CSP, the retired phone app's paths must be `404`, and pairing
 claims must keep their refusals and rate limit. Wherever Chromium is
 installed for Playwright, as in the hosted workflow, a browser also opens the
 printed pairing URL at both loopback origins and pairs. `make web` runs the
-workspace's own checks (`npm run check`).
+workspace's own checks (`npm run check`), whose last step rebuilds `web/dist/`.
+The web workflow then runs `scripts/check_web_dist.sh` and fails when the
+committed bundle differs from that build: a changed, new or missing file.
+`make web-dist-check` runs both locally; commit the rebuilt `web/dist/` when it
+fails.
 
 - **A pushed tag `vMAJOR.MINOR.PATCH`** must equal the workspace version in
   `Cargo.toml`, and `CHANGELOG.md` must have a `## MAJOR.MINOR.PATCH` section
