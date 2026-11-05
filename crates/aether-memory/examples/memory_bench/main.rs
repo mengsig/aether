@@ -37,6 +37,8 @@ const STORE_FILE: &str = "aether.db";
 pub struct Report {
     pub index: String,
     pub admissions: Vec<seed::AdmissionRow>,
+    /// Clusters consolidation merged; zero when the plan does not consolidate.
+    pub consolidated: usize,
     /// Keys the store holds current after seeding, read back from it.
     pub current: Vec<String>,
     pub queries: Vec<retrieval::QueryRow>,
@@ -65,7 +67,11 @@ pub fn run(plan: &Plan, sandbox: &Path) -> BenchResult<Report> {
     let empty = seed::empty_store(&sandbox.join("empty"))?;
     let main_dir = sandbox.join("main");
     let (store, service) = open(&main_dir, &plan.index)?;
-    let seeded = seed::seed(&store, &service, plan)?;
+    let mut seeded = seed::seed(&store, &service, plan)?;
+    let consolidated = match plan.consolidate {
+        true => seed::consolidate(&store, &service, &mut seeded)?,
+        false => 0,
+    };
     checkpoint(&store)?;
     let queries = retrieval::run_queries(&service, plan, &seeded)?;
     let small = retrieval::time_queries(&service, plan, &seeded)?;
@@ -79,6 +85,7 @@ pub fn run(plan: &Plan, sandbox: &Path) -> BenchResult<Report> {
     Ok(Report {
         index: plan.index.clone(),
         admissions: seeded.admissions,
+        consolidated,
         current: seeded.current_keys,
         queries,
         latency: retrieval::LatencyRows { small, scaled },

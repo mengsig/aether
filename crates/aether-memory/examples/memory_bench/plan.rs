@@ -20,6 +20,9 @@ pub struct Plan {
     pub memories: Vec<PlanMemory>,
     pub queries: Vec<PlanQuery>,
     pub latency: LatencyPlan,
+    /// Consolidate near-duplicates after seeding, as `consolidate_memories` does.
+    #[serde(default)]
+    pub consolidate: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
