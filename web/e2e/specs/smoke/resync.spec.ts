@@ -2,7 +2,7 @@
 // shows what changed while it was away, with no reload and nothing stale left on screen.
 
 import { createAgent, enqueueItem, itemTitles, listAgents, pauseQueue, renameAgent, retitleItem } from "../../harness/agents.ts";
-import { connection, pairBoth } from "../../harness/pair.ts";
+import { connection, everyQueueRow, pairBoth } from "../../harness/pair.ts";
 import { expect, test, type Page } from "../../harness/fixtures.ts";
 
 async function markPage(page: Page): Promise<void> {
@@ -56,7 +56,7 @@ test("the queue recovers from an archond restart without a reload", async ({ pag
   await expect(queue.getByRole("link", { name: "Retitled after archond restart" })).toBeVisible();
   await expect(queue.getByRole("link", { name: "Queued after archond restart" })).toBeVisible();
   await expect(queue.getByRole("link", { name: "Before archond restart" })).toHaveCount(0);
-  await expect(queue.locator(".queue-row")).toHaveCount((await itemTitles(stack)).length);
+  await expect(await everyQueueRow(page)).toHaveCount((await itemTitles(stack)).length);
   expect(await notReloaded(page), "the page was not reloaded").toBe(true);
   await page.screenshot({ path: info.outputPath("queue-after-archond-restart.png") });
 });

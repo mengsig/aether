@@ -3,7 +3,7 @@
 // each change is checked on the daemon, with who archond says made it.
 
 import { createAgent, enqueueItem, itemTitles, listAgents, queuePaused } from "../../../harness/agents.ts";
-import { connection } from "../../../harness/pair.ts";
+import { connection, everyQueueRow } from "../../../harness/pair.ts";
 import { expect, test } from "../../../harness/fixtures.ts";
 import { launchDesktop, type DesktopApp } from "./electron.ts";
 import { aetherConn, itemState, lastTransitionTo, route, setPaused, type TransitionActor } from "./state.ts";
@@ -58,9 +58,8 @@ test("the app window reads the fleet and the queue the daemons hold", async ({ s
   await expect(fleet.locator(".fleet-count")).toHaveText(`${agents.length} of ${agents.length} agents`);
 
   await route(window, "#/archon/queue");
-  const queue = window.getByRole("region", { name: "Queue" });
   await expect(window.locator(".queue-pause strong")).toHaveText("Running");
-  await expect(queue.locator(".queue-row")).toHaveCount((await itemTitles(stack)).length);
+  await expect(await everyQueueRow(window)).toHaveCount((await itemTitles(stack)).length);
   const reads = (await app.calls()).filter((call) => call.method === "request" || call.method === "subscribe");
   expect(reads.length, "the page read the daemons through the bridge").toBeGreaterThan(0);
 });

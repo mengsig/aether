@@ -14,6 +14,17 @@ export function connection(page: Page, daemon: "aether" | "archon") {
     .filter({ has: page.locator(".ui-conn-kind", { hasText: new RegExp(`^${daemon}$`) }) });
 }
 
+/**
+ * The Archon queue's rows under its "All" filter. The queue opens on its active items, and specs
+ * sharing a stack may leave some finished.
+ */
+export async function everyQueueRow(page: Page) {
+  const all = page.getByRole("group", { name: "Filter by state" }).getByRole("button", { name: /^All \d+$/ });
+  await all.click();
+  await expect(all, "the queue shows every item").toHaveAttribute("aria-pressed", "true");
+  return page.getByRole("region", { name: "Queue" }).locator(".queue-row");
+}
+
 export type Role = "operator" | "observer";
 
 /** Pairs `page` with aetherd as `role`; the smoke specs pair an observer. Returns the device id. */

@@ -2,7 +2,7 @@
 // archond, and an item queued on the host appears without a reload.
 
 import { enqueueItem, itemTitles, queuePaused } from "../../harness/agents.ts";
-import { pairBoth } from "../../harness/pair.ts";
+import { everyQueueRow, pairBoth } from "../../harness/pair.ts";
 import { expect, test } from "../../harness/fixtures.ts";
 
 test("the queue operates archond through the mount and follows its items live", async ({ page, stack }, info) => {
@@ -20,6 +20,6 @@ test("the queue operates archond through the mount and follows its items live", 
   await enqueueItem(stack, "Queued on the host");
   await expect(queue.getByRole("link", { name: "Queued on the host" })).toBeVisible();
   const titles = await itemTitles(stack);
-  await expect(queue.locator(".queue-row")).toHaveCount(titles.length);
+  await expect(await everyQueueRow(page)).toHaveCount(titles.length);
   await page.screenshot({ path: info.outputPath("queue.png") });
 });

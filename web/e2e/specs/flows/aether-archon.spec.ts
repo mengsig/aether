@@ -2,7 +2,7 @@
 // archond through Aether's /archon mount, and an item queued from the page lands in archond.
 
 import { createAgent, enqueueItem, itemTitles, listAgents, pauseQueue } from "../../harness/agents.ts";
-import { pairBoth } from "../../harness/pair.ts";
+import { everyQueueRow, pairBoth } from "../../harness/pair.ts";
 import { expect, test } from "../../harness/fixtures.ts";
 
 const AGENT = "Flow fleet agent";
@@ -47,7 +47,7 @@ test("the fleet and the queue work through one origin, and a queued item is on b
   expect(JSON.stringify(detail.data), "archond keeps the brief the page typed").toContain(BRIEF);
   await enqueueItem(stack, HOST_ITEM);
   await expect(queue.getByRole("link", { name: HOST_ITEM, exact: true }), "an item queued on the host appears on the page").toBeVisible();
-  await expect(queue.locator(".queue-row")).toHaveCount((await itemTitles(stack)).length);
+  await expect(await everyQueueRow(page), "the queue lists every item archond holds").toHaveCount((await itemTitles(stack)).length);
   await page.screenshot({ path: info.outputPath("queue-with-page-item.png") });
 
   const origin = new URL(stack.aether.origin);
