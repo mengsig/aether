@@ -2,7 +2,7 @@
 // unchanged and what conflicts; only a confirm of that same file writes, and nothing is overwritten.
 
 import type { aether, ConnId } from "@aether-ui/protocol";
-import { useId, useState, type ChangeEvent } from "react";
+import { useId, useRef, useState, type ChangeEvent } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import { Action, RunNote, useRun } from "../controls/kit.tsx";
 import { bytes, count } from "./format.ts";
@@ -12,16 +12,21 @@ import { replyData } from "./v2.ts";
 const MAX_FILE = 32 * 1024 * 1024;
 const FIELDS = ["dry_run", "digest", "records", "inserted", "unchanged"];
 type Picked = { readonly name: string; readonly artifact: string };
+// A dry run's report with the exact file it ran on, so a confirm applies that file and no other.
+type Plan = { readonly picked: Picked; readonly result: aether.MemoryImport };
 
 export function ImportTool({ conn, refresh }: { conn: ConnId; refresh: () => Promise<unknown> }) {
   const [picked, setPicked] = useState<Picked | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  const [plan, setPlan] = useState<aether.MemoryImport | null>(null);
+  const [plan, setPlan] = useState<Plan | null>(null);
+  // Bumped on every choice: a file read or reply begun for an older choice is dropped.
+  const selection = useRef(0);
   const [done, setDone] = useState<aether.MemoryImport | null>(null);
   const run = useRun(conn);
   const inputId = useId();
   const choose = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
+    const chosen = ++selection.current;
     setPlan(null); setDone(null); setPicked(null);
     if (!file) return;
     if (file.size > MAX_FILE) {
@@ -29,37 +34,41 @@ export function ImportTool({ conn, refresh }: { conn: ConnId; refresh: () => Pro
       return;
     }
     setProblem(null);
-    setPicked({ name: file.name, artifact: await file.text() });
+    const artifact = await file.text();
+    if (chosen === selection.current) setPicked({ name: file.name, artifact });
   };
-  const send = async (dryRun: boolean) => {
-    invariant(picked !== null && picked.artifact !== "", "a file is chosen before it is sent");
-    const reply = await run.send({ cmd: "memory_import", artifact: picked.artifact, dry_run: dryRun }, dryRun ? "Dry run done · nothing was written" : "Imported");
+  const send = async (target: Picked | null, dryRun: boolean) => {
+    invariant(target !== null && target.artifact !== "", "a file is chosen before it is sent");
+    invariant(dryRun || plan?.picked === target, "only the file a dry run planned is imported");
+    const chosen = selection.current;
+    const reply = await run.send({ cmd: "memory_import", artifact: target.artifact, dry_run: dryRun }, dryRun ? "Dry run done · nothing was written" : "Imported");
     if (!reply) return;
     const result = replyData<aether.MemoryImport>(reply, "memory_import", FIELDS);
     invariant(result.dry_run === dryRun, "the reply is for the run that was asked");
     if (dryRun) {
-      setPlan(result);
+      if (chosen === selection.current) setPlan({ picked: target, result });
       return;
     }
     setPlan(null); setDone(result);
     await refresh();
   };
   const command = { cmd: "memory_import", artifact: picked?.artifact ?? "", dry_run: true };
+  const busy = run.status.state === "busy";
   const empty = picked !== null && picked.artifact.trim() === "" ? `${picked.name} is empty` : null;
   return <div className="mem-tool" aria-label="Import">
     <h4 className="mem-tool-title">Import</h4>
     <p className="b3-meta">Adds what an export holds and this store lacks. A differing memory is reported, never overwritten.</p>
     <label className="b3-field" htmlFor={inputId}><span className="ui-field-label">Export file (.jsonl)</span>
-      <input id={inputId} className="mem-file" type="file" accept=".jsonl,.ndjson,application/jsonl,application/x-ndjson,text/plain" onChange={e => { void choose(e); }} /></label>
+      <input id={inputId} className="mem-file" type="file" accept=".jsonl,.ndjson,application/jsonl,application/x-ndjson,text/plain" disabled={busy} onChange={e => { void choose(e); }} /></label>
     {problem ? <p className="b3-note" role="alert" data-state="failed">{problem}</p> : null}
     <div className="b3-row">
-      <Action conn={conn} command={command} label="Dry run import" busy={run.status.state === "busy"} blocked={picked === null ? "Choose an export file" : empty} onRun={() => send(true)} />
-      {plan ? <Action conn={conn} command={{ ...command, dry_run: false }} label="Import" variant="primary" busy={run.status.state === "busy"} onRun={() => send(false)}
-        blocked={plan.inserted === 0 ? "Nothing new to insert" : null}
-        confirm={{ title: "Import memories?", body: `${count(plan.inserted, "memory", "memories")} will be inserted from ${picked?.name ?? "the file"} in one commit. ${count(plan.conflicts?.length ?? 0, "conflict stays", "conflicts stay")} as stored.`, confirmLabel: "Import memories" }} /> : null}
+      <Action conn={conn} command={command} label="Dry run import" busy={busy} blocked={picked === null ? "Choose an export file" : empty} onRun={() => send(picked, true)} />
+      {plan ? <Action conn={conn} command={{ ...command, artifact: plan.picked.artifact, dry_run: false }} label="Import" variant="primary" busy={busy} onRun={() => send(plan.picked, false)}
+        blocked={plan.result.inserted === 0 ? "Nothing new to insert" : null}
+        confirm={{ title: "Import memories?", body: `${count(plan.result.inserted, "memory", "memories")} will be inserted from ${plan.picked.name} in one commit. ${count(plan.result.conflicts?.length ?? 0, "conflict stays", "conflicts stay")} as stored.`, confirmLabel: "Import memories" }} /> : null}
     </div>
     <RunNote status={run.status} />
-    {plan ? <ImportCounts result={plan} /> : null}
+    {plan ? <ImportCounts result={plan.result} /> : null}
     {done ? <ImportCounts result={done} /> : null}
   </div>;
 }

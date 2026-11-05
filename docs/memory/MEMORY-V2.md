@@ -139,8 +139,11 @@ reply memory_import { dry_run: bool, digest: string, records: u32, inserted: u32
 ```
 
 Export reads every memory in the scope, including candidates, pending
-proposals, superseded memories and forgotten ones. More than 100,000
-records is refused as `invalid`, with the advice to export per scope.
+proposals, superseded memories and forgotten ones. It reads them under
+the commit lock, so the artifact is one snapshot of the store. More than
+100,000 records, or an artifact over 48 MiB as an escaped JSON string, is
+refused as `invalid`, with the advice to export per scope. The byte bound
+keeps the reply, and the import that sends it back, inside a 64 MiB frame.
 
 Import compares each entry with the store by memory id:
 
@@ -264,8 +267,8 @@ its own benchmark.
 `role:<role>`, `agent:<agent>`, `subtree:<agent>`,
 `repo-role:<role>@<repository>`, or anything else as a repository.
 
-`export -o FILE` writes `FILE.partial` and renames it into place, so FILE
-is never half an artifact. With `--json` it prints the count and digest.
+`export -o FILE` writes a staging file it creates under a fresh name
+beside FILE, then renames it onto FILE, so FILE is never half an artifact. With `--json` it prints the count and digest.
 
 ## 6. Changes from the §7 proposal
 

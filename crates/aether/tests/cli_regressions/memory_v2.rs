@@ -69,6 +69,10 @@ async fn export_writes_the_artifact_whole_and_import_sends_it_back_as_a_dry_run(
     let file = root.path().join("memories.jsonl");
     let path = file.to_str().unwrap();
     let export = json!({"artifact":artifact(), "records":0, "digest":DIGEST});
+    let victim = root.path().join("victim.txt");
+    std::fs::write(&victim, "keep").unwrap();
+    let planted = root.path().join("memories.jsonl.partial");
+    std::os::unix::fs::symlink(&victim, &planted).unwrap();
     let output = run(
         root.path(),
         &[
@@ -89,7 +93,17 @@ async fn export_writes_the_artifact_whole_and_import_sends_it_back_as_a_dry_run(
         (printed["records"].clone(), printed["digest"].clone()),
         (json!(0), json!(DIGEST))
     );
-    assert!(!root.path().join("memories.jsonl.partial").exists());
+    let left: Vec<_> = std::fs::read_dir(root.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".partial") && name != "memories.jsonl.partial")
+        .collect();
+    assert!(left.is_empty(), "no staging file is left behind: {left:?}");
+    assert_eq!(
+        std::fs::read_to_string(&victim).unwrap(),
+        "keep",
+        "a planted path is never followed"
+    );
 
     let report = json!({"dry_run":true, "digest":DIGEST, "records":0, "inserted":0,
         "unchanged":0, "conflicts":[]});

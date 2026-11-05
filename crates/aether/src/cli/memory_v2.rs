@@ -145,13 +145,7 @@ fn write_export(export: &MemoryExport, output: Option<PathBuf>, json: bool) -> a
         }
         return Ok(());
     };
-    let mut partial = path.clone().into_os_string();
-    partial.push(".partial");
-    let partial = PathBuf::from(partial);
-    std::fs::write(&partial, &export.artifact)
-        .with_context(|| format!("write {}", partial.display()))?;
-    std::fs::rename(&partial, &path)
-        .with_context(|| format!("move the export to {}", path.display()))?;
+    stage_and_publish(&path, &export.artifact)?;
     if json {
         let summary =
             serde_json::json!({"output": path, "records": export.records, "digest": export.digest});
@@ -164,6 +158,39 @@ fn write_export(export: &MemoryExport, output: Option<PathBuf>, json: bool) -> a
             export.digest
         );
     }
+    Ok(())
+}
+
+/// Writes `artifact` to a staging file this call alone created, beside
+/// `path`, then renames that file onto `path`: never a shared or followed path.
+fn stage_and_publish(path: &std::path::Path, artifact: &str) -> anyhow::Result<()> {
+    use std::io::Write as _;
+    let name = path
+        .file_name()
+        .with_context(|| format!("{} names no file", path.display()))?;
+    let directory = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => std::path::Path::new("."),
+    };
+    let mut staged = tempfile::Builder::new()
+        .prefix(&format!(".{}.", name.to_string_lossy()))
+        .suffix(".partial")
+        .tempfile_in(directory)
+        .with_context(|| format!("create a staging file in {}", directory.display()))?;
+    staged
+        .write_all(artifact.as_bytes())
+        .and_then(|()| staged.as_file().sync_all())
+        .with_context(|| format!("write {}", staged.path().display()))?;
+    let staged_len = staged.as_file().metadata()?.len();
+    anyhow::ensure!(
+        staged_len == artifact.len() as u64,
+        "the staging file holds {staged_len} of {} bytes",
+        artifact.len()
+    );
+    staged
+        .persist(path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("move the export to {}", path.display()))?;
     Ok(())
 }
 

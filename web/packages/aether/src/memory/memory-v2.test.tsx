@@ -117,6 +117,35 @@ test("import runs dry first, and writes only after the confirm", async () => {
   expect(h.daemon.commands("memories").length).toBeGreaterThan(reads);
 });
 
+test("a dry run's late reply never plans a file chosen after it", async () => {
+  const OTHER = DEMO_ARTIFACT.replace("\n", "\n\n");
+  let held = false;
+  const base = memoryScript();
+  const answer = base.memory_import;
+  expect(answer).toBeDefined();
+  const script = { ...base, memory_import: (command: Record<string, unknown>) => {
+    if (command.artifact === DEMO_ARTIFACT && !held) { held = true; return "hold" as const; }
+    return answer ? answer(command) : { code: "internal", message: "no scripted import" };
+  } };
+  h = await connected({ role: "local", features: V2_FEATURES, agents: demoAgents(), script });
+  const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
+  const tools = section(root, "Maintenance") as HTMLElement;
+  await chooseFile(root, DEMO_ARTIFACT);
+  await click(h, tools, "Dry run import");
+  expect((root.querySelector('input[type="file"]') as HTMLInputElement).disabled).toBe(true);
+  await chooseFile(root, OTHER);
+  await act(async () => { h.daemon.release(); });
+  await h.settle(); await h.settle();
+  const importButtons = [...tools.querySelectorAll("button")].filter(b => b.textContent?.trim() === "Import");
+  expect(importButtons, "the first file's plan is dropped").toHaveLength(0);
+  await click(h, tools, "Dry run import");
+  await click(h, tools, "Import");
+  await click(h, document.body, "Import memories");
+  await h.settle();
+  const sent = h.daemon.commands("memory_import").map(c => [c.artifact === OTHER, c.dry_run]);
+  expect(sent).toEqual([[false, true], [true, true], [true, false]]);
+});
+
 test("consolidate plans for the typed scope, and a new scope drops the plan", async () => {
   const root = await screen();
   const tools = section(root, "Maintenance") as HTMLElement;

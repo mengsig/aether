@@ -155,6 +155,9 @@ pub const EXPORT_FORMAT: &str = "aether.memory-export";
 pub const EXPORT_VERSION: u32 = 1;
 /// Most records one export carries; a larger store is exported per scope.
 pub const MAX_EXPORT_RECORDS: usize = 100_000;
+/// Most bytes the artifact may take as an escaped JSON string: a 64 MiB frame
+/// less room for the envelope, so the export reply and its import both fit.
+pub const MAX_EXPORT_ENCODED_BYTES: usize = 48 * 1024 * 1024;
 
 /// Line 1 of an export artifact.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

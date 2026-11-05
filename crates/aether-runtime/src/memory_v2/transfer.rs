@@ -10,7 +10,7 @@ use aether_core::memory::{MemoryRecord, MemoryScope};
 use aether_core::memory_admission::MemoryState;
 use aether_core::memory_v2_reports::{
     EXPORT_FORMAT, EXPORT_VERSION, ExportEntry, ExportHeader, ImportConflict, LastImport,
-    MAX_EXPORT_RECORDS, MemoryExport, MemoryImport,
+    MAX_EXPORT_ENCODED_BYTES, MAX_EXPORT_RECORDS, MemoryExport, MemoryImport,
 };
 use aether_core::time::now;
 use aether_store::{Commit, MemoryQuery, MemoryStaleMark, Mutation};
@@ -26,6 +26,9 @@ impl Runtime {
     /// Every memory in `scope` (or the store), as stored, as an artifact.
     pub fn export_memories(&self, scope: Option<MemoryScope>, by: &Actor) -> Result<MemoryExport> {
         require_operator(by, "export memories")?;
+        // Every write takes this lock, so holding it makes the record, admission
+        // and stale reads one snapshot: an acceptance cannot fall between them.
+        let _snapshot = self.hold();
         let records = self.exported_records(scope.as_ref())?;
         let ids: Vec<MemoryId> = records.iter().map(|record| record.id).collect();
         let mut admissions = self.store.memory_admissions(&ids)?;
@@ -49,6 +52,7 @@ impl Runtime {
             artifact.push_str(&encode_line(&entry)?);
         }
         debug_assert!(admissions.is_empty() && stale.is_empty());
+        fits_one_frame(&artifact, MAX_EXPORT_ENCODED_BYTES)?;
         Ok(MemoryExport {
             digest: digest(&artifact),
             records: header.records,
@@ -301,10 +305,72 @@ fn encode_line<T: serde::Serialize>(value: &T) -> Result<String> {
     Ok(line)
 }
 
+/// Refuses an artifact whose escaped JSON string exceeds `limit`, so a reply
+/// is never built that the transport would drop as too large.
+fn fits_one_frame(artifact: &str, limit: usize) -> Result<()> {
+    let encoded = escaped_len(artifact);
+    debug_assert!(
+        encoded >= artifact.len() + 2,
+        "escaping only grows a string"
+    );
+    if encoded <= limit {
+        return Ok(());
+    }
+    Err(RuntimeError::Invalid(format!(
+        "the export is {encoded} bytes on the wire, over the {limit} one frame carries; \
+         export one scope at a time"
+    )))
+}
+
+/// The length `serde_json` gives `text` as a JSON string, quotes included,
+/// counted without building it.
+fn escaped_len(text: &str) -> usize {
+    let extra: usize = text
+        .bytes()
+        .map(|byte| match byte {
+            b'"' | b'\\' | b'\n' | b'\r' | b'\t' | 0x08 | 0x0c => 1,
+            0x00..=0x1f => 5,
+            _ => 0,
+        })
+        .sum();
+    text.len() + extra + 2
+}
+
 fn digest(artifact: &str) -> String {
     hex::encode(sha2::Sha256::digest(artifact.as_bytes()))
 }
 
 fn invalid(message: String) -> RuntimeError {
     RuntimeError::Invalid(format!("memory import: {message}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{escaped_len, fits_one_frame};
+
+    #[test]
+    fn escaped_len_is_what_serde_json_writes() {
+        for text in [
+            "",
+            "plain",
+            "{\"a\":\"b\\\\c\"}\n",
+            "tab\tbell\u{7}nul\u{0}",
+            "é ✓ \u{1f600}\r\u{8}\u{c}",
+        ] {
+            let written = serde_json::to_string(text).expect("encode");
+            assert_eq!(escaped_len(text), written.len(), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn an_artifact_past_one_frame_is_refused_with_its_size() {
+        let artifact = "{\"record\":1}\n".repeat(4);
+        let encoded = escaped_len(&artifact);
+        assert!(fits_one_frame(&artifact, encoded).is_ok());
+        let refused = fits_one_frame(&artifact, encoded - 1).expect_err("one byte over");
+        assert!(
+            refused.to_string().contains(&encoded.to_string()),
+            "{refused}"
+        );
+    }
 }
