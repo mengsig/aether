@@ -38,3 +38,15 @@ It serves the C2 fixture (`packages/archon/src/dag/fixture`) with Vite, opens 2,
 faux archond in headless Chromium, and drives real wheel and drag input one step a frame: 90 zoom-in
 steps, 180 drag steps and 90 zoom-out steps. It reports each rAF callback's time (the renderer draws
 in its rAF) and the intervals between frames, and fails when the p95 callback exceeds 16.7 ms.
+
+## Memory screen screenshots
+
+```sh
+npx playwright install chromium   # once
+node dev/memory-capture.ts <out-dir> [prefix] [--flows]
+```
+
+It serves the memory fixture (`packages/aether/src/memory/fixture`) with Vite: the memory screen in
+the real shell over the scripted daemon and the Memory 2.0 demo data, never a real daemon. It writes
+full-page screenshots at a desktop and a 390 px phone width. `--flows` adds the retrieval explain, the
+import and consolidate dry runs, the dark theme, an observer and a daemon without `memory_v2`.
