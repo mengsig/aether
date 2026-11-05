@@ -1,4 +1,4 @@
-.PHONY: ci ci-checks fmt lint test build install web e2e bench-release bench-calibrate bench-memory
+.PHONY: ci ci-checks fmt lint test build install web web-perf e2e bench-release bench-calibrate bench-memory
 # `ci` holds one of the host-wide CI slots (scripts/ci_slot.sh, CI_HOST_SLOTS,
 # default 1) while scripts/ci.sh runs; `ci-checks` runs it without one.
 ci:      ; sh scripts/ci_slot.sh ./scripts/ci.sh
@@ -12,6 +12,9 @@ install: ; cargo install --path crates/aether --locked
 # and build (`npm run check`), then the desktop app's headless security tests,
 # holding a host CI slot like `ci`.
 web:     ; sh scripts/ci_slot.sh sh -c 'cd web && npm ci --no-audit --no-fund && npm run check && cd apps/desktop && npm ci --no-audit --no-fund && npm run check'
+# The frontend perf budgets (web/perf/budgets.json) on this host, holding a host CI slot; not part of `ci`.
+# PERF_ARGS=--ci checks only the host-independent measures, as the web-perf workflow does.
+web-perf: ; sh scripts/ci_slot.sh sh -c 'cd web && npm ci --no-audit --no-fund && node perf/run.ts $(PERF_ARGS)'
 # The end-to-end suite (web/e2e) against real aetherd and archond; not part of `ci`.
 # scripts/e2e.sh takes the CI slot itself, around each build and the Playwright run.
 e2e:     ; ./scripts/e2e.sh

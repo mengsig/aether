@@ -9,6 +9,7 @@ export default defineConfig({
       "packages/*/{src,test}/**/*.test.{ts,tsx}",
       "apps/web/{src,test}/**/*.test.{ts,tsx}",
       "scripts/**/*.test.ts",
+      "perf/**/*.test.ts",
     ],
     environment: "node",
     testTimeout: 30_000,
