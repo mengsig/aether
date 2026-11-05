@@ -20,7 +20,7 @@ const SYNC_MS = 75_000;
 let github: PrivateStack | undefined;
 let gh: GhStub;
 
-interface Linked { readonly links: { reference: { number: number; kind: string }; relation: string }[]; readonly objects: { reference: { number: number }; state: string }[] }
+interface Linked { readonly links: { ref: { number: number; kind: string }; relation: string }[]; readonly objects: { ref: { number: number }; state: string }[] }
 
 async function itemLinks(stack: Stack, item: string): Promise<Linked> {
   const { reply, data } = await stack.archon.request({ cmd: "item_links", item });
@@ -75,17 +75,22 @@ test("an issue imported from its page reaches a merged pull request, read throug
   // What ship records when the work lands: the pull request that closes the issue, linked to the item.
   const linked = await stack.archon.request({ cmd: "link_issue", item, ref: PULL_REF, relation: "closes" });
   expect(linked.reply).toBe("ok");
-  const synced = await until(() => itemLinks(stack, item), (read) => read.objects.some((object) => object.reference.number === PULL),
+  const synced = await until(() => itemLinks(stack, item), (read) => read.objects.some((object) => object.ref.number === PULL),
     `archond's sync to read #${PULL}`, SYNC_MS);
-  const pull = synced.objects.find((object) => object.reference.number === PULL);
+  const pull = synced.objects.find((object) => object.ref.number === PULL);
   expect(pull?.state, "archond caches the pull request as merged").toBe("merged");
 
-  await page.goto(`${stack.aether.origin}/#/github/github.com/${OWNER_REPO}/${ISSUE}`);
+  // The card's "Delivered PR" is the one ship records on the item; a linked PR shows on its own page.
+  // archond's sync caches what it read without streaming a change, so the app reads it on a fresh load.
+  await page.goto(`${stack.aether.origin}/#/github/github.com/${OWNER_REPO}/${PULL}`);
+  await page.reload();
+  const state = page.getByRole("group", { name: "GitHub state" }).locator('.gh-fact[data-fact="Pull request"]');
+  await expect(state, "the pull request's page shows it merged, as archond read it").toContainText("Merged");
+  await expect(state).not.toContainText(/closed|succeeded/i);
   const card = page.locator(`.gh-item[data-item="${item}"]`);
-  await expect(card, "the issue page shows the item it became").toBeVisible();
-  await expect(card.getByText(`#${ISSUE} ${ISSUE_TITLE}`)).toBeVisible();
-  await expect(card.locator(".gh-fact").filter({ hasText: /merged/i }), "the item's pull request shows merged").toBeVisible();
-  await expect(card.locator(".gh-fact").filter({ hasText: /merged/i })).not.toContainText(/closed|succeeded/i);
+  await expect(card, "the pull request's page shows the item it closes").toBeVisible();
+  await expect(card.getByRole("link", { name: `#${ISSUE} ${ISSUE_TITLE}` })).toBeVisible();
+  await expect(card.locator(".gh-item-head")).toContainText("closes");
   await page.screenshot({ path: info.outputPath("issue-to-merged-pr.png") });
 
   const calls = await gh.calls();
