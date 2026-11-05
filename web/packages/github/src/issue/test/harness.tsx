@@ -8,8 +8,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { vi } from "vitest";
 import GithubRoute from "../GithubScreen.tsx";
 import { invariant } from "../ref.ts";
-import { FauxAether, FauxArchon, type FauxArchonOptions } from "./faux.ts";
-import { demoWorld, type GithubWorld } from "./world.ts";
+import { FauxAether, FauxArchon, type FauxArchonOptions } from "../fixture/faux.ts";
+import { demoWorld, type GithubWorld } from "../fixture/world.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

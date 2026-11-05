@@ -77,6 +77,7 @@ describe("an item's states", () => {
     expect(container.querySelector(".item-fact:nth-child(1)")?.textContent).toContain("stage review");
     expect(container.querySelector(".item-fact:nth-child(2)")?.textContent).toContain("checks pending");
     expect(section(container, "Links")?.textContent).toContain("acme/site#41");
+    expect(section(container, "Links")?.querySelector('a[aria-label="Open the page of acme/site#41"]')?.getAttribute("href")).toBe("#/github/github.com/acme/site/41");
   });
 
   test("says what an item without a PR or issue is", async () => {

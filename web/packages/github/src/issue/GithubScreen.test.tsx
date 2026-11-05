@@ -2,7 +2,7 @@
 import { registerEntityAction } from "@aether-ui/core";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import "../index.ts";
-import { buttonNamed, click, facts, harness, type Harness } from "./fixture/harness.test-util.tsx";
+import { buttonNamed, click, facts, harness, type Harness } from "./test/harness.tsx";
 import { GITHUB_FEATURES } from "./fixture/faux.ts";
 
 const learned: string[] = [];

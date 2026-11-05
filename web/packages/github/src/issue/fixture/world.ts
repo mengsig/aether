@@ -37,7 +37,8 @@ export function item(id: string, title: string, state: Json, extra: { pr?: Json;
     id, title, brief: `Brief of ${title}`, state, repo: "repo_site", pipeline: "adaptive", priority: "normal", created_at: AT, updated_at: AT,
     dependencies: [], tags: [], model_plan: {}, spent_usd: 1.2, ...(extra.pr ? { pr: extra.pr } : {}), ...(extra.issue ? { issue: extra.issue } : {}),
   };
-  const { pr: _pr, issue: _issue, ...queued } = summary;
+  // A queue item carries no GitHub refs: the summary adds them (CONTRACTS.md §1.3).
+  const queued = Object.fromEntries(Object.entries(summary).filter(([key]) => key !== "pr" && key !== "issue"));
   return { summary, detail: { item: queued, runs: extra.runs ?? [], stages: extra.stages ?? [], gates: [], spent_usd: 1.2 } };
 }
 

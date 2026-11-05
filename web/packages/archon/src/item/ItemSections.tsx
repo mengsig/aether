@@ -129,6 +129,13 @@ export function Gates({ gates }: { readonly gates: readonly archon.OperatorGate[
 const githubUrl = (ref: archon.GithubRef): string | null =>
   safeHttpUrl(`https://${ref.host}/${ref.repo}/${ref.kind === "issue" ? "issues" : "pull"}/${ref.number}`);
 
+/** The link's page in the GitHub screens (CONTRACTS.md §2.3); null for a repository not named `owner/name`. */
+function pageHref(ref: archon.GithubRef): string | null {
+  const [owner, repo, ...rest] = ref.repo.split("/");
+  if (!owner || !repo || rest.length > 0) return null;
+  return routeHref("#/github/:host/:owner/:repo/:number", { host: ref.host, owner, repo, number: String(ref.number) });
+}
+
 /** Each link with what GitHub last said of it; its text is untrusted, so it is shown, never followed blindly. */
 export function Links({ links, objects }: { readonly links: readonly archon.GithubLink[]; readonly objects: readonly archon.GithubObject[] }) {
   if (links.length === 0) return <EmptyState title="No GitHub links">Issues and pull requests linked to this item show up here.</EmptyState>;
@@ -138,11 +145,13 @@ export function Links({ links, objects }: { readonly links: readonly archon.Gith
         const object = objectFor(link.ref, objects);
         const url = githubUrl(link.ref);
         const label = `${link.ref.repo}#${link.ref.number}`;
+        const page = pageHref(link.ref);
         return (
           <li key={`${label}-${link.relation}`} className="item-link">
             {url ? <a className="ui-link" href={url} target="_blank" rel="noopener noreferrer">{label}</a> : <span>{label}</span>}
             <Badge tone="neutral">{link.ref.kind === "issue" ? "Issue" : "Pull request"} · {link.relation}</Badge>
             {object ? <span className="item-muted">{object.title} · {object.state}</span> : <span className="item-muted">not read from GitHub yet</span>}
+            {page ? <a className="ui-link" href={page} aria-label={`Open the page of ${label}`}>Open page</a> : null}
           </li>
         );
       })}
