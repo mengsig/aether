@@ -82,7 +82,7 @@ impl Runtime {
             )));
         }
         let mut records: Vec<MemoryRecord> = found.into_values().collect();
-        records.sort_by(|a, b| (a.created_at, a.id).cmp(&(b.created_at, b.id)));
+        records.sort_by_key(|record| (record.created_at, record.id));
         debug_assert!(records.windows(2).all(|w| w[0].id != w[1].id));
         Ok(records)
     }

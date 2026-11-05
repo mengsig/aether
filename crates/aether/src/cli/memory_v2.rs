@@ -7,7 +7,7 @@ use aether_client::{Client, Endpoint};
 use aether_core::id::InvocationId;
 use aether_core::memory::MemoryScope;
 use aether_core::memory_v2_reports::{
-    MemoryConsolidation, MemoryExport, MemoryMigrationStatus, RetrievalExplain,
+    MemoryConsolidation, MemoryExport, MemoryImport, MemoryMigrationStatus, RetrievalExplain,
 };
 use anyhow::Context as _;
 use clap::Subcommand;
@@ -119,27 +119,7 @@ pub async fn memory_v2(socket: Endpoint, command: MemoryV2Cmd) -> anyhow::Result
             let artifact = std::fs::read_to_string(&file)
                 .with_context(|| format!("read {}", file.display()))?;
             let report = client.memory_import(artifact, dry_run).await?;
-            print_or(json, &report, |report| {
-                let verb = if report.dry_run {
-                    "would insert"
-                } else {
-                    "inserted"
-                };
-                println!(
-                    "{verb} {} of {}; {} unchanged; {} conflicts",
-                    report.inserted,
-                    report.records,
-                    report.unchanged,
-                    report.conflicts.len()
-                );
-                for conflict in &report.conflicts {
-                    println!(
-                        "  conflict {}: {}",
-                        conflict.memory,
-                        super::sane(&conflict.reason)
-                    );
-                }
-            })
+            print_or(json, &report, print_import)
         }
         MemoryV2Cmd::MigrationStatus { json } => {
             let status = client.memory_migration_status().await?;
@@ -288,6 +268,28 @@ fn print_consolidation(report: &MemoryConsolidation) {
                 .as_deref()
                 .map(|r| format!(": {}", super::sane(r)))
                 .unwrap_or_default()
+        );
+    }
+}
+
+fn print_import(report: &MemoryImport) {
+    let verb = if report.dry_run {
+        "would insert"
+    } else {
+        "inserted"
+    };
+    println!(
+        "{verb} {} of {}; {} unchanged; {} conflicts",
+        report.inserted,
+        report.records,
+        report.unchanged,
+        report.conflicts.len()
+    );
+    for conflict in &report.conflicts {
+        println!(
+            "  conflict {}: {}",
+            conflict.memory,
+            super::sane(&conflict.reason)
         );
     }
 }
