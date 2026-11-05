@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::{Result, StoreError};
 
-pub const SCHEMA_VERSION: u32 = 31;
+pub const SCHEMA_VERSION: u32 = 32;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -546,9 +546,15 @@ CREATE TABLE IF NOT EXISTS memory_holdouts (
 CREATE INDEX IF NOT EXISTS memory_holdouts_memory ON memory_holdouts(memory_id, seq);
 "#;
 
+// Memory 2.0 on the wire (docs/memory/MEMORY-V2.md) needs no table: export
+// and import compare ids and bodies, and the retrieval trace lives in the
+// snapshot body. The slot ships empty so the numbering stays fixed; the
+// stamp still moves, so opening a V31 store takes its pre-migration backup.
+const V32: &str = "";
+
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31,
+    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31, V32,
 ];
 
 /// Rewrites that SQL cannot express, run in the same transaction as the
@@ -768,3 +774,5 @@ pub fn migrate(conn: &Connection) -> Result<()> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod v32_tests;

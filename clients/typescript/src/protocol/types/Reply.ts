@@ -22,8 +22,12 @@ import type {
   InvocationSnapshot,
   McpServerHealth,
   MemoriesInContext,
+  MemoryConsolidation,
+  MemoryExport,
   MemoryFeedback,
   MemoryFeedbackList,
+  MemoryImport,
+  MemoryMigrationStatus,
   MemoryRecord,
   ModelInfo,
   Notification,
@@ -46,6 +50,7 @@ import type {
   RepositoryAlias,
   RepositoryAliasReport,
   RetentionPreview,
+  RetrievalExplain,
   RunListing,
   RunReport,
   Schedule,
@@ -331,6 +336,31 @@ export interface ReplyMemoryFeedbackList {
   "reply": "memory_feedback_list";
 }
 
+export interface ReplyMemoryRetrievalExplain {
+  "data": RetrievalExplain;
+  "reply": "memory_retrieval_explain";
+}
+
+export interface ReplyMemoryConsolidation {
+  "data": MemoryConsolidation;
+  "reply": "memory_consolidation";
+}
+
+export interface ReplyMemoryExport {
+  "data": MemoryExport;
+  "reply": "memory_export";
+}
+
+export interface ReplyMemoryImport {
+  "data": MemoryImport;
+  "reply": "memory_import";
+}
+
+export interface ReplyMemoryMigrationStatus {
+  "data": MemoryMigrationStatus;
+  "reply": "memory_migration_status";
+}
+
 export interface ReplyMemorySeeded {
   "data": Record<string, unknown>;
   "reply": "memory_seeded";
@@ -513,6 +543,11 @@ export type Reply =
     ReplyMemory |
     ReplyMemoryFeedback |
     ReplyMemoryFeedbackList |
+    ReplyMemoryRetrievalExplain |
+    ReplyMemoryConsolidation |
+    ReplyMemoryExport |
+    ReplyMemoryImport |
+    ReplyMemoryMigrationStatus |
     ReplyMemorySeeded |
     ReplyRuns |
     ReplyRunReport |

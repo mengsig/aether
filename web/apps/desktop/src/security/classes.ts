@@ -12,6 +12,7 @@ export const AETHER_OBSERVE: ReadonlySet<string> = new Set([
   "get_tree", "hello", "latest_checkpoint", "list_agents", "list_agents_page", "list_approval_rules",
   "list_approvals", "list_artifacts", "list_invocations", "list_models", "list_notifications",
   "list_repository_aliases", "list_runs", "list_schedules", "list_tasks", "list_workspaces", "memories",
+  "memory_migration_status",
   "noesis_get_session", "noesis_graph", "noesis_jobs", "noesis_learner", "noesis_learner_evidence",
   "noesis_list_sessions", "noesis_status", "ping", "preview_retention", "providers", "read_artifact",
   "replay", "schedule_history", "status", "storage_status", "subscribe", "unsubscribe", "usage_breakdown",
@@ -31,8 +32,9 @@ export const AETHER_OPERATE: ReadonlySet<string> = new Set([
 
 export const AETHER_HOST_ONLY: ReadonlySet<string> = new Set([
   "accept_memory", "alias_repository", "engine_tool", "engine_tools", "export_run", "import_run",
-  "memories_in_context", "memory_feedback", "record_memory_feedback", "reject_memory",
-  "retract_memory_feedback", "shutdown", "storage_gc",
+  "consolidate_memories", "memories_in_context", "memory_export", "memory_feedback", "memory_import",
+  "memory_retrieval_explain", "record_memory_feedback", "reject_memory", "retract_memory_feedback", "shutdown",
+  "storage_gc",
 ]);
 
 export const AETHER_REMOTE_ADMIN: ReadonlySet<string> = new Set([

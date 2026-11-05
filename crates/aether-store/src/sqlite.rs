@@ -31,6 +31,7 @@ mod ledger;
 mod memories;
 mod memory_feedback;
 mod memory_retrieval;
+mod memory_v2;
 mod mutations;
 mod notifications;
 mod publication;

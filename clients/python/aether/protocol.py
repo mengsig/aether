@@ -63,6 +63,10 @@ from ._protocol_commands.confirm import (
     confirm_pairing,
 )
 
+from ._protocol_commands.consolidate import (
+    consolidate_memories,
+)
+
 from ._protocol_commands.create import (
     create_agent,
     create_memory,
@@ -153,7 +157,11 @@ from ._protocol_commands.memories import (
 )
 
 from ._protocol_commands.memory import (
+    memory_export,
     memory_feedback,
+    memory_import,
+    memory_migration_status,
+    memory_retrieval_explain,
 )
 
 from ._protocol_commands.noesis import (

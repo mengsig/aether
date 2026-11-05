@@ -6,6 +6,7 @@ import type {
   MemoryKind,
   MemoryProvenance,
   MemoryScope,
+  MemoryStanding,
   Retraction,
 } from "../../protocol.ts";
 
@@ -27,6 +28,7 @@ export interface MemoryRecord {
   "retracted"?: Retraction | null;
   "retrieval_count"?: number;
   "scope": MemoryScope;
+  "standing"?: MemoryStanding | null;
   "structured"?: unknown;
   "superseded_by"?: MemoryId | null;
   "supersedes"?: MemoryId | null;

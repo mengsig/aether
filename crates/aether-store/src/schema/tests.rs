@@ -4,7 +4,7 @@ fn previous_database(path: &std::path::Path) -> Connection {
     database_at(path, SCHEMA_VERSION - 1)
 }
 
-fn database_at(path: &std::path::Path, version: u32) -> Connection {
+pub(super) fn database_at(path: &std::path::Path, version: u32) -> Connection {
     assert!(version > 0);
     assert!(version <= SCHEMA_VERSION);
     let conn = Connection::open(path).expect("database");
@@ -120,7 +120,7 @@ fn v9_initializes_cancellation_intent_without_overwriting_existing_state() {
 
 /// Restore a migration backup as docs/migration-backups.md describes: it is
 /// a zstd frame holding the plain SQLite file.
-fn restore(backup: &std::path::Path) -> (tempfile::TempDir, std::path::PathBuf) {
+pub(super) fn restore(backup: &std::path::Path) -> (tempfile::TempDir, std::path::PathBuf) {
     assert!(
         backup.to_string_lossy().ends_with(".sqlite.zst"),
         "{}",
@@ -138,7 +138,7 @@ fn restore(backup: &std::path::Path) -> (tempfile::TempDir, std::path::PathBuf) 
 }
 
 /// Every schema object and every row of every ordinary table, by row ID.
-fn dump(conn: &Connection) -> Vec<String> {
+pub(super) fn dump(conn: &Connection) -> Vec<String> {
     let mut statement = conn
         .prepare("SELECT type, name, sql FROM sqlite_master ORDER BY type, name")
         .expect("schema");
@@ -181,7 +181,7 @@ fn dump(conn: &Connection) -> Vec<String> {
     lines
 }
 
-fn version(conn: &Connection) -> u32 {
+pub(super) fn version(conn: &Connection) -> u32 {
     conn.query_row(
         "SELECT value FROM meta WHERE key = 'schema_version'",
         [],
@@ -1603,7 +1603,7 @@ use aether_core::{
 
 /// A V30 store at `path` with three admitted memories, the first with two
 /// helps and a hurt; returns them and the memory state as dumped.
-fn v30_store_with_memories(path: &std::path::Path) -> (Vec<MemoryRecord>, Vec<String>) {
+pub(super) fn v30_store_with_memories(path: &std::path::Path) -> (Vec<MemoryRecord>, Vec<String>) {
     let v30 = database_at(path, 30);
     let mut legacy: MemoryRecord = serde_json::from_str(V1_MEMORY_BODY).unwrap();
     legacy.scope = MemoryScope::Global;
@@ -1626,7 +1626,7 @@ fn v30_store_with_memories(path: &std::path::Path) -> (Vec<MemoryRecord>, Vec<St
 }
 
 /// One stale mark on `ids[1]` and one holdout of `ids[2]`, in one commit.
-fn write_v31_tables(store: &crate::SqliteStore, ids: &[MemoryId]) {
+pub(super) fn write_v31_tables(store: &crate::SqliteStore, ids: &[MemoryId]) {
     use crate::{Commit, MemoryHoldout, MemoryStaleMark, Mutation, Store};
     use aether_core::{id::AgentId, time::now};
     store
@@ -1662,7 +1662,7 @@ fn v31_upgrades_a_v30_store_keeping_every_memory_row_and_its_usefulness() {
     let store = crate::SqliteStore::open(&path).unwrap();
     assert_eq!(
         store.meta("schema_version").unwrap(),
-        Some("31".to_string())
+        Some(SCHEMA_VERSION.to_string())
     );
     for record in &records {
         assert_eq!(store.memory(record.id).unwrap().as_ref(), Some(record));
@@ -1706,7 +1706,7 @@ fn v31_replays_over_the_upgrade_lanes_undo() {
     let store = crate::SqliteStore::open(&path).unwrap();
     assert_eq!(
         store.meta("schema_version").unwrap(),
-        Some("31".to_string())
+        Some(SCHEMA_VERSION.to_string())
     );
     let ids = [aether_core::id::MemoryId::new()];
     assert!(store.memory_stale_marks(&ids).unwrap().is_empty());

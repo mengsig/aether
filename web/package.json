@@ -10,11 +10,13 @@
   "scripts": {
     "generate": "node scripts/generate-protocol.ts",
     "generate:check": "node scripts/generate-protocol.ts --check",
-    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json && tsc -p perf/tsconfig.json",
     "lint": "eslint --max-warnings 0 .",
     "test": "vitest run --config scripts/vitest.config.ts",
     "licenses": "node scripts/check-licenses.ts",
     "build": "node scripts/build.ts",
+    "perf": "node perf/run.ts",
+    "perf:ci": "node perf/run.ts --ci",
     "check": "npm run generate:check && npm run typecheck && npm run lint && npm run test && npm run licenses && npm run build"
   },
   "dependencies": {

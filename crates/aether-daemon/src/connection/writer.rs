@@ -18,6 +18,8 @@ pub(super) struct Speaking {
     pub delta_order: Arc<AtomicBool>,
     /// The client listed `features::NOESIS`.
     pub noesis: Arc<AtomicBool>,
+    /// The client listed `features::MEMORY_V2`.
+    pub memory_v2: Arc<AtomicBool>,
 }
 
 pub(super) async fn run<W: AsyncWrite + Unpin>(
@@ -40,6 +42,9 @@ pub(super) async fn run<W: AsyncWrite + Unpin>(
             }
             if !speaking.noesis.load(Ordering::SeqCst) {
                 compat::withhold_noesis_events(&mut frame);
+            }
+            if !speaking.memory_v2.load(Ordering::SeqCst) {
+                compat::withhold_memory_standing(&mut frame);
             }
             let line = match encode(speaking.version.load(Ordering::SeqCst), &frame) {
                 Ok(line) => line,
@@ -168,6 +173,7 @@ mod tests {
             history_expired: Arc::new(AtomicBool::new(true)),
             delta_order: Arc::new(AtomicBool::new(delta_order)),
             noesis: Arc::new(AtomicBool::new(true)),
+            memory_v2: Arc::new(AtomicBool::new(true)),
         };
         let (_auth, auth) = watch::channel(None);
         let writer = tokio::spawn(run(write, frames, speaking, auth));

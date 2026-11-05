@@ -59,6 +59,7 @@ pub(super) fn show(
         params: Default::default(),
         token_estimate: 0,
         created_at: now(),
+        memory_retrieval: None,
     };
     assert_eq!(snapshot.task_id, Some(task));
     let mut commit = Commit::new().mutate(Mutation::PutSnapshot(snapshot.clone()));

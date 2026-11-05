@@ -33,6 +33,9 @@ impl Command {
             Self::MemoriesInContext { .. } => Introduced::Feature(features::MEMORY_CONTEXT),
             Self::RecordMemoryFeedback { .. } | Self::RetractMemoryFeedback { .. }
             | Self::MemoryFeedback { .. } => Introduced::Feature(features::MEMORY_FEEDBACK),
+            Self::MemoryRetrievalExplain { .. } | Self::ConsolidateMemories { .. }
+            | Self::MemoryExport { .. } | Self::MemoryImport { .. }
+            | Self::MemoryMigrationStatus => Introduced::Feature(features::MEMORY_V2),
             Self::StorageStatus | Self::StorageGc { .. } => Introduced::Feature(features::STORAGE),
             Self::WorkspaceDiff { .. } | Self::WorkspaceIntegrate { .. }
             | Self::WorkspaceDiscard { .. } => Introduced::Feature(features::WORKSPACE_REVIEW),
@@ -150,6 +153,14 @@ mod tests {
             (
                 json!({"cmd": "memory_feedback", "memory": memory}),
                 features::MEMORY_FEEDBACK,
+            ),
+            (
+                json!({"cmd": "memory_import", "artifact": "", "dry_run": true}),
+                features::MEMORY_V2,
+            ),
+            (
+                json!({"cmd": "memory_migration_status"}),
+                features::MEMORY_V2,
             ),
             (
                 json!({"cmd": "workspace_discard", "agent": aether_core::id::AgentId::new()}),

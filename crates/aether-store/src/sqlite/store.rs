@@ -780,6 +780,24 @@ impl Store for SqliteStore {
         self.memory_holdouts_of(memory)
     }
 
+    fn memory_admissions(
+        &self,
+        memories: &[MemoryId],
+    ) -> Result<std::collections::BTreeMap<MemoryId, MemoryAdmission>> {
+        self.read_memory_admissions(memories)
+    }
+
+    fn memory_v2_counts(&self) -> Result<crate::MemoryV2Counts> {
+        self.count_memory_v2()
+    }
+
+    fn snapshot_retrievals(
+        &self,
+        ids: &[SnapshotId],
+    ) -> Result<Vec<(SnapshotId, Option<aether_core::memory_v2::RetrievalTrace>)>> {
+        self.read_snapshot_retrievals(ids)
+    }
+
     fn artifact(&self, id: ArtifactId) -> Result<Option<Artifact>> {
         self.read_one("SELECT body FROM artifacts WHERE id = ?1", &id.to_string())
     }

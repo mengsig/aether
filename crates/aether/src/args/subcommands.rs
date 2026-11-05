@@ -155,6 +155,8 @@ pub(crate) enum MemoryCmd {
         #[arg(long)]
         json: bool,
     },
+    #[command(flatten)]
+    V2(cli::MemoryV2Cmd),
 }
 
 /// Keep an answer as a durable rule. Without `--remember` nothing is kept.

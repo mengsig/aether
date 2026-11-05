@@ -21,6 +21,7 @@ mod inspection;
 pub mod memory_context;
 pub mod memory_curation;
 mod memory_feedback;
+pub mod memory_v2;
 pub mod noesis_guard;
 pub mod noesis_seal;
 pub mod notes;

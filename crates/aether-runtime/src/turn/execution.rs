@@ -422,7 +422,8 @@ pub(super) async fn run_link(
         now: now(),
     });
 
-    let snapshot = assembled.snapshot;
+    let mut snapshot = assembled.snapshot;
+    snapshot.memory_retrieval = memories.trace.clone();
     let input_budget = resolved
         .model
         .capabilities

@@ -2,6 +2,8 @@ import type { aether } from "@aether-ui/protocol";
 import { Badge } from "@aether-ui/ui";
 import { Action, RunNote, useRun } from "../controls/kit.tsx";
 import { invariant } from "../fleet/invariant.ts";
+import { scopeText } from "./scope.ts";
+import { StandingLine } from "./Standing.tsx";
 
 export function MemoryRow({ conn, memory, refresh, proposal = false }: {
   conn: string; memory: aether.MemoryRecord; refresh: () => Promise<unknown>; proposal?: boolean;
@@ -21,6 +23,7 @@ export function MemoryRow({ conn, memory, refresh, proposal = false }: {
     <div className="b3-row"><Badge>{memory.kind}</Badge><span className="b3-meta">{scopeText(memory.scope)}</span>
       {memory.pinned && <Badge>Pinned</Badge>}{memory.forgotten_at && <Badge>Forgotten</Badge>}
       {memory.superseded_by && <Badge>Superseded by {memory.superseded_by}</Badge>}</div>
+    {memory.standing ? <StandingLine standing={memory.standing} /> : null}
     <p className="b3-meta">{memory.tags?.join(" · ")} · {memory.created_at}</p>
     <div className="b3-row">
       {proposal ? <>
@@ -36,14 +39,3 @@ export function MemoryRow({ conn, memory, refresh, proposal = false }: {
   </article>;
 }
 
-/** "Global", or the repository a memory belongs to, in words. */
-function scopeText(scope: aether.MemoryScope): string {
-  switch (scope.scope) {
-    case "global": return "Global";
-    case "repository": return `Repository ${scope.id}`;
-    case "role": return `Role ${scope.role}`;
-    case "agent": return `Agent ${scope.id}`;
-    case "repository_role": return `Repository ${scope.id} · role ${scope.role}`;
-    case "subtree": return `Subtree of ${scope.root}`;
-  }
-}

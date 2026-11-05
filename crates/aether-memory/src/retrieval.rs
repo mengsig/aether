@@ -8,6 +8,34 @@ use aether_core::{
 use aether_store::{Commit, MemoryQuery, MemoryStaleMark, Mutation};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// A ranking and how every candidate in its pool fared.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ranking {
+    /// What [`MemoryService::retrieve`] returns: at most the limit, best first.
+    pub retrieved: Vec<Retrieved>,
+    /// How each of `retrieved` was scored, in the same order.
+    pub ranked: Vec<Considered>,
+    /// Passed the cutoff but ranked past the limit, best first.
+    pub over_limit: Vec<Considered>,
+    /// Below the minimum relevance, in pool order.
+    pub cut: Vec<Considered>,
+    /// Candidates considered.
+    pub pool: usize,
+    /// The minimum relevance applied; `None` for a request with no query.
+    pub cutoff: Option<f32>,
+}
+
+/// One candidate as ranking saw it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Considered {
+    pub memory: MemoryId,
+    pub relevance: f32,
+    /// The final score; `None` for a cut candidate, which is never scored.
+    pub score: Option<f32>,
+    pub stale: bool,
+    pub pinned: bool,
+}
+
 /// How retrieval cuts, and how much of it a turn withholds. The defaults are
 /// CONTRACTS.md §7's `[memory.retrieval]`, except the holdout: off here, so a
 /// service built without config never withholds; the daemon's config turns it
@@ -74,6 +102,12 @@ impl MemoryService {
     /// memories rather than always `limit`; a stale-marked one is demoted. A
     /// repository named by an old alias is read where its memories now live.
     pub fn retrieve(&self, req: &RetrievalRequest) -> Result<Vec<Retrieved>> {
+        Ok(self.retrieve_traced(req)?.retrieved)
+    }
+
+    /// [`Self::retrieve`], also saying how each candidate fared, for the
+    /// turn's trace. The ranking is the same.
+    pub fn retrieve_traced(&self, req: &RetrievalRequest) -> Result<Ranking> {
         let limit = if req.limit == 0 { 5 } else { req.limit };
         // Only collection is repeated when an alias lands mid-read; ranking,
         // and its one feedback read, run once on the pool that was kept.
@@ -95,34 +129,56 @@ impl MemoryService {
         scopes: &[MemoryScope],
         pool: Vec<MemoryRecord>,
         limit: usize,
-    ) -> Result<Vec<Retrieved>> {
+    ) -> Result<Ranking> {
         debug_assert!(limit > 0);
         let query_tokens = req.query.as_deref().map(tokens).unwrap_or_default();
         // Only a request that says what it is about can be judged irrelevant.
         let cutoff = (!query_tokens.is_empty()).then_some(self.retrieval.min_score);
         let at = now();
+        let pooled = pool.len();
         let semantic = self.semantic_scores(req, &pool)?;
         let tallies = self.feedback_tallies(&pool)?;
         let stale = self.stale_marks(&pool)?;
-        let mut scored: Vec<Retrieved> = pool
-            .into_iter()
-            .zip(semantic)
-            .filter_map(|(record, semantic)| {
-                let fit = Fit::of(&record, req, &query_tokens, semantic);
-                if cutoff.is_some_and(|min| !record.pinned && fit.relevance < min) {
-                    return None;
-                }
-                let score = score(&record, req, scopes, &fit, at) + SEMANTIC_WEIGHT * semantic;
-                let score = with_feedback(score, &record, tallies.get(&record.id));
-                let score = with_staleness(score, stale.contains_key(&record.id));
-                Some(Retrieved { record, score })
-            })
+        let mut cut = Vec::new();
+        let mut scored: Vec<(Retrieved, Considered)> = Vec::with_capacity(pool.len());
+        for (record, semantic) in pool.into_iter().zip(semantic) {
+            let fit = Fit::of(&record, req, &query_tokens, semantic);
+            let is_stale = stale.contains_key(&record.id);
+            let mut seen = Considered {
+                memory: record.id,
+                relevance: fit.relevance,
+                score: None,
+                stale: is_stale,
+                pinned: record.pinned,
+            };
+            if cutoff.is_some_and(|min| !record.pinned && fit.relevance < min) {
+                cut.push(seen);
+                continue;
+            }
+            let score = score(&record, req, scopes, &fit, at) + SEMANTIC_WEIGHT * semantic;
+            let score = with_feedback(score, &record, tallies.get(&record.id));
+            let score = with_staleness(score, is_stale);
+            seen.score = Some(score);
+            scored.push((Retrieved { record, score }, seen));
+        }
+        // Stable, on the score alone: the order `retrieve` always gave.
+        scored.sort_by(|a, b| b.0.score.total_cmp(&a.0.score));
+        let over_limit: Vec<Considered> = scored
+            .drain(limit.min(scored.len())..)
+            .map(|(_, seen)| seen)
             .collect();
-        scored.sort_by(|a, b| b.score.total_cmp(&a.score));
-        scored.truncate(limit);
-        debug_assert!(scored.len() <= limit);
-        debug_assert!(scored.windows(2).all(|w| w[0].score >= w[1].score));
-        Ok(scored)
+        let (retrieved, ranked): (Vec<_>, Vec<_>) = scored.into_iter().unzip();
+        debug_assert!(retrieved.len() <= limit);
+        debug_assert!(retrieved.windows(2).all(|w| w[0].score >= w[1].score));
+        debug_assert_eq!(retrieved.len() + over_limit.len() + cut.len(), pooled);
+        Ok(Ranking {
+            retrieved,
+            ranked,
+            over_limit,
+            cut,
+            pool: pooled,
+            cutoff,
+        })
     }
 
     /// Every candidate the request can see, each once: a structural page and,

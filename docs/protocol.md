@@ -216,6 +216,14 @@ reviewing proposals. The Rust client refuses these requests to older daemons.
 memories a task saw; see [memory feedback](#memory-feedback). Check it before
 sending any of the three commands. The Rust client refuses them to older daemons.
 
+`memory_v2` means memory replies carry `standing` (tier, state, support,
+verification, refs, stale) and the daemon serves `memory_retrieval_explain`,
+`consolidate_memories`, `memory_export`, `memory_import` and
+`memory_migration_status`; see [docs/memory/MEMORY-V2.md](memory/MEMORY-V2.md).
+A client lists `memory_v2` in its hello to receive `standing`; without it a
+memory reply is exactly as before. The Rust client refuses the five commands
+to older daemons.
+
 `prune_build_output` means `storage_gc` applies `prune_build_output`: it also
 deletes declared build output from finished workspaces that GC keeps for
 another reason. An older daemon ignores the field and runs an ordinary sweep;

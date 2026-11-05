@@ -287,6 +287,7 @@ impl ContextManager {
             params,
             token_estimate: used,
             created_at: inputs.now,
+            memory_retrieval: None,
         };
         let request = build_request(&snapshot);
         let new_user_message = if nudged && new_user_message.is_none() {

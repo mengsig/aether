@@ -462,6 +462,35 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<usize>,
     },
+    /// What retrieval did for each model call of a task, or for one
+    /// invocation; name exactly one. Needs `memory_v2`.
+    MemoryRetrievalExplain {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task: Option<TaskId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        invocation: Option<InvocationId>,
+    },
+    /// Merge near-duplicate memories, or with `dry_run` only plan it.
+    /// An absent scope means every scope. Needs `memory_v2`.
+    ConsolidateMemories {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<aether_core::memory::MemoryScope>,
+        dry_run: bool,
+    },
+    /// Every memory of a scope, or of the store, as a JSON Lines artifact.
+    /// Needs `memory_v2`.
+    MemoryExport {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<aether_core::memory::MemoryScope>,
+    },
+    /// Insert what an export holds and the store lacks; never overwrites.
+    /// Needs `memory_v2`.
+    MemoryImport {
+        artifact: String,
+        dry_run: bool,
+    },
+    /// The store's Memory 2.0 migrations, counts and backups. Needs `memory_v2`.
+    MemoryMigrationStatus,
     /// Curate a memory out. The record stays; it is never retrieved again.
     ForgetMemory {
         id: MemoryId,

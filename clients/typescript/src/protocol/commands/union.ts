@@ -16,6 +16,7 @@ import type {
   ConfigureGithubWatcherCommand,
   ConfigureRemoteCommand,
   ConfirmPairingCommand,
+  ConsolidateMemoriesCommand,
   CreateAgentCommand,
   CreateMemoryCommand,
   CreateScheduleCommand,
@@ -66,7 +67,11 @@ import type {
   McpServersCommand,
   MemoriesCommand,
   MemoriesInContextCommand,
+  MemoryExportCommand,
   MemoryFeedbackCommand,
+  MemoryImportCommand,
+  MemoryMigrationStatusCommand,
+  MemoryRetrievalExplainCommand,
   NoesisAnswerCommand,
   NoesisCancelJobCommand,
   NoesisConfigureCommand,
@@ -148,6 +153,7 @@ export type Command =
   | ConfigureGithubWatcherCommand
   | ConfigureRemoteCommand
   | ConfirmPairingCommand
+  | ConsolidateMemoriesCommand
   | CreateAgentCommand
   | CreateMemoryCommand
   | CreateScheduleCommand
@@ -198,7 +204,11 @@ export type Command =
   | McpServersCommand
   | MemoriesCommand
   | MemoriesInContextCommand
+  | MemoryExportCommand
   | MemoryFeedbackCommand
+  | MemoryImportCommand
+  | MemoryMigrationStatusCommand
+  | MemoryRetrievalExplainCommand
   | NoesisAnswerCommand
   | NoesisCancelJobCommand
   | NoesisConfigureCommand

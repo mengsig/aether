@@ -391,6 +391,11 @@ pub enum Reply {
     Memory(MemoryRecord),
     MemoryFeedback(aether_core::memory_feedback::MemoryFeedback),
     MemoryFeedbackList(aether_core::memory_feedback::MemoryFeedbackList),
+    MemoryRetrievalExplain(aether_core::memory_v2_reports::RetrievalExplain),
+    MemoryConsolidation(aether_core::memory_v2_reports::MemoryConsolidation),
+    MemoryExport(aether_core::memory_v2_reports::MemoryExport),
+    MemoryImport(aether_core::memory_v2_reports::MemoryImport),
+    MemoryMigrationStatus(aether_core::memory_v2_reports::MemoryMigrationStatus),
     MemorySeeded {
         repository: String,
         report: aether_core::memory::SeedReport,

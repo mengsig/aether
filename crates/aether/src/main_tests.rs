@@ -856,3 +856,97 @@ mod help_text {
         assert!(missing.is_empty(), "these have no help text: {missing:#?}");
     }
 }
+
+mod memory_v2 {
+    use super::*;
+
+    fn parse(args: &[&str]) -> cli::MemoryV2Cmd {
+        let parsed = Args::try_parse_from(["aether", "memory"].iter().chain(args)).expect("CLI");
+        let Some(Cmd::Memory {
+            command: MemoryCmd::V2(command),
+        }) = parsed.command
+        else {
+            panic!("memory {args:?}");
+        };
+        command
+    }
+
+    #[test]
+    fn memory_2_0_commands_parse_as_the_doc_spells_them() {
+        let cli::MemoryV2Cmd::Explain {
+            task,
+            invocation,
+            json,
+        } = parse(&["explain", "--task", "@last", "--json"])
+        else {
+            panic!("explain");
+        };
+        assert_eq!(task.map(|t| t.to_string()).as_deref(), Some("@last"));
+        assert!(invocation.is_none() && json);
+        let cli::MemoryV2Cmd::Consolidate { scope, dry_run, .. } =
+            parse(&["consolidate", "--scope", "global", "--dry-run"])
+        else {
+            panic!("consolidate");
+        };
+        assert!(
+            dry_run
+                && matches!(
+                    scope,
+                    Some(cli::MemoryScopeRef::Fixed(
+                        aether_core::memory::MemoryScope::Global
+                    ))
+                )
+        );
+        let cli::MemoryV2Cmd::Export { output, .. } = parse(&["export", "-o", "memories.jsonl"])
+        else {
+            panic!("export");
+        };
+        assert_eq!(
+            output.as_deref(),
+            Some(std::path::Path::new("memories.jsonl"))
+        );
+        let cli::MemoryV2Cmd::Import { file, dry_run, .. } =
+            parse(&["import", "m.jsonl", "--dry-run"])
+        else {
+            panic!("import");
+        };
+        assert!(dry_run && file == std::path::Path::new("m.jsonl"));
+        assert!(matches!(
+            parse(&["migration-status"]),
+            cli::MemoryV2Cmd::MigrationStatus { json: false }
+        ));
+    }
+
+    #[test]
+    fn explain_names_exactly_one_of_a_task_or_an_invocation() {
+        let explain = |extra: &[&str]| {
+            Args::try_parse_from(["aether", "memory", "explain"].iter().chain(extra))
+        };
+        assert!(explain(&[]).is_err(), "neither");
+        assert!(
+            explain(&[
+                "--task",
+                "@last",
+                "--invocation",
+                "inv_00000000000000000000000000"
+            ])
+            .is_err(),
+            "both"
+        );
+        assert!(
+            explain(&["--invocation", "not-an-id"]).is_err(),
+            "a malformed id"
+        );
+        assert!(
+            explain(&[
+                "--invocation",
+                &aether_core::id::InvocationId::new().to_string()
+            ])
+            .is_ok()
+        );
+        assert!(
+            Args::try_parse_from(["aether", "memory", "import"]).is_err(),
+            "import needs a file"
+        );
+    }
+}

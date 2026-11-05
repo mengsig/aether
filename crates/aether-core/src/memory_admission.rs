@@ -1,7 +1,7 @@
 //! What admission knows about a memory beyond its text: the tier it belongs
 //! to, whether it is still a candidate, which tasks support it, how it was
-//! verified and what it refers to. Kept by the store beside the record and
-//! not on the wire yet.
+//! verified and what it refers to. Kept by the store beside the record; on
+//! the wire as `MemoryRecord.standing` (`crate::memory_v2`).
 
 use std::collections::BTreeSet;
 
@@ -16,7 +16,7 @@ use crate::time::Timestamp;
 /// only bounds the body of a memory many tasks keep restating.
 pub const MAX_SUPPORTERS: usize = 32;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryTier {
     Working,
@@ -49,7 +49,7 @@ impl MemoryTier {
 
 /// Where a memory stands. The store keeps only `Candidate` or `Active`:
 /// superseded and retracted are read from the record, which already says so.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryState {
     Candidate,
@@ -86,7 +86,19 @@ impl MemoryState {
 }
 
 /// Ordered weakest first, so the stronger of two is their maximum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Verification {
     /// An agent's claim.
@@ -109,7 +121,19 @@ impl Verification {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RefKind {
     Repo,
@@ -123,7 +147,9 @@ pub enum RefKind {
     Doc,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct MemoryRef {
     pub kind: RefKind,
     pub value: String,
