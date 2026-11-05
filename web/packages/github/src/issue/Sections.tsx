@@ -86,4 +86,3 @@ export function Agents({ items, aether }: { readonly items: readonly ItemView[];
   return <ul className="gh-list" aria-label="Agents">{rows.map((row) => <AgentLine key={`${row.item.id} ${row.use.agent}`} row={row} aether={aether} />)}</ul>;
 }
 
-/** Every registered action for this entity whose `requires` holds, except the ones this page is itself. */
