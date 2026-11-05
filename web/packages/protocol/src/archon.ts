@@ -1,7 +1,7 @@
 // The Archon daemon protocol as TypeScript types and command builders.
 // Generated from web/schemas/archon.protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: 90c3597395464887ab73700074d811eb3d4d3a388d203fe431727feda8a0fa6b
+// Schema SHA-256: 249cefb63f214b7a4d3c7129f81e0eb48345b37a73ff8db50a043891bb19d1c9
 
 export const PROTOCOL_VERSION = 24;
 
@@ -353,6 +353,8 @@ export interface DaemonStatus {
   "directives": Array<Directive>;
   "disk"?: DiskStatus | null;
   "github"?: GithubWatch | null;
+  "github_outbox"?: Array<GithubOutboxPending>;
+  "github_outbox_pending"?: number;
   "health"?: StatusHealth | null;
   "held_news"?: number;
   "held_news_due"?: boolean;
@@ -736,6 +738,20 @@ export interface GithubObject {
 export type GithubObjectState = "open" | "closed" | "merged";
 
 /**
+ * A GitHub comment Archon recorded but has not seen posted: it is retried,
+ * at most once on GitHub, and never dropped (`DaemonStatus::github_outbox`).
+ */
+export interface GithubOutboxPending {
+  "attempts": number;
+  "created_at": string;
+  "last_error"?: string | null;
+  "next_attempt_at": string;
+  "purpose": string;
+  "target": string;
+  "token": string;
+}
+
+/**
  * An issue or pull request on a GitHub host.
  */
 export interface GithubRef {
@@ -812,6 +828,13 @@ export interface GraphInitiative {
 export interface HistoryRange {
   "first_seq": number;
   "last_seq": number;
+}
+
+export interface HoldoutLift {
+  "holdout_uses": number;
+  "holdout_wins": number;
+  "uses": number;
+  "wins": number;
 }
 
 /**
@@ -1045,6 +1068,7 @@ export interface LearningWhy {
 }
 
 export interface Lesson {
+  "cluster"?: LessonId | null;
   "confidence": number;
   "confirmed_at"?: string | null;
   "created_at": string;
@@ -1053,10 +1077,12 @@ export interface Lesson {
   "kind": LessonKind;
   "last_used_at"?: string | null;
   "pinned"?: boolean;
+  "refs"?: Array<LessonRef>;
   "scope": LessonScope;
   "source": LessonSource;
   "state": LessonState;
   "superseded_by"?: LessonId | null;
+  "support"?: number;
   "text": string;
   "updated_at": string;
   "uses": number;
@@ -1095,6 +1121,16 @@ export interface LessonQuery {
 }
 
 /**
+ * One piece of structured provenance.
+ */
+export interface LessonRef {
+  "kind": LessonRefKind;
+  "value": string;
+}
+
+export type LessonRefKind = "item" | "run" | "pr";
+
+/**
  * Where a lesson applies; all `None` is everywhere.
  */
 export interface LessonScope {
@@ -1109,6 +1145,7 @@ export type LessonState = "active" | "retracted" | "proposed";
 export interface LessonStats {
   "active": number;
   "corrected": number;
+  "holdout_lift"?: HoldoutLift | null;
   "merged": number;
   "outcomes": number;
   "pipelines"?: Array<PipelineEvidence>;

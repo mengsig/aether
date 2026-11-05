@@ -3435,6 +3435,19 @@
           "default": null,
           "description": "Archon's GitHub watcher. `None` in shared mode, where archond\nleaves the operator's Aether watcher alone, or from an older archond."
         },
+        "github_outbox": {
+          "description": "GitHub comments not yet seen posted, longest due first, at most\n[`MAX_OUTBOX_SHOWN`]; `github_outbox_pending` counts them all.",
+          "items": {
+            "$ref": "#/$defs/GithubOutboxPending"
+          },
+          "type": "array"
+        },
+        "github_outbox_pending": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "health": {
           "anyOf": [
             {
@@ -4811,6 +4824,51 @@
       ],
       "type": "string"
     },
+    "GithubOutboxPending": {
+      "description": "A GitHub comment Archon recorded but has not seen posted: it is retried,\nat most once on GitHub, and never dropped (`DaemonStatus::github_outbox`).",
+      "properties": {
+        "attempts": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "last_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "next_attempt_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "purpose": {
+          "description": "`reply` or `ship`.",
+          "type": "string"
+        },
+        "target": {
+          "description": "`owner/name#number` on github.com.",
+          "type": "string"
+        },
+        "token": {
+          "description": "The token its hidden marker carries.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "token",
+        "purpose",
+        "target",
+        "attempts",
+        "next_attempt_at",
+        "created_at"
+      ],
+      "type": "object"
+    },
     "GithubRef": {
       "description": "An issue or pull request on a GitHub host.",
       "properties": {
@@ -4998,6 +5056,37 @@
       "required": [
         "first_seq",
         "last_seq"
+      ],
+      "type": "object"
+    },
+    "HoldoutLift": {
+      "properties": {
+        "holdout_uses": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "holdout_wins": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "uses": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "wins": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "uses",
+        "wins",
+        "holdout_uses",
+        "holdout_wins"
       ],
       "type": "object"
     },
@@ -6058,6 +6147,17 @@
     },
     "Lesson": {
       "properties": {
+        "cluster": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LessonId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The near-duplicate group it belongs to, named by its smallest member's\nid; only display and injection dedupe read it, never scoring."
+        },
         "confidence": {
           "description": "0 to 1; a lower bound on its win rate, decayed since last use.",
           "format": "double",
@@ -6104,6 +6204,13 @@
           "description": "Pinned by the operator: never decays and is never retracted for it.",
           "type": "boolean"
         },
+        "refs": {
+          "description": "Where it came from: items, runs and pull requests, oldest first.",
+          "items": {
+            "$ref": "#/$defs/LessonRef"
+          },
+          "type": "array"
+        },
         "scope": {
           "$ref": "#/$defs/LessonScope"
         },
@@ -6122,6 +6229,12 @@
               "type": "null"
             }
           ]
+        },
+        "support": {
+          "description": "Distinct items among `refs`: how many tasks independently backed it.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "text": {
           "type": "string"
@@ -6297,6 +6410,38 @@
       },
       "type": "object"
     },
+    "LessonRef": {
+      "description": "One piece of structured provenance.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/LessonRefKind"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "type": "object"
+    },
+    "LessonRefKind": {
+      "oneOf": [
+        {
+          "enum": [
+            "item",
+            "run"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "pr",
+          "description": "A pull request, by its URL.",
+          "type": "string"
+        }
+      ]
+    },
     "LessonScope": {
       "description": "Where a lesson applies; all `None` is everywhere.",
       "properties": {
@@ -6362,6 +6507,17 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "holdout_lift": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HoldoutLift"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Scored runs that were given a lesson against runs it was held out\nfrom; absent until each arm has [`HOLDOUT_MIN_SAMPLES`]."
         },
         "merged": {
           "format": "uint64",
