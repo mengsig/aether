@@ -3,7 +3,7 @@
 
 import { routeHref, selectItem, selectItemLinks, selectItems, useSelector, type ArchonItem, type Stamped } from "@aether-ui/core";
 import type { archon, ConnectionInfo, RouteProps } from "@aether-ui/protocol";
-import { EmptyState, ErrorState, Skeleton, StatusPill } from "@aether-ui/ui";
+import { EmptyState, EntityActionMenu, ErrorState, Skeleton, StatusPill } from "@aether-ui/ui";
 import { useMemo } from "react";
 import { useActivity, useArchonAccess, useArchonConnection, useRead, useSettled, type ArchonAccess } from "../queue/archon.ts";
 import { invariant } from "../queue/model.ts";
@@ -73,6 +73,7 @@ function ItemPage({ access, detail, view, stored, reload }: PageProps) {
       <header className="item-header">
         <a className="ui-link item-back" href={routeHref("#/archon/queue", {})}>Queue</a>
         <h1 id="item-title" className="item-title">{item.title}</h1>
+        <EntityActionMenu entity={{ kind: "item", conn: access.conn, id: item.id }} />
         <p className="item-muted">{[repoName ?? item.repo ?? "no repository", pipeline, item.id].join(" · ")}{access.live ? "" : " · polled (protocol 23)"}</p>
         <Facts view={view} stored={stored} links={links} />
       </header>

@@ -2,13 +2,16 @@
 // time on purpose: the protocol 23 fallback backoff, core's debounces and the screens' polling.
 
 import { AppProvider, createApp, type App } from "@aether-ui/core";
-import { ThemeProvider } from "@aether-ui/ui";
+import { EntityActionProvider, ThemeProvider } from "@aether-ui/ui";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { vi } from "vitest";
 import { invariant } from "../model.ts";
 import { FauxArchond, type FauxOptions } from "../fixture/faux-archond.ts";
 import { demoWorld, type World } from "../fixture/world.ts";
+
+// The page's entity action menus need the shell's provider; these tests register no actions.
+const failAction = (action: { id: string }, error: unknown) => { throw new Error(`action ${action.id} failed`, { cause: error }); };
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -58,7 +61,7 @@ export async function archonHarness(options: FauxOptions, world: World = demoWor
     document.body.append(container);
     const root = createRoot(container);
     roots.set(container, root);
-    await act(async () => root.render(<AppProvider app={app}><ThemeProvider initialPreference="light">{node}</ThemeProvider></AppProvider>));
+    await act(async () => root.render(<AppProvider app={app}><ThemeProvider initialPreference="light"><EntityActionProvider actions={[]} capabilities={{}} onError={failAction}>{node}</EntityActionProvider></ThemeProvider></AppProvider>));
     await tick();
     invariant(container.isConnected, "the screen mounted into the document");
     return container;

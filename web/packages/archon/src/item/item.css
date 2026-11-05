@@ -2,6 +2,7 @@
   .item { display: grid; gap: var(--space-4); }
   .item-header { display: grid; gap: var(--space-2); }
   .item-back { justify-self: start; font-size: var(--text-sm); }
+  .item-header > .ui-menu { justify-self: end; }
   .item-title { margin: 0; font: var(--weight-bold) var(--text-2xl) / var(--leading-tight) var(--font-display); }
   .item-muted { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
   .item-error { margin: 0; color: var(--color-danger); font-size: var(--text-sm); }

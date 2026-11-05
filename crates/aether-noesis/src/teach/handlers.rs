@@ -273,12 +273,21 @@ impl<E: Engine> Teaching<'_, E> {
         row: &SessionRow,
         args: &ProbeDoneArgs,
     ) -> Result<String, TeachError> {
+        // The Teacher is a new agent: the session's bundle goes with the hand-off.
+        let bundle = crate::evidence::store::load(self.conn(), &row.id)
+            .map_err(|error| TeachError::Corrupt(error.to_string()))?;
         let teacher = self.spawn(Agent::Teacher)?;
         let assessment = json!({ "strands": args.strands, "summary": args.summary });
-        let handoff = format!(
+        let mut handoff = format!(
             "Learning goal: {}\nThe Prober's assessment:\n{assessment:#}",
             row.goal
         );
+        if let Some(bundle) = bundle {
+            handoff.push_str("\n\n");
+            let rendered = crate::evidence::prompt::render(&bundle)
+                .map_err(|error| TeachError::Corrupt(error.to_string()))?;
+            handoff.push_str(&rendered);
+        }
         self.engine.deliver(&teacher, Input::Handoff(handoff))?;
         Ok(teacher)
     }

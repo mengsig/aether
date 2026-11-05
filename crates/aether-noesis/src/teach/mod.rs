@@ -15,6 +15,8 @@ mod sessions;
 mod turn;
 
 #[cfg(test)]
+mod evidence_flow;
+#[cfg(test)]
 mod faux;
 #[cfg(test)]
 mod parity;

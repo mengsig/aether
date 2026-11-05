@@ -3,7 +3,7 @@
 
 import { routeHref, selectAgent, selectConnection, useSelector } from "@aether-ui/core";
 import type { aether, ConnId, RouteProps } from "@aether-ui/protocol";
-import { Badge, EmptyState, Skeleton, StatusPill } from "@aether-ui/ui";
+import { Badge, EmptyState, EntityActionMenu, Skeleton, StatusPill } from "@aether-ui/ui";
 import { useMemo } from "react";
 import { Conversation } from "../conversation/Conversation.tsx";
 import { agentStatus } from "../fleet/rows.ts";
@@ -28,6 +28,7 @@ function AgentHeader({ conn, agent }: { readonly conn: ConnId; readonly agent: a
         <StatusPill status={status.status} label={status.label} />
         {agent.paused ? <Badge tone="warning">Paused</Badge> : null}
         {agent.archived ? <Badge>Archived</Badge> : null}
+        <EntityActionMenu entity={{ kind: "agent", conn, id: agent.id }} />
       </div>
       <p className="agent-sub">
         <span title={agent.role}>{role.kind === "agent" ? role.text || "No role" : <Badge tone="accent">{role.text}</Badge>}</span>

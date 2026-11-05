@@ -109,6 +109,7 @@ fn run(
         corpus,
         cancel,
         events: &mut record,
+        engineering_in_effect: false,
     };
     let ended = run_job(conn, job, ports).unwrap();
     (ended, events)

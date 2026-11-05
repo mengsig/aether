@@ -3,7 +3,7 @@
 
 import { routeHref, selectItem, selectRunPlan, useApp, useSelector } from "@aether-ui/core";
 import type { archon, ConnectionInfo, RouteProps } from "@aether-ui/protocol";
-import { Badge, EmptyState, ErrorState, Skeleton, StatusPill } from "@aether-ui/ui";
+import { Badge, EmptyState, EntityActionMenu, ErrorState, Skeleton, StatusPill } from "@aether-ui/ui";
 import { useEffect, useMemo, useState } from "react";
 import { useItemDetail } from "../item/detail.ts";
 import { runPill } from "../item/facts.ts";
@@ -79,6 +79,7 @@ function RunView({ access, detail, run, title }: { readonly access: ArchonAccess
         <div className="pipeline-meta">
           <StatusPill status={pill.status} label={pill.label} />
           <span className="item-muted">{[run.branch, usd(run.cost_usd), run.id].join(" · ")}</span>
+          <EntityActionMenu entity={{ kind: "run", conn: access.conn, id: run.id }} />
         </div>
         {waitingForPlan ? <Skeleton height="1.5rem" width="40%" /> : <PlanSource view={view} error={error} />}
       </header>

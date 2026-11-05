@@ -3,6 +3,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 
+use aether_core::noesis::EvidenceBundle;
 use serde_json::{Value, json};
 
 use super::db::{self, SessionRow};
@@ -14,6 +15,7 @@ use super::records::{
 use super::{TeachError, phase, plan, question, role_of};
 use crate::Noesis;
 use crate::budget::{ModelOffer, choose_model};
+use crate::evidence;
 use crate::prompts::{self, Agent};
 use crate::tools;
 
@@ -137,6 +139,18 @@ impl<'a, E: Engine> Teaching<'a, E> {
         mode: Mode,
         practice_targets: &[String],
     ) -> Result<SessionView, TeachError> {
+        self.create_session_from(goal, mode, practice_targets, None)
+    }
+
+    /// [`Teaching::create_session`] starting from an evidence bundle, which is
+    /// admitted before any agent exists and stored with the session row.
+    pub fn create_session_from(
+        &mut self,
+        goal: &str,
+        mode: Mode,
+        practice_targets: &[String],
+        context: Option<&EvidenceBundle>,
+    ) -> Result<SessionView, TeachError> {
         let goal = goal.trim();
         if goal.is_empty() || goal.chars().count() > MAX_GOAL {
             return Err(TeachError::Invalid(format!(
@@ -148,16 +162,17 @@ impl<'a, E: Engine> Teaching<'a, E> {
                 "practice targets need a practice session".into(),
             ));
         }
+        if let Some(bundle) = context {
+            evidence::admit(&self.noesis.effective(), bundle)
+                .map_err(|error| TeachError::Invalid(error.to_string()))?;
+        }
         let targets = self.resolve_targets(practice_targets)?;
         let agent = match mode {
             Mode::Teach => Agent::Prober,
             Mode::Practice => Agent::Practitioner,
         };
         let agent_id = self.spawn(agent)?;
-        let mut opening = format!("Learning goal: {goal}");
-        if !targets.is_empty() {
-            opening.push_str(&format!("\nPractice targets: {}", targets.join(", ")));
-        }
+        let opening = opening(goal, &targets, context)?;
         self.engine.deliver(&agent_id, Input::Learner(opening))?;
         let at = db::now();
         let row = SessionRow {
@@ -169,12 +184,32 @@ impl<'a, E: Engine> Teaching<'a, E> {
             created_at: at.clone(),
             updated_at: at,
         };
-        db::insert_session(self.conn(), &row)?;
+        self.insert_with_bundle(&row, context)?;
         let view = self.session_view(&row)?;
         self.events.push(NoesisEvent::SessionCreated {
             session: Box::new(view.clone()),
         });
         Ok(view)
+    }
+
+    /// The session row and its bundle in one transaction: both or neither.
+    fn insert_with_bundle(
+        &self,
+        row: &SessionRow,
+        context: Option<&EvidenceBundle>,
+    ) -> Result<(), TeachError> {
+        let tx = self.conn().unchecked_transaction()?;
+        db::insert_session(&tx, row)?;
+        if let Some(bundle) = context {
+            evidence::store::save(&tx, &row.id, bundle, &row.created_at).map_err(|error| {
+                match error {
+                    evidence::EvidenceError::Sqlite(error) => TeachError::Sqlite(error),
+                    other => TeachError::Invalid(other.to_string()),
+                }
+            })?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     fn resolve_targets(&self, targets: &[String]) -> Result<Vec<String>, TeachError> {
@@ -414,4 +449,24 @@ fn reveal(open: &super::db::QuestionRow, correct: Option<bool>) -> QuestionResul
         answer_key,
         explanation: open.explanation.clone(),
     }
+}
+
+/// The first input of a session's agent: its goal, targets and any bundle.
+fn opening(
+    goal: &str,
+    targets: &[String],
+    context: Option<&EvidenceBundle>,
+) -> Result<String, TeachError> {
+    debug_assert!(!goal.is_empty(), "a checked goal");
+    let mut opening = format!("Learning goal: {goal}");
+    if !targets.is_empty() {
+        opening.push_str(&format!("\nPractice targets: {}", targets.join(", ")));
+    }
+    if let Some(bundle) = context {
+        opening.push_str("\n\n");
+        let rendered = evidence::prompt::render(bundle)
+            .map_err(|error| TeachError::Invalid(error.to_string()))?;
+        opening.push_str(&rendered);
+    }
+    Ok(opening)
 }
