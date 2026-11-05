@@ -36,6 +36,10 @@ before updating.
   `[memory.retrieval] min_score` (0.05) to reach a turn, pinned ones
   excepted, and `holdout_rate` (0.05) withholds a seeded sample and logs
   it. Set either to 0 to turn it off.
+- **Update the daemon before the clients.** The 1.3.0 Python and
+  TypeScript clients ask for protocol 26, which a 1.2.11 daemon refuses as
+  `incompatible`; give the Python client `protocol_version=25` to reach one.
+  The daemon still serves protocols 17 to 25 to older clients.
 - **Remote access to Archon 1.5.0 needs this release.** `archon remote
   setup` mounts archond on this listener at `/archon`; Archon 1.5.0 runs the
   queue on Aether 1.2.11 too.
