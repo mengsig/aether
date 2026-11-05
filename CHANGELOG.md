@@ -6,6 +6,8 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+The web frontend's screens share one page kit in `@aether-ui/ui`: one header, card, label, empty, loading and error pattern, a header that names every screen, and one entrance motion; see `docs/design/vnext-polish/`.
+
 ## 1.2.11
 
 Released 2026-11-03. A patch release for the TUI and the dependencies.
