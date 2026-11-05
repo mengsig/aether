@@ -3,15 +3,14 @@
 
 import { currentHash } from "@aether-ui/core";
 import type { archon, ConnectionInfo, RouteProps } from "@aether-ui/protocol";
-import { Badge, EmptyState, ErrorState, Skeleton } from "@aether-ui/ui";
+import { Badge, EmptyState, EntityActionMenu, ErrorState, Skeleton } from "@aether-ui/ui";
 import { useCallback, useMemo, useState } from "react";
 import { readStatus, STALE_CHECK_MS, useAether, useArchonConnection, useChangeKey, useGithubReads, useItems, useLinkedItems, useNow } from "./data.ts";
 import { githubFact } from "./facts.ts";
 import { ImportAction } from "./ImportAction.tsx";
 import { isStale, joinPage, type PageView } from "./join.ts";
 import { entityId, githubUrl, invariant, parsePage, type PageRef } from "./ref.ts";
-import { Agents, FactCard, ItemCard, RegisteredActions, Section } from "./Sections.tsx";
-import { OWN_ACTIONS } from "./actions.ts";
+import { Agents, FactCard, ItemCard, Section } from "./Sections.tsx";
 import "./github.css";
 
 function Loading({ label }: { readonly label: string }) {
@@ -57,8 +56,8 @@ function Actions({ info, page, view, reload }: Omit<Body, "error">) {
         <ImportAction conn={info.id} page={page} served={info.features.includes("github_import")} object={view.object}
           imported={imported} startOpen={startOpen} onDone={reload} />
       ) : null}
-      {view.kind !== null ? <RegisteredActions entity={entity} exclude={OWN_ACTIONS} /> : null}
       <a className="ui-link gh-external" href={githubUrl(page, view.kind)} target="_blank" rel="noopener noreferrer">Open on GitHub</a>
+      {view.kind !== null ? <EntityActionMenu entity={entity} label="More actions" /> : null}
     </div>
   );
 }

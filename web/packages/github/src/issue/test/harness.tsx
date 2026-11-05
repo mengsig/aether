@@ -1,9 +1,10 @@
 // Mounts a GitHub page under a real core app connected to the faux archond and, when asked, a faux aetherd.
 // Timers are fake, so a test moves time on purpose: core's frames, the settle window and the stale clock.
 
-import { AppProvider, createApp, type App, type Endpoint } from "@aether-ui/core";
-import { ThemeProvider } from "@aether-ui/ui";
-import { act } from "react";
+import { AppProvider, createApp, useApp, useCapabilities, useEntityActions, type App, type Endpoint } from "@aether-ui/core";
+import type { EntityAction } from "@aether-ui/protocol";
+import { EntityActionProvider, ThemeProvider } from "@aether-ui/ui";
+import { act, useCallback, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { vi } from "vitest";
 import GithubRoute from "../GithubScreen.tsx";
@@ -15,6 +16,17 @@ import { demoWorld, type GithubWorld } from "../fixture/world.ts";
 
 export const ARCHON = "archon:faux";
 export const AETHER = "aether:studio";
+
+/** What the shell gives a screen: the registered actions under live capabilities, failures reported. */
+function Shell({ children }: { readonly children: ReactNode }) {
+  const app = useApp();
+  const actions = useEntityActions();
+  const capabilities = useCapabilities();
+  const onError = useCallback((action: EntityAction, error: unknown) => {
+    app.store.report(`${action.label} failed: ${error instanceof Error ? error.message : String(error)}`);
+  }, [app]);
+  return <EntityActionProvider actions={actions} capabilities={capabilities} onError={onError}>{children}</EntityActionProvider>;
+}
 
 export interface HarnessOptions extends FauxArchonOptions {
   readonly aether?: boolean;
@@ -66,7 +78,9 @@ export async function harness(options: HarnessOptions = {}): Promise<Harness> {
     const root = createRoot(container);
     roots.push(root);
     const params = { host: "github.com", owner, repo: name, number: String(number) };
-    await act(async () => root.render(<AppProvider app={app}><ThemeProvider initialPreference="light"><GithubRoute params={params} /></ThemeProvider></AppProvider>));
+    location.hash = `#/github/github.com/${owner}/${name}/${number}`;
+    const page = <Shell><GithubRoute params={params} /></Shell>;
+    await act(async () => root.render(<AppProvider app={app}><ThemeProvider initialPreference="light">{page}</ThemeProvider></AppProvider>));
     await tick();
     return container;
   };

@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import type { Capabilities, EntityRef } from "@aether-ui/protocol";
+import { actionsFor } from "@aether-ui/ui";
 import { describe, expect, test } from "vitest";
-import { ACTIONS, canImport, canOpen } from "./actions.ts";
+import { ACTIONS, canImport, canOpen, onItsPage } from "./actions.ts";
 import { pageLinks } from "./join.ts";
 import { entityId, pageHref, pageOfEntity, parsePage } from "./ref.ts";
 
@@ -59,5 +60,16 @@ describe("entity actions", () => {
     await byId.get("d4.open-pull-request")?.run({ ...issue, kind: "pull_request", id: "github.com/acme/site#57" });
     expect(location.hash).toBe("#/github/github.com/acme/site/57");
     expect(() => byId.get("d4.open-issue")?.run({ ...issue, id: "nope" })).toThrow("does not name a GitHub issue");
+  });
+
+  test("none is offered on its own page, which renders the import itself", () => {
+    expect(onItsPage(issue, "#/github/github.com/acme/site/41")).toBe(true);
+    expect(onItsPage(issue, "#/github/GitHub.com/ACME/site/41?import")).toBe(true);
+    expect(onItsPage(issue, "#/github/github.com/acme/site/42")).toBe(false);
+    expect(onItsPage(issue, "#/archon/items/qi_dark_mode")).toBe(false);
+    location.hash = "#/github/github.com/acme/site/41";
+    expect(actionsFor(ACTIONS, ready, issue)).toEqual([]);
+    location.hash = "#/archon/items/qi_dark_mode";
+    expect(actionsFor(ACTIONS, ready, issue).map((action) => action.id)).toEqual(["d4.open-issue", "d4.import-issue"]);
   });
 });

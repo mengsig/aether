@@ -1,9 +1,9 @@
 // The entity actions this package registers on `issue` and `pull_request` (CONTRACTS.md §2.5): open the
 // GitHub page, and import an issue, which opens the page's preview so nothing is imported unconfirmed.
 
-import { navigate } from "@aether-ui/core";
+import { currentHash, matchPattern, navigate } from "@aether-ui/core";
 import type { Capabilities, EntityAction, EntityRef } from "@aether-ui/protocol";
-import { pageHref, pageOfEntity } from "./ref.ts";
+import { invariant, PAGE_ROUTE, pageHref, pageOfEntity, parsePage, samePlace } from "./ref.ts";
 
 const isArchon = (ref: EntityRef): boolean => ref.conn.startsWith("archon:");
 
@@ -18,6 +18,19 @@ export function canImport(caps: Capabilities, ref: EntityRef): boolean {
   return ref.kind === "issue" && canOpen(caps, ref) && caps["archon.feature.github_import"] === true && caps[`can.operate.${ref.conn}`] === true;
 }
 
+/** Whether `ref`'s own page is open: it renders the import itself and needs no link to itself. */
+export function onItsPage(ref: EntityRef, hash: string): boolean {
+  invariant(hash.startsWith("#"), `a location hash starts with #, got ${hash}`);
+  invariant(ref.kind === "issue" || ref.kind === "pull_request", `a GitHub page shows an issue or PR, not a ${ref.kind}`);
+  const params = matchPattern(PAGE_ROUTE, hash);
+  const here = params ? parsePage(params) : null;
+  const page = pageOfEntity(ref);
+  return here !== null && page !== null && samePlace(here, page);
+}
+
+const elsewhere = (allowed: (caps: Capabilities, ref: EntityRef) => boolean) =>
+  (caps: Capabilities, ref: EntityRef): boolean => allowed(caps, ref) && !onItsPage(ref, currentHash());
+
 function open(ref: EntityRef, suffix = ""): void {
   const page = pageOfEntity(ref);
   if (page === null) throw new Error(`${ref.id} does not name a GitHub issue or pull request`);
@@ -25,10 +38,7 @@ function open(ref: EntityRef, suffix = ""): void {
 }
 
 export const ACTIONS: readonly EntityAction[] = [
-  { id: "d4.open-issue", kind: "issue", label: "Open issue page", requires: canOpen, run: (ref) => open(ref) },
-  { id: "d4.open-pull-request", kind: "pull_request", label: "Open pull request page", requires: canOpen, run: (ref) => open(ref) },
-  { id: "d4.import-issue", kind: "issue", label: "Import as Archon work…", requires: canImport, run: (ref) => open(ref, "?import") },
+  { id: "d4.open-issue", kind: "issue", label: "Open issue page", requires: elsewhere(canOpen), run: (ref) => open(ref) },
+  { id: "d4.open-pull-request", kind: "pull_request", label: "Open pull request page", requires: elsewhere(canOpen), run: (ref) => open(ref) },
+  { id: "d4.import-issue", kind: "issue", label: "Import as Archon work…", requires: elsewhere(canImport), run: (ref) => open(ref, "?import") },
 ];
-
-/** The page is these actions' target or renders them itself, so it never lists them among the others. */
-export const OWN_ACTIONS: ReadonlySet<string> = new Set(ACTIONS.map((action) => action.id));

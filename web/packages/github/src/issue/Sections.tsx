@@ -1,10 +1,9 @@
 // The parts of a GitHub page: its states, the linked items with their runs and outcomes, the Aether agents
-// that worked on them, and every entity action other features registered for this issue or pull request.
+// that worked on them.
 
-import { routeHref, useApp, useCapabilities, useEntityActions } from "@aether-ui/core";
-import type { EntityAction, EntityRef } from "@aether-ui/protocol";
-import { actionsFor, Badge, Button, runAction, Skeleton, StatusPill } from "@aether-ui/ui";
-import { useCallback, type ReactNode } from "react";
+import { routeHref } from "@aether-ui/core";
+import { Badge, Skeleton, StatusPill } from "@aether-ui/ui";
+import type { ReactNode } from "react";
 import type { AetherSide } from "./data.ts";
 import type { StateFact } from "./facts.ts";
 import type { AgentUse, ItemView } from "./join.ts";
@@ -88,19 +87,3 @@ export function Agents({ items, aether }: { readonly items: readonly ItemView[];
 }
 
 /** Every registered action for this entity whose `requires` holds, except the ones this page is itself. */
-export function RegisteredActions({ entity, exclude }: { readonly entity: EntityRef; readonly exclude: ReadonlySet<string> }) {
-  const app = useApp();
-  const capabilities = useCapabilities();
-  const registered = useEntityActions();
-  const onError = useCallback((action: EntityAction, error: unknown) => {
-    app.store.report(`${action.label} failed: ${error instanceof Error ? error.message : String(error)}`, entity.conn);
-  }, [app, entity.conn]);
-  const shown = actionsFor(registered, capabilities, entity).filter((action) => !exclude.has(action.id));
-  invariant(shown.every((action) => action.kind === entity.kind), "only this entity's actions are shown");
-  if (shown.length === 0) return null;
-  return (
-    <div className="gh-registered" role="group" aria-label="More actions">
-      {shown.map((action) => <Button key={action.id} variant="quiet" onClick={() => runAction(action, entity, onError)}>{action.label}</Button>)}
-    </div>
-  );
-}

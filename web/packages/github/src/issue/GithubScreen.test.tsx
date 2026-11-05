@@ -57,7 +57,7 @@ describe("with Archon only", () => {
     expect(facts(itemCard(container, "qi_changelog"))).toEqual(["Execution: Succeeded"]);
     expect(itemCard(container, "qi_changelog")?.textContent).toContain("Changelog drafted and delivered.");
     expect(container.querySelector(".gh-import")).toBeNull();
-    expect(container.textContent).not.toContain("Learn from this");
+    expect(container.textContent).not.toContain("More actions");
   });
 });
 
@@ -74,9 +74,11 @@ describe("with Aether connected too", () => {
     const { h, container } = await loaded("acme/site", 52, { aether: true });
     await h.until(() => section(container, "Agents")?.querySelector("li") !== null, "the agents");
     expect(section(container, "Agents")?.textContent).toContain("agt_writernot on the connected Aether");
+    await click(h, buttonNamed(container, "More actions"));
+    const offered = [...container.querySelectorAll('[role="menuitem"]')].map((entry) => entry.textContent);
+    expect(offered).toEqual(["Learn from this"]);
     await click(h, buttonNamed(container, "Learn from this"));
     expect(learned).toEqual(["github.com/acme/site#52"]);
-    expect(container.textContent).not.toContain("Open pull request page");
   });
 });
 

@@ -25,7 +25,7 @@
   }
   .gh-note[data-tone="warning"] { border-inline-start-color: var(--color-warning); }
 
-  .gh-actions, .gh-registered, .gh-import { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+  .gh-actions, .gh-import { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .gh-external { margin-inline-start: auto; font-size: var(--text-sm); }
   .gh-reason { flex-basis: 100%; }
   .gh-confirm { display: flex; justify-content: end; gap: var(--space-2); margin-block-start: var(--space-3); }
