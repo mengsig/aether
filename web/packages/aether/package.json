@@ -1,6 +1,6 @@
 {
   "name": "@aether-ui/aether",
-  "version": "0.0.0",
+  "version": "1.3.0",
   "private": true,
   "type": "module",
   "description": "Aether screens: fleet, topology, agents, conversations, controls, inbox, activity and memory.",

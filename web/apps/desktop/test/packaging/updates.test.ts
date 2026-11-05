@@ -9,8 +9,8 @@ import {
   ConfirmedStepError, lockDown, UpdateFlow, updatesSupported, type BuildInfo, type Updater,
 } from "../../src/update/updates.ts";
 
-const UNSIGNED: BuildInfo = { version: "1.2.11", signed: false, notarized: false, label: "unsigned build" };
-const SIGNED: BuildInfo = { version: "1.2.11", signed: true, notarized: true, label: "signed build" };
+const UNSIGNED: BuildInfo = { version: "1.3.0", signed: false, notarized: false, label: "unsigned build" };
+const SIGNED: BuildInfo = { version: "1.3.0", signed: true, notarized: true, label: "signed build" };
 
 /** electron-updater as the flow sees it, recording every call; it installs only through quitAndInstall. */
 class FakeUpdater implements Updater {
@@ -173,11 +173,11 @@ test("only Linux and signed macOS builds update themselves", () => {
 
 test("a packaged build reads its signing from its package.json, and never claims one it lacks", () => {
   const manifest = (signing: unknown, notarized: unknown) => ({ name: "aether-desktop", aetherBuild: { signing, notarized } });
-  assert.deepEqual(buildInfo(manifest("unsigned", false), "1.2.11", true), UNSIGNED);
-  assert.deepEqual(buildInfo(manifest("signed", true), "1.2.11", true), SIGNED);
+  assert.deepEqual(buildInfo(manifest("unsigned", false), "1.3.0", true), UNSIGNED);
+  assert.deepEqual(buildInfo(manifest("signed", true), "1.3.0", true), SIGNED);
   assert.deepEqual(buildInfo({}, "0.0.0", false), { ...UNSIGNED, version: "0.0.0" }, "a development run is unsigned");
-  assert.throws(() => buildInfo({ name: "aether-desktop" }, "1.2.11", true), /records no signing state/);
-  assert.throws(() => buildInfo(manifest("maybe", false), "1.2.11", true), /records no signing state/);
-  assert.throws(() => buildInfo(manifest("unsigned", true), "1.2.11", true), /notarized but unsigned/);
-  assert.throws(() => buildInfo(manifest("signed", "yes"), "1.2.11", true), /no notarization state/);
+  assert.throws(() => buildInfo({ name: "aether-desktop" }, "1.3.0", true), /records no signing state/);
+  assert.throws(() => buildInfo(manifest("maybe", false), "1.3.0", true), /records no signing state/);
+  assert.throws(() => buildInfo(manifest("unsigned", true), "1.3.0", true), /notarized but unsigned/);
+  assert.throws(() => buildInfo(manifest("signed", "yes"), "1.3.0", true), /no notarization state/);
 });

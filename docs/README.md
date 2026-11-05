@@ -6,6 +6,9 @@ Start with the [README](../README.md) for prerequisites, installation, and a fir
 
 - [Install, update, uninstall](install.md): the installer, `aether update`,
   checksums, where files live, and building from source.
+- [Upgrading](upgrading.md): what an update from 1.2.11 to 1.3.0 asks of you,
+  in order: protocol 26, the schema 32 migration, Memory 2.0, Noesis, the web
+  app, the desktop app and the mount.
 - [User guide](guide.md): models, delegation, supervision, automation, and recovery.
 - [Prerequisite details](prerequisites.md): optional programs and feature-specific setup.
 - [Configuration](configuration.md): common settings, defaults, and storage paths.
@@ -15,6 +18,10 @@ Start with the [README](../README.md) for prerequisites, installation, and a fir
   native CLIs.
 - [Memory baseline](memory/BASELINE.md): how operational memory works today,
   and its baseline on `make bench-memory`, the benchmark Memory 2.0 is judged by.
+- [Memory 2.0](memory/MEMORY-V2.md): memory standing, the retrieval trace,
+  consolidation, export and import on the wire, and the V32 migration.
+- [Memory retrieval bench](memory/RETRIEVAL-BENCH.md): the relevance cutoff,
+  stale demotion and holdout, measured against the baseline.
 - [Development](development.md): build, test, and CI entry points.
 - [Architecture](../ARCHITECTURE.md): ownership, execution paths, persistence,
   and where code lives.
@@ -45,6 +52,8 @@ Start with the [README](../README.md) for prerequisites, installation, and a fir
 - [Status timestamps](status-time.md): accurate state-duration semantics.
 - [CI](ci.md): local/hosted checks and optional lanes.
 - [Known limitations](known-limitations.md): security boundaries and remaining gaps.
+- [Daemon state audit](audits/daemon-state-robustness.md): where stored rows,
+  recovery and connections assert, and how each failure surfaces.
 - [vNext security audit](security/vnext-audit.md): the Electron shell, remote
   access, the Archon mount and Noesis data boundaries, with evidence.
 - [Benchmarks against the native harnesses](#benchmark-reports): dated

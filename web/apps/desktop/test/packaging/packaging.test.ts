@@ -62,8 +62,8 @@ test("every artifact name and the packaged metadata carry the signing", () => {
   assert.equal(artifactSuffix({ signing: "unsigned", notarized: false }), "unsigned");
   assert.equal(artifactSuffix({ signing: "signed", notarized: false }), "signed");
   assert.equal(artifactSuffix({ signing: "signed", notarized: true }), "signed-notarized");
-  assert.deepEqual(overrides("linux", "1.2.11", { signing: "unsigned", notarized: false }), {
-    extraMetadata: { version: "1.2.11", aetherBuild: { signing: "unsigned", notarized: false } },
+  assert.deepEqual(overrides("linux", "1.3.0", { signing: "unsigned", notarized: false }), {
+    extraMetadata: { version: "1.3.0", aetherBuild: { signing: "unsigned", notarized: false } },
   });
 });
 
