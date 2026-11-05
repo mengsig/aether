@@ -17,7 +17,7 @@ import { ARCHON_MOUNT, archonSocketTransport } from "./transports/ws-archon.ts";
 import { aetherSocketTransport } from "./transports/ws-aether.ts";
 
 /** The web package version, sent in every hello. */
-export const CLIENT_VERSION = "0.0.0";
+export const CLIENT_VERSION = "1.3.0";
 
 /** A privileged action as a screen names it: core fills in the desktop's own connection id. */
 export type LocalAction = PrivilegedAction extends infer A ? (A extends { conn: string } ? Omit<A, "conn"> : never) : never;

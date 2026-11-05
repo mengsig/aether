@@ -1,6 +1,6 @@
 {
   "name": "@aether-ui/protocol",
-  "version": "0.0.0",
+  "version": "1.3.0",
   "private": true,
   "type": "module",
   "description": "Daemon protocol types and command builders generated from the schemas, plus the shared app types.",
