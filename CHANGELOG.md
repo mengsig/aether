@@ -4,7 +4,113 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
-## Unreleased
+## 1.3.0
+
+Released with Archon 1.5.0. One web app now serves every screen, from
+Aether's remote listener and in a new desktop app, and replaces the phone
+app. Archon can be mounted on the same listener at `/archon`. Memory 2.0
+gives memories a standing, a relevance cutoff and export and import.
+Noesis, a learning service, ships turned off. Protocol 26 (the daemon
+serves 17 to 26) and store schema 32. Read the
+[upgrade notes](https://github.com/mengsig/aether/blob/main/docs/upgrading.md)
+before updating.
+
+### Before updating
+
+- **Store schema 32.** Four migrations run when the daemon first opens the
+  store: V29 marks each agent's subsystem and adds the paging indexes, V30
+  gives each memory a tier and a state (existing memories become active,
+  unchanged), V31 adds the stale marks and the retrieval holdout log, and
+  V32 moves only the version stamp. The migration is one way: Aether saves
+  the schema 28 database first (see
+  [migration backups](https://github.com/mengsig/aether/blob/main/docs/migration-backups.md)),
+  and 1.2.11 refuses to start on the migrated store (`store schema version
+  32 is newer than supported 28`). To go back, stop the daemon and restore
+  that backup with the older binary; changes made since are lost.
+- **Restart the daemon** after the update (`aether stop`, then `aether`).
+- **The phone app is gone.** The listener now serves the new web app at the
+  same address. A browser that paired with 1.2.11 keeps its pairing; open
+  the address again. The old app's paths (`/app.js`, `/ui/…`,
+  `/asset-manifest.json`) answer 404.
+- **Memory retrieval injects less.** A memory needs a relevance of at least
+  `[memory.retrieval] min_score` (0.05) to reach a turn, pinned ones
+  excepted, and `holdout_rate` (0.05) withholds a seeded sample and logs
+  it. Set either to 0 to turn it off.
+- **Update the daemon before the clients.** The 1.3.0 Python and
+  TypeScript clients ask for protocol 26, which a 1.2.11 daemon refuses as
+  `incompatible`; give the Python client `protocol_version=25` to reach one.
+  The daemon still serves protocols 17 to 25 to older clients.
+- **Remote access to Archon 1.5.0 needs this release.** `archon remote
+  setup` mounts archond on this listener at `/archon`; Archon 1.5.0 runs the
+  queue on Aether 1.2.11 too.
+
+### Added
+
+- **One web app (A1–A5).** `web/` builds the app the listener serves and the
+  desktop app shows, committed as `web/dist/` and compiled into the binary,
+  so a release build needs no Node. It keeps the listener's strict CSP, and
+  `/pair#code=` opens pairing with the code filled in.
+- **Its screens (B1–B3, C1–C2, D4).** The fleet and its delegation
+  topology; an agent's facts and its conversation, streaming and paged; the
+  agent controls, the attention inbox, activity, memory review and settings,
+  covering everything the phone app did; Archon's queue, items, pipelines,
+  task graph, initiatives and history; and a page per GitHub issue and pull
+  request. An observer device sees every control disabled with the reason.
+- **Protocol 26 (AE-P).** `list_agents_page`, `get_tree`'s `root` and
+  `role_prefix`, `get_transcript_page` and `usage_breakdown`; deltas carry
+  `invocation_seq` and `tool_input` its `tool_use_id`. Each is behind a
+  feature, and a client of version 25 or older gets every frame as before.
+- **Mounts (AE-M).** `aether remote mount add|remove|list` forwards a path
+  of the listener, such as `/archon`, to a loopback archond. Adding one is
+  refused while Tailscale Funnel is on or its state is unknown, Funnel is
+  refused while a mount exists, and mounted traffic stops within seconds of
+  a Funnel appearing.
+- **The desktop app (E1–E3).** `web/apps/desktop` packages an Electron app
+  (AppImage and deb on Linux, dmg and zip on macOS) that shows the same
+  `web/dist`. It finds the local daemons, never stops one, starts one only
+  when managed start is turned on, confirms every privileged action in a
+  native dialog and keeps credentials out of the page. Updates come only
+  from this repository's releases, each download and install confirmed. A
+  build without signing credentials says "unsigned build". See
+  [Desktop app](https://github.com/mengsig/aether/blob/main/docs/desktop.md).
+- **Memory 2.0 (G1–G4).** Each memory has a tier and a state (candidate,
+  active, superseded, retracted) with support, verification and refs;
+  admission stays immediate by default. Retrieval ranks against a cutoff,
+  halves the score of a memory whose source no longer states it, and logs a
+  holdout to measure lift. `aether memory consolidate` merges near-duplicates
+  into one survivor; `aether memory explain`, `export`, `import` and
+  `migration-status` come with it, behind the `memory_v2` feature. See
+  [Memory 2.0](https://github.com/mengsig/aether/blob/main/docs/memory/MEMORY-V2.md).
+- **Noesis (F1–F8), off by default.** A learning service: teaching sessions
+  with questions, plans and practice, a learner model, a knowledge graph
+  built from sessions and imported sources, and "Learn from this" on item,
+  run, agent and PR pages. With `[noesis] enabled = true` it keeps its own
+  `noesis.db` and its own daily budgets; while off it opens nothing and
+  spends nothing. Answer keys never reach a page before the answer.
+- **Checks.** `make bench-memory` (G0), `make e2e` with seven cross-daemon
+  flows against a real aetherd and archond (H1, H4), and `make web-perf` with
+  54 frontend budgets (H2). None is part of `make ci`.
+
+### Security
+
+- **The vNext audit (H3).** `docs/security/vnext-audit.md` checks the
+  desktop app, remote access, the mount and Noesis. Three high findings are
+  fixed: the desktop page's Archon connections may greet only as
+  `archon-web`, so it cannot claim the CLI's standing or lift a hard pause;
+  the desktop bridge refuses to change the GitHub watcher's operators or
+  revoke an approval rule for every agent; and `noesis_import_source` masks
+  an artifact as `read_artifact` does. `docs/remote.md` lists the access
+  class of all 134 commands, kept in step by a test.
+- **Host-only Memory 2.0 and Noesis commands.** A paired device cannot
+  explain, consolidate, export or import memories, or turn Noesis on or
+  change its budgets, billing or prompts.
+
+### Changed
+
+- **Release checks.** CI fails when the committed `web/dist/` differs from
+  a fresh build (`make web-dist-check`).
+- **Versions.** The workspace, the Python and TypeScript clients and the web
+  and desktop packages are 1.3.0; the web app reports 1.3.0 in its hello.
 
 - A native tool call that never returns no longer holds its agent: after 15 minutes outstanding with no sign of life from the engine, Aether stops the turn and records `agent.tool_call_overdue`. It then wakes the agent, delivering the inbox, and pins Claude Code's shell cap at 10 minutes (archon#393).
 

@@ -50,7 +50,7 @@ run_lint() {
   step "scripts/ci_slot_test.sh (host CI slots)"; sh scripts/ci_slot_test.sh
   if command -v shellcheck >/dev/null; then
     step "shellcheck (installer, release, CI slot and e2e scripts)"
-    shellcheck install.sh scripts/release.sh scripts/ci_scope.sh scripts/ci_slot.sh scripts/ci_slot_test.sh scripts/e2e.sh
+    shellcheck install.sh scripts/release.sh scripts/ci_scope.sh scripts/ci_slot.sh scripts/ci_slot_test.sh scripts/e2e.sh scripts/check_web_dist.sh
   else
     printf '\n\033[1;33m==> shellcheck of install.sh skipped (needs shellcheck)\033[0m\n'
   fi
@@ -172,6 +172,8 @@ check_python_suites() {
     python3 -m unittest discover -s scripts -p test_release_install_check.py
     step "link check tests"
     python3 -m unittest discover -s scripts -p test_check_links.py
+    step "web/dist drift check tests"
+    python3 -m unittest discover -s scripts -p test_check_web_dist.py
     step "upgrade lane tests (release choice, schema rewind, fake engine)"
     python3 -m unittest discover -s scripts -p test_upgrade_compat.py
     step "CI scope tests (which changes skip the Rust checks)"

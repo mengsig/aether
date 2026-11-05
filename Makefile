@@ -1,4 +1,4 @@
-.PHONY: ci ci-checks fmt lint test build install web web-perf e2e bench-release bench-calibrate bench-memory
+.PHONY: ci ci-checks fmt lint test build install web web-dist-check web-perf e2e bench-release bench-calibrate bench-memory
 # `ci` holds one of the host-wide CI slots (scripts/ci_slot.sh, CI_HOST_SLOTS,
 # default 1) while scripts/ci.sh runs; `ci-checks` runs it without one.
 ci:      ; sh scripts/ci_slot.sh ./scripts/ci.sh
@@ -12,6 +12,8 @@ install: ; cargo install --path crates/aether --locked
 # and build (`npm run check`), then the desktop app's headless security tests,
 # holding a host CI slot like `ci`.
 web:     ; sh scripts/ci_slot.sh sh -c 'cd web && npm ci --no-audit --no-fund && npm run check && cd apps/desktop && npm ci --no-audit --no-fund && npm run check'
+# `web`, whose build rewrites web/dist/, then a failure if the committed bundle differed.
+web-dist-check: web ; sh scripts/check_web_dist.sh
 # The frontend perf budgets (web/perf/budgets.json) on this host, holding a host CI slot; not part of `ci`.
 # PERF_ARGS=--ci checks only the host-independent measures, as the web-perf workflow does.
 web-perf: ; sh scripts/ci_slot.sh sh -c 'cd web && npm ci --no-audit --no-fund && node perf/run.ts $(PERF_ARGS)'
