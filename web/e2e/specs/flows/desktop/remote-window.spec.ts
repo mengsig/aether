@@ -28,8 +28,8 @@ const PAIR_MS = 20_000;
 const RECONNECT_MS = 45_000;
 /** What aetherd answers an observer's operate command (crates/aether-daemon/src/authz.rs). */
 const AETHER_REFUSAL = { code: "forbidden", message: /needs the operator role/ };
-/** What archond's listener answers an observer's change. */
-const ARCHON_REFUSAL_CODE = "forbidden";
+/** What archond's listener answers an observer's change (archon-remote allow.rs, `Refusal::Observer`). */
+const ARCHON_REFUSAL = { code: "forbidden", message: /this device only observes/ };
 
 test.describe.configure({ mode: "serial" });
 
@@ -216,7 +216,8 @@ test("on the wire every operate command sent over the window's own connections i
 
   const archon = await probe(remote, "archon", archonChangeFrames(itemId), 2);
   expect(archon.filter((reply) => reply.ok), "archond made no change").toEqual([]);
-  expect(refusals(archon), "archond refused each change").toEqual(archon.map(({ cmd }) => ({ cmd, code: ARCHON_REFUSAL_CODE })));
+  expect(refusals(archon), "archond refused each change").toEqual(archon.map(({ cmd }) => ({ cmd, code: ARCHON_REFUSAL.code })));
+  for (const reply of archon) expect(reply.message ?? "", `${reply.cmd} is refused because the device observes`).toMatch(ARCHON_REFUSAL.message);
 
   expect(await snapshot(stack), "agents, items and the pause are as they were").toEqual(before);
   expect((await aetherDevices(stack)).filter((row) => row.name === DEVICE).map((row) => row.role), "aetherd still records an observer").toEqual(["observer"]);

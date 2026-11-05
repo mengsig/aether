@@ -2,11 +2,11 @@
 // is refused every operate command, by its own controls and, sent anyway on its socket, by the daemons.
 
 import { AETHER_OPERATE } from "../../../apps/desktop/src/security/classes.ts";
-import { createAgent, enqueueItem, itemTitles, listAgents, pauseQueue, queuePaused } from "../../harness/agents.ts";
+import { createAgent, enqueueItem, pauseQueue } from "../../harness/agents.ts";
 import { pairBoth } from "../../harness/pair.ts";
 import { expect, test } from "../../harness/fixtures.ts";
-import type { Stack } from "../../harness/stack.ts";
 import { openAgent, openItem } from "../noesis/noesis.ts";
+import { snapshot } from "./desktop/state.ts";
 import { ProtocolSchema, SocketTap, type Answer, type Frame } from "./wire.ts";
 
 const AGENT = "Observed agent";
@@ -14,12 +14,6 @@ const ITEM = "Observed item";
 const DEVICE = "Flow observer";
 /** What a device may change on archond (archon-remote allow.rs): every one is refused to an observer. */
 const ARCHON_CHANGES = ["enqueue", "cancel_item", "retry_item", "pause", "resume", "link_issue", "unlink_issue", "import_issue"] as const;
-
-interface Snapshot { readonly agents: string; readonly items: string; readonly paused: boolean }
-
-async function snapshot(stack: Stack): Promise<Snapshot> {
-  return { agents: JSON.stringify(await listAgents(stack)), items: JSON.stringify(await itemTitles(stack)), paused: await queuePaused(stack) };
-}
 
 /** aetherd validates a frame before it checks the role, so a few commands need more than their schema. */
 function aetherFrame(schema: ProtocolSchema, cmd: string, agent: string): Frame {
