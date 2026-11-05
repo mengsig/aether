@@ -426,65 +426,65 @@
       "reason": "95th percentile frame: frames where a message commits or another agent's event rebuilds the rows."
     },
     "bundle.total_bytes": {
-      "budget": 752802,
+      "budget": 779932,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 752802,
+      "measured": 779932,
       "noise": 0,
       "reason": "Everything web/dist ships, embedded in aether-remote."
     },
     "bundle.js_bytes": {
-      "budget": 670514,
+      "budget": 692249,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 670514,
+      "measured": 692249,
       "noise": 0,
       "reason": "All JavaScript chunks."
     },
     "bundle.css_bytes": {
-      "budget": 76104,
+      "budget": 81499,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 76104,
+      "measured": 81499,
       "noise": 0,
       "reason": "All stylesheets."
     },
     "bundle.initial_bytes": {
-      "budget": 359234,
+      "budget": 359381,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 359234,
+      "measured": 359381,
       "noise": 0,
       "reason": "The entry script and stylesheet index.html loads before first paint."
     },
     "bundle.initial_gzip_bytes": {
-      "budget": 113364,
+      "budget": 113424,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 113364,
+      "measured": 113424,
       "noise": 0,
       "reason": "The entry's transfer size at gzip -9: what a remote device downloads first."
     },
     "bundle.js_gzip_bytes": {
-      "budget": 230963,
+      "budget": 237648,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 230963,
+      "measured": 237648,
       "noise": 0,
       "reason": "All JavaScript at gzip -9."
     },
     "bundle.largest_js_bytes": {
-      "budget": 337650,
+      "budget": 337797,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 337650,
+      "measured": 337797,
       "noise": 0,
       "reason": "The largest chunk: a route that pulled a heavy module into the entry shows here."
     }
