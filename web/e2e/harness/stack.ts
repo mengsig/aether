@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { access, constants, readFile, realpath, rm } from "node:fs/promises";
 import path from "node:path";
-import { Aetherd, Archond, freePorts, type ArchonSchema } from "./daemons.ts";
+import { Aetherd, Archond, cli, freePorts, type ArchonSchema } from "./daemons.ts";
 import { providersToml, startEngine, type FauxEngine } from "./engine.ts";
 import { createLayout, type Layout } from "./env.ts";
 import { record } from "./process.ts";
@@ -44,10 +44,17 @@ export async function vendoredSchema(): Promise<ArchonSchema> {
   return { protocol_version: schema.protocol_version, features: schema.features };
 }
 
-async function boot(stack: Stack): Promise<void> {
+/** What a stack runs: both daemons by default; `archon: false` is Aether alone, its listener with no mount. */
+export interface StackOptions { readonly archon?: boolean }
+
+async function boot(stack: Stack, options: StackOptions): Promise<void> {
   const { aether, archon, engine, layout } = stack;
   await aether.configure(providersToml(engine));
   await aether.start();
+  if (options.archon === false) {
+    await cli(aether.binary, ["--local", "remote", "enable"], layout);
+    return;
+  }
   await aether.wire();
   await archon.configure(aether.origin, layout.aether.socket);
   await archon.start();
@@ -55,7 +62,7 @@ async function boot(stack: Stack): Promise<void> {
   await archon.wire();
 }
 
-export async function startStack(binaries: Binaries): Promise<Stack> {
+export async function startStack(binaries: Binaries, options: StackOptions = {}): Promise<Stack> {
   const schema = await vendoredSchema();
   const ports = await freePorts();
   const layout = await createLayout();
@@ -71,6 +78,7 @@ export async function startStack(binaries: Binaries): Promise<Stack> {
     binaries, layout, engine, aether, archon,
     async restart(daemon) {
       assert.ok(!stopped, "a stopped stack is not restarted");
+      assert.ok(daemon === "aether" || options.archon !== false, "an Aether-only stack has no archond to restart");
       const target = daemon === "aether" ? aether : archon;
       await target.stop();
       await target.start();
@@ -87,7 +95,7 @@ export async function startStack(binaries: Binaries): Promise<Stack> {
     },
   };
   try {
-    await boot(stack);
+    await boot(stack, options);
   } catch (error) {
     await stack.stop();
     throw error;
