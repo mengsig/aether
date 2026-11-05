@@ -207,8 +207,9 @@ export class Archond extends Daemon {
     await super.start();
   }
 
-  async pairing(): Promise<{ code: string }> {
-    const { reply, data } = await this.request({ cmd: "remote_pair" });
+  /** Opens a pairing code; the device it pairs gets `role` (archond's default is operator). */
+  async pairing(role: "operator" | "observer" = "operator"): Promise<{ code: string }> {
+    const { reply, data } = await this.request({ cmd: "remote_pair", role });
     assert.equal(reply, "remote_pairing", `remote_pair answers remote_pairing: ${reply}`);
     assert.match(String(data.code), /^[0-9A-Z]{4}-[0-9A-Z]{4}$/);
     return { code: String(data.code) };

@@ -14,8 +14,11 @@ export function connection(page: Page, daemon: "aether" | "archon") {
     .filter({ has: page.locator(".ui-conn-kind", { hasText: new RegExp(`^${daemon}$`) }) });
 }
 
-export async function pairAether(page: Page, stack: Stack, deviceName = "E2E browser"): Promise<string> {
-  const pairing = await stack.aether.pairing("observer");
+export type Role = "operator" | "observer";
+
+/** Pairs `page` with aetherd as `role`; the smoke specs pair an observer. Returns the device id. */
+export async function pairAether(page: Page, stack: Stack, deviceName = "E2E browser", role: Role = "observer"): Promise<string> {
+  const pairing = await stack.aether.pairing(role);
   assert.equal(pairing.url, `${stack.aether.origin}/pair#code=${pairing.code}`, "the daemon prints the URL the app reads");
   await page.goto(`${stack.aether.origin}/pair#code=${pairing.code}`);
   const code = page.getByLabel("Pairing code");
@@ -32,8 +35,8 @@ export async function pairAether(page: Page, stack: Stack, deviceName = "E2E bro
   return String((enrolled.data.device as { id?: unknown }).id);
 }
 
-export async function pairArchon(page: Page, stack: Stack, deviceName = "E2E browser"): Promise<void> {
-  const { code } = await stack.archon.pairing();
+export async function pairArchon(page: Page, stack: Stack, deviceName = "E2E browser", role: Role = "operator"): Promise<void> {
+  const { code } = await stack.archon.pairing(role);
   await page.goto(`${stack.aether.origin}/#/pair/archon`);
   await page.getByLabel("Pairing code").fill(code);
   await page.getByLabel("Name for this device").fill(deviceName);
@@ -43,9 +46,9 @@ export async function pairArchon(page: Page, stack: Stack, deviceName = "E2E bro
 }
 
 /** Pairs `page` with both daemons and waits until both connections are ready. */
-export async function pairBoth(page: Page, stack: Stack): Promise<void> {
-  await pairAether(page, stack);
-  await pairArchon(page, stack);
+export async function pairBoth(page: Page, stack: Stack, roles: { aether?: Role; archon?: Role } = {}, deviceName = "E2E browser"): Promise<void> {
+  await pairAether(page, stack, deviceName, roles.aether);
+  await pairArchon(page, stack, deviceName, roles.archon);
   await page.goto(`${stack.aether.origin}/#/fleet`);
   await expect(connection(page, "aether")).toHaveAttribute("data-state", "ready", { timeout: PAIR_MS });
   await expect(connection(page, "archon")).toHaveAttribute("data-state", "ready", { timeout: PAIR_MS });
