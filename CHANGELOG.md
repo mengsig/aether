@@ -24,9 +24,9 @@ before updating.
   V32 moves only the version stamp. The migration is one way: Aether saves
   the schema 28 database first (see
   [migration backups](https://github.com/mengsig/aether/blob/main/docs/migration-backups.md)),
-  and 1.2.11 refuses the migrated store as `schema too new`. To go back,
-  stop the daemon and restore that backup with the older binary; changes
-  made since are lost.
+  and 1.2.11 refuses to start on the migrated store (`store schema version
+  32 is newer than supported 28`). To go back, stop the daemon and restore
+  that backup with the older binary; changes made since are lost.
 - **Restart the daemon** after the update (`aether stop`, then `aether`).
 - **The phone app is gone.** The listener now serves the new web app at the
   same address. A browser that paired with 1.2.11 keeps its pairing; open

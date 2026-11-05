@@ -51,7 +51,8 @@ Before it migrates, the daemon writes one verified backup,
 `migration-backups/schema-28-before-32-<id>.sqlite.zst`, beside `aether.db`
 (see [Migration backups](migration-backups.md)). Startup fails, and nothing
 migrates, if the backup cannot be written. The migration is one way: 1.2.11
-refuses a schema 32 store as `schema too new`.
+refuses to start on a schema 32 store (`store schema version 32 is newer than
+supported 28`).
 
 To go back to 1.2.11: stop the daemon, restore that backup as
 [Migration backups](migration-backups.md#restoring-a-backup) describes, and
