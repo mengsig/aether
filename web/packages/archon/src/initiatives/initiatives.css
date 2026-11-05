@@ -1,0 +1,24 @@
+@layer app {
+  .initiative { display: grid; align-content: start; gap: var(--space-6); max-inline-size: 72rem; animation: dag-in var(--motion-base) var(--ease-standard); }
+  .initiative-header { display: grid; gap: var(--space-3); }
+  .initiative-back { justify-self: start; font-size: var(--text-sm); }
+  .initiative-eyebrow { margin: 0; color: var(--color-accent); font: var(--weight-medium) var(--text-xs) / 1 var(--font-ui); letter-spacing: 0.08em; text-transform: uppercase; }
+  .initiative-title { margin: 0; font: var(--weight-bold) var(--text-2xl) / var(--leading-tight) var(--font-display); letter-spacing: -0.01em; }
+  .initiative-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: var(--space-3); margin: var(--space-2) 0 0; }
+  .initiative-facts div { display: grid; gap: var(--space-1); padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1); }
+  .initiative-facts dt { color: var(--color-text-muted); font-size: var(--text-xs); }
+  .initiative-facts dd { margin: 0; font: var(--weight-bold) var(--text-lg) / 1 var(--font-mono); }
+  .initiative-body { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: var(--space-4); align-items: start; }
+  .initiative-card {
+    display: grid; align-content: start; gap: var(--space-3); padding: var(--space-5);
+    border: 1px solid var(--color-border); border-radius: var(--radius-xl); background: var(--color-surface-1); box-shadow: var(--elevation-1);
+  }
+  .initiative-order { grid-column: 1 / -1; }
+  .initiative-order .dag-canvas { min-block-size: 24rem; }
+  .initiative-contract { margin: 0; white-space: pre-wrap; line-height: var(--leading-normal); }
+  .initiative-members { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+  .initiative-member { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); border-radius: var(--radius-md); transition: background-color var(--motion-fast) var(--ease-standard); }
+  .initiative-member[aria-current] { background: var(--color-surface-2); }
+  .initiative-open { font-size: var(--text-xs); padding-inline-end: var(--space-2); }
+  @media (max-width: 960px) { .initiative-body { grid-template-columns: 1fr; } }
+}

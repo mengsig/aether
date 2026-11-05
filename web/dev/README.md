@@ -26,3 +26,15 @@ Without Chromium the browser half is skipped with a yellow banner, and the rest 
 
 The retired app's other suites drove its own screens and its protocol 18 mock daemon, so they did
 not move: the new app's unit tests cover its screens with in-memory transports.
+
+## Archon task graph frame bench
+
+```sh
+npx playwright install chromium   # once
+node dev/archon-dag-bench.ts [out.json]
+```
+
+It serves the C2 fixture (`packages/archon/src/dag/fixture`) with Vite, opens 2,000 items over its
+faux archond in headless Chromium, and drives real wheel and drag input one step a frame: 90 zoom-in
+steps, 180 drag steps and 90 zoom-out steps. It reports each rAF callback's time (the renderer draws
+in its rAF) and the intervals between frames, and fails when the p95 callback exceeds 16.7 ms.

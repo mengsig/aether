@@ -3,6 +3,7 @@
 
 import type { aether, Capabilities, ConnectionInfo, ConnId } from "@aether-ui/protocol";
 import { invariant, omit, type Json } from "./guards.ts";
+import { EMPTY_NOESIS, type NoesisCache } from "./noesis-cache.ts";
 import type { ReadEntry } from "./reads.ts";
 
 export interface TranscriptState {
@@ -64,6 +65,8 @@ export interface AetherConnState {
   /** Keyed by invocation id. */
   readonly streams: Readonly<Record<string, StreamState>>;
   readonly noesis: Json | null;
+  /** Noesis sessions, reads and reveals (noesis-cache.ts). */
+  readonly learn: NoesisCache;
   readonly outbox: readonly Submission[];
   /** Entities an applied event made stale; they survive reconnects until refetched. */
   readonly staleAgents: readonly string[];
@@ -109,6 +112,12 @@ export interface ArchonConnState {
   readonly links: Readonly<Record<string, Stamped>>;
   /** Keyed by run: `run_plan` replies, reread with their item. */
   readonly plans: Readonly<Record<string, ArchonPlan>>;
+  /** Keyed by item: `item_history` replies, reread with their item while it is on screen. */
+  readonly histories: Readonly<Record<string, Stamped>>;
+  /** Keyed by initiative: `get_initiative` replies. */
+  readonly initiatives: Readonly<Record<string, Stamped>>;
+  /** Keyed by `searchKey(query)`: the newest few `list_items` replies. */
+  readonly searches: Readonly<Record<string, Stamped>>;
   readonly feed: readonly Json[];
   readonly outbox: readonly Submission[];
   /** Refreshes an applied change asked for; they survive reconnects until done. */
@@ -138,12 +147,13 @@ export interface State {
 }
 
 export const EMPTY_AETHER: AetherConnState = Object.freeze({
-  lastSeq: null, agents: {}, roots: [], attention: null, events: [], transcripts: {}, streams: {}, noesis: null, outbox: [],
+  lastSeq: null, agents: {}, roots: [], attention: null, events: [], transcripts: {}, streams: {}, noesis: null, learn: EMPTY_NOESIS, outbox: [],
   staleAgents: [], staleAttention: false,
 });
 
 export const EMPTY_ARCHON: ArchonConnState = Object.freeze({
-  changeCursor: null, feedSeq: null, items: {}, itemsAsOf: null, graph: null, details: {}, links: {}, plans: {}, feed: [], outbox: [],
+  changeCursor: null, feedSeq: null, items: {}, itemsAsOf: null, graph: null, details: {}, links: {}, plans: {},
+  histories: {}, initiatives: {}, searches: {}, feed: [], outbox: [],
   staleSnapshots: false, staleItems: [], staleSummaries: [],
 });
 

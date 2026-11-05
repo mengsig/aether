@@ -5,7 +5,9 @@
 //! call is admitted by the service budget and passes the runtime's one
 //! [`NoesisCharge::before_invocation`] hook before it is sent.
 
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -13,11 +15,11 @@ use aether_core::agent::{Agent, AgentConfig};
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::{AgentId, RunId};
 use aether_core::model::{
-    ContentBlock, Message, MessageRole, ModelRef, ModelRequest, ModelResponse, SystemBlock,
-    ToolResultBlock, ToolSpec, Usage,
+    ContentBlock, CostGap, Message, MessageRole, ModelRef, ModelRequest, ModelResponse,
+    StreamAccumulator, StreamEvent, SystemBlock, ToolResultBlock, ToolSpec, Usage,
 };
 use aether_core::tool::ToolExposure;
-use aether_model::{ModelClient, Models};
+use aether_model::{ModelClient, ModelStream, Models};
 use aether_noesis::budget::{Billing, Spend};
 use aether_noesis::prompts;
 use aether_noesis::teach::engine::ModelInfo;
@@ -26,8 +28,10 @@ use aether_noesis::teach::{
 };
 use aether_noesis::tools::{self, ToolName};
 use aether_runtime::noesis_guard::{NoesisBudget, NoesisCharge, lane_of};
-use aether_runtime::{CreateAgentSpec, Runtime};
-use aether_store::{Commit, Mutation};
+use aether_runtime::{BusMessage, CreateAgentSpec, Runtime};
+use aether_store::Commit;
+use futures::StreamExt;
+use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
 use super::budget::{ServiceBudget, spend_of};
@@ -214,8 +218,9 @@ impl AetherEngine<'_> {
         }
     }
 
-    /// One model call over the agent's transcript, ended if the service stops.
-    fn invoke(&self, agent: &Agent, request: ModelRequest) -> Result<ModelResponse, EngineError> {
+    /// One model call over the agent's transcript, ended if the service
+    /// stops or the agent ends (a cancel) while it runs.
+    fn invoke(&self, agent: &Agent, request: ModelRequest) -> Result<CallEnd, EngineError> {
         let host = self.host;
         let handle = tokio::runtime::Handle::current();
         let cancel = host.cancel.child_token();
@@ -225,49 +230,67 @@ impl AetherEngine<'_> {
                     Some(client) => client.clone(),
                     None => host.models.client(&agent.model).await.map_err(not_sent)?,
                 };
-                let call = async {
-                    let stream = client
-                        .stream(request, cancel.clone())
-                        .await
-                        .map_err(not_sent)?;
-                    aether_model::collect(stream, |_| {}).await.map_err(failed)
+                let ended = agent_ended(&host.runtime, agent.id);
+                tokio::pin!(ended);
+                let stream = tokio::select! {
+                    stream = client.stream(request, cancel.clone()) => stream.map_err(not_sent)?,
+                    () = &mut ended => {
+                        cancel.cancel();
+                        return Ok(CallEnd::AgentEnded(Usage::default()));
+                    }
+                    () = cancel.cancelled() => return Err(failed(SERVICE_STOPPED)),
                 };
-                tokio::select! {
-                    response = call => response,
-                    () = cancel.cancelled() => Err(failed("the Noesis service stopped")),
-                }
+                read_reply(stream, &cancel, ended).await
             })
         })
     }
 
     /// Record the reply and its usage, so the day's spend survives a restart.
-    fn record_reply(&self, mut agent: Agent, response: &ModelResponse) -> Result<(), EngineError> {
+    /// Only the agent's stats are written, over the row as it is now.
+    fn record_reply(&self, agent: AgentId, response: &ModelResponse) -> Result<(), EngineError> {
         let content: Vec<ContentBlock> = response
             .content
             .iter()
             .filter(|block| !matches!(block, ContentBlock::Thinking { .. }))
             .cloned()
             .collect();
-        agent.stats.usage += response.usage;
-        agent.stats.turns = agent.stats.turns.saturating_add(1);
-        let mut commit = Commit::new();
-        if !content.is_empty() {
-            commit.push_event(message_draft(&agent, MessageRole::Assistant, content));
+        let row = self
+            .host
+            .runtime
+            .record_noesis_call(agent, response.usage, |row, commit| {
+                // An agent ended meanwhile acts on no reply: only the spend lands.
+                if !content.is_empty() && !row.status.is_terminal() {
+                    commit.push_event(message_draft(row, MessageRole::Assistant, content));
+                }
+            })
+            .map_err(failed)?;
+        if row.status.is_terminal() {
+            return Err(failed(format!("agent {agent} is {}", row.status.kind())));
         }
-        commit.push_event(
-            EventDraft::new(
-                Actor::agent(agent.id),
-                EventKind::AgentUsageUpdated {
-                    total: agent.stats.usage,
-                    turn_usage: response.usage,
-                },
-            )
-            .agent(agent.id)
-            .run(agent.run),
-        );
-        commit.push_mutation(Mutation::UpsertAgent(agent));
-        self.host.runtime.apply(commit).map_err(failed)?;
         Ok(())
+    }
+
+    /// The agent ended mid-call: what the provider reported spending so far
+    /// is charged and recorded, as the runtime records a cancelled call.
+    fn record_cut_short(&mut self, agent: AgentId, mut spent: Usage) -> EngineError {
+        spent.mark_cost_gap(CostGap::Interrupted);
+        if let Some(open) = self.charge.as_mut() {
+            debug_assert_eq!(open.agent, agent, "the call ran under its own admission");
+            open.spent += spent;
+        }
+        match self
+            .host
+            .runtime
+            .record_noesis_call(agent, spent, |_, _| {})
+        {
+            Ok(row) => failed(format!(
+                "agent {agent} became {} during its model call",
+                row.status.kind()
+            )),
+            Err(error) => failed(format!(
+                "agent {agent} ended during its model call, and its spend was not recorded: {error}"
+            )),
+        }
     }
 
     fn request(&self, agent: &Agent, history: Vec<Message>) -> Result<ModelRequest, EngineError> {
@@ -369,6 +392,9 @@ impl Engine for AetherEngine<'_> {
 
     fn step(&mut self, agent: &str) -> Result<Step, EngineError> {
         let row = self.agent(agent)?;
+        if row.status.is_terminal() {
+            return Err(not_sent(format!("agent {agent} is {}", row.status.kind())));
+        }
         let request = self.request(&row, self.transcript(row.id)?)?;
         let open = self.admitted(&row)?;
         let refused = open
@@ -378,13 +404,102 @@ impl Engine for AetherEngine<'_> {
         if let Some(reason) = refused {
             return Err(not_sent(reason));
         }
-        let response = self.invoke(&row, request)?;
+        let response = match self.invoke(&row, request)? {
+            CallEnd::Replied(response) => response,
+            CallEnd::AgentEnded(spent) => return Err(self.record_cut_short(row.id, spent)),
+        };
         if let Some(open) = self.charge.as_mut() {
             open.spent += response.usage;
         }
-        self.record_reply(row, &response)?;
+        self.record_reply(row.id, &response)?;
         Ok(step_of(&response))
     }
+}
+
+const SERVICE_STOPPED: &str = "the Noesis service stopped";
+
+/// How a model call ended, short of an error.
+enum CallEnd {
+    Replied(ModelResponse),
+    /// The agent ended mid-call: the usage the provider reported so far.
+    AgentEnded(Usage),
+}
+
+/// Resolves once `agent` is in a terminal state, as a cancel leaves it.
+/// Subscribed before the row is read, so an end landing between is seen.
+async fn agent_ended(runtime: &Runtime, agent: AgentId) {
+    let mut bus = runtime.subscribe();
+    // A failed read keeps the call going: the reply rereads the row anyway.
+    let ended = || match runtime.store().agent(agent) {
+        Ok(row) => row.is_none_or(|row| row.status.is_terminal()),
+        Err(error) => {
+            tracing::warn!(%agent, %error, "reading a Noesis agent's status mid-call failed");
+            false
+        }
+    };
+    if ended() {
+        return;
+    }
+    loop {
+        let recheck = match bus.recv().await {
+            Ok(BusMessage::Event(event)) => {
+                event.agent_id == Some(agent) && ends_agent(&event.kind)
+            }
+            Ok(BusMessage::Delta { .. }) => false,
+            Err(RecvError::Lagged(_)) => true,
+            // The runtime is gone; the service stop ends the call.
+            Err(RecvError::Closed) => return std::future::pending().await,
+        };
+        if recheck && ended() {
+            return;
+        }
+    }
+}
+
+fn ends_agent(kind: &EventKind) -> bool {
+    matches!(
+        kind,
+        EventKind::AgentCancelled { .. }
+            | EventKind::AgentFailed { .. }
+            | EventKind::AgentCompleted { .. }
+    )
+}
+
+/// Fold the reply's stream, keeping the provider's latest usage reading so
+/// a call cut short by the agent's end still records what it spent.
+async fn read_reply(
+    mut stream: ModelStream,
+    cancel: &CancellationToken,
+    mut ended: Pin<&mut impl Future<Output = ()>>,
+) -> Result<CallEnd, EngineError> {
+    let mut reply = StreamAccumulator::new();
+    let mut usage = Usage::default();
+    loop {
+        let item = tokio::select! {
+            item = stream.next() => item,
+            () = &mut ended => {
+                cancel.cancel();
+                return Ok(CallEnd::AgentEnded(usage));
+            }
+            () = cancel.cancelled() => return Err(failed(SERVICE_STOPPED)),
+        };
+        let event = match item {
+            None => break,
+            Some(Ok(event)) => event,
+            Some(Err(error)) => return Err(failed(error)),
+        };
+        if let StreamEvent::Usage { usage: reading } = &event {
+            usage = *reading;
+        }
+        reply
+            .apply(&event)
+            .map_err(|e| failed(format!("malformed model stream: {e}")))?;
+    }
+    let response = reply
+        .finish()
+        .map_err(|e| failed(format!("malformed model stream: {e}")))?;
+    debug_assert_eq!(response.usage, usage, "the reply carries the last reading");
+    Ok(CallEnd::Replied(response))
 }
 
 fn message_draft(agent: &Agent, role: MessageRole, content: Vec<ContentBlock>) -> EventDraft {
