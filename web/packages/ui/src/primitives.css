@@ -163,16 +163,16 @@
     animation: ui-rise var(--motion-base) var(--ease-standard);
   }
   .ui-page-head { display: grid; gap: var(--space-2); min-inline-size: 0; }
-  .ui-page-title { margin: 0; font: var(--weight-regular) var(--text-2xl) / var(--leading-tight) var(--font-display); letter-spacing: -0.015em; overflow-wrap: anywhere; }
+  .ui-page-title { margin: 0; font: var(--weight-regular) var(--text-2xl) / var(--leading-tight) var(--font-display); overflow-wrap: anywhere; }
   .ui-page-lede { margin: 0; max-inline-size: 64ch; color: var(--color-text-muted); font-size: var(--text-sm); line-height: var(--leading-normal); }
-  .ui-eyebrow { margin: 0; color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-normal) var(--font-ui); letter-spacing: 0.08em; text-transform: uppercase; }
+  .ui-eyebrow { margin: 0; color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-normal) var(--font-ui); text-transform: uppercase; }
   .ui-back { justify-self: start; font-size: var(--text-sm); }
   .ui-card {
     display: grid; align-content: start; gap: var(--space-4); min-inline-size: 0; padding: var(--space-5);
     border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1);
   }
   .ui-card-title { margin: 0; font: var(--weight-medium) var(--text-md) / var(--leading-tight) var(--font-ui); }
-  .ui-label { color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-tight) var(--font-ui); letter-spacing: 0.06em; text-transform: uppercase; }
+  .ui-label { color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-tight) var(--font-ui); text-transform: uppercase; }
   .ui-loading { display: grid; gap: var(--space-3); }
   .ui-visually-hidden { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   /* Inside a card, an empty or error state is a quiet line, not a second page title. */

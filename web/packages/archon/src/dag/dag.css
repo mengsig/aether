@@ -38,7 +38,7 @@
   .dag-badges, .dag-links { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
   .dag-links { gap: var(--space-4); font-size: var(--text-sm); }
   .dag-section { display: grid; gap: var(--space-2); }
-  .dag-heading { display: flex; align-items: center; gap: var(--space-2); margin: 0; color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / 1 var(--font-ui); letter-spacing: 0.06em; text-transform: uppercase; }
+  .dag-heading { display: flex; align-items: center; gap: var(--space-2); margin: 0; color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / 1 var(--font-ui); text-transform: uppercase; }
   .dag-count { font-family: var(--font-mono); color: var(--color-text-faint); }
   .dag-path { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; counter-reset: step; }
   .dag-row {

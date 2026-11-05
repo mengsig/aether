@@ -9,7 +9,7 @@
     grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: var(--space-4) var(--space-5); margin: 0;
   }
   .agent-fact { display: grid; gap: var(--space-1); min-inline-size: 0; }
-  .agent-fact dt { color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-tight) var(--font-ui); text-transform: uppercase; letter-spacing: 0.06em; }
+  .agent-fact dt { color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-tight) var(--font-ui); text-transform: uppercase; }
   .agent-fact dd { display: grid; margin: 0; overflow-wrap: anywhere; font-size: var(--text-sm); }
   .agent-hint { color: var(--color-text-muted); font-size: var(--text-xs); }
 }

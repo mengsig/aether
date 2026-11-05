@@ -39,7 +39,7 @@
   .queue-select .ui-field-input { inline-size: 100%; color: var(--color-text); font: inherit; }
   .queue-search { flex: 1; min-inline-size: 14rem; }
   .queue-form { display: grid; gap: var(--space-3); }
-  .queue-list { overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1); }
+  .queue-list { border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1); }
   /* As tall as its rows, up to the viewport; the scroller itself is capped, so it still virtualizes. */
   .queue-list .ui-vlist { block-size: auto; max-block-size: max(18rem, calc(100dvh - 24rem)); }
   .queue-row {

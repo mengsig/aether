@@ -41,6 +41,6 @@
   .st-prose { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: var(--leading-prose); }
   .st-code { font-family: var(--font-mono); font-size: var(--text-xs); }
   .st-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: var(--space-3) var(--space-5); margin: 0; }
-  .st-facts dt { color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-tight) var(--font-ui); letter-spacing: 0.06em; text-transform: uppercase; }
+  .st-facts dt { color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-tight) var(--font-ui); text-transform: uppercase; }
   .st-facts dd { margin: 0; font-size: var(--text-sm); overflow-wrap: anywhere; }
 }

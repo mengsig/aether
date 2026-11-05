@@ -6,7 +6,7 @@
   .fleet-filter .ui-field-input { inline-size: 100%; color: var(--color-text); font: inherit; }
   .fleet-count { margin-inline-start: auto; color: var(--color-text-muted); font-size: var(--text-sm); }
   .fleet-table {
-    display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden;
+    display: grid; grid-template-rows: auto minmax(0, 1fr);
     border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1);
   }
   /* The list is as tall as its rows, up to the viewport; the scroller itself is capped, so it still virtualizes. */
@@ -21,7 +21,7 @@
   .ui-vlist-row:hover .fleet-row { background: var(--color-surface-2); }
   .fleet-head {
     block-size: var(--space-10); color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / 1 var(--font-ui);
-    letter-spacing: 0.06em; text-transform: uppercase;
+    text-transform: uppercase;
   }
   .fleet-name, .fleet-role, .fleet-model, .fleet-run { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-inline-size: 0; }
   .fleet-name { font-weight: var(--weight-medium); }

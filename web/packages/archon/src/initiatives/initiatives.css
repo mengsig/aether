@@ -2,7 +2,7 @@
   .initiative-header { display: grid; gap: var(--space-3); }
   .initiative-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: var(--space-3); margin: var(--space-2) 0 0; }
   .initiative-facts div { display: grid; gap: var(--space-1); padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1); }
-  .initiative-facts dt { color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-tight) var(--font-ui); letter-spacing: 0.06em; text-transform: uppercase; }
+  .initiative-facts dt { color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-tight) var(--font-ui); text-transform: uppercase; }
   .initiative-facts dd { margin: 0; font: var(--weight-bold) var(--text-lg) / 1 var(--font-mono); }
   .initiative-body { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: var(--space-4); align-items: start; }
   .initiative-card { gap: var(--space-3); }
