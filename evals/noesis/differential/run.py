@@ -27,20 +27,28 @@ def skip_reason(path):
     return None
 
 
-def drive(checkout, script):
+def drive(checkout, script, app_class=adapter.UpstreamApp):
     """Start the faux model and the upstream app, run the script, return the upstream trace."""
     model = FauxModel(script["model_turns"])
-    app = adapter.UpstreamApp(checkout, model.start())
+    model_url = model.start()
     try:
-        app.start()
-        app.configure()
-        state = app.converse(script["topic"], script["user_messages"])
+        state = converse_with_app(app_class(checkout, model_url), script)
     finally:
-        app.stop()
         model.stop()
     if model.overruns:
         raise adapter.AdapterError(f"the app made {model.overruns} model calls past the script")
     return adapter.trace_from_state(state)
+
+
+def converse_with_app(app, script):
+    """Run the scripted conversation; the app is stopped even when a step or the stop itself fails."""
+    assert script["user_messages"], "the script sends at least one message"
+    try:
+        app.start()
+        app.configure()
+        return app.converse(script["topic"], script["user_messages"])
+    finally:
+        app.stop()
 
 
 def main(argv=None):

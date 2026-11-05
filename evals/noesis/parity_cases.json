@@ -2,493 +2,1126 @@
   "cases": [
     {
       "id": "T1",
-      "behaviour": "practice gets the practitioner; the teacher follows only a successful probe_done",
+      "behaviour": "Agent selection: practice sessions get the Practitioner; the Teacher only after a successful, non-refused `probe_done`",
       "noesis_form": "same",
-      "tests": [
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "t01_practice_gets_the_practitioner_and_the_teacher_only_follows_a_successful_probe_done"
+          "clause": "Agent selection: practice sessions get the Practitioner",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t01_practice_gets_the_practitioner_and_the_teacher_only_follows_a_successful_probe_done"
+            }
+          ]
+        },
+        {
+          "clause": "the Teacher only after a successful, non-refused `probe_done`",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t01_practice_gets_the_practitioner_and_the_teacher_only_follows_a_successful_probe_done"
+            }
+          ]
         }
       ]
     },
     {
       "id": "T2",
-      "behaviour": "probe_done refused while a question is open and on a second call; fixed acknowledgement",
+      "behaviour": "`probe_done` is refused while a question is open and on a second call; a fixed short acknowledgement; the hand-off starts the Teacher, and recovery works if the wake fails",
       "noesis_form": "same",
-      "tests": [
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "t02_probe_done_is_refused_while_a_question_is_open_and_on_a_second_call"
+          "clause": "`probe_done` is refused while a question is open",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t02_probe_done_is_refused_while_a_question_is_open_and_on_a_second_call"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "t02_the_acknowledgement_is_fixed_and_a_second_call_in_the_batch_is_refused"
+          "clause": "and on a second call",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t02_probe_done_is_refused_while_a_question_is_open_and_on_a_second_call"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t02_the_acknowledgement_is_fixed_and_a_second_call_in_the_batch_is_refused"
+            }
+          ]
+        },
+        {
+          "clause": "a fixed short acknowledgement",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t02_the_acknowledgement_is_fixed_and_a_second_call_in_the_batch_is_refused"
+            }
+          ]
+        },
+        {
+          "clause": "the hand-off starts the Teacher",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t01_practice_gets_the_practitioner_and_the_teacher_only_follows_a_successful_probe_done"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t02_the_acknowledgement_is_fixed_and_a_second_call_in_the_batch_is_refused"
+            }
+          ]
+        },
+        {
+          "clause": "and recovery works if the wake fails",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t02_probe_done_is_refused_while_a_question_is_open_and_on_a_second_call"
+            }
+          ]
         }
       ]
     },
     {
       "id": "T3",
-      "behaviour": "phase folds: probe to plan on probe_done, plan to teach on the first tagged question",
-      "noesis_form": "same",
-      "tests": [
+      "behaviour": "Phase moves probe → plan on `probe_done`, and plan → teach on the first question tagged with a plan node; a plan alone does not advance it",
+      "noesis_form": "the stored phase equals the fold over events",
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "t03_probe_to_plan_on_probe_done_and_plan_to_teach_on_the_first_tagged_question"
+          "clause": "Phase moves probe → plan on `probe_done`",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t03_probe_to_plan_on_probe_done_and_plan_to_teach_on_the_first_tagged_question"
+            }
+          ]
+        },
+        {
+          "clause": "and plan → teach on the first question tagged with a plan node",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t03_probe_to_plan_on_probe_done_and_plan_to_teach_on_the_first_tagged_question"
+            }
+          ]
+        },
+        {
+          "clause": "a plan alone does not advance it",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t03_probe_to_plan_on_probe_done_and_plan_to_teach_on_the_first_tagged_question"
+            }
+          ]
+        },
+        {
+          "clause": "the stored phase equals the fold over events",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t03_probe_to_plan_on_probe_done_and_plan_to_teach_on_the_first_tagged_question"
+            }
+          ]
         }
       ]
     },
     {
       "id": "T4",
-      "behaviour": "a pose ends the run; an invalid pose errors and may be retried",
+      "behaviour": "A question pose ends the run, including mixed tool batches. An invalid pose returns an error, and the model may retry. The pending question is derived from the record.",
       "noesis_form": "same",
-      "tests": [
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "t04_a_pose_ends_the_run_even_in_a_mixed_batch_and_the_pending_question_is_derived"
+          "clause": "A question pose ends the run, including mixed tool batches.",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t04_a_pose_ends_the_run_even_in_a_mixed_batch_and_the_pending_question_is_derived"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "t04_an_invalid_pose_returns_an_error_and_the_model_may_retry"
+          "clause": "An invalid pose returns an error, and the model may retry.",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t04_an_invalid_pose_returns_an_error_and_the_model_may_retry"
+            }
+          ]
+        },
+        {
+          "clause": "The pending question is derived from the record.",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t04_a_pose_ends_the_run_even_in_a_mixed_batch_and_the_pending_question_is_derived"
+            }
+          ]
         }
       ]
     },
     {
       "id": "T5",
-      "behaviour": "question authoring reports every problem",
-      "noesis_form": "same",
-      "tests": [
+      "behaviour": "Question authoring: ≥ 2 options; the answer key matches the option values; multi-select is graded as an exact set; `plan_node` exists; recall needs a committed answer key",
+      "noesis_form": "same, plus: the posing turn's visible text does not contain a choice answer key's option label or a recall key verbatim",
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "t05_question_authoring_reports_every_problem"
+          "clause": "Question authoring: ≥ 2 options",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t05_question_authoring_reports_every_problem"
+            }
+          ]
+        },
+        {
+          "clause": "the answer key matches the option values",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t05_question_authoring_reports_every_problem"
+            }
+          ]
+        },
+        {
+          "clause": "multi-select is graded as an exact set",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t05_question_authoring_reports_every_problem"
+            }
+          ]
+        },
+        {
+          "clause": "`plan_node` exists",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t05_question_authoring_reports_every_problem"
+            }
+          ]
+        },
+        {
+          "clause": "recall needs a committed answer key",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t05_question_authoring_reports_every_problem"
+            }
+          ]
+        },
+        {
+          "clause": "plus: the posing turn's visible text does not contain a choice answer key's option label or a recall key verbatim",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t05_question_authoring_reports_every_problem"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/regressions.rs",
+              "name": "a_question_whose_key_the_plan_shows_is_refused_in_either_order"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/regressions.rs",
+              "name": "a_choice_prompt_naming_the_correct_label_is_refused"
+            }
+          ]
         }
       ]
     },
     {
       "id": "T6",
-      "behaviour": "options shuffle deterministically; answers grade locally; dont_know is no mastery evidence",
+      "behaviour": "Deterministic option shuffle and local grading; confidence stops 0/30/50/70/90/100, default 50; \"don't know\" excludes confidence",
       "noesis_form": "same",
-      "tests": [
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "t06_options_shuffle_deterministically"
+          "clause": "Deterministic option shuffle",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t06_options_shuffle_deterministically"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "t06_answers_grade_locally_with_confidence_stops"
+          "clause": "and local grading",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t06_answers_grade_locally_with_confidence_stops"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "dont_know_never_counts_as_mastery_evidence"
+          "clause": "confidence stops 0/30/50/70/90/100",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t06_answers_grade_locally_with_confidence_stops"
+            },
+            {
+              "crate": "aether-protocol",
+              "file": "crates/aether-protocol/src/noesis/tests.rs",
+              "name": "only_the_documented_confidences_are_accepted"
+            }
+          ]
+        },
+        {
+          "clause": "default 50",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t06_answers_grade_locally_with_confidence_stops"
+            }
+          ]
+        },
+        {
+          "clause": "\"don't know\" excludes confidence",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t06_answers_grade_locally_with_confidence_stops"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "dont_know_never_counts_as_mastery_evidence"
+            }
+          ]
         }
       ]
     },
     {
       "id": "T7",
-      "behaviour": "teach checks collapse; predictions, probes and goals never do",
+      "behaviour": "Reveal rule: teach-phase checks are collapsed; predictions, probes and goal questions are never collapsed",
       "noesis_form": "same",
-      "tests": [
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "t07_teach_checks_collapse_and_predictions_probes_and_goals_never_do"
+          "clause": "Reveal rule: teach-phase checks are collapsed",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t07_teach_checks_collapse_and_predictions_probes_and_goals_never_do"
+            }
+          ]
+        },
+        {
+          "clause": "predictions, probes and goal questions are never collapsed",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t07_teach_checks_collapse_and_predictions_probes_and_goals_never_do"
+            }
+          ]
         }
       ]
     },
     {
       "id": "T8",
-      "behaviour": "plan validation reports every problem; a rewrite replaces the plan",
-      "noesis_form": "same",
-      "tests": [
+      "behaviour": "Plan validation: slug ids, cycles, self-loops, duplicates and missing endpoints rejected, with every problem reported; a rewrite replaces the whole plan",
+      "noesis_form": "JSON DAG instead of Mermaid",
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "t08_plan_validation_reports_every_problem_and_a_rewrite_replaces_the_plan"
+          "clause": "Plan validation: slug ids, cycles, self-loops, duplicates and missing endpoints rejected, with every problem reported",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t08_plan_validation_reports_every_problem_and_a_rewrite_replaces_the_plan"
+            }
+          ],
+          "noesis": "differs: the plan is a JSON DAG ({nodes, edges}) instead of Mermaid text, so the problems are checked on that graph"
+        },
+        {
+          "clause": "a rewrite replaces the whole plan",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t08_plan_validation_reports_every_problem_and_a_rewrite_replaces_the_plan"
+            }
+          ]
         }
       ]
     },
     {
       "id": "T9",
-      "behaviour": "plan node status follows the latest tagged question",
+      "behaviour": "Plan-node status (current, visited, upcoming) is derived from the latest tagged question",
       "noesis_form": "same",
-      "tests": [
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "t09_plan_node_status_follows_the_latest_tagged_question"
+          "clause": "Plan-node status (current, visited, upcoming) is derived from the latest tagged question",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t09_plan_node_status_follows_the_latest_tagged_question"
+            }
+          ]
         }
       ]
     },
     {
       "id": "T10",
-      "behaviour": "one active problem; targets resolve to proposition ids",
+      "behaviour": "Practice gate: one active problem; `conclude` with none is refused; conclude then problem in one turn works; target names normalize to ids; an unknown target is refused",
       "noesis_form": "same",
-      "tests": [
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "t10_one_active_problem_and_targets_resolve_to_proposition_ids"
+          "clause": "Practice gate: one active problem",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t10_one_active_problem_and_targets_resolve_to_proposition_ids"
+            }
+          ]
+        },
+        {
+          "clause": "`conclude` with none is refused",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t10_one_active_problem_and_targets_resolve_to_proposition_ids"
+            }
+          ]
+        },
+        {
+          "clause": "conclude then problem in one turn works",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t10_one_active_problem_and_targets_resolve_to_proposition_ids"
+            }
+          ]
+        },
+        {
+          "clause": "target names normalize to ids",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t10_one_active_problem_and_targets_resolve_to_proposition_ids"
+            }
+          ]
+        },
+        {
+          "clause": "an unknown target is refused",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t10_one_active_problem_and_targets_resolve_to_proposition_ids"
+            }
+          ]
         }
       ]
     },
     {
       "id": "T11",
-      "behaviour": "conclude checks its enums and records evidence; solution and answer keys sealed until released",
-      "noesis_form": "same",
-      "tests": [
+      "behaviour": "`conclude` enums (outcome, rung, miss class, retest); the solution is hidden until `conclude`; practice never writes to the graph",
+      "noesis_form": "same, plus learner evidence (§5); the solution is sealed on every generic read path",
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "t11_conclude_checks_its_enums_and_records_evidence"
+          "clause": "`conclude` enums (outcome, rung, miss class, retest)",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t11_conclude_checks_its_enums_and_records_evidence"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "t11_the_solution_is_sealed_on_every_read_path_until_conclude_and_practice_never_writes_the_graph"
+          "clause": "the solution is hidden until `conclude`",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t11_the_solution_is_sealed_on_every_read_path_until_conclude_and_practice_never_writes_the_graph"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "t11_answer_keys_are_sealed_until_the_answer_is_recorded"
+          "clause": "practice never writes to the graph",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t11_the_solution_is_sealed_on_every_read_path_until_conclude_and_practice_never_writes_the_graph"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/regressions.rs",
-          "name": "a_stringified_argument_cannot_carry_an_escaped_active_solution"
+          "clause": "plus learner evidence (§5)",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t11_conclude_checks_its_enums_and_records_evidence"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/regressions.rs",
-          "name": "a_question_whose_key_the_plan_shows_is_refused_in_either_order"
-        },
-        {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/regressions.rs",
-          "name": "a_posed_key_never_reaches_plan_events_or_the_session_view"
+          "clause": "the solution is sealed on every generic read path",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t11_the_solution_is_sealed_on_every_read_path_until_conclude_and_practice_never_writes_the_graph"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/regressions.rs",
+              "name": "a_stringified_argument_cannot_carry_an_escaped_active_solution"
+            }
+          ]
         }
       ]
     },
     {
       "id": "T12",
-      "behaviour": "malformed tool arguments are healed",
+      "behaviour": "Malformed tool arguments (stringified arrays, quoted enums) are healed",
       "noesis_form": "same",
-      "tests": [
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "t12_malformed_tool_arguments_are_healed"
+          "clause": "Malformed tool arguments (stringified arrays, quoted enums) are healed",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t12_malformed_tool_arguments_are_healed"
+            }
+          ]
         }
       ]
     },
     {
       "id": "S1",
-      "behaviour": "one turn per session; a refused message starts no turn; a cancelled or aborted turn keeps what it spent; no billed fallback",
-      "noesis_form": "same",
-      "tests": [
+      "behaviour": "One turn per session: a concurrent turn is refused, input is persisted before inference, missing models are refused explicitly, and an aborted turn keeps its partial output",
+      "noesis_form": "`conflict` error; `no_model` with alternatives",
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/src/noesis/teaching_tests.rs",
-          "name": "a_refused_message_starts_no_turn_and_a_sent_one_starts_one"
+          "clause": "One turn per session: a concurrent turn is refused",
+          "tests": [],
+          "noesis": "`conflict` error",
+          "gap": "no test sends a message while a turn of the same session is in flight and asserts a `conflict` refusal"
         },
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/src/noesis/teaching_race_tests.rs",
-          "name": "a_normal_turn_records_its_usage_turn_and_reply"
+          "clause": "input is persisted before inference",
+          "tests": [],
+          "gap": "no test asserts that the learner's message is stored before the model call starts"
         },
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/src/noesis/teaching_race_tests.rs",
-          "name": "a_pause_during_the_call_survives_its_reply"
+          "clause": "missing models are refused explicitly",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "a_session_never_falls_back_to_a_billed_model"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/budget.rs",
+              "name": "api_models_are_never_a_silent_fallback"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/budget.rs",
+              "name": "a_configured_model_that_is_not_ready_is_reported_not_replaced"
+            }
+          ],
+          "noesis": "`no_model` with alternatives"
         },
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/src/noesis/teaching_race_tests.rs",
-          "name": "a_cancel_during_the_call_ends_it_and_records_only_what_it_spent"
-        },
-        {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "a_session_never_falls_back_to_a_billed_model"
+          "clause": "and an aborted turn keeps its partial output",
+          "tests": [],
+          "gap": "no test asserts kept partial output; noesis::teaching_tests::race::a_cancel_during_the_call_ends_it_and_records_only_what_it_spent asserts the opposite for a call cancelled before its reply: its spend is kept and no reply is written"
         }
       ]
     },
     {
       "id": "S2",
-      "behaviour": "job and answer results are delivered once and recovered after a restart",
-      "noesis_form": "differs: delivery is a daemon-owned queue, not an in-process callback",
-      "tests": [
+      "behaviour": "Job results are delivered at turn boundaries exactly once, and recovered after a restart",
+      "noesis_form": "the Aether steering and inbox paths",
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/src/noesis/teaching_tests.rs",
-          "name": "a_restart_redelivers_an_owed_answer_exactly_once"
+          "clause": "Job results are delivered at turn boundaries",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/recovery.rs",
+              "name": "a_failed_answer_delivery_is_queued_after_the_commit_and_sent_before_the_next_step"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/recovery.rs",
+              "name": "results_kept_back_by_a_failed_delivery_arrive_before_the_answer"
+            }
+          ],
+          "noesis": "the owed results are learner answers and tool results; Noesis background jobs write the graph and deliver nothing to an agent"
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/regressions.rs",
-          "name": "an_answer_whose_delivery_failed_is_delivered_after_a_restart"
+          "clause": "exactly once",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/src/noesis/teaching_tests.rs",
+              "name": "a_restart_redelivers_an_owed_answer_exactly_once"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/regressions.rs",
+              "name": "an_answer_whose_delivery_failed_is_delivered_after_a_restart"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/recovery.rs",
+              "name": "a_failed_answer_delivery_is_queued_after_the_commit_and_sent_before_the_next_step"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/recovery.rs",
-          "name": "a_failed_answer_delivery_is_queued_after_the_commit_and_sent_before_the_next_step"
+          "clause": "and recovered after a restart",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/src/noesis/teaching_tests.rs",
+              "name": "a_restart_redelivers_an_owed_answer_exactly_once"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/regressions.rs",
+              "name": "an_answer_whose_delivery_failed_is_delivered_after_a_restart"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/recovery.rs",
-          "name": "results_kept_back_by_a_failed_delivery_arrive_before_the_answer"
+          "clause": "the Aether steering and inbox paths",
+          "tests": [],
+          "gap": "owed answers are queued in noesis.db and delivered by the teaching service before the next step; no test (and no code under crates/aether-daemon/src/noesis) delivers them through Aether steering or the inbox"
         }
       ]
     },
     {
       "id": "S3",
-      "behaviour": "prompt segments are ordered; overrides need the switch and a file",
+      "behaviour": "Prompt segment order, and an override needs both the switch and the file",
       "noesis_form": "same",
-      "tests": [
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/teach/parity.rs",
-          "name": "operator_prompt_overrides_apply_only_with_the_switch_on"
+          "clause": "Prompt segment order",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/prompts/mod.rs",
+              "name": "segments_are_ordered_and_named"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/prompts/mod.rs",
-          "name": "segments_are_ordered_and_named"
-        },
-        {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/prompts/mod.rs",
-          "name": "override_replaces_only_its_segment"
-        },
-        {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/prompts/mod.rs",
-          "name": "none_ignores_existing_override_files"
+          "clause": "and an override needs both the switch and the file",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "operator_prompt_overrides_apply_only_with_the_switch_on"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/prompts/mod.rs",
+              "name": "override_replaces_only_its_segment"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/prompts/mod.rs",
+              "name": "none_ignores_existing_override_files"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/prompts/mod.rs",
+              "name": "missing_file_or_directory_keeps_builtin"
+            }
+          ]
         }
       ]
     },
     {
       "id": "S4",
-      "behaviour": "invalid settings are refused, naming the key, never clamped",
-      "noesis_form": "differs: refused with the allowed values instead of silently clamped",
-      "tests": [
+      "behaviour": "Settings sanitizing",
+      "noesis_form": "**differs:** invalid values are refused with an error rather than clamped (CONTRACTS.md §6.1)",
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/settings.rs",
-          "name": "invalid_values_name_the_key_and_say_what_is_allowed"
+          "clause": "Settings sanitizing",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/settings.rs",
+              "name": "several_unknown_keys_are_all_listed"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/settings.rs",
+              "name": "values_built_in_code_are_validated_and_never_written_invalid"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/settings.rs",
-          "name": "several_unknown_keys_are_all_listed"
-        },
-        {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/settings.rs",
-          "name": "values_built_in_code_are_validated_and_never_written_invalid"
+          "clause": "invalid values are refused with an error rather than clamped (CONTRACTS.md §6.1)",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/settings.rs",
+              "name": "invalid_values_name_the_key_and_say_what_is_allowed"
+            },
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g08_configure_while_disabled_only_validates_and_writes_the_config"
+            }
+          ]
         }
       ]
     },
     {
       "id": "S5-G01",
-      "behaviour": "noesis is disabled by default",
-      "noesis_form": "differs: new guarantee, upstream has no off switch",
-      "tests": [
+      "behaviour": "`noesis.enabled = false` is the default.",
+      "noesis_form": "one test each (F7); ARCHITECTURE.md §g",
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
-          "name": "g01_noesis_is_disabled_by_default"
+          "clause": "`noesis.enabled = false` is the default.",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g01_noesis_is_disabled_by_default"
+            }
+          ],
+          "noesis": "new guarantee; upstream has no off switch"
         }
       ]
     },
     {
       "id": "S5-G02",
-      "behaviour": "no noesis tool is offered to any agent while disabled",
-      "noesis_form": "differs: new guarantee, upstream has no off switch",
-      "tests": [
+      "behaviour": "While disabled: no Noesis harness tool is registered",
+      "noesis_form": "one test each (F7); ARCHITECTURE.md §g",
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
-          "name": "g02_no_noesis_tool_is_offered_to_any_agent_while_disabled"
-        },
-        {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/tests/off_by_default.rs",
-          "name": "no_tool_is_registered_without_a_running_service_or_for_another_role"
+          "clause": "While disabled: no Noesis harness tool is registered",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g02_no_noesis_tool_is_offered_to_any_agent_while_disabled"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/tests/off_by_default.rs",
+              "name": "no_tool_is_registered_without_a_running_service_or_for_another_role"
+            }
+          ],
+          "noesis": "new guarantee; upstream has no off switch"
         }
       ]
     },
     {
       "id": "S5-G03",
-      "behaviour": "no noesis role can be created while disabled",
-      "noesis_form": "differs: new guarantee, upstream has no off switch",
-      "tests": [
+      "behaviour": "While disabled: no `noesis.*` role can be created",
+      "noesis_form": "one test each (F7); ARCHITECTURE.md §g",
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
-          "name": "g03_no_noesis_role_can_be_created_while_disabled"
+          "clause": "While disabled: no `noesis.*` role can be created",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g03_no_noesis_role_can_be_created_while_disabled"
+            }
+          ],
+          "noesis": "new guarantee; upstream has no off switch"
         }
       ]
     },
     {
       "id": "S5-G04",
-      "behaviour": "no worker or timer starts while disabled",
-      "noesis_form": "differs: new guarantee, upstream has no off switch",
-      "tests": [
+      "behaviour": "While disabled: no worker or timer starts",
+      "noesis_form": "one test each (F7); ARCHITECTURE.md §g",
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
-          "name": "g04_no_worker_or_timer_starts_while_disabled"
+          "clause": "While disabled: no worker or timer starts",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g04_no_worker_or_timer_starts_while_disabled"
+            }
+          ],
+          "noesis": "new guarantee; upstream has no off switch"
         }
       ]
     },
     {
       "id": "S5-G05",
-      "behaviour": "the noesis db is never opened or created while disabled",
-      "noesis_form": "differs: new guarantee, upstream has no off switch",
-      "tests": [
+      "behaviour": "While disabled: `noesis.db` is not opened or created",
+      "noesis_form": "one test each (F7); ARCHITECTURE.md §g",
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
-          "name": "g05_noesis_db_is_never_opened_or_created_while_disabled"
-        },
-        {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/tests/off_by_default.rs",
-          "name": "a_disabled_service_opens_nothing_and_an_enabled_one_opens_noesis_db"
+          "clause": "While disabled: `noesis.db` is not opened or created",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g05_noesis_db_is_never_opened_or_created_while_disabled"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/tests/off_by_default.rs",
+              "name": "a_disabled_service_opens_nothing_and_an_enabled_one_opens_noesis_db"
+            }
+          ],
+          "noesis": "new guarantee; upstream has no off switch"
         }
       ]
     },
     {
       "id": "S5-G06",
-      "behaviour": "no context layer is added to any agent while disabled",
-      "noesis_form": "differs: new guarantee, upstream has no off switch",
-      "tests": [
+      "behaviour": "While disabled: no context layer is added to any agent",
+      "noesis_form": "one test each (F7); ARCHITECTURE.md §g",
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
-          "name": "g06_no_context_layer_is_added_to_any_agent_while_disabled"
+          "clause": "While disabled: no context layer is added to any agent",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g06_no_context_layer_is_added_to_any_agent_while_disabled"
+            }
+          ],
+          "noesis": "new guarantee; upstream has no off switch"
         }
       ]
     },
     {
       "id": "S5-G07",
-      "behaviour": "every command but status and configure is refused with no side effect",
-      "noesis_form": "differs: new guarantee, upstream has no off switch",
-      "tests": [
+      "behaviour": "While disabled: every `noesis_*` command except `noesis_status` and `noesis_configure` returns `unavailable{reason: \"noesis_disabled\"}` with no side effect.",
+      "noesis_form": "one test each (F7); ARCHITECTURE.md §g",
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
-          "name": "g07_every_noesis_command_but_status_and_configure_is_refused_with_no_side_effect"
+          "clause": "While disabled: every `noesis_*` command except `noesis_status` and `noesis_configure` returns `unavailable{reason: \"noesis_disabled\"}` with no side effect.",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g07_every_noesis_command_but_status_and_configure_is_refused_with_no_side_effect"
+            }
+          ],
+          "noesis": "new guarantee; upstream has no off switch"
         }
       ]
     },
     {
       "id": "S5-G08",
-      "behaviour": "configure while disabled only validates and writes the config",
-      "noesis_form": "differs: new guarantee, upstream has no off switch",
-      "tests": [
+      "behaviour": "`noesis_configure` is the host-only control path. While disabled it only validates and writes the `[noesis]` config.",
+      "noesis_form": "one test each (F7); ARCHITECTURE.md §g",
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
-          "name": "g08_configure_while_disabled_only_validates_and_writes_the_config"
+          "clause": "`noesis_configure` is the host-only control path.",
+          "tests": [
+            {
+              "crate": "aether-protocol",
+              "file": "crates/aether-protocol/src/noesis/tests.rs",
+              "name": "host_only_keys_make_the_patch_host_only"
+            }
+          ],
+          "gap": "narrower than §g: only a patch that sets enabled, a budget, billing.allow_api or prompts.overrides is host-only; the_other_keys_and_an_empty_patch_are_operate asserts the other keys are open to operator devices",
+          "noesis": "new guarantee; upstream has no off switch"
+        },
+        {
+          "clause": "While disabled it only validates and writes the `[noesis]` config.",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g08_configure_while_disabled_only_validates_and_writes_the_config"
+            }
+          ]
         }
       ]
     },
     {
       "id": "S5-G09",
-      "behaviour": "enabling writes the config first, then opens the db",
-      "noesis_form": "differs: new guarantee, upstream has no off switch",
-      "tests": [
+      "behaviour": "Setting `enabled = true` then starts the service, which opens `noesis.db` only at that point.",
+      "noesis_form": "one test each (F7); ARCHITECTURE.md §g",
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
-          "name": "g09_enabling_writes_first_then_opens_noesis_db"
+          "clause": "Setting `enabled = true` then starts the service, which opens `noesis.db` only at that point.",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g09_enabling_writes_first_then_opens_noesis_db"
+            },
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g09_an_enable_whose_config_write_fails_starts_nothing"
+            }
+          ],
+          "noesis": "new guarantee; upstream has no off switch"
         }
       ]
     },
     {
       "id": "S5-G10",
-      "behaviour": "generic agent commands are refused for a noesis agent while disabled",
-      "noesis_form": "differs: new guarantee, upstream has no off switch",
-      "tests": [
+      "behaviour": "Aether's runtime checks that attribute in one admission guard before the generic agent commands (`send_message`, `reply_to_question`, `wake`, `resume`, `steer`, model changes). While Noesis is disabled or draining, the guard refuses new work for these agents and parks them, so nothing resumes them later by surprise.",
+      "noesis_form": "one test each (F7); ARCHITECTURE.md §g",
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_guard.rs",
-          "name": "g10_every_generic_agent_command_is_refused_for_a_parked_noesis_agent_while_disabled"
+          "clause": "Aether's runtime checks that attribute in one admission guard before the generic agent commands (`send_message`, `reply_to_question`, `wake`, `resume`, `steer`, model changes).",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_guard.rs",
+              "name": "g10_every_generic_agent_command_is_refused_for_a_parked_noesis_agent_while_disabled"
+            },
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_guard.rs",
+              "name": "g10_a_cancelled_noesis_agent_is_not_restarted_while_disabled"
+            }
+          ],
+          "noesis": "new guarantee; upstream has no off switch"
         },
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_guard.rs",
-          "name": "g10_a_cancelled_noesis_agent_is_not_restarted_while_disabled"
+          "clause": "While Noesis is disabled",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_guard.rs",
+              "name": "g10_every_generic_agent_command_is_refused_for_a_parked_noesis_agent_while_disabled"
+            }
+          ]
+        },
+        {
+          "clause": "or draining",
+          "tests": [],
+          "gap": "no test sends a generic agent command to a Noesis agent during the disable grace; a_disable_mid_turn_refuses_at_once_and_cancels_after_the_grace drains with noesis_* commands only"
+        },
+        {
+          "clause": "the guard refuses new work for these agents and parks them, so nothing resumes them later by surprise.",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_guard.rs",
+              "name": "g10_every_generic_agent_command_is_refused_for_a_parked_noesis_agent_while_disabled"
+            },
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_guard.rs",
+              "name": "g11_a_restart_with_a_parked_noesis_agent_while_disabled_resumes_nothing"
+            }
+          ]
         }
       ]
     },
     {
       "id": "S5-G11",
-      "behaviour": "a restart with a parked noesis agent while disabled resumes nothing",
-      "noesis_form": "differs: new guarantee, upstream has no off switch",
-      "tests": [
+      "behaviour": "Aether's runtime checks that attribute in one admission guard before startup recovery: F7 tests a daemon restart with a parked Noesis agent.",
+      "noesis_form": "one test each (F7); ARCHITECTURE.md §g",
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_guard.rs",
-          "name": "g11_a_restart_with_a_parked_noesis_agent_while_disabled_resumes_nothing"
+          "clause": "Aether's runtime checks that attribute in one admission guard before startup recovery: F7 tests a daemon restart with a parked Noesis agent.",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_guard.rs",
+              "name": "g11_a_restart_with_a_parked_noesis_agent_while_disabled_resumes_nothing"
+            }
+          ],
+          "noesis": "new guarantee; upstream has no off switch"
         }
       ]
     },
     {
       "id": "S5-G12",
-      "behaviour": "a noesis agent is offered no delegation tool",
-      "noesis_form": "differs: new guarantee, upstream has no off switch",
-      "tests": [
+      "behaviour": "Aether's runtime checks that attribute in one admission guard before delegation from a Noesis agent.",
+      "noesis_form": "one test each (F7); ARCHITECTURE.md §g",
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_guard.rs",
-          "name": "g12_a_noesis_agent_is_offered_no_tool_to_delegate_with"
+          "clause": "Aether's runtime checks that attribute in one admission guard before delegation from a Noesis agent.",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_guard.rs",
+              "name": "g12_a_noesis_agent_is_offered_no_tool_to_delegate_with"
+            }
+          ],
+          "noesis": "new guarantee; upstream has no off switch; a Noesis agent is offered no tool to delegate with, so no delegation reaches the guard"
         }
       ]
     },
     {
       "id": "S5-G13",
-      "behaviour": "switches are effective only with their prerequisites",
-      "noesis_form": "differs: new guarantee, upstream has no off switch",
-      "tests": [
+      "behaviour": "A switch is effective only when its prerequisites are effective. Turning a prerequisite off turns its dependents off in effect, but keeps their stored values, and `noesis_status` reports both.",
+      "noesis_form": "one test each (F7); ARCHITECTURE.md §g",
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
-          "name": "g13_switches_are_effective_only_with_their_prerequisites"
+          "clause": "A switch is effective only when its prerequisites are effective.",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g13_switches_are_effective_only_with_their_prerequisites"
+            }
+          ],
+          "noesis": "new guarantee; upstream has no off switch"
+        },
+        {
+          "clause": "Turning a prerequisite off turns its dependents off in effect, but keeps their stored values, and `noesis_status` reports both.",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g13_switches_are_effective_only_with_their_prerequisites"
+            }
+          ]
         }
       ]
     },
     {
       "id": "S5-G14",
-      "behaviour": "disabling refuses new work at once and reports the policy",
-      "noesis_form": "differs: new guarantee, upstream has no off switch",
-      "tests": [
+      "behaviour": "Disabling refuses new work at once. It cancels background jobs at their next model-call boundary (each job's last committed merge stays). It lets an in-flight interactive turn finish for up to 60 s and then cancels it. The cancellation policy is reported in `noesis_status`.",
+      "noesis_form": "one test each (F7); ARCHITECTURE.md §g",
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
-          "name": "g14_disabling_refuses_new_work_at_once_and_reports_the_policy"
+          "clause": "Disabling refuses new work at once.",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g14_disabling_refuses_new_work_at_once_and_reports_the_policy"
+            }
+          ],
+          "noesis": "new guarantee; upstream has no off switch"
+        },
+        {
+          "clause": "It cancels background jobs at their next model-call boundary (each job's last committed merge stays).",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_disable.rs",
+              "name": "g14_a_background_job_s_model_call_is_cancelled_by_the_disable"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/tests.rs",
+              "name": "cancelling_mid_job_keeps_the_last_committed_merge"
+            }
+          ],
+          "gap": "the kept merge is tested through the job's cancel flag only (cancelling_mid_job_keeps_the_last_committed_merge); the daemon test disables with a job's call in flight before any merge"
+        },
+        {
+          "clause": "It lets an in-flight interactive turn finish for up to 60 s and then cancels it.",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_disable.rs",
+              "name": "g14_an_interactive_turn_in_flight_finishes_within_the_grace"
+            },
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_disable.rs",
+              "name": "g14_an_interactive_turn_in_flight_is_cancelled_after_the_grace"
+            },
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/src/noesis/teaching_tests.rs",
+              "name": "a_disable_mid_turn_refuses_at_once_and_cancels_after_the_grace"
+            },
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g14_disabling_refuses_new_work_at_once_and_reports_the_policy"
+            }
+          ],
+          "noesis": "the grace is noesis.disable.grace_seconds: g14 asserts the default of 60, and the mid-turn test runs it at 1 s"
+        },
+        {
+          "clause": "The cancellation policy is reported in `noesis_status`.",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g14_disabling_refuses_new_work_at_once_and_reports_the_policy"
+            }
+          ]
         }
       ]
     },
     {
       "id": "S5-G15",
-      "behaviour": "every noesis invocation is charged to the noesis budget",
-      "noesis_form": "differs: new guarantee, upstream has no off switch",
-      "tests": [
+      "behaviour": "Aether's runtime checks that attribute in one admission guard before every scheduler dispatch, meaning every model call. Every Noesis invocation is charged to the Noesis budgets on the same path.",
+      "noesis_form": "one test each (F7); ARCHITECTURE.md §g",
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_guard.rs",
-          "name": "g15_every_noesis_invocation_is_charged_to_the_noesis_budget"
+          "clause": "Aether's runtime checks that attribute in one admission guard before every scheduler dispatch, meaning every model call.",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g14_disabling_refuses_new_work_at_once_and_reports_the_policy"
+            },
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_guard.rs",
+              "name": "g11_a_restart_with_a_parked_noesis_agent_while_disabled_resumes_nothing"
+            }
+          ],
+          "gap": "no test dispatches a parked Noesis agent's turn directly to show the scheduler guard refuses it; g11 and g14 only observe that no model call follows",
+          "noesis": "new guarantee; upstream has no off switch"
+        },
+        {
+          "clause": "Every Noesis invocation is charged to the Noesis budgets on the same path.",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_guard.rs",
+              "name": "g15_every_noesis_invocation_is_charged_to_the_noesis_budget"
+            }
+          ]
         }
       ]
     },
@@ -496,11 +1129,26 @@
       "id": "S5-H1",
       "behaviour": "an open question's key is hidden from every reader until answered",
       "noesis_form": "same",
-      "tests": [
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_hidden_answers.rs",
-          "name": "h1_an_open_question_s_key_is_hidden_from_every_reader_until_answered"
+          "clause": "an open question's key is hidden from every reader until answered",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_hidden_answers.rs",
+              "name": "h1_an_open_question_s_key_is_hidden_from_every_reader_until_answered"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t11_answer_keys_are_sealed_until_the_answer_is_recorded"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/regressions.rs",
+              "name": "a_posed_key_never_reaches_plan_events_or_the_session_view"
+            }
+          ]
         }
       ]
     },
@@ -508,248 +1156,561 @@
       "id": "S5-H2",
       "behaviour": "an active problem's solution is hidden from every reader until conclude",
       "noesis_form": "same",
-      "tests": [
+      "clauses": [
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/tests/noesis_hidden_answers.rs",
-          "name": "h2_an_active_problem_s_solution_is_hidden_from_every_reader_until_conclude"
+          "clause": "an active problem's solution is hidden from every reader until conclude",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_hidden_answers.rs",
+              "name": "h2_an_active_problem_s_solution_is_hidden_from_every_reader_until_conclude"
+            }
+          ]
         }
       ]
     },
     {
       "id": "S5-SETTINGS",
       "behaviour": "settings default to off and effective follows prerequisites",
-      "noesis_form": "differs: new guarantee, upstream has no off switch",
-      "tests": [
+      "noesis_form": "one test each (F7); ARCHITECTURE.md §g",
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/tests/off_by_default.rs",
-          "name": "settings_default_to_off_and_effective_follows_prerequisites"
+          "clause": "settings default to off and effective follows prerequisites",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/tests/off_by_default.rs",
+              "name": "settings_default_to_off_and_effective_follows_prerequisites"
+            }
+          ],
+          "noesis": "new guarantee; upstream has no off switch"
         }
       ]
     },
     {
       "id": "X1",
-      "behaviour": "coverage counts teacher prose only, fingerprinted per message; the uncovered set is derived; batches never split a message; learner answers never reopen covered prose",
+      "behaviour": "Coverage counts teacher prose only, fingerprinted per message; the uncovered set is derived; batches never split a message; learner answers never reopen covered prose",
       "noesis_form": "same",
-      "tests": [
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/extract/batch.rs",
-          "name": "batches_never_split_a_message_and_respect_the_budget"
+          "clause": "Coverage counts teacher prose only",
+          "tests": [],
+          "gap": "the daemon's StoreCorpus::session_prose keeps assistant messages only, but no test gives it a transcript with learner messages"
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/extract/batch.rs",
-          "name": "covered_prose_stays_covered_until_it_changes"
+          "clause": "fingerprinted per message",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/batch.rs",
+              "name": "covered_prose_stays_covered_until_it_changes"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/tests.rs",
+              "name": "a_session_job_merges_each_unit_and_covers_what_it_read"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/ids.rs",
+              "name": "fingerprints_are_sha256_hex"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/extract/tests.rs",
-          "name": "a_session_job_merges_each_unit_and_covers_what_it_read"
+          "clause": "the uncovered set is derived",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/batch.rs",
+              "name": "covered_prose_stays_covered_until_it_changes"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/tests.rs",
+              "name": "a_session_job_merges_each_unit_and_covers_what_it_read"
+            }
+          ]
+        },
+        {
+          "clause": "batches never split a message",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/batch.rs",
+              "name": "batches_never_split_a_message_and_respect_the_budget"
+            }
+          ]
+        },
+        {
+          "clause": "learner answers never reopen covered prose",
+          "tests": [],
+          "gap": "no test answers a question after extraction and asserts the covered prose is not read again"
         }
       ]
     },
     {
       "id": "X2",
-      "behaviour": "the extraction trigger threshold and its gate",
-      "noesis_form": "differs: manual by default; a session is extracted automatically only with noesis.extraction.sessions = auto",
-      "tests": [
+      "behaviour": "The extraction trigger threshold (default 4,096 tokens, floor 500) and its gate",
+      "noesis_form": "**differs:** manual by default",
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/extract/tests.rs",
-          "name": "sessions_are_extracted_automatically_only_in_auto_mode"
+          "clause": "The extraction trigger threshold",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/tests.rs",
+              "name": "sessions_are_extracted_automatically_only_in_auto_mode"
+            },
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/src/noesis/teaching_tests.rs",
+              "name": "a_committed_turn_queues_the_session_for_extraction_in_auto_mode"
+            }
+          ]
         },
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/src/noesis/graph/tests.rs",
-          "name": "sessions_are_queued_after_a_teaching_turn_only_in_auto_mode"
+          "clause": "default 4,096 tokens",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/tests.rs",
+              "name": "sessions_are_extracted_automatically_only_in_auto_mode"
+            }
+          ],
+          "gap": "the threshold is the constant AUTO_THRESHOLD_TOKENS = 4,096, but the tests use prose far above and below it, so no test pins the value"
+        },
+        {
+          "clause": "floor 500",
+          "tests": [],
+          "gap": "the threshold is not configurable, so there is no floor to enforce or test"
+        },
+        {
+          "clause": "and its gate",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/tests.rs",
+              "name": "sessions_are_extracted_automatically_only_in_auto_mode"
+            },
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/src/noesis/graph/tests.rs",
+              "name": "sessions_are_queued_after_a_teaching_turn_only_in_auto_mode"
+            }
+          ]
+        },
+        {
+          "clause": "manual by default",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/tests.rs",
+              "name": "sessions_are_extracted_automatically_only_in_auto_mode"
+            },
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/tests/noesis_off_by_default.rs",
+              "name": "g01_noesis_is_disabled_by_default"
+            }
+          ],
+          "noesis": "differs: a session is extracted automatically only with noesis.extraction.sessions = auto"
         }
       ]
     },
     {
       "id": "X3",
-      "behaviour": "extractor submissions are validated: anchors are in the batch, chain endpoints are local or existing ids",
+      "behaviour": "Extractor submissions are validated: anchors are in the batch, and chain endpoints are local or existing ids",
       "noesis_form": "same",
-      "tests": [
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/extract/tests.rs",
-          "name": "findings_outside_the_batch_or_with_unknown_endpoints_are_dropped"
+          "clause": "Extractor submissions are validated: anchors are in the batch",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/tests.rs",
+              "name": "findings_outside_the_batch_or_with_unknown_endpoints_are_dropped"
+            }
+          ]
+        },
+        {
+          "clause": "and chain endpoints are local or existing ids",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/tests.rs",
+              "name": "findings_outside_the_batch_or_with_unknown_endpoints_are_dropped"
+            }
+          ]
         }
       ]
     },
     {
       "id": "X4",
-      "behaviour": "the auditor returns links only; an unknown link creates a new node; lexical candidates per finding",
+      "behaviour": "The auditor returns links only; an unknown link creates a new node; 5 lexical candidates per finding, with paging",
       "noesis_form": "same",
-      "tests": [
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/extract/tests.rs",
-          "name": "the_auditor_links_findings_to_candidates_and_an_unknown_link_creates"
+          "clause": "The auditor returns links only",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/tests.rs",
+              "name": "the_auditor_links_findings_to_candidates_and_an_unknown_link_creates"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/prompt.rs",
+              "name": "the_auditor_sees_propositions_and_candidates_only"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/extract/prompt.rs",
-          "name": "the_auditor_sees_propositions_and_candidates_only"
+          "clause": "an unknown link creates a new node",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/tests.rs",
+              "name": "the_auditor_links_findings_to_candidates_and_an_unknown_link_creates"
+            }
+          ]
+        },
+        {
+          "clause": "5 lexical candidates per finding",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/tests.rs",
+              "name": "the_auditor_links_findings_to_candidates_and_an_unknown_link_creates"
+            }
+          ],
+          "gap": "the limit is the constant candidates::PER_FINDING = 5, but no test offers more than one candidate, so the limit of 5 is not asserted"
+        },
+        {
+          "clause": "with paging",
+          "tests": [],
+          "gap": "candidate paging is not implemented: the auditor sees at most PER_FINDING candidates, with no further page"
         }
       ]
     },
     {
       "id": "X5",
-      "behaviour": "merge: link appends, create adds; aliases and provenance unioned; chains deduplicated by key; a re-asserted chain keeps its id; premise = conclusion dropped; coverage written last",
-      "noesis_form": "same",
-      "tests": [
+      "behaviour": "Merge: link appends, create adds; aliases and provenance are unioned; chains are deduplicated by key; a re-asserted chain keeps its id; premise = conclusion is dropped; coverage is written last",
+      "noesis_form": "same, plus content-derived ids",
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/graph/tests.rs",
-          "name": "a_link_appends_and_an_unknown_link_creates"
+          "clause": "Merge: link appends, create adds",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/tests.rs",
+              "name": "a_link_appends_and_an_unknown_link_creates"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/graph/tests.rs",
-          "name": "chains_dedupe_by_key_keep_their_id_and_drop_circular_ones"
+          "clause": "aliases and provenance are unioned",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/tests.rs",
+              "name": "a_link_appends_and_an_unknown_link_creates"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/tests.rs",
+              "name": "proposition_merges_commute_across_extractions"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/graph/tests.rs",
-          "name": "the_merge_is_deterministic_under_any_input_order"
+          "clause": "chains are deduplicated by key",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/tests.rs",
+              "name": "chains_dedupe_by_key_keep_their_id_and_drop_circular_ones"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/ids.rs",
+              "name": "chain_ids_ignore_premise_order_and_repeats"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/graph/tests.rs",
-          "name": "proposition_merges_commute_across_extractions"
+          "clause": "a re-asserted chain keeps its id",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/tests.rs",
+              "name": "chains_dedupe_by_key_keep_their_id_and_drop_circular_ones"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/graph/tests.rs",
-          "name": "a_written_merge_loads_back_identically"
+          "clause": "premise = conclusion is dropped",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/tests.rs",
+              "name": "chains_dedupe_by_key_keep_their_id_and_drop_circular_ones"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/graph/ids.rs",
-          "name": "ids_depend_on_normalized_content_only"
+          "clause": "coverage is written last",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/tests.rs",
+              "name": "a_failing_unit_keeps_the_merges_before_it"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/tests.rs",
+              "name": "cancelling_mid_job_keeps_the_last_committed_merge"
+            }
+          ],
+          "noesis": "coverage is written in the merge's transaction; the tests assert no coverage row outlives a merge that did not commit"
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/graph/ids.rs",
-          "name": "chain_ids_ignore_premise_order_and_repeats"
+          "clause": "plus content-derived ids",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/ids.rs",
+              "name": "ids_depend_on_normalized_content_only"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/ids.rs",
+              "name": "chain_ids_ignore_premise_order_and_repeats"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/tests.rs",
+              "name": "the_merge_is_deterministic_under_any_input_order"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/tests.rs",
+              "name": "a_written_merge_loads_back_identically"
+            }
+          ]
         }
       ]
     },
     {
       "id": "X6",
-      "behaviour": "chain simplification rules and their tie-break order",
+      "behaviour": "Chain simplification rules and their tie-break order",
       "noesis_form": "same",
-      "tests": [
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/graph/tests.rs",
-          "name": "simplification_drops_supersets_and_shortcuts_covered_by_ancestry"
+          "clause": "Chain simplification rules",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/tests.rs",
+              "name": "simplification_drops_supersets_and_shortcuts_covered_by_ancestry"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/graph/tests.rs",
-          "name": "of_two_chains_that_cover_each_other_one_survives"
+          "clause": "and their tie-break order",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/tests.rs",
+              "name": "of_two_chains_that_cover_each_other_one_survives"
+            }
+          ]
         }
       ]
     },
     {
       "id": "X7",
-      "behaviour": "snapshot: junctions only for multi-premise chains; clusters by birth session; dangling chains dropped",
+      "behaviour": "Snapshot: junctions only for multi-premise chains; clusters by birth session (≥ 3); dangling chains dropped",
       "noesis_form": "same",
-      "tests": [
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/graph/tests.rs",
-          "name": "a_snapshot_filters_drops_dangling_chains_and_clusters_by_birth_session"
+          "clause": "Snapshot: junctions only for multi-premise chains",
+          "tests": [],
+          "gap": "no code under crates/ builds junction nodes and no test asserts them; the snapshot returns chains with their premise sets"
+        },
+        {
+          "clause": "clusters by birth session (≥ 3)",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/tests.rs",
+              "name": "a_snapshot_filters_drops_dangling_chains_and_clusters_by_birth_session"
+            }
+          ]
+        },
+        {
+          "clause": "dangling chains dropped",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/tests.rs",
+              "name": "a_snapshot_filters_drops_dangling_chains_and_clusters_by_birth_session"
+            }
+          ]
         }
       ]
     },
     {
       "id": "X8",
-      "behaviour": "notes import: whole file, stable source identity, partial outcomes, bounded size",
-      "noesis_form": "differs: through noesis_import_source over an Aether artifact",
-      "tests": [
+      "behaviour": "Notes import: whole file, stable source identity, partial outcomes, 3 in flight, 25 MiB limit",
+      "noesis_form": "via `noesis_import_source` (artifact)",
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/extract/tests.rs",
-          "name": "a_source_job_reads_its_chunks_fenced_as_data"
+          "clause": "Notes import: whole file",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/batch.rs",
+              "name": "chunks_keep_paragraphs_whole_and_are_stable"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/tests.rs",
+              "name": "a_source_job_reads_its_chunks_fenced_as_data"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/extract/tests.rs",
-          "name": "a_failing_unit_keeps_the_merges_before_it"
+          "clause": "stable source identity",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/ids.rs",
+              "name": "fingerprints_are_sha256_hex"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/batch.rs",
+              "name": "chunks_keep_paragraphs_whole_and_are_stable"
+            }
+          ],
+          "gap": "source ids derive from the text (ids::source_id), but no test imports the same text twice through noesis_import_source and asserts one source"
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/extract/batch.rs",
-          "name": "chunks_keep_paragraphs_whole_and_are_stable"
+          "clause": "partial outcomes",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/extract/tests.rs",
+              "name": "a_failing_unit_keeps_the_merges_before_it"
+            }
+          ],
+          "noesis": "a failing unit keeps the merges committed before it; the test runs a session job, which shares the pipeline with source jobs"
         },
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/src/noesis/graph/tests.rs",
-          "name": "a_blank_import_name_is_refused_before_anything_is_stored"
+          "clause": "3 in flight",
+          "tests": [],
+          "gap": "no import-specific limit of 3 exists: source jobs share noesis.concurrency.background (default 1), whose cap jobs_run_within_the_background_cap tests"
         },
         {
-          "crate": "aether-daemon",
-          "file": "crates/aether-daemon/src/noesis/graph/tests.rs",
-          "name": "a_live_job_holds_its_source_until_it_is_cancelled"
+          "clause": "25 MiB limit",
+          "tests": [],
+          "gap": "MAX_SOURCE_BYTES is 25 MiB in crates/aether-daemon/src/noesis/graph/jobs.rs, but no test imports an artifact over the limit"
+        },
+        {
+          "clause": "via `noesis_import_source` (artifact)",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/src/noesis/graph/tests.rs",
+              "name": "a_spent_background_budget_fails_an_import_s_job_before_any_model_call"
+            }
+          ]
         }
       ]
     },
     {
       "id": "X9",
-      "behaviour": "deletion: a node cascades to its chains; session deletion preserves or deletes the graph; a source deletion keeps nodes supported elsewhere",
+      "behaviour": "Deletion: a node cascades to its chains; session deletion preserves or deletes the graph; a source deletion keeps nodes supported elsewhere",
       "noesis_form": "same",
-      "tests": [
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/graph/tests.rs",
-          "name": "deleting_a_proposition_takes_its_chains"
+          "clause": "Deletion: a node cascades to its chains",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/tests.rs",
+              "name": "deleting_a_proposition_takes_its_chains"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/store/tests.rs",
+              "name": "deleting_a_proposition_takes_its_chains_and_a_session_its_rows"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/graph/tests.rs",
-          "name": "deleting_a_source_keeps_what_is_supported_elsewhere"
+          "clause": "session deletion preserves or deletes the graph",
+          "tests": [
+            {
+              "crate": "aether-daemon",
+              "file": "crates/aether-daemon/src/noesis/teaching_tests.rs",
+              "name": "delete_removes_the_rows_and_the_bundle_and_keeps_the_transcript"
+            }
+          ],
+          "gap": "graph = preserve deletes the session but no test asserts its graph rows survive; graph = delete_nodes is refused as unimplemented, which that test asserts"
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/graph/tests.rs",
-          "name": "preserving_a_deleted_source_keeps_the_graph"
-        },
-        {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/store/tests.rs",
-          "name": "deleting_a_proposition_takes_its_chains_and_a_session_its_rows"
+          "clause": "a source deletion keeps nodes supported elsewhere",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/tests.rs",
+              "name": "deleting_a_source_keeps_what_is_supported_elsewhere"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/tests.rs",
+              "name": "preserving_a_deleted_source_keeps_the_graph"
+            }
+          ]
         }
       ]
     },
     {
       "id": "X10",
-      "behaviour": "store versioning: a newer version is refused",
-      "noesis_form": "differs: SQLite migrations; a newer schema is refused",
-      "tests": [
+      "behaviour": "Store versioning: a newer version is refused",
+      "noesis_form": "SQLite migrations; newer schema refused",
+      "clauses": [
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/store/tests.rs",
-          "name": "a_store_from_a_newer_binary_is_refused"
+          "clause": "Store versioning: a newer version is refused",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/store/tests.rs",
+              "name": "a_store_from_a_newer_binary_is_refused"
+            }
+          ]
         },
         {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/store/tests.rs",
-          "name": "an_n1_store_upgrades_to_the_latest_keeping_its_rows"
-        },
-        {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/store/tests.rs",
-          "name": "an_n2_store_upgrades_to_n3_keeping_every_row"
-        },
-        {
-          "crate": "aether-noesis",
-          "file": "crates/aether-noesis/src/store/tests.rs",
-          "name": "a_failed_migration_leaves_the_store_unversioned"
+          "clause": "SQLite migrations",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/store/tests.rs",
+              "name": "an_n1_store_upgrades_to_the_latest_keeping_its_rows"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/store/tests.rs",
+              "name": "an_n2_store_upgrades_to_n3_keeping_every_row"
+            },
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/store/tests.rs",
+              "name": "a_failed_migration_leaves_the_store_unversioned"
+            }
+          ]
         }
       ]
     }

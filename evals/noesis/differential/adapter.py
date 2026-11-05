@@ -18,6 +18,8 @@ ASSUMPTIONS (override by editing ENDPOINTS or setting the environment variables)
       (each with "valid"), plan_attempts (each with "valid" and "problems",
       problem names from compare vocabulary), and graph with statements and
       premise_sets (conclusion plus premises, as statements).
+  A6. The app's processes stay in the launcher's process group. stop() signals
+      that group, so a child that starts its own session would escape it.
 If a reply lacks a field named above, AdapterError says which assumption broke.
 """
 import json
@@ -39,6 +41,9 @@ ENDPOINTS = {
 CHECKOUT_MARKERS = ("package.json", "pyproject.toml", "requirements.txt")
 READY_TIMEOUT_SECONDS = 60
 REQUEST_TIMEOUT_SECONDS = 120
+STOP_GRACE_SECONDS = 15
+KILL_WAIT_SECONDS = 5
+GROUP_POLL_SECONDS = 0.05
 
 
 class AdapterError(Exception):
@@ -84,11 +89,16 @@ class UpstreamApp:
         self.base = f"http://127.0.0.1:{self.port}"
         self._home = tempfile.TemporaryDirectory(prefix="noesis-diff-")
         self._proc = None
+        self._pgid = None
 
     def start(self):
+        """Launch in a new session, so the launcher and every child share one recorded process group."""
+        assert self._proc is None, "an app is started once"
         env = dict(os.environ, HOME=self._home.name, PORT=str(self.port))
         self._proc = subprocess.Popen(start_command(), cwd=self.checkout, env=env, start_new_session=True,
                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self._pgid = os.getpgid(self._proc.pid)
+        assert self._pgid == self._proc.pid, "the launcher leads its own process group"
         self._wait_ready()
 
     def _wait_ready(self):
@@ -106,10 +116,12 @@ class UpstreamApp:
         raise AdapterError(f"the app did not listen on {self.base} within {READY_TIMEOUT_SECONDS}s (assumption A1/A2)")
 
     def stop(self):
-        if self._proc is not None and self._proc.poll() is None:
-            os.killpg(self._proc.pid, signal.SIGTERM)
-            self._proc.wait(timeout=15)
-        self._home.cleanup()
+        """Stop the recorded process group even if the launcher already exited; always drop the temp HOME."""
+        try:
+            if self._pgid is not None:
+                stop_group(self._pgid, self._proc)
+        finally:
+            self._home.cleanup()
 
     def configure(self):
         body = {"base_url": self.model_url, "model": "faux", "api_key": ""}
@@ -122,6 +134,38 @@ class UpstreamApp:
         for text in messages:
             http_json("POST", self.base + ENDPOINTS["message"].format(id=created["id"]), {"text": text})
         return http_json("GET", self.base + ENDPOINTS["state"].format(id=created["id"]))
+
+
+def _signal_group(pgid, sig):
+    """Send `sig` to the group; False once no member is left. Signal 0 only probes."""
+    try:
+        os.killpg(pgid, sig)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _group_gone(pgid, leader, seconds):
+    """Reap the leader and poll until the group has no member, or `seconds` pass."""
+    deadline = time.monotonic() + seconds
+    while True:
+        leader.poll()
+        if not _signal_group(pgid, 0):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(GROUP_POLL_SECONDS)
+
+
+def stop_group(pgid, leader):
+    """SIGTERM the launcher's group, wait a bounded time, then SIGKILL it. Never matches by name."""
+    assert pgid > 1, f"refusing to signal process group {pgid}"
+    assert leader is not None and leader.pid == pgid, "only the launcher's own group is signalled"
+    if _signal_group(pgid, signal.SIGTERM) and not _group_gone(pgid, leader, STOP_GRACE_SECONDS):
+        _signal_group(pgid, signal.SIGKILL)
+        if not _group_gone(pgid, leader, KILL_WAIT_SECONDS):
+            raise AdapterError(f"process group {pgid} still has members {KILL_WAIT_SECONDS}s after SIGKILL")
+    leader.poll()
 
 
 def trace_from_state(state):

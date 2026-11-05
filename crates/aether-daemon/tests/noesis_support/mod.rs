@@ -90,15 +90,14 @@ impl Home {
 
     /// Enabled on the faux model, with no disable grace so a disable ends at once.
     pub async fn enable(&mut self) -> Value {
-        let status = self
-            .configure(json!({
-                "enabled": true,
-                "models": {"strong": MODEL, "cheap": MODEL},
-                "billing": {"allow_api": true},
-                "disable": {"grace_seconds": 0},
-            }))
-            .await;
+        self.enable_with_grace(0).await
+    }
+
+    /// Enabled on the faux model, a disable letting a turn finish for `grace` seconds.
+    pub async fn enable_with_grace(&mut self, grace: u32) -> Value {
+        let status = self.configure(enable_patch(grace)).await;
         assert_eq!(status["enabled"], true, "{status}");
+        assert_eq!(status["disable_policy"]["grace_seconds"], grace, "{status}");
         status
     }
 
@@ -174,12 +173,71 @@ impl Home {
     }
 }
 
-/// Whether this process (the daemon runs in it) holds `path` open.
+/// The patch that turns Noesis on over the faux model.
+pub fn enable_patch(grace: u32) -> Value {
+    json!({
+        "enabled": true,
+        "models": {"strong": MODEL, "cheap": MODEL},
+        "billing": {"allow_api": true},
+        "disable": {"grace_seconds": grace},
+    })
+}
+
+/// Wait until this process no longer holds `path` open; how long that took.
+pub async fn await_closed(path: &Path, within: Duration) -> Duration {
+    let started = std::time::Instant::now();
+    while holds_open(path) {
+        assert!(
+            started.elapsed() < within,
+            "{} is still open after {within:?}",
+            path.display()
+        );
+        tokio::time::sleep(POLL).await;
+    }
+    started.elapsed()
+}
+
+/// Whether this process (the daemon runs in it) holds `path`, or a file
+/// beside it that starts with its name (a SQLite sidecar), open.
 pub fn holds_open(path: &Path) -> bool {
+    let dir = path.parent().expect("a file in a directory");
+    let dir = std::fs::canonicalize(dir).expect("the data dir exists");
+    let prefix = dir.join(path.file_name().expect("a file name"));
+    let prefix = prefix.to_string_lossy();
+    let open = open_files();
+    assert!(!open.is_empty(), "a running test process has files open");
+    open.iter()
+        .any(|target| target.to_string_lossy().starts_with(&*prefix))
+}
+
+#[cfg(target_os = "linux")]
+fn open_files() -> Vec<PathBuf> {
     let fds = std::fs::read_dir("/proc/self/fd").expect("this process's fds");
+    // An fd closed between listing and reading is no longer open.
     fds.filter_map(Result::ok)
         .filter_map(|fd| std::fs::read_link(fd.path()).ok())
-        .any(|target| target.starts_with(path))
+        .collect()
+}
+
+/// No procfs here (macOS): `lsof` lists the names this process holds open.
+#[cfg(not(target_os = "linux"))]
+fn open_files() -> Vec<PathBuf> {
+    let pid = std::process::id().to_string();
+    let listed = std::process::Command::new("lsof")
+        .args(["-n", "-P", "-Fn", "-p", pid.as_str()])
+        .output()
+        .expect("lsof lists this process's open files");
+    assert!(
+        listed.status.success(),
+        "lsof failed: {}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    let names = String::from_utf8_lossy(&listed.stdout).into_owned();
+    names
+        .lines()
+        .filter_map(|line| line.strip_prefix('n'))
+        .map(PathBuf::from)
+        .collect()
 }
 
 /// `noesis.db` is neither on disk nor open.

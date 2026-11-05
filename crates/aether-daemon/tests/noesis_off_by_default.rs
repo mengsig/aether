@@ -323,6 +323,55 @@ async fn g09_enabling_writes_first_then_opens_noesis_db() {
     );
 }
 
+/// The config dir made read-only for as long as this lives, so a write fails.
+struct ReadOnly(std::path::PathBuf);
+
+impl ReadOnly {
+    fn new(dir: std::path::PathBuf) -> ReadOnly {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500))
+            .expect("lock the config dir");
+        assert!(
+            std::fs::File::create(dir.join("probe")).is_err(),
+            "the config dir refuses writes"
+        );
+        ReadOnly(dir)
+    }
+}
+
+impl Drop for ReadOnly {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700))
+            .expect("unlock the config dir");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn g09_an_enable_whose_config_write_fails_starts_nothing() {
+    let mut home = Home::start("").await;
+    let before = home.config_toml();
+    let locked = ReadOnly::new(home.host.daemon.config_dir());
+    let patch = noesis_support::enable_patch(0);
+    let refused = home
+        .err(json!({"cmd": "noesis_configure", "patch": patch}))
+        .await;
+    drop(locked);
+    assert!(
+        refused["code"].is_string(),
+        "the failed write is reported: {refused}"
+    );
+    assert_eq!(home.config_toml(), before, "nothing was written");
+    assert_no_noesis_db(&home, "after an enable whose write failed");
+    let status = home.ok(json!({"cmd": "noesis_status"})).await;
+    assert_eq!(status["enabled"], false, "{status}");
+    assert_eq!(status["effective"]["enabled"], false, "{status}");
+    let read = home.err(json!({"cmd": "noesis_list_sessions"})).await;
+    assert_noesis_disabled(&read, "a command after the failed enable");
+    tokio::time::sleep(QUIET).await;
+    assert!(home.model.requests().is_empty(), "nothing called a model");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn g13_switches_are_effective_only_with_their_prerequisites() {
     let mut home = Home::start("").await;

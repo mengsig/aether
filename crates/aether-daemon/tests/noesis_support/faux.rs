@@ -10,6 +10,7 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Notify;
 
 /// What the faux model answers once no scripted reply is left.
 pub const FALLBACK_TEXT: &str = "Faux model reply.";
@@ -27,9 +28,15 @@ pub enum Reply {
     },
 }
 
+/// A scripted reply, sent at once or only after its gate is opened.
+struct Scripted {
+    reply: Reply,
+    gate: Option<Arc<Notify>>,
+}
+
 #[derive(Default)]
 struct State {
-    script: VecDeque<Reply>,
+    script: VecDeque<Scripted>,
     requests: Vec<Value>,
 }
 
@@ -72,7 +79,22 @@ impl FauxModel {
     }
 
     pub fn push(&self, reply: Reply) {
-        self.state.lock().script.push_back(reply);
+        self.state
+            .lock()
+            .script
+            .push_back(Scripted { reply, gate: None });
+    }
+
+    /// Script `reply`, held in flight until the returned gate is opened with
+    /// `notify_one`; a gate never opened holds the call until the caller hangs up.
+    pub fn hold(&self, reply: Reply) -> Arc<Notify> {
+        let gate = Arc::new(Notify::new());
+        let scripted = Scripted {
+            reply,
+            gate: Some(gate.clone()),
+        };
+        self.state.lock().script.push_back(scripted);
+        gate
     }
 
     pub fn text(&self, text: &str) {
@@ -126,12 +148,18 @@ async fn serve(stream: TcpStream, state: Arc<Mutex<State>>) {
         }
         ("POST", "/v1/chat/completions") => {
             let request: Value = serde_json::from_slice(&body).expect("a JSON request body");
-            let reply = {
+            let scripted = {
                 let mut state = state.lock();
                 state.requests.push(request.clone());
                 state.script.pop_front()
             };
-            let reply = reply.unwrap_or_else(|| Reply::Text(FALLBACK_TEXT.into()));
+            let Scripted { reply, gate } = scripted.unwrap_or(Scripted {
+                reply: Reply::Text(FALLBACK_TEXT.into()),
+                gate: None,
+            });
+            if let Some(gate) = gate {
+                gate.notified().await;
+            }
             sse_response(request["model"].as_str().unwrap_or("mock-1"), &reply)
         }
         _ => "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
