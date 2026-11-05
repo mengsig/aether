@@ -11,10 +11,16 @@ const BOUND: Duration = Duration::from_millis(400);
 
 /// One step of a scripted launch.
 enum Step {
-    Send(EngineEvent),
+    Send(Box<EngineEvent>),
     Sleep(Duration),
     /// Hold the stream open, silent, until the runtime stops the process.
     Hang,
+    /// Like `Hang`, then take this long to exit once stopped.
+    HangThenLinger(Duration),
+}
+
+fn send(event: EngineEvent) -> Step {
+    Step::Send(Box::new(event))
 }
 
 /// Runs one script per launch. It takes steered input and never answers it,
@@ -22,6 +28,9 @@ enum Step {
 struct BoundEngine {
     runs: Mutex<VecDeque<Vec<Step>>>,
     prompts: Mutex<Vec<String>>,
+    /// When each launch started, and when each one's stream closed.
+    launched: Mutex<Vec<Instant>>,
+    closed: Arc<Mutex<Vec<Instant>>>,
 }
 
 #[async_trait::async_trait]
@@ -42,26 +51,34 @@ impl Engine for BoundEngine {
         let (tx, rx) = mpsc::channel(64);
         let (input, mut steered) = mpsc::channel(8);
         self.prompts.lock().unwrap().push(turn.prompt);
+        self.launched.lock().unwrap().push(Instant::now());
+        let closed = self.closed.clone();
         let steps = self
             .runs
             .lock()
             .unwrap()
             .pop_front()
-            .unwrap_or_else(|| answered("unscripted").into_iter().map(Step::Send).collect());
+            .unwrap_or_else(|| answered("unscripted").into_iter().map(send).collect());
         tokio::spawn(async move {
             // Read and dropped: the engine never acknowledges what it is handed.
             tokio::spawn(async move { while steered.recv().await.is_some() {} });
             for step in steps {
                 match step {
                     Step::Send(event) => {
-                        if tx.send(event).await.is_err() {
-                            return;
+                        if tx.send(*event).await.is_err() {
+                            break;
                         }
                     }
                     Step::Sleep(pause) => tokio::time::sleep(pause).await,
                     Step::Hang => cancel.cancelled().await,
+                    Step::HangThenLinger(exit) => {
+                        cancel.cancelled().await;
+                        tokio::time::sleep(exit).await;
+                    }
                 }
             }
+            drop(tx);
+            closed.lock().unwrap().push(Instant::now());
         });
         Ok(EngineRun {
             events: rx,
@@ -76,6 +93,8 @@ async fn bounded(runs: Vec<Vec<Step>>) -> (Harness, Arc<BoundEngine>, AgentId) {
     let engine = Arc::new(BoundEngine {
         runs: Mutex::new(runs.into()),
         prompts: Mutex::default(),
+        launched: Mutex::default(),
+        closed: Arc::default(),
     });
     let h = harness_with_engine_config(engine.clone(), |config| {
         config.tool_call_bound = BOUND;
@@ -129,16 +148,12 @@ fn job(id: &str, running: bool) -> EngineEvent {
 }
 
 fn hung(call: &str) -> Vec<Step> {
-    vec![
-        Step::Send(session("s")),
-        Step::Send(tool_use(call, "Bash")),
-        Step::Hang,
-    ]
+    vec![send(session("s")), send(tool_use(call, "Bash")), Step::Hang]
 }
 
 /// A launch that runs `steps` and then answers `text`.
 fn then_answers(mut steps: Vec<Step>, text: &str) -> Vec<Step> {
-    steps.extend(answered(text).into_iter().map(Step::Send));
+    steps.extend(answered(text).into_iter().map(send));
     steps
 }
 
@@ -259,23 +274,46 @@ async fn a_turn_that_hangs_again_on_its_own_wake_waits_for_a_message() {
 }
 
 #[tokio::test]
+async fn the_fresh_turn_starts_only_once_the_stopped_engine_has_exited() {
+    let linger = Duration::from_millis(600);
+    let stuck = vec![
+        send(session("s")),
+        send(tool_use("hung", "Bash")),
+        Step::HangThenLinger(linger),
+    ];
+    let (h, engine, id) = bounded(vec![stuck, then_answers(Vec::new(), "recovered")]).await;
+    h.runtime
+        .send_message(id, vec![ContentBlock::text("run the build")], Actor::user())
+        .unwrap();
+    turn_count_settles(&h, id, 2).await;
+    assert_eq!(overdue(&h, id).len(), 1);
+    let launched = engine.launched.lock().unwrap().clone();
+    let closed = engine.closed.lock().unwrap().clone();
+    assert_eq!(launched.len(), 2, "{launched:?}");
+    assert!(
+        closed[0] <= launched[1],
+        "the wake's turn launched {:?} before the stopped engine exited",
+        closed[0] - launched[1]
+    );
+    assert!(closed[0] - launched[0] >= BOUND + linger);
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_long_call_the_engine_shows_life_for_is_not_cut() {
     let progress = || {
-        Step::Send(EngineEvent::Assistant {
+        send(EngineEvent::Assistant {
             content: vec![ContentBlock::text("subagent: still building")],
             usage: None,
             model: None,
         })
     };
-    let mut steps = vec![
-        Step::Send(session("s")),
-        Step::Send(tool_use("long", "Agent")),
-    ];
-    for _ in 0..6 {
-        steps.push(Step::Sleep(BOUND / 2));
+    let mut steps = vec![send(session("s")), send(tool_use("long", "Agent"))];
+    for _ in 0..12 {
+        steps.push(Step::Sleep(BOUND / 4));
         steps.push(progress());
     }
-    steps.push(Step::Send(result("long")));
+    steps.push(send(result("long")));
     let (h, engine, id) = bounded(vec![then_answers(steps, "built")]).await;
     let started = Instant::now();
     engine_turn(&h, id, "run the build").await;
@@ -297,12 +335,12 @@ async fn a_long_call_the_engine_shows_life_for_is_not_cut() {
 #[tokio::test]
 async fn a_background_job_past_the_bound_is_not_cut() {
     let steps = vec![
-        Step::Send(session("s")),
-        Step::Send(tool_use("launch", "Bash")),
-        Step::Send(job("build", true)),
-        Step::Send(result("launch")),
+        send(session("s")),
+        send(tool_use("launch", "Bash")),
+        send(job("build", true)),
+        send(result("launch")),
         Step::Sleep(BOUND * 2),
-        Step::Send(job("build", false)),
+        send(job("build", false)),
     ];
     let (h, engine, id) = bounded(vec![then_answers(steps, "built")]).await;
     engine_turn(&h, id, "run the build").await;
@@ -315,12 +353,12 @@ async fn a_background_job_past_the_bound_is_not_cut() {
 async fn a_command_the_engine_reports_live_past_the_bound_is_not_cut() {
     // Codex's shape: a command is a live process under its call's own id.
     let steps = vec![
-        Step::Send(session("s")),
-        Step::Send(job("cmd", true)),
-        Step::Send(tool_use("cmd", "Bash")),
+        send(session("s")),
+        send(job("cmd", true)),
+        send(tool_use("cmd", "Bash")),
         Step::Sleep(BOUND * 2),
-        Step::Send(result("cmd")),
-        Step::Send(job("cmd", false)),
+        send(result("cmd")),
+        send(job("cmd", false)),
     ];
     let (h, engine, id) = bounded(vec![then_answers(steps, "built")]).await;
     engine_turn(&h, id, "run the build").await;

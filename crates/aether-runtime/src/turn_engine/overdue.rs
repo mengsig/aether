@@ -95,3 +95,22 @@ fn ran_on_own_wake(runtime: &Runtime, ctx: &TurnCtx) -> Result<bool> {
         |item| matches!(&item.kind, InboxKind::Wake { reason } if reason.starts_with(WAKE_OPENING)),
     ))
 }
+
+/// The outcome a stopped turn ends with once its engine is reaped: the
+/// bound's reason, unless the engine named an exhausted provider on its way out.
+pub(super) fn keep_reason(outcome: &mut EngineOutcome, reason: String) {
+    debug_assert!(
+        !reason.is_empty(),
+        "the bound always says why it stopped the turn"
+    );
+    outcome.is_error = true;
+    outcome.interrupted = true;
+    if outcome
+        .error
+        .as_deref()
+        .is_some_and(super::names_exhaustion)
+    {
+        return;
+    }
+    outcome.error = Some(reason);
+}

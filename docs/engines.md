@@ -1031,8 +1031,10 @@ bounds it. Once a call has gone the longest foreground command plus a 5-minute
 grace (15 minutes in all) without a result, and the engine has shown no sign
 of life over that time, Aether stops the engine and ends the turn interrupted.
 A sign of life is anything that restarts the stall watchdog above, such as a
-model message, a subagent's message, a tool result, a bridge request or a
-background task report.
+model message, a tool result, a bridge request or a background task report.
+The turn ends once the engine process has exited, within the same 5-second
+reap a harness stop allows, so the next turn never resumes a session still
+being killed. Bridge calls made in that window are refused.
 
 The stop records an `agent.tool_call_overdue` event. Its fields are `agent`,
 `engine`, `tool`, `call`, `outstanding_secs`, `silent_secs`, `bound_secs` and
@@ -1053,6 +1055,8 @@ Some long calls are not bounded:
   as Codex reports its commands.
 - A call Aether holds open itself: a `wait_for`, a question, an approval, or a
   harness action winding the turn down.
+- A tool Aether serves itself through the bridge, which keeps that tool's own
+  timeout.
 
 ### Running agents with no turn
 
