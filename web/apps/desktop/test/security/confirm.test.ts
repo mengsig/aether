@@ -149,3 +149,23 @@ test("archon merge and unblock confirm the item and send its exact frame", async
     assert.equal(plan.delivery.kind === "frame" && plan.delivery.text, JSON.stringify({ cmd, item: ITEM, req: 2 }));
   }
 });
+
+test("the app's archond connections greet as archon-web, and only main's confirmed actions as archon-cli", async () => {
+  const recorded = recordingLink({});
+  Object.assign(recorded.link, { isOpen: true });
+  const bridge = new Bridge(VALIDATOR, fakeHost(recorded, [], true));
+  const conn = await bridge.handle(APP_SENDER, 7, "connect", ["archon:local"]) as string;
+  const hello = (client: string) => ({ cmd: "hello", req: 1, protocol_version: 24, client, client_version: "0.0.0" });
+  for (const client of ["archon-cli", "archon-mcp", "archon-bench"]) {
+    for (const method of ["request", "subscribe"]) {
+      await assert.rejects(bridge.handle(APP_SENDER, 7, method, [conn, hello(client)]), /greets archond as archon-web/);
+    }
+  }
+  assert.deepEqual(recorded.written, [], "no refused hello reaches archond");
+  await bridge.handle(APP_SENDER, 7, "request", [conn, hello("archon-web")]);
+  assert.equal(JSON.parse(recorded.written[0] ?? "{}").client, "archon-web");
+  await bridge.handle(APP_SENDER, 7, "privileged", [{ kind: "archon.operator_change", conn, request: "merge", item: ITEM }]);
+  const control = recorded.written.slice(1).map((text) => JSON.parse(text) as Frame);
+  assert.deepEqual(control.map((frame) => frame.cmd), ["hello", "merge_item"]);
+  assert.equal(control[0]?.client, "archon-cli", "main's own control link keeps the CLI's standing");
+});

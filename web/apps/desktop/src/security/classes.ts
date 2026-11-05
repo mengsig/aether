@@ -64,6 +64,9 @@ export const ARCHON_PASS: ReadonlySet<string> = new Set([
   "link_issue", "unlink_issue", "import_issue",
 ]);
 
+/** The only client the app window's own connections may declare to archond. */
+export const ARCHON_APP_CLIENT = "archon-web";
+
 type Frame = Readonly<Record<string, unknown>>;
 type AetherClass = "observe" | "operate" | "host_only" | "remote_admin" | "device_self";
 
@@ -139,6 +142,11 @@ export function passThroughRefusal(kind: DaemonKind, frame: Frame): string | und
 
 function archonRefusal(cmd: string, frame: Frame): string | undefined {
   if (!ARCHON_PASS.has(cmd)) return `${cmd} is not open to the desktop app's requests`;
+  // archond takes a connection's standing from the client its hello declares, so the app's own
+  // connections greet only as the web app; CLI standing stays with main's confirmed actions.
+  if (cmd === "hello" && frame.client !== ARCHON_APP_CLIENT) {
+    return `the desktop app greets archond as ${ARCHON_APP_CLIENT}, not ${String(frame.client).slice(0, 32)}`;
+  }
   if ((cmd === "pause" || cmd === "resume") && frame.hard === true) return `${cmd} with hard is for the archon CLI`;
   return undefined;
 }

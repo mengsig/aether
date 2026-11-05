@@ -30,6 +30,7 @@ The Archon side is audited separately, in the Archon repository's own
 | Id | Severity | Area | Status |
 | --- | --- | --- | --- |
 | H3-A1 | high | Noesis / remote | Fixed in this change: `noesis_import_source` masks the artifact as `read_artifact` does |
+| H3-X1 | high | Electron / Archon bridge | Fixed in this change: the app's own archond connections may greet only as `archon-web` |
 | H3-A2 | low | Remote docs | Fixed in this change: the matrix in `docs/remote.md` now lists all 134 commands, enforced by a test |
 | H3-L1 | low | Electron | Follow-up |
 | H3-L2 | low | Electron | Follow-up |
@@ -44,8 +45,11 @@ The Archon side is audited separately, in the Archon repository's own
 | H3-L11 | low | Noesis tests | Follow-up |
 | H3-L12 | low | Noesis frontend | Follow-up |
 | H3-L13 | low | Noesis settings | Follow-up (spec question) |
+| H3-X2 | low | Electron / Archon bridge | Follow-up (needs Archon to publish request classes) |
 
-No medium finding was found. No high finding is open.
+H3-X1 and H3-X2 were found by the Archon side's audit (mengsig/archon#378,
+`f6d127ed`, "For the other repository") and routed here. No medium finding
+was found. No high finding is open.
 
 ### H3-A1 (high, fixed): an imported source bypassed artifact masking
 
@@ -67,7 +71,9 @@ provider also receives it.
 
 **Fix.** `read_source` takes the runtime's redactor and returns the masked
 text. `StoreCorpus` carries the redactor too, so the source ID derivation, the
-worker's prompt and the task objective all see only masked text.
+worker's prompt and the task objective all see only masked text. Two sources
+that differ only in a masked secret now derive the same text, and so the same
+source ID; that is intended.
 
 **Test.** `noesis::graph::tests::an_imported_source_reaches_its_extractor_masked_as_read_artifact_shows_it`.
 It publishes a token and imports it. It then asserts two things: the
@@ -93,6 +99,46 @@ not.
 reads the matrix and requires one row per fixture case of
 `authz/command_cases.json`, with the same class.
 
+### H3-X1 (high, fixed): a renderer could declare itself the Archon CLI
+
+archond takes a connection's standing from the `client` its first `hello`
+declares (Archon `crates/archon-daemon/src/server.rs:402-437`). The renderer's
+own Archon connections are raw links: `ConnectionTable.connect` opens the
+socket, and the renderer sends its own `hello` through `request`. The shared
+frontend greets as `archon-web` (`web/packages/core/src/connection.ts:146`),
+but the bridge did not enforce it. `hello` is in `ARCHON_PASS`, and the
+vendored schema's `ClientKind` admits `archon-cli`.
+
+**Scenario.** A compromised `app://` renderer greets archond as `archon-cli`.
+It then sends a soft `{"cmd":"resume","scope":"global"}`, which passes the
+bridge's `hard` check. archond refuses to release the operator's hard pause
+only for `archon-mcp` and `archon-web` (Archon
+`crates/archon-daemon/src/handlers/control.rs:488-497`), so stage agents
+resume. That is CLI-only (`OperatorChange`) power, reached with no native
+confirmation. The renderer's changes are also recorded as `by: "cli"`.
+(`helloFrame`'s `archon-cli` greeting at `src/bridge/bridge.ts:122` is used
+only by health probes and by main's control link for confirmed `privileged`
+actions.)
+
+**Fix.** `archonRefusal` (`web/apps/desktop/src/security/classes.ts`) refuses
+any `hello` to archond whose `client` is not `ARCHON_APP_CLIENT`
+(`archon-web`). It runs for both `request` and `subscribe`. archond then
+applies its own web refusals on top of the bridge's filter. Main's control
+link still greets as `archon-cli`, because it sends only the frames main
+builds and the user confirms.
+
+**Test.** `test/security/confirm.test.ts` "the app's archond connections greet
+as archon-web, and only main's confirmed actions as archon-cli". It covers:
+
+- through the real `Bridge`, a renderer `hello` declaring `archon-cli`,
+  `archon-mcp` or `archon-bench` is refused on `request` and on `subscribe`,
+  and nothing reaches the link;
+- an `archon-web` hello is sent;
+- a confirmed `archon.operator_change` merge greets its control link as
+  `archon-cli`.
+
+Without the fix, it fails with "Missing expected rejection".
+
 ## ARCHITECTURE §c: the Electron shell
 
 Paths are under `web/apps/desktop/`. "Headless check" means a named check in
@@ -111,7 +157,7 @@ headless security check"), from `make web`.
 | c7 | `app://` serves only the bundle | ✅ | Segment allowlist and containment assertion in `src/main/app-protocol.ts:25-33`. Headless check "app:// refuses paths outside the bundle" tries `..`, `%2e%2e`, a dot file, an encoded slash and another host. |
 | c8 | Each IPC call is checked for the sender frame (top-level `app://` document) | ✅ | `checkSender` at `src/security/validate.ts:196-203`, fed by `senderOf` (`src/main/host.ts:21-28`), which requires a registered app window, the main frame and an `app://aether` URL. Headless checks "subframes get no bridge", "no IPC handler answers a remote window". |
 | c9 | Payload against the generated JSON Schema; frames ≤ 1 MiB, strings ≤ 4 KiB | ✅ | `Validator.check` (`src/security/validate.ts:87-99`) checks sizes before the sender, then re-parses the JSON form, so the bytes it validates are the bytes it sends. Frames go through `FrameSchema` against `clients/protocol.schema.json` and the vendored Archon schema (`src/security/schema.ts`). Limits at `src/security/limits.ts:4-7`. Test `validate.test.ts`; headless check "bridge refuses …" sends a 1 MiB `send_message`. |
-| c10 | Class allowlist: Aether observe/operate and Archon Read/Change (remote allowlist) pass `request`; host_only, remote_admin, OperatorRead and OperatorChange never pass; `shutdown` never sent | ✅ | `passThroughRefusal` (`src/security/classes.ts:129-144`) mirrors the field rules of `Command::access`. Test `classes.test.ts` parses `crates/aether-protocol/src/access.rs` and fails when any schema command lacks a class or a static arm differs. G3's `memory_export`, `memory_import`, `memory_feedback`, `memory_retrieval_explain` and `consolidate_memories` are host_only. `noesis_configure` follows `configure_access`. Archon `pause`/`resume` with `hard` are refused. Headless check "bridge refuses shutdown, host-only and remote-admin commands". |
+| c10 | Class allowlist: Aether observe/operate and Archon Read/Change (remote allowlist) pass `request`; host_only, remote_admin, OperatorRead and OperatorChange never pass; `shutdown` never sent | ✅ | `passThroughRefusal` (`src/security/classes.ts:129-144`) mirrors the field rules of `Command::access`. Test `classes.test.ts` parses `crates/aether-protocol/src/access.rs` and fails when any schema command lacks a class or a static arm differs. G3's `memory_export`, `memory_import`, `memory_feedback`, `memory_retrieval_explain` and `consolidate_memories` are host_only. `noesis_configure` follows `configure_access`. Archon `pause`/`resume` with `hard` are refused, and a renderer `hello` to archond must declare `archon-web` (H3-X1). Headless check "bridge refuses shutdown, host-only and remote-admin commands". |
 | c11 | Privileged actions are a closed set, local connections only; main builds the frame and the confirmation; the renderer supplies no frame and no text; confirmation is bound to the exact request | ✅ | The `PrivilegedAction` schema and the connection-kind check (`src/security/validate.ts:136-145`). `planAction` builds each frame from validated fields (`src/bridge/privileged.ts`). Templates are main's own (`src/security/confirm.ts:127-152`) and escape control, format and bidi characters (`:37`). A rendering over 60 lines is refused (`:112`). Remote settings carry `expected_revision`, so a change between confirmation and send is refused (`privileged.ts:60,66`). The confirmed text is sent on main's own control link (`src/bridge/bridge.ts:83-101`). Tests `confirm.test.ts`; headless checks "privileged action sends the confirmed frame", "privileged action refused when cancelled". See H3-L5. |
 | c12 | No raw bytes, socket path, shell command or filesystem path from the renderer; a picked path comes back as an opaque token | ✅ | `discover` returns no socket (`publicDaemon`, `src/bridge/bridge.ts:127-131`); `connect` takes a daemon id pattern (`validate.ts:50`). `pickDirectory` returns a single-use grant redeemed only in main (`src/native/folder-tokens.ts`). `engine.login` runs a fixed argv from `LOGIN_COMMANDS` (`privileged.ts:24-27`), checked as plain words in `openTerminal` (`src/main/host.ts:63-78`). |
 | c13 | Credentials never cross IPC | ✅ | No bridge method takes or returns a credential (`ARGUMENTS`, `validate.ts:47-65`). Engine logins run in a terminal. Test `credentials.test.ts`. |
@@ -173,7 +219,7 @@ headless security check"), from `make web`.
 
 | # | Check | Status | Evidence |
 | --- | --- | --- | --- |
-| n1 | Sealed fields are replaced where the call is persisted | ✅ | `seal_commit` runs in `Runtime::apply_held_by` before write and publish, and `seal_import` on import (`crates/aether-runtime/src/lib.rs`). `seal_event` and `seal_mutations` name every variant with no wildcard (`crates/aether-runtime/src/noesis_seal.rs`). `answer_key`, `explanation` and `solution` become `"<sealed>"`. Tests in `crates/aether-runtime/src/kernel/noesis_seal.rs` and `noesis_seal/tests.rs`. |
+| n1 | Sealed fields are replaced where the call is persisted | ✅ | `seal_commit` runs in `Runtime::apply_held_by` before write and publish, and `seal_import` on import (`crates/aether-runtime/src/lib.rs`). `seal_event` and `seal_mutations` name every variant with no wildcard (`crates/aether-runtime/src/noesis_seal.rs`). `answer_key`, `explanation` and `solution` become `"<sealed>"`. Tests in `crates/aether-runtime/tests/kernel/noesis_seal.rs` and `noesis_seal/tests.rs`. |
 | n2 | No `tool_input` delta for a sealed call; no thinking for Noesis agents; no sequence gap | ✅ | `StreamSeal::admits` decides before a delta is numbered (`noesis_seal.rs`, `bus.rs`). Tests `a_stream_withholds_sealed_input_and_noesis_thinking_only` and `assert_deltas_sealed_and_gapless` (`crates/aether-daemon/src/noesis/teaching_tests.rs`). Noesis teaching turns publish no deltas at all (`crates/aether-daemon/src/noesis/engine.rs`). |
 | n3 | No read before reveal | ✅ | `Question` and `Problem` have no key or solution field (`crates/aether-core/src/noesis.rs`). `QuestionResult` is built only after the answer commits. `solution` appears only in `noesis.practice_concluded`, after the conclusion commits. Tests `t11_answer_keys_are_sealed_until_the_answer_is_recorded`, `t11_the_solution_is_sealed_on_every_read_path_until_conclude_and_practice_never_writes_the_graph` (`crates/aether-noesis/src/teach/parity.rs`). |
 | n4 | Not in logs or error text | ✅ | No `tracing` call prints a tool input. Argument errors show the shape only (`crates/aether-noesis/src/tools/args.rs`). Unknown argument names are never echoed. `Sealer`'s `Debug` prints only a count. |
@@ -248,6 +294,11 @@ headless security check"), from `make web`.
   `models.*` are `operate`, as `CONTRACTS.md` §6.1 says. So an operator device
   can choose which configured provider receives session data and bundles.
   *Follow-up:* the spec owner decides whether these keys become host_only.
+- **H3-X2 (Electron / Archon bridge).** `ARCHON_PASS` is a hand copy of
+  Archon's `allow.rs` "at 9a8d63d1". Archon's schema publishes no request
+  classes, so a changed class is not caught. A new Archon command fails
+  closed. *Follow-up:* once Archon emits each command's class into
+  `protocol.schema.json`, a test diffs `ARCHON_PASS` against it.
 
 ## For the other repository
 
@@ -266,3 +317,11 @@ the parts the mount depends on were read:
 No forwarded or peer-address header is trusted (`grep -rni forwarded
 crates/archon-remote/src` prints nothing). No Archon defect was found in what
 the mount relies on. The Archon side's own audit covers the rest.
+
+That audit (mengsig/archon#378 at `f6d127ed`) routed two Aether findings
+here: H3-X1, fixed above, and H3-X2, a follow-up. Its root cause has an
+Archon half that this repository cannot fix. `ClientKind` is self-declared
+on archond's socket (Archon `crates/archon-core/src/protocol.rs:190-201`:
+"Guards against mistakes, not attacks"). So any local process that can open
+the socket has CLI standing. The bridge is now the only place where an
+`app://` renderer's declaration is pinned.
