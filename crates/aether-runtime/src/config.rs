@@ -135,6 +135,8 @@ pub struct RuntimeConfig {
     /// Optional semantic pass over memory retrieval. `None` retrieves
     /// structurally and lexically, exactly as before.
     pub memory_index: Option<Arc<dyn aether_memory::MemoryIndex>>,
+    /// Cutoff, item count and holdout of every turn's retrieval.
+    pub memory_retrieval: aether_memory::RetrievalPolicy,
     /// Hold new turns while the store's filesystem runs low. `None` never
     /// measures it.
     pub disk_guard: Option<DiskGuard>,
@@ -205,6 +207,7 @@ impl Default for RuntimeConfig {
             retention: aether_core::artifact::RetentionPolicy::default(),
             storage_paths: None,
             memory_index: None,
+            memory_retrieval: aether_memory::RetrievalPolicy::default(),
             disk_guard: None,
             redactor: aether_tools::Redactor::default(),
             store_writes_off_worker: false,

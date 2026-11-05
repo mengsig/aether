@@ -46,12 +46,13 @@ pub(crate) fn agent_temp_dir(
 }
 
 /// Memories for this turn, ranked by the task objective and the inbox about
-/// to be consumed. Shared by the API and engine paths so both see one set.
+/// to be consumed, split into what the model is shown and the holdout.
+/// Shared by the API and engine paths so both see one set.
 pub(crate) fn retrieve_memories(
     runtime: &Runtime,
     ctx: &TurnCtx,
     inbox: &[aether_core::inbox::InboxItem],
-) -> Result<Vec<aether_memory::Retrieved>> {
+) -> Result<aether_memory::Holdout> {
     let mut query = ctx
         .task
         .as_ref()
@@ -72,7 +73,7 @@ pub(crate) fn retrieve_memories(
     let ancestors = lineage(ctx.agent.id, ctx.agent.parent, |id| {
         Ok::<_, aether_store::StoreError>(runtime.store.agent(id)?.and_then(|a| a.parent))
     })?;
-    Ok(runtime.memory.retrieve(&RetrievalRequest {
+    let request = RetrievalRequest {
         scope,
         role: Some(ctx.agent.role.as_str().to_owned()),
         agent: Some(ctx.agent.id),
@@ -80,8 +81,18 @@ pub(crate) fn retrieve_memories(
         query: Some(query).filter(|q| !q.trim().is_empty()),
         tags: Vec::new(),
         kinds: Vec::new(),
-        limit: 6,
-    })?)
+        limit: runtime.memory.retrieval_policy().max_items,
+    };
+    runtime.turn_memories(&request, holdout_unit(ctx))
+}
+
+/// The holdout is drawn per task, so a memory withheld from it stays
+/// withheld for all of its turns; per agent for turns without one.
+pub(crate) fn holdout_unit(ctx: &TurnCtx) -> aether_memory::HoldoutUnit {
+    aether_memory::HoldoutUnit {
+        agent: ctx.agent.id,
+        task: ctx.task.as_ref().map(|t| t.id),
+    }
 }
 
 /// `agent`'s nearest ancestors, at most [`aether_memory::MAX_LINEAGE`], whose

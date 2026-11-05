@@ -10,11 +10,33 @@ use aether_core::memory_feedback::{
 use aether_core::snapshot::SnapshotMemories;
 use aether_core::task::Task;
 use aether_core::time::now;
+use aether_memory::{Holdout, HoldoutUnit};
 use aether_store::{Commit, EventFilter, Mutation};
 
 use crate::{Result, Runtime, RuntimeError};
 
 impl Runtime {
+    /// Retrieve for a turn and draw its holdout. Nothing is written here: the
+    /// log goes into the turn's own commit ([`Self::memory_holdout_log`]).
+    pub(crate) fn turn_memories(
+        &self,
+        request: &aether_memory::RetrievalRequest,
+        unit: HoldoutUnit,
+    ) -> Result<Holdout> {
+        debug_assert_eq!(request.agent, Some(unit.agent));
+        let retrieved = self.memory.retrieve(request)?;
+        let found = retrieved.len();
+        let split = self.memory.hold_out(retrieved, unit);
+        debug_assert_eq!(split.injected.len() + split.held_out.len(), found);
+        Ok(split)
+    }
+
+    /// What the turn withheld, as log rows for the commit that records the
+    /// turn: the withheld injection is logged exactly when the turn lands.
+    pub(crate) fn memory_holdout_log(&self, split: &Holdout, unit: HoldoutUnit) -> Vec<Mutation> {
+        self.memory.holdout_log(&split.held_out, unit, now())
+    }
+
     pub fn record_memory_feedback(
         &self,
         spec: MemoryFeedbackSpec,

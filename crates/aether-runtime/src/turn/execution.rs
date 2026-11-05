@@ -386,7 +386,7 @@ pub(super) async fn run_link(
         .unwrap_or(0);
     let transcript = runtime.store.transcript(ctx.agent.id, transcript_after)?;
     let memories = retrieve_memories(runtime, ctx, pending_inbox)?;
-    let memory_records: Vec<_> = memories.iter().map(|m| m.record.clone()).collect();
+    let memory_records: Vec<_> = memories.injected.iter().map(|m| m.record.clone()).collect();
     let notes = crate::notes::digest(runtime, ctx.agent.id)?;
     let mut tools = runtime.agent_tool_specs(&ctx.agent);
     // Task-closing tools make no sense without a task; hiding them avoids
@@ -511,10 +511,13 @@ pub(super) async fn run_link(
                 },
             }));
         }
-        if !memories.is_empty() {
+        if !memories.injected.is_empty() {
             let touched = runtime.memory.touch(&hold, &snapshot.memory_ids)?;
             commit.mutations.extend(touched.mutations);
         }
+        commit
+            .mutations
+            .extend(runtime.memory_holdout_log(&memories, holdout_unit(ctx)));
         runtime.apply_held(hold, commit)?;
     }
 

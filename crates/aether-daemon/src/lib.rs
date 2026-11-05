@@ -83,6 +83,19 @@ fn memory_index_of(
     }
 }
 
+/// `[memory.retrieval]` as the memory service reads it. The section was
+/// validated when the config loaded; the runtime checks the policy again.
+fn retrieval_policy_of(
+    section: &aether_model::config::MemoryRetrievalSection,
+) -> aether_memory::RetrievalPolicy {
+    aether_memory::RetrievalPolicy {
+        max_items: section.max_items,
+        min_score: section.min_score,
+        holdout_rate: section.holdout_rate,
+        holdout_seed: section.holdout_seed,
+    }
+}
+
 /// `0` means unbounded, not "keep nothing" - the documented reading of
 /// `retain_days` / `retain_bytes`.
 fn retention_of(
@@ -418,6 +431,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
                 logs: aether_protocol::paths::log_dir(),
             }),
             memory_index: memory_index_of(models.config().memory.index),
+            memory_retrieval: retrieval_policy_of(&models.config().memory.retrieval),
             // Resolved with the engines, after the socket answers.
             default_model: None,
             workspace_root: config.workspace_root.clone(),
@@ -1163,6 +1177,35 @@ mod tests {
         for name in aether_tools::registry::DAEMON_ENV {
             assert!(hidden.contains(&name.to_owned()), "{name} reaches a child");
         }
+    }
+
+    #[test]
+    fn the_retrieval_config_reaches_the_memory_policy_field_for_field() {
+        let section = aether_model::config::MemoryRetrievalSection::default();
+        let policy = retrieval_policy_of(&section);
+        assert!(policy.validate().is_ok());
+        assert_eq!(policy.holdout_rate, 0.05, "the daemon holds out by default");
+        let library = aether_memory::RetrievalPolicy::default();
+        assert_eq!(
+            (policy.max_items, policy.min_score),
+            (library.max_items, library.min_score)
+        );
+        let set = aether_model::config::MemoryRetrievalSection {
+            max_items: 3,
+            min_score: 0.3,
+            holdout_rate: 0.5,
+            holdout_seed: 11,
+        };
+        let policy = retrieval_policy_of(&set);
+        assert_eq!(
+            (
+                policy.max_items,
+                policy.min_score,
+                policy.holdout_rate,
+                policy.holdout_seed
+            ),
+            (3, 0.3, 0.5, 11)
+        );
     }
 
     /// `daemon_secret_env` used to read only

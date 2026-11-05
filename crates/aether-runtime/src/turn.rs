@@ -60,7 +60,7 @@ mod failure;
 mod server_compaction;
 use failure::*;
 mod context;
-pub(crate) use context::{agent_temp_dir, retrieve_memories, tool_context};
+pub(crate) use context::{agent_temp_dir, holdout_unit, retrieve_memories, tool_context};
 mod tools;
 pub(crate) use tools::ToolEffects;
 use tools::*;

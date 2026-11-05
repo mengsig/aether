@@ -25,7 +25,7 @@ fn oversized_note(h: &Harness) -> MemoryId {
         MemoryCandidate {
             scope: MemoryScope::Global,
             kind: MemoryKind::Fact,
-            text: "Unrelated archive notes about lunch menus. ".repeat(250),
+            text: "Unrelated archive notes about release lunch menus. ".repeat(250),
             structured: None,
             importance: 0.1,
             confidence: 0.1,
@@ -185,6 +185,54 @@ async fn snapshot_created_names_exactly_the_rendered_memories_in_render_order() 
         }
     }
     h.runtime.shutdown().await;
+}
+
+/// At rate 1 every unpinned memory is withheld from the model and logged
+/// once for the task, however many calls it took; at the default rate of a
+/// runtime built without config, none is.
+#[tokio::test]
+async fn a_full_holdout_withholds_every_memory_from_the_turn_and_logs_it_once() {
+    let h = harness_configured(
+        scripted_task(),
+        |_| {},
+        |config| {
+            config.memory_retrieval.holdout_rate = 1.0;
+        },
+    )
+    .await;
+    let (kept, _) = seed_memories(&h);
+    let (agent, task) = finished_task(&h, "How is a release build made and signed?").await;
+    let snapshots = announced(&h, task);
+    assert!(!snapshots.is_empty());
+    for (memories, _) in &snapshots {
+        assert!(memories.is_empty(), "held out, never shown: {memories:?}");
+    }
+    for id in &kept {
+        let logged = h.store.memory_holdouts(*id).expect("holdouts");
+        assert_eq!(logged.len(), 1, "once per task: {logged:?}");
+        assert_eq!((logged[0].agent, logged[0].task), (agent, Some(task)));
+        assert_eq!(logged[0].rate, 1.0);
+    }
+    h.runtime.shutdown().await;
+
+    let control = harness(scripted_task()).await;
+    let (kept, _) = seed_memories(&control);
+    let (_, task) = finished_task(&control, "How is a release build made and signed?").await;
+    assert!(
+        announced(&control, task)
+            .iter()
+            .all(|(m, _)| m.len() == kept.len())
+    );
+    for id in &kept {
+        assert!(
+            control
+                .store
+                .memory_holdouts(*id)
+                .expect("holdouts")
+                .is_empty()
+        );
+    }
+    control.runtime.shutdown().await;
 }
 
 /// By task: every snapshot of the task, oldest first, with the invocations

@@ -731,6 +731,7 @@ fn every_owned_config_section_rejects_unknown_keys() {
         "network",
         "scheduler",
         "memory",
+        "memory.retrieval",
         "mcp",
         "artifacts",
         "web",
@@ -974,4 +975,41 @@ fn the_noesis_table_is_kept_as_written_for_the_noesis_crate() {
     let written = toml::to_string(&config).unwrap();
     let reread: AetherConfig = toml::from_str(&written).unwrap();
     assert_eq!(reread.noesis, config.noesis);
+}
+
+#[test]
+fn memory_retrieval_defaults_to_the_contract_and_refuses_values_out_of_range() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("config.toml"), "").unwrap();
+    let defaults = load_config(dir.path()).unwrap().memory.retrieval;
+    assert_eq!(defaults, MemoryRetrievalSection::default());
+    assert_eq!((defaults.max_items, defaults.holdout_rate), (6, 0.05));
+
+    std::fs::write(
+        dir.path().join("config.toml"),
+        "[memory.retrieval]\nmin_score = 0.2\nholdout_rate = 0\nholdout_seed = 9\n",
+    )
+    .unwrap();
+    let set = load_config(dir.path()).unwrap().memory.retrieval;
+    assert_eq!(
+        (set.min_score, set.holdout_rate, set.holdout_seed),
+        (0.2, 0.0, 9)
+    );
+
+    for (line, key) in [
+        ("holdout_rate = 1.5", "holdout_rate"),
+        ("min_score = -1", "min_score"),
+        ("max_items = 0", "max_items"),
+    ] {
+        std::fs::write(
+            dir.path().join("config.toml"),
+            format!("[memory.retrieval]\n{line}\n"),
+        )
+        .unwrap();
+        let error = load_config(dir.path()).expect_err(line);
+        assert!(
+            error.reason.contains(&format!("memory.retrieval.{key}")),
+            "{error}"
+        );
+    }
 }

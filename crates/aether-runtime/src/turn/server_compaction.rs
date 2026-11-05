@@ -99,6 +99,7 @@ fn conversation(runtime: &Runtime, ctx: &TurnCtx) -> Result<Conversation> {
     let inbox = runtime.store.inbox(ctx.agent.id, ctx.agent.inbox_cursor)?;
     let pending = aether_context::render::deliverable_prefix(&inbox);
     let memories = retrieve_memories(runtime, ctx, pending)?
+        .injected
         .into_iter()
         .map(|m| m.record)
         .collect();

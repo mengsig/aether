@@ -115,7 +115,7 @@ pub(crate) async fn execute(
     // reorder and resend the layer almost every turn. Memory relevant to a later message
     // but not to the objective is not surfaced mid-session.
     let memories = crate::turn::retrieve_memories(runtime, ctx, &[])?;
-    let memory_records: Vec<_> = memories.into_iter().map(|m| m.record).collect();
+    let memory_records: Vec<_> = memories.injected.iter().map(|m| m.record.clone()).collect();
     let notes = crate::notes::digest(runtime, ctx.agent.id)?;
     let tools: Vec<ToolSpec> = runtime.engine_tool_specs(&ctx.agent);
     let adapter = engine.adapter();
@@ -234,6 +234,9 @@ pub(crate) async fn execute(
             let touched = runtime.memory.touch(&hold, &snapshot.memory_ids)?;
             commit.mutations.extend(touched.mutations);
         }
+        commit
+            .mutations
+            .extend(runtime.memory_holdout_log(&memories, crate::turn::holdout_unit(ctx)));
         runtime.apply_held(hold, commit)?;
     }
 

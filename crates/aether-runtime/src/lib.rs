@@ -439,7 +439,9 @@ impl Runtime {
         // Curation commits on its own, so it publishes as `apply` does.
         let memory = {
             let bus = bus.clone();
+            config.memory_retrieval.validate()?;
             MemoryService::new(store.clone(), commit_lock.clone())
+                .with_retrieval(config.memory_retrieval.clone())
                 .with_publisher(Arc::new(move |event| bus.publish_event(event.clone())))
         };
         let runtime = Arc::new_cyclic(|me| Self {
