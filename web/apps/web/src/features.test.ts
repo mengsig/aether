@@ -12,6 +12,7 @@ describe("feature packages", () => {
     const loaded: Record<string, readonly string[]> = {
       aether: ["./activity/routes.ts", "./agent/routes.ts", "./controls/routes.ts", "./fleet/routes.ts", "./inbox/routes.ts", "./memory/routes.ts", "./topology/routes.ts"],
       archon: ["./dag/routes.ts", "./history/routes.ts", "./initiatives/routes.ts", "./item/routes.ts", "./pipeline/routes.ts", "./queue/routes.ts"],
+      github: ["./issue/routes.ts"],
       noesis: ["./learn/routes.ts", "./understand/routes.ts"],
       settings: ["./screens/routes.ts"],
     };
@@ -21,11 +22,12 @@ describe("feature packages", () => {
       ["#/memory/:conn", "B3"], ["#/fleet/topology", "B1"],
       ["#/archon/graph", "C2"], ["#/archon/history", "C2"], ["#/archon/initiatives/:id", "C2"],
       ["#/archon/items/:item", "C1"], ["#/archon/items/:item/runs/:run", "C1"], ["#/archon/queue", "C1"],
+      ["#/github/:host/:owner/:repo/:number", "D4"],
       ["#/learn", "F5"], ["#/learn/sessions/:id", "F5"], ["#/learn/graph", "F5"], ["#/learn/me", "F5"],
       ["#/settings/*", "B3"],
     ]);
     expect(registry.actions().map((action) => [action.id, action.kind])).toEqual([
-      ["b3.agent-controls", "agent"],
+      ["b3.agent-controls", "agent"], ["d4.open-issue", "issue"], ["d4.open-pull-request", "pull_request"], ["d4.import-issue", "issue"],
       ["f6.learn-from-item", "item"], ["f6.learn-from-run", "run"], ["f6.learn-from-agent", "agent"], ["f6.learn-from-pull_request", "pull_request"],
     ]);
   });
