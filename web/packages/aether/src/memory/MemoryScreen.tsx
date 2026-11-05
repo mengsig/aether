@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useApp, useReadPermission, useReread } from "@aether-ui/core";
 import type { aether, RouteProps } from "@aether-ui/protocol";
 import { Button, EmptyState, Field, Tabs } from "@aether-ui/ui";
@@ -7,6 +7,8 @@ import { Section, StandingNotice } from "../controls/kit.tsx";
 import { CreateMemory, kinds } from "./CreateMemory.tsx";
 import { MemoryRow } from "./MemoryRow.tsx";
 import { AgentPicker, records, ReadNote } from "./shared.tsx";
+import { V2Sections } from "./V2Sections.tsx";
+import "./memory.css";
 const proposed = { cmd: "memories", query: { proposed: true } };
 export default function MemoryScreen({ params }: RouteProps) {
   const conn = params.conn ?? "";
@@ -30,7 +32,8 @@ export default function MemoryScreen({ params }: RouteProps) {
     if (permission.refusal === null) await app.reread(conn, "memory:proposals", proposed, ["memories"]);
   };
   const rows = records<aether.MemoryRecord>(entry?.value);
-  return <div className="b3-screen"><header className="b3-screen-head"><h1 className="b3-screen-title">Memory</h1>
+  const known = useMemo(() => new Map(rows.map(memory => [memory.id, memory.text])), [rows]);
+  return <div className="b3-screen mem-screen"><header className="b3-screen-head"><h1 className="b3-screen-title">Memory</h1>
     <p className="b3-screen-sub">Review what stays with your agents.</p><Button onClick={() => setOpen(true)}>Create memory</Button></header>
     <StandingNotice conn={conn} />
     <Section title="Memories"><Field label="Search memories" value={text} onChange={e => setText(e.target.value)} />
@@ -46,7 +49,7 @@ export default function MemoryScreen({ params }: RouteProps) {
       {permission.refusal ? <p role="note">{permission.refusal}</p> : <><ReadNote entry={proposals} retry={refresh} />
         {records<aether.MemoryRecord>(proposals?.value).map(memory => <MemoryRow key={memory.id} conn={conn} memory={memory} proposal refresh={refresh} />)}
         {proposals?.issued && records(proposals.value).length === 0 ? <EmptyState title="No proposals to review" /> : null}</>}
-    </Section><CreateMemory conn={conn} open={open} close={() => setOpen(false)} refresh={refresh} />
+    </Section><V2Sections conn={conn} known={known} refresh={refresh} /><CreateMemory conn={conn} open={open} close={() => setOpen(false)} refresh={refresh} />
   </div>;
 }
 

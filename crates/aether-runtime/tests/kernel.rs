@@ -211,6 +211,8 @@ mod memory_proposals;
 mod memory_scope;
 #[path = "kernel/memory_support.rs"]
 mod memory_support;
+#[path = "kernel/memory_v2.rs"]
+mod memory_v2;
 #[path = "kernel/message_fanout.rs"]
 mod message_fanout;
 #[path = "kernel/message_limits.rs"]

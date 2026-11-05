@@ -391,6 +391,7 @@ fn external_snapshot_preserves_its_task_reference() {
         params: InvocationParams::default(),
         token_estimate: 0,
         created_at: f.agent.created_at,
+        memory_retrieval: None,
     };
     f.mutate(Mutation::PutSnapshot(snapshot));
     assert_eq!(

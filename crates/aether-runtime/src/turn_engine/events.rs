@@ -902,6 +902,7 @@ mod live_accounting_tests {
             params: InvocationParams::default(),
             token_estimate: 0,
             created_at: now(),
+            memory_retrieval: None,
         };
         let commits = runtime.store.commits();
         let last_seq = runtime.store.last_seq().unwrap();

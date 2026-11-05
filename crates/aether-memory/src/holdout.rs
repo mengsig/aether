@@ -19,6 +19,8 @@ use crate::{MemoryService, Retrieved};
 pub struct Holdout {
     pub injected: Vec<Retrieved>,
     pub held_out: Vec<Retrieved>,
+    /// What retrieval did for the turn, set by the caller that ran it.
+    pub trace: Option<aether_core::memory_v2::RetrievalTrace>,
 }
 
 /// Who the draw is for: one task, or one agent's turns without a task.
@@ -48,7 +50,11 @@ impl MemoryService {
         });
         debug_assert_eq!(injected.len() + held_out.len(), found);
         debug_assert!(held_out.iter().all(|item| !item.record.pinned));
-        Holdout { injected, held_out }
+        Holdout {
+            injected,
+            held_out,
+            trace: None,
+        }
     }
 
     /// One log row per held-out memory, for the turn's own commit. A memory

@@ -82,6 +82,7 @@ from ._CheckpointId import CheckpointId
 from ._CheckpointProvenance import CheckpointProvenance
 from ._ClientFrame import ClientFrame
 from ._Cluster import Cluster
+from ._ClusterOutcomeKind import ClusterOutcomeKind
 from ._CompactionTriggerTokenThreshold import CompactionTriggerTokenThreshold
 from ._CompactionTriggerTaskBoundary import CompactionTriggerTaskBoundary
 from ._CompactionTriggerLargeToolOutput import CompactionTriggerLargeToolOutput
@@ -95,6 +96,7 @@ from ._ConceptState import ConceptState
 from ._ConceptStateKind import ConceptStateKind
 from ._ConcurrencyPatch import ConcurrencyPatch
 from ._ConcurrencySettings import ConcurrencySettings
+from ._ConsolidatedCluster import ConsolidatedCluster
 from ._ContentBlockText import ContentBlockText
 from ._ContentBlockThinking import ContentBlockThinking
 from ._ContentBlockToolUse import ContentBlockToolUse
@@ -251,6 +253,7 @@ from ._ExecutionBackendHost import ExecutionBackendHost
 from ._ExecutionBackendContainer import ExecutionBackendContainer
 from ._ExecutionBackend import ExecutionBackend
 from ._ExhaustionClass import ExhaustionClass
+from ._ExplainedTurn import ExplainedTurn
 from ._ExportSummary import ExportSummary
 from ._ExtractionPatch import ExtractionPatch
 from ._ExtractionSettings import ExtractionSettings
@@ -275,6 +278,7 @@ from ._HttpErrorBody import HttpErrorBody
 from ._HttpErrorCode import HttpErrorCode
 from ._IdempotencyKey import IdempotencyKey
 from ._ImageAttachment import ImageAttachment
+from ._ImportConflict import ImportConflict
 from ._ImportSummary import ImportSummary
 from ._InboxItem import InboxItem
 from ._InboxItemId import InboxItemId
@@ -298,6 +302,7 @@ from ._JobKind import JobKind
 from ._JobState import JobState
 from ._JobStats import JobStats
 from ._KindWrites import KindWrites
+from ._LastImport import LastImport
 from ._LayerKind import LayerKind
 from ._LayerPlacement import LayerPlacement
 from ._Lease import Lease
@@ -309,16 +314,23 @@ from ._McpServerState import McpServerState
 from ._McpToolInfo import McpToolInfo
 from ._MemoriesInContext import MemoriesInContext
 from ._MemoryCandidate import MemoryCandidate
+from ._MemoryConsolidation import MemoryConsolidation
+from ._MemoryCounts import MemoryCounts
 from ._MemoryEvidence import MemoryEvidence
+from ._MemoryExport import MemoryExport
 from ._MemoryFeedback import MemoryFeedback
 from ._MemoryFeedbackId import MemoryFeedbackId
 from ._MemoryFeedbackList import MemoryFeedbackList
 from ._MemoryId import MemoryId
+from ._MemoryImport import MemoryImport
 from ._MemoryKind import MemoryKind
+from ._MemoryMigration import MemoryMigration
+from ._MemoryMigrationStatus import MemoryMigrationStatus
 from ._MemoryProvenance import MemoryProvenance
 from ._MemoryQuerySpec import MemoryQuerySpec
 from ._MemoryRecord import MemoryRecord
 from ._MemoryRecorder import MemoryRecorder
+from ._MemoryRef import MemoryRef
 from ._MemoryScopeGlobal import MemoryScopeGlobal
 from ._MemoryScopeRepository import MemoryScopeRepository
 from ._MemoryScopeRole import MemoryScopeRole
@@ -327,11 +339,16 @@ from ._MemoryScopeRepositoryRole import MemoryScopeRepositoryRole
 from ._MemoryScopeSubtree import MemoryScopeSubtree
 from ._MemoryScope import MemoryScope
 from ._MemorySource import MemorySource
+from ._MemoryStanding import MemoryStanding
+from ._MemoryState import MemoryState
+from ._MemorySupport import MemorySupport
+from ._MemoryTier import MemoryTier
 from ._MemoryVerdict import MemoryVerdict
 from ._Message import Message
 from ._MessageDelivery import MessageDelivery
 from ._MessageId import MessageId
 from ._MessageRole import MessageRole
+from ._MigrationBackup import MigrationBackup
 from ._Milestone import Milestone
 from ._MissClass import MissClass
 from ._MissedRunPolicy import MissedRunPolicy
@@ -384,43 +401,26 @@ from ._PairingState import PairingState
 from ._PathCompletion import PathCompletion
 from ._PathCompletionKind import PathCompletionKind
 from ._PathCompletions import PathCompletions
-from ._PendingArtifactCleanup import PendingArtifactCleanup
-from ._PendingQuestion import PendingQuestion
-from ._Phase import Phase
-from ._PlanEdge import PlanEdge
-from ._PlanNode import PlanNode
-from ._PlanNodeStatus import PlanNodeStatus
-from ._PlanTree import PlanTree
-from ._PracticeOutcome import PracticeOutcome
-from ._Priority import Priority
-from ._PriorityPatch import PriorityPatch
-from ._PrioritySettings import PrioritySettings
-from ._Problem import Problem
-from ._ProblemMode import ProblemMode
-from ._PromptSettings import PromptSettings
-from ._PromptsPatch import PromptsPatch
-from ._Proposition import Proposition
-from ._Provenance import Provenance
 
 __all__ = [
     'ActorSystem', 'ActorScheduler', 'ActorUser', 'ActorAgent', 'ActorTool', 'ActorRule', 'ActorClient', 'ActorImported', 'Actor', 'Agent', 'AgentAttention', 'AgentConfig', 'AgentId', 'AgentLine', 'AgentPatch', 'AgentQuery', 'AgentStats', 'AgentStatusCreated', 'AgentStatusReady', 'AgentStatusRunning',
     'AgentStatusWaiting', 'AgentStatusBlocked', 'AgentStatusCompleted', 'AgentStatusFailed', 'AgentStatusCancelled', 'AgentStatusImported', 'AgentStatus', 'AgentStatusKind', 'AgentTree', 'AnswerInput', 'AnswerKey', 'ApprovalDecision', 'ApprovalDefault', 'ApprovalId', 'ApprovalLine', 'ApprovalPolicy', 'ApprovalRequest', 'ApprovalRule', 'ApprovalRuleId', 'ApprovalStatusPending',
     'ApprovalStatusResolved', 'ApprovalStatus', 'ArchiveTarget', 'Artifact', 'ArtifactId', 'ArtifactKindFile', 'ArtifactKindCommandOutput', 'ArtifactKindDiff', 'ArtifactKindCommit', 'ArtifactKindResult', 'ArtifactKindOther', 'ArtifactKind', 'ArtifactLine', 'ArtifactNote', 'ArtifactQuery', 'AttachmentId', 'AttachmentRef', 'Attention', 'AttentionKind', 'AuthInfo',
     'BackgroundDisable', 'BackgroundPriority', 'BillingPatch', 'BillingSettings', 'BlockReasonDependency', 'BlockReasonResource', 'BlockReasonInspection', 'BlockReasonExhausted', 'BlockReason', 'BudgetPatch', 'BudgetSettings', 'BusyPolicy', 'CapabilityProfile', 'Chain', 'ChangedFile', 'Checkpoint', 'CheckpointDraft', 'CheckpointId', 'CheckpointProvenance', 'ClientFrame',
-    'Cluster', 'CompactionTriggerTokenThreshold', 'CompactionTriggerTaskBoundary', 'CompactionTriggerLargeToolOutput', 'CompactionTriggerLongWait', 'CompactionTriggerExplicit', 'CompactionTriggerHandoff', 'CompactionTrigger', 'ConceptKind', 'ConceptRef', 'ConceptState', 'ConceptStateKind', 'ConcurrencyPatch', 'ConcurrencySettings', 'ContentBlockText', 'ContentBlockThinking', 'ContentBlockToolUse', 'ContentBlockToolResult', 'ContentBlockImage', 'ContentBlockImageRef',
-    'ContentBlockCompaction', 'ContentBlock', 'ContextLayer', 'CostBasis', 'CostGap', 'CreateAgent', 'CreateScheduleSpec', 'CreateTask', 'DaemonStatus', 'DeadlineUpdate', 'DeleteSessionGraph', 'DeleteSourceGraph', 'DeltaTurnStarted', 'DeltaText', 'DeltaThinking', 'DeltaToolInput', 'DeltaAccounting', 'DeltaTurnFinished', 'Delta', 'Device',
-    'DeviceId', 'DeviceIdentity', 'DeviceProof', 'DeviceRole', 'DisablePatch', 'DisablePolicy', 'DisableSettings', 'DroppedItem', 'Effort', 'EndedRunning', 'EndedCompleted', 'EndedFailed', 'EndedCancelled', 'Ended', 'EngineSentLayers', 'EngineSessionUsage', 'EngineeringExtraction', 'ErrorCode', 'ErrorReply', 'ErrorTally',
-    'Event', 'EventId', 'EventKindAgentCreated', 'EventKindAgentReady', 'EventKindAgentStarted', 'EventKindAgentTurnCompleted', 'EventKindAgentInterrupted', 'EventKindAgentWaiting', 'EventKindAgentResumed', 'EventKindAgentPaused', 'EventKindAgentArchived', 'EventKindAgentBlocked', 'EventKindAgentCompleted', 'EventKindAgentFailed', 'EventKindAgentRestarted', 'EventKindAgentCancelled', 'EventKindAgentConfigUpdated', 'EventKindAgentUsageUpdated', 'EventKindAgentMessage', 'EventKindTaskCreated',
-    'EventKindTaskAssigned', 'EventKindTaskStarted', 'EventKindTaskBlocked', 'EventKindTaskUnblocked', 'EventKindTaskRequeued', 'EventKindTaskCompleted', 'EventKindTaskFailed', 'EventKindTaskCancelled', 'EventKindToolRequested', 'EventKindToolStarted', 'EventKindToolSucceeded', 'EventKindToolFailed', 'EventKindToolCancelled', 'EventKindToolDenied', 'EventKindToolReplayed', 'EventKindToolRetried', 'EventKindSnapshotCreated', 'EventKindInvocationCompleted', 'EventKindInvocationFailed', 'EventKindCompactionRequested',
-    'EventKindCheckpointCreated', 'EventKindCompactionCompleted', 'EventKindCompactionNative', 'EventKindCompactionFailed', 'EventKindContextHandoff', 'EventKindMemoryCandidate', 'EventKindMemoryAccepted', 'EventKindMemoryRejected', 'EventKindMemoryForgotten', 'EventKindMemoryRestored', 'EventKindMemoryPinned', 'EventKindMemorySuperseded', 'EventKindMessageSent', 'EventKindInboxDelivered', 'EventKindInboxConsumed', 'EventKindQuestionAsked', 'EventKindApprovalRequested', 'EventKindApprovalRuleAdded', 'EventKindApprovalRuleRevoked', 'EventKindApprovalResolved',
-    'EventKindArtifactCreated', 'EventKindArtifactDeduplicated', 'EventKindArtifactEvicted', 'EventKindMcpServerConnected', 'EventKindMcpServerFailed', 'EventKindRunImported', 'EventKindLeaseGranted', 'EventKindLeaseRenewed', 'EventKindLeaseReleased', 'EventKindLeaseExpired', 'EventKindLeaseResourceAcquired', 'EventKindLeaseResourceReleased', 'EventKindLeaseResourceWaiting', 'EventKindProviderBackoff', 'EventKindProviderRecovered', 'EventKindProviderFallback', 'EventKindProviderQuota', 'EventKindRecoveryClassified', 'EventKindBudgetWarning', 'EventKindDeadlinePassed',
-    'EventKindBudgetExceeded', 'EventKindRunHardStop', 'EventKindDaemonStarted', 'EventKindDaemonStopped', 'EventKindNoesisSessionCreated', 'EventKindNoesisPhaseChanged', 'EventKindNoesisQuestionPosed', 'EventKindNoesisAnswerRecorded', 'EventKindNoesisPlanUpdated', 'EventKindNoesisProblemPosed', 'EventKindNoesisPracticeConcluded', 'EventKindNoesisJobUpdated', 'EventKindNoesisGraphMerged', 'EventKindNoesisLearnerUpdated', 'EventKindNoesisSettingsChanged', 'EventKindCustom', 'EventKind', 'EventQuery', 'Evidence', 'EvidenceBundle',
-    'EvidenceItem', 'EvidenceKind', 'EvidenceOutcome', 'EvidenceRef', 'EvidenceRefKind', 'EvidenceStatus', 'ExecutionBackendHost', 'ExecutionBackendContainer', 'ExecutionBackend', 'ExhaustionClass', 'ExportSummary', 'ExtractionPatch', 'ExtractionSettings', 'FailureLine', 'FallbackRecord', 'FeedbackRanking', 'FileStatus', 'GitSummary', 'GithubDispatchModeFixed', 'GithubDispatchModeAutomatic',
-    'GithubDispatchModeThread', 'GithubDispatchMode', 'GithubRepositoryConfig', 'GithubRepositoryStatus', 'GithubWatcherConfig', 'GithubWatcherStatus', 'Health', 'Hello', 'HostContext', 'HttpError', 'HttpErrorBody', 'HttpErrorCode', 'IdempotencyKey', 'ImageAttachment', 'ImportSummary', 'InboxItem', 'InboxItemId', 'InboxKindTaskCompleted', 'InboxKindTaskFailed', 'InboxKindTaskCancelled',
-    'InboxKindMessage', 'InboxKindApprovalResolved', 'InboxKindChildFailed', 'InboxKindChildSuspended', 'InboxKindChildResumed', 'InboxKindExternalTrigger', 'InboxKindWake', 'InboxKind', 'Invocation', 'InvocationId', 'InvocationParams', 'InvocationSnapshot', 'Job', 'JobKind', 'JobState', 'JobStats', 'KindWrites', 'LayerKind', 'LayerPlacement', 'Lease',
-    'LowDisk', 'McpAuth', 'McpAuthState', 'McpServerHealth', 'McpServerState', 'McpToolInfo', 'MemoriesInContext', 'MemoryCandidate', 'MemoryEvidence', 'MemoryFeedback', 'MemoryFeedbackId', 'MemoryFeedbackList', 'MemoryId', 'MemoryKind', 'MemoryProvenance', 'MemoryQuerySpec', 'MemoryRecord', 'MemoryRecorder', 'MemoryScopeGlobal', 'MemoryScopeRepository',
-    'MemoryScopeRole', 'MemoryScopeAgent', 'MemoryScopeRepositoryRole', 'MemoryScopeSubtree', 'MemoryScope', 'MemorySource', 'MemoryVerdict', 'Message', 'MessageDelivery', 'MessageId', 'MessageRole', 'Milestone', 'MissClass', 'MissedRunPolicy', 'ModelCost', 'ModelCostTier', 'ModelErrorClass', 'ModelInfo', 'ModelRef', 'ModelSettings',
-    'ModelsPatch', 'MountKind', 'NetworkPolicy', 'NewApprovalRule', 'NoesisProvenance', 'NoesisSession', 'NoesisSettingsPatch', 'NoesisSettingsView', 'NoesisStatus', 'NoteContext', 'NoteLevel', 'Notification', 'NotificationAction', 'NotificationAnswer', 'NotificationId', 'NotificationKind', 'NotificationPost', 'NotificationState', 'OpenLoopAgent', 'OpenLoopTask',
-    'OpenLoopApproval', 'OpenLoop', 'OperatorMemoryScopeAgent', 'OperatorMemoryScopeGlobal', 'OperatorMemoryScopeRepository', 'OperatorMemoryScopeRole', 'OperatorMemoryScopeRepositoryRole', 'OperatorMemoryScope', 'OperatorMemorySpec', 'OperatorOriginLocalSocket', 'OperatorOriginTcp', 'OperatorOriginDevice', 'OperatorOrigin', 'PairClaimRequest', 'PairClaimResponse', 'PairStatusRequest', 'PairStatusResponse', 'Pairing', 'PairingCandidate', 'PairingState',
-    'PathCompletion', 'PathCompletionKind', 'PathCompletions', 'PendingArtifactCleanup', 'PendingQuestion', 'Phase', 'PlanEdge', 'PlanNode', 'PlanNodeStatus', 'PlanTree', 'PracticeOutcome', 'Priority', 'PriorityPatch', 'PrioritySettings', 'Problem', 'ProblemMode', 'PromptSettings', 'PromptsPatch', 'Proposition', 'Provenance',
+    'Cluster', 'ClusterOutcomeKind', 'CompactionTriggerTokenThreshold', 'CompactionTriggerTaskBoundary', 'CompactionTriggerLargeToolOutput', 'CompactionTriggerLongWait', 'CompactionTriggerExplicit', 'CompactionTriggerHandoff', 'CompactionTrigger', 'ConceptKind', 'ConceptRef', 'ConceptState', 'ConceptStateKind', 'ConcurrencyPatch', 'ConcurrencySettings', 'ConsolidatedCluster', 'ContentBlockText', 'ContentBlockThinking', 'ContentBlockToolUse', 'ContentBlockToolResult',
+    'ContentBlockImage', 'ContentBlockImageRef', 'ContentBlockCompaction', 'ContentBlock', 'ContextLayer', 'CostBasis', 'CostGap', 'CreateAgent', 'CreateScheduleSpec', 'CreateTask', 'DaemonStatus', 'DeadlineUpdate', 'DeleteSessionGraph', 'DeleteSourceGraph', 'DeltaTurnStarted', 'DeltaText', 'DeltaThinking', 'DeltaToolInput', 'DeltaAccounting', 'DeltaTurnFinished',
+    'Delta', 'Device', 'DeviceId', 'DeviceIdentity', 'DeviceProof', 'DeviceRole', 'DisablePatch', 'DisablePolicy', 'DisableSettings', 'DroppedItem', 'Effort', 'EndedRunning', 'EndedCompleted', 'EndedFailed', 'EndedCancelled', 'Ended', 'EngineSentLayers', 'EngineSessionUsage', 'EngineeringExtraction', 'ErrorCode',
+    'ErrorReply', 'ErrorTally', 'Event', 'EventId', 'EventKindAgentCreated', 'EventKindAgentReady', 'EventKindAgentStarted', 'EventKindAgentTurnCompleted', 'EventKindAgentInterrupted', 'EventKindAgentWaiting', 'EventKindAgentResumed', 'EventKindAgentPaused', 'EventKindAgentArchived', 'EventKindAgentBlocked', 'EventKindAgentCompleted', 'EventKindAgentFailed', 'EventKindAgentRestarted', 'EventKindAgentCancelled', 'EventKindAgentConfigUpdated', 'EventKindAgentUsageUpdated',
+    'EventKindAgentMessage', 'EventKindTaskCreated', 'EventKindTaskAssigned', 'EventKindTaskStarted', 'EventKindTaskBlocked', 'EventKindTaskUnblocked', 'EventKindTaskRequeued', 'EventKindTaskCompleted', 'EventKindTaskFailed', 'EventKindTaskCancelled', 'EventKindToolRequested', 'EventKindToolStarted', 'EventKindToolSucceeded', 'EventKindToolFailed', 'EventKindToolCancelled', 'EventKindToolDenied', 'EventKindToolReplayed', 'EventKindToolRetried', 'EventKindSnapshotCreated', 'EventKindInvocationCompleted',
+    'EventKindInvocationFailed', 'EventKindCompactionRequested', 'EventKindCheckpointCreated', 'EventKindCompactionCompleted', 'EventKindCompactionNative', 'EventKindCompactionFailed', 'EventKindContextHandoff', 'EventKindMemoryCandidate', 'EventKindMemoryAccepted', 'EventKindMemoryRejected', 'EventKindMemoryForgotten', 'EventKindMemoryRestored', 'EventKindMemoryPinned', 'EventKindMemorySuperseded', 'EventKindMessageSent', 'EventKindInboxDelivered', 'EventKindInboxConsumed', 'EventKindQuestionAsked', 'EventKindApprovalRequested', 'EventKindApprovalRuleAdded',
+    'EventKindApprovalRuleRevoked', 'EventKindApprovalResolved', 'EventKindArtifactCreated', 'EventKindArtifactDeduplicated', 'EventKindArtifactEvicted', 'EventKindMcpServerConnected', 'EventKindMcpServerFailed', 'EventKindRunImported', 'EventKindLeaseGranted', 'EventKindLeaseRenewed', 'EventKindLeaseReleased', 'EventKindLeaseExpired', 'EventKindLeaseResourceAcquired', 'EventKindLeaseResourceReleased', 'EventKindLeaseResourceWaiting', 'EventKindProviderBackoff', 'EventKindProviderRecovered', 'EventKindProviderFallback', 'EventKindProviderQuota', 'EventKindRecoveryClassified',
+    'EventKindBudgetWarning', 'EventKindDeadlinePassed', 'EventKindBudgetExceeded', 'EventKindRunHardStop', 'EventKindDaemonStarted', 'EventKindDaemonStopped', 'EventKindNoesisSessionCreated', 'EventKindNoesisPhaseChanged', 'EventKindNoesisQuestionPosed', 'EventKindNoesisAnswerRecorded', 'EventKindNoesisPlanUpdated', 'EventKindNoesisProblemPosed', 'EventKindNoesisPracticeConcluded', 'EventKindNoesisJobUpdated', 'EventKindNoesisGraphMerged', 'EventKindNoesisLearnerUpdated', 'EventKindNoesisSettingsChanged', 'EventKindCustom', 'EventKind', 'EventQuery',
+    'Evidence', 'EvidenceBundle', 'EvidenceItem', 'EvidenceKind', 'EvidenceOutcome', 'EvidenceRef', 'EvidenceRefKind', 'EvidenceStatus', 'ExecutionBackendHost', 'ExecutionBackendContainer', 'ExecutionBackend', 'ExhaustionClass', 'ExplainedTurn', 'ExportSummary', 'ExtractionPatch', 'ExtractionSettings', 'FailureLine', 'FallbackRecord', 'FeedbackRanking', 'FileStatus',
+    'GitSummary', 'GithubDispatchModeFixed', 'GithubDispatchModeAutomatic', 'GithubDispatchModeThread', 'GithubDispatchMode', 'GithubRepositoryConfig', 'GithubRepositoryStatus', 'GithubWatcherConfig', 'GithubWatcherStatus', 'Health', 'Hello', 'HostContext', 'HttpError', 'HttpErrorBody', 'HttpErrorCode', 'IdempotencyKey', 'ImageAttachment', 'ImportConflict', 'ImportSummary', 'InboxItem',
+    'InboxItemId', 'InboxKindTaskCompleted', 'InboxKindTaskFailed', 'InboxKindTaskCancelled', 'InboxKindMessage', 'InboxKindApprovalResolved', 'InboxKindChildFailed', 'InboxKindChildSuspended', 'InboxKindChildResumed', 'InboxKindExternalTrigger', 'InboxKindWake', 'InboxKind', 'Invocation', 'InvocationId', 'InvocationParams', 'InvocationSnapshot', 'Job', 'JobKind', 'JobState', 'JobStats',
+    'KindWrites', 'LastImport', 'LayerKind', 'LayerPlacement', 'Lease', 'LowDisk', 'McpAuth', 'McpAuthState', 'McpServerHealth', 'McpServerState', 'McpToolInfo', 'MemoriesInContext', 'MemoryCandidate', 'MemoryConsolidation', 'MemoryCounts', 'MemoryEvidence', 'MemoryExport', 'MemoryFeedback', 'MemoryFeedbackId', 'MemoryFeedbackList',
+    'MemoryId', 'MemoryImport', 'MemoryKind', 'MemoryMigration', 'MemoryMigrationStatus', 'MemoryProvenance', 'MemoryQuerySpec', 'MemoryRecord', 'MemoryRecorder', 'MemoryRef', 'MemoryScopeGlobal', 'MemoryScopeRepository', 'MemoryScopeRole', 'MemoryScopeAgent', 'MemoryScopeRepositoryRole', 'MemoryScopeSubtree', 'MemoryScope', 'MemorySource', 'MemoryStanding', 'MemoryState',
+    'MemorySupport', 'MemoryTier', 'MemoryVerdict', 'Message', 'MessageDelivery', 'MessageId', 'MessageRole', 'MigrationBackup', 'Milestone', 'MissClass', 'MissedRunPolicy', 'ModelCost', 'ModelCostTier', 'ModelErrorClass', 'ModelInfo', 'ModelRef', 'ModelSettings', 'ModelsPatch', 'MountKind', 'NetworkPolicy',
+    'NewApprovalRule', 'NoesisProvenance', 'NoesisSession', 'NoesisSettingsPatch', 'NoesisSettingsView', 'NoesisStatus', 'NoteContext', 'NoteLevel', 'Notification', 'NotificationAction', 'NotificationAnswer', 'NotificationId', 'NotificationKind', 'NotificationPost', 'NotificationState', 'OpenLoopAgent', 'OpenLoopTask', 'OpenLoopApproval', 'OpenLoop', 'OperatorMemoryScopeAgent',
+    'OperatorMemoryScopeGlobal', 'OperatorMemoryScopeRepository', 'OperatorMemoryScopeRole', 'OperatorMemoryScopeRepositoryRole', 'OperatorMemoryScope', 'OperatorMemorySpec', 'OperatorOriginLocalSocket', 'OperatorOriginTcp', 'OperatorOriginDevice', 'OperatorOrigin', 'PairClaimRequest', 'PairClaimResponse', 'PairStatusRequest', 'PairStatusResponse', 'Pairing', 'PairingCandidate', 'PairingState', 'PathCompletion', 'PathCompletionKind', 'PathCompletions',
 ]

@@ -15,7 +15,8 @@ export const AETHER_OBSERVE = words(`hello status preview_retention storage_stat
   latest_checkpoint get_artifact list_artifacts read_artifact memories list_runs get_run_report replay list_models
   auth_status providers get_attention list_workspaces get_push_config list_repository_aliases list_notifications
   get_notification mcp_servers list_agents_page get_transcript_page usage_breakdown noesis_status
-  noesis_get_session noesis_list_sessions noesis_graph noesis_jobs noesis_learner noesis_learner_evidence`);
+  noesis_get_session noesis_list_sessions noesis_graph noesis_jobs noesis_learner noesis_learner_evidence
+  memory_migration_status`);
 
 export const AETHER_OPERATE = words(`create_agent reply_to_question send_message append_note cancel interrupt
   configure_github_watcher create_schedule update_schedule trigger restart wake pause resume archive set_approvals
@@ -29,7 +30,8 @@ export const AETHER_OPERATE = words(`create_agent reply_to_question send_message
 /** Host-only and remote-admin alike: only a `local` connection may send them. */
 export const AETHER_HOST_ONLY = words(`storage_gc shutdown engine_tool engine_tools export_run import_run alias_repository
   accept_memory reject_memory memories_in_context record_memory_feedback retract_memory_feedback memory_feedback
-  get_remote configure_remote start_pairing get_pairing confirm_pairing cancel_pairing revoke_device update_device`);
+  get_remote configure_remote start_pairing get_pairing confirm_pairing cancel_pairing revoke_device update_device
+  memory_retrieval_explain consolidate_memories memory_export memory_import`);
 
 export const AETHER_DEVICE_SELF = words("subscribe_push unsubscribe_push test_push");
 

@@ -19,6 +19,7 @@ pub(super) fn bare_snapshot(agent_id: AgentId) -> InvocationSnapshot {
         params: InvocationParams::default(),
         token_estimate: 0,
         created_at: now(),
+        memory_retrieval: None,
     }
 }
 

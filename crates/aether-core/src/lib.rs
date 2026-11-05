@@ -28,6 +28,8 @@ pub mod mcp;
 pub mod memory;
 pub mod memory_admission;
 pub mod memory_feedback;
+pub mod memory_v2;
+pub mod memory_v2_reports;
 pub mod model;
 pub mod noesis;
 pub mod note;

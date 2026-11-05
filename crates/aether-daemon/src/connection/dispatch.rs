@@ -9,6 +9,7 @@ use super::resolution;
 mod agents;
 mod control;
 mod memory;
+mod memory_v2;
 mod notifications;
 mod reads;
 mod runs;

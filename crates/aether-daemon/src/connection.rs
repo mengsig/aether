@@ -166,6 +166,7 @@ where
     let delta_order = Arc::new(AtomicBool::new(false));
     // Whether the hello listed `features::NOESIS`; shared the same way.
     let noesis = Arc::new(AtomicBool::new(false));
+    let memory_v2 = Arc::new(AtomicBool::new(false));
 
     let (auth_tx, auth_rx) = tokio::sync::watch::channel::<Option<AuthContext>>(None);
     let writer = writer::run(
@@ -176,6 +177,7 @@ where
             history_expired: history_expired.clone(),
             delta_order: delta_order.clone(),
             noesis: noesis.clone(),
+            memory_v2: memory_v2.clone(),
         },
         auth_rx,
     );
@@ -337,6 +339,13 @@ where
                                         .any(|feature| feature == features::NOESIS),
                                     Ordering::SeqCst,
                                 );
+                                memory_v2.store(
+                                    hello
+                                        .features
+                                        .iter()
+                                        .any(|feature| feature == features::MEMORY_V2),
+                                    Ordering::SeqCst,
+                                );
                                 match policy.admit(hello) {
                                     Err(refusal) => {
                                         tokio::time::sleep(policy.refusal_delay()).await;
@@ -404,6 +413,7 @@ where
                                                     features::MEMORY_PROPOSALS.into(),
                                                     features::MEMORY_CONTEXT.into(),
                                                     features::MEMORY_FEEDBACK.into(),
+                                                    features::MEMORY_V2.into(),
                                                     features::STORAGE.into(),
                                                     features::PRUNE_BUILD_OUTPUT.into(),
                                                     features::WORKSPACE_REVIEW.into(),

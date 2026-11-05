@@ -9,8 +9,10 @@ use aether_core::model::ContentBlock;
 use aether_core::replay::{ReplayFrame, TurnOutcome};
 use serde_json::Value;
 
+mod memory_v2;
 mod noesis;
 mod v26;
+pub use memory_v2::withhold_memory_standing;
 pub use noesis::withhold_noesis_events;
 pub use v26::withhold_delta_order;
 
@@ -513,6 +515,7 @@ mod tests {
             ("configure_github_watcher", &["config", "expected_revision"]),
             ("configure_remote", &["expected_revision", "settings"]),
             ("confirm_pairing", &["accept", "id"]),
+            ("consolidate_memories", &["dry_run"]),
             ("create_agent", &["role"]),
             ("create_memory", &["spec"]),
             ("create_schedule", &["spec"]),
@@ -566,7 +569,11 @@ mod tests {
             ("mcp_servers", &[]),
             ("memories", &["query"]),
             ("memories_in_context", &[]),
+            ("memory_export", &[]),
             ("memory_feedback", &["memory"]),
+            ("memory_import", &["artifact", "dry_run"]),
+            ("memory_migration_status", &[]),
+            ("memory_retrieval_explain", &[]),
             ("noesis_answer", &["answer", "question", "session"]),
             ("noesis_cancel_job", &["job"]),
             ("noesis_configure", &["patch"]),

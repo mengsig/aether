@@ -153,6 +153,7 @@ pub(crate) async fn execute(
     )?);
     let assembled = runtime.context.assemble(context_inputs);
     let mut snapshot = assembled.snapshot;
+    snapshot.memory_retrieval = memories.trace.clone();
     // Explicit (or model-default) effort is independent of registry capability
     // flags. None records that the native harness chooses, not an assumed value.
     snapshot.params.effort = agent_for_link.config.effort;

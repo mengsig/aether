@@ -308,3 +308,28 @@ fn storage_gc_requires_host_access_in_both_modes() {
         }
     }
 }
+
+#[test]
+fn memory_v2_host_commands_refuse_every_paired_role_and_status_admits_observers() {
+    let host_only = [
+        serde_json::json!({"cmd":"memory_retrieval_explain", "invocation":aether_core::id::InvocationId::new()}),
+        serde_json::json!({"cmd":"consolidate_memories", "dry_run":false}),
+        serde_json::json!({"cmd":"memory_export"}),
+        serde_json::json!({"cmd":"memory_import", "artifact":"{}", "dry_run":false}),
+    ];
+    for value in host_only {
+        let command: Command = serde_json::from_value(value).unwrap();
+        assert_eq!(command.access(), Access::HostOnly);
+        assert!(AuthContext::Local.authorize(&command).is_ok());
+        assert!(AuthContext::Token.authorize(&command).is_ok());
+        for role in [DeviceRole::Operator, DeviceRole::Observer] {
+            assert_eq!(code(&device(role), &command), Some(ErrorCode::Forbidden));
+        }
+    }
+    let status: Command =
+        serde_json::from_value(serde_json::json!({"cmd":"memory_migration_status"})).unwrap();
+    assert_eq!(status.access(), Access::Observe);
+    for role in [DeviceRole::Operator, DeviceRole::Observer] {
+        assert_eq!(code(&device(role), &status), None);
+    }
+}
