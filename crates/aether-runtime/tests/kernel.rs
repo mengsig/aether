@@ -326,7 +326,7 @@ use exhaustion_support::{
 };
 use fixture::{
     Harness, declared_engines, harness, harness_configured, harness_full,
-    harness_full_with_engines, harness_with, harness_with_tools, spawns_real_bash,
+    harness_full_with_engines, harness_uncut, harness_with, harness_with_tools, spawns_real_bash,
 };
 use memory_support::{git_in, wait_for_seeding};
 use recovery_support::{

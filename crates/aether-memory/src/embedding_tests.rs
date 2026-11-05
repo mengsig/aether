@@ -61,20 +61,32 @@ fn top(service: &MemoryService) -> Option<String> {
         .map(|found| found.record.text.clone())
 }
 
+/// No relevance cutoff, so what decides the top is the ranking alone.
+fn uncut() -> RetrievalPolicy {
+    RetrievalPolicy {
+        min_score: 0.0,
+        ..Default::default()
+    }
+}
+
 #[test]
 fn the_embedding_pass_finds_what_word_matching_cannot() {
     // Without an index no whole word of the question appears in any of
-    // the four, so the relevance cutoff leaves nothing to put first.
-    assert_eq!(
-        top(&seeded(None)),
-        None,
+    // the four, so importance and recency decide and the answer is not first.
+    assert_ne!(
+        top(&seeded(None).with_retrieval(uncut())).as_deref(),
+        Some(CORPUS[0]),
         "if word matching already found it, this test proves nothing"
     );
+    let indexed = || seeded(Some(Arc::new(LocalEmbeddingIndex)));
     assert_eq!(
-        top(&seeded(Some(Arc::new(LocalEmbeddingIndex)))).as_deref(),
+        top(&indexed().with_retrieval(uncut())).as_deref(),
         Some(CORPUS[0]),
         "the semantic pass connects 'rebuild the index' to 'reindexing'"
     );
+    // A trigram similarity of about 0.26 is one unrelated sentences reach
+    // too, so by default it is below the relevance cutoff.
+    assert_eq!(top(&indexed()), None);
 }
 
 #[test]

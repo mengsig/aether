@@ -763,7 +763,7 @@ async fn operator_role_memory_keyed_replay_returns_the_receipt_without_events() 
 #[tokio::test]
 async fn explicit_repository_memories_reach_archon_agents_through_the_prompt() {
     use aether_core::memory::{MemoryScope, OperatorMemoryScope};
-    let h = harness(Vec::new()).await;
+    let h = harness_uncut(Vec::new()).await;
     let agent = explicit_repository_agent(&h, "archon-stage:default/review", "aether");
     let family = h
         .runtime
