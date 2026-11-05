@@ -109,7 +109,7 @@ layer is reported as `trimmed`. The trace keeps every memory within
 `max_items`, the 16 best over-limit memories and the 16 most relevant cut
 memories, and counts the rest in `omitted`.
 
-Errors: `invalid` when neither or both of task and invocation are named;
+Errors: `invalid_argument` when neither or both of task and invocation are named;
 `not_found` for an unknown task or invocation, or a snapshot that retention
 removed.
 
@@ -142,7 +142,7 @@ Export reads every memory in the scope, including candidates, pending
 proposals, superseded memories and forgotten ones. It reads them under
 the commit lock, so the artifact is one snapshot of the store. More than
 100,000 records, or an artifact over 48 MiB as an escaped JSON string, is
-refused as `invalid`, with the advice to export per scope. The byte bound
+refused as `invalid_argument`, with the advice to export per scope. The byte bound
 keeps the reply, and the import that sends it back, inside a 64 MiB frame.
 
 Import compares each entry with the store by memory id:
@@ -157,7 +157,7 @@ All inserts go in one commit, with one `memory.imported` event, so an
 import lands whole or not at all. Importing the same artifact again inserts
 nothing. `dry_run` reports the same counts and writes nothing.
 
-Import errors (`invalid`, and nothing is written):
+Import errors (`invalid_argument`, in a dry run too, and nothing is written):
 - a missing or unknown header;
 - a version newer than this build reads;
 - a record count that does not match the header;
@@ -166,7 +166,13 @@ Import errors (`invalid`, and nothing is written):
 - an admission naming another memory;
 - an admission state other than candidate or active;
 - a proposal state the store refuses;
-- an entry carrying `standing`.
+- an entry carrying `standing`;
+- an `importance` or `confidence` that is not a finite number in 0..=1
+  (a JSON number past f32 would parse as infinity);
+- a stale note with a blank reason or a blank revision.
+
+The web import refuses, before sending, a file whose escaped JSON string
+is over the same 48 MiB bound, so it takes every artifact an export gives.
 
 ### 2.4 Export artifact format
 

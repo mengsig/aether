@@ -35,3 +35,10 @@ export function count(n: number, one: string, many: string): string {
   invariant(Number.isInteger(n) && n >= 0, "a count is a whole number");
   return `${n} ${n === 1 ? one : many}`;
 }
+
+/** The UTF-8 bytes `text` takes as an escaped JSON string, without its quotes, as the daemon counts it. */
+export function escapedBytes(text: string): number {
+  const encoded = new TextEncoder().encode(JSON.stringify(text)).length - 2;
+  invariant(encoded >= 0, "an escaped string is at least its two quotes");
+  return encoded;
+}

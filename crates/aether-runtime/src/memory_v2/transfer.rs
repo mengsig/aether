@@ -8,6 +8,7 @@ use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::MemoryId;
 use aether_core::memory::{MemoryRecord, MemoryScope};
 use aether_core::memory_admission::MemoryState;
+use aether_core::memory_v2::StaleNote;
 use aether_core::memory_v2_reports::{
     EXPORT_FORMAT, EXPORT_VERSION, ExportEntry, ExportHeader, ImportConflict, LastImport,
     MAX_EXPORT_ENCODED_BYTES, MAX_EXPORT_RECORDS, MemoryExport, MemoryImport,
@@ -263,6 +264,8 @@ fn parse_artifact(artifact: &str) -> Result<Vec<ExportEntry>> {
 
 fn check_entry(entry: &ExportEntry, line: usize) -> Result<()> {
     let record = &entry.record;
+    check_weights(record, line)?;
+    check_stale(entry.stale.as_ref(), line)?;
     if record.standing.is_some() {
         return Err(invalid(format!(
             "line {line}: a record carries `standing`, which is never stored"
@@ -292,6 +295,45 @@ fn check_entry(entry: &ExportEntry, line: usize) -> Result<()> {
         return Err(invalid(format!(
             "line {line}: memory {} has an inconsistent proposal state",
             record.id
+        )));
+    }
+    Ok(())
+}
+
+/// A JSON number past f32 parses as infinity, which the store would write as
+/// null and then fail to read back; every write path keeps both in 0..=1.
+fn check_weights(record: &MemoryRecord, line: usize) -> Result<()> {
+    for (field, value) in [
+        ("importance", record.importance),
+        ("confidence", record.confidence),
+    ] {
+        if !(0.0..=1.0).contains(&value) {
+            return Err(invalid(format!(
+                "line {line}: memory {} has {field} {value}; it must be finite and between 0 and 1",
+                record.id
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The store refuses a blank stale reason or revision; a dry run refuses it too.
+fn check_stale(stale: Option<&StaleNote>, line: usize) -> Result<()> {
+    let Some(note) = stale else {
+        return Ok(());
+    };
+    if note.reason.trim().is_empty() {
+        return Err(invalid(format!(
+            "line {line}: the stale note has no reason"
+        )));
+    }
+    if note
+        .revision
+        .as_deref()
+        .is_some_and(|r| r.trim().is_empty())
+    {
+        return Err(invalid(format!(
+            "line {line}: the stale note has a blank revision"
         )));
     }
     Ok(())

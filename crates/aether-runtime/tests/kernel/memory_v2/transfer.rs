@@ -232,6 +232,16 @@ async fn a_bad_artifact_is_refused_by_line_and_writes_nothing() {
         "the oldest memory has an admission row"
     );
     mismatch["admission"]["memory"] = json!(MemoryId::new());
+    // Past f32, a JSON number parses as infinity and would be stored as null.
+    let with = |path: [&str; 2], value: serde_json::Value| {
+        let mut changed: serde_json::Value = serde_json::from_str(lines[1]).expect("entry");
+        changed[path[0]][path[1]] = value;
+        changed.to_string()
+    };
+    let huge_confidence = with(["record", "confidence"], json!(1e39));
+    let huge_importance = with(["record", "importance"], json!(1e100));
+    let mut blank_stale: serde_json::Value = serde_json::from_str(lines[1]).expect("entry");
+    blank_stale["stale"] = json!({"reason": " ", "since": "2026-10-15T00:00:00Z"});
     let body = |rest: &[String]| {
         let mut all = vec![lines[0].to_owned()];
         all.extend(rest.iter().cloned());
@@ -258,19 +268,33 @@ async fn a_bad_artifact_is_refused_by_line_and_writes_nothing() {
             &*body(&[vec![mismatch.to_string()], rest[1..].to_vec()].concat()),
             "admission names",
         ),
+        (
+            &*body(&[vec![huge_confidence], rest[1..].to_vec()].concat()),
+            "confidence inf",
+        ),
+        (
+            &*body(&[vec![huge_importance], rest[1..].to_vec()].concat()),
+            "importance inf",
+        ),
+        (
+            &*body(&[vec![blank_stale.to_string()], rest[1..].to_vec()].concat()),
+            "no reason",
+        ),
     ];
     let target = harness(Vec::new()).await;
     for (artifact, expected) in cases {
-        let refused = target
-            .runtime
-            .import_memories(artifact, false, Actor::user());
-        let Err(aether_runtime::RuntimeError::Invalid(message)) = refused else {
-            panic!("{expected}: {refused:?}");
-        };
-        assert!(
-            message.contains(expected) || message.contains("is empty"),
-            "{expected}: {message}"
-        );
+        for dry_run in [true, false] {
+            let refused = target
+                .runtime
+                .import_memories(artifact, dry_run, Actor::user());
+            let Err(aether_runtime::RuntimeError::Invalid(message)) = refused else {
+                panic!("{expected} (dry run {dry_run}): {refused:?}");
+            };
+            assert!(
+                message.contains(expected) || message.contains("is empty"),
+                "{expected}: {message}"
+            );
+        }
     }
     assert_eq!(target.store.memory_v2_counts().expect("counts").total, 0);
     let agent = Actor::Agent { id: AgentId::new() };

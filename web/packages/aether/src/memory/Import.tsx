@@ -5,11 +5,11 @@ import type { aether, ConnId } from "@aether-ui/protocol";
 import { useId, useRef, useState, type ChangeEvent } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import { Action, RunNote, useRun } from "../controls/kit.tsx";
-import { bytes, count } from "./format.ts";
+import { bytes, count, escapedBytes } from "./format.ts";
 import { replyData } from "./v2.ts";
 
-// The remote listener's frame cap is 64 MiB, and JSON escaping grows the artifact inside the frame.
-const MAX_FILE = 32 * 1024 * 1024;
+// MAX_EXPORT_ENCODED_BYTES in aether-core: the escaped artifact the daemon exports and accepts in a frame.
+export const MAX_ENCODED = 48 * 1024 * 1024;
 const FIELDS = ["dry_run", "digest", "records", "inserted", "unchanged"];
 type Picked = { readonly name: string; readonly artifact: string };
 // A dry run's report with the exact file it ran on, so a confirm applies that file and no other.
@@ -29,13 +29,21 @@ export function ImportTool({ conn, refresh }: { conn: ConnId; refresh: () => Pro
     const chosen = ++selection.current;
     setPlan(null); setDone(null); setPicked(null);
     if (!file) return;
-    if (file.size > MAX_FILE) {
-      setProblem(`${file.name} is ${bytes(file.size)}; export per scope to stay under ${bytes(MAX_FILE)}`);
+    // Escaping never shrinks text, so a file already past the bound is refused before it is read.
+    const tooLarge = (size: number) => `${file.name} is ${bytes(size)} on the wire; export per scope to stay under ${bytes(MAX_ENCODED)}`;
+    if (file.size > MAX_ENCODED) {
+      setProblem(tooLarge(file.size));
       return;
     }
     setProblem(null);
     const artifact = await file.text();
-    if (chosen === selection.current) setPicked({ name: file.name, artifact });
+    if (chosen !== selection.current) return;
+    const encoded = escapedBytes(artifact);
+    if (encoded > MAX_ENCODED) {
+      setProblem(tooLarge(encoded));
+      return;
+    }
+    setPicked({ name: file.name, artifact });
   };
   const send = async (target: Picked | null, dryRun: boolean) => {
     invariant(target !== null && target.artifact !== "", "a file is chosen before it is sent");

@@ -117,6 +117,23 @@ test("import runs dry first, and writes only after the confirm", async () => {
   expect(h.daemon.commands("memories").length).toBeGreaterThan(reads);
 });
 
+test("import takes any artifact the daemon exports, up to its 48 MiB escaped bound", async () => {
+  const root = await screen();
+  const tools = section(root, "Maintenance") as HTMLElement;
+  const large = DEMO_ARTIFACT + " ".repeat(40 * 1024 * 1024);
+  await chooseFile(root, large);
+  expect(root.querySelector('[role="alert"]'), "40 MiB of plain text fits").toBeNull();
+  await click(h, tools, "Dry run import");
+  const sent = h.daemon.commands("memory_import");
+  expect(sent).toHaveLength(1);
+  expect(sent[0]?.artifact === large && sent[0]?.dry_run === true).toBe(true);
+  // 25 MiB of quotes escapes to 50 MiB: past the bound, so it is refused before anything is sent.
+  await chooseFile(root, '"'.repeat(25 * 1024 * 1024));
+  expect(root.querySelector('[role="alert"]')?.textContent).toContain("50.0 MiB on the wire");
+  expect(buttonNamed(tools, "Dry run import").disabled).toBe(true);
+  expect(h.daemon.commands("memory_import")).toHaveLength(1);
+});
+
 test("a dry run's late reply never plans a file chosen after it", async () => {
   const OTHER = DEMO_ARTIFACT.replace("\n", "\n\n");
   let held = false;
