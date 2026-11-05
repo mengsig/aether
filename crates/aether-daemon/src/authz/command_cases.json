@@ -948,5 +948,40 @@
       "state": "fragile",
       "reason": "fixture"
     }
+  },
+  {
+    "access": "host_only",
+    "command": {
+      "cmd": "memory_retrieval_explain",
+      "task": "tsk_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "host_only",
+    "command": {
+      "cmd": "consolidate_memories",
+      "dry_run": true
+    }
+  },
+  {
+    "access": "host_only",
+    "command": {
+      "cmd": "memory_export",
+      "scope": {"scope": "global"}
+    }
+  },
+  {
+    "access": "host_only",
+    "command": {
+      "cmd": "memory_import",
+      "artifact": "",
+      "dry_run": true
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "memory_migration_status"
+    }
   }
 ]

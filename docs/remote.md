@@ -828,6 +828,11 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `record_memory_feedback` | host_only | Records evidence on a memory the named task saw. |
 | `retract_memory_feedback` | host_only | Withdraws feedback while preserving the original record. |
 | `memory_feedback` | host_only | Reads recent feedback, including retractions. |
+| `memory_retrieval_explain` | host_only | What retrieval did for each model call of a task or invocation. |
+| `consolidate_memories` | host_only | Merges near-duplicate memories, or plans it with `dry_run`. |
+| `memory_export` | host_only | Every memory of a scope as a JSON Lines artifact. |
+| `memory_import` | host_only | Inserts what an export holds and the store lacks; never overwrites. |
+| `memory_migration_status` | observe | Memory 2.0 migrations, counts and backup file names. |
 | `list_runs` | observe | |
 | `get_run_report` | observe | |
 | `replay` | observe | |
