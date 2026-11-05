@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vNext final pass: before and after</title>
+<style>
+  body { margin: 0; font: 16px/1.5 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; color: #171c1a; background: #f3f2ee; font-variant-numeric: tabular-nums; }
+  main { max-width: 1320px; margin: 0 auto; padding: 32px 20px 80px; }
+  .banner { padding: 16px 20px; border-radius: 12px; background: #0b6b52; color: #fff; }
+  .banner strong { display: block; font-size: 18px; }
+  h1 { font: 600 32px/1.2 inherit; letter-spacing: -0.02em; margin: 28px 0 8px; }
+  h2 { font: 600 24px/1.2 inherit; letter-spacing: -0.02em; margin: 56px 0 8px; padding-top: 16px; border-top: 1px solid #e3e1db; }
+  h3 { font: 600 16px/1.2 inherit; margin: 24px 0 4px; }
+  figure { margin: 20px 0 0; }
+  figcaption { font-weight: 600; margin-bottom: 6px; }
+  img { display: block; width: 100%; height: auto; border: 1px solid #e3e1db; border-radius: 8px; background: #fff; }
+  nav ul { columns: 3; padding-left: 20px; }
+  a { color: #0b6b52; }
+  table { border-collapse: collapse; font-size: 14px; }
+  td, th { text-align: left; padding: 4px 16px 4px 0; border-bottom: 1px solid #e3e1db; vertical-align: top; }
+  code { font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+  .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; border: 1px solid #0003; vertical-align: -2px; margin-right: 6px; }
+</style>
+</head>
+<body>
+<main>
+<div class="banner" role="note"><strong>Before this pass, the web app had one shared page kit but still read as a kit: boxes inside boxes, bordered buttons and chips, a serif display face over a sans text face, a dark gradient rail, uppercase labels, and empty states with a glyph. After it, one type family carries the hierarchy, lists are parted by hairlines, buttons and chips are flat tints, the rail shares the page's ground, and every motion runs on four duration tokens that reduced motion zeroes.</strong>
+Every "Before" image is the frontend at 1db2f324 (the branch's base); every "After" image is this branch. Both sets were taken headless on the
+end-to-end stack (real daemons, a faux engine, temporary roots), so no real credentials or operator data appear.</div>
+<h1>vNext final pass: before and after</h1>
+<p>22 screens, 40 states. Each state is shown at desktop width in the light theme; each screen's first state is
+also shown at desktop width in the dark theme and at a narrow (390 px) width. Pages taller than 2400 px are cropped at the bottom. The capture
+spec is <code>web/e2e/specs/capture/screens.spec.ts</code>; the motion spec is <code>web/e2e/specs/smoke/motion.spec.ts</code>.</p>
+<h2 id="principles">Design principles</h2>
+<h3>Type</h3><p>One family, the system sans (SF Pro, Segoe UI Variable, Roboto, Noto Sans in that order), for display and text alike. Display text is the same face set larger, bolder and tighter. Mono is for ids, code and keys only. Numerals are tabular everywhere, so counts and times line up.</p><table><tr><th>Token</th><th>Size</th><th>Use</th></tr><tr><td><code>--text-xs</code></td><td>12 px</td><td>labels, meta</td></tr><tr><td><code>--text-sm</code></td><td>13 px</td><td>secondary text, chips, badges</td></tr><tr><td><code>--text-md</code></td><td>14 px</td><td>body, card titles</td></tr><tr><td><code>--text-lg</code></td><td>16 px</td><td>state titles, strong facts</td></tr><tr><td><code>--text-xl</code></td><td>20 px</td><td>shell title, dialog title, big numbers</td></tr><tr><td><code>--text-2xl</code></td><td>24 px</td><td>page title, learning goal</td></tr><tr><td><code>--text-3xl</code></td><td>32 px</td><td>the pairing phrase</td></tr></table><p>Weights 400, 500 and 600. Display tracking is -0.02 em at 24 px and up, -0.01 em at 16 to 20 px. Labels are sentence case; no uppercase, no letter-spaced small caps.</p><h3>Spacing</h3><p>A 4 px grid, <code>--space-1</code> to <code>--space-12</code>. The page gap is 24, a card's padding is 20, the main column's padding is 32 on the sides and 16 above, rows in a list sit 12 to 16 apart, and controls are 36 px tall (28 px for the small size). Radii 6, 8, 12 and 16 px: fields and chips 6 or 8, cards 12, dialogs 16.</p><h3>Palette</h3><p>Neutral ground, white surfaces, one green that does the pointing, blue only for the focus ring. Every text colour reads at or above 4.5:1 on every surface in both themes, checked by script.</p><table><tr><th>Token</th><th>Light</th><th>Dark</th></tr><tr><td><code>--color-bg</code></td><td><span class=swatch style="background:#f3f2ee"></span>#f3f2ee</td><td><span class=swatch style="background:#0e1211"></span>#0e1211</td></tr><tr><td><code>--color-surface-1</code></td><td><span class=swatch style="background:#ffffff"></span>#ffffff</td><td><span class=swatch style="background:#161b19"></span>#161b19</td></tr><tr><td><code>--color-surface-3</code></td><td><span class=swatch style="background:#ebe9e4"></span>#ebe9e4</td><td><span class=swatch style="background:#232a27"></span>#232a27</td></tr><tr><td><code>--color-border</code></td><td><span class=swatch style="background:#e3e1db"></span>#e3e1db</td><td><span class=swatch style="background:#262d2a"></span>#262d2a</td></tr><tr><td><code>--color-text</code></td><td><span class=swatch style="background:#171c1a"></span>#171c1a</td><td><span class=swatch style="background:#eceeec"></span>#eceeec</td></tr><tr><td><code>--color-text-muted</code></td><td><span class=swatch style="background:#4b5450"></span>#4b5450</td><td><span class=swatch style="background:#a9b2ad"></span>#a9b2ad</td></tr><tr><td><code>--color-text-faint</code></td><td><span class=swatch style="background:#5e6760"></span>#5e6760</td><td><span class=swatch style="background:#8d9691"></span>#8d9691</td></tr><tr><td><code>--color-accent</code></td><td><span class=swatch style="background:#0b6b52"></span>#0b6b52</td><td><span class=swatch style="background:#5fd0ae"></span>#5fd0ae</td></tr><tr><td><code>--color-focus</code></td><td><span class=swatch style="background:#2457c9"></span>#2457c9</td><td><span class=swatch style="background:#9cb8ff"></span>#9cb8ff</td></tr></table><h3>Structure</h3><p>A card is the one box a view gets; inside it, items are parted by hairlines, never boxed again. Buttons, chips, badges and pills are flat tints with no border; only fields and cards have one. Each view has one filled primary action; everything else is a tint or plain text. The navigation rail shares the page's ground and is parted from it by a hairline; the current link is a lifted white row, not a coloured bar.</p><h3>Motion</h3><p>Four durations and three eases, nothing else: <code>--motion-instant</code> 60 ms, <code>--motion-fast</code> 120 ms, <code>--motion-base</code> 200 ms, <code>--motion-slow</code> 280 ms. Under <code>prefers-reduced-motion: reduce</code> all four are 0 ms, so every animation and transition below stops; <code>web/e2e/specs/smoke/motion.spec.ts</code> walks the DOM with that media emulated and asserts no element keeps a duration.</p><table><tr><th>Animation</th><th>Where</th><th>Token</th><th>Duration</th></tr><tr><td><code>ui-rise</code> (fade, 6 px up)</td><td>a page entering, a toast, the task graph panes, history, the pairing form, a new live message, a question row, a callout</td><td><code>--motion-base</code></td><td>200 ms</td></tr><tr><td><code>ui-rise</code></td><td>menus, a settings or controls row or note, a GitHub item, an opened tool call</td><td><code>--motion-fast</code></td><td>120 ms</td></tr><tr><td><code>ui-fade</code></td><td>a tab panel switching</td><td><code>--motion-fast</code></td><td>120 ms</td></tr><tr><td><code>ui-fade</code></td><td>an empty or error state, a dialog's backdrop</td><td><code>--motion-base</code></td><td>200 ms</td></tr><tr><td><code>ui-pop</code> (fade, scale 0.97, 8 px up)</td><td>a dialog, a sheet on a narrow screen, an open learning question</td><td><code>--motion-base</code></td><td>200 ms</td></tr><tr><td><code>ui-slide</code> (fade, 32 px in from the right)</td><td>a side sheet</td><td><code>--motion-slow</code></td><td>280 ms</td></tr><tr><td><code>ui-pulse</code> (loops)</td><td>a live pill's dot</td><td><code>--motion-slow</code> × 6</td><td>1680 ms</td></tr><tr><td><code>ui-shimmer</code> (loops)</td><td>a skeleton</td><td><code>--motion-slow</code> × 5</td><td>1400 ms</td></tr><tr><td><code>learn-breathe</code> (loops)</td><td>the tutor's thinking dots</td><td><code>--motion-slow</code> × 4</td><td>1120 ms</td></tr><tr><td>transition: background, colour, scale, opacity</td><td>buttons, chips, nav links, tabs, fields, links, tooltips</td><td><code>--motion-fast</code> (press: <code>--motion-instant</code>)</td><td>120 ms (60 ms)</td></tr><tr><td>transition: colour</td><td>pill and connection dots, stage borders, plan dots, meters</td><td><code>--motion-base</code></td><td>200 ms</td></tr></table>
+<nav aria-label="Screens"><ul><li><a href="#fleet">Fleet</a></li><li><a href="#pairing">Pairing</a></li><li><a href="#queue">Queue</a></li><li><a href="#inbox">Inbox</a></li><li><a href="#history">History</a></li><li><a href="#task-graph">Task graph</a></li><li><a href="#topology">Topology</a></li><li><a href="#agent">Agent</a></li><li><a href="#controls">Controls</a></li><li><a href="#memory">Memory</a></li><li><a href="#activity">Activity</a></li><li><a href="#item">Item</a></li><li><a href="#settings">Settings</a></li><li><a href="#pipeline">Pipeline</a></li><li><a href="#initiative">Initiative</a></li><li><a href="#learn">Learn</a></li><li><a href="#learn-sessions">Learn sessions</a></li><li><a href="#knowledge">Knowledge</a></li><li><a href="#my-understanding">My understanding</a></li><li><a href="#session">Session</a></li><li><a href="#github-issue">GitHub issue</a></li><li><a href="#github-pull-request">GitHub pull request</a></li></ul></nav>
+<section id="fleet"><h2>Fleet</h2><ul><li>The agent table is no longer a bordered box: rows are parted by hairlines and sit flush with the page.</li><li>Agent names are plain medium-weight text that turns green on hover instead of underlined links.</li><li>Column heads are sentence case in the faint label style.</li></ul>
+<figure><figcaption>Before · unpaired · desktop light</figcaption><img src="img/01-fleet-unpaired--desktop-light--before.png" alt="Before · unpaired · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · unpaired · desktop light</figcaption><img src="img/01-fleet-unpaired--desktop-light--after.png" alt="After · unpaired · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · unpaired · desktop dark</figcaption><img src="img/01-fleet-unpaired--desktop-dark--before.png" alt="Before · unpaired · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · unpaired · desktop dark</figcaption><img src="img/01-fleet-unpaired--desktop-dark--after.png" alt="After · unpaired · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · unpaired · narrow light</figcaption><img src="img/01-fleet-unpaired--narrow-light--before.png" alt="Before · unpaired · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · unpaired · narrow light</figcaption><img src="img/01-fleet-unpaired--narrow-light--after.png" alt="After · unpaired · narrow light" loading="lazy"></figure>
+<figure><figcaption>Before · loaded · desktop light</figcaption><img src="img/08-fleet-loaded--desktop-light--before.png" alt="Before · loaded · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · loaded · desktop light</figcaption><img src="img/08-fleet-loaded--desktop-light--after.png" alt="After · loaded · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · loading · desktop light</figcaption><img src="img/27-fleet-loading--desktop-light--before.png" alt="Before · loading · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · loading · desktop light</figcaption><img src="img/27-fleet-loading--desktop-light--after.png" alt="After · loading · desktop light" loading="lazy"></figure>
+</section>
+<section id="pairing"><h2>Pairing</h2><ul><li>The eyebrow is the kit&#x27;s quiet label, not an uppercase accent line; the pairing phrase is the one display moment at 32 px.</li><li>The form rises in on the base token and the primary button is the only filled control on the screen.</li></ul>
+<figure><figcaption>Before · Aether · desktop light</figcaption><img src="img/02-pairing-aether--desktop-light--before.png" alt="Before · Aether · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · Aether · desktop light</figcaption><img src="img/02-pairing-aether--desktop-light--after.png" alt="After · Aether · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · Aether · desktop dark</figcaption><img src="img/02-pairing-aether--desktop-dark--before.png" alt="Before · Aether · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · Aether · desktop dark</figcaption><img src="img/02-pairing-aether--desktop-dark--after.png" alt="After · Aether · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · Aether · narrow light</figcaption><img src="img/02-pairing-aether--narrow-light--before.png" alt="Before · Aether · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · Aether · narrow light</figcaption><img src="img/02-pairing-aether--narrow-light--after.png" alt="After · Aether · narrow light" loading="lazy"></figure>
+<figure><figcaption>Before · Archon · desktop light</figcaption><img src="img/03-pairing-archon--desktop-light--before.png" alt="Before · Archon · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · Archon · desktop light</figcaption><img src="img/03-pairing-archon--desktop-light--after.png" alt="After · Archon · desktop light" loading="lazy"></figure>
+</section>
+<section id="queue"><h2>Queue</h2><ul><li>Rows are hairline-parted with no surrounding box; the title is medium text that turns green on hover.</li><li>Filter chips are flat tints; the pressed chip inverts to ink on paper. Counts are faint and tabular.</li><li>The status summary breathes more (24 px gaps) and the paused state reads at 16 px bold.</li><li>Question rows carry a left rule in the operator colour and rise in on the fast token.</li></ul>
+<figure><figcaption>Before · empty · desktop light</figcaption><img src="img/04-queue-empty--desktop-light--before.png" alt="Before · empty · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · empty · desktop light</figcaption><img src="img/04-queue-empty--desktop-light--after.png" alt="After · empty · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · empty · desktop dark</figcaption><img src="img/04-queue-empty--desktop-dark--before.png" alt="Before · empty · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · empty · desktop dark</figcaption><img src="img/04-queue-empty--desktop-dark--after.png" alt="After · empty · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · empty · narrow light</figcaption><img src="img/04-queue-empty--narrow-light--before.png" alt="Before · empty · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · empty · narrow light</figcaption><img src="img/04-queue-empty--narrow-light--after.png" alt="After · empty · narrow light" loading="lazy"></figure>
+<figure><figcaption>Before · paused · desktop light</figcaption><img src="img/14-queue-paused--desktop-light--before.png" alt="Before · paused · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · paused · desktop light</figcaption><img src="img/14-queue-paused--desktop-light--after.png" alt="After · paused · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · loading · desktop light</figcaption><img src="img/28-queue-loading--desktop-light--before.png" alt="Before · loading · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · loading · desktop light</figcaption><img src="img/28-queue-loading--desktop-light--after.png" alt="After · loading · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · observer · desktop light</figcaption><img src="img/31-queue-observer--desktop-light--before.png" alt="Before · observer · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · observer · desktop light</figcaption><img src="img/31-queue-observer--desktop-light--after.png" alt="After · observer · desktop light" loading="lazy"></figure>
+</section>
+<section id="inbox"><h2>Inbox</h2><ul><li>Items are hairline-parted rows inside the card instead of boxes inside the card.</li><li>Notes are a left rule on the second surface rather than a bordered callout.</li></ul>
+<figure><figcaption>Before · empty · desktop light</figcaption><img src="img/05-inbox-empty--desktop-light--before.png" alt="Before · empty · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · empty · desktop light</figcaption><img src="img/05-inbox-empty--desktop-light--after.png" alt="After · empty · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · empty · desktop dark</figcaption><img src="img/05-inbox-empty--desktop-dark--before.png" alt="Before · empty · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · empty · desktop dark</figcaption><img src="img/05-inbox-empty--desktop-dark--after.png" alt="After · empty · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · empty · narrow light</figcaption><img src="img/05-inbox-empty--narrow-light--before.png" alt="Before · empty · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · empty · narrow light</figcaption><img src="img/05-inbox-empty--narrow-light--after.png" alt="After · empty · narrow light" loading="lazy"></figure>
+</section>
+<section id="history"><h2>History</h2><ul><li>The search is a row of fields on the page, not a card of its own.</li><li>Results sit in a plain list; the picked row tints to the third surface. The timeline dot defaults to the strong border colour.</li></ul>
+<figure><figcaption>Before · empty · desktop light</figcaption><img src="img/06-history-empty--desktop-light--before.png" alt="Before · empty · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · empty · desktop light</figcaption><img src="img/06-history-empty--desktop-light--after.png" alt="After · empty · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · empty · desktop dark</figcaption><img src="img/06-history-empty--desktop-dark--before.png" alt="Before · empty · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · empty · desktop dark</figcaption><img src="img/06-history-empty--desktop-dark--after.png" alt="After · empty · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · empty · narrow light</figcaption><img src="img/06-history-empty--narrow-light--before.png" alt="Before · empty · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · empty · narrow light</figcaption><img src="img/06-history-empty--narrow-light--after.png" alt="After · empty · narrow light" loading="lazy"></figure>
+<figure><figcaption>Before · loaded · desktop light</figcaption><img src="img/17-history-loaded--desktop-light--before.png" alt="Before · loaded · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · loaded · desktop light</figcaption><img src="img/17-history-loaded--desktop-light--after.png" alt="After · loaded · desktop light" loading="lazy"></figure>
+</section>
+<section id="task-graph"><h2>Task graph</h2><ul><li>Section headings are sentence case; counts are sans and tabular.</li><li>Held-up items are hairline rows inside the inspector; the callout is a left rule.</li><li>The item title is bold at 16 px with tight tracking.</li></ul>
+<figure><figcaption>Before · empty · desktop light</figcaption><img src="img/07-task-graph-empty--desktop-light--before.png" alt="Before · empty · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · empty · desktop light</figcaption><img src="img/07-task-graph-empty--desktop-light--after.png" alt="After · empty · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · empty · desktop dark</figcaption><img src="img/07-task-graph-empty--desktop-dark--before.png" alt="Before · empty · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · empty · desktop dark</figcaption><img src="img/07-task-graph-empty--desktop-dark--after.png" alt="After · empty · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · empty · narrow light</figcaption><img src="img/07-task-graph-empty--narrow-light--before.png" alt="Before · empty · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · empty · narrow light</figcaption><img src="img/07-task-graph-empty--narrow-light--after.png" alt="After · empty · narrow light" loading="lazy"></figure>
+<figure><figcaption>Before · loaded · desktop light</figcaption><img src="img/16-task-graph-loaded--desktop-light--before.png" alt="Before · loaded · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · loaded · desktop light</figcaption><img src="img/16-task-graph-loaded--desktop-light--after.png" alt="After · loaded · desktop light" loading="lazy"></figure>
+</section>
+<section id="topology"><h2>Topology</h2><ul><li>No screen-specific change: it takes the new palette, rail, header and type.</li></ul>
+<figure><figcaption>Before · loaded · desktop light</figcaption><img src="img/09-topology-loaded--desktop-light--before.png" alt="Before · loaded · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · loaded · desktop light</figcaption><img src="img/09-topology-loaded--desktop-light--after.png" alt="After · loaded · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · loaded · desktop dark</figcaption><img src="img/09-topology-loaded--desktop-dark--before.png" alt="Before · loaded · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · loaded · desktop dark</figcaption><img src="img/09-topology-loaded--desktop-dark--after.png" alt="After · loaded · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · loaded · narrow light</figcaption><img src="img/09-topology-loaded--narrow-light--before.png" alt="Before · loaded · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · loaded · narrow light</figcaption><img src="img/09-topology-loaded--narrow-light--after.png" alt="After · loaded · narrow light" loading="lazy"></figure>
+</section>
+<section id="agent"><h2>Agent</h2><ul><li>Fact labels are sentence case; the menu sits at the end of the title row.</li><li>Messages are hairline-separated: yours on a white surface, the agent&#x27;s plain on the page, at a 72-character measure.</li><li>Attachments and code blocks use the quieter surfaces and the medium radius.</li></ul>
+<figure><figcaption>Before · conversation · desktop light</figcaption><img src="img/10-agent-conversation--desktop-light--before.png" alt="Before · conversation · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · conversation · desktop light</figcaption><img src="img/10-agent-conversation--desktop-light--after.png" alt="After · conversation · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · conversation · desktop dark</figcaption><img src="img/10-agent-conversation--desktop-dark--before.png" alt="Before · conversation · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · conversation · desktop dark</figcaption><img src="img/10-agent-conversation--desktop-dark--after.png" alt="After · conversation · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · conversation · narrow light</figcaption><img src="img/10-agent-conversation--narrow-light--before.png" alt="Before · conversation · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · conversation · narrow light</figcaption><img src="img/10-agent-conversation--narrow-light--after.png" alt="After · conversation · narrow light" loading="lazy"></figure>
+<figure><figcaption>Before · error · desktop light</figcaption><img src="img/24-agent-error--desktop-light--before.png" alt="Before · error · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · error · desktop light</figcaption><img src="img/24-agent-error--desktop-light--after.png" alt="After · error · desktop light" loading="lazy"></figure>
+</section>
+<section id="controls"><h2>Controls</h2><ul><li>Sections are kit cards whose items are hairline rows, not cards inside cards.</li><li>Standing notes are a left info rule on the second surface; text areas and selects use the standard field border with a hover state.</li><li>The observer view keeps every control visible with its refusal reason, all in the new flat button style.</li></ul>
+<figure><figcaption>Before · operator · desktop light</figcaption><img src="img/11-controls-operator--desktop-light--before.png" alt="Before · operator · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · operator · desktop light</figcaption><img src="img/11-controls-operator--desktop-light--after.png" alt="After · operator · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · operator · desktop dark</figcaption><img src="img/11-controls-operator--desktop-dark--before.png" alt="Before · operator · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · operator · desktop dark</figcaption><img src="img/11-controls-operator--desktop-dark--after.png" alt="After · operator · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · operator · narrow light</figcaption><img src="img/11-controls-operator--narrow-light--before.png" alt="Before · operator · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · operator · narrow light</figcaption><img src="img/11-controls-operator--narrow-light--after.png" alt="After · operator · narrow light" loading="lazy"></figure>
+<figure><figcaption>Before · observer · desktop light</figcaption><img src="img/30-controls-observer--desktop-light--before.png" alt="Before · observer · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · observer · desktop light</figcaption><img src="img/30-controls-observer--desktop-light--after.png" alt="After · observer · desktop light" loading="lazy"></figure>
+</section>
+<section id="memory"><h2>Memory</h2><ul><li>Store labels are sentence case; the big numbers are bold 20 px display, not mono.</li><li>Tool rows and turns are hairline rows; an untraced turn is dimmed rather than boxed.</li><li>The screen&#x27;s own reduced-motion override is gone: the tokens already handle it.</li></ul>
+<figure><figcaption>Before · review · desktop light</figcaption><img src="img/12-memory-review--desktop-light--before.png" alt="Before · review · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · review · desktop light</figcaption><img src="img/12-memory-review--desktop-light--after.png" alt="After · review · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · review · desktop dark</figcaption><img src="img/12-memory-review--desktop-dark--before.png" alt="Before · review · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · review · desktop dark</figcaption><img src="img/12-memory-review--desktop-dark--after.png" alt="After · review · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · review · narrow light</figcaption><img src="img/12-memory-review--narrow-light--before.png" alt="Before · review · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · review · narrow light</figcaption><img src="img/12-memory-review--narrow-light--after.png" alt="After · review · narrow light" loading="lazy"></figure>
+</section>
+<section id="activity"><h2>Activity</h2><ul><li>Events are hairline rows in the connection&#x27;s card rather than a stack of grey boxes.</li><li>The filter fields take the standard field style and height.</li></ul>
+<figure><figcaption>Before · loaded · desktop light</figcaption><img src="img/13-activity-loaded--desktop-light--before.png" alt="Before · loaded · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · loaded · desktop light</figcaption><img src="img/13-activity-loaded--desktop-light--after.png" alt="After · loaded · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · loaded · desktop dark</figcaption><img src="img/13-activity-loaded--desktop-dark--before.png" alt="Before · loaded · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · loaded · desktop dark</figcaption><img src="img/13-activity-loaded--desktop-dark--after.png" alt="After · loaded · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · loaded · narrow light</figcaption><img src="img/13-activity-loaded--narrow-light--before.png" alt="Before · loaded · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · loaded · narrow light</figcaption><img src="img/13-activity-loaded--narrow-light--after.png" alt="After · loaded · narrow light" loading="lazy"></figure>
+</section>
+<section id="item"><h2>Item</h2><ul><li>Facts are one hairline-bounded row of label-over-value pairs, not a grid of tiles.</li><li>Callouts are a 2 px left rule on a white surface; row buttons are flat tints; a stage&#x27;s left border animates on the base token.</li></ul>
+<figure><figcaption>Before · queued · desktop light</figcaption><img src="img/15-item-queued--desktop-light--before.png" alt="Before · queued · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · queued · desktop light</figcaption><img src="img/15-item-queued--desktop-light--after.png" alt="After · queued · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · queued · desktop dark</figcaption><img src="img/15-item-queued--desktop-dark--before.png" alt="Before · queued · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · queued · desktop dark</figcaption><img src="img/15-item-queued--desktop-dark--after.png" alt="After · queued · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · queued · narrow light</figcaption><img src="img/15-item-queued--narrow-light--before.png" alt="Before · queued · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · queued · narrow light</figcaption><img src="img/15-item-queued--narrow-light--after.png" alt="After · queued · narrow light" loading="lazy"></figure>
+<figure><figcaption>Before · error · desktop light</figcaption><img src="img/23-item-error--desktop-light--before.png" alt="Before · error · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · error · desktop light</figcaption><img src="img/23-item-error--desktop-light--after.png" alt="After · error · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · observer · desktop light</figcaption><img src="img/32-item-observer--desktop-light--before.png" alt="Before · observer · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · observer · desktop light</figcaption><img src="img/32-item-observer--desktop-light--after.png" alt="After · observer · desktop light" loading="lazy"></figure>
+</section>
+<section id="settings"><h2>Settings</h2><ul><li>Each tab&#x27;s items are hairline rows inside their card.</li><li>Switching tabs cross-fades the panel on the fast token; the tab underline fades and scales in.</li></ul>
+<figure><figcaption>Before · connections · desktop light</figcaption><img src="img/18-settings-connections--desktop-light--before.png" alt="Before · connections · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · connections · desktop light</figcaption><img src="img/18-settings-connections--desktop-light--after.png" alt="After · connections · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · connections · desktop dark</figcaption><img src="img/18-settings-connections--desktop-dark--before.png" alt="Before · connections · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · connections · desktop dark</figcaption><img src="img/18-settings-connections--desktop-dark--after.png" alt="After · connections · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · connections · narrow light</figcaption><img src="img/18-settings-connections--narrow-light--before.png" alt="Before · connections · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · connections · narrow light</figcaption><img src="img/18-settings-connections--narrow-light--after.png" alt="After · connections · narrow light" loading="lazy"></figure>
+<figure><figcaption>Before · devices · desktop light</figcaption><img src="img/19-settings-devices--desktop-light--before.png" alt="Before · devices · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · devices · desktop light</figcaption><img src="img/19-settings-devices--desktop-light--after.png" alt="After · devices · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · remote · desktop light</figcaption><img src="img/20-settings-remote--desktop-light--before.png" alt="Before · remote · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · remote · desktop light</figcaption><img src="img/20-settings-remote--desktop-light--after.png" alt="After · remote · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · providers · desktop light</figcaption><img src="img/21-settings-providers--desktop-light--before.png" alt="Before · providers · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · providers · desktop light</figcaption><img src="img/21-settings-providers--desktop-light--after.png" alt="After · providers · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · notifications · desktop light</figcaption><img src="img/22-settings-notifications--desktop-light--before.png" alt="Before · notifications · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · notifications · desktop light</figcaption><img src="img/22-settings-notifications--desktop-light--after.png" alt="After · notifications · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · loading · desktop light</figcaption><img src="img/29-settings-loading--desktop-light--before.png" alt="Before · loading · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · loading · desktop light</figcaption><img src="img/29-settings-loading--desktop-light--after.png" alt="After · loading · desktop light" loading="lazy"></figure>
+</section>
+<section id="pipeline"><h2>Pipeline</h2><ul><li>The current step loses its shadow; the connector is a 1 px hairline and the step index is sans.</li><li>Only the error state is shown: no run exists on the capture host.</li></ul>
+<figure><figcaption>Before · error · desktop light</figcaption><img src="img/25-pipeline-error--desktop-light--before.png" alt="Before · error · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · error · desktop light</figcaption><img src="img/25-pipeline-error--desktop-light--after.png" alt="After · error · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · error · desktop dark</figcaption><img src="img/25-pipeline-error--desktop-dark--before.png" alt="Before · error · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · error · desktop dark</figcaption><img src="img/25-pipeline-error--desktop-dark--after.png" alt="After · error · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · error · narrow light</figcaption><img src="img/25-pipeline-error--narrow-light--before.png" alt="Before · error · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · error · narrow light</figcaption><img src="img/25-pipeline-error--narrow-light--after.png" alt="After · error · narrow light" loading="lazy"></figure>
+</section>
+<section id="initiative"><h2>Initiative</h2><ul><li>Facts are a hairline-bounded row with bold 20 px values.</li><li>Members tint on hover on the fast token.</li></ul>
+<figure><figcaption>Before · error · desktop light</figcaption><img src="img/26-initiative-error--desktop-light--before.png" alt="Before · error · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · error · desktop light</figcaption><img src="img/26-initiative-error--desktop-light--after.png" alt="After · error · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · error · desktop dark</figcaption><img src="img/26-initiative-error--desktop-dark--before.png" alt="Before · error · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · error · desktop dark</figcaption><img src="img/26-initiative-error--desktop-dark--after.png" alt="After · error · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · error · narrow light</figcaption><img src="img/26-initiative-error--narrow-light--before.png" alt="Before · error · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · error · narrow light</figcaption><img src="img/26-initiative-error--narrow-light--after.png" alt="After · error · narrow light" loading="lazy"></figure>
+</section>
+<section id="learn"><h2>Learn</h2><ul><li>The Noesis eyebrow is a quiet sentence-case label.</li><li>Goals are bold with tight tracking; panels carry a hairline instead of a shadow.</li></ul>
+<figure><figcaption>Before · off · desktop light</figcaption><img src="img/33-learn-off--desktop-light--before.png" alt="Before · off · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · off · desktop light</figcaption><img src="img/33-learn-off--desktop-light--after.png" alt="After · off · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · off · desktop dark</figcaption><img src="img/33-learn-off--desktop-dark--before.png" alt="Before · off · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · off · desktop dark</figcaption><img src="img/33-learn-off--desktop-dark--after.png" alt="After · off · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · off · narrow light</figcaption><img src="img/33-learn-off--narrow-light--before.png" alt="Before · off · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · off · narrow light</figcaption><img src="img/33-learn-off--narrow-light--after.png" alt="After · off · narrow light" loading="lazy"></figure>
+</section>
+<section id="learn-sessions"><h2>Learn sessions</h2><ul><li>The start card is a flat kit card; an open question has no shadow.</li><li>The question kind is sentence case.</li></ul>
+<figure><figcaption>Before · empty · desktop light</figcaption><img src="img/34-learn-sessions-empty--desktop-light--before.png" alt="Before · empty · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · empty · desktop light</figcaption><img src="img/34-learn-sessions-empty--desktop-light--after.png" alt="After · empty · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · empty · desktop dark</figcaption><img src="img/34-learn-sessions-empty--desktop-dark--before.png" alt="Before · empty · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · empty · desktop dark</figcaption><img src="img/34-learn-sessions-empty--desktop-dark--after.png" alt="After · empty · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · empty · narrow light</figcaption><img src="img/34-learn-sessions-empty--narrow-light--before.png" alt="Before · empty · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · empty · narrow light</figcaption><img src="img/34-learn-sessions-empty--narrow-light--after.png" alt="After · empty · narrow light" loading="lazy"></figure>
+</section>
+<section id="knowledge"><h2>Knowledge</h2><ul><li>Same Learn frame: new palette, type and rail.</li></ul>
+<figure><figcaption>Before · empty · desktop light</figcaption><img src="img/35-knowledge-empty--desktop-light--before.png" alt="Before · empty · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · empty · desktop light</figcaption><img src="img/35-knowledge-empty--desktop-light--after.png" alt="After · empty · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · empty · desktop dark</figcaption><img src="img/35-knowledge-empty--desktop-dark--before.png" alt="Before · empty · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · empty · desktop dark</figcaption><img src="img/35-knowledge-empty--desktop-dark--after.png" alt="After · empty · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · empty · narrow light</figcaption><img src="img/35-knowledge-empty--narrow-light--before.png" alt="Before · empty · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · empty · narrow light</figcaption><img src="img/35-knowledge-empty--narrow-light--after.png" alt="After · empty · narrow light" loading="lazy"></figure>
+</section>
+<section id="my-understanding"><h2>My understanding</h2><ul><li>Same Learn frame; the counts are bold display numerals.</li></ul>
+<figure><figcaption>Before · empty · desktop light</figcaption><img src="img/36-my-understanding-empty--desktop-light--before.png" alt="Before · empty · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · empty · desktop light</figcaption><img src="img/36-my-understanding-empty--desktop-light--after.png" alt="After · empty · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · empty · desktop dark</figcaption><img src="img/36-my-understanding-empty--desktop-dark--before.png" alt="Before · empty · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · empty · desktop dark</figcaption><img src="img/36-my-understanding-empty--desktop-dark--after.png" alt="After · empty · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · empty · narrow light</figcaption><img src="img/36-my-understanding-empty--narrow-light--before.png" alt="Before · empty · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · empty · narrow light</figcaption><img src="img/36-my-understanding-empty--narrow-light--after.png" alt="After · empty · narrow light" loading="lazy"></figure>
+</section>
+<section id="session"><h2>Session</h2><ul><li>The error state is the kit&#x27;s quiet state without a glyph.</li></ul>
+<figure><figcaption>Before · error · desktop light</figcaption><img src="img/37-session-error--desktop-light--before.png" alt="Before · error · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · error · desktop light</figcaption><img src="img/37-session-error--desktop-light--after.png" alt="After · error · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · error · desktop dark</figcaption><img src="img/37-session-error--desktop-dark--before.png" alt="Before · error · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · error · desktop dark</figcaption><img src="img/37-session-error--desktop-dark--after.png" alt="After · error · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · error · narrow light</figcaption><img src="img/37-session-error--narrow-light--before.png" alt="Before · error · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · error · narrow light</figcaption><img src="img/37-session-error--narrow-light--after.png" alt="After · error · narrow light" loading="lazy"></figure>
+</section>
+<section id="github-issue"><h2>GitHub issue</h2><ul><li>Facts are a hairline-bounded row of label-over-value pairs, not tiles.</li><li>Notes are a left rule; work items are hairline rows that rise in on the fast token.</li><li>Badges are sentence-case sans tints without a border.</li></ul>
+<figure><figcaption>Before · unread · desktop light</figcaption><img src="img/38-github-issue-unread--desktop-light--before.png" alt="Before · unread · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · unread · desktop light</figcaption><img src="img/38-github-issue-unread--desktop-light--after.png" alt="After · unread · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · unread · desktop dark</figcaption><img src="img/38-github-issue-unread--desktop-dark--before.png" alt="Before · unread · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · unread · desktop dark</figcaption><img src="img/38-github-issue-unread--desktop-dark--after.png" alt="After · unread · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · unread · narrow light</figcaption><img src="img/38-github-issue-unread--narrow-light--before.png" alt="Before · unread · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · unread · narrow light</figcaption><img src="img/38-github-issue-unread--narrow-light--after.png" alt="After · unread · narrow light" loading="lazy"></figure>
+<figure><figcaption>Before · imported · desktop light</figcaption><img src="img/39-github-issue-imported--desktop-light--before.png" alt="Before · imported · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · imported · desktop light</figcaption><img src="img/39-github-issue-imported--desktop-light--after.png" alt="After · imported · desktop light" loading="lazy"></figure>
+</section>
+<section id="github-pull-request"><h2>GitHub pull request</h2><ul><li>Same kit as the issue page; the merged state reads from one fact row.</li></ul>
+<figure><figcaption>Before · merged · desktop light</figcaption><img src="img/40-github-pull-request-merged--desktop-light--before.png" alt="Before · merged · desktop light" loading="lazy"></figure>
+<figure><figcaption>After · merged · desktop light</figcaption><img src="img/40-github-pull-request-merged--desktop-light--after.png" alt="After · merged · desktop light" loading="lazy"></figure>
+<figure><figcaption>Before · merged · desktop dark</figcaption><img src="img/40-github-pull-request-merged--desktop-dark--before.png" alt="Before · merged · desktop dark" loading="lazy"></figure>
+<figure><figcaption>After · merged · desktop dark</figcaption><img src="img/40-github-pull-request-merged--desktop-dark--after.png" alt="After · merged · desktop dark" loading="lazy"></figure>
+<figure><figcaption>Before · merged · narrow light</figcaption><img src="img/40-github-pull-request-merged--narrow-light--before.png" alt="Before · merged · narrow light" loading="lazy"></figure>
+<figure><figcaption>After · merged · narrow light</figcaption><img src="img/40-github-pull-request-merged--narrow-light--after.png" alt="After · merged · narrow light" loading="lazy"></figure>
+</section>
+</main>
+</body>
+</html>
