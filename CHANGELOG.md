@@ -112,7 +112,12 @@ before updating.
 - **Versions.** The workspace, the Python and TypeScript clients and the web
   and desktop packages are 1.3.0; the web app reports 1.3.0 in its hello.
 
-- A native tool call that never returns no longer holds its agent: after 15 minutes outstanding with no sign of life from the engine, Aether stops the turn and records `agent.tool_call_overdue`. It then wakes the agent, delivering the inbox, and pins Claude Code's shell cap at 10 minutes (archon#393).
+### Fixed
+
+- **A tool call that never returns (archon#393).** After 15 minutes
+  outstanding with no sign of life from the engine, Aether stops the turn,
+  records `agent.tool_call_overdue` and wakes the agent to read its inbox;
+  Claude Code's shell cap is pinned at 10 minutes.
 
 ## 1.2.11
 
