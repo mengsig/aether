@@ -1,0 +1,51 @@
+# Frontend performance budgets
+
+The fixtures, scenarios and budgets of vNext task H2. Run them with `make web-perf`, or with
+`npm run perf` in `web/` (`npm run perf:ci` checks only the host-independent measures, as the
+`web-perf` workflow does on every pull request). `make ci` does not run them.
+
+## Fixtures
+
+All are generated from a seed (`fixtures/random.ts`, mulberry32), so no blob is committed and every
+host measures the same data:
+
+| Fixture | Size | Generator |
+| --- | --- | --- |
+| Fleet | 5,000 agents in runs of 1 to 24, a third Archon runs | `fixtures/fleet.ts` |
+| Transcript | 20,000 entries: prompts, Markdown, reasoning, tool calls and results, attachments | `fixtures/transcript.ts` |
+| DAG | 2,000 items in 40 initiatives, 4,027 typed edges (seed 2000) | `fixtures/dag.ts` |
+| Delta load | 10 s at 60 fps: 3 streams × 40 text deltas/s, a commit every 2 s per stream, 20 fleet row updates/s | `fixtures/deltas.ts` |
+
+## Scenarios
+
+`scenarios/*.perf.tsx` mount the real screens (fleet, conversation, DAG workspace) under a real core
+app in happy-dom, with the store committing only when a scenario runs a frame. Updates go through
+core's own reducers (`aether-reduce.ts`). Each measure is:
+
+- **counts** (`enforce: ci`): React commits, rows rendered (counted by wrapping the one component each
+  row draws), DOM elements, DOM mutation records, layouts and canvas frames. These are the same on
+  every host for the same lockfile.
+- **bytes** (`enforce: ci`): `web/dist` sizes, raw and at gzip -9 (`bundle.ts`).
+- **wall time and heap** (`enforce: local`): the median of 7 timed repeats after a warm-up, and the
+  heap a mounted screen keeps after a full GC. They hold only on the host in `budgets.json`.
+
+The numbers come from React's development build, which `act` needs, in happy-dom, which has no
+layout or paint. They are regression guards for the JavaScript work, not absolute browser timings;
+`dev/archon-dag-bench.ts` measures DAG frames in Chromium.
+
+## Budgets
+
+`budgets.json` holds, per measure, the measured median of three calibration runs (`measured`), the
+run-to-run noise allowed (`noise`, 0 for counts and bytes, at least 10% for wall time and heap),
+the budget (`measured × (1 + noise)`) and why the measure matters. `run.ts` fails when a measure
+is more than `tolerance` (10%) over its budget, when a budgeted measure was not measured, or when a
+measure has no budget.
+
+After an intended change, recalibrate on the budget host and review the diff:
+
+```sh
+sh ../scripts/ci_slot.sh node perf/run.ts --runs 3 --calibrate
+```
+
+It prints each measure across the runs and the budgets they support; copy the ones that changed
+into `budgets.json` with the reason.
