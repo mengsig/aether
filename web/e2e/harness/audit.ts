@@ -57,23 +57,29 @@ async function socketTable(pid: number): Promise<Map<string, Socket>> {
   return sockets;
 }
 
-/** `roots` and every descendant still alive, from one pass over /proc. */
-export async function processTree(roots: readonly number[]): Promise<number[]> {
-  const parents = new Map<number, number[]>();
+/** Every live process's children, from one pass over /proc. */
+async function childrenByParent(): Promise<Map<number, number[]>> {
+  const children = new Map<number, number[]>();
   for (const entry of await readdir("/proc")) {
     if (!/^\d+$/.test(entry)) continue;
     const stat = await readFile(`/proc/${entry}/stat`, "utf8").catch(() => null);
     if (stat === null) continue;
     const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
-    parents.set(ppid, [...(parents.get(ppid) ?? []), Number(entry)]);
+    assert.ok(Number.isInteger(ppid), `/proc/${entry}/stat names a parent pid`);
+    children.set(ppid, [...(children.get(ppid) ?? []), Number(entry)]);
   }
+  return children;
+}
+
+/** `roots` and every descendant in `children`. */
+function processTree(roots: readonly number[], children: ReadonlyMap<number, number[]>): number[] {
   const seen = new Set<number>();
   const queue = [...roots];
   while (queue.length > 0) {
     const pid = queue.pop() as number;
     if (seen.has(pid)) continue;
     seen.add(pid);
-    queue.push(...(parents.get(pid) ?? []));
+    queue.push(...(children.get(pid) ?? []));
   }
   return [...seen];
 }
@@ -115,8 +121,9 @@ export function startAudit(target: AuditTarget): Audit {
   let samples = 0;
   let running = true;
   const sample = async () => {
-    const daemons = await processTree(target.daemons());
-    const clients = await processTree(target.clients());
+    const children = await childrenByParent();
+    const daemons = processTree(target.daemons(), children);
+    const clients = processTree(target.clients(), children);
     const root = target.root();
     for (const pid of [...daemons, ...clients]) {
       const table = await socketTable(pid);

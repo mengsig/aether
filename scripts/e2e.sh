@@ -1,18 +1,12 @@
 #!/usr/bin/env bash
-# The end-to-end suite (web/e2e): real aetherd and archond with a faux engine, driven through
-# Chromium. Resolves both binaries, runs Playwright in the host CI slot, then fails if any
-# daemon process or temporary root outlived the run.
-#
-#   scripts/e2e.sh [playwright test arguments...]
-#
-# AETHER_BIN   the aether binary; default: `cargo build -p aether` of this checkout.
-# ARCHOND_BIN  the archon binary; default: built once from a read-only clone of mengsig/archon
-#              at E2E_ARCHON_BRANCH's head, cached under $CARGO_TARGET_DIR/e2e-archon by commit.
+# The web/e2e suite against real aetherd and archond: `scripts/e2e.sh [playwright test args]`.
+# Fails if any daemon process or stack root outlives the run.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO_ROOT=$PWD
 TARGET=${CARGO_TARGET_DIR:-$REPO_ROOT/target}
 case "$TARGET" in /*) ;; *) TARGET=$REPO_ROOT/$TARGET ;; esac
+# ARCHOND_BIN, when unset, is built once from a read-only clone at the branch head, cached by commit.
 ARCHON_URL=${E2E_ARCHON_URL:-https://github.com/mengsig/archon}
 ARCHON_BRANCH=${E2E_ARCHON_BRANCH:-archon/qryx61z9-vnext-phase-0-baselines-architecture-sha}
 ARCHON_CACHE=$TARGET/e2e-archon
@@ -37,6 +31,7 @@ retry() {
   return 1
 }
 
+# AETHER_BIN, when unset, is this checkout's debug build.
 resolve_aether() {
   if [ -n "${AETHER_BIN:-}" ]; then return; fi
   say "building aether from this checkout"
@@ -111,11 +106,17 @@ check_leftovers() {
       if [ -e "$root" ]; then echo "e2e: $root outlived the run" >&2; leftovers=1; fi
     done < "$STATE/roots"
   fi
-  [ "$daemons" -gt 0 ] && [ "$roots" -gt 0 ] || { echo "e2e: the harness recorded no daemon or root" >&2; leftovers=1; }
+  if [ "$LISTING" = 0 ] && { [ "$daemons" = 0 ] || [ "$roots" = 0 ]; }; then
+    echo "e2e: the harness recorded no daemon or root, so nothing was checked" >&2
+    leftovers=1
+  fi
   [ "$leftovers" = 0 ] && echo "e2e: clean teardown: $daemons daemon starts all stopped, $roots stack roots all removed"
   return "$leftovers"
 }
 
+# `--list` starts no stack, so it records nothing to check.
+LISTING=0
+for argument in "$@"; do [ "$argument" = --list ] && LISTING=1; done
 resolve_aether
 resolve_archond
 for binary in "$AETHER_BIN" "$ARCHOND_BIN"; do

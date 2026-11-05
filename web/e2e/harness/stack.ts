@@ -56,12 +56,16 @@ async function boot(stack: Stack): Promise<void> {
 }
 
 export async function startStack(binaries: Binaries): Promise<Stack> {
+  const schema = await vendoredSchema();
+  const ports = await freePorts();
   const layout = await createLayout();
   record("roots", layout.root);
-  const engine = await startEngine();
-  const ports = await freePorts();
+  const engine = await startEngine().catch(async (error: unknown) => {
+    await rm(layout.root, { recursive: true, force: true, maxRetries: 3 });
+    throw error;
+  });
   const aether = new Aetherd(binaries.aether, layout, ports);
-  const archon = new Archond(binaries.archon, layout, ports, await vendoredSchema());
+  const archon = new Archond(binaries.archon, layout, ports, schema);
   let stopped = false;
   const stack: Stack = {
     binaries, layout, engine, aether, archon,
@@ -74,13 +78,12 @@ export async function startStack(binaries: Binaries): Promise<Stack> {
     async stop() {
       if (stopped) return;
       stopped = true;
-      try {
-        await archon.stop();
-        await aether.stop();
-        await engine.close();
-      } finally {
-        await rm(layout.root, { recursive: true, force: true, maxRetries: 3 });
-      }
+      // Every step runs even when one fails, so one stuck daemon leaks nothing else.
+      const steps = [() => archon.stop(), () => aether.stop(), () => engine.close(),
+        () => rm(layout.root, { recursive: true, force: true, maxRetries: 3 })];
+      const failures: unknown[] = [];
+      for (const step of steps) await step().catch((error: unknown) => { failures.push(error); });
+      if (failures.length > 0) throw new AggregateError(failures, `the stack at ${layout.root} did not stop cleanly`);
     },
   };
   try {

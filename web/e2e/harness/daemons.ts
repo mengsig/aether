@@ -87,7 +87,8 @@ export class Daemon {
     this.#process = started;
     try {
       await until(async () => started.child.exitCode === null && await logShows(log, "listening", from), Boolean, `${name} to listen`, START_MS);
-      await until(() => this.request({ cmd: "status" }).then(() => true, () => false), Boolean, `${name} to answer on its socket`, START_MS);
+      await until(() => this.request({ cmd: "status" }).then(() => "answered", (error: unknown) => String(error)),
+        (outcome) => outcome === "answered", `${name} to answer on its socket`, START_MS);
     } catch (error) {
       await this.stop();
       throw new Error(`${name} did not start. Its log:\n${await tail(log)}`, { cause: error });
