@@ -68,6 +68,19 @@ describe("AppShell", () => {
     expect(document.title).toBe("Agent · Aether");
   });
 
+  test("names a route with no nav entry by its listed title, else by the product", async () => {
+    const route: RouteDef = { path: "#/archon/items/:item", owner: "C1", load };
+    const match = { route, params: { item: "qi_1" } };
+    const titled = await render(shell({ match, hash: "#/archon/items/qi_1", titles: { [route.path]: "Item" } }).node);
+    await settle();
+    expect(titled.container.querySelector("h1")?.textContent).toBe("Item");
+    expect(document.title).toBe("Item · Aether");
+    document.body.innerHTML = "";
+    const untitled = await render(shell({ match, hash: "#/archon/items/qi_1" }).node);
+    await settle();
+    expect(untitled.container.querySelector("h1")?.textContent).toBe("Aether");
+  });
+
   test("marks the current link and says when no screen or no permission applies", async () => {
     const { container, rerender } = await render(shell({ hash: "#/fleet/topology", match: { route: routes[1] as RouteDef, params: {} } }).node);
     expect(byText(container, "a", "Topology").getAttribute("aria-current")).toBe("page");

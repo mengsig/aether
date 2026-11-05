@@ -5,6 +5,8 @@ import * as archon from "@aether-ui/archon";
 import * as github from "@aether-ui/github";
 import * as noesis from "@aether-ui/noesis";
 import * as settings from "@aether-ui/settings";
+import { appRoutes } from "./routes.ts";
+import { screenTitles } from "./titles.ts";
 
 describe("feature packages", () => {
   test("each loads its routes.ts files by glob and registers their routes", () => {
@@ -30,5 +32,13 @@ describe("feature packages", () => {
       ["b3.agent-controls", "agent"], ["d4.open-issue", "issue"], ["d4.open-pull-request", "pull_request"], ["d4.import-issue", "issue"],
       ["f6.learn-from-item", "item"], ["f6.learn-from-run", "run"], ["f6.learn-from-agent", "agent"], ["f6.learn-from-pull_request", "pull_request"],
     ]);
+  });
+
+  test("every route without a nav entry has a header title, and every title names a route", () => {
+    const routes = [...registry.routes(), ...appRoutes];
+    const navless = routes.filter((route) => route.nav === undefined).map((route) => route.path);
+    expect(navless.length).toBeGreaterThan(0);
+    expect(navless.filter((path) => screenTitles[path] === undefined)).toEqual([]);
+    expect(Object.keys(screenTitles).filter((path) => !navless.includes(path))).toEqual([]);
   });
 });

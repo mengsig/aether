@@ -30,6 +30,8 @@ export interface AppShellProps {
   readonly onDismissNotice?: (id: ToastMessage["id"]) => void;
   /** Extra palette commands, after navigation and theme. */
   readonly commands?: readonly Command[];
+  /** The header of each route with no nav entry, by route path. */
+  readonly titles?: Readonly<Record<string, string>>;
 }
 
 type RouteComponent = ComponentType<RouteProps>;
@@ -62,6 +64,13 @@ function paletteCommands(sections: readonly NavSection[], onNavigate: (href: str
 }
 
 /** The frame every screen renders in: the nav rail, a header, the routed screen and the toasts (CONTRACTS.md §2.5). */
+/** The header for the current route: its nav label, else its listed title, else the product name. */
+function screenTitle(match: ShellMatch | null, titles: Readonly<Record<string, string>> = {}): string {
+  if (match === null) return "Overview";
+  const route = match.route;
+  return route.nav?.label ?? titles[route.path] ?? "Aether";
+}
+
 export function AppShell(props: AppShellProps) {
   const { routes, capabilities, hash, onNavigate } = props;
   const theme = useTheme();
@@ -69,7 +78,7 @@ export function AppShell(props: AppShellProps) {
   const sections = useMemo(() => navSections(routes, capabilities), [routes, capabilities]);
   const commands = useMemo(() => [...paletteCommands(sections, onNavigate, theme), ...(props.commands ?? [])],
     [sections, onNavigate, theme, props.commands]);
-  const title = props.match?.route.nav?.label ?? (props.match ? "Aether" : "Overview");
+  const title = screenTitle(props.match, props.titles);
   useGlobalShortcut(() => setPaletteOpen(true));
   useScreenFocus(hash, title);
 
