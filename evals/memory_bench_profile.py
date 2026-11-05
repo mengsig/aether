@@ -1,13 +1,14 @@
 """Where memory retrieval spends its time: the driver's `--profile` output, summarised.
 
 The driver times each stage of `MemoryService::retrieve` on its own (alias
-resolution, structural pages, lexical pages, the feedback read, the semantic
-pass) beside the whole call and the context layer. `rank` is what the whole
-call spends beyond the stages' sum: scoring and sorting in memory.
+resolution, structural pages, lexical pages, the feedback read, the stale-mark
+read, the semantic pass) beside the whole call and the context layer. `rank` is
+what the whole call spends beyond the stages' sum: scoring, the relevance cutoff
+and sorting in memory. Drivers older than G2 have no stale stage.
 """
 from memory_bench_metrics import mean, percentile
 
-STAGES = ("resolve", "structural", "lexical", "feedback", "semantic")
+STAGES = ("resolve", "structural", "lexical", "feedback", "stale", "semantic")
 COLUMNS = STAGES + ("rank", "retrieve", "layer")
 
 

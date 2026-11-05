@@ -294,7 +294,7 @@ class TaskArmTest(unittest.TestCase):
 
 def profiled_row(qid, retrieve):
     stages = {name: [10.0, 10.0] for name in profiling.STAGES}
-    return dict(stages, id=qid, scopes=5, reads=13, pool=8, retrieved=6, retrieve=retrieve, layer=[1.0, 3.0])
+    return dict(stages, id=qid, scopes=5, reads=14, pool=8, retrieved=6, retrieve=retrieve, layer=[1.0, 3.0])
 
 
 class ProfileTest(unittest.TestCase):
@@ -305,12 +305,13 @@ class ProfileTest(unittest.TestCase):
     def test_rank_is_what_retrieve_spends_beyond_the_stages_never_negative(self):
         summary = profiling.summarise(self.profile())
         small = summary["small"]["stages"]
-        # Stages sum to 50 per pass: rank is 20, 40, 30 and (40 - 50) clamped to 0.
-        self.assertEqual(small["rank"]["mean"], 22.5)
+        # Six stages sum to 60 per pass: rank is 10, 30, 20 and (40 - 60) clamped to 0.
+        self.assertEqual(small["rank"]["mean"], 15.0)
         self.assertEqual(small["retrieve"]["mean"], 70.0)
         self.assertEqual(small["lexical"]["share"], round(10.0 / 70.0, 4))
-        self.assertEqual(summary["small"]["reads_per_retrieval"], 13)
-        self.assertIn("| rank | 20.0 |", profiling.render(summary))
+        self.assertEqual(small["stale"]["mean"], 10.0)
+        self.assertEqual(summary["small"]["reads_per_retrieval"], 14)
+        self.assertIn("| rank | 10.0 |", profiling.render(summary))
 
     def test_a_row_missing_samples_is_refused(self):
         profile = self.profile()

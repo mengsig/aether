@@ -94,12 +94,13 @@ fn a_profile_times_every_stage_of_every_query_on_both_stores() {
             row.scopes, 5,
             "repository, its worker notes, role, agent, subtree"
         );
-        assert_eq!(row.reads, 2 + 2 * 5 + 1);
+        assert_eq!(row.reads, 2 + 2 * 5 + 2);
         for stage in [
             &row.resolve,
             &row.structural,
             &row.lexical,
             &row.feedback,
+            &row.stale,
             &row.semantic,
         ] {
             assert_eq!(stage.len(), 2);

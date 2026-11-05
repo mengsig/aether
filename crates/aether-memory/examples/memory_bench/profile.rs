@@ -4,8 +4,8 @@
 //!
 //! The stages mirror the baseline's pipeline (`aether-memory/src/retrieval.rs`):
 //! alias resolution, a structural and a lexical page per scope, one feedback
-//! read and the semantic pass. What `retrieve` spends beyond their sum is its
-//! in-memory scoring and sorting. A change to that pipeline makes the stage
+//! read, one stale-mark read and the semantic pass. What `retrieve` spends
+//! beyond their sum is its in-memory scoring, cutoff and sorting. A change to that pipeline makes the stage
 //! split stale; the `retrieve` column stays the authority.
 
 use std::collections::BTreeSet;
@@ -37,6 +37,7 @@ pub struct StageTimings {
     pub structural: Vec<f64>,
     pub lexical: Vec<f64>,
     pub feedback: Vec<f64>,
+    pub stale: Vec<f64>,
     pub semantic: Vec<f64>,
     pub layer: Vec<f64>,
     pub retrieve: Vec<f64>,
@@ -109,7 +110,8 @@ fn profile_query(
     let found = service.retrieve(&req)?;
     check_mirror(&pool, found.iter().map(|r| r.record.id), &query.id)?;
     row.scopes = scopes(service, &req)?.len();
-    row.reads = 2 + row.scopes * if req.query.is_some() { 2 } else { 1 } + 1;
+    // Alias resolution twice, the pages, then the feedback and stale reads.
+    row.reads = 2 + row.scopes * if req.query.is_some() { 2 } else { 1 } + 2;
     row.pool = pool.len();
     row.retrieved = found.len();
     for _ in 0..plan.latency.reps {
@@ -163,12 +165,16 @@ fn stages(
     let tallies = store.memory_feedback_tallies(&ids)?;
     row.feedback.push(micros(started));
     let started = Instant::now();
+    let marks = store.memory_stale_marks(&ids)?;
+    row.stale.push(micros(started));
+    let started = Instant::now();
     if local && let Some(text) = req.query.as_deref() {
         let scores = LocalEmbeddingIndex.similarity(text, &pool)?;
         debug_assert_eq!(scores.len(), pool.len());
     }
     row.semantic.push(micros(started));
     debug_assert!(tallies.len() <= pool.len());
+    debug_assert!(marks.len() <= pool.len());
     Ok(pool)
 }
 
