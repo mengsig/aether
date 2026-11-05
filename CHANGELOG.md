@@ -6,6 +6,8 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+- A native tool call that never returns no longer holds its agent: after 15 minutes outstanding with no sign of life from the engine, Aether stops the turn and records `agent.tool_call_overdue`. It then wakes the agent, delivering the inbox, and pins Claude Code's shell cap at 10 minutes (archon#393).
+
 ## 1.2.11
 
 Released 2026-11-03. A patch release for the TUI and the dependencies.

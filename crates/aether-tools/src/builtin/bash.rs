@@ -529,6 +529,37 @@ mod tests {
         assert!(!process_alive(pid), "background sleep {pid} should be dead");
     }
 
+    /// archon#393: a grandchild that leaves the process group with the pipes
+    /// still open must not hold the call past its pipe grace.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_grandchild_holding_the_pipes_does_not_hold_the_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ctx_in(dir.path());
+        let marker = dir.path().join("holder_pid");
+        let cmd = format!(
+            "setsid sh -c 'echo $$ > {}; exec sleep 30' & sleep 0.3",
+            marker.display()
+        );
+        let started = std::time::Instant::now();
+        let out = run(&ctx, &cmd, CancellationToken::new()).await.unwrap();
+        let took = started.elapsed();
+        let pid: i32 = std::fs::read_to_string(&marker)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        if process_alive(pid) {
+            nix::sys::signal::kill(Pid::from_raw(pid), nix::sys::signal::Signal::SIGKILL).unwrap();
+        }
+        assert!(
+            took < PIPE_GRACE + Duration::from_secs(5),
+            "held for {took:?}: {}",
+            out.content
+        );
+        assert!(!out.content.is_empty());
+    }
+
     #[tokio::test]
     async fn empty_command_is_invalid() {
         let dir = tempfile::tempdir().unwrap();

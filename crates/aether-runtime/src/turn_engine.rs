@@ -148,6 +148,7 @@ use outcome::{
 mod availability;
 mod driver;
 mod native_wait;
+mod overdue;
 mod stall;
 mod transient;
 use driver::{DriveResult, drive};

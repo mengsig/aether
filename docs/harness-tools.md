@@ -233,6 +233,8 @@ range in disk storage; it does not load the entire artifact.
 Direct API agents receive `bash`, `shell_output`, `shell_processes`,
 `shell_stop`, and `write_stdin`. CLI engines retain their native shell and
 file tools; these Aether workspace tools are not added to their MCP catalog.
+A native call that never returns is bounded at 15 minutes without a sign of
+life; see [Tool calls that never return](engines.md#tool-calls-that-never-return).
 
 Every shell command writes combined stdout/stderr to a private, randomly named
 `.aether-shell-*/output.log` file in the agent's temp directory, so a finished

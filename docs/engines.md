@@ -1007,7 +1007,7 @@ When an engine has produced nothing (no stream, message, tool result or
 bridge request) for `[scheduler] engine_stall_minutes` (15 by default; `0`
 turns the watchdog off) and no tool call is running, no background task is
 owed and no harness action is winding the turn down, the turn is stalled. A
-running tool is not silence: it keeps its own timeout.
+running tool is not silence here: it has its own bound, below.
 
 A stall emits an `agent.stalled` event with `agent`, `engine`, `model`,
 `silent_secs` and `attempt` (1 for the first stall of the turn), so clients can
@@ -1019,6 +1019,40 @@ tool result - restarts that count, even after the eight outages whose window
 progress resets, so a long turn is not ended by stalls hours apart; the agent goes idle and a message resumes its session. While
 an agent is stalled, `aether status` lists it under "Needs attention", and the
 TUI and `aether run` print a notice for each stall.
+
+### Tool calls that never return
+
+A tool call the engine runs should end within the engine's own tool timeout.
+Aether pins Claude Code's shell cap, `BASH_MAX_TIMEOUT_MS`, at 600000 (10
+minutes, the longest foreground command a turn may run), so a model cannot ask
+for more. Aether's own `bash` stops sooner. When an engine leaves a call
+outstanding anyway, its turn would hold the agent's inbox for good, so Aether
+bounds it. Once a call has gone the longest foreground command plus a 5-minute
+grace (15 minutes in all) without a result, and the engine has shown no sign
+of life over that time, Aether stops the engine and ends the turn interrupted.
+A sign of life is anything that restarts the stall watchdog above, such as a
+model message, a subagent's message, a tool result, a bridge request or a
+background task report.
+
+The stop records an `agent.tool_call_overdue` event. Its fields are `agent`,
+`engine`, `tool`, `call`, `outstanding_secs`, `silent_secs`, `bound_secs` and
+`resumed`. The usual `engine.interrupted` notice and the closed call follow,
+each giving the reason. Aether then wakes the agent with a message: the
+call's result is lost, it may still have had effects, and it must not be
+repeated unchanged. The inbox, with any message sent during the stuck turn, is
+delivered in that fresh turn. A message the stuck engine was handed but never
+acknowledged stays unread until then. If the turn the wake started is stopped
+the same way with nothing new in the inbox, `resumed` is `false` and no
+further wake is sent. The agent waits for a message, and the next one resumes
+it.
+
+Some long calls are not bounded:
+
+- A background job, whose call returns as soon as it starts.
+- A command the engine reports live as a background task under its call's id,
+  as Codex reports its commands.
+- A call Aether holds open itself: a `wait_for`, a question, an approval, or a
+  harness action winding the turn down.
 
 ### Running agents with no turn
 

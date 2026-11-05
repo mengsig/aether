@@ -27,6 +27,14 @@ pub const DEFAULT_ENGINE_TRANSIENT_RETRY_FLOOR: Duration = Duration::from_secs(1
 /// before the stall watchdog interrupts it.
 pub const DEFAULT_ENGINE_STALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
+/// The longest foreground command a turn may run: the shell cap Aether pins on
+/// Claude Code. Aether's own `bash` stops sooner (`ExecutionPolicy`).
+pub const LONGEST_FOREGROUND_COMMAND: Duration = aether_engine::claude_code::BASH_MAX_TIMEOUT;
+
+/// How long past that a native tool call may stay outstanding, with no sign
+/// of life from the engine, before its turn is interrupted.
+pub const TOOL_CALL_GRACE: Duration = Duration::from_secs(5 * 60);
+
 /// How long a worker whose native turn answered while its background jobs
 /// still ran sleeps before it is woken to check on them.
 pub const DEFAULT_NATIVE_JOB_WAKE_AFTER: Duration = Duration::from_secs(2 * 60);
@@ -106,6 +114,10 @@ pub struct RuntimeConfig {
     /// Silence, with no tool running, after which a native engine turn is
     /// interrupted and resumed. Zero turns the watchdog off.
     pub engine_stall_timeout: Duration,
+    /// How long a native tool call may stay outstanding with no sign of life
+    /// before its turn is interrupted: [`LONGEST_FOREGROUND_COMMAND`] plus
+    /// [`TOOL_CALL_GRACE`]. Held waits (`wait_for`, questions) are exempt.
+    pub tool_call_bound: Duration,
     /// A worker whose native turn ended in prose while its background jobs
     /// still ran is woken this long after, its task kept open.
     pub native_job_wake_after: Duration,
@@ -197,6 +209,7 @@ impl Default for RuntimeConfig {
             engine_transient_retry_window: DEFAULT_ENGINE_TRANSIENT_RETRY_WINDOW,
             engine_transient_retry_floor: DEFAULT_ENGINE_TRANSIENT_RETRY_FLOOR,
             engine_stall_timeout: DEFAULT_ENGINE_STALL_TIMEOUT,
+            tool_call_bound: LONGEST_FOREGROUND_COMMAND.saturating_add(TOOL_CALL_GRACE),
             native_job_wake_after: DEFAULT_NATIVE_JOB_WAKE_AFTER,
             orphan_sweep_interval: DEFAULT_ORPHAN_SWEEP_INTERVAL,
             orphan_idle: DEFAULT_ORPHAN_IDLE,
