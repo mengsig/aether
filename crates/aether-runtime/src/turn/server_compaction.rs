@@ -73,7 +73,11 @@ struct Conversation {
     notes: crate::notes::NoteDigest,
 }
 
-fn conversation(runtime: &Runtime, ctx: &TurnCtx) -> Result<Conversation> {
+fn conversation(
+    runtime: &Runtime,
+    ctx: &TurnCtx,
+    resolved: &ResolvedModel,
+) -> Result<Conversation> {
     let checkpoint = runtime.store.latest_checkpoint(ctx.agent.id)?;
     let after = checkpoint.as_ref().map_or(0, |c| c.provenance.to_seq);
     let transcript = runtime.store.transcript(ctx.agent.id, after)?;
@@ -98,7 +102,7 @@ fn conversation(runtime: &Runtime, ctx: &TurnCtx) -> Result<Conversation> {
         .collect();
     let inbox = runtime.store.inbox(ctx.agent.id, ctx.agent.inbox_cursor)?;
     let pending = aether_context::render::deliverable_prefix(&inbox);
-    let memories = retrieve_memories(runtime, ctx, pending)?
+    let memories = retrieve_memories(runtime, ctx, pending, &resolved.model.capabilities)?
         .injected
         .into_iter()
         .map(|m| m.record)
@@ -129,7 +133,7 @@ fn request(
 ) -> Result<Option<ModelRequest>> {
     debug_assert_eq!(resolved.provider.protocol, Protocol::AnthropicMessages);
     debug_assert!(resolved.model.capabilities.compacts_on_server());
-    let state = conversation(runtime, ctx)?;
+    let state = conversation(runtime, ctx, resolved)?;
     if state.transcript.is_empty() || unanswered_tool_calls(&state.transcript) > 0 {
         return Ok(None);
     }

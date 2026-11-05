@@ -47,11 +47,13 @@ pub(crate) fn agent_temp_dir(
 
 /// Memories for this turn, ranked by the task objective and the inbox about
 /// to be consumed, split into what the model is shown and the holdout.
-/// Shared by the API and engine paths so both see one set.
+/// Shared by the API and engine paths so both see one set, fitted to the
+/// memory budget of the model the turn is sent to.
 pub(crate) fn retrieve_memories(
     runtime: &Runtime,
     ctx: &TurnCtx,
     inbox: &[aether_core::inbox::InboxItem],
+    capabilities: &aether_core::model::CapabilityProfile,
 ) -> Result<aether_memory::Holdout> {
     let mut query = ctx
         .task
@@ -83,7 +85,12 @@ pub(crate) fn retrieve_memories(
         kinds: Vec::new(),
         limit: runtime.memory.retrieval_policy().max_items,
     };
-    runtime.turn_memories(&request, holdout_unit(ctx))
+    runtime.turn_memories(
+        &request,
+        holdout_unit(ctx),
+        capabilities,
+        ctx.agent.config.max_output_tokens,
+    )
 }
 
 /// The holdout is drawn per task, so a memory withheld from it stays

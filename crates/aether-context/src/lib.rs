@@ -121,6 +121,21 @@ impl ContextManager {
         self
     }
 
+    /// The ids of `records` that [`Self::assemble`] would render for this
+    /// model and output cap: the only memories a turn could inject.
+    pub fn memories_that_fit(
+        &self,
+        records: &[MemoryRecord],
+        capabilities: &CapabilityProfile,
+        max_output_tokens: Option<u32>,
+    ) -> Vec<aether_core::id::MemoryId> {
+        let budget = ContextBudget::for_profile(capabilities, max_output_tokens);
+        let (_, ids) = memory_layer(records, &self.estimator, budget.memory_max);
+        debug_assert!(ids.len() <= records.len());
+        debug_assert!(ids.iter().all(|id| records.iter().any(|r| r.id == *id)));
+        ids
+    }
+
     fn policy_text(&self, engine_policy: Option<&str>) -> Option<String> {
         let parts: Vec<_> = [Some(self.policy.as_str()), engine_policy]
             .into_iter()

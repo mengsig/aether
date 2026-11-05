@@ -7,6 +7,7 @@ use aether_core::memory_feedback::{
     MAX_FEEDBACK_REASON_CHARS, MEMORY_FEEDBACK_LIMIT, MemoryFeedback, MemoryFeedbackList,
     MemoryFeedbackSpec,
 };
+use aether_core::model::CapabilityProfile;
 use aether_core::snapshot::SnapshotMemories;
 use aether_core::task::Task;
 use aether_core::time::now;
@@ -16,18 +17,29 @@ use aether_store::{Commit, EventFilter, Mutation};
 use crate::{Result, Runtime, RuntimeError};
 
 impl Runtime {
-    /// Retrieve for a turn and draw its holdout. Nothing is written here: the
+    /// Retrieve for a turn, keep what this model's memory budget would
+    /// render, and draw the holdout from that. Nothing is written here: the
     /// log goes into the turn's own commit ([`Self::memory_holdout_log`]).
     pub(crate) fn turn_memories(
         &self,
         request: &aether_memory::RetrievalRequest,
         unit: HoldoutUnit,
+        capabilities: &CapabilityProfile,
+        max_output_tokens: Option<u32>,
     ) -> Result<Holdout> {
         debug_assert_eq!(request.agent, Some(unit.agent));
-        let retrieved = self.memory.retrieve(request)?;
-        let found = retrieved.len();
+        let mut retrieved = self.memory.retrieve(request)?;
+        let records: Vec<_> = retrieved.iter().map(|item| item.record.clone()).collect();
+        let fits = self
+            .context
+            .memories_that_fit(&records, capabilities, max_output_tokens);
+        // Trimmed, not refilled: a held-out slot stays empty, so the injected
+        // arm never sees a memory the full layer would not have carried.
+        retrieved.retain(|item| fits.contains(&item.record.id));
+        let eligible = retrieved.len();
+        debug_assert_eq!(eligible, fits.len());
         let split = self.memory.hold_out(retrieved, unit);
-        debug_assert_eq!(split.injected.len() + split.held_out.len(), found);
+        debug_assert_eq!(split.injected.len() + split.held_out.len(), eligible);
         Ok(split)
     }
 

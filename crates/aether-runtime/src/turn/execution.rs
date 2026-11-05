@@ -385,7 +385,7 @@ pub(super) async fn run_link(
         .map(|c| c.provenance.to_seq)
         .unwrap_or(0);
     let transcript = runtime.store.transcript(ctx.agent.id, transcript_after)?;
-    let memories = retrieve_memories(runtime, ctx, pending_inbox)?;
+    let memories = retrieve_memories(runtime, ctx, pending_inbox, &resolved.model.capabilities)?;
     let memory_records: Vec<_> = memories.injected.iter().map(|m| m.record.clone()).collect();
     let notes = crate::notes::digest(runtime, ctx.agent.id)?;
     let mut tools = runtime.agent_tool_specs(&ctx.agent);

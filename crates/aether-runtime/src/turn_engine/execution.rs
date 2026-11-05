@@ -114,7 +114,7 @@ pub(crate) async fn execute(
     // assignment. Rank on the task objective: per-message ranking would
     // reorder and resend the layer almost every turn. Memory relevant to a later message
     // but not to the objective is not surfaced mid-session.
-    let memories = crate::turn::retrieve_memories(runtime, ctx, &[])?;
+    let memories = crate::turn::retrieve_memories(runtime, ctx, &[], &resolved.model.capabilities)?;
     let memory_records: Vec<_> = memories.injected.iter().map(|m| m.record.clone()).collect();
     let notes = crate::notes::digest(runtime, ctx.agent.id)?;
     let tools: Vec<ToolSpec> = runtime.engine_tool_specs(&ctx.agent);

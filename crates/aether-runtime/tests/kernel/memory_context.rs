@@ -200,8 +200,11 @@ async fn a_full_holdout_withholds_every_memory_from_the_turn_and_logs_it_once() 
         },
     )
     .await;
-    let (kept, _) = seed_memories(&h);
-    let (agent, task) = finished_task(&h, "How is a release build made and signed?").await;
+    let (kept, never) = seed_memories(&h);
+    let objective = "How is a release build made and signed?";
+    let (agent, task) = finished_task(&h, objective).await;
+    let trimmed = *never.last().expect("the oversized note");
+    assert_eq!(retrieved(&h, agent, objective).last(), Some(&trimmed));
     let snapshots = announced(&h, task);
     assert!(!snapshots.is_empty());
     for (memories, _) in &snapshots {
@@ -212,6 +215,10 @@ async fn a_full_holdout_withholds_every_memory_from_the_turn_and_logs_it_once() 
         assert_eq!(logged.len(), 1, "once per task: {logged:?}");
         assert_eq!((logged[0].agent, logged[0].task), (agent, Some(task)));
         assert_eq!(logged[0].rate, 1.0);
+    }
+    for id in &never {
+        let logged = h.store.memory_holdouts(*id).expect("holdouts");
+        assert!(logged.is_empty(), "never a would-be injection: {logged:?}");
     }
     h.runtime.shutdown().await;
 
