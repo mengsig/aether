@@ -16,7 +16,7 @@ interface Motion {
   readonly transitionS: number;
 }
 
-/** Every element with a non-zero animation or transition, as the browser computed it. */
+/** Every element or pseudo-element with a non-zero animation or transition, as the browser computed it. */
 async function motions(page: Page): Promise<Motion[]> {
   return page.evaluate(() => {
     const seconds = (list: string): number => Math.max(...list.split(",").map((part) => {
@@ -25,12 +25,15 @@ async function motions(page: Page): Promise<Motion[]> {
     }));
     const found: Motion[] = [];
     for (const element of document.querySelectorAll("body *")) {
-      const style = getComputedStyle(element);
-      const animationS = style.animationName === "none" ? 0 : seconds(style.animationDuration);
-      const transitionS = seconds(style.transitionDuration);
-      if (animationS === 0 && transitionS === 0) continue;
-      const name = `${element.tagName.toLowerCase()}.${element.className.toString().split(" ")[0] ?? ""}`;
-      found.push({ element: name, animation: style.animationName, animationS, loops: style.animationIterationCount === "infinite", transitionS });
+      for (const pseudo of [undefined, "::before", "::after"]) {
+        const style = getComputedStyle(element, pseudo);
+        if (pseudo !== undefined && style.content === "none") continue;
+        const animationS = style.animationName === "none" ? 0 : seconds(style.animationDuration);
+        const transitionS = seconds(style.transitionDuration);
+        if (animationS === 0 && transitionS === 0) continue;
+        const name = `${element.tagName.toLowerCase()}.${element.className.toString().split(" ")[0] ?? ""}${pseudo ?? ""}`;
+        found.push({ element: name, animation: style.animationName, animationS, loops: style.animationIterationCount === "infinite", transitionS });
+      }
     }
     return found;
   });
@@ -65,7 +68,7 @@ test("with motion on, the kit animates and nothing finite outlasts a beat", asyn
   const found = await motions(page);
   const slow = found.filter((motion) => (motion.animationS > LONGEST_S && !motion.loops) || motion.transitionS > LONGEST_S);
   expect(slow, `nothing finite runs longer than ${LONGEST_S}s`).toEqual([]);
-  // The documented pieces: a page that rises in, buttons and nav links that respond, a live pulse that loops.
+  // The documented pieces: a page that rises in, buttons and nav links that respond; anything that loops is an indicator.
   const byName = (name: string) => found.filter((motion) => motion.animation === name);
   expect(byName("ui-rise").length, "a screen rises in").toBeGreaterThan(0);
   expect(found.some((motion) => motion.element.startsWith("button.ui-button") && motion.transitionS > 0), "buttons transition").toBe(true);

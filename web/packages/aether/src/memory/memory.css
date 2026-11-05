@@ -36,7 +36,6 @@
     display: grid; gap: var(--space-4); padding-block: var(--space-4); border-block-start: 1px solid var(--color-border);
     animation: ui-rise var(--motion-base) var(--ease-standard);
   }
-  .mem-turn[data-traced="false"] { opacity: 0.8; }
   .mem-turn-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
   .mem-turn-block { display: grid; gap: var(--space-2); }
   .mem-ids, .mem-backups, .mem-conflicts, .mem-clusters, .mem-candidates { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }

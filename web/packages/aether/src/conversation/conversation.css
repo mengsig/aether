@@ -55,7 +55,6 @@
   .md p, .md ul, .md ol, .md blockquote, .md pre, .md h3, .md h4, .md h5, .md h6 { margin: 0; }
   .md ul, .md ol { padding-inline-start: var(--space-6); }
   .md blockquote { padding-inline-start: var(--space-3); border-inline-start: 2px solid var(--color-border-strong); color: var(--color-text-muted); }
-  .md code { font-family: var(--font-mono); font-size: 0.92em; }
   .md pre { overflow: auto; padding: var(--space-3); border-radius: var(--radius-md); background: var(--color-surface-2); font-size: var(--text-sm); }
   .md hr { border: 0; border-block-start: 1px solid var(--color-border); }
 }
