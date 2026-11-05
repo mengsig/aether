@@ -115,6 +115,13 @@ before updating.
   `@aether-ui/ui`: one header, card, label, empty, loading and error pattern,
   a header that names every screen and one entrance motion. See
   [the before and after report](https://github.com/mengsig/aether/blob/main/docs/design/vnext-polish/index.html).
+- **A quieter, sharper web app.** The final pass before 1.3.0: one system
+  type family at a seven-step scale, tabular numerals, a cooler neutral
+  palette with one green accent and AA contrast in both themes, lists parted
+  by hairlines instead of boxes in boxes, borderless buttons and chips, a
+  navigation rail on the page's own ground, and motion that runs only on the
+  kit's duration tokens and stops under `prefers-reduced-motion`. See
+  [the final pass report](https://github.com/mengsig/aether/blob/main/docs/design/vnext-final/index.html).
 
 ### Fixed
 

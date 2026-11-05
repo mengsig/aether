@@ -63,7 +63,7 @@
   .learn-card:hover { border-color: var(--color-border-strong); box-shadow: var(--elevation-1); }
   .learn-card-link { display: grid; gap: var(--space-2); padding: var(--space-5); color: inherit; text-decoration: none; border-radius: inherit; }
   .learn-card-link:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-  .learn-card-goal { margin: 0; font: var(--text-lg) / var(--leading-tight) var(--font-display); }
+  .learn-card-goal { margin: 0; font: var(--weight-bold) var(--text-lg) / var(--leading-tight) var(--font-display); letter-spacing: -0.01em; }
   .learn-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); color: var(--color-text-muted); font-size: var(--text-sm); }
   .learn-card-next { margin: 0; color: var(--color-accent); font: var(--weight-medium) var(--text-sm) / var(--leading-normal) var(--font-ui); }
   .learn-new {
@@ -75,7 +75,7 @@
   .learn-session { display: grid; gap: var(--space-8); grid-template-columns: minmax(0, 1fr); }
   @media (min-width: 64rem) { .learn-session { grid-template-columns: minmax(0, 1fr) 20rem; align-items: start; } }
   .learn-chat { display: grid; gap: var(--space-4); min-inline-size: 0; }
-  .learn-session-goal { margin: 0; font: var(--text-2xl) / var(--leading-tight) var(--font-display); }
+  .learn-session-goal { margin: 0; font: var(--weight-bold) var(--text-2xl) / var(--leading-tight) var(--font-display); letter-spacing: -0.02em; }
   .learn-aside { display: grid; gap: var(--space-6); position: sticky; inset-block-start: var(--space-4); }
   .learn-timeline { display: grid; gap: var(--space-4); margin: 0; padding: 0; list-style: none; }
   .learn-timeline-item { animation: ui-rise var(--motion-base) var(--ease-standard); }
@@ -101,10 +101,10 @@
     border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1);
     transition: border-color var(--motion-base) var(--ease-standard), box-shadow var(--motion-base) var(--ease-standard);
   }
-  .learn-q[data-state="open"] { border-color: var(--color-accent); box-shadow: var(--elevation-2); animation: ui-pop var(--motion-base) var(--ease-standard); }
+  .learn-q[data-state="open"] { border-color: var(--color-accent); animation: ui-pop var(--motion-base) var(--ease-standard); }
   .learn-q[data-state="correct"] { border-color: var(--color-success); }
   .learn-q[data-state="incorrect"] { border-color: var(--color-warning); }
-  .learn-q-kind { margin: 0; color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-normal) var(--font-ui); letter-spacing: 0.06em; text-transform: uppercase; }
+  .learn-q-kind { margin: 0; color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-normal) var(--font-ui); }
   .learn-q-prompt { margin: 0; font: var(--text-lg) / var(--leading-normal) var(--font-prose); }
   .learn-q-form { display: grid; gap: var(--space-4); }
   .learn-q-details > summary { cursor: pointer; font-size: var(--text-md); }
@@ -166,7 +166,7 @@
   .learn-me { display: grid; gap: var(--space-8); }
   .learn-me-summary { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
   .learn-me-count { display: grid; justify-items: start; gap: var(--space-2); min-inline-size: 8rem; padding: var(--space-4) var(--space-5); border-radius: var(--radius-lg); background: var(--color-surface-1); }
-  .learn-me-count > .learn-num { font: var(--text-2xl) / var(--leading-tight) var(--font-display); }
+  .learn-me-count > .learn-num { font: var(--weight-bold) var(--text-2xl) / var(--leading-tight) var(--font-display); letter-spacing: -0.02em; }
   .learn-me-group { display: grid; gap: var(--space-3); }
   .learn-me-list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
   .learn-concept {
@@ -194,7 +194,7 @@
   .learn-graph-canvas[data-settled] { opacity: 1; }
   .learn-panel {
     display: grid; align-content: start; justify-items: start; gap: var(--space-3); padding: var(--space-5);
-    border-radius: var(--radius-lg); background: var(--color-surface-1); box-shadow: var(--elevation-2);
+    border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1);
     animation: ui-slide var(--motion-base) var(--ease-standard);
   }
   .learn-panel p { margin: 0; }

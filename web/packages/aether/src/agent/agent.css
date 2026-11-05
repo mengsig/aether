@@ -1,6 +1,7 @@
 @layer app {
   .agent-head { display: grid; gap: var(--space-1); }
   .agent-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+  .agent-title > .ui-menu { margin-inline-start: auto; }
   .agent-sub { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
   .agent-id { font-family: var(--font-mono); font-size: var(--text-xs); }
   .agent-detail { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); transition: color var(--motion-base) var(--ease-standard); }
@@ -9,7 +10,7 @@
     grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: var(--space-4) var(--space-5); margin: 0;
   }
   .agent-fact { display: grid; gap: var(--space-1); min-inline-size: 0; }
-  .agent-fact dt { color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-tight) var(--font-ui); text-transform: uppercase; }
+  .agent-fact dt { color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-tight) var(--font-ui); }
   .agent-fact dd { display: grid; margin: 0; overflow-wrap: anywhere; font-size: var(--text-sm); }
   .agent-hint { color: var(--color-text-muted); font-size: var(--text-xs); }
 }

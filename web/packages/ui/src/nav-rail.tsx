@@ -60,11 +60,11 @@ export interface NavRailProps {
   readonly footer?: ReactNode;
 }
 
-/** The primary navigation; it is always dark, as the bezel the screens sit in. */
+/** The primary navigation: the same ground as the page, parted by one hairline. */
 export function NavRail({ sections, hash, footer }: NavRailProps) {
   const active = activeHref(sections, hash);
   return (
-    <nav className="ui-navrail" aria-label="Primary" data-theme="dark">
+    <nav className="ui-navrail" aria-label="Primary">
       <a className="ui-brand" href="#/">
         <span className="ui-brand-mark" aria-hidden="true">a</span>
         <span className="ui-brand-name">Aether</span>

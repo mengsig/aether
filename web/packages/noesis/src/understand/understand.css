@@ -17,7 +17,7 @@
     transition: inline-size var(--motion-base) var(--ease-standard);
   }
   .understand-size[data-over] .understand-meter-fill { background: var(--color-danger); }
-  .understand-size-text { color: var(--color-text-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .understand-size-text { color: var(--color-text-muted); font-size: var(--text-xs); white-space: nowrap; }
 
   .understand-items { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
   .understand-item {
@@ -28,7 +28,7 @@
   .understand-item-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
   .understand-ref { min-inline-size: 0; color: var(--color-text-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
   .understand-ref code { font-family: var(--font-mono); }
-  .understand-ref-kind { color: var(--color-text-faint); font-weight: var(--weight-medium); letter-spacing: 0.06em; text-transform: uppercase; }
+  .understand-ref-kind { color: var(--color-text-faint); font-weight: var(--weight-medium); }
   .understand-excerpt {
     margin: 0; max-block-size: 12rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
     font: var(--text-sm) / var(--leading-prose) var(--font-ui);

@@ -53,7 +53,7 @@ export function Tabs({ label, tabs, selected, onSelect, className }: TabsProps) 
           </button>
         ))}
       </div>
-      <div className="ui-tabpanel" role="tabpanel" id={`${base}-panel-${current.id}`} aria-labelledby={`${base}-tab-${current.id}`} tabIndex={0}>
+      <div key={current.id} className="ui-tabpanel" role="tabpanel" id={`${base}-panel-${current.id}`} aria-labelledby={`${base}-tab-${current.id}`} tabIndex={0}>
         {current.panel}
       </div>
     </div>

@@ -19,7 +19,6 @@ export function EmptyState({ title, children, action, className }: EmptyStatePro
   invariant(title.trim().length > 0, "an empty state needs a title");
   return (
     <section className={classes("ui-state", className)} data-kind="empty" aria-label={title}>
-      <span className="ui-state-glyph" aria-hidden="true" />
       <h2 className="ui-state-title">{title}</h2>
       {children === undefined ? null : <div className="ui-state-body">{children}</div>}
       {action === undefined ? null : <div className="ui-state-action">{action}</div>}
@@ -40,7 +39,6 @@ export function ErrorState({ title = "Something went wrong", message, onRetry, r
   invariant(message.trim().length > 0, "an error state needs the error's message");
   return (
     <section className={classes("ui-state", className)} data-kind="error" role="alert">
-      <span className="ui-state-glyph" aria-hidden="true" />
       <h2 className="ui-state-title">{title}</h2>
       <p className="ui-state-body">{message}</p>
       {onRetry === undefined ? null : <div className="ui-state-action"><Button onClick={onRetry}>{retryLabel}</Button></div>}

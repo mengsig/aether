@@ -34,12 +34,12 @@
   }
   .dag-overview, .dag-inspector { display: grid; align-content: start; gap: var(--space-5); animation: ui-rise var(--motion-base) var(--ease-standard); }
   .dag-inspector > .ui-button { justify-self: start; }
-  .dag-title { margin: 0; font: var(--weight-regular) var(--text-xl) / var(--leading-tight) var(--font-display); }
+  .dag-title { margin: 0; font: var(--weight-bold) var(--text-lg) / var(--leading-tight) var(--font-display); letter-spacing: -0.01em; }
   .dag-badges, .dag-links { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
   .dag-links { gap: var(--space-4); font-size: var(--text-sm); }
   .dag-section { display: grid; gap: var(--space-2); }
-  .dag-heading { display: flex; align-items: center; gap: var(--space-2); margin: 0; color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / 1 var(--font-ui); text-transform: uppercase; }
-  .dag-count { font-family: var(--font-mono); color: var(--color-text-faint); }
+  .dag-heading { display: flex; align-items: center; gap: var(--space-2); margin: 0; color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / 1 var(--font-ui); }
+  .dag-count { color: var(--color-text-faint); }
   .dag-path { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; counter-reset: step; }
   .dag-row {
     display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-1) var(--space-3);
@@ -54,7 +54,7 @@
   .dag-reason, .dag-initiative .dag-muted, .dag-meter { grid-column: 1 / -1; }
   .dag-reason { color: var(--color-text-muted); font-size: var(--text-xs); }
   .dag-meter { inline-size: 100%; block-size: var(--space-2); }
-  .dag-callout { display: grid; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-inline-start: var(--space-1) solid var(--status-blocked); border-radius: var(--radius-md); background: var(--color-surface-2); }
+  .dag-callout { display: grid; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-inline-start: 2px solid var(--status-blocked); border-radius: var(--radius-sm); background: var(--color-surface-2); }
   .dag-reasons { display: grid; gap: var(--space-1); margin: 0; padding-inline-start: var(--space-5); font-size: var(--text-sm); }
   .dag-state { min-block-size: 20rem; }
   @media (max-width: 60rem) { .dag-body { grid-template-columns: 1fr; } .dag-panel { max-block-size: none; } }

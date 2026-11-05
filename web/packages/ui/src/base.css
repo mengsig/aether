@@ -8,23 +8,31 @@
     background: var(--color-bg);
     color: var(--color-text);
     font: var(--weight-regular) var(--text-md) / var(--leading-normal) var(--font-ui);
+    /* Counts, costs and times line up in every column without each screen asking. */
+    font-variant-numeric: tabular-nums;
     -webkit-text-size-adjust: 100%;
+    -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
   body { margin: 0; min-block-size: 100dvh; }
   button, input, select, textarea { font: inherit; color: inherit; letter-spacing: inherit; }
   h1, h2, h3, h4, p { margin: 0; overflow-wrap: anywhere; }
-  code, kbd, pre, samp { font-family: var(--font-mono); }
-  ::selection { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
+  code, kbd, pre, samp { font-family: var(--font-mono); font-size: 0.92em; }
+  ::selection { background: color-mix(in srgb, var(--color-accent) 24%, transparent); }
   [hidden] { display: none !important; }
-  .ui-link { color: var(--color-accent); text-underline-offset: 3px; border-radius: var(--radius-sm); }
+  .ui-link {
+    color: var(--color-accent); font-weight: var(--weight-medium); border-radius: var(--radius-sm);
+    text-decoration-color: color-mix(in srgb, var(--color-accent) 35%, transparent); text-underline-offset: 3px;
+    transition: text-decoration-color var(--motion-fast) var(--ease-standard);
+  }
+  .ui-link:hover { text-decoration-color: currentColor; }
   .ui-kbd {
-    padding: 2px var(--space-2);
+    padding: 1px var(--space-2);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
-    background: var(--color-surface-2);
-    color: var(--color-text-muted);
-    font: var(--weight-medium) var(--text-xs) / 1.4 var(--font-mono);
+    background: var(--color-surface-1);
+    color: var(--color-text-faint);
+    font: var(--weight-medium) var(--text-xs) / 1.4 var(--font-ui);
   }
   .ui-prose { font-family: var(--font-prose); line-height: var(--leading-prose); max-inline-size: 68ch; }
 }
