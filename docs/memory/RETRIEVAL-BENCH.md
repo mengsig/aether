@@ -138,3 +138,66 @@ head with 5 runs, no `--check` (the deterministic metrics are meant to move).
 A run is disturbed when its retrieval median is more than 25% above the
 lowest median of the series; report it, and rerun the series if two or more
 runs of an arm are disturbed.
+
+## What G2 changed
+
+- **Relevance cutoff.** A candidate's relevance is the largest of its word
+  overlap with the query (set cosine of meaningful words), its semantic
+  similarity above 0.4 rescaled to `0..=1` (a trigram similarity unrelated
+  sentences reach anyway), and its tag overlap. Below `min_score` it is not
+  injected. The cutoff applies only when the query has a meaningful word, and
+  never to a pinned memory. Scoring and ordering are otherwise unchanged.
+- **Stale demotion.** A memory with a stale mark (V31 `memory_stale`) ranks at
+  half its score; it is never hidden. The seeding sweep marks a pinned note
+  its file no longer states, and clears the mark when the file states it again.
+  The marks of the whole pool are one store read.
+- **Injection holdout.** After retrieval, outside `retrieve`, the turn
+  withholds each unpinned memory whose seeded draw over (task, or agent
+  without one; memory) falls below `holdout_rate`. A memory held out of a task
+  stays held out for all of its turns. Each held-out memory is logged once per
+  unit in V31 `memory_holdouts`, in the turn's own commit.
+
+```toml
+[memory.retrieval]
+max_items = 6        # 1..=50, memories injected per turn at most
+min_score = 0.05     # 0..=1, least relevance to inject; 0 turns the cutoff off
+holdout_rate = 0.05  # 0..=1, share of unpinned memories withheld and logged
+holdout_seed = 0     # changes which memories the draw withholds
+```
+
+## After G2
+
+The driver was built at `dca3e745` (`memory_bench-dca3e745`, sha256
+`db7ae0d7…4cab1e3`). Five runs and the profile ran in one slot session
+on the same host, with a 1-minute load of 1.8; no run was disturbed.
+
+| Metric (5 runs) | none: before → after | local: before → after |
+|---|---|---|
+| precision@3 | 0.2564 → **0.4808** | 0.2949 → **0.4808** |
+| precision@6 | 0.1603 → **0.4244** | 0.1731 → **0.4308** |
+| Tokens injected on the 3 queries with nothing relevant | 305.0 → **24.0** | 306.6667 → **24.0** |
+| Tokens injected per turn, mean | 323.0 → 192.5 | 320.2 → 191.7 |
+| Retrieval p95, 48 memories, median of runs (us) | 3231 → **3217** (limit 3554) | 3601 → **3410** (limit 3961) |
+| — per run | 3250, 3173, 3303, 3217, 3217 | 3364, 3410, 3410, 3500, 3757 |
+| Retrieval median, median of runs (us) | 2314 → 2306 (guard 2545) | 2469 → 2497 (guard 2716) |
+| Retrieval p95, 5,048 memories, median of runs (us) | 19974 → 13009 | 14106 → 13437 |
+| recall@3 | 0.6957 → 0.7391 | 0.8261 → 0.7391 |
+| recall@6 | 0.8913 → 0.7826 | 0.9783 → 0.8261 |
+| MRR | 0.7297 → 0.6920 | 0.8333 → 0.7391 |
+| Queries shown a stale or incorrect memory | 0.4 → 0.5 | 0.6 → 0.5 |
+
+The three guards that moved:
+
+- **recall@6 and MRR fall** because the cutoff drops relevant memories that
+  share no word with the query and are not close enough in trigrams (for
+  example the CSS-modules note for the dark-mode query, the commit-steps note
+  for the long task). The cost is a recall of 0.78–0.83 for a precision 2.5×
+  higher and 87% fewer tokens on unrelated tasks.
+- **Stale exposure (none) rises from 0.4 to 0.5**: the Travis note reaches
+  the lint-job query through the word "pipeline" now that a shorter list no
+  longer pushes it out. The dataset has no file-sourced memories, so stale
+  marks cannot demote it here; the per-slot rate rises for the same reason
+  (fewer slots).
+- Latency is within noise. The profile's stage split is unchanged (lexical
+  pages 86% of `retrieve`); the stale-mark read is one batch query inside
+  `rank`, which stays at 3.4%.
