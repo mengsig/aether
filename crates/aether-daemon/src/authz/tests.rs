@@ -143,6 +143,52 @@ fn every_command_has_an_explicit_role_decision() {
     }
 }
 
+/// The matrix in docs/remote.md names every command with the class its
+/// fixture case has, so the document cannot drift from the daemon.
+#[test]
+fn the_documented_matrix_names_every_command_with_its_class() {
+    let doc = include_str!("../../../../docs/remote.md");
+    let start = doc
+        .find("### The matrix")
+        .expect("docs/remote.md has the matrix");
+    let mut documented = std::collections::BTreeMap::new();
+    for line in doc[start..].lines().skip(1) {
+        if line.starts_with("### ") {
+            break;
+        }
+        let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+        let Some(cmd) = cells
+            .get(1)
+            .and_then(|c| c.strip_prefix('`')?.strip_suffix('`'))
+        else {
+            continue;
+        };
+        let class = cells.get(2).copied().unwrap_or_default();
+        assert!(
+            documented.insert(cmd, class).is_none(),
+            "{cmd} is documented twice"
+        );
+    }
+    let cases: serde_json::Value =
+        serde_json::from_str(include_str!("command_cases.json")).unwrap();
+    let cases = cases.as_array().unwrap();
+    assert!(cases.len() > 100, "the fixture holds every command");
+    for case in cases {
+        let cmd = case["command"]["cmd"].as_str().unwrap();
+        let wanted = case["access"].as_str().unwrap();
+        assert_eq!(
+            documented.get(cmd).copied(),
+            Some(wanted),
+            "docs/remote.md row for {cmd}"
+        );
+    }
+    assert_eq!(
+        documented.len(),
+        cases.len(),
+        "the matrix names no command the daemon lacks"
+    );
+}
+
 #[test]
 fn observers_never_get_an_operator_actor_and_revocation_precedes_reads() {
     let observer = device(DeviceRole::Observer);

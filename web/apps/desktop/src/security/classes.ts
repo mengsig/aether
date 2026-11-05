@@ -64,6 +64,9 @@ export const ARCHON_PASS: ReadonlySet<string> = new Set([
   "link_issue", "unlink_issue", "import_issue",
 ]);
 
+/** The only client the app window's own connections may declare to archond. */
+export const ARCHON_APP_CLIENT = "archon-web";
+
 type Frame = Readonly<Record<string, unknown>>;
 type AetherClass = "observe" | "operate" | "host_only" | "remote_admin" | "device_self";
 
@@ -133,12 +136,43 @@ export function passThroughRefusal(kind: DaemonKind, frame: Frame): string | und
   if (kind === "archon") return archonRefusal(cmd, frame);
   const access = aetherClass(frame);
   if (access === undefined) return `Unknown command ${cmd}`;
-  if (access === "observe" || access === "operate") return undefined;
-  return `${cmd} is ${access} and needs a privileged action`;
+  if (access !== "observe" && access !== "operate") return `${cmd} is ${access} and needs a privileged action`;
+  // The local socket skips the guards aetherd puts on a device; who the watcher obeys is one.
+  const run = commandRun(frame);
+  if (run.cmd === "configure_github_watcher") {
+    return "configure_github_watcher sets who the watcher obeys on GitHub; change it at the host";
+  }
+  // The schema does not check a replayed command, and main must look its rule up.
+  if (run.cmd === "revoke_approval_rule" && (typeof run.id !== "string" || run.id === "")) {
+    return "revoke_approval_rule names its rule in id";
+  }
+  return undefined;
+}
+
+/** The command a frame runs: its own, or the one a `resolve_submission` may replay. */
+function commandRun(frame: Frame): Frame {
+  return frame.cmd === "resolve_submission" ? field(frame, "command") : frame;
+}
+
+/**
+ * The rule an Aether frame revokes, for the bridge to look up: aetherd refuses a device the
+ * revocation of a rule for every agent, and the local socket does not, so main refuses it.
+ */
+export function revokedRule(kind: DaemonKind, frame: Frame): string | undefined {
+  if (kind !== "aether") return undefined;
+  const run = commandRun(frame);
+  if (run.cmd !== "revoke_approval_rule") return undefined;
+  if (typeof run.id !== "string" || run.id === "") throw new Error("the schema requires a revoked rule's id");
+  return run.id;
 }
 
 function archonRefusal(cmd: string, frame: Frame): string | undefined {
   if (!ARCHON_PASS.has(cmd)) return `${cmd} is not open to the desktop app's requests`;
+  // archond takes a connection's standing from the client its hello declares, so the app's own
+  // connections greet only as the web app; CLI standing stays with main's confirmed actions.
+  if (cmd === "hello" && frame.client !== ARCHON_APP_CLIENT) {
+    return `the desktop app greets archond as ${ARCHON_APP_CLIENT}, not ${String(frame.client).slice(0, 32)}`;
+  }
   if ((cmd === "pause" || cmd === "resume") && frame.hard === true) return `${cmd} with hard is for the archon CLI`;
   return undefined;
 }

@@ -176,6 +176,57 @@ async fn a_spent_background_budget_fails_an_import_s_job_before_any_model_call()
     );
 }
 
+/// A token the default redactor masks; `read_artifact` never shows it.
+const SOURCE_TOKEN: &str = "ghp_Q7rT2vX9kL4mN8pZ3wY6bC1dF5gH0jKs";
+
+/// The extraction task's objective once its worker has created it.
+async fn extraction_objective(harness: &Harness) -> String {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let store = harness.daemon.runtime.store();
+        let tasks = store.tasks(&Default::default()).expect("tasks");
+        if let Some(task) = tasks
+            .iter()
+            .find(|task| task.objective.contains("Alpha holds"))
+        {
+            return task.objective.clone();
+        }
+        assert!(Instant::now() < deadline, "no extraction task was created");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test]
+async fn an_imported_source_reaches_its_extractor_masked_as_read_artifact_shows_it() {
+    let harness = running(NoesisSettingsPatch::default()).await;
+    let text = format!("Alpha holds.\n\nThe deploy token is {SOURCE_TOKEN}.\n\nBeta follows.");
+    let artifact = publish(&harness, &text).await;
+    let import =
+        format!(r#"{{"cmd":"noesis_import_source","name":"Notes","artifact":"{artifact}"}}"#);
+    let Reply::NoesisImport { job, .. } = harness.send(command(&import)).await.expect("import")
+    else {
+        panic!("an import reply");
+    };
+    let objective = extraction_objective(&harness).await;
+    assert!(
+        !objective.contains(SOURCE_TOKEN),
+        "the task objective carries the raw token"
+    );
+    assert!(objective.contains("[REDACTED:github_token]"), "{objective}");
+    let store = harness.daemon.runtime.store();
+    let events = store
+        .events(0, 10_000, &aether_store::EventFilter::default())
+        .expect("events");
+    let leaked = events.iter().any(|event| {
+        serde_json::to_string(&event.kind)
+            .expect("event json")
+            .contains(SOURCE_TOKEN)
+    });
+    assert!(!leaked, "an event carries the raw token");
+    let cancel = format!(r#"{{"cmd":"noesis_cancel_job","job":"{}"}}"#, job.id);
+    harness.send(command(&cancel)).await.expect("cancel");
+}
+
 #[tokio::test]
 async fn graph_writes_name_what_does_not_exist() {
     let harness = running(NoesisSettingsPatch::default()).await;

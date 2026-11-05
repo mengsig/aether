@@ -103,7 +103,7 @@ impl NoesisService {
             return Ok(None);
         };
         let store = noesis.store();
-        let corpus = jobs::StoreCorpus::new(store, runtime.store().clone());
+        let corpus = jobs::StoreCorpus::new(store, runtime);
         let effective = noesis.effective();
         let queued = extract::after_teaching_turn(store.connection(), &effective, &corpus, session)
             .map_err(extract_error)?;
@@ -349,7 +349,8 @@ fn import(
         return Err(ErrorReply::invalid("name must not be blank"));
     }
     check_slots(writer)?;
-    let text = jobs::read_source(writer.runtime.store().as_ref(), artifact)?;
+    let redactor = &writer.runtime.config().redactor;
+    let text = jobs::read_source(writer.runtime.store().as_ref(), redactor, artifact)?;
     if text.trim().is_empty() {
         return Err(ErrorReply::invalid("the source has no text to extract"));
     }

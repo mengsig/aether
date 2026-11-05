@@ -149,3 +149,58 @@ test("archon merge and unblock confirm the item and send its exact frame", async
     assert.equal(plan.delivery.kind === "frame" && plan.delivery.text, JSON.stringify({ cmd, item: ITEM, req: 2 }));
   }
 });
+
+test("the app's archond connections greet as archon-web, and only main's confirmed actions as archon-cli", async () => {
+  const recorded = recordingLink({});
+  Object.assign(recorded.link, { isOpen: true });
+  const bridge = new Bridge(VALIDATOR, fakeHost(recorded, [], true));
+  const conn = await bridge.handle(APP_SENDER, 7, "connect", ["archon:local"]) as string;
+  const hello = (client: string) => ({ cmd: "hello", req: 1, protocol_version: 24, client, client_version: "0.0.0" });
+  for (const client of ["archon-cli", "archon-mcp", "archon-bench"]) {
+    for (const method of ["request", "subscribe"]) {
+      await assert.rejects(bridge.handle(APP_SENDER, 7, method, [conn, hello(client)]), /greets archond as archon-web/);
+    }
+  }
+  assert.deepEqual(recorded.written, [], "no refused hello reaches archond");
+  await bridge.handle(APP_SENDER, 7, "request", [conn, hello("archon-web")]);
+  assert.equal(JSON.parse(recorded.written[0] ?? "{}").client, "archon-web");
+  await bridge.handle(APP_SENDER, 7, "privileged", [{ kind: "archon.operator_change", conn, request: "merge", item: ITEM }]);
+  const control = recorded.written.slice(1).map((text) => JSON.parse(text) as Frame);
+  assert.deepEqual(control.map((frame) => frame.cmd), ["hello", "merge_item"]);
+  assert.equal(control[0]?.client, "archon-cli", "main's own control link keeps the CLI's standing");
+});
+
+test("the app cannot use host standing for the watcher's operators or a rule for every agent", async () => {
+  const GLOBAL = "rule_01JAAAAAAAAAAAAAAAAAAAAAAA";
+  const LOCAL = "rule_01JBBBBBBBBBBBBBBBBBBBBBBB";
+  const rules = [
+    { id: GLOBAL, scope: { scope: "everywhere" } },
+    { id: LOCAL, scope: { scope: "agent", id: "agt_01JAAAAAAAAAAAAAAAAAAAAAAA" } },
+  ];
+  const recorded = recordingLink({ list_approval_rules: rules });
+  Object.assign(recorded.link, { isOpen: true });
+  const bridge = new Bridge(VALIDATOR, fakeHost(recorded, [], true));
+  const conn = await bridge.handle(APP_SENDER, 7, "connect", ["aether:local"]) as string;
+  const watcher = { cmd: "configure_github_watcher", req: 4, config: { operator_users: ["mallory"] }, expected_revision: 1 };
+  for (const frame of [watcher, { cmd: "resolve_submission", req: 4, command: watcher }]) {
+    await assert.rejects(bridge.handle(APP_SENDER, 7, "request", [conn, frame]), /who the watcher obeys/);
+  }
+  const revoke = (id: string) => ({ cmd: "revoke_approval_rule", req: 5, id });
+  for (const method of ["request", "subscribe"]) {
+    await assert.rejects(bridge.handle(APP_SENDER, 7, method, [conn, revoke(GLOBAL)]), /applies to every agent/);
+  }
+  // The ULID overflow spelling aetherd decodes to GLOBAL, and an id aetherd never listed.
+  for (const method of ["request", "subscribe"]) {
+    for (const id of ["rule_81JAAAAAAAAAAAAAAAAAAAAAAA", "rule_01JCCCCCCCCCCCCCCCCCCCCCCC"]) {
+      await assert.rejects(bridge.handle(APP_SENDER, 7, method, [conn, revoke(id)]), /not one of this host's rules/);
+    }
+  }
+  const replayed = { cmd: "resolve_submission", req: 5, command: { cmd: "revoke_approval_rule", id: 7 } };
+  await assert.rejects(bridge.handle(APP_SENDER, 7, "request", [conn, replayed]), /names its rule in id/);
+  const sent = () => recorded.written.map((text) => JSON.parse(text) as Frame).filter((frame) => frame.req === 5);
+  assert.deepEqual(sent(), [], "neither refusal reaches aetherd");
+  await bridge.handle(APP_SENDER, 7, "request", [conn, revoke(LOCAL)]);
+  assert.deepEqual(sent(), [revoke(LOCAL)], "a rule for one agent is still the app's to revoke");
+  const reads = recorded.written.map((text) => (JSON.parse(text) as Frame).cmd).filter((cmd) => cmd === "list_approval_rules");
+  assert.equal(reads.length, 7, "main reads the rule on its own link before each revocation");
+});

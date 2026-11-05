@@ -27,6 +27,7 @@ use aether_protocol::ErrorReply;
 use aether_runtime::noesis_guard::NOESIS_SUBSYSTEM;
 use aether_runtime::{CreateAgentSpec, Runtime};
 use aether_store::{Commit, Store};
+use aether_tools::Redactor;
 
 use crate::noesis::budget::ServiceBudget;
 
@@ -169,7 +170,7 @@ impl Extraction {
             cancel: flag.clone(),
         };
         let mut budget = GuardBudget(self.budget.clone());
-        let corpus = StoreCorpus::new(noesis, runtime.store().clone());
+        let corpus = StoreCorpus::new(noesis, runtime);
         let mut events = |event| announce(runtime, event);
         let ports = JobPorts {
             model: &mut model,
@@ -298,15 +299,20 @@ impl AgentModel {
 }
 
 /// Session prose from the session agent's persisted (sealed) transcript;
-/// source text from the imported artifact.
+/// source text from the imported artifact, masked as `read_artifact` masks it.
 pub(super) struct StoreCorpus<'a> {
     noesis: &'a NoesisStore,
     store: Arc<dyn Store>,
+    redactor: Redactor,
 }
 
 impl<'a> StoreCorpus<'a> {
-    pub(super) fn new(noesis: &'a NoesisStore, store: Arc<dyn Store>) -> Self {
-        Self { noesis, store }
+    pub(super) fn new(noesis: &'a NoesisStore, runtime: &Runtime) -> Self {
+        Self {
+            noesis,
+            store: runtime.store().clone(),
+            redactor: runtime.config().redactor.clone(),
+        }
     }
 }
 
@@ -335,12 +341,18 @@ impl Corpus for StoreCorpus<'_> {
     fn source_text(&self, artifact: &str) -> Result<String, String> {
         let id =
             ArtifactId::from_str(artifact).map_err(|e| format!("artifact `{artifact}`: {e}"))?;
-        read_source(self.store.as_ref(), id).map_err(|e| e.message)
+        read_source(self.store.as_ref(), &self.redactor, id).map_err(|e| e.message)
     }
 }
 
-/// An artifact's text: at most [`MAX_SOURCE_BYTES`], and UTF-8.
-pub(super) fn read_source(store: &dyn Store, artifact: ArtifactId) -> Result<String, ErrorReply> {
+/// An artifact's text: at most [`MAX_SOURCE_BYTES`], UTF-8, and masked by
+/// `redactor`. A published artifact is stored as sent, and this text reaches
+/// the extractor's task objective, which every observer can read.
+pub(super) fn read_source(
+    store: &dyn Store,
+    redactor: &Redactor,
+    artifact: ArtifactId,
+) -> Result<String, ErrorReply> {
     let meta = store.artifact(artifact).map_err(store_error)?;
     let meta = meta.ok_or_else(|| ErrorReply::not_found(format!("artifact `{artifact}`")))?;
     if meta.size_bytes > MAX_SOURCE_BYTES {
@@ -356,7 +368,9 @@ pub(super) fn read_source(store: &dyn Store, artifact: ArtifactId) -> Result<Str
             "the artifact grew past the source limit",
         ));
     }
-    String::from_utf8(bytes).map_err(|_| ErrorReply::invalid("a source must be UTF-8 text"))
+    let text =
+        String::from_utf8(bytes).map_err(|_| ErrorReply::invalid("a source must be UTF-8 text"))?;
+    Ok(redactor.redact(&text).into_owned())
 }
 
 fn store_error(error: aether_store::StoreError) -> ErrorReply {

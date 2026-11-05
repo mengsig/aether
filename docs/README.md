@@ -45,6 +45,8 @@ Start with the [README](../README.md) for prerequisites, installation, and a fir
 - [Status timestamps](status-time.md): accurate state-duration semantics.
 - [CI](ci.md): local/hosted checks and optional lanes.
 - [Known limitations](known-limitations.md): security boundaries and remaining gaps.
+- [vNext security audit](security/vnext-audit.md): the Electron shell, remote
+  access, the Archon mount and Noesis data boundaries, with evidence.
 - [Benchmarks against the native harnesses](#benchmark-reports): dated
   reports with their method, raw tables and limits.
 - [Configuration templates](../crates/aether-model/src/config/templates.rs):
