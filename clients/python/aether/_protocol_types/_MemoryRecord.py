@@ -24,6 +24,7 @@ class MemoryRecord(TypedDict, total=False):
     retracted: _protocol.Retraction | None  # optional
     retrieval_count: int  # optional
     scope: _protocol.MemoryScope
+    standing: _protocol.MemoryStanding | None  # optional
     structured: Any  # optional
     superseded_by: _protocol.MemoryId | None  # optional
     supersedes: _protocol.MemoryId | None  # optional

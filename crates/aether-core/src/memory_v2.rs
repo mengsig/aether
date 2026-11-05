@@ -41,7 +41,11 @@ pub struct StaleNote {
 
 impl MemoryStanding {
     /// `record`'s standing from its stored admission and stale mark.
-    pub fn of(record: &MemoryRecord, admission: &MemoryAdmission, stale: Option<StaleNote>) -> Self {
+    pub fn of(
+        record: &MemoryRecord,
+        admission: &MemoryAdmission,
+        stale: Option<StaleNote>,
+    ) -> Self {
         assert_eq!(admission.memory, record.id, "an admission names its record");
         debug_assert!(admission.independent() <= admission.tasks());
         Self {
@@ -111,7 +115,9 @@ pub enum TraceOutcome {
 }
 
 /// Candidates past the trace's caps, by the outcome they had.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct TraceOmitted {
     pub over_limit: u32,
     pub cut: u32,

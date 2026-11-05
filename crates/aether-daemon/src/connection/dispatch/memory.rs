@@ -25,10 +25,23 @@ pub(super) fn owns(command: &Command) -> bool {
             | Command::AliasRepository { .. }
             | Command::ListRepositoryAliases
             | Command::MemoriesInContext { .. }
-    )
+    ) || super::memory_v2::owns(command)
 }
 
 pub(super) async fn dispatch(
+    daemon: &Daemon,
+    command: Command,
+    by: Actor,
+    submission: Option<Submission>,
+) -> Result<Reply, ErrorReply> {
+    if super::memory_v2::owns(&command) {
+        return super::memory_v2::dispatch(daemon, command, by).await;
+    }
+    let reply = records(daemon, command, by, submission).await?;
+    super::memory_v2::with_standing(daemon, reply)
+}
+
+async fn records(
     daemon: &Daemon,
     command: Command,
     by: Actor,

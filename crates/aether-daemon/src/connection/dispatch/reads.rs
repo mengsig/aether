@@ -80,10 +80,15 @@ fn read(store: &dyn aether_store::Store, command: Command) -> Result<Reply, Erro
         Command::GetInbox { agent, after } => {
             Ok(Reply::Inbox(store.inbox(agent, after).map_err(store_err)?))
         }
+        // The retrieval trace is host-only (`memory_retrieval_explain`);
+        // a snapshot is readable by observers.
         Command::GetSnapshot { id } => store
             .snapshot(id)
             .map_err(store_err)?
-            .map(Reply::Snapshot)
+            .map(|mut snapshot| {
+                snapshot.memory_retrieval = None;
+                Reply::Snapshot(snapshot)
+            })
             .ok_or_else(|| ErrorReply::not_found(id)),
         Command::GetInvocation { id } => store
             .invocation(id)

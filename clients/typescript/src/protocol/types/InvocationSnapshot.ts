@@ -9,6 +9,7 @@ import type {
   MemoryId,
   Message,
   ModelRef,
+  RetrievalTrace,
   SnapshotId,
   TaskId,
   ToolSpec,
@@ -30,6 +31,7 @@ export interface InvocationSnapshot {
   "id": SnapshotId;
   "layers": Array<ContextLayer>;
   "memory_ids"?: Array<MemoryId>;
+  "memory_retrieval"?: RetrievalTrace | null;
   "messages": Array<Message>;
   "model": ModelRef;
   "params": InvocationParams;

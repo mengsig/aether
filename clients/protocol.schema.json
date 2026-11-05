@@ -3991,6 +3991,123 @@
           "type": "object"
         },
         {
+          "description": "What retrieval did for each model call of a task, or for one\ninvocation; name exactly one. Needs `memory_v2`.",
+          "properties": {
+            "cmd": {
+              "const": "memory_retrieval_explain",
+              "type": "string"
+            },
+            "invocation": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/InvocationId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "task": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TaskId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Merge near-duplicate memories, or with `dry_run` only plan it.\nAn absent scope means every scope. Needs `memory_v2`.",
+          "properties": {
+            "cmd": {
+              "const": "consolidate_memories",
+              "type": "string"
+            },
+            "dry_run": {
+              "type": "boolean"
+            },
+            "scope": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/MemoryScope"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "dry_run"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Every memory of a scope, or of the store, as a JSON Lines artifact.\nNeeds `memory_v2`.",
+          "properties": {
+            "cmd": {
+              "const": "memory_export",
+              "type": "string"
+            },
+            "scope": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/MemoryScope"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Insert what an export holds and the store lacks; never overwrites.\nNeeds `memory_v2`.",
+          "properties": {
+            "artifact": {
+              "type": "string"
+            },
+            "cmd": {
+              "const": "memory_import",
+              "type": "string"
+            },
+            "dry_run": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "cmd",
+            "artifact",
+            "dry_run"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The store's Memory 2.0 migrations, counts and backups. Needs `memory_v2`.",
+          "properties": {
+            "cmd": {
+              "const": "memory_migration_status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Curate a memory out. The record stays; it is never retrieved again.",
           "properties": {
             "cmd": {
@@ -5304,6 +5421,26 @@
       ],
       "type": "object"
     },
+    "ClusterOutcomeKind": {
+      "oneOf": [
+        {
+          "enum": [
+            "merged"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "planned",
+          "description": "A dry run: nothing was written.",
+          "type": "string"
+        },
+        {
+          "const": "skipped",
+          "description": "Something changed under the plan; the cluster was left as it was.",
+          "type": "string"
+        }
+      ]
+    },
     "CompactionTrigger": {
       "description": "What triggered a compaction.",
       "oneOf": [
@@ -5560,6 +5697,44 @@
       "required": [
         "interactive",
         "background"
+      ],
+      "type": "object"
+    },
+    "ConsolidatedCluster": {
+      "properties": {
+        "members": {
+          "description": "The members it replaces, strongest first; never the survivor.",
+          "items": {
+            "$ref": "#/$defs/MemoryId"
+          },
+          "type": "array"
+        },
+        "outcome": {
+          "$ref": "#/$defs/ClusterOutcomeKind"
+        },
+        "promoted": {
+          "default": false,
+          "description": "The merged support made a candidate survivor active.",
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scope": {
+          "$ref": "#/$defs/MemoryScope"
+        },
+        "survivor": {
+          "$ref": "#/$defs/MemoryId"
+        }
+      },
+      "required": [
+        "scope",
+        "survivor",
+        "members",
+        "outcome"
       ],
       "type": "object"
     },
@@ -9571,6 +9746,92 @@
       ],
       "type": "string"
     },
+    "ExplainedTurn": {
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/AgentId"
+        },
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "candidates": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TraceCandidate"
+          },
+          "type": "array"
+        },
+        "injected": {
+          "default": [],
+          "description": "The snapshot's memory layer, in render order: what the model was given.",
+          "items": {
+            "$ref": "#/$defs/MemoryId"
+          },
+          "type": "array"
+        },
+        "invocations": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/InvocationId"
+          },
+          "type": "array"
+        },
+        "omitted": {
+          "$ref": "#/$defs/TraceOmitted",
+          "default": {
+            "cut": 0,
+            "over_limit": 0
+          }
+        },
+        "policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TracePolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pool": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/SnapshotId"
+        },
+        "task": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "traced": {
+          "description": "False when the snapshot predates the trace or the turn did not retrieve.",
+          "type": "boolean"
+        },
+        "turn": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "snapshot",
+        "agent",
+        "turn",
+        "at",
+        "traced",
+        "pool"
+      ],
+      "type": "object"
+    },
     "ExportSummary": {
       "description": "What an export wrote.",
       "properties": {
@@ -10230,6 +10491,21 @@
       ],
       "type": "object"
     },
+    "ImportConflict": {
+      "properties": {
+        "memory": {
+          "$ref": "#/$defs/MemoryId"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "memory",
+        "reason"
+      ],
+      "type": "object"
+    },
     "ImportSummary": {
       "description": "What an import recreated.",
       "properties": {
@@ -10746,6 +11022,17 @@
           },
           "type": "array"
         },
+        "memory_retrieval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetrievalTrace"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What retrieval did for this turn, read by `memory_retrieval_explain`.\nWithheld from every `get_snapshot` reply."
+        },
         "messages": {
           "items": {
             "$ref": "#/$defs/Message"
@@ -10918,6 +11205,40 @@
         "kind",
         "rows",
         "bytes"
+      ],
+      "type": "object"
+    },
+    "LastImport": {
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "conflicts": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "inserted": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unchanged": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "at",
+        "digest",
+        "inserted",
+        "unchanged",
+        "conflicts"
       ],
       "type": "object"
     },
@@ -11232,6 +11553,75 @@
       ],
       "type": "object"
     },
+    "MemoryConsolidation": {
+      "properties": {
+        "clusters": {
+          "items": {
+            "$ref": "#/$defs/ConsolidatedCluster"
+          },
+          "type": "array"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "scanned": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dry_run",
+        "scanned",
+        "clusters"
+      ],
+      "type": "object"
+    },
+    "MemoryCounts": {
+      "properties": {
+        "admitted": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "candidates": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "held_out": {
+          "description": "Rows in the holdout log.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "implicit": {
+          "description": "Memories with no admission row, read as active.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stale": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total",
+        "admitted",
+        "implicit",
+        "candidates",
+        "stale",
+        "held_out"
+      ],
+      "type": "object"
+    },
     "MemoryEvidence": {
       "enum": [
         "operator",
@@ -11239,6 +11629,29 @@
         "outcome"
       ],
       "type": "string"
+    },
+    "MemoryExport": {
+      "properties": {
+        "artifact": {
+          "description": "The JSON Lines artifact (§2.4).",
+          "type": "string"
+        },
+        "digest": {
+          "description": "SHA-256 of `artifact`, lowercase hex.",
+          "type": "string"
+        },
+        "records": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "artifact",
+        "records",
+        "digest"
+      ],
+      "type": "object"
     },
     "MemoryFeedback": {
       "properties": {
@@ -11340,6 +11753,46 @@
       "pattern": "^mem_[0-9A-HJKMNP-TV-Z]{26}$",
       "type": "string"
     },
+    "MemoryImport": {
+      "properties": {
+        "conflicts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ImportConflict"
+          },
+          "type": "array"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "dry_run": {
+          "type": "boolean"
+        },
+        "inserted": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "records": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unchanged": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dry_run",
+        "digest",
+        "records",
+        "inserted",
+        "unchanged"
+      ],
+      "type": "object"
+    },
     "MemoryKind": {
       "enum": [
         "fact",
@@ -11349,6 +11802,69 @@
         "preference"
       ],
       "type": "string"
+    },
+    "MemoryMigration": {
+      "properties": {
+        "applied": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "name",
+        "applied"
+      ],
+      "type": "object"
+    },
+    "MemoryMigrationStatus": {
+      "properties": {
+        "backups": {
+          "default": [],
+          "description": "Newest first, by file name only.",
+          "items": {
+            "$ref": "#/$defs/MigrationBackup"
+          },
+          "type": "array"
+        },
+        "last_import": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LastImport"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "memories": {
+          "$ref": "#/$defs/MemoryCounts"
+        },
+        "migrations": {
+          "items": {
+            "$ref": "#/$defs/MemoryMigration"
+          },
+          "type": "array"
+        },
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "migrations",
+        "memories"
+      ],
+      "type": "object"
     },
     "MemoryProvenance": {
       "properties": {
@@ -11582,6 +12098,17 @@
         "scope": {
           "$ref": "#/$defs/MemoryScope"
         },
+        "standing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MemoryStanding"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Memory 2.0 standing, filled in only on a reply to a `memory_v2`\nclient. Never stored: the store keeps it beside the record."
+        },
         "structured": true,
         "superseded_by": {
           "anyOf": [
@@ -11635,6 +12162,21 @@
           "type": "string"
         }
       ]
+    },
+    "MemoryRef": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/RefKind"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "type": "object"
     },
     "MemoryScope": {
       "oneOf": [
@@ -11757,6 +12299,87 @@
       ],
       "type": "object"
     },
+    "MemoryStanding": {
+      "description": "What admission and retrieval know about a record, sent beside it to a\nclient that lists `memory_v2`. Never part of the stored body.",
+      "properties": {
+        "refs": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/MemoryRef"
+          },
+          "type": "array"
+        },
+        "stale": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StaleNote"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/MemoryState"
+        },
+        "support": {
+          "$ref": "#/$defs/MemorySupport"
+        },
+        "tier": {
+          "$ref": "#/$defs/MemoryTier"
+        },
+        "verification": {
+          "$ref": "#/$defs/Verification"
+        }
+      },
+      "required": [
+        "tier",
+        "state",
+        "support",
+        "verification"
+      ],
+      "type": "object"
+    },
+    "MemoryState": {
+      "description": "Where a memory stands. The store keeps only `Candidate` or `Active`:\nsuperseded and retracted are read from the record, which already says so.",
+      "enum": [
+        "candidate",
+        "active",
+        "superseded",
+        "retracted"
+      ],
+      "type": "string"
+    },
+    "MemorySupport": {
+      "description": "Distinct supporting tasks, and their distinct runs: the independent ones.",
+      "properties": {
+        "independent": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tasks": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "tasks",
+        "independent"
+      ],
+      "type": "object"
+    },
+    "MemoryTier": {
+      "enum": [
+        "working",
+        "operational",
+        "architecture",
+        "history",
+        "evidence"
+      ],
+      "type": "string"
+    },
     "MemoryVerdict": {
       "enum": [
         "helped",
@@ -11811,6 +12434,40 @@
         "assistant"
       ],
       "type": "string"
+    },
+    "MigrationBackup": {
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "from_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "to_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "from_version",
+        "to_version",
+        "bytes",
+        "at"
+      ],
+      "type": "object"
     },
     "Milestone": {
       "description": "One line of the run's story: the events a person would want to see.",
@@ -14107,6 +14764,20 @@
         }
       ]
     },
+    "RefKind": {
+      "enum": [
+        "repo",
+        "path",
+        "symbol",
+        "commit",
+        "issue",
+        "pr",
+        "test",
+        "review",
+        "doc"
+      ],
+      "type": "string"
+    },
     "RememberSpec": {
       "description": "How to remember the answer a person just gave. The defaults are the\nnarrowest reading of it: the answered agent, this tool, and what this\ncall touched. Anything wider is asked for explicitly.",
       "properties": {
@@ -15473,6 +16144,86 @@
         {
           "properties": {
             "data": {
+              "$ref": "#/$defs/RetrievalExplain"
+            },
+            "reply": {
+              "const": "memory_retrieval_explain",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/MemoryConsolidation"
+            },
+            "reply": {
+              "const": "memory_consolidation",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/MemoryExport"
+            },
+            "reply": {
+              "const": "memory_export",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/MemoryImport"
+            },
+            "reply": {
+              "const": "memory_import",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/MemoryMigrationStatus"
+            },
+            "reply": {
+              "const": "memory_migration_status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
               "properties": {
                 "report": {
                   "$ref": "#/$defs/SeedReport"
@@ -16445,6 +17196,60 @@
         "file",
         "commit",
         "at"
+      ],
+      "type": "object"
+    },
+    "RetrievalExplain": {
+      "description": "What retrieval did for each model call of a task, or one invocation.",
+      "properties": {
+        "truncated": {
+          "default": false,
+          "description": "Snapshots past the limit were left out.",
+          "type": "boolean"
+        },
+        "turns": {
+          "items": {
+            "$ref": "#/$defs/ExplainedTurn"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "turns"
+      ],
+      "type": "object"
+    },
+    "RetrievalTrace": {
+      "description": "What retrieval did for one turn, recorded with the snapshot it built.",
+      "properties": {
+        "candidates": {
+          "description": "Ranked first, then the cut ones by relevance.",
+          "items": {
+            "$ref": "#/$defs/TraceCandidate"
+          },
+          "type": "array"
+        },
+        "omitted": {
+          "$ref": "#/$defs/TraceOmitted",
+          "default": {
+            "cut": 0,
+            "over_limit": 0
+          }
+        },
+        "policy": {
+          "$ref": "#/$defs/TracePolicy"
+        },
+        "pool": {
+          "description": "Candidates considered, before the cutoff.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "policy",
+        "pool",
+        "candidates"
       ],
       "type": "object"
     },
@@ -17636,6 +18441,30 @@
       ],
       "type": "object"
     },
+    "StaleNote": {
+      "description": "Why retrieval demotes a memory as possibly stale, and since when.",
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "revision": {
+          "description": "The commit whose tree stopped stating it, when a sweep set the mark.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "since": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "since"
+      ],
+      "type": "object"
+    },
     "StatusStale": {
       "description": "Why a [`DaemonStatus`] is not fresh, and how old it is.",
       "properties": {
@@ -18672,6 +19501,123 @@
       ],
       "type": "object"
     },
+    "TraceCandidate": {
+      "properties": {
+        "memory": {
+          "$ref": "#/$defs/MemoryId"
+        },
+        "outcome": {
+          "$ref": "#/$defs/TraceOutcome"
+        },
+        "pinned": {
+          "type": "boolean"
+        },
+        "rank": {
+          "description": "1-based rank among the memories that passed the cutoff.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "relevance": {
+          "format": "float",
+          "type": "number"
+        },
+        "score": {
+          "description": "The final score; a cut candidate is never scored.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "stale": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "memory",
+        "outcome",
+        "relevance",
+        "stale",
+        "pinned"
+      ],
+      "type": "object"
+    },
+    "TraceOmitted": {
+      "description": "Candidates past the trace's caps, by the outcome they had.",
+      "properties": {
+        "cut": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "over_limit": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "over_limit",
+        "cut"
+      ],
+      "type": "object"
+    },
+    "TraceOutcome": {
+      "oneOf": [
+        {
+          "enum": [
+            "injected",
+            "held_out"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "trimmed",
+          "description": "Within `max_items`, but the model's memory budget had no room.",
+          "type": "string"
+        },
+        {
+          "const": "over_limit",
+          "description": "Passed the cutoff but ranked past `max_items`.",
+          "type": "string"
+        },
+        {
+          "const": "cut",
+          "description": "Below the minimum relevance.",
+          "type": "string"
+        }
+      ]
+    },
+    "TracePolicy": {
+      "properties": {
+        "holdout_rate": {
+          "format": "float",
+          "type": "number"
+        },
+        "max_items": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_score": {
+          "description": "The cutoff applied; absent when the request had no query.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "max_items",
+        "holdout_rate"
+      ],
+      "type": "object"
+    },
     "TranscriptEntry": {
       "properties": {
         "at": {
@@ -19091,6 +20037,26 @@
         "quota"
       ],
       "type": "object"
+    },
+    "Verification": {
+      "description": "Ordered weakest first, so the stronger of two is their maximum.",
+      "oneOf": [
+        {
+          "const": "inferred",
+          "description": "An agent's claim.",
+          "type": "string"
+        },
+        {
+          "const": "observed",
+          "description": "Read from a committed file, or restated by independent tasks.",
+          "type": "string"
+        },
+        {
+          "const": "verified",
+          "description": "Stated or accepted by an operator.",
+          "type": "string"
+        }
+      ]
     },
     "WaitCondition": {
       "description": "What a waiting agent is waiting for. A typed expression the scheduler\nevaluates; the model never polls. Leaves are single facts, and `Any`,\n`All` and `AtLeast` combine them, so \"wait for two of these five workers\nor a deadline\" is a value, not a prompt.",

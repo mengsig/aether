@@ -780,6 +780,13 @@ impl Store for SqliteStore {
         self.memory_holdouts_of(memory)
     }
 
+    fn memory_admissions(
+        &self,
+        memories: &[MemoryId],
+    ) -> Result<std::collections::BTreeMap<MemoryId, MemoryAdmission>> {
+        self.read_memory_admissions(memories)
+    }
+
     fn memory_v2_counts(&self) -> Result<crate::MemoryV2Counts> {
         self.count_memory_v2()
     }

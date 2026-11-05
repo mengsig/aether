@@ -31,8 +31,13 @@ from ._ReplyMcpServers import ReplyMcpServers
 from ._ReplyMemories import ReplyMemories
 from ._ReplyMemoriesInContext import ReplyMemoriesInContext
 from ._ReplyMemory import ReplyMemory
+from ._ReplyMemoryConsolidation import ReplyMemoryConsolidation
+from ._ReplyMemoryExport import ReplyMemoryExport
 from ._ReplyMemoryFeedback import ReplyMemoryFeedback
 from ._ReplyMemoryFeedbackList import ReplyMemoryFeedbackList
+from ._ReplyMemoryImport import ReplyMemoryImport
+from ._ReplyMemoryMigrationStatus import ReplyMemoryMigrationStatus
+from ._ReplyMemoryRetrievalExplain import ReplyMemoryRetrievalExplain
 from ._ReplyMemorySeeded import ReplyMemorySeeded
 from ._ReplyMessageSent import ReplyMessageSent
 from ._ReplyMessagesSent import ReplyMessagesSent
@@ -135,6 +140,11 @@ Reply = (
     ReplyMemory |
     ReplyMemoryFeedback |
     ReplyMemoryFeedbackList |
+    ReplyMemoryRetrievalExplain |
+    ReplyMemoryConsolidation |
+    ReplyMemoryExport |
+    ReplyMemoryImport |
+    ReplyMemoryMigrationStatus |
     ReplyMemorySeeded |
     ReplyRuns |
     ReplyRunReport |

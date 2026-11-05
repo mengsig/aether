@@ -35,6 +35,7 @@ pub use delivery::key_command;
 pub use outbox::{Unreadable, Unresolved};
 pub use resolution::{Settlement, Undecided};
 mod memory_feedback;
+mod memory_v2;
 mod negotiation;
 mod notifications;
 mod operations;
@@ -374,6 +375,9 @@ impl Client {
         hello
             .features
             .push(aether_protocol::features::HISTORY_EXPIRED.into());
+        hello
+            .features
+            .push(aether_protocol::features::MEMORY_V2.into());
         let hello = match token {
             Some(token) => hello.with_token(token),
             None => hello,

@@ -21,6 +21,7 @@ class InvocationSnapshot(TypedDict, total=False):
     id: _protocol.SnapshotId
     layers: list[_protocol.ContextLayer]
     memory_ids: list[_protocol.MemoryId]  # optional
+    memory_retrieval: _protocol.RetrievalTrace | None  # optional
     messages: list[_protocol.Message]
     model: _protocol.ModelRef
     params: _protocol.InvocationParams

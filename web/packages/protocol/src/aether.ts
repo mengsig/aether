@@ -1,7 +1,7 @@
 // The Aether daemon protocol as TypeScript types and command builders.
 // Generated from clients/protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: 7de5e71528d41c6f78bcb51e835235810153530c7864ed8f1cc4aa77f34857c3
+// Schema SHA-256: 3eced3372e13ae22e3c788801f1ad910514ed529240ce1a26ade2aba2626582c
 
 export const PROTOCOL_VERSION = 26;
 export const MIN_PROTOCOL_VERSION = 17;
@@ -686,6 +686,8 @@ export interface Cluster {
   "session": string;
 }
 
+export type ClusterOutcomeKind = "merged" | "planned" | "skipped";
+
 /**
  * What triggered a compaction.
  * Tagged by `trigger`.
@@ -764,6 +766,15 @@ export interface ConcurrencyPatch {
 export interface ConcurrencySettings {
   "background": number;
   "interactive": number;
+}
+
+export interface ConsolidatedCluster {
+  "members": Array<MemoryId>;
+  "outcome": ClusterOutcomeKind;
+  "promoted"?: boolean;
+  "reason"?: string | null;
+  "scope": MemoryScope;
+  "survivor": MemoryId;
 }
 
 /**
@@ -2087,6 +2098,21 @@ export type ExecutionBackend = ExecutionBackendHost | ExecutionBackendContainer;
  */
 export type ExhaustionClass = "quota_exhausted" | "usage_limit" | "credentials";
 
+export interface ExplainedTurn {
+  "agent": AgentId;
+  "at": string;
+  "candidates"?: Array<TraceCandidate>;
+  "injected"?: Array<MemoryId>;
+  "invocations"?: Array<InvocationId>;
+  "omitted"?: TraceOmitted;
+  "policy"?: TracePolicy | null;
+  "pool": number;
+  "snapshot": SnapshotId;
+  "task"?: TaskId | null;
+  "traced": boolean;
+  "turn": number;
+}
+
 /**
  * What an export wrote.
  */
@@ -2291,6 +2317,11 @@ export interface ImageAttachment {
   "name"?: string | null;
 }
 
+export interface ImportConflict {
+  "memory": MemoryId;
+  "reason": string;
+}
+
 /**
  * What an import recreated.
  */
@@ -2462,6 +2493,7 @@ export interface InvocationSnapshot {
   "id": SnapshotId;
   "layers": Array<ContextLayer>;
   "memory_ids"?: Array<MemoryId>;
+  "memory_retrieval"?: RetrievalTrace | null;
   "messages": Array<Message>;
   "model": ModelRef;
   "params": InvocationParams;
@@ -2501,6 +2533,14 @@ export interface KindWrites {
   "bytes": number;
   "kind": string;
   "rows": number;
+}
+
+export interface LastImport {
+  "at": string;
+  "conflicts": number;
+  "digest": string;
+  "inserted": number;
+  "unchanged": number;
 }
 
 /**
@@ -2597,7 +2637,28 @@ export interface MemoryCandidate {
   "text": string;
 }
 
+export interface MemoryConsolidation {
+  "clusters": Array<ConsolidatedCluster>;
+  "dry_run": boolean;
+  "scanned": number;
+}
+
+export interface MemoryCounts {
+  "admitted": number;
+  "candidates": number;
+  "held_out": number;
+  "implicit": number;
+  "stale": number;
+  "total": number;
+}
+
 export type MemoryEvidence = "operator" | "review" | "outcome";
+
+export interface MemoryExport {
+  "artifact": string;
+  "digest": string;
+  "records": number;
+}
 
 export interface MemoryFeedback {
   "actor": Actor;
@@ -2631,7 +2692,30 @@ export interface MemoryFeedbackList {
  */
 export type MemoryId = string;
 
+export interface MemoryImport {
+  "conflicts"?: Array<ImportConflict>;
+  "digest": string;
+  "dry_run": boolean;
+  "inserted": number;
+  "records": number;
+  "unchanged": number;
+}
+
 export type MemoryKind = "fact" | "decision" | "lesson" | "constraint" | "preference";
+
+export interface MemoryMigration {
+  "applied": boolean;
+  "name": string;
+  "version": number;
+}
+
+export interface MemoryMigrationStatus {
+  "backups"?: Array<MigrationBackup>;
+  "last_import"?: LastImport | null;
+  "memories": MemoryCounts;
+  "migrations": Array<MemoryMigration>;
+  "schema_version": number;
+}
 
 export interface MemoryProvenance {
   "actor"?: Actor | null;
@@ -2674,6 +2758,7 @@ export interface MemoryRecord {
   "retracted"?: Retraction | null;
   "retrieval_count"?: number;
   "scope": MemoryScope;
+  "standing"?: MemoryStanding | null;
   "structured"?: unknown;
   "superseded_by"?: MemoryId | null;
   "supersedes"?: MemoryId | null;
@@ -2686,6 +2771,11 @@ export interface MemoryRecord {
  * `provenance.actor`, never from anything an author supplied.
  */
 export type MemoryRecorder = "operator";
+
+export interface MemoryRef {
+  "kind": RefKind;
+  "value": string;
+}
 
 /**
  * Tagged by `scope`.
@@ -2745,6 +2835,35 @@ export interface MemorySource {
   "file": string;
 }
 
+/**
+ * What admission and retrieval know about a record, sent beside it to a
+ * client that lists `memory_v2`. Never part of the stored body.
+ */
+export interface MemoryStanding {
+  "refs"?: Array<MemoryRef>;
+  "stale"?: StaleNote | null;
+  "state": MemoryState;
+  "support": MemorySupport;
+  "tier": MemoryTier;
+  "verification": Verification;
+}
+
+/**
+ * Where a memory stands. The store keeps only `Candidate` or `Active`:
+ * superseded and retracted are read from the record, which already says so.
+ */
+export type MemoryState = "candidate" | "active" | "superseded" | "retracted";
+
+/**
+ * Distinct supporting tasks, and their distinct runs: the independent ones.
+ */
+export interface MemorySupport {
+  "independent": number;
+  "tasks": number;
+}
+
+export type MemoryTier = "working" | "operational" | "architecture" | "history" | "evidence";
+
 export type MemoryVerdict = "helped" | "hurt" | "neutral";
 
 /**
@@ -2770,6 +2889,14 @@ export interface MessageDelivery {
 export type MessageId = string;
 
 export type MessageRole = "user" | "assistant";
+
+export interface MigrationBackup {
+  "at": string;
+  "bytes": number;
+  "from_version": number;
+  "name": string;
+  "to_version": number;
+}
 
 /**
  * One line of the run's story: the events a person would want to see.
@@ -3443,6 +3570,8 @@ export interface RecurrenceCron {
 
 export type Recurrence = RecurrenceInterval | RecurrenceCron;
 
+export type RefKind = "repo" | "path" | "symbol" | "commit" | "issue" | "pr" | "test" | "review" | "doc";
+
 /**
  * How to remember the answer a person just gave. The defaults are the
  * narrowest reading of it: the answered agent, this tool, and what this
@@ -3821,6 +3950,31 @@ export interface ReplyMemoryFeedbackList {
   "reply": "memory_feedback_list";
 }
 
+export interface ReplyMemoryRetrievalExplain {
+  "data": RetrievalExplain;
+  "reply": "memory_retrieval_explain";
+}
+
+export interface ReplyMemoryConsolidation {
+  "data": MemoryConsolidation;
+  "reply": "memory_consolidation";
+}
+
+export interface ReplyMemoryExport {
+  "data": MemoryExport;
+  "reply": "memory_export";
+}
+
+export interface ReplyMemoryImport {
+  "data": MemoryImport;
+  "reply": "memory_import";
+}
+
+export interface ReplyMemoryMigrationStatus {
+  "data": MemoryMigrationStatus;
+  "reply": "memory_migration_status";
+}
+
 export interface ReplyMemorySeeded {
   "data": Record<string, unknown>;
   "reply": "memory_seeded";
@@ -4062,6 +4216,11 @@ export type Reply =
   | ReplyMemory
   | ReplyMemoryFeedback
   | ReplyMemoryFeedbackList
+  | ReplyMemoryRetrievalExplain
+  | ReplyMemoryConsolidation
+  | ReplyMemoryExport
+  | ReplyMemoryImport
+  | ReplyMemoryMigrationStatus
   | ReplyMemorySeeded
   | ReplyRuns
   | ReplyRunReport
@@ -4175,6 +4334,24 @@ export interface Retraction {
   "at": string;
   "commit": string;
   "file": string;
+}
+
+/**
+ * What retrieval did for each model call of a task, or one invocation.
+ */
+export interface RetrievalExplain {
+  "truncated"?: boolean;
+  "turns": Array<ExplainedTurn>;
+}
+
+/**
+ * What retrieval did for one turn, recorded with the snapshot it built.
+ */
+export interface RetrievalTrace {
+  "candidates": Array<TraceCandidate>;
+  "omitted"?: TraceOmitted;
+  "policy": TracePolicy;
+  "pool": number;
 }
 
 /**
@@ -4577,6 +4754,15 @@ export interface SpendToday {
 }
 
 /**
+ * Why retrieval demotes a memory as possibly stale, and since when.
+ */
+export interface StaleNote {
+  "reason": string;
+  "revision"?: string | null;
+  "since": string;
+}
+
+/**
  * Why a [`DaemonStatus`] is not fresh, and how old it is.
  */
 export interface StatusStale {
@@ -4942,6 +5128,32 @@ export interface ToolSpec {
   "strict"?: boolean;
 }
 
+export interface TraceCandidate {
+  "memory": MemoryId;
+  "outcome": TraceOutcome;
+  "pinned": boolean;
+  "rank"?: number | null;
+  "relevance": number;
+  "score"?: number | null;
+  "stale": boolean;
+}
+
+/**
+ * Candidates past the trace's caps, by the outcome they had.
+ */
+export interface TraceOmitted {
+  "cut": number;
+  "over_limit": number;
+}
+
+export type TraceOutcome = "injected" | "held_out" | "trimmed" | "over_limit" | "cut";
+
+export interface TracePolicy {
+  "holdout_rate": number;
+  "max_items": number;
+  "min_score"?: number | null;
+}
+
 export interface TranscriptEntry {
   "at": string;
   "invocation"?: InvocationId | null;
@@ -5074,6 +5286,11 @@ export interface UsageWindow {
   "name": string;
   "quota": QuotaWindow;
 }
+
+/**
+ * Ordered weakest first, so the stronger of two is their maximum.
+ */
+export type Verification = "inferred" | "observed" | "verified";
 
 /**
  * What a waiting agent is waiting for. A typed expression the scheduler
@@ -5433,6 +5650,20 @@ export interface ConfirmPairingCommand {
 
 export function confirmPairing(args: Omit<ConfirmPairingCommand, "cmd">): ConfirmPairingCommand {
   return { cmd: "confirm_pairing", ...args };
+}
+
+/**
+ * Merge near-duplicate memories, or with `dry_run` only plan it.
+ * An absent scope means every scope. Needs `memory_v2`.
+ */
+export interface ConsolidateMemoriesCommand {
+  "cmd": "consolidate_memories";
+  "dry_run": boolean;
+  "scope"?: MemoryScope | null;
+}
+
+export function consolidateMemories(args: Omit<ConsolidateMemoriesCommand, "cmd">): ConsolidateMemoriesCommand {
+  return { cmd: "consolidate_memories", ...args };
 }
 
 export interface CreateAgentCommand {
@@ -6017,6 +6248,19 @@ export function memoriesInContext(args: Omit<MemoriesInContextCommand, "cmd">): 
 }
 
 /**
+ * Every memory of a scope, or of the store, as a JSON Lines artifact.
+ * Needs `memory_v2`.
+ */
+export interface MemoryExportCommand {
+  "cmd": "memory_export";
+  "scope"?: MemoryScope | null;
+}
+
+export function memoryExport(args: Omit<MemoryExportCommand, "cmd">): MemoryExportCommand {
+  return { cmd: "memory_export", ...args };
+}
+
+/**
  * Newest evidence first, including retractions. Needs `memory_feedback`.
  */
 export interface MemoryFeedbackCommand {
@@ -6027,6 +6271,45 @@ export interface MemoryFeedbackCommand {
 
 export function memoryFeedback(args: Omit<MemoryFeedbackCommand, "cmd">): MemoryFeedbackCommand {
   return { cmd: "memory_feedback", ...args };
+}
+
+/**
+ * Insert what an export holds and the store lacks; never overwrites.
+ * Needs `memory_v2`.
+ */
+export interface MemoryImportCommand {
+  "cmd": "memory_import";
+  "artifact": string;
+  "dry_run": boolean;
+}
+
+export function memoryImport(args: Omit<MemoryImportCommand, "cmd">): MemoryImportCommand {
+  return { cmd: "memory_import", ...args };
+}
+
+/**
+ * The store's Memory 2.0 migrations, counts and backups. Needs `memory_v2`.
+ */
+export interface MemoryMigrationStatusCommand {
+  "cmd": "memory_migration_status";
+}
+
+export function memoryMigrationStatus(): MemoryMigrationStatusCommand {
+  return { cmd: "memory_migration_status" };
+}
+
+/**
+ * What retrieval did for each model call of a task, or for one
+ * invocation; name exactly one. Needs `memory_v2`.
+ */
+export interface MemoryRetrievalExplainCommand {
+  "cmd": "memory_retrieval_explain";
+  "invocation"?: InvocationId | null;
+  "task"?: TaskId | null;
+}
+
+export function memoryRetrievalExplain(args: Omit<MemoryRetrievalExplainCommand, "cmd">): MemoryRetrievalExplainCommand {
+  return { cmd: "memory_retrieval_explain", ...args };
 }
 
 /**
@@ -6891,6 +7174,7 @@ export type Command =
   | ConfigureGithubWatcherCommand
   | ConfigureRemoteCommand
   | ConfirmPairingCommand
+  | ConsolidateMemoriesCommand
   | CreateAgentCommand
   | CreateMemoryCommand
   | CreateScheduleCommand
@@ -6941,7 +7225,11 @@ export type Command =
   | McpServersCommand
   | MemoriesCommand
   | MemoriesInContextCommand
+  | MemoryExportCommand
   | MemoryFeedbackCommand
+  | MemoryImportCommand
+  | MemoryMigrationStatusCommand
+  | MemoryRetrievalExplainCommand
   | NoesisAnswerCommand
   | NoesisCancelJobCommand
   | NoesisConfigureCommand

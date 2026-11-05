@@ -292,6 +292,12 @@ fn put_memory(
     mem: &aether_core::memory::MemoryRecord,
     tally: &mut WriteTally,
 ) -> Result<()> {
+    if mem.standing.is_some() {
+        return Err(StoreError::Corrupt(format!(
+            "memory {} carries `standing`, which is read beside the record and never stored",
+            mem.id
+        )));
+    }
     if (mem.accepted_at.is_some() && mem.proposed_at.is_none())
         || (mem.is_proposed() && mem.superseded_by.is_some())
     {

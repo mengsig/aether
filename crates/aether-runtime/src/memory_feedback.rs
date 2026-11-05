@@ -42,7 +42,9 @@ impl Runtime {
         let mut split = self.memory.hold_out(retrieved, unit);
         debug_assert_eq!(split.injected.len() + split.held_out.len(), eligible);
         let policy = self.memory.retrieval_policy();
-        split.trace = Some(aether_memory::retrieval_trace(&ranking, &fits, &split, policy));
+        split.trace = Some(aether_memory::retrieval_trace(
+            &ranking, &fits, &split, policy,
+        ));
         Ok(split)
     }
 

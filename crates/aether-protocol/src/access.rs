@@ -107,7 +107,7 @@ impl Command {
             | Self::GetTranscriptPage { .. } | Self::UsageBreakdown { .. } | Self::NoesisStatus
             | Self::NoesisGetSession { .. } | Self::NoesisListSessions { .. }
             | Self::NoesisGraph { .. } | Self::NoesisJobs { .. } | Self::NoesisLearner { .. }
-            | Self::NoesisLearnerEvidence { .. } => Access::Observe,
+            | Self::NoesisLearnerEvidence { .. } | Self::MemoryMigrationStatus => Access::Observe,
 
             Self::CreateAgent(_) | Self::ReplyToQuestion { .. } | Self::SendMessage { .. }
             | Self::AppendNote { .. } | Self::Cancel { .. } | Self::Interrupt { .. }
@@ -135,7 +135,9 @@ impl Command {
             | Self::AliasRepository { .. } | Self::AcceptMemory { .. }
             | Self::RejectMemory { .. } | Self::MemoriesInContext { .. }
             | Self::RecordMemoryFeedback { .. } | Self::RetractMemoryFeedback { .. }
-            | Self::MemoryFeedback { .. } => Access::HostOnly,
+            | Self::MemoryFeedback { .. } | Self::MemoryRetrievalExplain { .. }
+            | Self::ConsolidateMemories { .. } | Self::MemoryExport { .. }
+            | Self::MemoryImport { .. } => Access::HostOnly,
 
             Self::GetRemote | Self::ConfigureRemote { .. } | Self::StartPairing { .. }
             | Self::GetPairing { .. } | Self::ConfirmPairing { .. }

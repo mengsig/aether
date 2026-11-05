@@ -217,6 +217,9 @@ pub mod features {
     pub const BUILD_CACHE: &str = "build_cache";
     /// Host evidence about memories a task saw, with append-only records and retractions.
     pub const MEMORY_FEEDBACK: &str = "memory_feedback";
+    /// Memory 2.0: `MemoryRecord.standing` on memory replies, and the
+    /// explain, consolidate, export, import and migration-status commands.
+    pub const MEMORY_V2: &str = "memory_v2";
     /// The daemon serves `workspace_diff`, `workspace_integrate` and
     /// `workspace_discard`.
     pub const WORKSPACE_REVIEW: &str = "workspace_review";

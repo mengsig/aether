@@ -44,7 +44,11 @@ fn the_backup_taken_before_v32_is_a_v31_store_the_previous_binary_opens_with_its
         .map(|entry| entry.unwrap().path())
         .collect();
     assert_eq!(backups.len(), 1);
-    let name = backups[0].file_name().unwrap().to_string_lossy().into_owned();
+    let name = backups[0]
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     assert!(name.starts_with("schema-31-before-32-"), "{name}");
     let (_restored_dir, restored) = restore(&backups[0]);
     let backup =
@@ -71,7 +75,11 @@ fn the_backup_taken_before_v32_is_a_v31_store_the_previous_binary_opens_with_its
     };
     let after = migration_visible(dump(&migrated));
     assert!(after.iter().any(|line| line.starts_with("memory_stale ")));
-    assert_eq!(after, migration_visible(before), "V32 adds and rewrites nothing");
+    assert_eq!(
+        after,
+        migration_visible(before),
+        "V32 adds and rewrites nothing"
+    );
 }
 
 /// The upgrade lane undoes V32 with REWINDS[32] (only the stamp); it replays.

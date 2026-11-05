@@ -897,6 +897,19 @@ pub trait Store: Send + Sync {
     fn memories(&self, query: &MemoryQuery) -> Result<Vec<MemoryRecord>>;
     /// `None` for a record admitted before admission was tracked.
     fn memory_admission(&self, id: MemoryId) -> Result<Option<MemoryAdmission>>;
+    /// The stored admission of each of `memories` that has one.
+    fn memory_admissions(
+        &self,
+        memories: &[MemoryId],
+    ) -> Result<BTreeMap<MemoryId, MemoryAdmission>> {
+        let mut found = BTreeMap::new();
+        for id in memories {
+            if let Some(admission) = self.memory_admission(*id)? {
+                found.insert(*id, admission);
+            }
+        }
+        Ok(found)
+    }
     /// The stale mark of each of `memories` that has one, in one read.
     fn memory_stale_marks(
         &self,
@@ -927,8 +940,9 @@ pub trait Store: Send + Sync {
             match self.memory_admission(id)? {
                 Some(admission) => {
                     counts.admitted += 1;
-                    counts.candidates +=
-                        u64::from(admission.state == aether_core::memory_admission::MemoryState::Candidate);
+                    counts.candidates += u64::from(
+                        admission.state == aether_core::memory_admission::MemoryState::Candidate,
+                    );
                 }
                 None => counts.implicit += 1,
             }
