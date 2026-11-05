@@ -97,7 +97,7 @@
     background: var(--color-surface-1); box-shadow: var(--elevation-2);
     animation: ui-rise var(--motion-base) var(--ease-emphasized);
   }
-  .ui-toast::before { content: ""; flex: none; inline-size: 8px; block-size: 8px; margin-block-start: 6px; border-radius: 50%; background: var(--toast-color); }
+  .ui-toast::before { content: ""; flex: none; inline-size: var(--space-2); block-size: var(--space-2); margin-block-start: var(--space-1); border-radius: 50%; background: var(--toast-color); }
   .ui-toast[data-tone="info"] { --toast-color: var(--color-info); }
   .ui-toast[data-tone="success"] { --toast-color: var(--color-success); }
   .ui-toast[data-tone="warning"] { --toast-color: var(--color-warning); }
@@ -188,9 +188,9 @@
   .ui-vlist-row { position: absolute; inset-inline: 0; display: flex; align-items: center; min-inline-size: 0; }
 
   @keyframes ui-fade { from { opacity: 0; } }
-  @keyframes ui-rise { from { opacity: 0; translate: 0 6px; } }
-  @keyframes ui-pop { from { opacity: 0; scale: 0.97; translate: 0 8px; } }
-  @keyframes ui-slide { from { opacity: 0; translate: 32px 0; } }
+  @keyframes ui-rise { from { opacity: 0; translate: 0 var(--space-2); } }
+  @keyframes ui-pop { from { opacity: 0; scale: 0.97; translate: 0 var(--space-2); } }
+  @keyframes ui-slide { from { opacity: 0; translate: var(--space-8) 0; } }
   @keyframes ui-pulse {
     from { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
     to { box-shadow: 0 0 0 6px transparent; }

@@ -6,7 +6,7 @@ import { pairBoth } from "../../harness/pair.ts";
 import { expect, test, type Page } from "../../harness/fixtures.ts";
 
 /** The longest a finite animation or a transition may take; looping indicators are exempt. */
-const LONGEST_S = 0.3;
+const LONGEST_S = 0.28;
 
 interface Motion {
   readonly element: string;
