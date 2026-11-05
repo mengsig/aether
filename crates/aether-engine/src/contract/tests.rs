@@ -34,6 +34,7 @@ fn snapshot() -> InvocationSnapshot {
         params: Default::default(),
         token_estimate: 8,
         created_at: aether_core::time::now(),
+        memory_retrieval: None,
     }
 }
 

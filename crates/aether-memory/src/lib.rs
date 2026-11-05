@@ -16,7 +16,8 @@ pub use consolidation::{
 };
 pub use holdout::{Holdout, HoldoutUnit};
 pub use index::{LocalEmbeddingIndex, MemoryIndex};
-pub use retrieval::RetrievalPolicy;
+pub use retrieval::{Considered, Ranking, RetrievalPolicy};
+pub use trace::retrieval_trace;
 pub use tiers::{AdmissionMode, PROMOTION_SUPPORT};
 
 use std::collections::BTreeSet;
@@ -564,6 +565,7 @@ mod admission;
 mod holdout;
 mod proposals;
 mod retrieval;
+mod trace;
 mod seeding;
 mod tiers;
 

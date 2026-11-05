@@ -240,6 +240,7 @@ fn memory_records() -> Vec<aether_core::memory::MemoryRecord> {
         pinned: false,
         forgotten_at: None,
         retracted: None,
+        standing: None,
     };
     let mut new = old.clone();
     new.id = aether_core::id::MemoryId::new();

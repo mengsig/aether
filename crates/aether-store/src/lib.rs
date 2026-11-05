@@ -465,6 +465,22 @@ pub struct TaskFilter {
     pub statuses: Vec<TaskStatusKind>,
 }
 
+/// Memory 2.0 rows, counted for `memory_migration_status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MemoryV2Counts {
+    pub total: u64,
+    /// With an admission row (V30).
+    pub admitted: u64,
+    /// Without one: read as active.
+    pub implicit: u64,
+    /// Admission rows still waiting for support.
+    pub candidates: u64,
+    /// Stale marks (V31).
+    pub stale: u64,
+    /// Rows in the holdout log (V31).
+    pub held_out: u64,
+}
+
 /// A memory whose source may no longer say what it says. Retrieval demotes
 /// it; nothing hides it.
 #[derive(Debug, Clone, PartialEq)]
@@ -802,6 +818,21 @@ pub trait Store: Send + Sync {
         }
         Ok(out)
     }
+    /// The retrieval trace each stored snapshot recorded, in the order of
+    /// `ids`; ids with no stored snapshot are left out. Disk stores skip the
+    /// messages.
+    fn snapshot_retrievals(
+        &self,
+        ids: &[SnapshotId],
+    ) -> Result<Vec<(SnapshotId, Option<aether_core::memory_v2::RetrievalTrace>)>> {
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(snapshot) = self.snapshot(*id)? {
+                out.push((snapshot.id, snapshot.memory_retrieval));
+            }
+        }
+        Ok(out)
+    }
     fn invocation(&self, id: InvocationId) -> Result<Option<Invocation>>;
     fn invocations_for_agent(&self, agent: AgentId) -> Result<Vec<Invocation>>;
 
@@ -873,6 +904,39 @@ pub trait Store: Send + Sync {
     ) -> Result<BTreeMap<MemoryId, MemoryStaleMark>>;
     /// Every logged holdout of `memory`, oldest first.
     fn memory_holdouts(&self, memory: MemoryId) -> Result<Vec<MemoryHoldout>>;
+    /// How many memories stand where Memory 2.0 keeps them, for
+    /// `memory_migration_status`. Disk stores count in SQL.
+    fn memory_v2_counts(&self) -> Result<MemoryV2Counts> {
+        let everything = |proposed| MemoryQuery {
+            include_superseded: true,
+            include_forgotten: true,
+            include_candidates: true,
+            proposed,
+            limit: usize::MAX,
+            ..Default::default()
+        };
+        let mut records = self.memories(&everything(false))?;
+        records.extend(self.memories(&everything(true))?);
+        let ids: Vec<MemoryId> = records.iter().map(|r| r.id).collect();
+        let mut counts = MemoryV2Counts {
+            total: ids.len() as u64,
+            stale: self.memory_stale_marks(&ids)?.len() as u64,
+            ..Default::default()
+        };
+        for id in ids {
+            match self.memory_admission(id)? {
+                Some(admission) => {
+                    counts.admitted += 1;
+                    counts.candidates +=
+                        u64::from(admission.state == aether_core::memory_admission::MemoryState::Candidate);
+                }
+                None => counts.implicit += 1,
+            }
+            counts.held_out += self.memory_holdouts(id)?.len() as u64;
+        }
+        debug_assert_eq!(counts.admitted + counts.implicit, counts.total);
+        Ok(counts)
+    }
 
     fn artifact(&self, id: ArtifactId) -> Result<Option<Artifact>>;
     fn artifacts_for_task(&self, task: TaskId) -> Result<Vec<Artifact>>;

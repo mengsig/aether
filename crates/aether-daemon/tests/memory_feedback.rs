@@ -61,6 +61,7 @@ fn show_memory(host: &Host, memory: MemoryId, task: TaskId) {
         params: Default::default(),
         token_estimate: 0,
         created_at: now(),
+        memory_retrieval: None,
     };
     let id = snapshot.id;
     let event = EventDraft::new(

@@ -28,7 +28,8 @@ impl Runtime {
         max_output_tokens: Option<u32>,
     ) -> Result<Holdout> {
         debug_assert_eq!(request.agent, Some(unit.agent));
-        let mut retrieved = self.memory.retrieve(request)?;
+        let ranking = self.memory.retrieve_traced(request)?;
+        let mut retrieved = ranking.retrieved.clone();
         let records: Vec<_> = retrieved.iter().map(|item| item.record.clone()).collect();
         let fits = self
             .context
@@ -38,8 +39,10 @@ impl Runtime {
         retrieved.retain(|item| fits.contains(&item.record.id));
         let eligible = retrieved.len();
         debug_assert_eq!(eligible, fits.len());
-        let split = self.memory.hold_out(retrieved, unit);
+        let mut split = self.memory.hold_out(retrieved, unit);
         debug_assert_eq!(split.injected.len() + split.held_out.len(), eligible);
+        let policy = self.memory.retrieval_policy();
+        split.trace = Some(aether_memory::retrieval_trace(&ranking, &fits, &split, policy));
         Ok(split)
     }
 

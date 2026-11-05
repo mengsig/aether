@@ -572,6 +572,7 @@ fn snapshot_memories_follow_the_requested_order_and_match_the_stored_snapshots()
             params: Default::default(),
             token_estimate: 0,
             created_at: now(),
+            memory_retrieval: None,
         };
         store
             .commit(Commit::new().mutate(Mutation::PutSnapshot(snapshot.clone())))
