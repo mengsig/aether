@@ -2,7 +2,7 @@
 // a user wires them. start, restart one daemon, and stop; stop leaves nothing behind.
 
 import assert from "node:assert/strict";
-import { access, constants, readFile, rm } from "node:fs/promises";
+import { access, constants, readFile, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { Aetherd, Archond, freePorts, type ArchonSchema } from "./daemons.ts";
 import { providersToml, startEngine, type FauxEngine } from "./engine.ts";
@@ -14,6 +14,7 @@ export const ARCHON_SCHEMA = path.resolve(import.meta.dirname, "..", "..", "sche
 export interface Binaries { readonly aether: string; readonly archon: string }
 
 export interface Stack {
+  readonly binaries: Binaries;
   readonly layout: Layout;
   readonly engine: FauxEngine;
   readonly aether: Aetherd;
@@ -24,7 +25,8 @@ export interface Stack {
   stop(): Promise<void>;
 }
 
-/** `AETHER_BIN` and `ARCHOND_BIN`, which scripts/e2e.sh resolves; both must be executables. */
+/** `AETHER_BIN` and `ARCHOND_BIN`, which scripts/e2e.sh resolves; both must be executables. Resolved
+ * through symlinks, as /proc names them. */
 export async function binariesFromEnv(env: NodeJS.ProcessEnv = process.env): Promise<Binaries> {
   const aether = env.AETHER_BIN;
   const archon = env.ARCHOND_BIN;
@@ -33,7 +35,7 @@ export async function binariesFromEnv(env: NodeJS.ProcessEnv = process.env): Pro
     assert.ok(path.isAbsolute(binary), `binary paths are absolute: ${binary}`);
     await access(binary, constants.X_OK);
   }
-  return { aether, archon };
+  return { aether: await realpath(aether), archon: await realpath(archon) };
 }
 
 export async function vendoredSchema(): Promise<ArchonSchema> {
@@ -62,7 +64,7 @@ export async function startStack(binaries: Binaries): Promise<Stack> {
   const archon = new Archond(binaries.archon, layout, ports, await vendoredSchema());
   let stopped = false;
   const stack: Stack = {
-    layout, engine, aether, archon,
+    binaries, layout, engine, aether, archon,
     async restart(daemon) {
       assert.ok(!stopped, "a stopped stack is not restarted");
       const target = daemon === "aether" ? aether : archon;

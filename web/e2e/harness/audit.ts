@@ -91,11 +91,25 @@ export interface Audit {
   stop(): void;
 }
 
+export interface AuditTarget {
+  readonly root: () => string;
+  /** The binaries under test: a daemon may read its own executable, which lies outside the root. */
+  readonly binaries: readonly string[];
+  readonly daemons: () => number[];
+  readonly clients: () => number[];
+}
+
+function outsideRoot(open: string, root: string, binaries: readonly string[]): boolean {
+  if (!path.isAbsolute(open) || open.startsWith(`${root}/`) || binaries.includes(open)) return false;
+  return !SYSTEM.some((prefix) => open.startsWith(prefix) || `${open}/` === prefix);
+}
+
 /**
  * Samples every 100 ms until stopped. `daemons` are checked for sockets and files (inside
  * `root` only); `clients` (the browser) for sockets only.
  */
-export function startAudit(target: { root: () => string; daemons: () => number[]; clients: () => number[] }): Audit {
+export function startAudit(target: AuditTarget): Audit {
+  assert.ok(target.binaries.length > 0 && target.binaries.every((binary) => path.isAbsolute(binary)), "the binaries are absolute paths");
   const violations = new Set<string>();
   const sockets = new Set<string>();
   let samples = 0;
@@ -114,8 +128,7 @@ export function startAudit(target: { root: () => string; daemons: () => number[]
           if (!isLoopback(socket.local) || (hasPeer(socket.remote) && !isLoopback(socket.remote))) {
             violations.add(`pid ${pid}: ${socket.table} ${socket.local} -> ${socket.remote}`);
           }
-        } else if (inode === undefined && daemons.includes(pid) && path.isAbsolute(open)
-          && !open.startsWith(`${root}/`) && !SYSTEM.some((prefix) => open.startsWith(prefix) || `${open}/` === prefix)) {
+        } else if (inode === undefined && daemons.includes(pid) && outsideRoot(open, root, target.binaries)) {
           violations.add(`pid ${pid} holds ${open}, outside the stack root`);
         }
       }

@@ -30,6 +30,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   audit: [async ({ stack }, provide) => {
     const audit = startAudit({
       root: () => stack.layout.root,
+      binaries: [stack.binaries.aether, stack.binaries.archon],
       daemons: () => [stack.aether.pid, stack.archon.pid].filter((pid): pid is number => pid !== undefined),
       // The worker and all it spawned: the browser, the faux engine's server, the CLI calls.
       clients: () => [process.pid],
