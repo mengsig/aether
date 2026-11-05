@@ -161,14 +161,20 @@ export class Archond extends Daemon {
     this.schema = schema;
   }
 
-  /** Shared mode on the harness's aetherd, the faux model only, served behind Aether's /archon mount. */
-  async configure(aetherOrigin: string, aetherSocket: string): Promise<void> {
+  /**
+   * Shared mode on the harness's aetherd, the faux model only, served behind Aether's /archon mount.
+   * `publicOrigins` are https origins that reach Aether's listener too (a test TLS front); they
+   * take effect at the next start.
+   */
+  async configure(aetherOrigin: string, aetherSocket: string, publicOrigins: readonly string[] = []): Promise<void> {
     assert.match(aetherOrigin, /^http:\/\/127\.0\.0\.1:\d+$/, "archond trusts only a loopback Aether origin");
+    for (const origin of publicOrigins) assert.match(origin, /^https:\/\/127\.0\.0\.1:\d+$/, "an extra trusted origin is a loopback https front");
+    const trusted = [aetherOrigin, ...publicOrigins].map((origin) => `"${origin}"`).join(", ");
     await writeFile(path.join(this.layout.archon.config, "config.toml"), [
       "[aether]", 'mode = "shared"', `socket = "${aetherSocket}"`, "",
       "[orchestrator]", `model = "${FAUX_MODEL}"`, "",
       "[models]", `allow = ["${FAUX_MODEL}"]`, "",
-      "[remote]", `address = "127.0.0.1:${this.ports.archon}"`, 'mounted_at = "/archon"', `trusted_origins = ["${aetherOrigin}"]`, "",
+      "[remote]", `address = "127.0.0.1:${this.ports.archon}"`, 'mounted_at = "/archon"', `trusted_origins = [${trusted}]`, "",
     ].join("\n"));
   }
 
