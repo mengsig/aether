@@ -1,7 +1,7 @@
 // The "learn from this" sheet: it previews the evidence gathered about one entity, each fact with its
 // status, and starts a teaching session from it. While Noesis or engineering context is off it reads nothing.
 
-import { navigate, routeHref, useCapabilities } from "@aether-ui/core";
+import { navigate, routeHref } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
 import { Button, EmptyState, ErrorState, Sheet, Skeleton, StatusPill, type Status } from "@aether-ui/ui";
 import { useCallback, useMemo, useState, useSyncExternalStore, type FormEvent } from "react";
@@ -37,8 +37,8 @@ export function UnderstandFromHash() {
 
 export function UnderstandSheet({ request, onClose }: { readonly request: UnderstandRequest; readonly onClose: () => void }) {
   const gate = useGate();
-  const engineering = useCapabilities()["noesis.engineering_context"] === true;
-  const open = gate.state === "on" && engineering;
+  // The selected daemon's own setting: the capability is true when any connected daemon has it on.
+  const open = gate.state === "on" && gate.status.effective.engineering_context === true;
   return (
     <Sheet open onClose={onClose} title="Learn from this" className="understand-sheet"
       description="Noesis teaches from the evidence below, read with your own access. Nothing is sent until you start.">

@@ -100,6 +100,23 @@ describe("learning from an item", () => {
     expect(created(h)).toEqual([]);
   });
 
+  test("keeps the item on core's screen while open, so an Archon change rereads its detail", async () => {
+    const h = await connected(scenario(true, { status: statusWith(true, true) }), vi);
+    harness = h;
+    const shown = vi.spyOn(h.app.manager, "showItems").mockImplementation(() => undefined);
+    vi.spyOn(h.app.manager, "refreshItem").mockResolvedValue(undefined);
+    const archond = { id: ARCHON_CONN, daemon: "archon", state: "ready", protocol: 24, features: ["changes"], label: "archond" } as const;
+    h.app.store.update((s) => ({ ...s, connections: { ...s.connections, [ARCHON_CONN]: archond } }));
+    seed(h, SHIPPED, SHIPPED_SUMMARY);
+    location.hash = understandHref(ITEM);
+    await h.mount(<SessionsRoute />);
+    await h.settle();
+    expect(shown).toHaveBeenLastCalledWith(ARCHON_CONN, ["qi_cache"]);
+    await click(h, $(document, "dialog[open] button[aria-label='Close Learn from this']"));
+    await hashChanged(h);
+    expect(shown).toHaveBeenLastCalledWith(ARCHON_CONN, []);
+  });
+
   test("closing the sheet clears the query", async () => {
     const { h } = await open(ITEM);
     await click(h, $(document, "dialog[open] button[aria-label='Close Learn from this']"));
@@ -147,6 +164,25 @@ describe("off by default", () => {
     for (const kind of ["item", "run", "agent", "pull_request"] as const) {
       expect(actionsFor(actions, h.app.store.get().capabilities, { kind, conn: ARCHON_CONN, id: "x" })).toEqual([]);
     }
+  });
+
+  test("another daemon's engineering context does not open the selected daemon's sheet", async () => {
+    const h = await connected(scenario(true, { status: statusWith(true, false) }), vi);
+    harness = h;
+    const other = "aether:second";
+    const first = h.app.store.get().connections[CONN];
+    if (first === undefined) throw new Error("the faux Aether connection is ready");
+    h.app.store.update((s) => ({ ...s, connections: { ...s.connections, [other]: { ...first, id: other } } }));
+    h.app.store.updateAether(other, (s) => ({ ...s, noesis: statusWith(true, true) as never }));
+    h.app.manager.refreshCapabilities();
+    await h.settle();
+    expect(h.app.store.get().capabilities["noesis.engineering_context"]).toBe(true);
+    location.hash = understandHref({ kind: "agent", conn: CONN, id: LESSON.agent });
+    await h.mount(<SessionsRoute />);
+    await h.settle();
+    expect($(document, "dialog[open] [data-testid=understand-off]").textContent).toContain("Learning from your work is off");
+    expect(document.querySelector("dialog[open] button[type=submit]")).toBeNull();
+    expect(created(h)).toEqual([]);
   });
 
   test("with engineering context on, the action is offered for each kind", async () => {

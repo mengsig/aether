@@ -7,7 +7,7 @@ import { useCallback, useMemo, useState } from "react";
 import { invariant } from "../learn/model.ts";
 import { itemBundle, runBundle } from "./archon-bundles.ts";
 import { findPr, parsePrId, prBundle, type PrId } from "./pr-bundle.ts";
-import { notConnected, useConnectionReady, useCoreRead, type BundleRead, type Reader } from "./read.ts";
+import { notConnected, useConnectionReady, useCoreRead, useShownItem, type BundleRead, type Reader } from "./read.ts";
 
 const refreshItem: Reader = (app, conn, [item]) => app.manager.refreshItem(conn, item ?? "");
 const readPlan: Reader = (app, conn, [item, run]) => app.manager.readPlan(conn, item ?? "", run ?? "");
@@ -23,6 +23,7 @@ export function useItemSource(conn: string, id: string): BundleRead {
   const ready = useConnectionReady(conn, "archon");
   const stamped = useSelector(useMemo(() => selectItemDetail(conn, id), [conn, id]));
   const stored = useSelector(useMemo(() => selectItem(conn, id), [conn, id]));
+  useShownItem(conn, ready, id);
   const read = useCoreRead(conn, ready, [id], refreshItem);
   const bundle = useMemo(() => {
     if (stamped === undefined) return null;
@@ -46,13 +47,14 @@ function owningItem(state: State, conn: string, run: string): string | null {
 export function useRunSource(conn: string, id: string): BundleRead {
   const ready = useConnectionReady(conn, "archon");
   const found = useSelector(useCallback((state: State) => owningItem(state, conn, id), [conn, id]));
-  // Off screen, core may drop the item's detail on a change; the owner, once seen, is kept to reread it.
+  // The owner, once seen, is kept: it stays on screen and is reread even while its detail is refetched.
   const [seen, setSeen] = useState<string | null>(found);
   if (found !== null && found !== seen) setSeen(found);
   const item = found ?? seen;
   const servesPlans = useSelector(useCallback((state: State) => state.connections[conn]?.features.includes("run_plan") === true, [conn]));
   const stamped = useSelector(useMemo(() => selectItemDetail(conn, item ?? ""), [conn, item]));
   const plan = useSelector(useMemo(() => selectRunPlan(conn, id), [conn, id]));
+  useShownItem(conn, ready, item);
   const read = useCoreRead(conn, ready, item === null ? null : [item], refreshItem);
   const planRead = useCoreRead(conn, ready && servesPlans, item === null ? null : [item, id], readPlan);
   const bundle = useMemo(() => {

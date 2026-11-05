@@ -1,7 +1,7 @@
 // What a bundle source answers, and the one way a source asks core to (re)read: on mount, when its
 // target changes and on retry, only while the entity's connection is ready.
 
-import { selectConnection, useApp, useSelector, type App } from "@aether-ui/core";
+import { selectConnection, useApp, useSelector, type App, type State } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { errorText } from "../learn/data.ts";
@@ -53,6 +53,18 @@ export function useCoreRead(conn: string, ready: boolean, targets: readonly stri
   const retry = useCallback(() => setNonce((n) => n + 1), []);
   const mine = answer !== null && answer.key === key;
   return { error: mine ? answer.error : null, settled: mine, retry };
+}
+
+/** Keeps `item` on core's screen while its evidence is open, so a change rereads its detail, not drops it. */
+export function useShownItem(conn: string, ready: boolean, item: string | null): void {
+  const app = useApp();
+  const live = useSelector(useCallback((state: State) => state.connections[conn]?.features.includes("changes") === true, [conn]));
+  useEffect(() => {
+    if (!ready || !live || item === null) return;
+    invariant(item.length > 0, "an on-screen item is named");
+    app.manager.showItems(conn, [item]);
+    return () => app.manager.showItems(conn, []);
+  }, [app, conn, ready, live, item]);
 }
 
 export const notConnected = (daemon: "Aether" | "Archon", conn: string): BundleRead =>
