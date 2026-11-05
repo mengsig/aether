@@ -150,6 +150,7 @@ dependencies = [
  "tokio-util",
  "toml",
  "tracing",
+ "tracing-subscriber",
  "ulid",
 ]
 

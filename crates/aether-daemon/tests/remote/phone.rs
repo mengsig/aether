@@ -239,6 +239,8 @@ pub struct Socket {
     /// The challenge the daemon opened with.
     pub nonce: String,
     pub instance_id: String,
+    /// Every event and delta frame read while awaiting a reply, oldest first.
+    pub pushed: Vec<Value>,
 }
 
 impl Socket {
@@ -270,6 +272,7 @@ impl Socket {
             next_id: 1,
             nonce: String::new(),
             instance_id: String::new(),
+            pushed: Vec::new(),
         };
         let challenge = socket.frame().await.expect("a challenge comes first");
         assert_eq!(challenge["frame"], "challenge", "{challenge}");
@@ -315,6 +318,7 @@ impl Socket {
                 assert_eq!(answer["id"], id, "reply out of order: {answer}");
                 return answer;
             }
+            self.pushed.push(answer);
         }
     }
 

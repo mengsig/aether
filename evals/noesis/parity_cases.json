@@ -423,7 +423,12 @@
         {
           "crate": "aether-daemon",
           "file": "crates/aether-daemon/tests/noesis_guard.rs",
-          "name": "g10_every_generic_agent_command_is_refused_for_a_noesis_agent_while_disabled"
+          "name": "g10_every_generic_agent_command_is_refused_for_a_parked_noesis_agent_while_disabled"
+        },
+        {
+          "crate": "aether-daemon",
+          "file": "crates/aether-daemon/tests/noesis_guard.rs",
+          "name": "g10_a_cancelled_noesis_agent_is_not_restarted_while_disabled"
         }
       ]
     },
