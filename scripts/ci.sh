@@ -181,6 +181,8 @@ check_python_suites() {
     check_release_bench_min_python
     step "memory benchmark tests (dataset, metrics, baseline check; no cargo, no model calls)"
     python3 -m unittest discover -s evals -p 'test_memory_bench*.py'
+    step "noesis eval tests (parity checker, differential comparator, quality sheet; no cargo, no model calls)"
+    python3 -m unittest discover -s evals/noesis -p 'test_*.py'
     step "client generator layout tests"
     python3 -m unittest discover -s scripts -p 'test_generate_clients_*.py'
     step "python client tests"

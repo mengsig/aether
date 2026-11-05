@@ -1,0 +1,38 @@
+{
+  "scale": {"min": 0, "max": 4, "meaning": "0 fails the criterion, 2 is acceptable, 4 is exemplary"},
+  "dimensions": [
+    {
+      "id": "probing_efficiency",
+      "title": "Probing efficiency",
+      "applies_to": "probe phase",
+      "criteria": [
+        "Reaches an accurate read of the learner's level in few questions",
+        "Each question separates a strand's floor from its ceiling rather than repeating a level",
+        "Stops probing once the evidence is enough; does not quiz past it",
+        "The assessment names misconceptions the answers actually showed"
+      ]
+    },
+    {
+      "id": "plan_quality",
+      "title": "Plan quality",
+      "applies_to": "plan phase",
+      "criteria": [
+        "Steps are ordered so every step builds only on earlier ones",
+        "Granularity fits the learner: no step is a leap, none is trivial",
+        "The plan starts where the probe said to start and aims at the stated goal",
+        "A rewrite after feedback addresses that feedback"
+      ]
+    },
+    {
+      "id": "question_quality",
+      "title": "Question quality",
+      "applies_to": "teach and probe questions",
+      "criteria": [
+        "The question tests understanding, not recall of the teacher's own wording",
+        "Distractors are plausible and tied to real misconceptions",
+        "The prompt and options never reveal the answer",
+        "The explanation teaches why, in terms the learner can use"
+      ]
+    }
+  ]
+}
