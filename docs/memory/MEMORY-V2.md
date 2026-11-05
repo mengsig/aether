@@ -56,8 +56,8 @@ Each command is listed in `Command::introduced()` as
 `docs/remote.md`, and checked against `authz/command_cases.json`.
 
 `dry_run` has no default on either command, so a client must say which it
-means. `scope` is the wire `MemoryScope` (`{"kind":"global"}`,
-`{"kind":"repository","id":…}`, and so on). It is matched exactly, with the
+means. `scope` is the wire `MemoryScope` (`{"scope":"global"}`,
+`{"scope":"repository","id":…}`, and so on). It is matched exactly, with the
 role scopes nested in a repository. An absent scope means every scope.
 
 ### 2.1 `memory_retrieval_explain`
@@ -160,7 +160,7 @@ Import errors (`invalid`, and nothing is written):
 - a record count that does not match the header;
 - a malformed entry, naming its line;
 - a repeated memory id;
-- an admission or stale mark naming another memory;
+- an admission naming another memory;
 - an admission state other than candidate or active;
 - a proposal state the store refuses;
 - an entry carrying `standing`.
@@ -178,7 +178,7 @@ Line 1 is the header:
 Each following line is one memory, ordered by `created_at` and then by id:
 
 ```json
-{"record":{…MemoryRecord, without standing…},"admission":{…MemoryAdmission…}|null,"stale":{"reason":"…","since":"…","revision":"…"|null}|null}
+{"record":{…MemoryRecord, without standing…},"admission":{…MemoryAdmission…}|null,"stale":{"reason":"…","since":"…","revision"?:"…"}|null}
 ```
 
 - `record` is the stored body, every field included: ids, scope,
@@ -188,7 +188,8 @@ Each following line is one memory, ordered by `created_at` and then by id:
   their runs, verification, refs and `promoted_at`. It is `null` when the
   store holds none, and an import then writes none, so the round trip stays
   exact.
-- `stale` is the V31 mark, or `null`.
+- `stale` is the V31 mark, or `null`. Its `revision` is absent when no
+  sweep set the mark.
 
 A reader refuses a version it does not know. A later version may add
 optional fields. Feedback, the holdout log and retrieval traces are not
@@ -209,6 +210,9 @@ reply memory_migration_status {
 - `implicit` counts memories with no admission row, which are read as
   active.
 - `held_out` counts rows in the holdout log.
+- `last_import` is the last applied import. It is kept in the store's meta
+  key `memory.last_import` as well as the `memory.imported` event, so the
+  status reads it in one lookup.
 - `backups` lists the pre-migration snapshots in `migration-backups/`
   beside the store, newest first, by file name only: no host path is sent
   to a device.
@@ -252,12 +256,16 @@ its own benchmark.
 | --- | --- |
 | `aether memory explain (--task T \| --invocation I) [--json]` | `memory_retrieval_explain` |
 | `aether memory consolidate [--scope S] [--dry-run] [--json]` | `consolidate_memories` |
-| `aether memory export [--scope S] [-o FILE]` | `memory_export`; writes the artifact to FILE, or to stdout |
+| `aether memory export [--scope S] [-o FILE] [--json]` | `memory_export`; writes the artifact to FILE, or to stdout |
 | `aether memory import FILE [--dry-run] [--json]` | `memory_import` |
 | `aether memory migration-status [--json]` | `memory_migration_status` |
 
-`--scope` takes `global`, `repo:<id>`, `role:<role>`, `repo:<id>/<role>` or
-`agent:<id>`.
+`--scope` takes what `aether memory list --scope` takes: `global`,
+`role:<role>`, `agent:<agent>`, `subtree:<agent>`,
+`repo-role:<role>@<repository>`, or anything else as a repository.
+
+`export -o FILE` writes `FILE.partial` and renames it into place, so FILE
+is never half an artifact. With `--json` it prints the count and digest.
 
 ## 6. Changes from the §7 proposal
 
