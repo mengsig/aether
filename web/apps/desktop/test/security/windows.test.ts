@@ -70,15 +70,21 @@ test("navigation and redirects are pinned to the exact origin, popups and webvie
   assert.throws(() => pinContents(new FakeContents() as unknown as WebContents, "https://a.example/path"));
 });
 
-test("the permission handlers allow notifications and nothing else", () => {
+test("a guarded session allows notifications and nothing else, and never spellchecks", () => {
   let request: ((contents: unknown, permission: string, callback: (granted: boolean) => void) => void) | undefined;
   let check: ((contents: unknown, permission: string) => boolean) | undefined;
+  let spellchecker: boolean | undefined;
+  let dictionaries: string[] | undefined;
   const fake = {
+    setSpellCheckerEnabled: (enabled: boolean) => { spellchecker = enabled; },
+    setSpellCheckerLanguages: (languages: string[]) => { dictionaries = languages; },
     setPermissionRequestHandler: (handler: typeof request) => { request = handler; },
     setPermissionCheckHandler: (handler: typeof check) => { check = handler; },
   };
   guardSession(fake as unknown as Session);
   assert.ok(request !== undefined && check !== undefined);
+  assert.equal(spellchecker, false, "no session spellchecks");
+  assert.deepEqual(dictionaries, [], "no session loads, and so downloads, a dictionary");
   for (const permission of ["geolocation", "media", "clipboard-read", "openExternal", "fullscreen", "hid", "usb", "serial"]) {
     let granted: boolean | undefined;
     request(null, permission, (value) => { granted = value; });

@@ -1,5 +1,6 @@
 // The guards every window gets (ARCHITECTURE.md §c): navigation and redirects pinned to one
-// origin, window.open denied, no <webview>, and permissions denied except notifications.
+// origin, window.open denied, no <webview>, permissions denied except notifications, and no
+// spellcheck dictionaries, which Electron fetches from Google even with `spellcheck: false`.
 
 import type { Session, WebContents } from "electron";
 
@@ -29,8 +30,10 @@ export function pinContents(contents: WebContents, origin: string): void {
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
 }
 
-/** Deny-by-default permission handlers on `session`, notifications excepted. */
+/** Deny-by-default permission handlers on `session`, notifications excepted; no spellchecker. */
 export function guardSession(session: Session): void {
+  session.setSpellCheckerEnabled(false);
+  session.setSpellCheckerLanguages([]);
   session.setPermissionRequestHandler((_contents, permission, callback) => callback(allowOnlyNotifications(permission)));
   session.setPermissionCheckHandler((_contents, permission) => allowOnlyNotifications(permission));
 }
