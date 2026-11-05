@@ -15,6 +15,13 @@ use std::{
 /// with more seeded notes than this has already hit the scan caps in `repo`.
 const MAX_SEEDED_PER_SCOPE: usize = 1_000;
 
+fn departed(file: &str, commit: &str) -> String {
+    format!(
+        "{file} no longer states it at {}",
+        commit.chars().take(7).collect::<String>()
+    )
+}
+
 impl MemoryService {
     /// Read a repository's committed notes and admit what is not already
     /// there. Idempotent: an unchanged note is skipped before it becomes a
@@ -122,7 +129,8 @@ impl MemoryService {
     /// contains the commit it was read at - so the tree has seen it - and
     /// HEAD's own content of the file no longer states it. A note whose
     /// commit is unknown is not checkable and is never swept, and neither is
-    /// a pinned one, which is a person's decision.
+    /// a pinned one, which is a person's decision: it is marked stale
+    /// instead, and the mark is cleared once the file states it again.
     fn retract_departed_notes(
         &self,
         root: &Path,
@@ -132,24 +140,7 @@ impl MemoryService {
         let Some(head) = repo::head_commit(root) else {
             return Ok(0);
         };
-        let scope = MemoryScope::Repository {
-            id: repository.to_owned(),
-        };
-        let seeded: Vec<MemoryRecord> = self
-            .read_resolved(Some(scope), |scope| {
-                self.store
-                    .memories(&MemoryQuery {
-                        scope,
-                        exact_scope: true,
-                        nested_scopes: true,
-                        limit: MAX_SEEDED_PER_SCOPE,
-                        ..Default::default()
-                    })
-                    .map_err(Into::into)
-            })?
-            .into_iter()
-            .filter(|m| m.provenance.source.is_some() && !m.pinned)
-            .collect();
+        let seeded = self.seeded_notes(repository)?;
         let mut stated: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut retracted = 0;
         for record in seeded {
@@ -166,6 +157,13 @@ impl MemoryService {
                 .entry(source.file.clone())
                 .or_insert_with(|| repo::notes_at(root, &head, &source.file))
                 .contains(&record.text);
+            if record.pinned {
+                // A person's decision is kept, but a pinned note its file
+                // no longer states is demoted as possibly stale.
+                let reason = (!still_states).then(|| departed(&source.file, &head));
+                self.set_stale(record.id, reason)?;
+                continue;
+            }
             if still_states {
                 continue;
             }
@@ -183,15 +181,43 @@ impl MemoryService {
         Ok(retracted)
     }
 
+    /// The live notes of `repository` read from a file, at most a page.
+    fn seeded_notes(&self, repository: &str) -> Result<Vec<MemoryRecord>> {
+        let scope = MemoryScope::Repository {
+            id: repository.to_owned(),
+        };
+        let page = self.read_resolved(Some(scope), |scope| {
+            self.store
+                .memories(&MemoryQuery {
+                    scope,
+                    exact_scope: true,
+                    nested_scopes: true,
+                    limit: MAX_SEEDED_PER_SCOPE,
+                    ..Default::default()
+                })
+                .map_err(Into::into)
+        })?;
+        debug_assert!(page.len() <= MAX_SEEDED_PER_SCOPE, "the read is one page");
+        let seeded: Vec<MemoryRecord> = page
+            .into_iter()
+            .filter(|m| m.provenance.source.is_some())
+            .collect();
+        debug_assert!(
+            seeded.iter().all(|m| match &m.scope {
+                MemoryScope::Repository { id } | MemoryScope::RepositoryRole { id, .. } =>
+                    id == repository,
+                _ => false,
+            }),
+            "only {repository}'s own notes are swept"
+        );
+        Ok(seeded)
+    }
+
     /// Curate a record out because the tree stopped stating it. Marked as the
     /// sweep's doing, so the note coming back seeds it again - unlike
     /// [`Self::forget`], which is a person's decision and final.
     fn retract(&self, id: MemoryId, retraction: Retraction, by: Actor) -> Result<bool> {
-        let reason = format!(
-            "{} no longer states it at {}",
-            retraction.file,
-            retraction.commit.chars().take(7).collect::<String>()
-        );
+        let reason = departed(&retraction.file, &retraction.commit);
         let (_, changed) = self.curate(id, by, |record| {
             let event = EventKind::MemoryForgotten {
                 memory: id,

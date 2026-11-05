@@ -499,7 +499,9 @@ fn a_pinned_note_is_never_swept() {
         .expect("seeded");
     service.pin(pinned.id, true, Actor::user()).expect("pin");
 
-    std::fs::remove_file(dir.path().join(repo::KNOWLEDGE_DIR).join("layout.md")).expect("remove");
+    let layout = dir.path().join(repo::KNOWLEDGE_DIR).join("layout.md");
+    let stated = std::fs::read(&layout).expect("read");
+    std::fs::remove_file(&layout).expect("remove");
     git(dir.path(), &["add", "-A"]);
     git(dir.path(), &["commit", "-q", "-m", "drop it"]);
     let report = service
@@ -512,6 +514,22 @@ fn a_pinned_note_is_never_swept() {
             .expect("get")
             .expect("exists")
             .is_current()
+    );
+    // Kept, but demoted at retrieval until the file states it again.
+    let marks = store.memory_stale_marks(&[pinned.id]).expect("marks");
+    assert!(marks[&pinned.id].reason.contains("layout.md"), "{marks:?}");
+
+    std::fs::write(&layout, stated).expect("restore");
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "bring it back"]);
+    service
+        .seed_repository(dir.path(), "fixture", Actor::System)
+        .expect("seed");
+    assert!(
+        store
+            .memory_stale_marks(&[pinned.id])
+            .expect("marks")
+            .is_empty()
     );
 }
 

@@ -9,7 +9,9 @@
 pub mod index;
 pub mod repo;
 
+pub use holdout::{Holdout, HoldoutUnit};
 pub use index::{LocalEmbeddingIndex, MemoryIndex};
+pub use retrieval::RetrievalPolicy;
 pub use tiers::{AdmissionMode, PROMOTION_SUPPORT};
 
 use std::collections::BTreeSet;
@@ -146,6 +148,7 @@ pub struct MemoryService {
     /// read and the commit have to be one step.
     gate: WriteGate,
     policy: AdmissionPolicy,
+    retrieval: RetrievalPolicy,
     index: Option<Arc<dyn MemoryIndex>>,
     publisher: Option<Publisher>,
 }
@@ -154,6 +157,7 @@ impl std::fmt::Debug for MemoryService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MemoryService")
             .field("policy", &self.policy)
+            .field("retrieval", &self.retrieval)
             .field("index", &self.index.as_ref().map(|i| i.name()))
             .field("publishes", &self.publisher.is_some())
             .finish()
@@ -166,6 +170,7 @@ impl MemoryService {
             store,
             gate,
             policy: AdmissionPolicy::default(),
+            retrieval: RetrievalPolicy::default(),
             index: None,
             publisher: None,
         }
@@ -194,6 +199,21 @@ impl MemoryService {
     pub fn with_policy(mut self, policy: AdmissionPolicy) -> Self {
         self.policy = policy;
         self
+    }
+
+    /// Retrieve under `policy`. It must already be valid
+    /// ([`RetrievalPolicy::validate`]): config is checked where it is read.
+    pub fn with_retrieval(mut self, policy: RetrievalPolicy) -> Self {
+        assert!(
+            policy.validate().is_ok(),
+            "invalid retrieval policy {policy:?}"
+        );
+        self.retrieval = policy;
+        self
+    }
+
+    pub fn retrieval_policy(&self) -> &RetrievalPolicy {
+        &self.retrieval
     }
 
     /// Add a semantic pass to retrieval. Without one, retrieval is structural
@@ -536,6 +556,7 @@ fn jaccard(a: &BTreeSet<String>, b: &BTreeSet<String>) -> f32 {
 }
 
 mod admission;
+mod holdout;
 mod proposals;
 mod retrieval;
 mod seeding;
@@ -555,6 +576,9 @@ mod embedding_tests;
 
 #[cfg(test)]
 mod feedback_ranking_tests;
+
+#[cfg(test)]
+mod retrieval_tests;
 
 #[cfg(test)]
 mod admission_tests;

@@ -5,13 +5,73 @@ use aether_core::{
     memory_feedback::FeedbackTally,
     time::{Timestamp, now},
 };
-use aether_store::MemoryQuery;
+use aether_store::{Commit, MemoryQuery, MemoryStaleMark, Mutation};
 use std::collections::{BTreeMap, BTreeSet};
+
+/// How retrieval cuts, and how much of it a turn withholds. The defaults are
+/// CONTRACTS.md §7's `[memory.retrieval]`, except the holdout: off here, so a
+/// service built without config never withholds; the daemon's config turns it
+/// on at 0.05.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RetrievalPolicy {
+    /// Most memories one turn is shown.
+    pub max_items: usize,
+    /// Least relevance, in `0..=1`, a memory needs to a request that has a
+    /// query. A pinned memory needs none.
+    pub min_score: f32,
+    /// Share of eligible injections withheld and logged, in `0..=1`.
+    pub holdout_rate: f32,
+    /// Seeds every holdout draw: the same seed, unit and memory always draw
+    /// the same. Task ids are random, so a fixed seed still spreads the arms.
+    pub holdout_seed: u64,
+}
+
+impl Default for RetrievalPolicy {
+    fn default() -> Self {
+        Self {
+            max_items: 6,
+            min_score: 0.05,
+            holdout_rate: 0.0,
+            holdout_seed: 0,
+        }
+    }
+}
+
+impl RetrievalPolicy {
+    /// Refuse a policy retrieval cannot run under, naming the bad setting.
+    pub fn validate(&self) -> Result<()> {
+        if self.max_items == 0 || self.max_items > MAX_ITEMS {
+            return Err(MemoryError::Invalid(format!(
+                "memory.retrieval.max_items must be 1 to {MAX_ITEMS}, not {}",
+                self.max_items
+            )));
+        }
+        if !(0.0..=1.0).contains(&self.min_score) {
+            return Err(MemoryError::Invalid(format!(
+                "memory.retrieval.min_score must be 0 to 1, not {}",
+                self.min_score
+            )));
+        }
+        if !(0.0..=1.0).contains(&self.holdout_rate) {
+            return Err(MemoryError::Invalid(format!(
+                "memory.retrieval.holdout_rate must be 0 to 1, not {}",
+                self.holdout_rate
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Past this, the layer's token cap decides long before the count does.
+const MAX_ITEMS: usize = 50;
 
 impl MemoryService {
     /// Rank memories for a request. Structural signals dominate; lexical
     /// match narrows the candidate set when a query is given, and counted
-    /// feedback scales a non-pinned memory's score by 0.75 to 1.25. A
+    /// feedback scales a non-pinned memory's score by 0.75 to 1.25. With a
+    /// query, a memory that does not reach [`RetrievalPolicy::min_score`]
+    /// relevance is cut, unless pinned, so an unrelated task gets fewer
+    /// memories rather than always `limit`; a stale-marked one is demoted. A
     /// repository named by an old alias is read where its memories now live.
     pub fn retrieve(&self, req: &RetrievalRequest) -> Result<Vec<Retrieved>> {
         let limit = if req.limit == 0 { 5 } else { req.limit };
@@ -38,17 +98,24 @@ impl MemoryService {
     ) -> Result<Vec<Retrieved>> {
         debug_assert!(limit > 0);
         let query_tokens = req.query.as_deref().map(tokens).unwrap_or_default();
+        // Only a request that says what it is about can be judged irrelevant.
+        let cutoff = (!query_tokens.is_empty()).then_some(self.retrieval.min_score);
         let at = now();
         let semantic = self.semantic_scores(req, &pool)?;
         let tallies = self.feedback_tallies(&pool)?;
+        let stale = self.stale_marks(&pool)?;
         let mut scored: Vec<Retrieved> = pool
             .into_iter()
             .zip(semantic)
-            .map(|(record, semantic)| {
-                let score =
-                    score(&record, req, scopes, &query_tokens, at) + SEMANTIC_WEIGHT * semantic;
+            .filter_map(|(record, semantic)| {
+                let fit = Fit::of(&record, req, &query_tokens, semantic);
+                if cutoff.is_some_and(|min| !record.pinned && fit.relevance < min) {
+                    return None;
+                }
+                let score = score(&record, req, scopes, &fit, at) + SEMANTIC_WEIGHT * semantic;
                 let score = with_feedback(score, &record, tallies.get(&record.id));
-                Retrieved { record, score }
+                let score = with_staleness(score, stale.contains_key(&record.id));
+                Some(Retrieved { record, score })
             })
             .collect();
         scored.sort_by(|a, b| b.score.total_cmp(&a.score));
@@ -141,6 +208,48 @@ impl MemoryService {
         Ok(tallies)
     }
 
+    /// Mark a memory as possibly stale, with why, or clear its mark with
+    /// `None`. Committed at once; returns whether anything changed.
+    pub fn set_stale(&self, id: MemoryId, reason: Option<String>) -> Result<bool> {
+        if reason.as_deref().is_some_and(|r| r.trim().is_empty()) {
+            return Err(MemoryError::Invalid("a stale mark needs a reason".into()));
+        }
+        let hold = self.gate.hold();
+        self.store.memory(id)?.ok_or(MemoryError::NotFound(id))?;
+        let marked = self.store.memory_stale_marks(&[id])?.remove(&id);
+        debug_assert!(marked.as_ref().is_none_or(|m| m.memory == id));
+        let mutation = match (reason, marked) {
+            (None, None) => return Ok(false),
+            (Some(reason), Some(mark)) if mark.reason == reason => return Ok(false),
+            (None, Some(_)) => Mutation::ClearMemoryStale(id),
+            (Some(reason), _) => Mutation::MarkMemoryStale(MemoryStaleMark {
+                memory: id,
+                reason,
+                since: now(),
+            }),
+        };
+        self.commit(&hold, Commit::new().mutate(mutation))?;
+        Ok(true)
+    }
+
+    /// Stale marks on the pool, in one read, and none for an empty pool. A
+    /// store failure fails the retrieval, as for feedback.
+    fn stale_marks(&self, pool: &[MemoryRecord]) -> Result<BTreeMap<MemoryId, MemoryStaleMark>> {
+        if pool.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let ids: Vec<MemoryId> = pool.iter().map(|record| record.id).collect();
+        let marks = self.store.memory_stale_marks(&ids)?;
+        debug_assert!(marks.len() <= ids.len());
+        debug_assert!(
+            marks
+                .iter()
+                .all(|(id, mark)| *id == mark.memory && ids.contains(id)),
+            "a stale mark outside the pool"
+        );
+        Ok(marks)
+    }
+
     /// Every scope the request can see besides `Global`, in the order they
     /// are asked: its repository, that repository's notes for each of its
     /// role families (most specific first), its role, itself, then the
@@ -193,12 +302,78 @@ fn with_feedback(score: f32, record: &MemoryRecord, tally: Option<&FeedbackTally
     moved
 }
 
+/// A memory whose source may have moved on still counts, at half its score:
+/// it ranks behind what is known to hold, and is never hidden for it.
+pub(crate) const STALE_FACTOR: f32 = 0.5;
+
+fn with_staleness(score: f32, stale: bool) -> f32 {
+    debug_assert!(score.is_finite(), "score {score}");
+    if !stale {
+        return score;
+    }
+    let demoted = score * STALE_FACTOR;
+    debug_assert!(demoted.abs() <= score.abs());
+    demoted
+}
+
+/// Trigram similarity two unrelated sentences reach anyway. Only what is
+/// above it is evidence that a memory is about the request.
+const SEMANTIC_FLOOR: f32 = 0.4;
+
+/// How well one memory fits the request's own words, apart from where it
+/// sits. `relevance` is what the cutoff reads.
+struct Fit {
+    /// The share of the query's meaningful words the memory states, as the
+    /// score has always weighed it.
+    coverage: f32,
+    /// The best of three signals, each in `0..=1`: shared words as a set
+    /// cosine (fair to a long objective), meaning above the floor, and tags.
+    relevance: f32,
+    tag_overlap: f32,
+}
+
+impl Fit {
+    fn of(
+        record: &MemoryRecord,
+        req: &RetrievalRequest,
+        query_tokens: &BTreeSet<String>,
+        semantic: f32,
+    ) -> Self {
+        debug_assert!((0.0..=1.0).contains(&semantic), "semantic {semantic}");
+        let tag_overlap = if req.tags.is_empty() {
+            0.0
+        } else {
+            let hits = record.tags.iter().filter(|t| req.tags.contains(t)).count() as f32;
+            (hits / req.tags.len() as f32).min(1.0)
+        };
+        let (coverage, cosine) = if query_tokens.is_empty() {
+            (0.0, 0.0)
+        } else {
+            let rt = tokens(&record.text);
+            let hits = rt.intersection(query_tokens).count() as f32;
+            let both = (rt.len() * query_tokens.len()).max(1) as f32;
+            (
+                (hits / query_tokens.len() as f32).min(1.0),
+                (hits / both.sqrt()).min(1.0),
+            )
+        };
+        let meaning = ((semantic - SEMANTIC_FLOOR) / (1.0 - SEMANTIC_FLOOR)).max(0.0);
+        let relevance = cosine.max(meaning).max(tag_overlap);
+        debug_assert!((0.0..=1.0).contains(&relevance), "relevance {relevance}");
+        Self {
+            coverage,
+            relevance,
+            tag_overlap,
+        }
+    }
+}
+
 /// `visible` is what [`MemoryService::scopes_for`] asked for this request.
 fn score(
     record: &MemoryRecord,
     req: &RetrievalRequest,
     visible: &[MemoryScope],
-    query_tokens: &BTreeSet<String>,
+    fit: &Fit,
     at: Timestamp,
 ) -> f32 {
     let scope_score = match (&record.scope, &req.scope) {
@@ -213,19 +388,6 @@ fn score(
     };
     let age_days = (at - record.created_at).num_seconds().max(0) as f32 / 86_400.0;
     let recency = 0.1 * (1.0 / (1.0 + age_days / 30.0));
-    let tag_overlap = if req.tags.is_empty() {
-        0.0
-    } else {
-        let hits = record.tags.iter().filter(|t| req.tags.contains(t)).count() as f32;
-        0.15 * (hits / req.tags.len() as f32)
-    };
-    let lexical = if query_tokens.is_empty() {
-        0.0
-    } else {
-        let rt = tokens(&record.text);
-        let hits = rt.intersection(query_tokens).count() as f32;
-        0.2 * (hits / query_tokens.len() as f32).min(1.0)
-    };
     // A pinned memory is a person's instruction, not a guess: it outranks
     // every signal below rather than nudging them.
     let pinned = if record.pinned { 1.0 } else { 0.0 };
@@ -234,6 +396,6 @@ fn score(
         + 0.1 * record.confidence
         + scope_score
         + recency
-        + tag_overlap
-        + lexical
+        + 0.15 * fit.tag_overlap
+        + 0.2 * fit.coverage
 }
