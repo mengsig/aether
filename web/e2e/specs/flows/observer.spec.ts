@@ -82,7 +82,8 @@ test("an observer device reads both daemons and is refused every operate command
   const archon = new ProtocolSchema("archon");
   const item = { item: itemId };
   for (const cmd of ARCHON_CHANGES) {
-    const frame = archon.frame(cmd, cmd === "cancel_item" || cmd === "retry_item" ? item : {});
+    const sample = archon.frame(cmd);
+    const frame = "item" in sample ? { ...sample, ...item } : sample;
     const why = refusal(await tap.send("archon", frame));
     expect.soft(why, `archond refuses ${cmd} to an observer`).toContain("this device only observes");
   }

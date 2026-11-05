@@ -55,7 +55,11 @@ test("an issue imported from its page reaches a merged pull request, read throug
   await page.getByRole("button", { name: "Import as Archon work" }).click();
   const dialog = page.getByRole("dialog", { name: `Import #${ISSUE} as Archon work?` });
   await dialog.getByRole("button", { name: "Import", exact: true }).click();
-  await expect(page.getByRole("status").filter({ hasText: "Imported as" })).toBeVisible();
+  // "Imported as" shows only until the issue's items refresh; then the page settles on the item.
+  const actions = page.getByRole("group", { name: "Actions" });
+  await expect(actions.getByText(`Already Archon work: #${ISSUE} ${ISSUE_TITLE}`), "the page knows the issue is Archon work").toBeVisible();
+  await expect(actions.getByRole("button", { name: "Import as Archon work" }), "an imported issue cannot be imported again").toBeDisabled();
+  await expect(page.getByRole("region", { name: "Archon work" }).getByRole("link", { name: `#${ISSUE} ${ISSUE_TITLE}` })).toBeVisible();
 
   const imported = await stack.archon.request({ cmd: "issue_items", ref: ISSUE_REF });
   const links = imported.data.links as { item: string; relation: string }[];
