@@ -1576,3 +1576,138 @@ fn an_admission_needs_its_record_and_a_storable_state() {
         "the whole commit failed"
     );
 }
+
+/// Every table a V30 store holds memory state in, definitions and rows: what
+/// V31 must leave exactly as it found it.
+fn dump_memory_state(conn: &Connection) -> Vec<String> {
+    let lines: Vec<String> = dump(conn)
+        .into_iter()
+        .filter(|line| {
+            ["memories ", "memory_feedback ", "memory_admission "]
+                .iter()
+                .any(|table| line.starts_with(table) || line.starts_with(&format!("table {table}")))
+        })
+        .collect();
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("memory_admission "))
+    );
+    lines
+}
+
+use aether_core::{
+    id::MemoryId,
+    memory::{MemoryRecord, MemoryScope},
+};
+
+/// A V30 store at `path` with three admitted memories, the first with two
+/// helps and a hurt; returns them and the memory state as dumped.
+fn v30_store_with_memories(path: &std::path::Path) -> (Vec<MemoryRecord>, Vec<String>) {
+    let v30 = database_at(path, 30);
+    let mut legacy: MemoryRecord = serde_json::from_str(V1_MEMORY_BODY).unwrap();
+    legacy.scope = MemoryScope::Global;
+    legacy.retrieval_count = 7;
+    let mut records = Vec::new();
+    for pinned in [false, true, false] {
+        let mut record = legacy.clone();
+        record.id = MemoryId::new();
+        record.pinned = pinned;
+        insert_legacy_memory(&v30, &record);
+        records.push(record);
+    }
+    super::backfill_memory_admission(&v30).unwrap();
+    for verdict in ["helped", "hurt", "helped"] {
+        insert_v29_feedback(&v30, records[0].id, verdict);
+    }
+    let dumped = dump_memory_state(&v30);
+    assert_eq!(records.len(), 3);
+    (records, dumped)
+}
+
+/// One stale mark on `ids[1]` and one holdout of `ids[2]`, in one commit.
+fn write_v31_tables(store: &crate::SqliteStore, ids: &[MemoryId]) {
+    use crate::{Commit, MemoryHoldout, MemoryStaleMark, Mutation, Store};
+    use aether_core::{id::AgentId, time::now};
+    store
+        .commit(
+            Commit::new()
+                .mutate(Mutation::MarkMemoryStale(MemoryStaleMark {
+                    memory: ids[1],
+                    reason: "notes.md no longer states it".into(),
+                    since: now(),
+                }))
+                .mutate(Mutation::LogMemoryHoldout(MemoryHoldout {
+                    memory: ids[2],
+                    agent: AgentId::new(),
+                    task: None,
+                    at: now(),
+                    rate: 0.05,
+                    score: 0.7,
+                })),
+        )
+        .unwrap();
+    assert_eq!(store.memory_stale_marks(ids).unwrap().len(), 1);
+    assert_eq!(store.memory_holdouts(ids[2]).unwrap().len(), 1);
+}
+
+#[test]
+fn v31_upgrades_a_v30_store_keeping_every_memory_row_and_its_usefulness() {
+    use crate::{MemoryQuery, Store};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("aether.db");
+    let (records, before) = v30_store_with_memories(&path);
+
+    let store = crate::SqliteStore::open(&path).unwrap();
+    assert_eq!(
+        store.meta("schema_version").unwrap(),
+        Some("31".to_string())
+    );
+    for record in &records {
+        assert_eq!(store.memory(record.id).unwrap().as_ref(), Some(record));
+        assert!(store.memory_admission(record.id).unwrap().is_some());
+        assert!(store.memory_holdouts(record.id).unwrap().is_empty());
+    }
+    let ids: Vec<MemoryId> = records.iter().map(|r| r.id).collect();
+    let tallies = store.memory_feedback_tallies(&ids).unwrap();
+    assert_eq!((tallies[&ids[0]].helped, tallies[&ids[0]].hurt), (2, 1));
+    assert!(
+        store.memory_stale_marks(&ids).unwrap().is_empty(),
+        "nothing starts stale"
+    );
+    assert_eq!(store.memories(&MemoryQuery::default()).unwrap().len(), 3);
+    write_v31_tables(&store, &ids);
+    drop(store);
+
+    let conn = Connection::open(&path).unwrap();
+    assert_eq!(
+        dump_memory_state(&conn),
+        before,
+        "no memory, feedback or admission row moved"
+    );
+}
+
+/// The upgrade lane undoes V31 with REWINDS[31] in
+/// scripts/upgrade_compat_migration.py; V31 must then replay in full.
+#[test]
+fn v31_replays_over_the_upgrade_lanes_undo() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("aether.db");
+    drop(crate::SqliteStore::open(&path).unwrap());
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "DROP TABLE memory_holdouts; DROP TABLE memory_stale;
+         UPDATE meta SET value = '30' WHERE key = 'schema_version';",
+    )
+    .unwrap();
+    drop(conn);
+    use crate::Store;
+    let store = crate::SqliteStore::open(&path).unwrap();
+    assert_eq!(
+        store.meta("schema_version").unwrap(),
+        Some("31".to_string())
+    );
+    let ids = [aether_core::id::MemoryId::new()];
+    assert!(store.memory_stale_marks(&ids).unwrap().is_empty());
+    assert!(store.memory_holdouts(ids[0]).unwrap().is_empty());
+}

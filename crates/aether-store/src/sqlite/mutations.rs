@@ -226,6 +226,15 @@ impl SqliteStore {
             Mutation::PutMemoryAdmission(admission) => {
                 super::memories::put_memory_admission(tx, &admission, tally)?
             }
+            Mutation::MarkMemoryStale(mark) => {
+                super::memory_retrieval::mark_memory_stale(tx, &mark, tally)?
+            }
+            Mutation::ClearMemoryStale(memory) => {
+                super::memory_retrieval::clear_memory_stale(tx, memory)?
+            }
+            Mutation::LogMemoryHoldout(holdout) => {
+                super::memory_retrieval::log_memory_holdout(tx, &holdout, tally)?
+            }
             Mutation::PutArtifact(art) => {
                 tx.execute(
                     "INSERT OR REPLACE INTO artifacts(id, agent_id, task_id, created_at, digest, evicted, body)

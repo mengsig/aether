@@ -210,6 +210,13 @@ pub enum Mutation {
     /// Insert or replace a memory's admission. Its record must already be
     /// stored, earlier in the same commit or before it.
     PutMemoryAdmission(MemoryAdmission),
+    /// Insert or replace a memory's stale mark. Its record must be stored.
+    MarkMemoryStale(MemoryStaleMark),
+    /// Drop a memory's stale mark; a memory with none is left as it is.
+    ClearMemoryStale(MemoryId),
+    /// Log a memory a turn withheld from its model. The first log for a
+    /// memory in one holdout unit wins; a repeat is not an error.
+    LogMemoryHoldout(MemoryHoldout),
     RecordMemoryFeedback(MemoryFeedback),
     RetractMemoryFeedback {
         id: MemoryFeedbackId,
@@ -456,6 +463,38 @@ pub struct TaskFilter {
     pub parent_task: Option<TaskId>,
     pub run: Option<RunId>,
     pub statuses: Vec<TaskStatusKind>,
+}
+
+/// A memory whose source may no longer say what it says. Retrieval demotes
+/// it; nothing hides it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemoryStaleMark {
+    pub memory: MemoryId,
+    pub reason: String,
+    pub since: Timestamp,
+}
+
+/// A memory a turn withheld from its model, so its lift can be measured as a
+/// difference. `unit` is the task the draw was made for, or the agent with
+/// none: each memory is held out once per unit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemoryHoldout {
+    pub memory: MemoryId,
+    pub agent: AgentId,
+    pub task: Option<TaskId>,
+    pub at: Timestamp,
+    /// The configured rate the draw was made at, in `0..=1`.
+    pub rate: f32,
+    /// The retrieval score the memory would have been injected with.
+    pub score: f32,
+}
+
+impl MemoryHoldout {
+    /// The task, or the agent when the turn had none.
+    pub fn unit(&self) -> String {
+        self.task
+            .map_or_else(|| self.agent.to_string(), |task| task.to_string())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -824,6 +863,13 @@ pub trait Store: Send + Sync {
     fn memories(&self, query: &MemoryQuery) -> Result<Vec<MemoryRecord>>;
     /// `None` for a record admitted before admission was tracked.
     fn memory_admission(&self, id: MemoryId) -> Result<Option<MemoryAdmission>>;
+    /// The stale mark of each of `memories` that has one, in one read.
+    fn memory_stale_marks(
+        &self,
+        memories: &[MemoryId],
+    ) -> Result<BTreeMap<MemoryId, MemoryStaleMark>>;
+    /// Every logged holdout of `memory`, oldest first.
+    fn memory_holdouts(&self, memory: MemoryId) -> Result<Vec<MemoryHoldout>>;
 
     fn artifact(&self, id: ArtifactId) -> Result<Option<Artifact>>;
     fn artifacts_for_task(&self, task: TaskId) -> Result<Vec<Artifact>>;

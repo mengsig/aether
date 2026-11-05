@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::{Result, StoreError};
 
-pub const SCHEMA_VERSION: u32 = 30;
+pub const SCHEMA_VERSION: u32 = 31;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -522,9 +522,32 @@ CREATE TABLE IF NOT EXISTS memory_admission (
 );
 "#;
 
+// Retrieval: a stale mark per memory whose source may have moved on, and a
+// log of every injection a turn withheld as the holdout arm, once per memory
+// and task (or agent). Additive: no existing row is read or rewritten.
+const V31: &str = r#"
+CREATE TABLE IF NOT EXISTS memory_stale (
+    memory_id TEXT PRIMARY KEY,
+    reason    TEXT NOT NULL,
+    since     TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memory_holdouts (
+    seq       INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id TEXT NOT NULL,
+    agent_id  TEXT NOT NULL,
+    task_id   TEXT,
+    unit      TEXT NOT NULL,
+    at        TEXT NOT NULL,
+    rate      REAL NOT NULL CHECK (rate >= 0 AND rate <= 1),
+    score     REAL NOT NULL,
+    UNIQUE (unit, memory_id)
+);
+CREATE INDEX IF NOT EXISTS memory_holdouts_memory ON memory_holdouts(memory_id, seq);
+"#;
+
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27, V28, V29, V30,
+    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31,
 ];
 
 /// Rewrites that SQL cannot express, run in the same transaction as the

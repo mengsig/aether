@@ -594,6 +594,15 @@ impl Store for CommitLog {
     ) -> StoreResult<Option<aether_core::memory_admission::MemoryAdmission>> {
         self.inner.memory_admission(id)
     }
+    fn memory_stale_marks(
+        &self,
+        memories: &[MemoryId],
+    ) -> StoreResult<std::collections::BTreeMap<MemoryId, aether_store::MemoryStaleMark>> {
+        self.inner.memory_stale_marks(memories)
+    }
+    fn memory_holdouts(&self, memory: MemoryId) -> StoreResult<Vec<aether_store::MemoryHoldout>> {
+        self.inner.memory_holdouts(memory)
+    }
     fn memories(&self, query: &MemoryQuery) -> StoreResult<Vec<MemoryRecord>> {
         self.inner.memories(query)
     }

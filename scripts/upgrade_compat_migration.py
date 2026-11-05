@@ -22,6 +22,8 @@ POLL_SECONDS = 0.002
 # What undoes the newest migration block, for when the previous release is
 # already on this build's schema. Add the next block's undo when it lands.
 REWINDS = {
+    # V31 is two new tables and an index; it replays in full.
+    31: ("DROP TABLE memory_holdouts", "DROP TABLE memory_stale"),
     # V30 replays in full: the table comes back and every memory is backfilled.
     30: ("DROP TABLE memory_admission",),
     # The trigger names the column, so it goes first; V29 adds the column back.

@@ -536,6 +536,15 @@ impl Store for CommitsMidPass {
     ) -> Result<Option<aether_core::memory_admission::MemoryAdmission>> {
         self.inner.memory_admission(id)
     }
+    fn memory_stale_marks(
+        &self,
+        memories: &[MemoryId],
+    ) -> Result<std::collections::BTreeMap<MemoryId, aether_store::MemoryStaleMark>> {
+        self.inner.memory_stale_marks(memories)
+    }
+    fn memory_holdouts(&self, memory: MemoryId) -> Result<Vec<aether_store::MemoryHoldout>> {
+        self.inner.memory_holdouts(memory)
+    }
     fn memories(&self, query: &MemoryQuery) -> Result<Vec<MemoryRecord>> {
         self.fire(Hook::MemoryRetrievalRead)?;
         self.inner.memories(query)

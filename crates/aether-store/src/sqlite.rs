@@ -30,6 +30,7 @@ pub use history_retention::{HistoryScreen, RunExpiry};
 mod ledger;
 mod memories;
 mod memory_feedback;
+mod memory_retrieval;
 mod mutations;
 mod notifications;
 mod publication;

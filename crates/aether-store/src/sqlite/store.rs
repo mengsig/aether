@@ -769,6 +769,17 @@ impl Store for SqliteStore {
         self.read_memory_admission(id)
     }
 
+    fn memory_stale_marks(
+        &self,
+        memories: &[MemoryId],
+    ) -> Result<std::collections::BTreeMap<MemoryId, crate::MemoryStaleMark>> {
+        self.memory_stale_marks_for(memories)
+    }
+
+    fn memory_holdouts(&self, memory: MemoryId) -> Result<Vec<crate::MemoryHoldout>> {
+        self.memory_holdouts_of(memory)
+    }
+
     fn artifact(&self, id: ArtifactId) -> Result<Option<Artifact>> {
         self.read_one("SELECT body FROM artifacts WHERE id = ?1", &id.to_string())
     }

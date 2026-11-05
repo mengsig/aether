@@ -125,6 +125,8 @@ mod memories;
 
 mod memory_feedback;
 
+mod memory_retrieval;
+
 mod submissions;
 
 mod ledger;
