@@ -117,6 +117,36 @@ impl NoesisService {
         Ok(Some(job))
     }
 
+    /// The hook a session created with an evidence bundle calls: queue and
+    /// start its engineering extraction when `extraction.engineering = auto`
+    /// is in effect, which needs both switches. Takes the desk itself.
+    pub(in crate::noesis) async fn after_bundle_stored(
+        &self,
+        runtime: &Arc<Runtime>,
+        session: &str,
+    ) -> Result<Option<Job>, ErrorReply> {
+        let Some((desk, extraction)) = self.graph_parts().await else {
+            return Ok(None);
+        };
+        let desk = desk.lock().await;
+        let Some(noesis) = &desk.noesis else {
+            return Ok(None);
+        };
+        let effective = noesis.effective();
+        let conn = noesis.store().connection();
+        let queued = extract::engineering::after_bundle_stored(conn, &effective, session)
+            .map_err(extract_error)?;
+        let Some(job) = queued else {
+            return Ok(None);
+        };
+        debug_assert_eq!(job.kind, JobKind::ExtractEngineering);
+        runtime
+            .apply(Commit::new().event(job_event(&job)))
+            .map_err(map_err)?;
+        extraction.pump(runtime);
+        Ok(Some(job))
+    }
+
     /// The running service's desk and extraction jobs, taken under the state
     /// lock and used after it is released, as teaching calls do.
     async fn graph_parts(&self) -> Option<(Arc<tokio::sync::Mutex<super::Desk>>, Arc<Extraction>)> {

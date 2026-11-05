@@ -9,6 +9,7 @@ import { useLearn, useNoesisChange, useNoesisRead, useOperateRefusal } from "./d
 import { LearnFrame, type OpenGate } from "./LearnFrame.tsx";
 import { classifyRefusal, dateTime, invariant, nextStep, PHASE_LABEL, sortSessions, type Refusal } from "./model.ts";
 import { RefusalNote } from "./RefusalNote.tsx";
+import { UnderstandFromHash } from "../understand/UnderstandSheet.tsx";
 
 const GOAL_MAX = 2000;
 
@@ -95,5 +96,5 @@ function NewSession({ conn }: { conn: string }) {
 }
 
 export default function SessionsRoute() {
-  return <LearnFrame view="sessions">{(gate) => <SessionsScreen {...gate} />}</LearnFrame>;
+  return <><LearnFrame view="sessions">{(gate) => <SessionsScreen {...gate} />}</LearnFrame><UnderstandFromHash /></>;
 }

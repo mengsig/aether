@@ -2,11 +2,14 @@
 // only when a test runs a frame, so each step's screen is the one a browser would paint.
 
 import { AppProvider, createApp, type App } from "@aether-ui/core";
-import { ThemeProvider } from "@aether-ui/ui";
+import { EntityActionProvider, ThemeProvider } from "@aether-ui/ui";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { invariant } from "../../fleet/invariant.ts";
 import { FauxDaemon, type FauxOptions } from "./faux-daemon.ts";
+
+// The page's entity action menus need the shell's provider; these tests register no actions.
+const failAction = (action: { id: string }, error: unknown) => { throw new Error(`action ${action.id} failed`, { cause: error }); };
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -43,7 +46,7 @@ export async function connected(options: FauxOptions): Promise<Harness> {
     document.body.append(container);
     root = createRoot(container);
     const mounted = root;
-    await act(async () => mounted.render(<AppProvider app={app}><ThemeProvider initialPreference="light">{node}</ThemeProvider></AppProvider>));
+    await act(async () => mounted.render(<AppProvider app={app}><ThemeProvider initialPreference="light"><EntityActionProvider actions={[]} capabilities={{}} onError={failAction}>{node}</EntityActionProvider></ThemeProvider></AppProvider>));
     await settle();
     return container;
   };

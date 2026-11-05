@@ -29,6 +29,8 @@ use super::routes::{Group, group_of};
 use super::{NoesisService, State};
 use crate::Daemon;
 
+mod evidence;
+
 const MODEL: &str = "anthropic/claude-sonnet-5-5";
 const ASK: &str = "noesis_ask";
 
@@ -768,7 +770,9 @@ async fn delete_removes_the_rows_and_the_bundle_and_keeps_the_transcript() {
     let client = Arc::new(ScriptedClient::new());
     client.push(ScriptedClient::tool_call(ASK, capital_question()));
     let harness = Harness::open(&home, client).await;
-    harness.configure(teaching_on(|_| {})).await;
+    harness
+        .configure(teaching_on(|patch| patch.engineering_context = Some(true)))
+        .await;
     let bundle = json!({"context": {"title": "Release notes", "items": [{
         "ref": {"kind": "pr", "id": "401"},
         "excerpt": "Wire the teaching service.",
@@ -777,12 +781,11 @@ async fn delete_removes_the_rows_and_the_bundle_and_keeps_the_transcript() {
     let created = harness.create(bundle).await;
     let posed = harness.posed(&created.id).await;
     harness.settled().await;
-    let bundle_file = home
-        .data
-        .path()
-        .join("noesis/bundles")
-        .join(format!("{}.json", created.id));
-    assert!(bundle_file.exists(), "the bundle is kept with the session");
+    assert_eq!(
+        evidence::bundle_rows(&home, &created.id),
+        1,
+        "the bundle is kept with the session"
+    );
     let transcript = harness.transcript(posed.agent);
     assert!(
         format!("{transcript:?}").contains("Release notes"),
@@ -811,7 +814,11 @@ async fn delete_removes_the_rows_and_the_bundle_and_keeps_the_transcript() {
         panic!("a page");
     };
     assert!(sessions.is_empty());
-    assert!(!bundle_file.exists(), "the bundle went with it");
+    assert_eq!(
+        evidence::bundle_rows(&home, &created.id),
+        0,
+        "the bundle went with it"
+    );
     assert_eq!(
         harness.transcript(posed.agent),
         transcript,

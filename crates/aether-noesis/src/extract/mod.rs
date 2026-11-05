@@ -17,6 +17,7 @@ use crate::graph::store::GraphError;
 
 pub mod batch;
 mod candidates;
+pub mod engineering;
 pub mod findings;
 pub mod jobs;
 pub mod prompt;
