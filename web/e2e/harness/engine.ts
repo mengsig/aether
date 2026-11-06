@@ -5,13 +5,32 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 
+export interface EngineToolResult {
+  readonly callId: string;
+  readonly content: string;
+}
+
 export interface EngineRequest {
   readonly model: string;
   readonly lastUserText: string;
+  /** Names of the tools the daemon advertised with the request, in its order. */
+  readonly toolNames: readonly string[];
+  /** Results of the tool calls the daemon ran since the last user message, oldest first. */
+  readonly toolResults: readonly EngineToolResult[];
 }
 
-/** The text an agent receives for a request; the default names the faux engine. */
-export type Script = (request: EngineRequest) => string;
+/** A scripted tool call: the daemon runs the tool and sends the result back in the next request. */
+export interface EngineToolCall {
+  readonly name: string;
+  readonly arguments: Readonly<Record<string, unknown>>;
+  /** Text streamed before the call, as a model explains what it is about to do. */
+  readonly text?: string;
+}
+
+export type Reply = string | { readonly toolCall: EngineToolCall };
+
+/** What an agent receives for a request: text, or a tool call; the default names the faux engine. */
+export type Script = (request: EngineRequest) => Reply;
 
 export interface FauxEngine {
   /** `http://127.0.0.1:<port>/v1`, the provider's `base_url`. */
@@ -37,6 +56,25 @@ function lastUserText(messages: unknown): string {
   return "";
 }
 
+type Message = { role?: unknown; content?: unknown; tool_call_id?: unknown };
+
+/** Tool results after the last user message, so a script can answer the call it made. */
+function toolResults(messages: unknown): EngineToolResult[] {
+  if (!Array.isArray(messages)) return [];
+  const results: EngineToolResult[] = [];
+  for (const message of messages as Message[]) {
+    if (message.role === "user") results.length = 0;
+    if (message.role !== "tool" || typeof message.tool_call_id !== "string") continue;
+    results.push({ callId: message.tool_call_id, content: typeof message.content === "string" ? message.content : JSON.stringify(message.content ?? null) });
+  }
+  return results;
+}
+
+function toolNames(tools: unknown): string[] {
+  if (!Array.isArray(tools)) return [];
+  return (tools as { function?: { name?: unknown } }[]).map((tool) => tool.function?.name).filter((name): name is string => typeof name === "string");
+}
+
 async function readJson(request: http.IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -50,16 +88,33 @@ async function readJson(request: http.IncomingMessage): Promise<Record<string, u
   return parsed as Record<string, unknown>;
 }
 
-function streamReply(response: http.ServerResponse, model: string, text: string): void {
+let callCounter = 0;
+
+function streamReply(response: http.ServerResponse, model: string, reply: Reply): void {
   const id = `chatcmpl-faux-${Date.now()}`;
   const chunk = (delta: Record<string, unknown>, finish: string | null, usage?: Record<string, number>) =>
     `data: ${JSON.stringify({ id, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model,
       choices: [{ index: 0, delta, finish_reason: finish }], ...(usage ? { usage } : {}) })}\n\n`;
+  const text = typeof reply === "string" ? reply : reply.toolCall.text ?? "";
   response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
   response.write(chunk({ role: "assistant", content: "" }, null));
   for (let at = 0; at < text.length; at += 8) response.write(chunk({ content: text.slice(at, at + 8) }, null));
+  let finish = "stop";
+  if (typeof reply !== "string") {
+    const { name, arguments: args } = reply.toolCall;
+    assert.ok(name.length > 0, "a scripted tool call names its tool");
+    callCounter += 1;
+    const callId = `call_faux_${callCounter}`;
+    const argumentsText = JSON.stringify(args);
+    // The id and name come first and the arguments after, the way real providers split a call across chunks.
+    response.write(chunk({ tool_calls: [{ index: 0, id: callId, type: "function", function: { name, arguments: "" } }] }, null));
+    for (let at = 0; at < argumentsText.length; at += 16) {
+      response.write(chunk({ tool_calls: [{ index: 0, function: { arguments: argumentsText.slice(at, at + 16) } }] }, null));
+    }
+    finish = "tool_calls";
+  }
   const tokens = Math.max(1, Math.ceil(text.length / 4));
-  response.write(chunk({}, "stop", { prompt_tokens: 10, completion_tokens: tokens, total_tokens: 10 + tokens }));
+  response.write(chunk({}, finish, { prompt_tokens: 10, completion_tokens: tokens, total_tokens: 10 + tokens }));
   response.end("data: [DONE]\n\n");
 }
 
@@ -74,7 +129,9 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     return;
   }
   const body = await readJson(request);
-  const seen: EngineRequest = { model: String(body.model ?? ""), lastUserText: lastUserText(body.messages) };
+  const seen: EngineRequest = {
+    model: String(body.model ?? ""), lastUserText: lastUserText(body.messages), toolNames: toolNames(body.tools), toolResults: toolResults(body.messages),
+  };
   state.requests.push(seen);
   streamReply(response, seen.model, state.script(seen));
 }
