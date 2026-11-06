@@ -360,6 +360,20 @@ removes an expired run's agents with it, so their roles are unknown: a
 `role_prefix` scope without a `subtree` reads its whole `run`, or every run,
 and is refused when any of that history expired.
 
+## Status sections
+
+`status` reads its sections behind a lock or the store (`problems`,
+`providers`, `live_agents`, `runs`, `usage_total`, `tasks_active`,
+`pending_approvals`, `low_disk`) side by side and waits 2 s for them. A
+section not read by then is listed in `unavailable`, each entry `{section,
+reason}` with reason `timed out`; its fields hold their defaults, which are
+not figures, and `problems` leads with a line naming the sections, for a
+client that does not know `unavailable`. `live_agents` covers every `agents_*`
+count. The field is absent when every section was read. A section still being
+read for an earlier `status` is not read again; it stays unavailable until
+that read ends. `stale` is separate: it marks a whole answer replayed from an
+earlier read.
+
 ## Delta order
 
 Each delta the daemon streams for an invocation is numbered when it is

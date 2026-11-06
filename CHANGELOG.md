@@ -11,21 +11,22 @@ Aether's remote listener and in a new desktop app, and replaces the phone
 app. Archon can be mounted on the same listener at `/archon`. Memory 2.0
 gives memories a standing, a relevance cutoff and export and import.
 Noesis, a learning service, ships turned off. Protocol 26 (the daemon
-serves 17 to 26) and store schema 32. Read the
+serves 17 to 26) and store schema 33. Read the
 [upgrade notes](https://github.com/mengsig/aether/blob/main/docs/upgrading.md)
 before updating.
 
 ### Before updating
 
-- **Store schema 32.** Four migrations run when the daemon first opens the
+- **Store schema 33.** Five migrations run when the daemon first opens the
   store: V29 marks each agent's subsystem and adds the paging indexes, V30
   gives each memory a tier and a state (existing memories become active,
-  unchanged), V31 adds the stale marks and the retrieval holdout log, and
-  V32 moves only the version stamp. The migration is one way: Aether saves
+  unchanged), V31 adds the stale marks and the retrieval holdout log, V32
+  moves only the version stamp, and V33 keeps each agent's usage in its own
+  table, for `status`. The migration is one way: Aether saves
   the schema 28 database first (see
   [migration backups](https://github.com/mengsig/aether/blob/main/docs/migration-backups.md)),
   and 1.2.11 refuses to start on the migrated store (`store schema version
-  32 is newer than supported 28`). To go back, stop the daemon and restore
+  33 is newer than supported 28`). To go back, stop the daemon and restore
   that backup with the older binary; changes made since are lost.
 - **Restart the daemon** after the update (`aether stop`, then `aether`).
 - **The phone app is gone.** The listener now serves the new web app at the
@@ -125,6 +126,17 @@ before updating.
 
 ### Fixed
 
+- **`status` on a large, long-lived store.** Every section reads an index
+  or a kept total: the fleet's usage from `agent_usage`, the live agents
+  by their status, and a run's usage receipts by run and type, so a
+  run days old with millions of events costs what a new one does. A
+  section the store does not answer within 2 s is listed in the reply's
+  `unavailable` and named in its problems, and the CLI, TUI and `aether
+  doctor` show it as unavailable instead of as zero. The GitHub watcher's
+  status no longer waits on the commit lock, `get_tree` reads only the
+  tasks it shows, a timed-out client names the daemon's slowest recent
+  status section or the host's load, and a slow engine tool call is logged
+  with its tool, split into its wait for the turn and its own run.
 - **A tool call that never returns (archon#393).** After 15 minutes
   outstanding with no sign of life from the engine, Aether stops the turn,
   records `agent.tool_call_overdue` and wakes the agent to read its inbox;
