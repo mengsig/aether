@@ -20,8 +20,7 @@ const MEMORY_TABLES: [&str; 7] = [
 /// naming the table and SQLite's first finding. Linear in those tables only.
 pub(super) fn verify_memory_tables(conn: &Connection) -> Result<()> {
     for table in MEMORY_TABLES {
-        let problems =
-            quick_check(conn, table).map_err(|error| corrupt(table, &error.to_string()))?;
+        let problems = quick_check(conn, table).map_err(|error| check_failed(table, error))?;
         if let Some(first) = problems.first() {
             return Err(corrupt(table, first));
         }
@@ -44,6 +43,17 @@ fn quick_check(conn: &Connection, table: &str) -> rusqlite::Result<Vec<String>> 
         "quick_check always answers at least one row"
     );
     Ok(rows.into_iter().filter(|row| row != "ok").collect())
+}
+
+/// A check that could not run is damage only when SQLite says so; a lock or
+/// I/O failure keeps its own error, so `is_contended` and `is_unwritable` still see it.
+fn check_failed(table: &str, error: rusqlite::Error) -> StoreError {
+    match error.sqlite_error_code() {
+        Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase) => {
+            corrupt(table, &error.to_string())
+        }
+        _ => StoreError::Sqlite(error),
+    }
 }
 
 fn corrupt(table: &str, finding: &str) -> StoreError {
@@ -104,6 +114,24 @@ mod tests {
         assert!(
             error.to_string().contains("memory table memories"),
             "{error}"
+        );
+    }
+
+    fn sqlite_failure(code: i32) -> rusqlite::Error {
+        rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None)
+    }
+
+    #[test]
+    fn a_check_that_meets_a_held_lock_is_contention_not_damage() {
+        let busy = super::check_failed("memories", sqlite_failure(rusqlite::ffi::SQLITE_BUSY));
+        assert!(busy.is_contended(), "{busy:?}");
+        assert!(!matches!(busy, StoreError::Corrupt(_)), "{busy:?}");
+        let damaged =
+            super::check_failed("memories", sqlite_failure(rusqlite::ffi::SQLITE_CORRUPT));
+        assert!(matches!(damaged, StoreError::Corrupt(_)), "{damaged:?}");
+        assert!(
+            damaged.to_string().contains("memory table memories"),
+            "{damaged}"
         );
     }
 

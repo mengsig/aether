@@ -135,7 +135,8 @@ before updating.
   benchmark).
 - **A store with damaged memory tables refuses to open.** The daemon checks
   those tables when it opens the store and names the damaged one, instead
-  of starting and failing every turn's memory retrieval.
+  of starting and failing every turn's memory retrieval. A check that
+  meets a held lock or an I/O error reports that error, not damage.
 - **A result written out as text keeps its structured part.** An agent that
   ends its task by writing `complete_task`'s input as its answer (a bare or
   fenced JSON object, `complete_task {...}` or `{"complete_task": {...}}`)
