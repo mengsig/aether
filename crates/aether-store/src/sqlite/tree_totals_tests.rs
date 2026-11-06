@@ -178,20 +178,11 @@ fn assert_sums_hold(
         if let Some(hidden) = usages[&agent.id].hidden {
             rebuilt += hidden;
         }
-        let listed_under = usages[&agent.id].parent;
-        assert_eq!(
-            listed_under,
-            agent.parent.filter(|parent| visible.contains(parent)),
-            "listed under its shown parent"
-        );
-        for child in shown
-            .iter()
-            .filter(|c| usages[&c.id].parent == Some(agent.id))
-        {
+        for child in shown.iter().filter(|c| c.parent == Some(agent.id)) {
             rebuilt += usages[&child.id].subtree;
         }
         assert_eq!(rebuilt, usages[&agent.id].subtree, "agent {}", agent.id);
-        if listed_under.is_none() {
+        if agent.parent.is_none_or(|parent| !visible.contains(&parent)) {
             roots_total += usages[&agent.id].subtree;
         }
     }
@@ -210,10 +201,10 @@ fn assert_sums_hold(
     assert_eq!(roots_total, expected, "each agent below a shown one, once");
 }
 
-/// A page's copy of a shown child still names the parent it left: the roll-up,
-/// read after the move, lists it as a root, where it is counted, so no total drops it.
+/// A page's copy of a shown child still names the parent it left: its
+/// roll-up folds it there, as the reply lists it, so the sums still hold.
 #[test]
-fn a_child_moved_after_the_page_read_is_listed_where_it_is_counted() {
+fn a_child_moved_after_the_page_read_is_counted_where_the_page_lists_it() {
     let store = SqliteStore::open_in_memory().unwrap();
     let run = RunId::new();
     let tokens = |input_tokens| Usage {
@@ -236,21 +227,17 @@ fn a_child_moved_after_the_page_read_is_listed_where_it_is_counted() {
     for moved_to in [None, Some(other.id), Some(hidden.id)] {
         let mut moved = child.clone();
         moved.parent = moved_to;
-        let commit = Commit::new().mutate(Mutation::UpsertAgent(moved));
+        let commit = Commit::new().mutate(Mutation::UpsertAgent(moved.clone()));
         store.commit(commit).unwrap();
         let read = store.tree_usages(&page, None).unwrap();
-        assert_eq!(read[&child.id].parent, None, "moved to {moved_to:?}");
-        assert_eq!(read[&parent.id].subtree.input_tokens, 1, "left out below");
+        assert_eq!(read[&parent.id].subtree.input_tokens, 101, "as listed");
         assert_eq!(
             read[&other.id].subtree.input_tokens, 1010,
-            "it counts apart"
+            "moved {moved_to:?}"
         );
-        let roots: u64 = read
-            .values()
-            .filter(|usage| usage.parent.is_none())
-            .map(|usage| usage.subtree.input_tokens)
-            .sum();
-        assert_eq!(roots, 1111, "the roots count each agent once");
+        assert_eq!(read[&other.id].hidden.map(|u| u.input_tokens), Some(1000));
+        let now = [parent.clone(), other.clone(), hidden.clone(), moved];
+        assert_sums_hold(&now, &page, None, &read);
     }
 }
 

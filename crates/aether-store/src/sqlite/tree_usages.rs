@@ -1,8 +1,7 @@
 //! `get_tree`'s roll-ups, read by key from the subtree totals V33 keeps. Every
 //! agent counts once, under the nearest shown agent at or above it.
 
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use aether_core::agent::Agent;
 use aether_core::id::{AgentId, RunId};
@@ -12,6 +11,7 @@ use rusqlite::Connection;
 use super::SqliteStore;
 use super::tree_pages::parse_id;
 use super::usage_totals::{TOTALS_COLUMNS, USAGE_COLUMNS, totals_from, usage_from};
+use crate::tree_query::fold_shown;
 use crate::{Result, StoreError, TreeUsage, UsageNode};
 
 /// An agent's ancestors read one by one past this many are sought among the
@@ -86,8 +86,8 @@ impl SqliteStore {
         Ok(nodes)
     }
 
-    /// Each shown agent's roll-up, all from one snapshot, the links between
-    /// the shown agents included: a few rows by key per agent, however many are below it.
+    /// Each shown agent's roll-up: what each owns, from one snapshot that also
+    /// links the shown agents, a few rows by key per agent however many are below it.
     pub(super) fn read_tree_usages(
         &self,
         shown: &[Agent],
@@ -106,7 +106,7 @@ impl SqliteStore {
             owned.insert(agent.id, owned_usage(&tx, agent, below, run)?);
         }
         tx.commit()?;
-        let usages = fold_subtrees(shown, &links, owned);
+        let usages = fold_subtrees(shown, owned)?;
         assert_eq!(
             usages.len(),
             links.depth.len(),
@@ -276,53 +276,30 @@ fn owned_usage(
     Ok((owned, (hidden_members > 0).then_some(hidden)))
 }
 
-/// Each shown agent's roll-up: what it owns and the subtrees of the shown
-/// children listed under it, children first, so no two shown roots share a member.
+/// Each shown agent's roll-up: what it owns and the subtrees of its shown
+/// children as the page links them, as the reply lists them, so its sums hold
+/// even when a parent moved since the page was read.
 fn fold_subtrees(
     shown: &[Agent],
-    links: &Links,
     owned: HashMap<AgentId, (Usage, Option<Usage>)>,
-) -> BTreeMap<AgentId, TreeUsage> {
-    let mut usages: BTreeMap<AgentId, TreeUsage> = owned
+) -> Result<BTreeMap<AgentId, TreeUsage>> {
+    let visible: HashSet<AgentId> = shown.iter().map(|agent| agent.id).collect();
+    let own: HashMap<AgentId, Usage> = owned.iter().map(|(id, (usage, _))| (*id, *usage)).collect();
+    let subtrees = fold_shown(shown, &visible, &own);
+    if subtrees.len() != shown.len() {
+        return Err(StoreError::Corrupt(
+            "the shown agents' parents form a cycle".into(),
+        ));
+    }
+    let usages: BTreeMap<AgentId, TreeUsage> = owned
         .into_iter()
-        .map(|(id, (subtree, hidden))| {
-            let usage = TreeUsage {
-                subtree,
-                hidden,
-                parent: None,
-            };
-            (id, usage)
+        .map(|(id, (_, hidden))| {
+            let subtree = subtrees[&id];
+            (id, TreeUsage { subtree, hidden })
         })
         .collect();
-    let mut deepest_first: Vec<&Agent> = shown.iter().collect();
-    deepest_first.sort_by_key(|agent| Reverse(links.depth[&agent.id]));
-    for agent in deepest_first {
-        // Listed under its parent only when the store still links it there.
-        let Some(parent) = agent
-            .parent
-            .filter(|p| links.nearest.get(&agent.id) == Some(p))
-        else {
-            continue;
-        };
-        let child = usages[&agent.id].subtree;
-        let Some(usage) = usages.get_mut(&parent) else {
-            continue;
-        };
-        usage.subtree += child;
-        usages
-            .get_mut(&agent.id)
-            .expect("every shown agent has a roll-up")
-            .parent = Some(parent);
-    }
     assert_eq!(usages.len(), shown.len(), "one roll-up per shown agent");
-    debug_assert!(
-        usages
-            .values()
-            .filter_map(|usage| usage.parent)
-            .all(|parent| usages.contains_key(&parent)),
-        "an agent is listed only under a shown parent"
-    );
-    usages
+    Ok(usages)
 }
 
 /// The scope of one subtree's totals: within the run bound as ?3, or over every run.

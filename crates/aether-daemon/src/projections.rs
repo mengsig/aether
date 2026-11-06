@@ -12,9 +12,7 @@ use aether_core::report::{self, RunReport};
 use aether_core::task::Task;
 use aether_protocol::{AgentTree, RunListing, TranscriptEntry, TreeNode};
 use aether_runtime::Runtime;
-use aether_store::{
-    AgentFilter, EventFilter, Store, TREE_PAGE_MAX, TaskFilter, TreeQuery, TreeUsage,
-};
+use aether_store::{AgentFilter, EventFilter, Store, TREE_PAGE_MAX, TaskFilter, TreeQuery};
 
 /// Which agents `get_tree` projects. Spend is rolled up over every agent
 /// below a shown one up to the next shown ones; what is not shown lands in the
@@ -67,7 +65,7 @@ pub fn build_tree(
     let leases = shown_leases(store, &agents)?;
     let tasks = current_tasks(store, &agents)?;
     let mut nodes: BTreeMap<AgentId, TreeNode> = BTreeMap::new();
-    let (roots, mut children) = link(&agents, &usages);
+    let (roots, mut children) = link(&agents, &visible);
     for agent in agents {
         let task = agent.current_task.and_then(|id| tasks.get(&id).cloned());
         let waiting_on = Runtime::waiting_on(&agent).into_iter().collect();
@@ -134,22 +132,17 @@ fn current_tasks(
     Ok(tasks)
 }
 
-/// The shown agents without a shown parent, and each shown agent's shown
-/// children, as the roll-ups link them: a parent move after the page was read
-/// can never list a child whose usage its parent's subtree left out.
+/// The shown agents without a shown parent, and each shown agent's shown children.
 fn link(
     agents: &[Agent],
-    usages: &BTreeMap<AgentId, TreeUsage>,
+    visible: &BTreeSet<AgentId>,
 ) -> (Vec<AgentId>, BTreeMap<AgentId, Vec<AgentId>>) {
     let mut children: BTreeMap<AgentId, Vec<AgentId>> = BTreeMap::new();
     let mut roots = Vec::new();
     for agent in agents {
-        match usages.get(&agent.id).and_then(|usage| usage.parent) {
-            Some(parent) => {
-                assert!(usages.contains_key(&parent), "listed under a shown agent");
-                children.entry(parent).or_default().push(agent.id);
-            }
-            None => roots.push(agent.id),
+        match agent.parent {
+            Some(p) if visible.contains(&p) => children.entry(p).or_default().push(agent.id),
+            _ => roots.push(agent.id),
         }
     }
     debug_assert_eq!(
@@ -395,39 +388,6 @@ mod tests {
                 .mutate(Mutation::UpsertAgent(a.clone())),
         )
         .expect("commit");
-    }
-
-    /// A child whose page copy names a parent the roll-up no longer counts it
-    /// under is listed as a root, so the reply's sums still hold.
-    #[test]
-    fn a_child_is_listed_where_its_roll_up_counts_it() {
-        let run = RunId::new();
-        let parent = agent(None, run, false, 1);
-        let child = agent(Some(parent.id), run, false, 100);
-        let usage = |input_tokens, parent| TreeUsage {
-            subtree: Usage {
-                input_tokens,
-                ..Default::default()
-            },
-            hidden: None,
-            parent,
-        };
-        let agents = vec![parent.clone(), child.clone()];
-        let moved = BTreeMap::from([(parent.id, usage(1, None)), (child.id, usage(100, None))]);
-        let (roots, children) = link(&agents, &moved);
-        assert_eq!(
-            roots,
-            vec![parent.id, child.id],
-            "the moved child is a root"
-        );
-        assert!(children.is_empty(), "listed under no one");
-        let kept = BTreeMap::from([
-            (parent.id, usage(101, None)),
-            (child.id, usage(100, Some(parent.id))),
-        ]);
-        let (roots, children) = link(&agents, &kept);
-        assert_eq!(roots, vec![parent.id]);
-        assert_eq!(children[&parent.id], vec![child.id]);
     }
 
     /// An archived child's cost must still count toward its live

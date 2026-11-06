@@ -60,9 +60,6 @@ pub struct TreePage {
 pub struct TreeUsage {
     pub subtree: Usage,
     pub hidden: Option<Usage>,
-    /// The shown agent whose subtree counts this one's, `None` for a root:
-    /// list it there, as the roll-up's snapshot links it, never by an older read.
-    pub parent: Option<AgentId>,
 }
 
 /// One agent as a usage roll-up reads it: its links and usage, no body.
@@ -159,14 +156,7 @@ pub fn tree_usages_of(
     for agent in shown {
         let hidden = hidden.get(&agent.id).map(|(_, usage)| *usage);
         let subtree = subtrees.get(&agent.id).copied().unwrap_or_default();
-        // `fold_shown` folds each shown agent into its shown parent as `shown` links it.
-        let parent = agent.parent.filter(|parent| visible.contains(parent));
-        let usage = TreeUsage {
-            subtree,
-            hidden,
-            parent,
-        };
-        usages.insert(agent.id, usage);
+        usages.insert(agent.id, TreeUsage { subtree, hidden });
     }
     assert_eq!(usages.len(), visible.len(), "one roll-up per shown agent");
     debug_assert!(hidden.values().all(|(members, _)| *members > 0));
@@ -211,7 +201,8 @@ fn owners_of(nodes: &[UsageNode], visible: &HashSet<AgentId>) -> HashMap<AgentId
 
 /// Each shown agent's subtree: what it owns and its shown children's
 /// subtrees, folded children first by a post-order walk from the shown roots.
-fn fold_shown(
+/// An agent on a parent cycle among `shown` is reached from no root and left out.
+pub(crate) fn fold_shown(
     shown: &[Agent],
     visible: &HashSet<AgentId>,
     owned: &HashMap<AgentId, Usage>,
