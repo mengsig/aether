@@ -8,7 +8,7 @@ import { useMemo, useState, type FormEvent } from "react";
 import { useGate, useHostAdmin, useNoesisConfigure, useNoesisRead, useOperateRefusal } from "./data.ts";
 import { budgetShare, invariant, spentUsd, usd } from "./model.ts";
 import { hasReadyModel, useModelChoices, type ModelChoices } from "./models.ts";
-import { draftOf, patchOf, SETTINGS_DRAFT_KEY, type BudgetField, type SettingsDraft } from "./settings-draft.ts";
+import { draftOf, patchOf, settingsDraftKey, type BudgetField, type SettingsDraft } from "./settings-draft.ts";
 
 export const DEFAULT_MODEL_LABEL = "Default (first ready subscription model)";
 const HOST_NOTE = "Only the daemon's own host can change this";
@@ -27,16 +27,17 @@ export function SettingsSheet({ open, conn, onClose }: { open: boolean; conn: st
 }
 
 /** The sheet's draft, seeded from the daemon's settings; the off state's "Turn on" writes the same draft. */
-export function useSettingsDraft(settings: aether.NoesisSettingsView): Draft<SettingsDraft> {
+export function useSettingsDraft(conn: string, settings: aether.NoesisSettingsView): Draft<SettingsDraft> {
+  invariant(conn.length > 0, "the settings draft belongs to a connection");
   const initial = useMemo(() => draftOf(settings), [settings]);
-  return useDraft(SETTINGS_DRAFT_KEY, initial);
+  return useDraft(settingsDraftKey(conn), initial);
 }
 
 function SettingsForm({ conn, status, onDone }: { conn: string; status: aether.NoesisStatus; onDone: () => void }) {
   const host = useHostAdmin(conn);
   const refusal = useOperateRefusal(conn);
   const configure = useNoesisConfigure(conn);
-  const draft = useSettingsDraft(status.settings);
+  const draft = useSettingsDraft(conn, status.settings);
   const value = draft.value;
   // Models are read only once Noesis is on, or about to be: while it stays off nothing else is read.
   const choices = useModelChoices(conn, status.settings.enabled || value.enabled);

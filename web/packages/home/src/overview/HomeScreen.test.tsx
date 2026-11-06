@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { HomeScreen } from "../index.ts";
+import { HOME_REFRESH_MS } from "./sources.ts";
 import { harness, type Harness, type Replies } from "./fixture/harness.test-util.tsx";
 import { aetherInfo, archonInfo, BREAKDOWN, fixtureEvents, QUESTIONS, NOW, seedWorld, WATCHER, AETHER_CONN, ARCHON_CONN } from "./fixture/world.ts";
 import type { ConnectionInfo } from "@aether-ui/protocol";
@@ -130,11 +131,15 @@ describe("with seeded data", () => {
     await h.frame();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(h.sent).toHaveLength(5);
+    await vi.advanceTimersByTimeAsync(HOME_REFRESH_MS);
+    await h.frame();
+    expect(h.sent.slice(5).sort(), "every read goes again after the refresh period").toEqual([...h.sent.slice(0, 5)].sort());
+    h.sent.length = 0;
     h.app.store.update((s) => ({ ...s, connections: { ...s.connections, [ARCHON_CONN]: archonInfo("backoff") } }));
     await h.frame();
     h.app.store.update((s) => ({ ...s, connections: { ...s.connections, [ARCHON_CONN]: archonInfo() } }));
     await h.frame();
-    expect(h.sent.slice(5).sort()).toEqual([`${ARCHON_CONN} github_watcher`, `${ARCHON_CONN} list_questions`]);
+    expect(h.sent.sort()).toEqual([`${ARCHON_CONN} github_watcher`, `${ARCHON_CONN} list_questions`]);
   });
 
   test("without usage_breakdown, spend today comes from the agents' cost fields and says so", async () => {

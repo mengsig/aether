@@ -99,23 +99,39 @@ export function homeReads(sources: HomeSources, dayStart: number, noesisConn: st
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+/** How often the overview rereads what no event keeps current, while its window is visible. */
+export const HOME_REFRESH_MS = 120_000;
+
+/** Counts the refreshes due so far: one every HOME_REFRESH_MS, skipped while the window is hidden. */
+function useRefreshRound(): number {
+  const [round, setRound] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => { if (document.visibilityState === "visible") setRound((n) => n + 1); }, HOME_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, []);
+  return round;
+}
+
 /**
- * Sends each read once while it stays wanted: a read that drops out (its connection went down) is sent
- * again when it comes back. Core keeps reread failures in the store; Noesis failures come back here.
+ * Sends each read once per refresh round while it stays wanted: a read that drops out (its connection
+ * went down) is sent again when it comes back. Core keeps reread failures in the store; Noesis failures
+ * come back here.
  */
 export function useHomeReads(reads: readonly HomeRead[]): Readonly<Record<string, string>> {
   const app = useApp();
-  const sent = useRef(new Set<string>());
+  const round = useRefreshRound();
+  const sent = useRef({ round: 0, ids: new Set<string>() });
   const [failures, setFailures] = useState<Readonly<Record<string, string>>>({});
   const text = JSON.stringify(reads);
   useEffect(() => {
+    if (sent.current.round !== round) sent.current = { round, ids: new Set() };
     const wanted = JSON.parse(text) as HomeRead[];
     const ids = new Set(wanted.map(readId));
-    for (const id of [...sent.current]) if (!ids.has(id)) sent.current.delete(id);
+    for (const id of [...sent.current.ids]) if (!ids.has(id)) sent.current.ids.delete(id);
     for (const read of wanted) {
       const id = readId(read);
-      if (sent.current.has(id)) continue;
-      sent.current.add(id);
+      if (sent.current.ids.has(id)) continue;
+      sent.current.ids.add(id);
       if (read.kind === "reread") {
         void app.reread(read.conn, read.key, read.command as Parameters<typeof app.reread>[2], read.tags);
         continue;
@@ -125,7 +141,7 @@ export function useHomeReads(reads: readonly HomeRead[]): Readonly<Record<string
         (error: unknown) => setFailures((held) => ({ ...held, [id]: errorText(error) })),
       );
     }
-  }, [app, text]);
+  }, [app, text, round]);
   return failures;
 }
 

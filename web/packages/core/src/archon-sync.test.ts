@@ -330,6 +330,7 @@ describe("Archon resync, third review", () => {
     expect(daemon.commands("get_item").map((c) => c.item)).toEqual(["qi_gone"]);
     expect(store.get().archon[CONN]?.details.qi_gone).toBeUndefined();
     expect(store.get().archon[CONN]?.staleItems).toEqual([]);
+    expect(store.get().archon[CONN]?.missingItems).toEqual(["qi_gone"]);
     expect(store.get().reports).toEqual([]);
   });
 

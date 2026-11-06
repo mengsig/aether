@@ -12,7 +12,7 @@ export interface DraftMirror { getItem(key: string): string | null; setItem(key:
 
 export const DRAFT_STORAGE_KEY = "aether.drafts.v1";
 /** A draft bigger than this is not mirrored: sessionStorage is small and such a draft is likely pasted data. */
-const MIRROR_LIMIT_BYTES = 256 * 1024;
+export const MIRROR_LIMIT_BYTES = 256 * 1024;
 
 function invariant(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`@aether-ui/core drafts: ${message}`);
@@ -91,13 +91,17 @@ export class DraftStore {
     for (const listener of this.#listeners.get(key) ?? []) listener();
   }
 
+  /** Mirrors every draft under the size limit; an oversized one stays in memory without holding the others back. */
   #persist(): void {
     if (this.#mirror === null) return;
-    const text = JSON.stringify(Object.fromEntries(this.#drafts));
-    if (text.length > MIRROR_LIMIT_BYTES) return;
+    const mirrored: Record<string, DraftValue> = {};
+    for (const [key, value] of this.#drafts) {
+      if (JSON.stringify(value).length <= MIRROR_LIMIT_BYTES) mirrored[key] = value;
+    }
+    const keys = Object.keys(mirrored);
     try {
-      if (this.#drafts.size === 0) this.#mirror.removeItem(DRAFT_STORAGE_KEY);
-      else this.#mirror.setItem(DRAFT_STORAGE_KEY, text);
+      if (keys.length === 0) this.#mirror.removeItem(DRAFT_STORAGE_KEY);
+      else this.#mirror.setItem(DRAFT_STORAGE_KEY, JSON.stringify(mirrored));
     } catch {
       // A full or disabled sessionStorage loses only the reload mirror; the in-memory draft stands.
     }

@@ -182,3 +182,11 @@ test("says when archond has no such item", async () => {
   const container = await h.mount(<ItemRoute params={{ item: "qi_missing" }} />);
   expect(container.querySelector(".ui-state-title")?.textContent).toBe("Item not found");
 });
+
+test("says so even while archond lists no item at all, once it answers not_found", async () => {
+  h = await archonHarness({ protocol: 24 }, { ...demoWorld(), items: new Map() });
+  const container = await h.mount(<ItemRoute params={{ item: "qi_missing" }} />);
+  await h.tick(300);
+  expect(container.querySelector(".ui-state-title")?.textContent).toBe("Item not found");
+  expect(h.app.store.get().reports).toEqual([]);
+});

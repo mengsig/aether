@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { DRAFT_STORAGE_KEY, DraftStore, isPristine, type DraftMirror } from "./drafts.ts";
+import { DRAFT_STORAGE_KEY, DraftStore, isPristine, MIRROR_LIMIT_BYTES, type DraftMirror } from "./drafts.ts";
 
 function memoryMirror(): DraftMirror & { readonly map: Map<string, string> } {
   const map = new Map<string, string>();
@@ -29,6 +29,21 @@ describe("DraftStore", () => {
     const second = new DraftStore(mirror);
     expect(second.get("controls/steer")).toEqual({ text: "slow down" });
     second.clear("controls/steer");
+    expect(mirror.map.has(DRAFT_STORAGE_KEY)).toBe(false);
+  });
+
+  test("an oversized draft stays in memory while the others are still mirrored", () => {
+    const mirror = memoryMirror();
+    const store = new DraftStore(mirror);
+    store.set("controls/steer", { text: "slow down" });
+    store.set("memory/import", { picked: "x".repeat(MIRROR_LIMIT_BYTES) });
+    store.set("memory/create", { text: "small" });
+    expect(Object.keys(JSON.parse(mirror.map.get(DRAFT_STORAGE_KEY) ?? "{}")).sort()).toEqual(["controls/steer", "memory/create"]);
+    expect(store.get("memory/import")).toMatchObject({ picked: expect.stringMatching(/^x+$/) as string });
+    store.clear("controls/steer");
+    expect(Object.keys(JSON.parse(mirror.map.get(DRAFT_STORAGE_KEY) ?? "{}"))).toEqual(["memory/create"]);
+    store.clear("memory/create");
+    store.clear("memory/import");
     expect(mirror.map.has(DRAFT_STORAGE_KEY)).toBe(false);
   });
 

@@ -461,6 +461,7 @@ export class ArchonSync {
     this.set((s) => ({
       ...s, details: { ...s.details, [item]: { value: detail, asOf } },
       links: links === null ? s.links : { ...s.links, [item]: { value: links, asOf } },
+      missingItems: s.missingItems.includes(item) ? s.missingItems.filter((id) => id !== item) : s.missingItems,
     }));
     await this.readItemPlans(item, version);
     if (this.ctx.features.has("item_history") && item in this.state.histories) await this.readItemHistory(item);
@@ -537,11 +538,16 @@ export class ArchonSync {
       await this.readItem(item);
     } catch (error) {
       // An item archond no longer has is told in place by its page, not by a toast.
-      if (codeOf(error) === "not_found") return;
+      if (codeOf(error) === "not_found") return this.markMissing(item);
       if (!LINK_LOST.has(codeOf(error) ?? "")) return this.fail(`item ${item}`, error);
       this.set((s) => (s.staleItems.includes(item) ? s : { ...s, staleItems: [...s.staleItems, item] }));
       this.retryAfterTimeout(`item ${item}`, error);
     }
+  }
+
+  private markMissing(item: string): void {
+    invariant(!(item in this.state.details) || this.onScreen.has(item), `a missing item ${item} held no fresh detail`);
+    this.set((s) => (s.missingItems.includes(item) ? s : { ...s, missingItems: [...s.missingItems, item] }));
   }
 
   /** A lost link refetches on the next ready; a timeout on a live one must be retried now, and seen. */

@@ -37,6 +37,13 @@ describe("Action", () => {
     expect(root.querySelector(".b3-reason")?.textContent).toBe("Only the daemon's own host can do this");
   });
 
+  test("mounts for a connection still before its handshake, whose id a draft key cannot hold as is", async () => {
+    const h = current = await connected({ role: "operator" });
+    const root = await h.mount(<Probe conn="aether:@localhost:9234" command={{ cmd: "cancel", agent: "agt_1" }} confirm />);
+    expect(buttonNamed(root, "Go")).not.toBeNull();
+    expect(root.querySelector(".b3-note")?.getAttribute("data-state") ?? "idle").toBe("idle");
+  });
+
   test("asks before sending, and a lost reply is reported unconfirmed and kept for review", async () => {
     const h = current = await connected({ role: "operator", script: { cancel: () => "hold" } });
     const root = await h.mount(<Probe conn={h.conn} command={{ cmd: "cancel", agent: "agt_1" }} confirm />);

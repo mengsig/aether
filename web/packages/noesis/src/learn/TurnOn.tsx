@@ -10,7 +10,7 @@ import { useSettingsDraft } from "./SettingsSheet.tsx";
 export function TurnOnNoesis({ conn, status, onSettings }: { conn: string; status: aether.NoesisStatus; onSettings: () => void }) {
   invariant(!status.enabled, "the turn-on state shows only while Noesis is off");
   const host = useHostAdmin(conn);
-  const draft = useSettingsDraft(status.settings);
+  const draft = useSettingsDraft(conn, status.settings);
   const turnOn = () => {
     draft.update({ enabled: true });
     onSettings();

@@ -226,5 +226,7 @@ function confirmationDraftKey(conn: string, command: Json): string {
   invariant(typeof command.cmd === "string", "a confirmation names its command");
   const target = command.id ?? command.agent ?? command.to ?? command.target ?? command.scope ?? "all";
   const identity = encodeURIComponent(JSON.stringify(target)).replaceAll("%", "_").replace(/[!'()*]/g, "_");
-  return `controls/${conn}/${command.cmd}/${identity}/confirmation`;
+  // A connection id before its handshake is `aether:@host:port`; the key keeps only what a draft key allows.
+  const connection = conn.replace(/[^a-z0-9:_.-]/gi, "_");
+  return `controls/${connection}/${command.cmd}/${identity}/confirmation`;
 }

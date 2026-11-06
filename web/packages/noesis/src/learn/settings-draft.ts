@@ -2,10 +2,10 @@
 // turns the daemon's settings into the draft. Pure, so the sheet and the off state's "Turn on" share it.
 
 import type { aether } from "@aether-ui/protocol";
-import { invariant } from "./model.ts";
+import { draftKey, invariant } from "./model.ts";
 
-/** Where the sheet keeps what was typed until it is saved or discarded. */
-export const SETTINGS_DRAFT_KEY = "learn/settings";
+/** Where the sheet keeps what was typed until it is saved or discarded; each daemon's settings have their own. */
+export const settingsDraftKey = (conn: string): string => draftKey("settings", conn);
 
 export type SettingsDraft = {
   readonly enabled: boolean;

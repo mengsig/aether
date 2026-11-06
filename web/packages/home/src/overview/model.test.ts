@@ -1,6 +1,6 @@
 import type { ArchonItem } from "@aether-ui/core";
 import type { aether, ConnectionInfo } from "@aether-ui/protocol";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { joinReads } from "./derive.ts";
 import { aetherInfo, archonInfo, BREAKDOWN, fixtureAgents, fixtureAttention, fixtureEvents, fixtureItems, LEARNER, NOW, WATCHER } from "./fixture/world.ts";
 import {
@@ -41,7 +41,21 @@ describe("time", () => {
   });
 });
 
-describe("counts by state", () => {
+describe("hourly buckets across a daylight saving change", () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  test("the clock hour that comes twice gets two labels", () => {
+    vi.stubEnv("TZ", "America/New_York");
+    // 2026-11-01: 02:00 EDT falls back to 01:00 EST, so 01:00 comes twice before 02:00 EST (07:00Z).
+    const now = Date.UTC(2026, 10, 1, 7, 30);
+    expect(new Date(now).getHours()).toBe(2);
+    const labels = hourlyBuckets([], now).map((bucket) => bucket.label);
+    expect(labels.slice(-4)).toEqual(["00:00", "01:00", "01:00 again", "02:00"]);
+    expect(new Set(labels).size).toBe(labels.length);
+  });
+});
+
+describe("counts by state", () =>{
   test("agents: running, waiting (waiting or ready) and needing attention (blocked or failed)", () => {
     expect(agentCounts(Object.values(fixtureAgents()))).toEqual({ total: 7, running: 2, waiting: 2, attention: 2 });
     expect(agentCounts([])).toEqual({ total: 0, running: 0, waiting: 0, attention: 0 });

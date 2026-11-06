@@ -7,10 +7,12 @@ import { drafts } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { SETTLE_MS } from "./data.ts";
-import { $, byText, click, connected, hashChanged, type, type Harness } from "./fixture/harness.test-util.tsx";
+import { $, byText, click, CONN, connected, hashChanged, type, type Harness } from "./fixture/harness.test-util.tsx";
 import { AUTH, MODELS, scenario, SETTINGS, statusOf } from "./fixture/scenario.ts";
 import { modelList } from "./models.ts";
-import { draftOf, patchOf, SETTINGS_DRAFT_KEY } from "./settings-draft.ts";
+import { draftOf, patchOf, settingsDraftKey } from "./settings-draft.ts";
+
+const SETTINGS_DRAFT_KEY = settingsDraftKey(CONN);
 import { DEFAULT_MODEL_LABEL, hiddenModelNote } from "./SettingsSheet.tsx";
 import SessionsRoute from "./SessionsScreen.tsx";
 

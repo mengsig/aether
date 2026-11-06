@@ -41,8 +41,15 @@ export function hourlyBuckets(events: readonly aether.Event[], now: number, hour
     const index = Math.floor((time - first) / HOUR_MS);
     counts[index] = (counts[index] ?? 0) + 1;
   }
-  const buckets = counts.map((value, i) => ({ label: hourLabel(first + i * HOUR_MS), value }));
-  invariant(buckets.length === hours, "one bucket per hour");
+  const labels = new Set<string>();
+  const buckets = counts.map((value, i) => {
+    const hour = hourLabel(first + i * HOUR_MS);
+    // A clock hour comes twice when daylight saving time ends; the second is told apart.
+    const label = labels.has(hour) ? `${hour} again` : hour;
+    labels.add(label);
+    return { label, value };
+  });
+  invariant(buckets.length === hours && labels.size === hours, "one bucket per hour, each with its own label");
   return buckets;
 }
 
