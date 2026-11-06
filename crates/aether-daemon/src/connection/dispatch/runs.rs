@@ -73,14 +73,23 @@ pub(super) async fn dispatch(daemon: &Daemon, command: Command) -> Result<Reply,
             if role_prefix.as_deref().is_some_and(str::is_empty) {
                 return Err(ErrorReply::invalid("role_prefix must not be empty"));
             }
+            let key = crate::tree_reads::TreeKey {
+                run,
+                include_archived,
+                role_prefix: role_prefix.clone(),
+                root,
+            };
             let filter = TreeFilter {
                 include_archived,
                 role_prefix,
                 root,
             };
             let store = rt.store().clone();
-            let tree = blocking(move || rooted_tree(store.as_ref(), run, &filter)).await?;
-            Ok(Reply::Tree(tree?))
+            let tree = daemon
+                .tree_reads
+                .answer(key, move || rooted_tree(store.as_ref(), run, &filter))
+                .await?;
+            Ok(Reply::Tree(tree))
         }
         _ => unreachable!("routed to the wrong command family"),
     }

@@ -9,3 +9,4 @@ from .. import protocol as _protocol
 class AgentTree(TypedDict, total=False):
     nodes: dict[str, Any]
     roots: list[_protocol.AgentId]
+    stale: _protocol.StatusStale | None  # optional

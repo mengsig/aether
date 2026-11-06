@@ -1,7 +1,7 @@
 // The Aether daemon protocol as TypeScript types and command builders.
 // Generated from clients/protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: 914b064bc6f7f0895be7cfe61d841cdd0ecd22345cacaf2051369b52db91ed2a
+// Schema SHA-256: c9bb45709243428b1ee938cb6e0545e3eaa92c1e0bb08ecc169bc62e8cf357be
 
 export const PROTOCOL_VERSION = 26;
 export const MIN_PROTOCOL_VERSION = 17;
@@ -267,6 +267,7 @@ export type AgentStatusKind = "created" | "ready" | "running" | "waiting" | "blo
 export interface AgentTree {
   "nodes": Record<string, unknown>;
   "roots": Array<AgentId>;
+  "stale"?: StatusStale | null;
 }
 
 /**

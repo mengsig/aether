@@ -176,6 +176,7 @@ pub fn app_with_transcript(messages: &[&str]) -> App {
     app.reduce(AppEvent::Reply {
         then: Then::Tree,
         result: Ok(Reply::Tree(AgentTree {
+            stale: None,
             roots: vec![id],
             nodes,
         })),
@@ -319,6 +320,7 @@ pub fn populated_app() -> App {
     app.reduce(AppEvent::Reply {
         then: Then::Tree,
         result: Ok(Reply::Tree(AgentTree {
+            stale: None,
             roots: vec![id],
             nodes,
         })),

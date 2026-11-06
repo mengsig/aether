@@ -85,6 +85,7 @@ impl Fixture {
             push: Some(push),
             remote: Default::default(),
             status_reads: Default::default(),
+            tree_reads: Default::default(),
         };
         Self {
             daemon,

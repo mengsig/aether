@@ -94,6 +94,7 @@ pub fn loaded_app(agents: usize, events: usize, messages: usize) -> App {
     app.reduce(AppEvent::Reply {
         then: Then::Tree,
         result: Ok(Reply::Tree(AgentTree {
+            stale: None,
             roots: vec![root_id],
             nodes,
         })),
@@ -266,6 +267,7 @@ pub fn loaded_app_with_capped_subtree(cap: usize) -> App {
     app.reduce(AppEvent::Reply {
         then: Then::Tree,
         result: Ok(Reply::Tree(AgentTree {
+            stale: None,
             roots: vec![root_id],
             nodes,
         })),
@@ -336,6 +338,7 @@ pub fn loaded_app_with_capped_subtree_under_finished_child(cap: usize) -> App {
     app.reduce(AppEvent::Reply {
         then: Then::Tree,
         result: Ok(Reply::Tree(AgentTree {
+            stale: None,
             roots: vec![root_id],
             nodes,
         })),

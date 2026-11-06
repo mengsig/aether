@@ -57,7 +57,12 @@ impl App {
 
     fn tree_arrived(&mut self, tree: AgentTree, effects: &mut Vec<Effect>) {
         self.tree_in_flight = false;
-        self.apply_tree(tree, effects);
+        // A stale tree is no newer than the one shown, which deltas kept current.
+        if tree.stale.is_some() {
+            self.flash("the daemon did not read the agent tree in time; showing the last one");
+        } else {
+            self.apply_tree(tree, effects);
+        }
         if self.tree_stale {
             effects.push(self.tree_request());
         }

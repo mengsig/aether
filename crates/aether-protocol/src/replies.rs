@@ -202,6 +202,10 @@ pub struct TreeNode {
 pub struct AgentTree {
     pub roots: Vec<AgentId>,
     pub nodes: BTreeMap<AgentId, TreeNode>,
+    /// Set when no fresh read finished in the daemon's patience: this is the
+    /// last tree read for the same request, or empty if none finished yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale: Option<StatusStale>,
 }
 
 /// One row of `aether runs list`, projected from a run's agents and tasks.

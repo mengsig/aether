@@ -310,11 +310,16 @@ pub async fn run(
     tracing::debug!("final usage fetched");
     let u = final_agent.stats.usage;
     let tree = client.tree(Some(final_agent.run), true).await?;
-    let node = tree
-        .nodes
-        .get(&agent.id)
-        .ok_or_else(|| anyhow!("agent {} is missing from its run tree", agent.id))?;
-    let subtree_usage = (!node.children.is_empty()).then_some(node.subtree_usage);
+    let subtree_usage = if tree.stale.is_some() {
+        eprintln!("subtree usage not shown: the daemon did not read the run's tree in time");
+        None
+    } else {
+        let node = tree
+            .nodes
+            .get(&agent.id)
+            .ok_or_else(|| anyhow!("agent {} is missing from its run tree", agent.id))?;
+        (!node.children.is_empty()).then_some(node.subtree_usage)
+    };
     eprintln!("{}", usage_line(&u, Some(final_agent.stats.turns)));
     if let Some(total) = subtree_usage {
         eprintln!("{}", usage_line(&total, None));

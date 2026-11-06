@@ -124,6 +124,7 @@ fn tree() -> AgentTree {
         },
     );
     AgentTree {
+        stale: None,
         roots: vec![id],
         nodes,
     }

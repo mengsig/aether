@@ -25,13 +25,13 @@ pub struct TreeFilter {
 }
 
 impl TreeFilter {
-    fn shows(&self, agent: &Agent, under_root: Option<&BTreeSet<AgentId>>) -> bool {
+    /// Whether `agent`, already in the tree's scope, is drawn.
+    fn shows(&self, agent: &Agent) -> bool {
         (self.include_archived || !agent.archived)
             && self
                 .role_prefix
                 .as_deref()
                 .is_none_or(|prefix| agent.role.as_str().starts_with(prefix))
-            && under_root.is_none_or(|under| under.contains(&agent.id))
     }
 }
 
@@ -41,13 +41,9 @@ pub fn build_tree(
     run: Option<RunId>,
     filter: &TreeFilter,
 ) -> aether_store::Result<AgentTree> {
-    // Always roll usage up over the unfiltered set: an archived child's spend
-    // still counts against its live ancestors' budgets even once hidden.
-    let all_agents = store.agents(&AgentFilter {
-        run,
-        exclude_archived: false,
-        ..Default::default()
-    })?;
+    // Usage rolls up over every agent in scope, shown or not: an archived
+    // child's spend still counts against its live ancestors' budgets.
+    let all_agents = agents_in_scope(store, run, filter.root)?;
     let leases: BTreeMap<AgentId, _> = store
         .leases()?
         .into_iter()
@@ -55,19 +51,14 @@ pub fn build_tree(
         .collect();
     let all_children = children_of(&all_agents);
     let subtree_usage = roll_up_usage(&all_agents, &all_children);
-    let under_root = match (filter.root, run) {
-        (Some(root), Some(_)) => Some(subtree_across_runs(store, root)?),
-        (Some(root), None) => Some(subtree_of(root, &all_children)),
-        (None, _) => None,
-    };
     let agents: Vec<_> = all_agents
         .into_iter()
-        .filter(|agent| filter.shows(agent, under_root.as_ref()))
+        .filter(|agent| filter.shows(agent))
         .collect();
     let visible: BTreeSet<_> = agents.iter().map(|agent| agent.id).collect();
     assert!(
         visible.len() <= subtree_usage.len(),
-        "only agents of the run are shown"
+        "only agents in scope are shown"
     );
 
     let tasks = current_tasks(store, &agents)?;
@@ -93,7 +84,37 @@ pub fn build_tree(
             },
         );
     }
-    Ok(AgentTree { roots, nodes })
+    Ok(AgentTree {
+        roots,
+        nodes,
+        stale: None,
+    })
+}
+
+/// The agents a tree is drawn from: `root`'s subtree walked by its parent
+/// links, across runs, or the run's agents, or the fleet; then cut to `run`.
+fn agents_in_scope(
+    store: &dyn Store,
+    run: Option<RunId>,
+    root: Option<AgentId>,
+) -> aether_store::Result<Vec<Agent>> {
+    let Some(root) = root else {
+        return store.agents(&AgentFilter {
+            run,
+            exclude_archived: false,
+            ..Default::default()
+        });
+    };
+    let mut subtree = store.subtree_agents(root)?;
+    assert!(
+        subtree.is_empty() || subtree.iter().any(|agent| agent.id == root),
+        "a known root's subtree holds it"
+    );
+    if let Some(run) = run {
+        subtree.retain(|agent| agent.run == run);
+    }
+    debug_assert!(run.is_none_or(|run| subtree.iter().all(|agent| agent.run == run)));
+    Ok(subtree)
 }
 
 /// The task each shown agent is on, read by id: a long-lived store's task
@@ -118,21 +139,6 @@ fn current_tasks(
         "at most one current task per agent"
     );
     Ok(tasks)
-}
-
-/// The root's descendants over every run: delegation may cross runs, so a
-/// run filter must not cut the walk at an intermediate agent of another run.
-fn subtree_across_runs(
-    store: &dyn Store,
-    root: AgentId,
-) -> aether_store::Result<BTreeSet<AgentId>> {
-    let everyone = store.agents(&AgentFilter {
-        exclude_archived: false,
-        ..Default::default()
-    })?;
-    let subtree = subtree_of(root, &children_of(&everyone));
-    assert!(subtree.contains(&root), "a subtree holds its root");
-    Ok(subtree)
 }
 
 /// Every agent's children, in the order `agents` lists them.
@@ -216,22 +222,6 @@ fn roll_up_usage(
     }
     assert_eq!(subtree_usage.len(), all_ids.len(), "one total per agent");
     subtree_usage
-}
-
-/// `root` and every agent below it.
-fn subtree_of(root: AgentId, all_children: &BTreeMap<AgentId, Vec<AgentId>>) -> BTreeSet<AgentId> {
-    let mut under = BTreeSet::from([root]);
-    let mut stack = vec![root];
-    while let Some(id) = stack.pop() {
-        for child in all_children.get(&id).into_iter().flatten() {
-            // A parent cycle in a corrupt store must not loop forever.
-            if under.insert(*child) {
-                stack.push(*child);
-            }
-        }
-    }
-    assert!(under.contains(&root));
-    under
 }
 
 /// Every run the store knows about, newest first. Projected from agents and

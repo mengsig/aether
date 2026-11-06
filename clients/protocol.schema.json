@@ -1005,6 +1005,17 @@
             "$ref": "#/$defs/AgentId"
           },
           "type": "array"
+        },
+        "stale": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StatusStale"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set when no fresh read finished in the daemon's patience: this is the\nlast tree read for the same request, or empty if none finished yet."
         }
       },
       "required": [

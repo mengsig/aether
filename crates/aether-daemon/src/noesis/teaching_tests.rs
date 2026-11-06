@@ -113,6 +113,7 @@ impl Harness {
             push: None,
             remote: Default::default(),
             status_reads: Default::default(),
+            tree_reads: Default::default(),
             noesis,
         };
         Self { daemon, client }

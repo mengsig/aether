@@ -102,6 +102,7 @@ fn a_selection_removed_by_something_other_than_this_client_clears_on_the_next_re
     // second client's archive, or `aether archive <id>` from a shell:
     // the only thing this client ever sees is the next tree.
     let empty = AgentTree {
+        stale: None,
         roots: vec![],
         nodes: std::collections::BTreeMap::new(),
     };
@@ -112,6 +113,32 @@ fn a_selection_removed_by_something_other_than_this_client_clears_on_the_next_re
     assert_eq!(
         app.selected, None,
         "the node is gone from the tree, so the dangling selection must clear"
+    );
+}
+
+/// A stale tree is the daemon saying it could not read one in time: an empty
+/// one must not clear the board as if every agent were gone.
+#[test]
+fn a_stale_empty_tree_keeps_the_tree_shown_and_says_why() {
+    let (mut app, id) = app_with_agent();
+    let stale = AgentTree {
+        stale: Some(aether_protocol::StatusStale {
+            read_at: None,
+            waited_ms: 3_000,
+        }),
+        roots: vec![],
+        nodes: std::collections::BTreeMap::new(),
+    };
+    app.reduce(AppEvent::Reply {
+        then: Then::Tree,
+        result: Ok(Reply::Tree(stale)),
+    });
+    assert_eq!(app.selected, Some(id), "the selection stays");
+    assert!(app.tree.nodes.contains_key(&id), "the tree shown stays");
+    let flash = app.live_flash().unwrap_or_default().to_owned();
+    assert!(
+        flash.contains("did not read the agent tree in time"),
+        "{flash}"
     );
 }
 

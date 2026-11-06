@@ -113,3 +113,53 @@ fn status_answers_stale_while_its_read_cannot_run() {
         daemon.runtime.shutdown().await;
     });
 }
+
+/// `get_tree` while its read cannot run: answered within its patience with an
+/// empty tree marked stale, then fresh once the read can run.
+#[test]
+fn get_tree_answers_stale_while_its_read_cannot_run() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (daemon, _config) = daemon().await;
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let hold = tokio::task::spawn_blocking(move || {
+            let _ = held.recv();
+        });
+        let tree = || Command::GetTree {
+            role_prefix: None,
+            root: None,
+            run: None,
+            include_archived: false,
+        };
+        let bound = crate::status_reads::PATIENCE * 3;
+        let reply = tokio::time::timeout(bound, run(&daemon, &AuthContext::Local, tree())).await;
+        let Ok(Ok(aether_protocol::Reply::Tree(stale))) = reply else {
+            panic!("get_tree did not answer within {bound:?} while its read was held");
+        };
+        let marker = stale.stale.as_ref().expect("marked stale");
+        assert_eq!(marker.read_at, None, "nothing was read yet");
+        assert!(stale.nodes.is_empty(), "no tree is made up");
+
+        drop(release);
+        hold.await.unwrap();
+        let fresh = async {
+            loop {
+                let reply = run(&daemon, &AuthContext::Local, tree()).await;
+                let Ok(aether_protocol::Reply::Tree(tree)) = reply else {
+                    panic!("get_tree failed: {reply:?}");
+                };
+                if tree.stale.is_none() {
+                    return tree;
+                }
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(60), fresh)
+            .await
+            .expect("a fresh tree once the read can run");
+        daemon.runtime.shutdown().await;
+    });
+}

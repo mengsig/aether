@@ -60,6 +60,7 @@ fn tree(agent: Agent) -> AgentTree {
         },
     );
     AgentTree {
+        stale: None,
         roots: vec![id],
         nodes,
     }
