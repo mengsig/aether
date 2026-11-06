@@ -18,11 +18,23 @@ Rules:
 only as its correction. Never record anything about the learner.
 - Each statement stands alone: no pronouns pointing outside it.
 - `anchor` is the `ref` of the message that states it.
+- Extract the reasoning as well as the facts: when the material explains why \
+ or how a conclusion follows, record its supporting premises as a chain. Split \
+ a statement containing both a reason and its consequence into standalone \
+ propositions and connect them. Include all conditions needed for the inference.
+- Look for causal explanations, derivations, rule applications and prerequisite \
+ relationships that support a conclusion. Mere topic similarity, teaching order \
+ or a prerequisite alone does not entail a conclusion: never invent a link.
+- Review the propositions for supported links before replying. Use an empty \
+ chains array only when the material supports no inference between them.
 - A chain's premises and conclusion are your own keys, or ids of existing \
-propositions listed in the data.
+propositions listed in the data. Always include every endpoint proposition; \
+ use the message explaining the inference as the chain's anchor.
 
 Reply with only this JSON object and nothing else:
 {\"propositions\": [{\"key\": \"k1\", \"name\": \"short name\", \"statement\": \"...\", \
+\"aliases\": [], \"anchor\": \"<ref>\"}, \
+{\"key\": \"k2\", \"name\": \"conclusion name\", \"statement\": \"...\", \
 \"aliases\": [], \"anchor\": \"<ref>\"}], \
 \"chains\": [{\"premises\": [\"k1\"], \"conclusion\": \"k2\", \"anchor\": \"<ref>\"}]}";
 
@@ -101,6 +113,28 @@ pub fn auditor(items: &[AuditItem]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extractor_schema_declares_every_chain_endpoint() {
+        let example = EXTRACTOR_RULES
+            .split("Reply with only this JSON object and nothing else:\n")
+            .nth(1)
+            .expect("schema");
+        let object: serde_json::Value = serde_json::from_str(example).expect("JSON example");
+        let keys: std::collections::BTreeSet<_> = object["propositions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["key"].as_str().unwrap())
+            .collect();
+        assert!(keys.len() >= 2, "an inference needs distinct propositions");
+        for chain in object["chains"].as_array().unwrap() {
+            assert!(keys.contains(chain["conclusion"].as_str().unwrap()));
+            for premise in chain["premises"].as_array().unwrap() {
+                assert!(keys.contains(premise.as_str().unwrap()));
+            }
+        }
+    }
 
     #[test]
     fn hostile_text_stays_inside_the_fence_as_a_json_string() {

@@ -823,6 +823,17 @@ ready is refused, never replaced. The refusal names the ready alternatives.
 `subscription` or `api`, `ready`) and the resolved teaching model or its
 refusal in `teaching_model`.
 
+Graph extraction asks for supported reasoning chains as well as standalone
+propositions, including the conditions needed for causal explanations and
+rule applications. Endpoints use local keys or existing proposition IDs;
+unambiguous names, aliases and statements (including object references) also
+resolve exactly after case/whitespace normalization. `links`, `premise_ids`
+and `conclusion_id` are accepted spellings; chains inside a proposition inherit
+its conclusion and anchor if omitted. Unknown or ambiguous endpoints, numeric
+indices without explicit string keys, and invalid anchors are rejected. A
+missing premise rejects the whole chain; extraction never invents an edge.
+Audited local endpoints follow their merged proposition IDs.
+
 The built-in `prober`, `teacher` and `practitioner` prompts use `03-tools` for
 tool schemas and `04-rules` for behavior and presentation. Learner-facing text
 supports Markdown headings, lists, emphasis, comparison tables, language-tagged
