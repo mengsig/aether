@@ -27,7 +27,7 @@
       "fixture": "5,000 agents",
       "measured": 632,
       "noise": 0,
-      "reason": "The list is virtualized (\u00a75.4): DOM grows with the viewport, never with the fleet."
+      "reason": "The list is virtualized (§5.4): DOM grows with the viewport, never with the fleet."
     },
     "fleet.mount.row_renders": {
       "budget": 18,
@@ -57,13 +57,13 @@
       "reason": "Rows rendered by one State filter change."
     },
     "fleet.filter.dom_mutations": {
-      "budget": 40,
+      "budget": 47,
       "unit": "mutations",
       "enforce": "ci",
       "fixture": "5,000 agents",
-      "measured": 40,
+      "measured": 47,
       "noise": 0,
-      "reason": "DOM mutations for one filter change: bounded by the rows on screen."
+      "reason": "Filtering through the State picker: its value, the count and the rows that change; the picker draws its value and badge beside the list."
     },
     "fleet.filter.ms": {
       "budget": 17.67,
@@ -156,13 +156,13 @@
       "reason": "Mount commits: the render and the viewport measure."
     },
     "conversation.mount.dom_elements": {
-      "budget": 135,
+      "budget": 201,
       "unit": "elements",
       "enforce": "ci",
       "fixture": "20,000 entries",
-      "measured": 135,
+      "measured": 201,
       "noise": 0,
-      "reason": "The transcript is virtualized (\u00a75.4): DOM holds the rows in view plus 800 px overscan."
+      "reason": "The full-height chat: speaker marks, folded tool rows with Copy, the find bar, jump to latest and the pinned composer (§5.5)."
     },
     "conversation.mount.row_renders": {
       "budget": 21,
@@ -315,7 +315,7 @@
       "fixture": "2,000 items",
       "measured": 0,
       "noise": 0,
-      "reason": "Selecting an item never lays out again (\u00a75.4)."
+      "reason": "Selecting an item never lays out again (§5.4)."
     },
     "dag.select.canvas_frames": {
       "budget": 1,
@@ -327,13 +327,13 @@
       "reason": "Selecting an item repaints once."
     },
     "dag.select.dom_mutations": {
-      "budget": 3,
+      "budget": 5,
       "unit": "mutations",
       "enforce": "ci",
       "fixture": "2,000 items",
-      "measured": 3,
+      "measured": 5,
       "noise": 0,
-      "reason": "Selecting swaps the overview panel for the inspector."
+      "reason": "Selecting a node also fills the detail card and raises the legend entry of its kind."
     },
     "dag.select.ms": {
       "budget": 37.45,
@@ -351,7 +351,7 @@
       "fixture": "2,000 items",
       "measured": 0,
       "noise": 0,
-      "reason": "A state change never lays out again (\u00a75.4): its budget is 0."
+      "reason": "A state change never lays out again (§5.4): its budget is 0."
     },
     "dag.delta.canvas_frames": {
       "budget": 1,
@@ -387,7 +387,7 @@
       "fixture": "10 s: 3 streams x 40 deltas/s, 15 commits, 200 row updates",
       "measured": 443,
       "noise": 0,
-      "reason": "Store updates batch to one commit per frame (\u00a75.4): at most one per frame with a visible change, of 600."
+      "reason": "Store updates batch to one commit per frame (§5.4): at most one per frame with a visible change, of 600."
     },
     "deltas.row_renders": {
       "budget": 460,
@@ -426,67 +426,67 @@
       "reason": "95th percentile frame: frames where a message commits or another agent's event rebuilds the rows."
     },
     "bundle.total_bytes": {
-      "budget": 779932,
+      "budget": 963037,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 779932,
+      "measured": 963037,
       "noise": 0,
-      "reason": "Everything web/dist ships, embedded in aether-remote."
+      "reason": "The overhaul's screens: the GitHub overview with charts and a graph, the home dashboard, the graph canvas, the kit pickers and the draft store."
     },
     "bundle.js_bytes": {
-      "budget": 692249,
+      "budget": 836051,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 692249,
+      "measured": 836051,
       "noise": 0,
-      "reason": "All JavaScript chunks."
+      "reason": "As bundle.total_bytes: the overhaul's screens, canvases and pickers."
     },
     "bundle.css_bytes": {
-      "budget": 81499,
+      "budget": 120802,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 81499,
+      "measured": 120802,
       "noise": 0,
-      "reason": "All stylesheets."
+      "reason": "One token system, the kit's pickers, combos, switches and segments, chart and canvas styles, the chat and the dashboard."
     },
     "bundle.initial_bytes": {
-      "budget": 359381,
+      "budget": 418485,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 359381,
+      "measured": 418485,
       "noise": 0,
-      "reason": "The entry script and stylesheet index.html loads before first paint."
+      "reason": "The first screen carries the kit (pickers, model picker, draft store), the navigation rail with icons and the home dashboard."
     },
     "bundle.initial_gzip_bytes": {
-      "budget": 113424,
+      "budget": 128241,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 113424,
+      "measured": 128241,
       "noise": 0,
-      "reason": "The entry's transfer size at gzip -9: what a remote device downloads first."
+      "reason": "As bundle.initial_bytes, compressed."
     },
     "bundle.js_gzip_bytes": {
-      "budget": 237648,
+      "budget": 292325,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 237648,
+      "measured": 292325,
       "noise": 0,
-      "reason": "All JavaScript at gzip -9."
+      "reason": "As bundle.js_bytes, compressed."
     },
     "bundle.largest_js_bytes": {
-      "budget": 337797,
+      "budget": 374164,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 337797,
+      "measured": 374164,
       "noise": 0,
-      "reason": "The largest chunk: a route that pulled a heavy module into the entry shows here."
+      "reason": "The entry chunk: the kit, the navigation, the store and the home dashboard; screens stay lazy chunks."
     }
   }
 }
