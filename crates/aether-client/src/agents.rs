@@ -61,10 +61,18 @@ impl Client {
 
     /// `root` and what is live below it, with the subtree's whole usage
     /// rolled up into `root`'s node, however many finished agents it holds.
+    /// A daemon without `agents_paging` cannot root a tree, nor page one, so
+    /// it is asked for `run`'s whole tree, which holds the same roll-up.
     pub async fn subtree(&self, run: RunId, root: AgentId) -> Result<AgentTree> {
+        let rooted = self.welcome().is_some_and(|welcome| {
+            welcome
+                .features
+                .iter()
+                .any(|feature| feature == aether_protocol::features::AGENTS_PAGING)
+        });
         self.tree_request(Command::GetTree {
             role_prefix: None,
-            root: Some(root),
+            root: rooted.then_some(root),
             run: Some(run),
             include_archived: true,
             after: None,

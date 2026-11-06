@@ -55,7 +55,9 @@ pub fn build_tree(
     filter: &TreeFilter,
 ) -> aether_store::Result<AgentTree> {
     let page = store.tree_page(&filter.query(run))?;
-    let agents = page.agents;
+    let mut agents = page.agents;
+    // A page comes newest first; the reply lists roots and children oldest first.
+    agents.sort_unstable_by_key(|agent| agent.id);
     let visible: BTreeSet<AgentId> = agents.iter().map(|agent| agent.id).collect();
     assert_eq!(visible.len(), agents.len(), "a page shows an agent once");
     let nodes = usage_nodes(store, run, &agents)?;
