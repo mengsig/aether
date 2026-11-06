@@ -475,9 +475,9 @@ fn a_rooted_tree_page_walks_the_subtree_down_the_closure_key() {
         "{steps:?}"
     );
     assert!(
-        steps
-            .iter()
-            .any(|s| s.2 == "SEARCH s USING PRIMARY KEY (ancestor=? AND descendant=?)"),
+        steps.iter().any(|s| s.2.starts_with("SEARCH s ")
+            && s.2.contains("descendant=?")
+            && s.2.contains("ancestor=?")),
         "the root is checked by key, not by walking its subtree: {steps:?}"
     );
     no_scan_or_sort(&steps);

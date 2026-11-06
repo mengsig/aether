@@ -69,8 +69,8 @@ pub enum Command {
         limit: Option<u32>,
     },
     /// The live graph: the agents in the run (or all runs) with relations.
-    /// One page: every live agent, then the newest finished ones, at most
-    /// `limit` of those (1 to 500, 500 when absent); `AgentTree.next_after`
+    /// One page: the newest live agents, then the newest agents of any state,
+    /// at most `limit` of each (1 to 500, 500 when absent); `AgentTree.next_after`
     /// says older ones were left out.
     GetTree {
         run: Option<RunId>,

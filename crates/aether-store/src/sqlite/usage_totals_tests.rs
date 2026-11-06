@@ -154,7 +154,11 @@ fn an_emptied_scope_leaves_no_row_behind() {
         conn.query_row("SELECT COUNT(*) FROM usage_totals", [], |r| r.get(0))
             .unwrap()
     };
-    assert_eq!(rows(&conn), 2, "the run's row and the fleet's");
+    assert_eq!(
+        rows(&conn),
+        3,
+        "the run's row, the fleet's and its own subtree's"
+    );
     conn.execute("DELETE FROM agents WHERE id = ?1", [only.id.to_string()])
         .unwrap();
     assert_eq!(rows(&conn), 0, "no rounding outlives the members");

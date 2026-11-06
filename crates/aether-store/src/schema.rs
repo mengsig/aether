@@ -772,27 +772,27 @@ CREATE TRIGGER IF NOT EXISTS agent_tree_added AFTER INSERT ON agent_tree BEGIN
 END;
 CREATE TRIGGER IF NOT EXISTS agent_tree_removed AFTER DELETE ON agent_tree BEGIN
     UPDATE usage_totals SET
-        members = members - 1,
-        input_tokens = input_tokens - u.input_tokens,
-        output_tokens = output_tokens - u.output_tokens,
-        cache_read_tokens = cache_read_tokens - u.cache_read_tokens,
-        cache_write_tokens = cache_write_tokens - u.cache_write_tokens,
-        cache_write_1h_tokens = cache_write_1h_tokens - u.cache_write_1h_tokens,
-        reasoning_members = reasoning_members - (u.reasoning_tokens IS NOT NULL),
-        reasoning_tokens = reasoning_tokens - COALESCE(u.reasoning_tokens, 0),
-        cost_usd = cost_usd - u.cost_usd,
-        estimated_members = estimated_members - (u.estimated_cost_usd IS NOT NULL),
-        estimated_cost_usd = estimated_cost_usd - COALESCE(u.estimated_cost_usd, 0.0),
-        gap_unreported = gap_unreported - (u.cost_gap IS 'unreported'),
-        gap_unpriced = gap_unpriced - (u.cost_gap IS 'unpriced'),
-        gap_interrupted = gap_interrupted - (u.cost_gap IS 'interrupted'),
-        gap_mixed = gap_mixed - (u.cost_gap IS 'mixed'),
-        gap_unknown = gap_unknown - (u.cost_gap IS 'unknown'),
-        basis_unknown = basis_unknown - (u.figure AND u.cost_basis = 'unknown'),
-        basis_list_price = basis_list_price - (u.figure AND u.cost_basis = 'list_price'),
-        basis_provider_reported = basis_provider_reported
+        members = usage_totals.members - 1,
+        input_tokens = usage_totals.input_tokens - u.input_tokens,
+        output_tokens = usage_totals.output_tokens - u.output_tokens,
+        cache_read_tokens = usage_totals.cache_read_tokens - u.cache_read_tokens,
+        cache_write_tokens = usage_totals.cache_write_tokens - u.cache_write_tokens,
+        cache_write_1h_tokens = usage_totals.cache_write_1h_tokens - u.cache_write_1h_tokens,
+        reasoning_members = usage_totals.reasoning_members - (u.reasoning_tokens IS NOT NULL),
+        reasoning_tokens = usage_totals.reasoning_tokens - COALESCE(u.reasoning_tokens, 0),
+        cost_usd = usage_totals.cost_usd - u.cost_usd,
+        estimated_members = usage_totals.estimated_members - (u.estimated_cost_usd IS NOT NULL),
+        estimated_cost_usd = usage_totals.estimated_cost_usd - COALESCE(u.estimated_cost_usd, 0.0),
+        gap_unreported = usage_totals.gap_unreported - (u.cost_gap IS 'unreported'),
+        gap_unpriced = usage_totals.gap_unpriced - (u.cost_gap IS 'unpriced'),
+        gap_interrupted = usage_totals.gap_interrupted - (u.cost_gap IS 'interrupted'),
+        gap_mixed = usage_totals.gap_mixed - (u.cost_gap IS 'mixed'),
+        gap_unknown = usage_totals.gap_unknown - (u.cost_gap IS 'unknown'),
+        basis_unknown = usage_totals.basis_unknown - (u.figure AND u.cost_basis = 'unknown'),
+        basis_list_price = usage_totals.basis_list_price - (u.figure AND u.cost_basis = 'list_price'),
+        basis_provider_reported = usage_totals.basis_provider_reported
             - (u.figure AND u.cost_basis = 'provider_reported'),
-        basis_mixed = basis_mixed - (u.figure AND u.cost_basis = 'mixed')
+        basis_mixed = usage_totals.basis_mixed - (u.figure AND u.cost_basis = 'mixed')
     FROM agent_usage u
     WHERE u.agent_id = old.descendant AND usage_totals.scope = 'tree:' || old.ancestor || ':' || u.run;
     DELETE FROM usage_totals WHERE members = 0 AND scope IN (

@@ -52,9 +52,11 @@ fn scope_predicate(query: &TreeQuery, by_status: bool, root: Root) -> (String, V
         sql.push_str(&format!(" AND substr(a.role, 1, length(?{n})) = ?{n}"));
     }
     assert!(args.len() <= 3, "at most a root, a run and a prefix");
-    assert_eq!(
-        query.root.is_some(),
-        args.first() == query.root.map(|r| r.to_string()).as_ref()
+    assert!(
+        query
+            .root
+            .is_none_or(|root| args.first() == Some(&root.to_string())),
+        "the root binds ?1"
     );
     (sql, args)
 }

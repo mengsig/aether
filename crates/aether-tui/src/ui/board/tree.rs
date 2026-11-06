@@ -86,7 +86,7 @@ fn row_cost_text(cost: Option<Cost>) -> String {
 }
 
 /// `5 agents · 2 running · $1.84`; the running count only when something
-/// runs, the total only when something was priced, then whether older finished agents were left out.
+/// runs, the total only when something was priced, then whether older agents were left out.
 fn summary(model: &BoardModel, theme: &Theme) -> String {
     let dot = theme.glyphs().dot;
     let s = &model.summary;
