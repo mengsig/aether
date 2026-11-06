@@ -536,6 +536,8 @@ export class ArchonSync {
     try {
       await this.readItem(item);
     } catch (error) {
+      // An item archond no longer has is told in place by its page, not by a toast.
+      if (codeOf(error) === "not_found") return;
       if (!LINK_LOST.has(codeOf(error) ?? "")) return this.fail(`item ${item}`, error);
       this.set((s) => (s.staleItems.includes(item) ? s : { ...s, staleItems: [...s.staleItems, item] }));
       this.retryAfterTimeout(`item ${item}`, error);
