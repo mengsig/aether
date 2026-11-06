@@ -61,7 +61,11 @@ export function spawnLogged(binary: string, args: readonly string[], options: { 
     closeSync(out);
   }
   const pid = child.pid;
-  if (pid === undefined) throw new Error(`${binary} did not start`);
+  if (pid === undefined) {
+    // Node reports the spawn error as an event after this throw, which already says it.
+    child.once("error", () => undefined);
+    throw new Error(`${binary} did not start`);
+  }
   record("pids", `${pid} ${startTime(pid) ?? "gone"} ${path.basename(binary)}`);
   return { child, pid, log: options.log };
 }

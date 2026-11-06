@@ -12,6 +12,8 @@ import { SCHEMAS } from "./support.ts";
 
 const PACKAGES = path.join(WEB_ROOT, "packages");
 const SKIPPED_DIRS = new Set(["fixture", "fixtures", "test", "node_modules"]);
+/** Sources that talk only to archond: the Archon and GitHub packages, and every archon-* module. */
+const ARCHON_OWNED = /^packages\/(archon|github)\/|\/archon-[\w-]+\.tsx?$/;
 
 /** The app's own form of a command with no arguments: a hello declares the web app. */
 function bare(cmd: string): Record<string, unknown> {
@@ -47,20 +49,21 @@ function archonBuilders(): Map<string, string> {
   return builders;
 }
 
-/** Each command name the packages' code writes in a `cmd:` field or builds with `archon.<builder>(`. */
-function sentCommands(): Map<string, string> {
+/** Each command the packages' code writes in a `cmd:` field or builds with `archon.<builder>(`, with the files that do. */
+function sentCommands(): Map<string, string[]> {
   const builders = archonBuilders();
-  const sent = new Map<string, string>();
+  const sent = new Map<string, string[]>();
+  const add = (cmd: string, where: string) => sent.set(cmd, [...(sent.get(cmd) ?? []), where]);
   const protocol = path.join(PACKAGES, "protocol");
   for (const file of productSources(PACKAGES).filter((at) => !at.startsWith(protocol))) {
     const source = readFileSync(file, "utf8");
     const where = path.relative(WEB_ROOT, file);
     for (const [, value] of source.matchAll(/\bcmd:\s*([^,}\n]+)/g)) {
-      for (const [, name] of (value ?? "").matchAll(/["'](\w+)["']/g)) sent.set(name ?? "", where);
+      for (const [, name] of (value ?? "").matchAll(/["'](\w+)["']/g)) add(name ?? "", where);
     }
     for (const [, builder] of source.matchAll(/\barchon\.(\w+)\(/g)) {
       const cmd = builders.get(builder ?? "");
-      if (cmd !== undefined) sent.set(cmd, where);
+      if (cmd !== undefined) add(cmd, where);
     }
   }
   return sent;
@@ -90,11 +93,12 @@ test("the CLI's knobs are refused alike on both sides, and the soft forms pass",
 
 test("every Archon command the web packages send passes the bridge", () => {
   const archon = new Set(SCHEMAS.frames.archon.commands());
-  // A name both daemons have is ambiguous here; the agreement test above covers its Archon side.
   const aether = new Set(SCHEMAS.frames.aether.commands());
-  const sent = [...sentCommands()].filter(([cmd]) => archon.has(cmd) && !aether.has(cmd));
+  // A name both daemons have counts where only archond hears it: an Archon-owned source.
+  const sent = [...sentCommands()].filter(([cmd]) => archon.has(cmd)).flatMap(([cmd, files]) =>
+    files.filter((where) => !aether.has(cmd) || ARCHON_OWNED.test(where)).map((where) => [cmd, where] as const));
   const names = new Set(sent.map(([cmd]) => cmd));
-  for (const wanted of ["say", "answer", "get_initiative", "enqueue", "issue_items"]) {
+  for (const wanted of ["say", "answer", "get_initiative", "enqueue", "issue_items", "status", "pause", "read_artifact"]) {
     assert.ok(names.has(wanted), `the scan finds ${wanted}`);
   }
   for (const [cmd, where] of sent) {
