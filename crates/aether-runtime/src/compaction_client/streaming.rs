@@ -89,11 +89,11 @@ async fn produce(
         Ok(text) => output.finish(&text).await,
         Err(error) => Err(error),
     };
-    if let Err(error) = result {
-        // A closed receiver has abandoned this invocation and its error.
-        if output.sender.send(Err(error)).await.is_err() {
-            cancel.cancel();
-        }
+    // A closed receiver has abandoned this invocation and its error.
+    if let Err(error) = result
+        && output.sender.send(Err(error)).await.is_err()
+    {
+        cancel.cancel();
     }
 }
 

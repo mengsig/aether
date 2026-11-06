@@ -116,17 +116,23 @@ impl ParsedStream {
             self.fail(malformed(reason));
             return;
         }
-        let raw = self.reply.text_so_far();
-        match parse_reply(&raw)
-            .and_then(|reply| remaining_events(self.reply.usage(), reply, &self.public.emitted))
-        {
-            Ok(events) => {
-                self.pending.extend(events);
-                self.done = true;
-            }
-            Err(reason) => self.fail(malformed(&reason)),
+        let usage = self.reply.usage();
+        let result = std::mem::take(&mut self.reply)
+            .finish()
+            .map_err(|_| "invalid engine event stream".to_string())
+            .and_then(|reply| parse_reply(&reply.text()))
+            .and_then(|reply| remaining_events(usage, reply, &self.public.emitted));
+        match result {
+            Ok(events) => self.pending.extend(events),
+            Err(reason) => self
+                .pending
+                .extend(failed_events(usage, malformed(&reason))),
         }
-        debug_assert!(self.done);
+        self.done = true;
+        debug_assert!(matches!(
+            self.pending.back(),
+            Some(Ok(StreamEvent::MessageStop)) | Some(Err(_))
+        ));
     }
 }
 

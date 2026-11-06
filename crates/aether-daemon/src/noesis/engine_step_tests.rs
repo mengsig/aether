@@ -256,3 +256,46 @@ async fn a_noncanonical_field_order_keeps_private_text_out_of_deltas() {
     assert_eq!(name, "noesis_problem");
     assert_eq!(input["solution"], "PRIVATE");
 }
+
+#[tokio::test]
+async fn malformed_native_blocks_fail_before_returning_the_json_reply() {
+    let inner = Arc::new(ScriptedClient::new());
+    inner.push(Ok(vec![
+        StreamEvent::BlockStart {
+            index: 0,
+            block: BlockStart::Text {
+                text: r#"{"text":"Public","tool_calls":[]}"#.into(),
+            },
+        },
+        StreamEvent::BlockStart {
+            index: 1,
+            block: BlockStart::ToolUse {
+                id: "unexpected".into(),
+                name: "PRIVATE-TOOL".into(),
+                input: None,
+            },
+        },
+        StreamEvent::ToolInputDelta {
+            index: 1,
+            partial_json: "{".into(),
+        },
+        StreamEvent::Usage {
+            usage: Usage {
+                input_tokens: 7,
+                ..Default::default()
+            },
+        },
+    ]));
+    let client = EngineStepClient::new(inner);
+    let stream = client
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let failure = collect_partial(stream, |_| {})
+        .await
+        .expect_err("malformed native block");
+    assert!(is_malformed(&failure.error));
+    assert_eq!(failure.partial.usage.input_tokens, 7);
+    assert_eq!(failure.partial.text(), "Public");
+    assert!(!failure.error.message.contains("PRIVATE-TOOL"));
+}
