@@ -813,6 +813,22 @@ a restart does not reset it. A model chain with an API-billed link is
 refused unless `billing.allow_api = true`: a fallback never reaches a billed
 endpoint silently.
 
+Noesis runs on subscription engines (`claude-code`, `codex`) with
+`allow_api = false`. An engine model is ready when its CLI is detected,
+launchable and signed in; an API model is ready only with its credentials.
+`[noesis.models]` `strong` teaches and `cheap` extracts; a slot left unset
+takes the first ready subscription model, and a set slot whose model is not
+ready is refused, never replaced. The refusal names the ready alternatives.
+`noesis_status` reports every model in `models` (`id`, `billing`
+`subscription` or `api`, `ready`) and the resolved teaching model or its
+refusal in `teaching_model`.
+
+On an engine, each Noesis step is one fresh session without tools of its
+own: Aether gives it the agent's tools and transcript, sealed values as
+`"<sealed>"`, and runs the tool calls it answers with, so asking, sealing
+and budgets behave as on an API model. The step's text reaches watchers as
+one delta when the step ends, not word by word.
+
 ## Signed webhook door
 
 `aether serve` reads `[[serve.webhook]]` routes from `config.toml`. Each

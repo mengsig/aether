@@ -71,7 +71,10 @@ async fn the_engine_reads_tools_and_transcript_as_text_and_gets_no_native_tool()
     assert_eq!(reply.expect("parsed").text(), "Next one.");
     let sent = inner.requests();
     assert_eq!(sent.len(), 1);
-    assert!(sent[0].tools.is_empty(), "no native tool reaches the engine");
+    assert!(
+        sent[0].tools.is_empty(),
+        "no native tool reaches the engine"
+    );
     let system = &sent[0].system[0].text;
     assert!(system.starts_with("You are the Prober."), "{system}");
     assert!(system.contains("### noesis_ask") && system.contains("Pose one question."));
@@ -132,9 +135,7 @@ async fn two_malformed_replies_fail_the_step_and_keep_what_both_spent() {
         .stream(request(), CancellationToken::new())
         .await
         .expect("a stream");
-    let failure = collect_partial(stream, |_| {})
-        .await
-        .expect_err("refused");
+    let failure = collect_partial(stream, |_| {}).await.expect_err("refused");
     assert!(
         failure.error.message.contains("not the JSON object"),
         "{}",
@@ -151,7 +152,10 @@ async fn two_malformed_replies_fail_the_step_and_keep_what_both_spent() {
 #[tokio::test]
 async fn a_refused_first_call_is_not_sent_and_says_why() {
     let inner = Arc::new(ScriptedClient::new());
-    inner.push(ScriptedClient::error(ModelErrorClass::Auth, "not signed in"));
+    inner.push(ScriptedClient::error(
+        ModelErrorClass::Auth,
+        "not signed in",
+    ));
     let client = EngineStepClient::new(inner);
     let stream = client.stream(request(), CancellationToken::new()).await;
     match stream {
@@ -172,9 +176,15 @@ fn plain_prose_is_a_text_reply_and_empty_objects_are_refused() {
     assert!(parse_reply("{}").is_err(), "neither text nor a call");
     assert!(parse_reply(r#"{"tool_calls": [{"name": " "}]}"#).is_err());
     assert!(parse_reply(r#"{"text": "x", "extra": 1}"#).is_err());
-    assert!(parse_reply("{bad").is_err(), "an object that does not close");
+    assert!(
+        parse_reply("{bad").is_err(),
+        "an object that does not close"
+    );
     let braces = parse_reply("The set {1, 2} has two members.").expect("prose");
-    assert_eq!(braces.text.as_deref(), Some("The set {1, 2} has two members."));
+    assert_eq!(
+        braces.text.as_deref(),
+        Some("The set {1, 2} has two members.")
+    );
     let embedded = parse_reply("Here: {\"text\": \"Hi\"}").expect("embedded");
     assert_eq!(embedded.text.as_deref(), Some("Hi"));
     assert!(parse_reply(r#"{"tool_calls": [{"name": "x", "input": 3}]}"#).is_err());

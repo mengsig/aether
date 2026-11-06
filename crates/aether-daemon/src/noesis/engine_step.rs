@@ -102,7 +102,11 @@ fn engine_request(request: &ModelRequest) -> ModelRequest {
 
 /// The prompt again, with the reply that failed and why.
 fn corrected(mut request: ModelRequest, reply: &str, error: &str) -> ModelRequest {
-    debug_assert_eq!(request.messages.len(), 1, "the rendered prompt is one message");
+    debug_assert_eq!(
+        request.messages.len(),
+        1,
+        "the rendered prompt is one message"
+    );
     let note = format!(
         "\n\n## Your previous reply was refused\n\nIt was not one valid JSON object of the \
          reply format ({error}). It read:\n\n{reply}\n\nReply again with only the JSON object."
@@ -154,10 +158,7 @@ fn transcript(messages: &[Message]) -> String {
             text.push_str(&format!("\n## {speaker}\n\n{}\n", texts.join("\n\n")));
         }
         if !calls.is_empty() {
-            text.push_str(&format!(
-                "\n## You called\n\n{}\n",
-                Value::Array(calls)
-            ));
+            text.push_str(&format!("\n## You called\n\n{}\n", Value::Array(calls)));
         }
         if !results.is_empty() {
             text.push_str(&format!("\n## Tool results\n\n{}\n", results.join("\n")));

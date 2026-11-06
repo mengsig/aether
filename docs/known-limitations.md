@@ -271,6 +271,8 @@ looks like a boundary and is not one.
   Unknown cost is not zero cost or a reliable dollar-budget guarantee.
 - Retention is not a full disk quota. Native sessions, backups, and workspaces
   have separate lifecycles.
+- A Noesis step on a subscription engine starts a fresh CLI session each
+  turn, and its text arrives in one piece when the step ends, not streamed.
 
 ## Platforms
 

@@ -70,6 +70,7 @@ pub use bus::{BusMessage, DeltaKind, DeltaStream, EventBus};
 pub use commands::{
     AgentUpdate, CreateAgentSpec, CreateTaskSpec, MessageDelivery, RuntimeStatus, pending_question,
 };
+pub use noesis_engine::NoesisStepStream;
 pub use retention::HistorySweep;
 
 #[derive(Debug, thiserror::Error)]

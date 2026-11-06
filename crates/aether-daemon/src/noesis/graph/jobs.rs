@@ -15,7 +15,7 @@ use aether_core::id::{AgentId, ArtifactId, TaskId};
 use aether_core::model::{MessageRole, ModelRef};
 use aether_core::task::TaskStatus;
 use aether_noesis::Noesis;
-use aether_noesis::budget::Spend;
+use aether_noesis::budget::{Billing, Spend};
 use aether_noesis::extract::jobs::fail_interrupted;
 use aether_noesis::extract::session_origin;
 use aether_noesis::extract::{
@@ -30,6 +30,7 @@ use aether_store::{Commit, Store};
 use aether_tools::Redactor;
 
 use crate::noesis::budget::ServiceBudget;
+use crate::noesis::engine::model_offers;
 
 /// The largest source an import reads (parity X8).
 pub(super) const MAX_SOURCE_BYTES: u64 = 25 * 1024 * 1024;
@@ -166,7 +167,10 @@ impl Extraction {
         announce(runtime, JobEvent::Updated(job.clone()));
         let mut model = AgentModel {
             runtime: runtime.clone(),
-            model: self.model.clone(),
+            model: self
+                .model
+                .clone()
+                .or_else(|| first_subscription_model(runtime)),
             cancel: flag.clone(),
         };
         let mut budget = GuardBudget(self.budget.clone());
@@ -184,6 +188,19 @@ impl Extraction {
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
+}
+
+/// An unset cheap slot takes the first ready subscription model; with none,
+/// the runtime's default stands, which the guard refuses if it is billed.
+fn first_subscription_model(runtime: &Arc<Runtime>) -> Option<ModelRef> {
+    let handle = tokio::runtime::Handle::current();
+    let offers = handle.block_on(model_offers(runtime, runtime.models(), false));
+    let chosen = offers
+        .into_iter()
+        .find(|offer| offer.ready && offer.billing == Billing::Subscription)?;
+    let model = ModelRef::parse(&chosen.id);
+    debug_assert!(model.is_some(), "an offer's id is provider/model");
+    model
 }
 
 /// Record a job's progress as a durable `noesis` event.

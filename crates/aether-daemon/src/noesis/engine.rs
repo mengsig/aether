@@ -29,7 +29,7 @@ use aether_noesis::teach::{
 };
 use aether_noesis::tools::{self, ToolName};
 use aether_runtime::noesis_guard::{NoesisBudget, NoesisCharge, lane_of};
-use aether_runtime::{BusMessage, CreateAgentSpec, Runtime};
+use aether_runtime::{BusMessage, CreateAgentSpec, NoesisStepStream, Runtime};
 use aether_store::Commit;
 use futures::StreamExt;
 use tokio::sync::broadcast::error::RecvError;
@@ -53,46 +53,54 @@ pub(super) struct EngineHost {
     pub run: RunId,
 }
 
-impl EngineHost {
-    /// Whether `model` runs on an engine CLI (a subscription), not an API.
-    fn is_engine(&self, model: &ModelRef) -> bool {
-        self.models
-            .registry()
-            .provider(&model.provider)
-            .is_some_and(|provider| provider.protocol.is_engine())
-    }
+/// Whether `model` runs on an engine CLI (a subscription), not an API.
+fn runs_on_engine(models: &Models, model: &ModelRef) -> bool {
+    models
+        .registry()
+        .provider(&model.provider)
+        .is_some_and(|provider| provider.protocol.is_engine())
+}
 
-    /// Every listed model, ready only when a step on it could run now: an
-    /// engine detected and launchable with its CLI signed in, an API
-    /// provider with credentials (or the test client standing in for it).
-    pub(super) async fn model_offers(&self) -> Vec<ModelInfo> {
-        let mut signed_in: HashMap<String, bool> = HashMap::new();
-        let mut offers = Vec::new();
-        for info in self.models.list() {
-            let provider = info.model.provider.clone();
-            let engine = self.is_engine(&info.model);
-            if !signed_in.contains_key(&provider) {
-                let status = self.models.auth_status(&provider).await;
-                signed_in.insert(provider.clone(), status.configured);
-            }
-            let credentials = signed_in.get(&provider).copied().unwrap_or(false);
-            let ready = if engine {
-                credentials && self.runtime.engine_launchable(&info.model) == Some(true)
-            } else {
-                credentials || self.client.is_some()
-            };
-            offers.push(ModelInfo {
-                id: info.model.to_string(),
-                billing: if engine {
-                    Billing::Subscription
-                } else {
-                    Billing::Api
-                },
-                ready,
-            });
+/// Every listed model, ready only when a step on it could run now: an
+/// engine detected and launchable with its CLI signed in, an API provider
+/// with credentials, or any API model while `test_client` stands in.
+pub(super) async fn model_offers(
+    runtime: &Runtime,
+    models: &Models,
+    test_client: bool,
+) -> Vec<ModelInfo> {
+    let mut signed_in: HashMap<String, bool> = HashMap::new();
+    let mut offers = Vec::new();
+    for info in models.list() {
+        let provider = info.model.provider.clone();
+        let engine = runs_on_engine(models, &info.model);
+        if !signed_in.contains_key(&provider) {
+            let status = models.auth_status(&provider).await;
+            signed_in.insert(provider.clone(), status.configured);
         }
-        debug_assert!(offers.iter().all(|offer| !offer.id.is_empty()));
-        offers
+        let credentials = signed_in.get(&provider).copied().unwrap_or(false);
+        let ready = if engine {
+            credentials && runtime.engine_launchable(&info.model) == Some(true)
+        } else {
+            credentials || test_client
+        };
+        offers.push(ModelInfo {
+            id: info.model.to_string(),
+            billing: if engine {
+                Billing::Subscription
+            } else {
+                Billing::Api
+            },
+            ready,
+        });
+    }
+    debug_assert!(offers.iter().all(|offer| !offer.id.is_empty()));
+    offers
+}
+
+impl EngineHost {
+    fn is_engine(&self, model: &ModelRef) -> bool {
+        runs_on_engine(&self.models, model)
     }
 
     /// The client a step of `agent` is sent to: its engine for an engine
@@ -287,9 +295,11 @@ impl AetherEngine<'_> {
         let host = self.host;
         let handle = tokio::runtime::Handle::current();
         let cancel = host.cancel.child_token();
+        let turn = step_number(&request.messages);
         tokio::task::block_in_place(|| {
             handle.block_on(async {
                 let client = host.client_for(agent).await?;
+                let mut live = NoesisStepStream::start(host.runtime.clone(), agent.id, turn);
                 let ended = agent_ended(&host.runtime, agent.id);
                 tokio::pin!(ended);
                 let stream = tokio::select! {
@@ -300,7 +310,7 @@ impl AetherEngine<'_> {
                     }
                     () = cancel.cancelled() => return Err(failed(SERVICE_STOPPED)),
                 };
-                read_reply(stream, &cancel, ended).await
+                read_reply(stream, &cancel, ended, &mut live).await
             })
         })
     }
@@ -401,8 +411,10 @@ impl AetherEngine<'_> {
 
 impl Engine for AetherEngine<'_> {
     fn models(&self) -> Vec<ModelInfo> {
+        let host = self.host;
         let handle = tokio::runtime::Handle::current();
-        tokio::task::block_in_place(|| handle.block_on(self.host.model_offers()))
+        let offers = model_offers(&host.runtime, &host.models, host.client.is_some());
+        tokio::task::block_in_place(|| handle.block_on(offers))
     }
 
     fn spawn(&mut self, spec: AgentSpec) -> Result<String, EngineError> {
@@ -537,6 +549,7 @@ async fn read_reply(
     mut stream: ModelStream,
     cancel: &CancellationToken,
     mut ended: Pin<&mut impl Future<Output = ()>>,
+    live: &mut NoesisStepStream,
 ) -> Result<CallEnd, EngineError> {
     let mut reply = StreamAccumulator::new();
     let mut usage = Usage::default();
@@ -554,8 +567,10 @@ async fn read_reply(
             Some(Ok(event)) => event,
             Some(Err(error)) => return Ok(CallEnd::Broke(usage, error.to_string())),
         };
-        if let StreamEvent::Usage { usage: reading } = &event {
-            usage = *reading;
+        match &event {
+            StreamEvent::Usage { usage: reading } => usage = *reading,
+            StreamEvent::TextDelta { text, .. } => live.text(text),
+            _ => {}
         }
         reply
             .apply(&event)
@@ -566,6 +581,15 @@ async fn read_reply(
         .map_err(|e| failed(format!("malformed model stream: {e}")))?;
     debug_assert_eq!(response.usage, usage, "the reply carries the last reading");
     Ok(CallEnd::Replied(response))
+}
+
+/// The step's turn number for live deltas: one more than the replies so far.
+fn step_number(history: &[Message]) -> u32 {
+    let replies = history
+        .iter()
+        .filter(|message| message.role == MessageRole::Assistant)
+        .count();
+    u32::try_from(replies).map_or(u32::MAX, |replies| replies.saturating_add(1))
 }
 
 fn message_draft(agent: &Agent, role: MessageRole, content: Vec<ContentBlock>) -> EventDraft {
