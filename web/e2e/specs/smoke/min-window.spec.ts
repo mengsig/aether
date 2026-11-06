@@ -9,13 +9,14 @@ import { openAgent } from "../noesis/noesis.ts";
 
 const MIN_WINDOW = { width: 720, height: 451 };
 
-/** The page's scroll width against its viewport, and the shell main's, after the screen settled. */
-async function widths(page: Page): Promise<{ readonly page: number; readonly viewport: number; readonly main: number }> {
-  await expect(page.locator(".ui-screen-skeleton")).toHaveCount(0);
+/** The page's scroll width against its viewport, and the shell main's, once `ready` shows. */
+async function widths(page: Page, ready: string): Promise<{ readonly page: number; readonly viewport: number; readonly main: number }> {
+  await expect(page.locator(ready).first(), `the screen is populated: ${ready}`).toBeVisible();
+  await expect(page.locator(".ui-shell-main"), "the shell's main is there to measure").toHaveCount(1);
   return page.evaluate(() => ({
     page: document.documentElement.scrollWidth,
     viewport: window.innerWidth,
-    main: document.querySelector(".ui-shell-main")?.scrollWidth ?? 0,
+    main: document.querySelector(".ui-shell-main")?.scrollWidth ?? Number.NaN,
   }));
 }
 
@@ -25,18 +26,18 @@ test("at the minimum window size no screen scrolls sideways and the controls for
   const conn = encodeURIComponent(await openAgent(page, stack, "Narrow worker"));
   await page.setViewportSize(MIN_WINDOW);
   const controls = `#/controls/${conn}/${agentId}`;
+  // Each screen with what shows once its data is there, not its loading skeleton.
   const screens = [
-    ["settings", "#/settings/providers"],
-    ["activity", "#/activity"],
-    ["controls", controls],
-    ["chat", `#/agents/${conn}/${agentId}`],
-    ["learn", "#/learn"],
+    ["settings", "#/settings/providers", '[role="tabpanel"]'],
+    ["activity", "#/activity", "article[data-kind]"],
+    ["controls", controls, '[data-testid="configure-model"]'],
+    ["chat", `#/agents/${conn}/${agentId}`, '[data-testid="composer-input"]'],
+    ["learn", "#/learn", '[data-testid="noesis-turn-on"]'],
   ] as const;
-  for (const [name, hash] of screens) {
+  for (const [name, hash, ready] of screens) {
     await page.goto(`${stack.aether.origin}/${hash}`);
     if (name === "controls") await openModelTab(page);
-    await page.waitForTimeout(300);
-    const measured = await widths(page);
+    const measured = await widths(page, ready);
     expect(measured.page, `${name} fits the window: ${JSON.stringify(measured)}`).toBeLessThanOrEqual(measured.viewport);
     expect(measured.main, `${name}'s main does not scroll sideways: ${JSON.stringify(measured)}`).toBeLessThanOrEqual(measured.viewport);
     await page.screenshot({ path: info.outputPath(`min-window-${name}.png`), fullPage: true });

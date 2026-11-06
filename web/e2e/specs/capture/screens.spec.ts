@@ -138,15 +138,23 @@ test("operator: empty, then loaded, then error states", async ({ page, stack }) 
     await expect(p.getByTestId("new-item-submit")).toBeVisible();
     await p.mouse.move(0, 0);
   } });
+  await shootSettings(page, stack);
+  await shootErrors(page, stack, conn, itemId);
+});
+
+async function shootSettings(page: Page, stack: Stack): Promise<void> {
   for (const tab of ["connections", "devices", "remote", "providers", "notifications"]) {
     await shoot(page, stack, "Settings", tab, `#/settings/${tab}`, '[role="tabpanel"]');
   }
+}
 
+/** The pages for things the daemons do not have: each says so in place. */
+async function shootErrors(page: Page, stack: Stack, conn: string, itemId: string): Promise<void> {
   await shoot(page, stack, "Item", "error", `#/archon/items/${NO_ITEM}`);
   await shoot(page, stack, "Agent", "error", `#/agents/${encodeURIComponent(conn)}/${NO_AGENT}`);
   await shoot(page, stack, "Pipeline", "error", `#/archon/items/${itemId}/runs/run_missing`);
   await shoot(page, stack, "Initiative", "error", "#/archon/initiatives/ini_missing");
-});
+}
 
 test("loading: the screens while their sockets wait", async ({ page, stack }) => {
   await pairBoth(page, stack, { aether: "operator", archon: "operator" }, "Design audit loading");

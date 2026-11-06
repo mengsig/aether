@@ -7,7 +7,7 @@ import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { until } from "../../harness/process.ts";
 import { AGENT_LIMITS, isRealModel } from "../../harness/real-engine.ts";
-import { agent, agentIds, cancelLive, capAgent, transcriptText } from "./daemon.ts";
+import { agent, agentIds, cancelLive, capAgent, toolCallInputs } from "./daemon.ts";
 import { connectionsReady, pairIfAsked, journeyHooks, type Journey } from "./journey.ts";
 import { FAUX_COMMANDS, LISTED_REPLY, OBJECTIVES, REAL_COMMANDS, REAL_OBJECTIVES, RELEASE_FILE } from "./scripts.ts";
 import { shootWindow } from "./capture.ts";
@@ -51,7 +51,8 @@ async function expectReplyAndToolCall(run: Journey, id: string): Promise<void> {
   const { window, stack, variant } = run;
   const page = agentPage(window);
   const reply = variant === "faux" ? LISTED_REPLY : /pong/i;
-  await expect(page.getByText(reply).first(), "the agent's reply shows").toBeVisible({ timeout: REPLY_MS[variant] });
+  // The agent's own words: the page also prints the objective, which names the reply.
+  await expect(page.locator('.conv-msg[data-role="assistant"]').filter({ hasText: reply }).first(), "the agent's reply shows").toBeVisible({ timeout: REPLY_MS[variant] });
   if (variant === "faux") {
     const answered = stack.engine.requests.filter((request) => request.toolResults.length > 0);
     assert.ok(answered.length > 0, "the daemon ran the shell call and sent its result back");
@@ -64,7 +65,7 @@ async function expectReplyAndToolCall(run: Journey, id: string): Promise<void> {
   const output = page.getByTestId("conv-tool-output").filter({ hasText: command }).first();
   await expect(output, "the unfolded call shows its command").toBeVisible();
   await shootWindow(window, "agent", "tool-unfolded");
-  await until(() => transcriptText(stack, id), (text) => text.includes(RELEASE_FILE), "the agent to hold in its shell call", REPLY_MS[variant]);
+  await until(() => toolCallInputs(stack, id), (inputs) => inputs.some((input) => input.includes(RELEASE_FILE)), "the agent to hold in its shell call", REPLY_MS[variant]);
   const held = await agent(stack, id);
   assert.ok(!["completed", "failed", "cancelled"].includes(held.state), `the held agent still works: ${held.state}`);
 }

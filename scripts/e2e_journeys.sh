@@ -107,7 +107,7 @@ for tool in sway swaymsg wtype; do command -v "$tool" > /dev/null || die "the jo
 
 STATE=$(mktemp -d "${E2E_RUN_BASE:-/var/tmp}/ae-run-XXXXXX")
 mkdir -m 700 "$STATE/t" "$STATE/home" "$STATE/xdg"
-export E2E_STATE=$STATE E2E_TMP=$STATE/t E2E_USER_HOME=$HOME E2E_USER_PATH=$PATH E2E_OUT=${E2E_OUT:-$REPO_ROOT/web/e2e/.out}
+export E2E_STATE=$STATE E2E_TMP=$STATE/t E2E_USER_HOME=$HOME E2E_USER_PATH=${E2E_USER_PATH:-$PATH} E2E_OUT=${E2E_OUT:-$REPO_ROOT/web/e2e/.out}
 export AETHER_BIN ARCHOND_BIN E2E_DESKTOP_EXEC JOURNEY_ENGINE
 export PLAYWRIGHT_BROWSERS_PATH=${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}
 

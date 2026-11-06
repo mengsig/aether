@@ -142,13 +142,46 @@ export async function createAgentOn(stack: Stack, spec: NewAgent): Promise<strin
   return String(data.id);
 }
 
-/** The agent's transcript as one string, for checks that a tool result or reply is in it. */
-export async function transcriptText(stack: Stack, id: string): Promise<string> {
+interface Block { readonly type: string; readonly text?: unknown; readonly input?: unknown; readonly content?: unknown; readonly is_error?: unknown }
+interface Entry { readonly message: { readonly role: string; readonly content: Block[] } }
+
+/** The transcript's content blocks with their message's role, in order; the objective is the first user message. */
+async function transcriptBlocks(stack: Stack, id: string): Promise<Array<{ role: string; block: Block }>> {
   const { reply, data } = await stack.aether.request({ cmd: "get_transcript", agent: id, after: 0 });
   assert.equal(reply, "transcript", `get_transcript answers transcript: ${reply}`);
-  const text = JSON.stringify(data);
-  assert.ok(text.length > 2, "the transcript is not empty");
-  return text;
+  assert.ok(Array.isArray(data) && data.length > 0, "the transcript has entries");
+  return (data as Entry[]).flatMap((entry) => {
+    assert.ok(Array.isArray(entry.message?.content), "each entry's message carries content blocks");
+    return entry.message.content.map((block) => ({ role: entry.message.role, block }));
+  });
+}
+
+/** What the agent itself said: the text blocks of its assistant messages, joined. */
+export async function assistantText(stack: Stack, id: string): Promise<string> {
+  const blocks = await transcriptBlocks(stack, id);
+  return blocks.filter(({ role, block }) => role === "assistant" && block.type === "text").map(({ block }) => String(block.text ?? "")).join("\n");
+}
+
+/** The inputs of every tool call the agent made, as JSON; the objective's words are not among them. */
+export async function toolCallInputs(stack: Stack, id: string): Promise<string[]> {
+  const blocks = await transcriptBlocks(stack, id);
+  return blocks.filter(({ block }) => block.type === "tool_use").map(({ block }) => JSON.stringify(block.input ?? null));
+}
+
+/** Every tool result the daemon sent back: its text and whether the tool failed. */
+export async function toolResults(stack: Stack, id: string): Promise<Array<{ text: string; failed: boolean }>> {
+  const blocks = await transcriptBlocks(stack, id);
+  return blocks.filter(({ block }) => block.type === "tool_result").map(({ block }) => {
+    const parts = Array.isArray(block.content) ? (block.content as Block[]) : [];
+    return { text: parts.filter((part) => part.type === "text").map((part) => String(part.text ?? "")).join("\n"), failed: block.is_error === true };
+  });
+}
+
+/** A global memory created on the daemon directly, as a neighbour for what the screen creates. */
+export async function createMemory(stack: Stack, text: string): Promise<void> {
+  assert.ok(text.trim() !== "", "a memory has text");
+  const { reply } = await stack.aether.request({ cmd: "create_memory", spec: { text, kind: "fact", scope: { scope: "global" }, tags: [] } });
+  assert.equal(reply, "memory", `create_memory answers with the memory: ${reply}`);
 }
 
 /** Caps an agent the window started: the real variant's cost budget and turn limit. */

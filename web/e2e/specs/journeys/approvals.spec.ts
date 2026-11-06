@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { expect, test } from "@playwright/test";
 import { until } from "../../harness/process.ts";
 import { AGENT_LIMITS, REAL_MODELS } from "../../harness/real-engine.ts";
-import { agent, approvalRuleTools, cancelLive, createAgentOn, pendingApprovals, transcriptText } from "./daemon.ts";
+import { agent, approvalRuleTools, assistantText, cancelLive, createAgentOn, pendingApprovals, toolResults } from "./daemon.ts";
 import { connectionsReady, journeyHooks, type Journey } from "./journey.ts";
 import { APPROVED_REPLY, OBJECTIVES, REAL_OBJECTIVES } from "./scripts.ts";
 import { shootWindow } from "./capture.ts";
@@ -80,8 +80,9 @@ test("approvals journey: Inbox approves a waiting tool call and the agent goes o
     assert.equal((await agent(run.stack, id)).state, "completed", "the agent finished through its approved call");
     return;
   }
-  const transcript = await until(() => transcriptText(run.stack, id), (text) => text.includes(APPROVED_REPLY), "the agent to go on", WAIT_MS.faux);
-  assert.ok(transcript.includes("approval-probe"), "the approved call ran");
+  await until(() => assistantText(run.stack, id), (said) => said.includes(APPROVED_REPLY), "the agent to go on", WAIT_MS.faux);
+  const results = await toolResults(run.stack, id);
+  assert.ok(results.some((result) => !result.failed && result.text.includes("approval-probe")), `the approved call ran and printed its probe: ${JSON.stringify(results)}`);
 });
 
 test("approvals journey: a standing rule added from Controls", async () => {
