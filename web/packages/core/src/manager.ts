@@ -129,6 +129,18 @@ export class ConnectionManager {
     return connection.show(agents);
   }
 
+  /**
+   * Reads an agent's transcript into the store without its deltas, for an agent on screen beyond the
+   * watched ones; committed messages then extend it from the durable events.
+   */
+  readTranscript(conn: ConnId, agent: string): Promise<void> {
+    const connection = this.get(conn);
+    if (connection?.endpoint.daemon !== "aether") return Promise.reject(new DaemonError("not_found", `${conn} is not an Aether connection`));
+    const sync = connection.aetherSync;
+    if (sync === null) return Promise.reject(new DaemonError("not_connected", `${conn} is not connected`));
+    return sync.reread(string(agent, "agent id"));
+  }
+
   /** §5.3.3: the items on screen for one archond connection; resumed after reconnects. */
   showItems(conn: ConnId, items: readonly string[]): void {
     const connection = this.get(conn);

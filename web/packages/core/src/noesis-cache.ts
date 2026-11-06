@@ -74,10 +74,23 @@ export function installSession(cache: NoesisCache, session: aether.NoesisSession
   if (cache.deleted.includes(id)) return cache;
   const held = cache.sessions[id];
   if (held && compareStamps(held.updated_at, session.updated_at) > 0) return cache;
-  let next: NoesisCache = { ...cache, sessions: { ...cache.sessions, [id]: session } };
+  let next: NoesisCache = { ...cache, sessions: { ...cache.sessions, [id]: withHeldHistory(held, session) } };
   if (session.open_question) next = withQuestion(next, id, session.open_question);
   if (session.active_problem) next = withProblem(next, id, session.active_problem);
   return next;
+}
+
+const HISTORY = ["agents", "questions", "problems", "usage", "context"] as const;
+
+/**
+ * Only `noesis_get_session` carries a session's history, and it always names the session's agents.
+ * A list row or an event without it keeps the history held, which the session's reread refreshes.
+ */
+function withHeldHistory(held: aether.NoesisSession | undefined, session: aether.NoesisSession): aether.NoesisSession {
+  if (held?.agents === undefined || session.agents !== undefined) return session;
+  invariant(held.id === session.id, "history is kept for its own session");
+  const kept = Object.fromEntries(HISTORY.filter((key) => session[key] === undefined && held[key] !== undefined).map((key) => [key, held[key]]));
+  return { ...session, ...kept };
 }
 
 /** Installs a page of `noesis_list_sessions`: each row whole by its own stamp, and the page as a read. */
@@ -134,18 +147,25 @@ export function applyNoesisEvent(cache: NoesisCache, kind: Json, agent: string |
   } else if (type === "noesis.settings_changed") {
     next = stampStatus(next);
   }
-  const stale = staleKeys(type, session);
+  const stale = staleKeys(type, session, kind);
   return stale.length === 0 ? next : { ...next, versions: bump(next.versions, ...stale) };
 }
 
-/** Which held entities an event makes stale. */
-function staleKeys(type: string, session: string | null): string[] {
+/** Which held entities an event makes stale; a job that ends has merged what it found into the graph. */
+function staleKeys(type: string, session: string | null, kind: Json): string[] {
   if (type === "noesis.learner_updated") return [noesisKey.learner];
   if (type === "noesis.graph_merged") return [noesisKey.graph];
-  if (type === "noesis.job_updated") return [noesisKey.jobs];
+  if (type === "noesis.job_updated") return jobEnded(kind) ? [noesisKey.jobs, noesisKey.graph] : [noesisKey.jobs];
   if (type === "noesis.settings_changed") return [noesisKey.status];
   if (session === null) return [];
   return [noesisKey.session(session), noesisKey.sessions];
+}
+
+const ENDED_JOB = new Set<string>(["succeeded", "failed", "cancelled"]);
+
+function jobEnded(kind: Json): boolean {
+  const job = object(kind.job, "noesis.job_updated.job");
+  return ENDED_JOB.has(string(job.state, "noesis.job_updated.job.state"));
 }
 
 /** A settings event is newer than any status ask still in flight: its read takes a fresh ticket. */

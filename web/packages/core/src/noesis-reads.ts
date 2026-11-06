@@ -64,13 +64,16 @@ export function installNoesisChange(state: AetherConnState, command: Json, reply
   if (cmd === "noesis_configure") return installStatus(state, replyObject(reply, "noesis_status"), ticket);
   if (cmd === "noesis_create_session") return withLearn(state, installSession(state.learn, replyObject(reply, "noesis_session") as unknown as aether.NoesisSession));
   if (cmd === "noesis_delete_session") return withLearn(state, removeSession(state.learn, string(command.session, "noesis_delete_session.session")));
-  if (cmd === "noesis_delete_proposition" || cmd === "noesis_delete_source") return withLearn(state, staleGraph(state.learn));
+  if (cmd === "noesis_delete_proposition" || cmd === "noesis_delete_source") return withLearn(state, stale(state.learn, noesisKey.graph));
   object(reply, "reply");
+  // An answer is recorded and graded before the reply, and a message is queued: the session's reread shows both.
+  if (cmd === "noesis_answer" || cmd === "noesis_send") return withLearn(state, stale(state.learn, noesisKey.session(string(command.session, `${cmd}.session`))));
+  if (cmd === "noesis_extract") return withLearn(state, stale(state.learn, noesisKey.jobs));
   return state;
 }
 
-function staleGraph(learn: NoesisCache): NoesisCache {
-  return { ...learn, versions: { ...learn.versions, [noesisKey.graph]: (learn.versions[noesisKey.graph] ?? 0) + 1 } };
+function stale(learn: NoesisCache, key: string): NoesisCache {
+  return { ...learn, versions: { ...learn.versions, [key]: (learn.versions[key] ?? 0) + 1 } };
 }
 
 function withLearn(state: AetherConnState, learn: NoesisCache): AetherConnState {
