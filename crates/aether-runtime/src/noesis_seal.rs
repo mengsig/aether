@@ -295,6 +295,7 @@ fn seal_event(
         | EventKind::DaemonStopped { .. }
         | EventKind::NoesisSessionCreated { .. }
         | EventKind::NoesisPhaseChanged { .. }
+        | EventKind::NoesisSessionStalled { .. }
         | EventKind::NoesisQuestionPosed { .. }
         | EventKind::NoesisAnswerRecorded { .. }
         | EventKind::NoesisPlanUpdated { .. }

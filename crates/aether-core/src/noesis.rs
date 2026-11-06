@@ -88,6 +88,26 @@ pub struct NoesisSession {
     /// The evidence bundle the session started from, when it had one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<EvidenceBundle>,
+    /// Why the session's last turn could not run, until a later turn runs.
+    /// Every session read carries it; events leave it out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stalled: Option<SessionStall>,
+}
+
+/// A turn that stopped before any model call, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SessionStall {
+    pub reason: StallReason,
+    /// What the learner can do about it, naming the setting to change.
+    pub message: String,
+    pub at: Timestamp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StallReason {
+    /// Today's interactive budget (`noesis.budget.interactive_usd_daily`) is spent.
+    BudgetExhausted,
 }
 
 /// What an agent did in its session.
@@ -135,6 +155,9 @@ pub struct RecordedAnswer {
     /// One of [`CONFIDENCE_LEVELS`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confidence: Option<u8>,
+    /// The reasoning the learner gave with the answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
     pub answered_at: Timestamp,
 }
 

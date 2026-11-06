@@ -388,6 +388,7 @@ fn noesis_session() -> crate::noesis::NoesisSession {
         problems: Vec::new(),
         usage: None,
         context: None,
+        stalled: None,
     }
 }
 
@@ -448,6 +449,17 @@ fn noesis_events_are_durable_noesis_family_events_that_survive_the_log() {
                 miss_class: None,
                 retest: true,
                 solution: "x = 1".into(),
+            },
+        ),
+        (
+            "noesis.session_stalled",
+            EventKind::NoesisSessionStalled {
+                session: "ns_1".into(),
+                stall: SessionStall {
+                    reason: StallReason::BudgetExhausted,
+                    message: "raise noesis.budget.interactive_usd_daily".into(),
+                    at: crate::time::now(),
+                },
             },
         ),
         (

@@ -5,6 +5,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use aether_core::model::Usage;
 use aether_noesis::budget::{Billing, ModelOffer, choose_model};
 use aether_noesis::settings::NoesisSettings;
 use aether_noesis::teach::engine::ModelInfo;

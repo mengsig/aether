@@ -16,7 +16,7 @@ use crate::memory::MemoryCandidate;
 use crate::model::{ContentBlock, MessageRole, ModelRef, StopReason, Usage};
 use crate::noesis::{
     ConceptId, Job, JobId, JobStats, MissClass, NoesisSession, NoesisSettingsView, Phase, PlanTree,
-    PracticeOutcome, Problem, Question, QuestionResult, SessionId,
+    PracticeOutcome, Problem, Question, QuestionResult, SessionId, SessionStall,
 };
 use crate::provider::QuotaWindow;
 use crate::snapshot::ContextLayer;
@@ -580,6 +580,12 @@ pub enum EventKind {
         miss_class: Option<MissClass>,
         retest: bool,
         solution: String,
+    },
+    /// A turn stopped before any model call; the session carries it too.
+    #[serde(rename = "noesis.session_stalled")]
+    NoesisSessionStalled {
+        session: SessionId,
+        stall: SessionStall,
     },
     #[serde(rename = "noesis.job_updated")]
     NoesisJobUpdated { job: Job },
