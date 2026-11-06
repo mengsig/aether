@@ -101,13 +101,17 @@ describe("KaTeX trust boundary", () => {
     expect(container.querySelector("a,img,script,iframe,style,#owned,.owned,[data-test]")).toBeNull();
     for (const node of container.querySelectorAll("*")) {
       expect([...node.attributes].some((attribute) => /^(?:on|href|src)/i.test(attribute.name))).toBe(false);
+      expect(node.getAttribute("style") ?? "").not.toMatch(/url\s*\(|background/i);
     }
   });
 
   test("caps macro expansion and does not share macro definitions between messages", () => {
     expect(renderMath(String.raw`\def\loop{\loop}\loop`, false)).toContain("katex-error");
     renderMath(String.raw`\gdef\owned{x}`, false);
-    expect(renderMath(String.raw`\owned`, false)).toContain("owned");
+    const isolated = document.createElement("div");
+    isolated.innerHTML = renderMath(String.raw`\owned`, false);
+    expect(isolated.textContent).toContain("owned");
+    expect(isolated.querySelector("math mi")?.textContent).not.toBe("x");
     expect(() => renderMath("x".repeat(8193), false)).toThrow("bounded");
   });
 });
