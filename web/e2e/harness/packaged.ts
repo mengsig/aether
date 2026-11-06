@@ -96,9 +96,28 @@ function appEnv(dir: string, launch: PackagedLaunch): NodeJS.ProcessEnv {
 }
 
 let running: PackagedApp | undefined;
+/** On a host under heavy load the app can take the DevTools socket yet not answer in time. */
+const LAUNCH_ATTEMPTS = 2;
 
-/** Starts the packaged app, connects over its DevTools port and returns its app window. One at a time. */
+/**
+ * Starts the packaged app, connects over its DevTools port and returns its app window. One at a
+ * time. A start that does not answer is stopped and tried once more; both failures are kept.
+ */
 export async function launchPackaged(launch: PackagedLaunch): Promise<PackagedApp> {
+  const failures: unknown[] = [];
+  for (let attempt = 1; attempt <= LAUNCH_ATTEMPTS; attempt += 1) {
+    try {
+      return await launchOnce(launch);
+    } catch (error) {
+      failures.push(error);
+      console.warn(`the packaged app did not start (attempt ${attempt} of ${LAUNCH_ATTEMPTS}): ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
+    }
+  }
+  assert.equal(failures.length, LAUNCH_ATTEMPTS, "every attempt failed");
+  throw new AggregateError(failures, `the packaged app did not start in ${LAUNCH_ATTEMPTS} attempts`);
+}
+
+async function launchOnce(launch: PackagedLaunch): Promise<PackagedApp> {
   assert.equal(running, undefined, "one packaged app runs at a time; close the last one first");
   assert.ok(path.isAbsolute(launch.aetherSocket) && path.isAbsolute(launch.archonSocket), "the app gets absolute socket paths");
   const dir = await mkdtemp(path.join(tempBase(), "pk-"));
@@ -163,27 +182,60 @@ function swayEnv(sway: Sway): NodeJS.ProcessEnv {
   return { PATH: SYSTEM_PATH, XDG_RUNTIME_DIR: sway.runtime, WAYLAND_DISPLAY: sway.display, SWAYSOCK: sway.ipc };
 }
 
-/** Titles of every window sway shows, native dialogs included. */
-export async function windowTitles(sway: Sway): Promise<string[]> {
+interface SwayWindow { readonly title: string; readonly focused: boolean }
+
+/** Every window sway shows, native dialogs included, and whether it has the keyboard. */
+async function swayWindows(sway: Sway): Promise<SwayWindow[]> {
   const { stdout } = await run("/usr/bin/swaymsg", ["-t", "get_tree", "-r"], { env: swayEnv(sway), timeout: TOOL_MS });
-  const titles: string[] = [];
-  const walk = (node: { name?: unknown; nodes?: unknown[]; floating_nodes?: unknown[] }) => {
-    if (typeof node.name === "string" && (node.nodes?.length ?? 0) === 0) titles.push(node.name);
-    for (const child of [...(node.nodes ?? []), ...(node.floating_nodes ?? [])]) walk(child as typeof node);
+  const windows: SwayWindow[] = [];
+  const walk = (node: { name?: unknown; focused?: unknown; nodes?: unknown[]; floating_nodes?: unknown[] }) => {
+    const children = [...(node.nodes ?? []), ...(node.floating_nodes ?? [])];
+    if (typeof node.name === "string" && children.length === 0) windows.push({ title: node.name, focused: node.focused === true });
+    for (const child of children) walk(child as typeof node);
   };
   walk(JSON.parse(stdout) as Parameters<typeof walk>[0]);
-  return titles;
+  assert.ok(windows.filter((window) => window.focused).length <= 1, "sway gives the keyboard to one window at most");
+  return windows;
+}
+
+/** Titles of every window sway shows, native dialogs included. */
+export async function windowTitles(sway: Sway): Promise<string[]> {
+  return (await swayWindows(sway)).map((window) => window.title);
+}
+
+const DIALOG_ATTEMPTS = 3;
+const DIALOG_CLOSE_MS = 3_000;
+
+/** Whether the window titled `title` is gone within the bound; a failing swaymsg still throws. */
+async function closesWithin(sway: Sway, title: string, timeoutMs: number): Promise<boolean> {
+  assert.ok(timeoutMs > 0, "a close is awaited for a positive time");
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    if (!(await windowTitles(sway)).includes(title)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return !(await windowTitles(sway)).includes(title);
 }
 
 /**
  * Accepts the native confirmation titled `title` (security/confirm.ts): its buttons are Cancel
- * then the action, Cancel focused, so Right moves to the action and Return presses it.
+ * then the action, Cancel focused, so Right moves to the action and Return presses it. Keys go
+ * only once sway gives the dialog the keyboard; a press that does not close it is tried again.
  */
 export async function acceptNativeDialog(sway: Sway, title: string, timeoutMs = 15_000): Promise<void> {
   assert.ok(title.trim() !== "", "a native dialog is found by its title");
   await until(() => windowTitles(sway), (titles) => titles.includes(title), `the native dialog "${title}"`, timeoutMs);
   const env = swayEnv(sway);
-  await run("/usr/bin/swaymsg", [`[title="^${title.replace(/[.*+?^${}()|[\]\\"]/g, "\\$&")}$"]`, "focus"], { env, timeout: TOOL_MS });
-  await run("/usr/bin/wtype", ["-k", "Right", "-k", "Return"], { env, timeout: TOOL_MS });
-  await until(() => windowTitles(sway), (titles) => !titles.includes(title), `the native dialog "${title}" to close`, timeoutMs);
+  const criteria = `[title="^${title.replace(/[.*+?^${}()|[\]\\"]/g, "\\$&")}$"]`;
+  for (let attempt = 1; attempt <= DIALOG_ATTEMPTS; attempt += 1) {
+    await run("/usr/bin/swaymsg", [criteria, "focus"], { env, timeout: TOOL_MS });
+    const windows = await until(() => swayWindows(sway), (now) => now.some((window) => window.title === title && window.focused),
+      `the native dialog "${title}" to take the keyboard`, timeoutMs);
+    assert.ok(windows.some((window) => window.title === title && window.focused), "the dialog has the keyboard");
+    await run("/usr/bin/wtype", ["-k", "Right", "-k", "Return"], { env, timeout: TOOL_MS });
+    if (await closesWithin(sway, title, DIALOG_CLOSE_MS)) return;
+    console.warn(`the native dialog "${title}" stayed open after attempt ${attempt} of ${DIALOG_ATTEMPTS}`);
+  }
+  const focused = (await swayWindows(sway)).find((window) => window.focused)?.title ?? "nothing";
+  throw new Error(`the native dialog "${title}" did not close after ${DIALOG_ATTEMPTS} presses; sway's keyboard is on ${focused}`);
 }

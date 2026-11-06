@@ -9,7 +9,7 @@ import { approvalRuleTools, cancelLive, createAgentOn, pendingApprovals, transcr
 import { connectionsReady, journeyHooks, type Journey } from "./journey.ts";
 import { APPROVED_REPLY, OBJECTIVES, REAL_OBJECTIVES } from "./scripts.ts";
 import { openControls } from "./steps.ts";
-import { choose, confirmIfAsked, finish, need, open } from "./ui.ts";
+import { choose, confirmIfAsked, need, open, textField } from "./ui.ts";
 
 const journey = journeyHooks({ archon: false });
 const EVERY_EFFECT = ["read_only", "idempotent_mutation", "mutation", "external"] as const;
@@ -46,8 +46,8 @@ test("approvals journey: a standing rule added from Controls", async () => {
   assert.ok(agentId !== undefined, "the first approvals test started the agent");
   try {
     const controls = await openControls(run.window, run.stack, agentId, "Approvals");
-    await choose(run.window, await need(run.window, "rule-tool", () => controls.getByLabel("Tool", { exact: true })), "bash");
-    const submit = await need(run.window, "rule-submit", () => controls.getByRole("button", { name: "Add rule", exact: true }));
+    await choose(run.window, await textField(await need(controls, "rule-tool")), "bash");
+    const submit = await need(controls, "rule-submit");
     await expect(submit, "the rule is ready to add").toBeEnabled();
     await submit.click();
     await confirmIfAsked(run.window, "Add rule");
@@ -56,5 +56,4 @@ test("approvals journey: a standing rule added from Controls", async () => {
   } finally {
     await cancelLive(run.stack, [agentId]);
   }
-  finish();
 });

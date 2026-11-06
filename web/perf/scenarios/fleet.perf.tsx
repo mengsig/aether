@@ -38,11 +38,20 @@ async function mountFleet(agents: Record<string, aether.Agent>): Promise<Mounted
   return mount(app, frames, <FleetScreen />);
 }
 
-function stateSelect(container: HTMLElement): HTMLSelectElement {
-  const field = [...container.querySelectorAll(".fleet-filter")].find((node) => node.querySelector("label")?.textContent === "State");
-  const select = field?.querySelector("select");
-  if (!select) throw new Error("the fleet has no State filter");
-  return select;
+/** The State filter is a kit Picker: a combobox trigger that opens a listbox of options. */
+function stateTrigger(container: HTMLElement): HTMLButtonElement {
+  const field = [...container.querySelectorAll(".fleet-filters .ui-picker")].find((node) => node.querySelector("label")?.textContent === "State");
+  const trigger = field?.querySelector<HTMLButtonElement>("[role=combobox]");
+  if (!trigger) throw new Error("the fleet has no State filter");
+  return trigger;
+}
+
+/** Opens the State picker and chooses the option whose label starts with `label`, as a pointer user does. */
+async function pickState(fleet: Mounted, label: string): Promise<void> {
+  await fleet.step(() => stateTrigger(fleet.container).click());
+  const option = [...fleet.container.querySelectorAll<HTMLElement>("[role=option]")].find((node) => node.textContent?.startsWith(label));
+  if (!option) throw new Error(`the State filter lists no ${label}`);
+  await fleet.step(() => option.click());
 }
 
 /** The store as core leaves it after `get_agent` answers for a changed row (aether-sync withAgent). */
@@ -76,18 +85,13 @@ describe("the fleet at 5,000 agents", () => {
 
   test("filters by state and back", async () => {
     const fleet = await mountFleet(agents);
-    const select = stateSelect(fleet.container);
-    const pick = (value: string) => fleet.step(() => {
-      select.value = value;
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
     await fleet.mutations();
     resetRenders();
-    await pick("=running");
+    await pickState(fleet, "running (");
     expect(fleet.container.querySelector(".fleet-count")?.textContent).toMatch(/^[\d,]+ of 5,000 agents$/);
     results.count("fleet.filter.row_renders", renders.pill);
     results.count("fleet.filter.dom_mutations", await fleet.mutations());
-    results.time("fleet.filter.ms", await timed(() => pick("=running"), () => pick("")));
+    results.time("fleet.filter.ms", await timed(() => pickState(fleet, "running ("), () => pickState(fleet, "All")));
     fleet.unmount();
   });
 

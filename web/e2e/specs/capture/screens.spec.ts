@@ -95,10 +95,14 @@ test("operator: empty, then loaded, then error states", async ({ page, stack }) 
   await shoot(page, stack, "GitHub overview", "off", "#/github", ".ui-state");
   await shoot(page, stack, "Activity", "start-sheet", "#/activity", { prepare: openStartSheet });
 
-  // The worker's first turn is a scripted shell call, so the conversation shows a tool row and its output.
-  stack.engine.setScript((request) => (request.toolResults.length === 0 && /Answer briefly/.test(request.lastUserText)
-    ? { toolCall: { name: "bash", arguments: { command: "ls -1" }, text: "Let me look at the workspace first." } }
-    : "The workspace holds the fixture files listed above. Nothing else to do; finishing."));
+  // The worker's first turn is a scripted shell call, so the conversation shows a tool row and its output. Its second
+  // call waits, so the agent is still running, with its composer open, while the agent screens are shot.
+  stack.engine.setScript((request) => {
+    if (!/Answer briefly/.test(request.lastUserText)) return "Nothing to do; finishing.";
+    if (request.toolResults.length === 0) return { toolCall: { name: "bash", arguments: { command: "ls -1" }, text: "Let me look at the workspace first." } };
+    if (request.toolResults.length === 1) return { toolCall: { name: "bash", arguments: { command: "sleep 150" }, text: "Checking the files more closely." } };
+    return "The workspace holds the fixture files listed above. Nothing else to do; finishing.";
+  });
   await createAgent(stack, "Design audit worker", "Answer briefly, then finish.");
   await createAgent(stack, "Idle reviewer", "Wait for work.", false);
   const itemId = await enqueueItem(stack, "Polish the queue rows");

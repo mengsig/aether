@@ -7,7 +7,7 @@ import { until } from "../../harness/process.ts";
 import { cancelLive, createAgentOn, scheduleNames } from "./daemon.ts";
 import { connectionsReady, journeyHooks } from "./journey.ts";
 import { openControls } from "./steps.ts";
-import { choose, confirmIfAsked, finish, isTestId, need, textField } from "./ui.ts";
+import { choose, confirmIfAsked, need, textField } from "./ui.ts";
 
 const journey = journeyHooks({ archon: false });
 const NAME = "Journey weekday check";
@@ -15,35 +15,23 @@ const CRON = "0 9 * * 1-5";
 const FAUX_MODEL = { provider: "mock", model: "mock-1" } as const;
 const LIST_MS = 30_000;
 
-/** A weekday-morning recurrence: the new UI's preset, else today's Cron expression. */
+/** A weekday-morning cron recurrence, from the cron presets. */
 async function weekdayCron(page: Page, controls: Locator): Promise<void> {
-  const preset = await need(page, "schedule-cron-preset", () => controls.getByLabel("Recurrence", { exact: true }));
-  if (await isTestId(preset, "schedule-cron-preset")) {
-    await choose(page, preset, /weekday|Mon.*Fri/i);
-    return;
-  }
-  await choose(page, preset, "Cron");
-  await controls.getByLabel("Cron expression", { exact: true }).fill(CRON);
-}
-
-/** The model for the schedule's agents: typed where the field is text, else picked by name. */
-async function scheduleModel(page: Page, controls: Locator): Promise<void> {
-  const found = await need(page, "schedule-model", () => controls.getByLabel("Model", { exact: true }));
-  const tag = await found.evaluate((element) => element.tagName);
-  if (tag === "INPUT" || tag === "TEXTAREA") await choose(page, found, `${FAUX_MODEL.provider}/${FAUX_MODEL.model}`);
-  else await choose(page, found, /Faux model|mock/i);
+  await choose(page, controls.getByRole("radiogroup", { name: "Recurrence" }), "Cron");
+  await choose(page, await need(controls, "schedule-cron-preset"), /weekday/i);
+  await expect(controls.getByRole("status").filter({ hasText: "Every weekday at 09:00" }), `the form reads ${CRON} back`).toBeVisible();
 }
 
 async function fillSchedule(page: Page, controls: Locator, work: string): Promise<void> {
-  await (await textField(await need(page, "schedule-name", () => controls.getByLabel("Schedule name", { exact: true })))).fill(NAME);
-  const target = controls.getByLabel("Send to", { exact: true });
-  if (await target.isVisible()) await choose(page, target, "A new agent");
+  await (await textField(await need(controls, "schedule-name"))).fill(NAME);
+  await choose(page, controls.getByRole("radiogroup", { name: "Send to" }), "A new agent");
   await weekdayCron(page, controls);
-  await choose(page, await need(page, "schedule-timezone", () => controls.getByLabel("Timezone", { exact: true })), "UTC");
-  await (await textField(await need(page, "schedule-workspace", () => controls.getByLabel("Workspace", { exact: true })))).fill(work);
-  await scheduleModel(page, controls);
-  const objective = controls.getByLabel("Objective for each new agent", { exact: true });
-  if (await objective.isVisible()) await objective.fill("Check the workspace, then finish.");
+  await choose(page, await textField(await need(controls, "schedule-timezone")), "UTC");
+  const workspace = await textField(await need(controls, "schedule-workspace"));
+  await workspace.fill(work);
+  await expect(workspace, "the schedule's workspace").toHaveValue(work);
+  await choose(page, await need(controls, "schedule-model"), "Faux model");
+  await controls.getByLabel("Objective for each new agent", { exact: true }).fill("Check the workspace, then finish.");
 }
 
 test("schedules journey: create a weekday schedule, see it listed, delete it", async () => {
@@ -53,19 +41,19 @@ test("schedules journey: create a weekday schedule, see it listed, delete it", a
   try {
     const controls = await openControls(window, stack, host, "Schedules");
     await fillSchedule(window, controls, stack.layout.aether.work);
-    await (await need(window, "schedule-submit", () => controls.getByRole("button", { name: "Create schedule", exact: true }))).click();
+    const submit = await need(controls, "schedule-submit");
+    await expect(submit, "the schedule is ready to create").toBeEnabled();
+    await submit.click();
     await confirmIfAsked(window, "Create schedule");
     await until(() => scheduleNames(stack), (names) => names.includes(NAME), "the schedule on the daemon", LIST_MS);
-    const all = controls.getByRole("button", { name: "All schedules" });
-    if (await all.isVisible()) await all.click();
-    const row = window.getByRole("listitem").filter({ hasText: NAME }).first();
+    await choose(window, controls.getByRole("radiogroup", { name: "Schedule scope" }), "All schedules");
+    const row = controls.getByRole("listitem").filter({ hasText: NAME }).first();
     await expect(row, "the schedule is listed").toBeVisible();
-    await row.getByRole("button", { name: /^(Delete|Cancel schedule)\b/ }).click();
-    await confirmIfAsked(window, /^(Delete|Cancel schedule)\b/);
+    await row.getByRole("button", { name: "Cancel schedule", exact: true }).click();
+    await confirmIfAsked(window, "Cancel schedule");
     const left = await until(() => scheduleNames(stack), (names) => !names.includes(NAME), "the schedule to be deleted", LIST_MS);
     assert.ok(!left.includes(NAME), "the daemon no longer runs the schedule");
   } finally {
     await cancelLive(stack, [host]);
   }
-  finish();
 });

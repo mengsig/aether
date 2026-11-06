@@ -51,20 +51,44 @@ export async function approvalRuleTools(stack: Stack): Promise<string[]> {
   return rows.map((rule) => String(rule.tool ?? ""));
 }
 
+/** Names of the schedules that will still fire: active or paused, not cancelled or ended. */
 export async function scheduleNames(stack: Stack): Promise<string[]> {
-  const rows = await list(stack, { cmd: "list_schedules" }, "schedules") as Array<{ name?: string; spec?: { name?: string }; cancelled_at?: unknown; state?: unknown }>;
-  return rows.filter((row) => !JSON.stringify(row.state ?? "").includes("cancel") && !row.cancelled_at).map((row) => String(row.name ?? row.spec?.name ?? ""));
+  const rows = await list(stack, { cmd: "list_schedules" }, "schedules") as Array<{ name: string; status: { state: string } }>;
+  assert.ok(rows.every((row) => typeof row.name === "string" && typeof row.status?.state === "string"), "each schedule has a name and a status");
+  return rows.filter((row) => row.status.state === "active" || row.status.state === "paused").map((row) => row.name);
 }
 
 export async function memoryTexts(stack: Stack, text: string): Promise<string[]> {
   assert.ok(text.trim() !== "", "a memory search has text");
-  const rows = await list(stack, { cmd: "memories", query: { text, proposed: true } }, "memories") as Array<{ text?: string; memory?: { text?: string } }>;
+  // Not `proposed`: that lists only proposals, and a memory the host creates is active at once.
+  const rows = await list(stack, { cmd: "memories", query: { text } }, "memories") as Array<{ text?: string; memory?: { text?: string } }>;
   return rows.map((row) => String(row.text ?? row.memory?.text ?? ""));
 }
 
 export async function taskObjectives(stack: Stack, owner: string): Promise<string[]> {
   const rows = await list(stack, { cmd: "list_tasks", query: { owner } }, "tasks") as Array<{ objective: string }>;
   return rows.map((task) => task.objective);
+}
+
+export interface Spend {
+  readonly agents: number;
+  readonly usd: number;
+  /** Agents that ran but reported neither an actual nor an estimated cost. */
+  readonly unreported: number;
+}
+
+/** What every agent on the stack spent: actual cost where the engine reported it, else its estimate. */
+export async function stackSpend(stack: Stack): Promise<Spend> {
+  const views = await Promise.all((await agentIds(stack)).map((id) => agent(stack, id)));
+  let usd = 0;
+  let unreported = 0;
+  for (const view of views) {
+    const cost = view.usage?.cost_usd ?? view.usage?.estimated_cost_usd ?? null;
+    if (cost === null) unreported += view.usage === null ? 0 : 1;
+    else usd += cost;
+  }
+  assert.ok(Number.isFinite(usd) && usd >= 0, `spend is a non-negative amount: ${usd}`);
+  return { agents: views.length, usd, unreported };
 }
 
 /** Cancels each agent that is still live; the journeys' cheap cleanup before the stack stops. */
@@ -76,7 +100,7 @@ export async function cancelLive(stack: Stack, ids: readonly string[]): Promise<
   }
 }
 
-/** A scratch git repository with one commit, inside the stack root. */
+/** A scratch git repository with one commit and no remote, inside the stack root. */
 export async function scratchRepo(stack: Stack, name: string): Promise<string> {
   assert.match(name, /^[a-z0-9-]+$/, `a scratch repository name is plain: ${name}`);
   const repo = path.join(stack.layout.root, "repos", name);
@@ -86,13 +110,16 @@ export async function scratchRepo(stack: Stack, name: string): Promise<string> {
   await writeFile(path.join(repo, "README.md"), `# ${name}\n\nA journey's scratch repository.\n`);
   await git("add", "README.md");
   await git("-c", "user.name=Journey", "-c", "user.email=journey@example.invalid", "commit", "-q", "-m", "init");
+  const { stdout } = await git("remote");
+  assert.equal(stdout.trim(), "", "the scratch repository has no remote");
   assert.ok(repo.startsWith(`${stack.layout.root}/`), "the scratch repository is inside the stack root");
   return repo;
 }
 
 export interface NewAgent {
   readonly name: string;
-  readonly objective: string;
+  /** Its first task; none leaves the agent free to take one (an agent carries one task at a time). */
+  readonly objective?: string;
   readonly model: { readonly provider: string; readonly model: string };
   readonly start?: boolean;
   /** Side-effect classes that ask first; every class makes any tool call wait for approval. */
@@ -101,9 +128,11 @@ export interface NewAgent {
 }
 
 export async function createAgentOn(stack: Stack, spec: NewAgent): Promise<string> {
-  assert.ok(spec.name.trim() !== "" && spec.objective.trim() !== "", "an agent has a name and an objective");
+  assert.ok(spec.name.trim() !== "", "an agent has a name");
+  assert.ok(spec.objective === undefined || spec.objective.trim() !== "", "an objective, when given, is not blank");
   const { reply, data } = await stack.aether.request({
-    cmd: "create_agent", role: "journey-worker", name: spec.name, objective: spec.objective, model: spec.model, start: spec.start ?? true,
+    cmd: "create_agent", role: "journey-worker", name: spec.name, ...(spec.objective === undefined ? {} : { objective: spec.objective }),
+    model: spec.model, start: spec.start ?? true,
     scope: { workspace_root: stack.layout.aether.work },
     ...(spec.requireFor === undefined ? {} : { approval: { require_for: spec.requireFor } }),
     ...(spec.limits === undefined ? {} : { config: { ...spec.limits } }),

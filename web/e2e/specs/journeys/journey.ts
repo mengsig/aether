@@ -2,7 +2,7 @@
 // stack, a private headless sway and the packaged app on the stack's sockets, all stopped after.
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { startAudit, type Audit } from "../../harness/audit.ts";
@@ -12,6 +12,7 @@ import { connection } from "../../harness/pair.ts";
 import { record, until } from "../../harness/process.ts";
 import { checkReadiness, enableRealEngines, readinessMessage } from "../../harness/real-engine.ts";
 import { binariesFromEnv, startStack, type Stack } from "../../harness/stack.ts";
+import { stackSpend } from "./daemon.ts";
 import { journeyScript } from "./scripts.ts";
 
 export type Variant = "faux" | "real";
@@ -100,6 +101,16 @@ async function boot(parts: Parts, variant: Variant, options: JourneyOptions): Pr
 
 class SkipJourney extends Error {}
 
+/** The real variant's spend for one spec file, appended to `spend.jsonl` beside the report. */
+async function recordSpend(journey: Journey): Promise<void> {
+  const spend = await stackSpend(journey.stack);
+  const file = path.basename(test.info().file);
+  assert.ok(file.endsWith(".spec.ts"), `spend is recorded per spec file: ${file}`);
+  const line = JSON.stringify({ file, at: new Date().toISOString(), ...spend });
+  await appendFile(path.join(test.info().project.outputDir, "..", "spend.jsonl"), `${line}\n`);
+  console.log(`journey spend: ${line}`);
+}
+
 /**
  * Registers the spec file's hooks and returns its journey: started before the first test, stopped
  * after the last. The real variant skips the file, after stopping what it started, when its
@@ -125,10 +136,19 @@ export function journeyHooks(options: JourneyOptions = {}): () => Journey {
   });
   test.afterAll(async () => {
     test.setTimeout(SETUP_MS);
-    await teardown(parts);
+    try {
+      if (variant === "real" && journey !== undefined) await recordSpend(journey);
+    } finally {
+      await teardown(parts);
+    }
   });
-  test.afterEach(() => {
-    if (journey !== undefined) expect(journey.pageErrors.splice(0), "the app window threw no page error").toEqual([]);
+  test.afterEach(async () => {
+    if (journey === undefined) return;
+    // The window as the test left it, passed or failed, for the run's evidence.
+    const shot = test.info().outputPath("window.png");
+    await journey.window.screenshot({ path: shot, timeout: 15_000 });
+    await test.info().attach("window at the end", { path: shot, contentType: "image/png" });
+    expect(journey.pageErrors.splice(0), "the app window threw no page error").toEqual([]);
   });
   return () => {
     assert.ok(journey !== undefined, "the journey started in beforeAll");

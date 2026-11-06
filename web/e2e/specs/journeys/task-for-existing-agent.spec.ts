@@ -4,35 +4,37 @@
 import assert from "node:assert/strict";
 import { expect, test } from "@playwright/test";
 import { until } from "../../harness/process.ts";
-import { aetherConn, route } from "../flows/desktop/state.ts";
-import { cancelLive, createAgentOn, taskObjectives } from "./daemon.ts";
+import { agent, cancelLive, createAgentOn, taskObjectives } from "./daemon.ts";
 import { connectionsReady, journeyHooks } from "./journey.ts";
-import { agentPage, objectiveField, openStart, startSheet, submitStart } from "./steps.ts";
-import { choose, finish, need, shows } from "./ui.ts";
+import { agentPage, landOnAgent, objectiveField, openStart, startSheet, submitStart } from "./steps.ts";
+import { choose, need } from "./ui.ts";
 
 const journey = journeyHooks({ archon: false });
 const OWNER = "Journey owner";
 const TASK = "Write the release note for the journey task.";
-// The owner never runs a turn: it waits unstarted on the faux model, in both variants.
+// The owner runs on the faux model in both variants, so its turns are free. It starts with no
+// objective, so it idles holding no task and may take this one; the task reaches it as a message.
 const FAUX_MODEL = { provider: "mock", model: "mock-1" } as const;
+const IDLE = new Set(["ready", "waiting"]);
 
 test("task-for-existing-agent journey: a task in task mode lands on its owner", async () => {
   const { window, stack } = journey();
   await connectionsReady(journey(), false);
-  const owner = await createAgentOn(stack, { name: OWNER, objective: "Wait for tasks.", model: FAUX_MODEL, start: false });
+  const owner = await createAgentOn(stack, { name: OWNER, model: FAUX_MODEL, start: true });
+  const idle = await until(() => agent(stack, owner), (view) => IDLE.has(view.state), "the owner to wait for work", 30_000);
+  assert.ok(IDLE.has(idle.state), `the owner waits for work: ${idle.state}`);
   try {
     await openStart(window);
-    await choose(window, await need(window, "start-mode", (p) => startSheet(p).getByRole("tablist", { name: "Work type" })), /task/i);
+    const sheet = startSheet(window);
+    await choose(window, (await need(sheet, "start-mode")).getByRole("radiogroup", { name: "Work type" }), "Task for an existing agent");
     await (await objectiveField(window)).fill(TASK);
-    await choose(window, await need(window, "start-owner", (p) => startSheet(p).getByRole("button", { name: OWNER, exact: true })), OWNER);
+    await choose(window, await need(sheet, "start-owner"), OWNER);
     await submitStart(window, "Create task");
     const tasks = await until(() => taskObjectives(stack, owner), (objectives) => objectives.includes(TASK), "the task on its owner", 30_000);
     assert.equal(tasks.filter((objective) => objective === TASK).length, 1, "one task was created");
-    await route(window, `#/agents/${encodeURIComponent(await aetherConn(stack))}/${owner}`);
-    await expect(agentPage(window), "the owner's page shows").toBeVisible();
-    await shows(agentPage(window).getByText(TASK), "the task on the owner's page");
+    await landOnAgent(window, owner);
+    await expect(agentPage(window).getByText(TASK).first(), "the task reaches the owner's conversation").toBeVisible();
   } finally {
     await cancelLive(stack, [owner]);
   }
-  finish();
 });

@@ -3,6 +3,15 @@
 
 import { DEFAULT_REPLY, type EngineRequest, type Reply } from "../../harness/engine.ts";
 
+/**
+ * First launch messages, stops and resumes its agent while it still works: a worker completes once
+ * it answers, and then reads no more messages. So it waits in a shell call, at most HOLD_SECONDS,
+ * until the journey drops this file in its workspace.
+ */
+export const RELEASE_FILE = ".journey-release";
+const HOLD_SECONDS = 100;
+const HOLD = `for i in $(seq ${HOLD_SECONDS}); do [ -e ${RELEASE_FILE} ] && exit 0; sleep 1; done; exit 1`;
+
 /** Objectives the journeys type; the faux engine recognises them. */
 export const OBJECTIVES = {
   firstLaunch: "List files in the workspace, then finish.",
@@ -10,14 +19,16 @@ export const OBJECTIVES = {
 } as const;
 /** The real variant's objectives: one cheap shell call, then one word. */
 export const REAL_OBJECTIVES = {
-  firstLaunch: "Run `echo pong` with your shell tool, then reply with the word pong and finish.",
+  firstLaunch: `Run \`echo pong\` with your shell tool and say pong. Then run \`${HOLD}\` with your shell tool in the foreground, and finish.`,
   approval: "Run `echo approval-probe` with your shell tool, then reply with the word done and finish.",
 } as const;
 /** The shell commands each journey's agent runs, faux and real alike. */
-export const FAUX_COMMANDS = { firstLaunch: "ls -la .", approval: "echo approval-probe" } as const;
-export const REAL_COMMANDS = { firstLaunch: "echo pong", approval: "echo approval-probe" } as const;
+export const FAUX_COMMANDS = { firstLaunch: "ls -la .", hold: HOLD, approval: "echo approval-probe" } as const;
+export const REAL_COMMANDS = { firstLaunch: "echo pong", hold: HOLD, approval: "echo approval-probe" } as const;
 export const LISTED_REPLY = DEFAULT_REPLY;
 export const APPROVED_REPLY = "Approval probe done.";
+/** The notice the daemon sends the agent, as its own user message, once a person approves a call. */
+const APPROVAL_NOTICE = /^\[inbox \d+\] Approval apr_\S+ approved by /;
 export const PROBER_QUESTION = "Before we start: what does 2x mean?";
 export const PRACTICE_STATEMENT = "Solve 2x = 8";
 
@@ -54,11 +65,20 @@ function noesisReply(request: EngineRequest): Reply | undefined {
   return undefined;
 }
 
+/** Lists the workspace, answers while holding in a shell call, then finishes once released. */
+function firstLaunchReply(request: EngineRequest): Reply {
+  const done = request.toolResults.length;
+  if (done === 0) return shellCall(request, FAUX_COMMANDS.firstLaunch, "Listing the workspace.");
+  if (done === 1) return shellCall(request, FAUX_COMMANDS.hold, LISTED_REPLY);
+  return LISTED_REPLY;
+}
+
 export function journeyScript(request: EngineRequest): Reply {
   const noesis = noesisReply(request);
   if (noesis !== undefined) return noesis;
   const answered = request.toolResults.length > 0;
-  if (request.lastUserText.includes(OBJECTIVES.firstLaunch)) return answered ? LISTED_REPLY : shellCall(request, FAUX_COMMANDS.firstLaunch, "Listing the workspace.");
+  if (request.lastUserText.includes(OBJECTIVES.firstLaunch)) return firstLaunchReply(request);
   if (request.lastUserText.includes(OBJECTIVES.approval)) return answered ? APPROVED_REPLY : shellCall(request, FAUX_COMMANDS.approval, "Running the probe.");
+  if (APPROVAL_NOTICE.test(request.lastUserText)) return APPROVED_REPLY;
   return DEFAULT_REPLY;
 }
