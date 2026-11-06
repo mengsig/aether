@@ -257,6 +257,7 @@ from ._TurnOutcomeFailed import TurnOutcomeFailed
 from ._TurnOutcomeInterrupted import TurnOutcomeInterrupted
 from ._TurnOutcomeNotStarted import TurnOutcomeNotStarted
 from ._TurnOutcome import TurnOutcome
+from ._UnavailableSection import UnavailableSection
 from ._UnprovenAbsence import UnprovenAbsence
 from ._Usage import Usage
 from ._UsageBreakdown import UsageBreakdown
@@ -297,7 +298,7 @@ __all__ = [
     'ServerFrameReply', 'ServerFrameEvent', 'ServerFrameDelta', 'ServerFrameChallenge', 'ServerFrame', 'SessionExtraction', 'SessionMode', 'SideEffectClass', 'SnapshotId', 'SnapshotMemories', 'SpawnSpec', 'SpendToday', 'StaleNote', 'StatusStale', 'StopReasonEndTurn', 'StopReasonToolUse', 'StopReasonMaxTokens', 'StopReasonStopSequence', 'StopReasonRefusal', 'StopReasonPauseTurn',
     'StopReasonOther', 'StopReason', 'SubmissionResolutionExecuted', 'SubmissionResolutionAbsentSafe', 'SubmissionResolutionUnknown', 'SubmissionResolution', 'Task', 'TaskId', 'TaskLine', 'TaskQuery', 'TaskResult', 'TaskStatusQueued', 'TaskStatusAssigned', 'TaskStatusActive', 'TaskStatusBlocked', 'TaskStatusCompleted', 'TaskStatusFailed', 'TaskStatusCancelled', 'TaskStatus', 'TaskStatusKind',
     'ThinkingModeOff', 'ThinkingModeAdaptive', 'ThinkingModeBudget', 'ThinkingMode', 'ThinkingSupport', 'ToolCall', 'ToolCallId', 'ToolExposureAll', 'ToolExposureOnly', 'ToolExposureExcept', 'ToolExposure', 'ToolLine', 'ToolOutcome', 'ToolResultPending', 'ToolResultSucceeded', 'ToolResultFailed', 'ToolResultDenied', 'ToolResultCancelled', 'ToolResultReplayed', 'ToolResult',
-    'ToolResultBlockText', 'ToolResultBlockImage', 'ToolResultBlock', 'ToolSpec', 'TraceCandidate', 'TraceOmitted', 'TraceOutcome', 'TracePolicy', 'TranscriptEntry', 'TreeNode', 'TurnOutcomeRunning', 'TurnOutcomeCompleted', 'TurnOutcomeFailed', 'TurnOutcomeInterrupted', 'TurnOutcomeNotStarted', 'TurnOutcome', 'UnprovenAbsence', 'Usage', 'UsageBreakdown', 'UsageGroup',
-    'UsageRow', 'UsageScope', 'UsageWindow', 'Verification', 'WaitConditionTask', 'WaitConditionApproval', 'WaitConditionMessageFrom', 'WaitConditionInbox', 'WaitConditionDeadline', 'WaitConditionAny', 'WaitConditionAll', 'WaitConditionAtLeast', 'WaitCondition', 'Welcome', 'WindowHeadroom', 'Workspace', 'WorkspaceCommit', 'WorkspaceDiff', 'WorkspaceDiscard', 'WorkspaceIntegration',
-    'WorkspaceValidation', 'WriteStats',
+    'ToolResultBlockText', 'ToolResultBlockImage', 'ToolResultBlock', 'ToolSpec', 'TraceCandidate', 'TraceOmitted', 'TraceOutcome', 'TracePolicy', 'TranscriptEntry', 'TreeNode', 'TurnOutcomeRunning', 'TurnOutcomeCompleted', 'TurnOutcomeFailed', 'TurnOutcomeInterrupted', 'TurnOutcomeNotStarted', 'TurnOutcome', 'UnavailableSection', 'UnprovenAbsence', 'Usage', 'UsageBreakdown',
+    'UsageGroup', 'UsageRow', 'UsageScope', 'UsageWindow', 'Verification', 'WaitConditionTask', 'WaitConditionApproval', 'WaitConditionMessageFrom', 'WaitConditionInbox', 'WaitConditionDeadline', 'WaitConditionAny', 'WaitConditionAll', 'WaitConditionAtLeast', 'WaitCondition', 'Welcome', 'WindowHeadroom', 'Workspace', 'WorkspaceCommit', 'WorkspaceDiff', 'WorkspaceDiscard',
+    'WorkspaceIntegration', 'WorkspaceValidation', 'WriteStats',
 ]

@@ -86,7 +86,7 @@ pub async fn agents(
     // ready agent is waiting on that, not about to run.
     let status = client.status().await?;
     let disk_low = fresh_disk_low(&status);
-    if let Some(note) = stale_disk_note(&status) {
+    if let Some(note) = disk_status_note(&status) {
         eprintln!("{note}");
     }
     // Cache reads are their own column: folded into `in` they let a
@@ -114,15 +114,23 @@ pub async fn agents(
     Ok(())
 }
 
-/// Whether turns wait on the disk, as far as this status can say: a stale
-/// one is an earlier read or none, so it never says so.
+/// Only a fresh, available disk reading can mark turns as held.
 fn fresh_disk_low(status: &aether_protocol::DaemonStatus) -> bool {
-    status.stale.is_none() && status.low_disk.is_some()
+    status.stale.is_none()
+        && status
+            .unavailable(aether_protocol::status_sections::LOW_DISK)
+            .is_none()
+        && status.low_disk.is_some()
 }
 
-/// A stale status is an earlier read, or none, so it cannot say whether
-/// turns wait on the disk; the table then omits that hold and this says why.
-fn stale_disk_note(status: &aether_protocol::DaemonStatus) -> Option<String> {
+/// Explain why the table cannot say whether turns wait on the disk.
+fn disk_status_note(status: &aether_protocol::DaemonStatus) -> Option<String> {
+    if let Some(reason) = status.unavailable(aether_protocol::status_sections::LOW_DISK) {
+        return Some(format!(
+            "note: disk unavailable: {}; whether new turns wait on the disk is not shown",
+            super::sane(reason)
+        ));
+    }
     let stale = status.stale.as_ref()?;
     let figures = match stale.read_at {
         Some(at) => format!("figures from {} UTC", at.format("%H:%M:%S")),
@@ -445,7 +453,7 @@ pub async fn resume(
 
 #[cfg(test)]
 mod tests {
-    use super::{Glyphs, Holds, agent_status_label, fresh_disk_low, stale_disk_note};
+    use super::{Glyphs, Holds, agent_status_label, disk_status_note, fresh_disk_low};
     use aether_core::agent::AgentStatus;
 
     fn status(stale: Option<serde_json::Value>) -> aether_protocol::DaemonStatus {
@@ -472,6 +480,21 @@ mod tests {
         .expect("daemon status")
     }
 
+    #[test]
+    fn an_unavailable_disk_read_omits_the_hold_and_explains_why() {
+        let mut status = status_with_disk(None, true);
+        status
+            .unavailable
+            .push(aether_protocol::UnavailableSection {
+                section: aether_protocol::status_sections::LOW_DISK.into(),
+                reason: "store busy".into(),
+            });
+        assert!(!fresh_disk_low(&status));
+        let note = disk_status_note(&status).expect("unavailable note");
+        assert!(note.contains("disk unavailable: store busy"), "{note}");
+        assert!(note.contains("not shown"), "{note}");
+    }
+
     /// Only a fresh status sets the hold; a stale one, read or not, never does.
     #[test]
     fn only_a_fresh_status_marks_the_disk_low() {
@@ -490,14 +513,14 @@ mod tests {
 
     #[test]
     fn a_stale_status_is_named_with_its_read_time_and_a_fresh_one_is_not() {
-        assert_eq!(stale_disk_note(&status(None)), None);
+        assert_eq!(disk_status_note(&status(None)), None);
         let unread = status(Some(serde_json::json!({ "waited_ms": 3000 })));
-        let note = stale_disk_note(&unread).expect("note");
+        let note = disk_status_note(&unread).expect("note");
         assert!(note.contains("figures not read yet"), "{note}");
         let read = status(Some(serde_json::json!({
             "read_at": "2026-11-01T13:44:05Z", "waited_ms": 3000,
         })));
-        let note = stale_disk_note(&read).expect("note");
+        let note = disk_status_note(&read).expect("note");
         assert!(note.contains("figures from 13:44:05 UTC"), "{note}");
     }
 

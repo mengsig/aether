@@ -11,6 +11,7 @@ import type {
   ResourceHolding,
   RunSummary,
   StatusStale,
+  UnavailableSection,
   Usage,
   WriteStats,
   providers,
@@ -47,6 +48,7 @@ export interface DaemonStatus {
   "stale"?: StatusStale | null;
   "started_at": string;
   "tasks_active": number;
+  "unavailable"?: Array<UnavailableSection>;
   "usage_total": Usage;
   "version": string;
   "writes"?: WriteStats | null;

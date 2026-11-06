@@ -6417,6 +6417,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "unavailable": {
+          "description": "Sections the daemon could not read before its status deadline. Their\nfields carry no figure, so a client shows each as unavailable, never\nas the zero it holds. Empty on a complete answer, and on older daemons.",
+          "items": {
+            "$ref": "#/$defs/UnavailableSection"
+          },
+          "type": "array"
+        },
         "usage_total": {
           "$ref": "#/$defs/Usage"
         },
@@ -19797,6 +19804,24 @@
           "type": "object"
         }
       ]
+    },
+    "UnavailableSection": {
+      "description": "A [`DaemonStatus`] section left out of a reply, and why.",
+      "properties": {
+        "reason": {
+          "description": "Why it is missing: [`status_sections::TIMED_OUT`], the read ran past\nthe deadline. A read that fails fails the whole `status` instead.",
+          "type": "string"
+        },
+        "section": {
+          "description": "The section as the daemon's log names it: one of [`status_sections`].",
+          "type": "string"
+        }
+      },
+      "required": [
+        "section",
+        "reason"
+      ],
+      "type": "object"
     },
     "UnprovenAbsence": {
       "description": "Why an absent receipt does not prove its key was never executed.",

@@ -1,7 +1,7 @@
 // The Aether daemon protocol as TypeScript types and command builders.
 // Generated from clients/protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: 3eced3372e13ae22e3c788801f1ad910514ed529240ce1a26ade2aba2626582c
+// Schema SHA-256: 914b064bc6f7f0895be7cfe61d841cdd0ecd22345cacaf2051369b52db91ed2a
 
 export const PROTOCOL_VERSION = 26;
 export const MIN_PROTOCOL_VERSION = 17;
@@ -943,6 +943,7 @@ export interface DaemonStatus {
   "stale"?: StatusStale | null;
   "started_at": string;
   "tasks_active": number;
+  "unavailable"?: Array<UnavailableSection>;
   "usage_total": Usage;
   "version": string;
   "writes"?: WriteStats | null;
@@ -5213,6 +5214,14 @@ export type TurnOutcome =
   | TurnOutcomeFailed
   | TurnOutcomeInterrupted
   | TurnOutcomeNotStarted;
+
+/**
+ * A [`DaemonStatus`] section left out of a reply, and why.
+ */
+export interface UnavailableSection {
+  "reason": string;
+  "section": string;
+}
 
 /**
  * Why an absent receipt does not prove its key was never executed.

@@ -1,6 +1,7 @@
 use super::units;
 use super::{AgentId, ApprovalDefault, PathBuf, connect, health_segments, sane};
 use aether_core::time::{Timestamp, now};
+use aether_protocol::status_sections;
 use anyhow::Context as _;
 
 pub async fn status(
@@ -69,11 +70,14 @@ fn human_status(
     version: Option<&str>,
     at: Timestamp,
 ) -> Vec<String> {
-    let mut out: Vec<String> = s
-        .problems
-        .iter()
-        .map(|problem| format!("Needs attention: {}", sane(problem)))
-        .collect();
+    let mut out: Vec<String> = match s.unavailable(status_sections::PROBLEMS) {
+        Some(reason) => vec![format!("problems unavailable: {}", sane(reason))],
+        None => s
+            .problems
+            .iter()
+            .map(|problem| format!("Needs attention: {}", sane(problem)))
+            .collect(),
+    };
     out.push(format!(
         "aetherd {} (pid {}) instance {}",
         sane(&s.version),
@@ -95,20 +99,50 @@ fn human_status(
             None => "none configured".into(),
         }
     ));
-    out.push(format!(
-        "agents   {} live · {} running · {} waiting · {} blocked ({} suspended) · {} paused",
-        s.agents_live,
-        s.agents_running,
-        s.agents_waiting,
-        s.agents_blocked,
-        s.agents_suspended,
-        s.agents_paused
-    ));
-    out.push(format!(
-        "tasks    {} active · {} approvals pending",
-        s.tasks_active, s.pending_approvals
-    ));
-    if let Some(low) = &s.low_disk {
+    out.extend(summary_lines(s));
+    out.extend(activity_lines(s, at));
+    debug_assert!(out.iter().all(|line| !line.is_empty()));
+    out
+}
+
+fn section_value(
+    s: &aether_protocol::DaemonStatus,
+    section: &str,
+    available: impl FnOnce() -> String,
+) -> String {
+    s.unavailable(section)
+        .map_or_else(available, |reason| format!("unavailable: {}", sane(reason)))
+}
+
+fn summary_lines(s: &aether_protocol::DaemonStatus) -> Vec<String> {
+    let mut out = vec![
+        format!(
+            "agents   {}",
+            section_value(s, status_sections::LIVE_AGENTS, || format!(
+                "{} live · {} running · {} waiting · {} blocked ({} suspended) · {} paused",
+                s.agents_live,
+                s.agents_running,
+                s.agents_waiting,
+                s.agents_blocked,
+                s.agents_suspended,
+                s.agents_paused
+            ))
+        ),
+        format!(
+            "tasks    {} · {}",
+            match s.unavailable(status_sections::TASKS_ACTIVE) {
+                Some(reason) => format!("active unavailable: {}", sane(reason)),
+                None => format!("{} active", s.tasks_active),
+            },
+            match s.unavailable(status_sections::PENDING_APPROVALS) {
+                Some(reason) => format!("approvals pending unavailable: {}", sane(reason)),
+                None => format!("{} approvals pending", s.pending_approvals),
+            }
+        ),
+    ];
+    if let Some(reason) = s.unavailable(status_sections::LOW_DISK) {
+        out.push(format!("disk     unavailable: {}", sane(reason)));
+    } else if let Some(low) = &s.low_disk {
         out.push(disk_line(low, s.stale.as_ref()));
     }
     if let Some(writes) = &s.writes {
@@ -116,8 +150,6 @@ fn human_status(
     }
     out.push(limits_line(s));
     out.push(approval_line(s));
-    out.extend(activity_lines(s, at));
-    debug_assert!(out.iter().all(|line| !line.is_empty()));
     out
 }
 
@@ -193,21 +225,25 @@ fn limits_line(s: &aether_protocol::DaemonStatus) -> String {
             Some(cap) => format!("{}/{cap}", s.engine_turns_running),
             None => format!("{} running · uncapped", s.engine_turns_running),
         },
-        match s.run_budget_usd {
-            // The run closest to the budget is the one about to be refused.
-            Some(budget) => match s
-                .runs
-                .iter()
-                .max_by(|a, b| { a.usage.cost_usd.total_cmp(&b.usage.cost_usd) })
-            {
-                Some(worst) =>
-                    format!("{} of ${budget}, highest live run", worst.usage.cost_line()),
-                None => format!("${budget}, no live run"),
-            },
-            None => "none".to_owned(),
-        },
+        run_budget_text(s),
         hard_stop_text(s)
     )
+}
+
+fn run_budget_text(s: &aether_protocol::DaemonStatus) -> String {
+    let Some(budget) = s.run_budget_usd else {
+        return "none".to_owned();
+    };
+    section_value(s, status_sections::RUNS, || {
+        match s
+            .runs
+            .iter()
+            .max_by(|a, b| a.usage.cost_usd.total_cmp(&b.usage.cost_usd))
+        {
+            Some(worst) => format!("{} of ${budget}, highest live run", worst.usage.cost_line()),
+            None => format!("${budget}, no live run"),
+        }
+    })
 }
 
 fn hard_stop_text(s: &aether_protocol::DaemonStatus) -> String {
@@ -247,9 +283,12 @@ fn approval_line(s: &aether_protocol::DaemonStatus) -> String {
 fn activity_lines(s: &aether_protocol::DaemonStatus, at: Timestamp) -> Vec<String> {
     let mut out = Vec::new();
     out.push(format!(
-        "usage    {} · {}",
-        s.usage_total.tokens_line(units::tokens),
-        s.usage_total.cost_and_estimate_line()
+        "usage    {}",
+        section_value(s, status_sections::USAGE_TOTAL, || format!(
+            "{} · {}",
+            s.usage_total.tokens_line(units::tokens),
+            s.usage_total.cost_and_estimate_line()
+        ))
     ));
     out.push(format!(
         "engines  {}",
@@ -262,15 +301,14 @@ fn activity_lines(s: &aether_protocol::DaemonStatus, at: Timestamp) -> Vec<Strin
         }
     ));
     out.push(format!("mcp      {}", render_mcp_summary(&s.mcp)));
-    if !s.providers.is_empty() {
-        let rows: Vec<String> = s
-            .providers
-            .iter()
-            .map(|p| format!("{} {}", sane(&p.provider), health_segments(p).join(" · ")))
-            .collect();
-        out.push(format!("providers {}", rows.join("\n          ")));
+    if let Some(line) = providers_line(s) {
+        out.push(line);
     }
-    out.extend(run_lines(&s.runs, at));
+    if let Some(reason) = s.unavailable(status_sections::RUNS) {
+        out.push(format!("runs     unavailable: {}", sane(reason)));
+    } else {
+        out.extend(run_lines(&s.runs, at));
+    }
     for holding in &s.resource_leases {
         out.push(format!(
             "holding  {} · {}{}",
@@ -292,6 +330,21 @@ fn activity_lines(s: &aether_protocol::DaemonStatus, at: Timestamp) -> Vec<Strin
     }
     out.push(format!("events   {}", s.last_seq));
     out
+}
+
+fn providers_line(s: &aether_protocol::DaemonStatus) -> Option<String> {
+    if let Some(reason) = s.unavailable(status_sections::PROVIDERS) {
+        return Some(format!("providers unavailable: {}", sane(reason)));
+    }
+    if s.providers.is_empty() {
+        return None;
+    }
+    let rows: Vec<String> = s
+        .providers
+        .iter()
+        .map(|p| format!("{} {}", sane(&p.provider), health_segments(p).join(" · ")))
+        .collect();
+    Some(format!("providers {}", rows.join("\n          ")))
 }
 
 /// Runs `aether status` lists one per line; the rest are summed up in one.
@@ -533,6 +586,80 @@ mod tests {
             ],
         }))
         .expect("the fixture is a valid status")
+    }
+
+    #[test]
+    fn unavailable_sections_replace_figures_but_keep_fresh_sections() {
+        let at = aether_core::time::now();
+        let mut status = fixture(at);
+        status.run_budget_usd = Some(1000.0);
+        status.problems = vec!["old failure".into()];
+        for section in [
+            status_sections::LIVE_AGENTS,
+            status_sections::USAGE_TOTAL,
+            status_sections::RUNS,
+            status_sections::TASKS_ACTIVE,
+            status_sections::PENDING_APPROVALS,
+            status_sections::LOW_DISK,
+            status_sections::PROVIDERS,
+            status_sections::PROBLEMS,
+        ] {
+            status
+                .unavailable
+                .push(aether_protocol::UnavailableSection {
+                    section: section.into(),
+                    reason: status_sections::TIMED_OUT.into(),
+                });
+        }
+        let text = status_text(&status, &LocalInstall::default(), false, at).expect("renders");
+        for line in [
+            "agents   unavailable: timed out",
+            "usage    unavailable: timed out",
+            "runs     unavailable: timed out",
+            "disk     unavailable: timed out",
+            "providers unavailable: timed out",
+            "problems unavailable: timed out",
+            "tasks    active unavailable: timed out · approvals pending unavailable: timed out",
+        ] {
+            assert!(text.contains(line), "{text}");
+        }
+        assert!(!text.contains('$') && !text.contains("run      "), "{text}");
+        assert!(!text.contains("old failure"), "{text}");
+        assert!(
+            text.contains("events   42") && text.contains("aetherd 1 (pid 7)"),
+            "{text}"
+        );
+        status
+            .unavailable
+            .retain(|entry| entry.section != status_sections::TASKS_ACTIVE);
+        status.unavailable[0].reason = "store busy".into();
+        status.runs.clear();
+        let text = status_text(&status, &LocalInstall::default(), false, at).expect("renders");
+        assert!(
+            text.contains("tasks    1 active · approvals pending unavailable: timed out"),
+            "{text}"
+        );
+        assert!(text.contains("agents   unavailable: store busy"), "{text}");
+        assert!(!text.contains("no live run"), "{text}");
+    }
+
+    #[test]
+    fn json_keeps_unavailable_sections_and_reasons() {
+        let at = aether_core::time::now();
+        let mut status = fixture(at);
+        status
+            .unavailable
+            .push(aether_protocol::UnavailableSection {
+                section: status_sections::USAGE_TOTAL.into(),
+                reason: status_sections::TIMED_OUT.into(),
+            });
+        let text = status_text(&status, &LocalInstall::default(), true, at).expect("renders");
+        let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+        assert_eq!(
+            value["unavailable"],
+            json!([{"section": "usage_total", "reason": "timed out"}])
+        );
+        assert_eq!(value, serde_json::to_value(status).expect("serializes"));
     }
 
     #[test]
