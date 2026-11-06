@@ -121,3 +121,63 @@ describe("the focus ring", () => {
     expect(hiding.map((block) => block.selector)).toEqual([]);
   });
 });
+
+type Rgb = readonly [number, number, number];
+
+function rgb(value: string | undefined): Rgb {
+  expect(value).toMatch(/^#[0-9a-f]{6}$/);
+  const packed = Number.parseInt((value ?? "").slice(1), 16);
+  return [(packed >> 16) & 255, (packed >> 8) & 255, packed & 255];
+}
+
+function luminance(colour: Rgb): number {
+  const linear = (channel: number): number => {
+    const share = channel / 255;
+    return share <= 0.04045 ? share / 12.92 : ((share + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * linear(colour[0]) + 0.7152 * linear(colour[1]) + 0.0722 * linear(colour[2]);
+}
+
+/** WCAG contrast ratio, from 1 (equal) to 21 (black on white). */
+function contrast(a: Rgb, b: Rgb): number {
+  const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  const ratio = (high + 0.05) / (low + 0.05);
+  expect(ratio).toBeGreaterThanOrEqual(1);
+  return ratio;
+}
+
+/** `color-mix(in srgb, a share%, b)` as the browsers compute it for opaque sRGB colours. */
+function mix(a: Rgb, b: Rgb, share: number): Rgb {
+  expect(share).toBeGreaterThan(0);
+  expect(share).toBeLessThan(1);
+  return [0, 1, 2].map((index) => Math.round(a[index] * share + b[index] * (1 - share))) as unknown as Rgb;
+}
+
+describe("text contrast", () => {
+  const AA = 4.5;
+  const TEXT = ["--color-text", "--color-text-muted", "--color-text-faint"];
+  const SURFACES = ["--color-bg", "--color-surface-1", "--color-surface-2", "--color-surface-3"];
+  const themes: Array<[string, CssBlock | undefined]> = [["light", lightBlock], ["dark", darkBlock]];
+  const colour = (block: CssBlock | undefined, name: string): Rgb => rgb(block?.declarations.get(name));
+
+  test.each(themes)("%s: every text colour reads at AA on every surface", (_name, block) => {
+    for (const text of TEXT) {
+      for (const surface of SURFACES) {
+        expect(contrast(colour(block, text), colour(block, surface)), `${text} on ${surface}`).toBeGreaterThanOrEqual(AA);
+      }
+    }
+  });
+
+  test.each(themes)("%s: the button hover fill keeps its text at AA, so the palette trigger must lift to it", (_name, block) => {
+    const hover = cssBlocks(primitives).find((rule) => rule.selector === ".ui-button:hover")?.declarations.get("background");
+    const parsed = /^color-mix\(in srgb, var\((--[\w-]+)\) (\d+)%, var\((--[\w-]+)\)\)$/.exec(hover ?? "");
+    expect(parsed, hover).not.toBeNull();
+    const [, surface, share, tint] = parsed ?? [];
+    const fill = mix(colour(block, surface ?? ""), colour(block, tint ?? ""), Number(share) / 100);
+    expect(contrast(colour(block, "--color-text"), fill)).toBeGreaterThanOrEqual(AA);
+    // The trigger rests in faint text, which the hover fill would drop below AA; on hover it takes the full text colour.
+    expect(contrast(colour(block, "--color-text-faint"), fill)).toBeLessThan(AA);
+    const trigger = cssBlocks(shell).find((rule) => rule.selector === ".ui-palette-trigger:hover");
+    expect(trigger?.declarations.get("color")).toBe("var(--color-text)");
+  });
+});
