@@ -9,7 +9,7 @@ use aether_core::agent::WaitCondition;
 use aether_core::event::{Actor, EventDraft};
 use aether_core::id::{EventId, ToolCallId};
 use aether_core::model::{ModelRef, Usage};
-use aether_store::{ImportedEvent, Mutation, SqliteStore, Store};
+use aether_store::{AgentFilter, ImportedEvent, Mutation, SqliteStore, Store, TreeQuery};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing_subscriber::Layer;
@@ -192,6 +192,47 @@ fn report(sections: &Sections, totals: &mut [u64]) {
     );
 }
 
+fn print_timing(name: &str, ms: &mut [u64]) {
+    ms.sort_unstable();
+    let max = *ms.last().expect("samples");
+    println!(
+        "{name:<18} {:>6}  {:>6}  {max:>6}",
+        percentile(ms, 0.5),
+        percentile(ms, 0.99)
+    );
+}
+
+/// `get_tree`'s store reads for the whole fleet: every agent decoded, as
+/// before V33, against one page and its usage roll-up from `agent_usage`.
+fn report_tree_reads(store: &SqliteStore) {
+    let (mut whole, mut paged) = (Vec::new(), Vec::new());
+    let query = TreeQuery {
+        run: None,
+        root: None,
+        include_archived: false,
+        role_prefix: None,
+        after: None,
+        limit: aether_store::TREE_PAGE_MAX,
+    };
+    for _ in 0..SAMPLES {
+        let started = Instant::now();
+        let agents = store.agents(&AgentFilter::default()).expect("agents");
+        assert!(agents.len() >= OLD_AGENTS + RUN_MEMBERS, "the whole fleet");
+        whole.push(started.elapsed().as_millis() as u64);
+        let started = Instant::now();
+        let page = store.tree_page(&query).expect("page");
+        let ids: Vec<AgentId> = page.agents.iter().map(|agent| agent.id).collect();
+        let nodes = store.subtree_usages(&ids).expect("roll-up");
+        assert!(
+            nodes.len() >= ids.len() && page.next_after.is_some(),
+            "a page of many"
+        );
+        paged.push(started.elapsed().as_millis() as u64);
+    }
+    print_timing("tree (every agent)", &mut whole);
+    print_timing("tree (one page)", &mut paged);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "builds a five-million-event store; run by hand, in release"]
 async fn status_at_scale() {
@@ -248,4 +289,5 @@ async fn status_at_scale() {
         std::thread::sleep(Duration::from_millis(20));
     }
     report(&sections, &mut totals);
+    report_tree_reads(&store);
 }
