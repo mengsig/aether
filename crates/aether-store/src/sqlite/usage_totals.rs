@@ -23,8 +23,9 @@ pub(crate) const COUNTED_USAGE: &str = "aether_counted_usage";
 pub(crate) const FLEET: &str = "";
 
 /// Registers [`COUNTED_USAGE`] on `conn`. Every connection that writes agents
-/// needs it: without it a write fails on the trigger, never silently.
-pub(crate) fn register(conn: &Connection) -> rusqlite::Result<()> {
+/// needs it, a raw one opened outside the store included: without it a write
+/// fails on the trigger, never silently.
+pub fn register(conn: &Connection) -> rusqlite::Result<()> {
     let flags = FunctionFlags::SQLITE_UTF8
         | FunctionFlags::SQLITE_DETERMINISTIC
         | FunctionFlags::SQLITE_INNOCUOUS;

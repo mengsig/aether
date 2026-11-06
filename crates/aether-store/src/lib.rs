@@ -47,6 +47,7 @@ use aether_core::memory_feedback::{FeedbackTally, MemoryFeedback};
 
 pub use migration_backup::backup_database;
 pub use schema::SCHEMA_VERSION;
+pub use sqlite::usage_totals::register as register_sql_functions;
 pub use sqlite::{HistoryScreen, PushSubscriptionRow, RunExpiry, SqliteStore};
 pub use tree_query::{TREE_PAGE_MAX, TreePage, TreeQuery, UsageNode, tree_page_of};
 
