@@ -285,7 +285,14 @@ fn fold_subtrees(
 ) -> BTreeMap<AgentId, TreeUsage> {
     let mut usages: BTreeMap<AgentId, TreeUsage> = owned
         .into_iter()
-        .map(|(id, (subtree, hidden))| (id, TreeUsage { subtree, hidden }))
+        .map(|(id, (subtree, hidden))| {
+            let usage = TreeUsage {
+                subtree,
+                hidden,
+                parent: None,
+            };
+            (id, usage)
+        })
         .collect();
     let mut deepest_first: Vec<&Agent> = shown.iter().collect();
     deepest_first.sort_by_key(|agent| Reverse(links.depth[&agent.id]));
@@ -298,11 +305,23 @@ fn fold_subtrees(
             continue;
         };
         let child = usages[&agent.id].subtree;
-        if let Some(usage) = usages.get_mut(&parent) {
-            usage.subtree += child;
-        }
+        let Some(usage) = usages.get_mut(&parent) else {
+            continue;
+        };
+        usage.subtree += child;
+        usages
+            .get_mut(&agent.id)
+            .expect("every shown agent has a roll-up")
+            .parent = Some(parent);
     }
     assert_eq!(usages.len(), shown.len(), "one roll-up per shown agent");
+    debug_assert!(
+        usages
+            .values()
+            .filter_map(|usage| usage.parent)
+            .all(|parent| usages.contains_key(&parent)),
+        "an agent is listed only under a shown parent"
+    );
     usages
 }
 

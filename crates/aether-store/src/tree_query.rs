@@ -60,6 +60,9 @@ pub struct TreePage {
 pub struct TreeUsage {
     pub subtree: Usage,
     pub hidden: Option<Usage>,
+    /// The shown agent whose subtree counts this one's, `None` for a root:
+    /// list it there, as the roll-up's snapshot links it, never by an older read.
+    pub parent: Option<AgentId>,
 }
 
 /// One agent as a usage roll-up reads it: its links and usage, no body.
@@ -156,7 +159,14 @@ pub fn tree_usages_of(
     for agent in shown {
         let hidden = hidden.get(&agent.id).map(|(_, usage)| *usage);
         let subtree = subtrees.get(&agent.id).copied().unwrap_or_default();
-        usages.insert(agent.id, TreeUsage { subtree, hidden });
+        // `fold_shown` folds each shown agent into its shown parent as `shown` links it.
+        let parent = agent.parent.filter(|parent| visible.contains(parent));
+        let usage = TreeUsage {
+            subtree,
+            hidden,
+            parent,
+        };
+        usages.insert(agent.id, usage);
     }
     assert_eq!(usages.len(), visible.len(), "one roll-up per shown agent");
     debug_assert!(hidden.values().all(|(members, _)| *members > 0));
