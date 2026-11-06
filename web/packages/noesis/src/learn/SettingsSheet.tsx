@@ -5,7 +5,8 @@ import type { aether } from "@aether-ui/protocol";
 import { Button, Field, Sheet } from "@aether-ui/ui";
 import { useMemo, useState, type FormEvent } from "react";
 import { useGate, useHostAdmin, useNoesisConfigure, useNoesisRead, useOperateRefusal } from "./data.ts";
-import { budgetShare, invariant, spentUsd, usd } from "./model.ts";
+import { billingWords, budgetShare, invariant, spentUsd, usd } from "./model.ts";
+import { ModelChooser, modelError } from "./ModelChooser.tsx";
 
 interface Draft {
   readonly enabled: boolean;
@@ -16,6 +17,7 @@ interface Draft {
   readonly strong: string;
   readonly cheap: string;
   readonly extraction: "manual" | "auto";
+  readonly engineering: boolean;
 }
 
 function draftOf(settings: aether.NoesisSettingsView): Draft {
@@ -24,6 +26,7 @@ function draftOf(settings: aether.NoesisSettingsView): Draft {
     interactiveUsd: String(settings.budget.interactive_usd_daily), backgroundUsd: String(settings.budget.background_usd_daily),
     backgroundTokens: String(settings.budget.background_tokens_daily),
     strong: settings.models.strong ?? "", cheap: settings.models.cheap ?? "", extraction: settings.extraction.sessions,
+    engineering: settings.engineering_context,
   };
 }
 
@@ -38,8 +41,8 @@ function tokens(text: string): number | string {
   return text.trim() !== "" && Number.isSafeInteger(value) && value >= 0 ? value : "Enter a whole number of 0 or more";
 }
 
-/** The patch that turns `settings` into `draft`, or the field errors that stop it. */
-export function patchOf(settings: aether.NoesisSettingsView, draft: Draft): { patch: aether.NoesisSettingsPatch; errors: Record<string, string> } {
+/** The patch that turns `settings` into `draft`, or the field errors that stop it; a model must be one `offers` can run. */
+export function patchOf(settings: aether.NoesisSettingsView, draft: Draft, offers: readonly aether.NoesisModelOffer[] | undefined): { patch: aether.NoesisSettingsPatch; errors: Record<string, string> } {
   const errors: Record<string, string> = {};
   const patch: Record<string, unknown> = {};
   if (draft.enabled !== settings.enabled) patch.enabled = draft.enabled;
@@ -53,11 +56,16 @@ export function patchOf(settings: aether.NoesisSettingsView, draft: Draft): { pa
   }
   if (Object.keys(budget).length > 0) patch.budget = budget;
   const models: Record<string, string | null> = {};
-  if (draft.strong.trim() !== (settings.models.strong ?? "")) models.strong = draft.strong.trim() || null;
-  if (draft.cheap.trim() !== (settings.models.cheap ?? "")) models.cheap = draft.cheap.trim() || null;
+  for (const key of ["strong", "cheap"] as const) {
+    if (draft[key] === (settings.models[key] ?? "")) continue;
+    const error = modelError(draft[key], offers, draft.allowApi);
+    if (error !== undefined) errors[key] = error;
+    else models[key] = draft[key] || null;
+  }
   if (Object.keys(models).length > 0) patch.models = models;
   if (draft.extraction !== settings.extraction.sessions) patch.extraction = { sessions: draft.extraction };
-  invariant(Object.keys(errors).length === 0 || Object.keys(errors).every((key) => key in settings.budget), "only budget fields are checked here");
+  if (draft.engineering !== settings.engineering_context) patch.engineering_context = draft.engineering;
+  invariant(Object.keys(errors).every((key) => key in settings.budget || key === "strong" || key === "cheap"), "only budget and model fields are checked here");
   return { patch: patch as aether.NoesisSettingsPatch, errors };
 }
 
@@ -81,7 +89,7 @@ function SettingsForm({ conn, status, onDone }: { conn: string; status: aether.N
   const [draft, setDraft] = useState<Draft>(() => draftOf(status.settings));
   const [saving, setSaving] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  const { patch, errors } = useMemo(() => patchOf(status.settings, draft), [status.settings, draft]);
+  const { patch, errors } = useMemo(() => patchOf(status.settings, draft, status.models), [status.settings, status.models, draft]);
   const dirty = Object.keys(patch).length > 0;
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((old) => ({ ...old, [key]: value }));
   const hostNote = host ? undefined : "Only the daemon's own host can change this";
@@ -111,9 +119,16 @@ function SettingsForm({ conn, status, onDone }: { conn: string; status: aether.N
       </fieldset>
       <fieldset className="learn-fieldset">
         <legend>Models and the graph</legend>
-        <Field label="Teaching model" placeholder="First ready subscription model" value={draft.strong} disabled={refusal !== null} onChange={(e) => set("strong", e.target.value)} />
-        <Field label="Light model" placeholder="First ready subscription model" value={draft.cheap} disabled={refusal !== null} onChange={(e) => set("cheap", e.target.value)} />
+        <ModelChooser id="learn-model-strong" label="Teaching model" value={draft.strong} offers={status.models} allowApi={draft.allowApi}
+          disabled={refusal !== null} resolved={status.teaching_model} onChange={(v) => set("strong", v)} />
+        <ModelChooser id="learn-model-cheap" label="Light model, for checks and the graph" value={draft.cheap} offers={status.models} allowApi={draft.allowApi}
+          disabled={refusal !== null} onChange={(v) => set("cheap", v)} />
         <Toggle label="Add sessions to the knowledge graph automatically" hint="Off means you choose when, from a session" checked={draft.extraction === "auto"} disabled={refusal !== null} onChange={(v) => set("extraction", v ? "auto" : "manual")} />
+      </fieldset>
+      <fieldset className="learn-fieldset">
+        <legend>Learn from my work</legend>
+        <Toggle label="Learn from my work" checked={draft.engineering} disabled={refusal !== null} onChange={(v) => set("engineering", v)}
+          hint="Lets you start a lesson from your own Archon items, runs and pull requests. What you pick is shown to the teaching model; nothing is read until you choose it." />
       </fieldset>
       {failure !== null && <p className="learn-callout" role="alert">{failure}</p>}
       <div className="learn-actions">
@@ -141,7 +156,8 @@ function Spend({ status }: { status: aether.NoesisStatus }) {
           <span className="learn-num">{usd(row.spent)} of {usd(row.budget)}</span>
         </div>
       ))}
-      <p className="learn-muted">Background tokens: {usedTokens.toLocaleString("en")} of {budget.background_tokens_daily.toLocaleString("en")}. Subscription use counts at its estimated price.</p>
+      <p className="learn-muted">Background tokens: {usedTokens.toLocaleString("en")} of {budget.background_tokens_daily.toLocaleString("en")}. Subscription use counts against the budget at its estimated price.</p>
+      <p className="learn-muted" aria-label="Billing today">{billingWords(status.spend_today)}</p>
     </section>
   );
 }

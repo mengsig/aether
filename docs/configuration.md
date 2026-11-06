@@ -829,6 +829,22 @@ own: Aether gives it the agent's tools and transcript, sealed values as
 and budgets behave as on an API model. The step's text reaches watchers as
 one delta when the step ends, not word by word.
 
+In the Learn screen's settings:
+
+- **Model choosers.** The teaching and light models are picked from
+  `models`, grouped by billing. A model that is not ready, or an API model
+  while `allow_api` is off, is listed but cannot be picked. A stored model
+  the daemon no longer offers shows as unknown until you pick another.
+- **Billing.** "Spent today" and each lesson say what paid. Subscription use
+  is covered by your plan; its dollars are a list-price estimate, never a
+  charge. API use is billed to your key.
+- **"Learn from my work".** This is `engineering_context`, an operate-level
+  key. It lets a lesson start from your own items, runs and pull requests.
+  The "Learn from this" sheet offers to turn it on when it is off.
+
+When the day's teaching budget is spent, a lesson pauses and says how much of
+it was used, with a link to these settings.
+
 ## Signed webhook door
 
 `aether serve` reads `[[serve.webhook]]` routes from `config.toml`. Each
