@@ -24,4 +24,5 @@ export * from "./selectors.ts";
 export { EMPTY_NOESIS, noesisKey, type NoesisCache, type NoesisRead, type NoesisQuestionEntry, type NoesisProblemEntry } from "./noesis-cache.ts";
 export { noesisReadKey, type NoesisReadRequest } from "./noesis-reads.ts";
 export { compareStamps } from "./stamps.ts";
+export { DraftStore, drafts, useDraft, isPristine, DRAFT_STORAGE_KEY, type Draft, type DraftMirror, type DraftPatch, type DraftValue } from "./drafts.ts";
 export { AppProvider, useApp, useSelector, useCapabilities, useCommand, useRoutes, useEntityActions, useRoute, useReread, usePermission, permissionFor, useReadPermission, readPermissionFor, type Permission, type CommandInput } from "./react.ts";

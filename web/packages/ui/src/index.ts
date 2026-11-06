@@ -26,3 +26,9 @@ export { EntityActionMenu, EntityActionProvider, actionsFor, runAction } from ".
 export { ConnectionList } from "./shell-parts.tsx";
 export { AppShell, screenFor, type AppShellProps, type ShellMatch } from "./app-shell.tsx";
 export { FOCUSABLE } from "./focus.ts";
+export { Picker, listKey, SEARCH_FROM, type PickerProps } from "./picker.tsx";
+export { groupOptions, filterOptions, moveIndex, typeAhead, type PickerOption, type PickerGroup } from "./picker-model.ts";
+export { Combo, type ComboProps } from "./combo.tsx";
+export { Switch, Segmented, type SwitchProps, type SegmentedProps, type SegmentOption } from "./switch.tsx";
+export { TextArea, type TextAreaProps } from "./textarea.tsx";
+export { ModelPicker, modelOptions, modelRefText, billingOf, type ModelPickerProps, type ModelOptionsSettings, type Billing } from "./model-picker.tsx";
