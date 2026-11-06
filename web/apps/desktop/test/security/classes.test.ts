@@ -63,7 +63,22 @@ test("field rules widen the class as access.rs does", () => {
 test("the Archon pass list names only commands Archon's schema has, and never shutdown", () => {
   const commands = new Set(SCHEMAS.frames.archon.commands());
   for (const cmd of ARCHON_PASS) assert.ok(commands.has(cmd), cmd);
-  assert.ok(!ARCHON_PASS.has("shutdown") && !ARCHON_PASS.has("answer") && !ARCHON_PASS.has("say"));
+  assert.ok(!ARCHON_PASS.has("shutdown") && !ARCHON_PASS.has("operator_command") && !ARCHON_PASS.has("for_agent"));
   assert.match(passThroughRefusal("archon", { cmd: "shutdown" }) ?? "", /shutdown/);
   assert.equal(passThroughRefusal("archon", { cmd: "pause", scope: "global" }), undefined);
+});
+
+test("the app says, answers and reads an initiative as the web app, never with the CLI's knobs", () => {
+  assert.equal(passThroughRefusal("archon", { cmd: "say", text: "hi" }), undefined);
+  assert.equal(passThroughRefusal("archon", { cmd: "answer", question: "q_1", text: "yes" }), undefined);
+  assert.equal(passThroughRefusal("archon", { cmd: "get_initiative", initiative: "in_1" }), undefined);
+  assert.match(passThroughRefusal("archon", { cmd: "answer", question: "q_1", text: "yes", chat: true }) ?? "", /archon chat/);
+  assert.match(passThroughRefusal("archon", { cmd: "resume", scope: "global", hard: true }) ?? "", /archon CLI/);
+});
+
+test("no frame but the hello declares a client, and none names an agent caller", () => {
+  assert.match(passThroughRefusal("archon", { cmd: "say", text: "hi", client: "archon-cli" }) ?? "", /names no client/);
+  assert.match(passThroughRefusal("archon", { cmd: "answer", question: "q_1", text: "y", caller: "agt_1" }) ?? "", /names no caller/);
+  assert.match(passThroughRefusal("archon", { cmd: "hello", client: "archon-cli" }) ?? "", /greets archond as archon-web/);
+  assert.equal(passThroughRefusal("archon", { cmd: "hello", client: "archon-web" }), undefined);
 });

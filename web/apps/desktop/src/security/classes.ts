@@ -52,16 +52,18 @@ export const AETHER_BY_FIELD: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * What Archon lets a device send (archon-remote `allow.rs`, Archon 9a8d63d1) that is `Read`
- * or `Change` (`RequestClass`). `answer` and `say` are `OperatorChange`, so they stay out.
+ * What Archon lets an operator device send (archon-remote `allow.rs`, Archon 9a8d63d1), and
+ * `get_initiative`, a `Read`. The app's connections greet as the web app, so archond marks its
+ * `say` and `answer` as a device's and refuses it authority confirmations: no CLI standing.
+ * The web packages' `archonAccess` must agree, which test/security/ui-parity.test.ts checks.
  */
 export const ARCHON_PASS: ReadonlySet<string> = new Set([
   "hello", "status", "repo_list", "list_items", "list_item_summaries", "get_item", "get_stage",
   "resolve_item", "list_pipelines", "list_questions", "feed_history", "subscribe_feed", "list_reports",
   "orchestrator_status", "cost_report", "list_artifacts", "read_artifact", "item_diff", "settings",
   "autonomy", "subscribe_changes", "changes_page", "item_history", "task_graph", "run_plan", "item_links",
-  "issue_items", "list_github_objects", "enqueue", "cancel_item", "retry_item", "pause", "resume",
-  "link_issue", "unlink_issue", "import_issue",
+  "issue_items", "list_github_objects", "get_initiative", "enqueue", "cancel_item", "retry_item", "pause",
+  "resume", "answer", "say", "link_issue", "unlink_issue", "import_issue",
 ]);
 
 /** The only client the app window's own connections may declare to archond. */
@@ -173,6 +175,11 @@ function archonRefusal(cmd: string, frame: Frame): string | undefined {
   if (cmd === "hello" && frame.client !== ARCHON_APP_CLIENT) {
     return `the desktop app greets archond as ${ARCHON_APP_CLIENT}, not ${String(frame.client).slice(0, 32)}`;
   }
+  // Who sends is the hello's to say: no other frame names a client, and Aether alone names a caller.
+  if (cmd !== "hello" && "client" in frame) return `${cmd} names no client; the connection's hello did`;
+  if ("caller" in frame) return `${cmd} names no caller; only Aether names an agent caller`;
   if ((cmd === "pause" || cmd === "resume") && frame.hard === true) return `${cmd} with hard is for the archon CLI`;
+  // `chat` records an answer as given in archon chat; the app's answers are its own.
+  if (cmd === "answer" && frame.chat === true) return "answer with chat is for archon chat; the app answers as itself";
   return undefined;
 }
