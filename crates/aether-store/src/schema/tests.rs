@@ -1025,8 +1025,10 @@ fn a_v22_store_gains_the_creation_order_listing_indexes() {
     assert_eq!(
         indexes(&v22),
         [
+            "agents_archived_id",
             "agents_created",
             "agents_parent",
+            "agents_run_archived_id",
             "agents_run_created",
             "agents_run_id",
             "agents_status",
@@ -1251,6 +1253,7 @@ fn v29_replays_over_the_upgrade_lanes_undo() {
     let path = directory.path().join("aether.db");
     drop(crate::SqliteStore::open(&path).expect("v29 store"));
     let conn = Connection::open(&path).expect("rewind");
+    crate::sqlite::usage_totals::register(&conn).expect("the usage triggers' function");
     conn.execute(
         "INSERT INTO agents(id, role, status, run, created_at, updated_at, body, subsystem)
          VALUES ('agt_named', 'lead', 'ready', 'run_x', 't', 't', '{}', 'archon')",

@@ -163,6 +163,13 @@ fn totals_from(row: &Row<'_>) -> rusqlite::Result<(u64, Usage)> {
     let members = tokens(row, 0)?;
     let reasoning_members = tokens(row, 6)?;
     let estimated_members = tokens(row, 9)?;
+    if reasoning_members > members || estimated_members > members {
+        return Err(rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Integer,
+            format!("usage totals of {members} members count more of them with a figure").into(),
+        ));
+    }
     let mut gaps = Vec::new();
     for (offset, gap) in GAPS.into_iter().enumerate() {
         if tokens(row, 11 + offset)? > 0 {
@@ -192,7 +199,7 @@ fn totals_from(row: &Row<'_>) -> rusqlite::Result<(u64, Usage)> {
             .then(|| dollars(row, 10))
             .transpose()?,
     };
-    debug_assert!(reasoning_members <= members && estimated_members <= members);
+    debug_assert!(usage.cost_usd >= 0.0, "dollars are clamped at zero");
     Ok((members, usage))
 }
 
@@ -223,7 +230,15 @@ pub(crate) fn read_totals(conn: &Connection, scope: &str) -> Result<(u64, Usage)
     let mut statement = conn.prepare_cached(&format!(
         "SELECT {TOTALS_COLUMNS} FROM usage_totals WHERE scope = ?1"
     ))?;
-    let totals = statement.query_row([scope], totals_from).optional()?;
+    let totals = statement
+        .query_row([scope], totals_from)
+        .optional()
+        .map_err(|error| match error {
+            rusqlite::Error::FromSqlConversionFailure(..) => {
+                StoreError::Corrupt(format!("usage totals of scope `{scope}`: {error}"))
+            }
+            error => error.into(),
+        })?;
     Ok(totals.unwrap_or((0, Usage::default())))
 }
 

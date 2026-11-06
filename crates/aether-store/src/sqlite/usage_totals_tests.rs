@@ -208,28 +208,49 @@ fn a_ledger_row_reads_back_as_the_usage_it_was_written_from() {
     }
 }
 
-#[test]
-fn totals_that_disagree_with_their_members_read_as_a_corrupt_store() {
+/// One member billing tokens but no reasoning or estimate, with its totals
+/// then rewritten past the triggers by `tamper`.
+fn store_with_tampered_totals(tamper: &str) -> (SqliteStore, RunId) {
     let store = SqliteStore::open_in_memory().unwrap();
     let run = RunId::new();
-    let member = agent(run, shaped(3));
+    let usage = shaped(4);
+    assert!(usage.reasoning_tokens.is_none() && usage.estimated_cost_usd.is_none());
+    assert_ne!(usage, Usage::default(), "the member billed");
     store
-        .commit(Commit::new().mutate(Mutation::UpsertAgent(member)))
+        .commit(Commit::new().mutate(Mutation::UpsertAgent(agent(run, usage))))
         .unwrap();
     assert!(store.run_totals(run).unwrap().is_some());
-    let conn = store.conn.lock();
-    // Written past the triggers, which keep the totals and members in step.
-    conn.execute("UPDATE usage_totals SET members = 0", [])
-        .unwrap();
-    drop(conn);
+    store.conn.lock().execute(tamper, []).unwrap();
+    (store, run)
+}
+
+fn is_corrupt<T>(read: &Result<T>) -> bool {
+    matches!(read, Err(StoreError::Corrupt(_)))
+}
+
+#[test]
+fn totals_that_disagree_with_their_members_read_as_a_corrupt_store() {
+    let (store, run) = store_with_tampered_totals("UPDATE usage_totals SET members = 0");
     let run_read = store.run_totals(run);
     assert!(
-        matches!(run_read, Err(crate::StoreError::Corrupt(_))),
-        "a first agent without members: {run_read:?}"
+        is_corrupt(&run_read),
+        "a first agent, no members: {run_read:?}"
     );
     let fleet_read = store.fleet_usage();
     assert!(
-        matches!(fleet_read, Err(crate::StoreError::Corrupt(_))),
-        "an empty fleet that billed: {fleet_read:?}"
+        is_corrupt(&fleet_read),
+        "an empty fleet billed: {fleet_read:?}"
+    );
+
+    let (store, run) = store_with_tampered_totals("UPDATE usage_totals SET reasoning_members = 2");
+    let run_read = store.run_totals(run);
+    assert!(
+        is_corrupt(&run_read),
+        "more reasoners than members: {run_read:?}"
+    );
+    let fleet_read = store.fleet_usage();
+    assert!(
+        is_corrupt(&fleet_read),
+        "more reasoners than members: {fleet_read:?}"
     );
 }

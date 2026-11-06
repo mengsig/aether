@@ -73,11 +73,13 @@ fn the_backup_taken_before_v32_is_a_v31_store_the_previous_binary_opens_with_its
         })
     ));
     // Opening a store also stamps meta and rebuilds the FTS shadow rows, and
-    // V33 adds `agent_usage`; V32 itself must leave everything else as it was.
+    // V33 adds its usage tables, archived indexes and column; V32 adds nothing.
     let migration_visible = |rows: Vec<String>| -> Vec<String> {
         rows.into_iter()
             .filter(|line| !line.starts_with("meta ") && !line.starts_with("memories_fts"))
-            .filter(|line| !line.contains("agent_usage"))
+            .filter(|line| !line.contains("agent_usage") && !line.contains("usage_totals"))
+            .filter(|line| !line.contains("archived_id ON agents"))
+            .map(|line| line.replace(", archived INTEGER NOT NULL DEFAULT 0)", ")"))
             .collect()
     };
     let after = migration_visible(dump(&migrated));
