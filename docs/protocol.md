@@ -374,6 +374,13 @@ read for an earlier `status` is not read again; it stays unavailable until
 that read ends. `stale` is separate: it marks a whole answer replayed from an
 earlier read.
 
+`get_tree` is shared the same way, per request shape (run, archived, role
+prefix, root): a request waits 3 s for a read that started after it arrived,
+and past that is answered with the last tree read for the same shape, with
+`stale` `{read_at, waited_ms}` set. A stale tree is no newer than any tree the
+client already holds; with no `read_at` it is empty because nothing was read,
+not because there are no agents.
+
 ## Delta order
 
 Each delta the daemon streams for an invocation is numbered when it is
