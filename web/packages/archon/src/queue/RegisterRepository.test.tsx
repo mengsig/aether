@@ -3,7 +3,7 @@ import { drafts } from "@aether-ui/core";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { demoWorld } from "./fixture/world.ts";
 import { QueueScreen } from "./QueueScreen.tsx";
-import { folderName, repositoryCommand, EMPTY_REPOSITORY } from "./RegisterRepository.tsx";
+import { folderName, repositoryCommand, EMPTY_REPOSITORY, WATCH_DESKTOP_HINT } from "./RegisterRepository.tsx";
 import { archonHarness, byText, click, pick, type, type ArchonHarness } from "./test/harness.tsx";
 
 let h: ArchonHarness | undefined;
@@ -16,7 +16,8 @@ it("derives a name from Unix and Windows folder paths and validates registration
   expect(() => repositoryCommand(EMPTY_REPOSITORY)).toThrow(/path/);
   expect(() => repositoryCommand({ ...EMPTY_REPOSITORY, path: "/work/example", branch: "" })).toThrow(/base branch/);
   expect(repositoryCommand({ ...EMPTY_REPOSITORY, path: " /work/example ", name: "example", pipeline: "direct", watch: true }))
-    .toEqual({ cmd: "repo_add", path: "/work/example", name: "example", default_pipeline: "direct", base_branch: "main", github_watch: true });
+    .toEqual({ cmd: "repo_add", path: "/work/example", name: "example", default_pipeline: "direct", base_branch: "main", ship: "pr", github_watch: true });
+  expect(repositoryCommand({ ...EMPTY_REPOSITORY, path: "/work/local", ship: "local" })).toMatchObject({ ship: "local", github_watch: false });
 });
 
 it("registers a repository, fills its name, and opens a preselected new item", async () => {
@@ -31,7 +32,7 @@ it("registers a repository, fills its name, and opens a preselected new item", a
   await click(h, document.querySelector('[role="switch"]') as Element);
   await click(h, document.querySelector('[data-testid="repo-register-submit"]') as Element);
   await h.until(() => document.querySelector('[data-testid="new-item-repo"]') !== null, "new item after registration");
-  expect(h.faux.commands("repo_add")[0]).toMatchObject({ path: "/home/user/example", name: "example", default_pipeline: "direct", base_branch: "main", github_watch: true });
+  expect(h.faux.commands("repo_add")[0]).toMatchObject({ path: "/home/user/example", name: "example", default_pipeline: "direct", base_branch: "main", ship: "pr", github_watch: true });
   expect(document.querySelector('[data-testid="new-item-repo"]')?.textContent).toBe("example");
   expect(document.querySelector('[data-testid="new-item-pipeline"]')?.textContent).toBe("direct");
   expect(drafts.get("archon/register-repository")).toBeUndefined();
@@ -94,6 +95,13 @@ it("uses the desktop folder picker and preserves an edited repository name", asy
   await type(h, document.querySelector('[data-testid="repo-name"]') as Element, "Custom name");
   await type(h, document.querySelector('[data-testid="repo-path"]') as Element, "/home/user/other");
   expect(document.querySelector<HTMLInputElement>('[data-testid="repo-name"]')?.value).toBe("Custom name");
+  const watch = document.querySelector<HTMLButtonElement>('[role="switch"]');
+  expect(watch?.disabled).toBe(true);
+  expect(document.body.textContent).toContain(WATCH_DESKTOP_HINT);
+  await click(h, byText(document.body, "button", "Keep it local"));
+  await click(h, document.querySelector('[data-testid="repo-register-submit"]') as Element);
+  await h.until(() => h?.faux.commands("repo_add").length === 1, "the registration");
+  expect(h.faux.commands("repo_add")[0]).toMatchObject({ path: "/home/user/other", ship: "local", github_watch: false });
 });
 
 it("keeps a question answer through navigation and clears it after sending", async () => {

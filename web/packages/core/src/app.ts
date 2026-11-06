@@ -86,7 +86,8 @@ export function createApp(host: HostAdapter, options: AppOptions = {}): App {
       const order = issued;
       store.update((state) => markRequested(state, conn, key, order));
       try {
-        const reply = await app.send(conn, command);
+        // A read's failure belongs to the read's own state, which its screen shows in place; only a user's send toasts.
+        const reply = await manager.send(conn, command);
         if (!tags.includes(String(reply.reply))) throw new Error(`Expected a ${tags.join(" or ")} reply, got ${String(reply.reply)}`);
         store.update((state) => applyRead(state, conn, key, order, reply.data ?? null));
       } catch (error) {

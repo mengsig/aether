@@ -135,6 +135,14 @@ before updating.
 
 ### Fixed
 
+- **The desktop app can register a repository and read the GitHub
+  watcher.** Its bridge refused `repo_add` and `github_watcher`, so
+  registration always failed and every launch with archond raised watcher
+  toasts. Only `repo_add` with `auto_merge` or `github_watch` stays with the
+  archon CLI. A screen's background read that fails now shows its error in
+  place instead of a toast that covered the composer; registration offers
+  "Keep it local" for a checkout without an origin remote; the Start sheet
+  lists an agent that already holds a task as unavailable.
 - **A tool call that never returns (archon#393).** After 15 minutes
   outstanding with no sign of life from the engine, Aether stops the turn,
   records `agent.tool_call_overdue` and wakes the agent to read its inbox;

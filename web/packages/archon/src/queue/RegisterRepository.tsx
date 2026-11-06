@@ -1,11 +1,14 @@
 import { useApp, useDraft } from "@aether-ui/core";
 import { archon } from "@aether-ui/protocol";
-import { Button, Combo, Field, Picker, Sheet, Switch } from "@aether-ui/ui";
+import { Button, Combo, Field, Picker, Segmented, Sheet, Switch } from "@aether-ui/ui";
 import { useState, type FormEvent } from "react";
 import { useChange, useRead, type ArchonAccess } from "./archon.ts";
 import { invariant, replyOf } from "./model.ts";
 
-export const EMPTY_REPOSITORY = { path: "", name: "", pipeline: "", branch: "main", watch: false };
+export const EMPTY_REPOSITORY = { path: "", name: "", pipeline: "", branch: "main", ship: "pr" as archon.ShipMode, watch: false };
+const SHIP_OPTIONS = [{ id: "pr", label: "Open a pull request" }, { id: "local", label: "Keep it local" }];
+/** The desktop bridge keeps `github_watch` for the archon CLI, so the app only shows the switch. */
+export const WATCH_DESKTOP_HINT = "Use the archon CLI to watch GitHub.";
 export type RepositoryDraft = typeof EMPTY_REPOSITORY;
 
 export function folderName(path: string): string {
@@ -15,8 +18,9 @@ export function folderName(path: string): string {
 export function repositoryCommand(draft: RepositoryDraft): archon.RepoAddCommand {
   invariant(draft.path.trim().length > 0, "a repository has a path");
   invariant(draft.branch.trim().length > 0, "a repository has a base branch");
+  invariant(draft.ship === "pr" || draft.ship === "local", "a repository ships by pull request or locally");
   return archon.repoAdd({ path: draft.path.trim(), name: draft.name.trim() || null, default_pipeline: draft.pipeline || null,
-    base_branch: draft.branch.trim(), github_watch: draft.watch });
+    base_branch: draft.branch.trim(), ship: draft.ship, github_watch: draft.watch });
 }
 
 function RepositoryFields({ draft, update, access }: {
@@ -42,7 +46,9 @@ function RepositoryFields({ draft, update, access }: {
     <Picker label="Default pipeline" value={draft.pipeline} onChange={(pipeline) => update({ pipeline })} data-testid="repo-default-pipeline"
       options={[{ id: "", label: "Archon's default" }, ...(catalog.data?.pipelines ?? []).map((pipeline) => ({ id: pipeline.name, label: pipeline.name }))]} />
     <Field label="Base branch" value={draft.branch} onChange={(event) => update({ branch: event.target.value })} {...(!draft.branch.trim() ? { error: "Enter a base branch." } : {})} />
-    <Switch label="Watch GitHub" checked={draft.watch} onChange={(watch) => update({ watch })} />
+    <Segmented label="When work is done" value={draft.ship} onChange={(ship) => update({ ship: ship as archon.ShipMode })} options={SHIP_OPTIONS} />
+    <Switch label="Watch GitHub" checked={draft.watch} onChange={(watch) => update({ watch })} disabled={app.host.desktop !== undefined}
+      hint={app.host.desktop ? WATCH_DESKTOP_HINT : "Import issues and pull requests from GitHub as they change."} />
     {error || catalog.error ? <p role="alert" className="queue-error">{error ?? catalog.error}</p> : null}
   </>;
 }
@@ -67,7 +73,7 @@ export function RegisterRepository({ access, open, onClose, onRegistered }: {
     invariant(typeof repo.name === "string", "registration returns a repository name");
     clear(); setError(null); onRegistered(repo);
   };
-  return <Sheet open={open} onClose={onClose} title="Register a repository" description="Choose a checkout, set its defaults, then queue your first item.">
+  return <Sheet open={open} onClose={onClose} title="Register a repository" description="Choose a checkout, set its defaults, then queue your first item. A checkout without an origin remote can only keep its work local.">
     <form className="queue-form" onSubmit={(event) => void submit(event)} noValidate>
       {open ? <RepositoryFields draft={draft} update={update} access={access} /> : null}
       {error ? <p role="alert" className="queue-error">{error}</p> : null}
