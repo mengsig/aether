@@ -96,7 +96,8 @@ fn status_answers_stale_while_its_read_cannot_run() {
                 let Ok(aether_protocol::Reply::Status(status)) = reply else {
                     panic!("status failed: {reply:?}");
                 };
-                if status.stale.is_none() {
+                // A loaded host can run a section past its deadline; wait for a whole read.
+                if status.stale.is_none() && status.unavailable.is_empty() {
                     return status;
                 }
             }
@@ -104,7 +105,11 @@ fn status_answers_stale_while_its_read_cannot_run() {
         let status = tokio::time::timeout(Duration::from_secs(60), fresh)
             .await
             .expect("a fresh status once the read can run");
-        assert!(status.problems.iter().all(|p| !p.contains("status")));
+        assert!(
+            status.problems.iter().all(|p| !p.contains("status")),
+            "{:?}",
+            status.problems
+        );
         daemon.runtime.shutdown().await;
     });
 }

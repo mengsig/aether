@@ -4,10 +4,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use aether_core::agent::Agent;
 
-use aether_core::id::{AgentId, RunId};
+use aether_core::id::{AgentId, RunId, TaskId};
 use aether_core::model::Usage;
 use aether_core::replay::{self, ReplayFrame};
 use aether_core::report::{self, RunReport};
+use aether_core::task::Task;
 use aether_protocol::{AgentTree, RunListing, TranscriptEntry, TreeNode};
 use aether_runtime::Runtime;
 use aether_store::{AgentFilter, EventFilter, Store, TaskFilter};
@@ -47,10 +48,6 @@ pub fn build_tree(
         exclude_archived: false,
         ..Default::default()
     })?;
-    let tasks = store.tasks(&TaskFilter {
-        run,
-        ..Default::default()
-    })?;
     let leases: BTreeMap<AgentId, _> = store
         .leases()?
         .into_iter()
@@ -73,7 +70,7 @@ pub fn build_tree(
         "only agents of the run are shown"
     );
 
-    let tasks: HashMap<_, _> = tasks.into_iter().map(|t| (t.id, t)).collect();
+    let tasks = current_tasks(store, &agents)?;
     let mut nodes: BTreeMap<AgentId, TreeNode> = BTreeMap::new();
     let (roots, mut children) = link(&agents, &visible);
     for agent in agents {
@@ -97,6 +94,30 @@ pub fn build_tree(
         );
     }
     Ok(AgentTree { roots, nodes })
+}
+
+/// The task each shown agent is on, read by id: a long-lived store's task
+/// history is never decoded for the few the tree shows.
+fn current_tasks(
+    store: &dyn Store,
+    agents: &[Agent],
+) -> aether_store::Result<HashMap<TaskId, Task>> {
+    let ids: BTreeSet<TaskId> = agents
+        .iter()
+        .filter_map(|agent| agent.current_task)
+        .collect();
+    let mut tasks = HashMap::with_capacity(ids.len());
+    for id in ids {
+        if let Some(task) = store.task(id)? {
+            assert_eq!(task.id, id, "a task read by id is that task");
+            tasks.insert(id, task);
+        }
+    }
+    assert!(
+        tasks.len() <= agents.len(),
+        "at most one current task per agent"
+    );
+    Ok(tasks)
 }
 
 /// The root's descendants over every run: delegation may cross runs, so a

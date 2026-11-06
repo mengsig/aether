@@ -74,9 +74,12 @@ pub(super) async fn dispatch(
             "a resolution is answered before dispatch",
         )),
         Command::McpServers { refresh, server } => mcp_servers(daemon, refresh, server).await,
-        Command::GetGithubWatcher => Ok(Reply::GithubWatcher(
-            rt.github_watcher_status().map_err(map_err)?,
-        )),
+        Command::GetGithubWatcher => {
+            let reading = rt.clone();
+            let watcher =
+                blocking(move || reading.github_watcher_status().map_err(map_err)).await??;
+            Ok(Reply::GithubWatcher(watcher))
+        }
         Command::ConfigureGithubWatcher {
             config,
             expected_revision,
@@ -147,6 +150,9 @@ async fn status(daemon: &Daemon) -> Result<Reply, ErrorReply> {
         s.problems
             .insert(0, stale_problem(stale, aether_core::time::now()));
     }
+    if let Some(problem) = unavailable_problem(&s.unavailable) {
+        s.problems.insert(0, problem);
+    }
     Ok(Reply::Status(DaemonStatus {
         problems: s.problems,
         instance_id: daemon.instance_id.clone(),
@@ -186,7 +192,7 @@ async fn status(daemon: &Daemon) -> Result<Reply, ErrorReply> {
             .as_ref()
             .map(|bridge| bridge.command.display().to_string()),
         stale,
-        unavailable: Vec::new(),
+        unavailable: s.unavailable,
     }))
 }
 
@@ -218,7 +224,10 @@ fn resolve(answer: Answer<Figures>) -> (Option<Arc<Figures>>, Option<StatusStale
 /// One read for `status`: the runtime's figures, a crash left behind, and
 /// the log position.
 fn read_figures(reading: &aether_runtime::Runtime) -> Result<Figures, ErrorReply> {
-    let mut runtime = reading.status().map_err(map_err)?;
+    const { assert!(aether_runtime::STATUS_DEADLINE.as_millis() < PATIENCE.as_millis()) };
+    let mut runtime = reading
+        .status_within(aether_runtime::STATUS_DEADLINE)
+        .map_err(map_err)?;
     if let Some(paths) = &reading.config().storage_paths
         && let Some(problem) = aether_core::crash::problem(&paths.store)
     {
@@ -226,6 +235,25 @@ fn read_figures(reading: &aether_runtime::Runtime) -> Result<Figures, ErrorReply
     }
     let last_seq = reading.store().last_seq().map_err(store_err)?;
     Ok(Figures { runtime, last_seq })
+}
+
+/// The line a status missing some sections leads its problems with, for
+/// older clients that do not know `unavailable` and show its zeros.
+fn unavailable_problem(unavailable: &[aether_protocol::UnavailableSection]) -> Option<String> {
+    if unavailable.is_empty() {
+        return None;
+    }
+    let names: Vec<&str> = unavailable.iter().map(|u| u.section.as_str()).collect();
+    debug_assert!(
+        names.iter().all(|name| !name.is_empty()),
+        "a section has a name"
+    );
+    Some(format!(
+        "status sections unavailable ({}): the store did not answer them within {}s, so their \
+         figures read zero because they were not read, not because they are zero",
+        names.join(", "),
+        aether_runtime::STATUS_DEADLINE.as_secs()
+    ))
 }
 
 /// The line a stale status leads its problems with, which older clients
@@ -315,4 +343,28 @@ async fn refresh_provider_usage(
             .await
             .map_err(map_err)?,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unavailable_problem;
+    use aether_protocol::{UnavailableSection, status_sections};
+
+    #[test]
+    fn a_status_missing_sections_says_its_zeros_were_not_read() {
+        assert_eq!(
+            unavailable_problem(&[]),
+            None,
+            "a whole status has no such line"
+        );
+        let missing = [status_sections::RUNS, status_sections::USAGE_TOTAL].map(|section| {
+            UnavailableSection {
+                section: section.to_owned(),
+                reason: status_sections::TIMED_OUT.to_owned(),
+            }
+        });
+        let line = unavailable_problem(&missing).expect("a line");
+        assert!(line.contains("(runs, usage_total)"), "{line}");
+        assert!(line.contains("not because they are zero"), "{line}");
+    }
 }
