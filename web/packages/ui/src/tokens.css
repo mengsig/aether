@@ -74,6 +74,8 @@
   --weight-bold: 600;
 
   --space-0: 0px;
+  --space-px: 1px;
+  --space-0-5: 2px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -86,6 +88,9 @@
   --space-10: 40px;
   --space-11: 44px;
   --space-12: 48px;
+
+  --blur-sm: 4px;
+  --blur-lg: 12px;
 
   --radius-sm: 6px;
   --radius-md: 8px;

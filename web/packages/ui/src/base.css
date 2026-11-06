@@ -22,12 +22,12 @@
   [hidden] { display: none !important; }
   .ui-link {
     color: var(--color-accent); font-weight: var(--weight-medium); border-radius: var(--radius-sm);
-    text-decoration-color: color-mix(in srgb, var(--color-accent) 35%, transparent); text-underline-offset: 3px;
+    text-decoration-color: color-mix(in srgb, var(--color-accent) 35%, transparent); text-underline-offset: var(--space-1);
     transition: text-decoration-color var(--motion-fast) var(--ease-standard);
   }
   .ui-link:hover { text-decoration-color: currentColor; }
   .ui-kbd {
-    padding: 1px var(--space-2);
+    padding: var(--space-px) var(--space-2);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     background: var(--color-surface-1);

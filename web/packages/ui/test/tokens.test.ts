@@ -21,7 +21,7 @@ const STATUS = ["--status-queued", "--status-dispatching", "--status-running", "
 const TYPE = ["--font-ui", "--font-prose", "--font-mono", "--font-display", "--text-xs", "--text-sm", "--text-md", "--text-lg",
   "--text-xl", "--text-2xl", "--text-3xl", "--leading-tight", "--leading-normal", "--leading-prose", "--weight-regular",
   "--weight-medium", "--weight-bold"];
-const SPACE = [...Array.from({ length: 13 }, (_, n) => `--space-${n}`), "--radius-sm", "--radius-md", "--radius-lg", "--radius-xl",
+const SPACE = [...Array.from({ length: 13 }, (_, n) => `--space-${n}`), "--space-px", "--space-0-5", "--blur-sm", "--blur-lg", "--radius-sm", "--radius-md", "--radius-lg", "--radius-xl",
   "--elevation-1", "--elevation-2", "--elevation-3", "--focus-ring"];
 const DURATIONS = ["--motion-instant", "--motion-fast", "--motion-base", "--motion-slow"];
 const MOTION = [...DURATIONS, "--ease-standard", "--ease-emphasized", "--ease-exit"];
