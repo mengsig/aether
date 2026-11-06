@@ -142,17 +142,24 @@ before updating.
   archived state before it reads an agent and answers one page: the newest
   live agents and the root, then the newest agents of any state, 500 of each
   at most, with `next_after` for the rest (`after` and `limit`, feature
-  `tree_pages`); the board says when older agents are left out. A rooted page
-  walks a kept table of each agent's ancestors, and each shown agent's
-  roll-up is read from its subtree's kept totals, so a page costs the same
-  however many agents are below it. Within a run, a roll-up counts that run's
-  agents below, even under an agent of another run. It is shared like
+  `tree_pages`); the board says when older agents are left out. A filter no
+  index answers is checked on at most 4000 agents per page, and a page holds
+  at most `limit` ancestors. A rooted page walks a kept table of each agent's
+  ancestors, and each shown agent's roll-up is read from its subtree's kept
+  totals, so a page costs the same however many agents are below it. An agent
+  shown apart from its ancestors, its parent filtered out, is counted at its
+  own root only, so the roots' sums count each agent once. Within a run, a
+  roll-up counts that run's agents below, even under an agent of another run.
+  The tree reads leases by agent instead of every lease. It is shared like
   `status`: past 750 ms it answers with the last tree read for the same
   request, marked `stale`. The GitHub watcher's status shares one read and
   answers `unavailable` past 750 ms. A timed-out client names the daemon's
   slowest recent status section or the host's load, and a slow engine tool
   call is logged with its tool, split into its wait for the turn and its own
-  run. BENCH_NUMBERS
+  run. On a synthetic store of 5 million events with a live run five days old,
+  `status` answers in 13 ms at p99 instead of 480 ms (`runs` 12 ms instead of
+  456, `usage_total` under 1 ms instead of 68), a 500-agent tree page with its
+  roll-ups reads in 11 ms, and the migration to schema 33 takes about a minute.
 - **A tool call that never returns (archon#393).** After 15 minutes
   outstanding with no sign of life from the engine, Aether stops the turn,
   records `agent.tool_call_overdue` and wakes the agent to read its inbox;
