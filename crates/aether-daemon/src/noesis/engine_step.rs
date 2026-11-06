@@ -16,12 +16,21 @@ use aether_core::model::{
     StreamEvent, SystemBlock, ToolResultBlock, ToolSpec, Usage,
 };
 use aether_model::{ModelClient, ModelStream, collect_partial};
+use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-/// One corrective retry when a reply is not the JSON object asked for.
-const ATTEMPTS: usize = 2;
+/// A step tries the engine twice: one corrective retry when a reply is not
+/// the JSON object asked for. Each attempt is gated and charged on its own.
+pub(super) const ATTEMPTS: usize = 2;
+
+const MALFORMED_REPLY: &str = "the engine's reply was not the JSON object asked for";
+
+/// What a retry adds to the transcript. The refused reply is never shown
+/// again: it may hold a value the transcript seals.
+const RETRY_NOTE: &str = "Your previous reply was refused and discarded: it was not one valid \
+    JSON object of the reply format. Reply again with only the JSON object.";
 
 /// Renders a Noesis request for `inner`, a one-shot engine client, and
 /// parses its reply into text and tool calls.
@@ -41,43 +50,49 @@ impl ModelClient for EngineStepClient {
         "noesis-engine-step/1"
     }
 
+    /// One engine attempt. The reply is parsed as the stream is read, so a
+    /// caller that stops reading still holds what the attempt reported.
     async fn stream(
         &self,
         request: ModelRequest,
         cancel: CancellationToken,
     ) -> Result<ModelStream, ModelError> {
         debug_assert!(!request.messages.is_empty(), "a step has a transcript");
-        let mut prompt = engine_request(&request);
-        let mut spent = Usage::default();
-        let mut last_error = String::new();
-        for attempt in 0..ATTEMPTS {
-            let stream = self.inner.stream(prompt.clone(), cancel.clone()).await;
-            // Nothing was sent on the first attempt's refusal; a retry's is
-            // reported with what the first attempt spent.
-            let stream = match stream {
-                Ok(stream) => stream,
-                Err(error) if attempt == 0 => return Err(error),
-                Err(error) => return Ok(failed_stream(spent, error)),
-            };
-            let reply = match collect_partial(stream, |_| {}).await {
-                Ok(reply) => reply,
-                Err(failure) => {
-                    spent += failure.partial.usage;
-                    return Ok(failed_stream(spent, failure.error));
-                }
-            };
-            spent += reply.usage;
-            match parse_reply(&reply.text()) {
-                Ok(parsed) => return Ok(reply_stream(spent, parsed)),
-                Err(error) => last_error = error,
-            }
-            prompt = corrected(prompt, &reply.text(), &last_error);
+        let rendered = engine_request(&request);
+        assert!(rendered.tools.is_empty(), "the engine gets no native tools");
+        let stream = self.inner.stream(rendered, cancel).await?;
+        let events = futures::stream::once(parsed_events(stream)).flat_map(futures::stream::iter);
+        Ok(Box::pin(events))
+    }
+}
+
+/// Whether a step's error is a reply that was not the object asked for.
+pub(super) fn is_malformed(error: &ModelError) -> bool {
+    error.class == ModelErrorClass::Server && error.message.starts_with(MALFORMED_REPLY)
+}
+
+/// The note a retried step's transcript ends with.
+pub(super) fn retry_note() -> Message {
+    Message::user_text(RETRY_NOTE)
+}
+
+/// The engine's whole reply as an API reply's events. A failure reports the
+/// attempt's usage first, so the step charges what was spent.
+async fn parsed_events(stream: ModelStream) -> Vec<Result<StreamEvent, ModelError>> {
+    let reply = match collect_partial(stream, |_| {}).await {
+        Ok(reply) => reply,
+        Err(failure) => return failed_events(failure.partial.usage, failure.error),
+    };
+    match parse_reply(&reply.text()) {
+        Ok(parsed) => reply_events(reply.usage, parsed),
+        Err(reason) => {
+            let error = ModelError::new(
+                ModelErrorClass::Server,
+                format!("{MALFORMED_REPLY}: {reason}"),
+            );
+            debug_assert!(is_malformed(&error));
+            failed_events(reply.usage, error)
         }
-        let error = ModelError::new(
-            ModelErrorClass::Server,
-            format!("the engine's reply was not the JSON object asked for: {last_error}"),
-        );
-        Ok(failed_stream(spent, error))
     }
 }
 
@@ -98,27 +113,6 @@ fn engine_request(request: &ModelRequest) -> ModelRequest {
     rendered.effort = request.effort;
     debug_assert!(rendered.tools.is_empty(), "the engine gets no native tools");
     rendered
-}
-
-/// The prompt again, with the reply that failed and why.
-fn corrected(mut request: ModelRequest, reply: &str, error: &str) -> ModelRequest {
-    debug_assert_eq!(
-        request.messages.len(),
-        1,
-        "the rendered prompt is one message"
-    );
-    let note = format!(
-        "\n\n## Your previous reply was refused\n\nIt was not one valid JSON object of the \
-         reply format ({error}). It read:\n\n{reply}\n\nReply again with only the JSON object."
-    );
-    if let Some(ContentBlock::Text { text }) = request
-        .messages
-        .first_mut()
-        .and_then(|message| message.content.first_mut())
-    {
-        text.push_str(&note);
-    }
-    request
 }
 
 fn protocol(tools: &[ToolSpec]) -> String {
@@ -222,31 +216,36 @@ struct Reply {
     calls: Vec<(String, String, Value)>,
 }
 
-/// The reply's text and calls. A reply that opens with `{` (after any code
-/// fence) must be the object; other prose is plain text that ends the turn,
-/// unless it embeds a reply object, which is then taken.
+/// The reply's text and calls. Prose with no `{` is plain text that ends the
+/// turn; anything else must hold one valid reply object, which is taken.
+/// Refusal reasons never quote the reply, which may hold a sealed value.
 fn parse_reply(raw: &str) -> Result<Reply, String> {
     let raw = unfenced(raw.trim());
     if raw.is_empty() {
         return Err("the reply was empty".into());
     }
-    if raw.starts_with('{') {
-        let wire: WireReply = serde_json::from_str(raw).map_err(|e| e.to_string())?;
-        return reply_of(wire);
-    }
-    let embedded = match (raw.find('{'), raw.rfind('}')) {
-        (Some(start), Some(end)) if start < end => {
-            serde_json::from_str::<WireReply>(&raw[start..=end]).ok()
-        }
-        _ => None,
-    };
-    match embedded {
-        Some(wire) => reply_of(wire),
-        None => Ok(Reply {
+    let Some(start) = raw.find('{') else {
+        return Ok(Reply {
             text: Some(raw.into()),
             calls: Vec::new(),
-        }),
-    }
+        });
+    };
+    let object = match raw.rfind('}') {
+        Some(end) if end > start => &raw[start..=end],
+        _ => return Err("the reply has an unclosed JSON object".into()),
+    };
+    let wire: WireReply = serde_json::from_str(object).map_err(|error| {
+        let what = match error.classify() {
+            serde_json::error::Category::Data => "does not follow the reply format",
+            _ => "is not valid JSON",
+        };
+        format!(
+            "its object {what} (line {}, column {})",
+            error.line(),
+            error.column()
+        )
+    })?;
+    reply_of(wire)
 }
 
 /// `raw` without a surrounding Markdown code fence.
@@ -280,7 +279,7 @@ fn reply_of(wire: WireReply) -> Result<Reply, String> {
     Ok(Reply { text, calls })
 }
 
-fn reply_stream(usage: Usage, reply: Reply) -> ModelStream {
+fn reply_events(usage: Usage, reply: Reply) -> Vec<Result<StreamEvent, ModelError>> {
     debug_assert!(reply.text.is_some() || !reply.calls.is_empty());
     let mut events = vec![
         StreamEvent::MessageStart {
@@ -317,13 +316,12 @@ fn reply_stream(usage: Usage, reply: Reply) -> ModelStream {
         ]);
     }
     events.push(StreamEvent::MessageStop);
-    Box::pin(futures::stream::iter(events.into_iter().map(Ok)))
+    events.into_iter().map(Ok).collect()
 }
 
 /// What was spent, then the error: the step charges the usage it reports.
-fn failed_stream(usage: Usage, error: ModelError) -> ModelStream {
-    let events = vec![Ok(StreamEvent::Usage { usage }), Err(error)];
-    Box::pin(futures::stream::iter(events))
+fn failed_events(usage: Usage, error: ModelError) -> Vec<Result<StreamEvent, ModelError>> {
+    vec![Ok(StreamEvent::Usage { usage }), Err(error)]
 }
 
 #[cfg(test)]

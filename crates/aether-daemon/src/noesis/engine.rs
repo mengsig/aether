@@ -16,7 +16,7 @@ use aether_core::agent::{Agent, AgentConfig};
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::{AgentId, RunId};
 use aether_core::model::{
-    ContentBlock, CostGap, Message, MessageRole, ModelRef, ModelRequest, ModelResponse,
+    ContentBlock, CostGap, Message, MessageRole, ModelError, ModelRef, ModelRequest, ModelResponse,
     StreamAccumulator, StreamEvent, SystemBlock, ToolResultBlock, ToolSpec, Usage,
 };
 use aether_core::tool::ToolExposure;
@@ -36,7 +36,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
 use super::budget::{ServiceBudget, spend_of};
-use super::engine_step::EngineStepClient;
+use super::engine_step::{self, EngineStepClient};
 
 /// What every engine of one running service shares.
 pub(super) struct EngineHost {
@@ -368,20 +368,41 @@ impl AetherEngine<'_> {
     fn record_broken(&mut self, agent: AgentId, mut spent: Usage, error: String) -> EngineError {
         debug_assert!(!error.is_empty(), "a broken reply says why");
         spent.mark_cost_gap(CostGap::Interrupted);
-        if let Some(open) = self.charge.as_mut() {
-            debug_assert_eq!(open.agent, agent, "the call ran under its own admission");
-            open.spent += spent;
-        }
-        match self
-            .host
-            .runtime
-            .record_noesis_call(agent, spent, |_, _| {})
-        {
-            Ok(_) => failed(error),
+        match self.charge_spent(agent, spent) {
+            Ok(()) => failed(error),
             Err(record) => failed(format!(
                 "{error}; and the call's spend was not recorded: {record}"
             )),
         }
+    }
+
+    /// Charge a call that produced no reply to keep, and record its usage.
+    fn charge_spent(&mut self, agent: AgentId, spent: Usage) -> Result<(), String> {
+        let open = self.charge.as_mut();
+        assert!(
+            open.as_ref().is_some_and(|open| open.agent == agent),
+            "the call ran under its own admission"
+        );
+        if let Some(open) = open {
+            open.spent += spent;
+        }
+        let recorded = self
+            .host
+            .runtime
+            .record_noesis_call(agent, spent, |_, _| {});
+        recorded.map(|_| ()).map_err(|error| error.to_string())
+    }
+
+    /// Refuse a call the agent's admission does not cover, given its spend
+    /// so far; asked again before each attempt of a step.
+    fn gate(&mut self, row: &Agent) -> Result<(), EngineError> {
+        let open = self.admitted(row)?;
+        debug_assert_eq!(open.agent, row.id, "the admission is the agent's");
+        let refused = open
+            .charge
+            .refuses_model(&row.model)
+            .or_else(|| open.charge.before_invocation(&open.spent));
+        refused.map_or(Ok(()), |reason| Err(not_sent(reason)))
     }
 
     fn request(&self, agent: &Agent, history: Vec<Message>) -> Result<ModelRequest, EngineError> {
@@ -469,19 +490,24 @@ impl Engine for AetherEngine<'_> {
         if row.status.is_terminal() {
             return Err(not_sent(format!("agent {agent} is {}", row.status.kind())));
         }
-        let request = self.request(&row, self.transcript(row.id)?)?;
-        let open = self.admitted(&row)?;
-        let refused = open
-            .charge
-            .refuses_model(&row.model)
-            .or_else(|| open.charge.before_invocation(&open.spent));
-        if let Some(reason) = refused {
-            return Err(not_sent(reason));
-        }
-        let response = match self.invoke(&row, request)? {
-            CallEnd::Replied(response) => response,
-            CallEnd::AgentEnded(spent) => return Err(self.record_cut_short(row.id, spent)),
-            CallEnd::Broke(spent, error) => return Err(self.record_broken(row.id, spent, error)),
+        let mut request = self.request(&row, self.transcript(row.id)?)?;
+        let mut attempt = 1;
+        let response = loop {
+            self.gate(&row)?;
+            match self.invoke(&row, request.clone())? {
+                CallEnd::Replied(response) => break response,
+                CallEnd::AgentEnded(spent) => return Err(self.record_cut_short(row.id, spent)),
+                CallEnd::Broke(spent, error)
+                    if attempt < engine_step::ATTEMPTS && engine_step::is_malformed(&error) =>
+                {
+                    self.charge_spent(row.id, spent).map_err(failed)?;
+                    request.messages.push(engine_step::retry_note());
+                    attempt += 1;
+                }
+                CallEnd::Broke(spent, error) => {
+                    return Err(self.record_broken(row.id, spent, error.to_string()));
+                }
+            }
         };
         if let Some(open) = self.charge.as_mut() {
             open.spent += response.usage;
@@ -500,7 +526,7 @@ enum CallEnd {
     AgentEnded(Usage),
     /// The reply broke off with an error after the provider reported usage,
     /// which is charged as a cut-short call's is.
-    Broke(Usage, String),
+    Broke(Usage, ModelError),
 }
 
 /// Resolves once `agent` is in a terminal state, as a cancel leaves it.
@@ -565,7 +591,7 @@ async fn read_reply(
         let event = match item {
             None => break,
             Some(Ok(event)) => event,
-            Some(Err(error)) => return Ok(CallEnd::Broke(usage, error.to_string())),
+            Some(Err(error)) => return Ok(CallEnd::Broke(usage, error)),
         };
         match &event {
             StreamEvent::Usage { usage: reading } => usage = *reading,

@@ -12795,6 +12795,58 @@
       ],
       "type": "object"
     },
+    "NoesisBilling": {
+      "oneOf": [
+        {
+          "const": "subscription",
+          "description": "An engine CLI on the user's own subscription (Claude Code, Codex).",
+          "type": "string"
+        },
+        {
+          "const": "api",
+          "description": "A provider billed per request through an API key.",
+          "type": "string"
+        }
+      ]
+    },
+    "NoesisModelChoice": {
+      "description": "The strong slot resolved: `model` when one would run, else `refusal`.",
+      "properties": {
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "refusal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "NoesisModelOffer": {
+      "description": "A model as Noesis sees it: how it is paid for and whether a step on it\ncould run now (an engine detected and signed in, an API provider keyed).",
+      "properties": {
+        "billing": {
+          "$ref": "#/$defs/NoesisBilling"
+        },
+        "id": {
+          "type": "string"
+        },
+        "ready": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "billing",
+        "ready"
+      ],
+      "type": "object"
+    },
     "NoesisProvenance": {
       "description": "Where a proposition or chain came from.",
       "properties": {
@@ -13045,6 +13097,14 @@
           "minimum": 0,
           "type": "integer"
         },
+        "models": {
+          "default": [],
+          "description": "Every model Noesis could run on, as it would judge it now.",
+          "items": {
+            "$ref": "#/$defs/NoesisModelOffer"
+          },
+          "type": "array"
+        },
         "prompt_overrides": {
           "description": "The prompt segments a file under the data dir currently replaces.",
           "items": {
@@ -13058,6 +13118,17 @@
         },
         "spend_today": {
           "$ref": "#/$defs/SpendToday"
+        },
+        "teaching_model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NoesisModelChoice"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The model a new session's agents would run on, or why there is none."
         }
       },
       "required": [
@@ -14601,6 +14672,17 @@
         },
         "prompt": {
           "type": "string"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuestionStep"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The lesson step the question is, for a client to render it as one.\nOlder daemons leave it out."
         }
       },
       "required": [
@@ -14669,6 +14751,17 @@
         "question"
       ],
       "type": "object"
+    },
+    "QuestionStep": {
+      "description": "What a question does in the lesson: a probe measures, a teach-phase\nquestion predicts before a step or checks after it.",
+      "enum": [
+        "measure",
+        "predict",
+        "check",
+        "goal",
+        "practice"
+      ],
+      "type": "string"
     },
     "QuotaWindow": {
       "description": "A subscription usage window as an engine reported it. Opaque JSON on the\nwire from the CLI; normalized here so every reader agrees.",

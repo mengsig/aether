@@ -115,9 +115,10 @@ impl aether_engine::Engine for FauxCli {
             .lock()
             .get_mut(agent)
             .and_then(VecDeque::pop_front);
-        let reply = queued
-            .unwrap_or_else(|| json!({"text": "Go on."}))
-            .to_string();
+        let reply = match queued.unwrap_or_else(|| json!({"text": "Go on."})) {
+            Value::String(raw) => raw,
+            object => object.to_string(),
+        };
         let (tx, events) = mpsc::channel(4);
         tokio::spawn(async move {
             let usage = Usage {
@@ -198,8 +199,13 @@ fn step_of(session: &NoesisSession) -> Option<QuestionStep> {
 /// No event holds `secret` yet, and every entry of `agent` that carried it
 /// as a tool input holds `"<sealed>"` in its place.
 fn assert_sealed(harness: &Harness, agent: AgentId, secret: &str) {
-    let logged = serde_json::to_string(&harness.events()).expect("json");
-    assert!(!logged.contains(secret), "the sealed value reached the log");
+    for event in harness.events() {
+        let logged = serde_json::to_string(&event).expect("json");
+        assert!(
+            !logged.contains(secret),
+            "the sealed value reached the log: {logged}"
+        );
+    }
     let transcript = serde_json::to_string(&harness.transcript(agent)).expect("json");
     assert!(
         !transcript.contains(secret),
@@ -254,6 +260,9 @@ async fn a_whole_session_runs_on_the_engine_with_sealed_answers_and_charged_step
     let cli = Arc::new(FauxCli::default());
     let mut question = capital_question();
     question["explanation"] = json!(KEY_SECRET);
+    // A broken first reply holding the secret is refused, never shown or replayed.
+    let broken = format!("Sure: {{\"text\": \"Q\", \"explanation\": \"{KEY_SECRET}\",}}");
+    cli.queue("prober", Value::String(broken));
     cli.queue(
         "prober",
         json!({"text": "First, a quick check.", "tool_calls": [tool_call(ASK, question.clone())]}),
@@ -286,6 +295,16 @@ async fn a_whole_session_runs_on_the_engine_with_sealed_answers_and_charged_step
     assert_eq!(row.expect("the prober").model.to_string(), ENGINE_MODEL);
     assert_sealed(&harness, prober, KEY_SECRET);
     let first = &cli.launches()[0];
+    let retried = &cli.launches()[1];
+    assert!(
+        retried.prompt.contains("was refused and discarded"),
+        "{}",
+        retried.prompt
+    );
+    assert!(
+        !retried.prompt.contains(KEY_SECRET),
+        "the refused reply is not replayed"
+    );
     assert!(!first.had_mcp, "the step gets no tool server");
     assert!(first.system.contains("### noesis_ask"), "{}", first.system);
     assert!(first.prompt.contains("Learn capitals"), "{}", first.prompt);
@@ -340,16 +359,16 @@ async fn a_practice_problem_on_the_engine_keeps_its_solution_sealed_until_conclu
         "practitioner",
         json!({"text": "Try this one.", "tool_calls": [tool_call("noesis_problem", problem)]}),
     );
-    let solved = json!({"outcome": "solved", "rung": 0, "retest": false});
-    cli.queue(
-        "practitioner",
-        json!({"text": "Yes!", "tool_calls": [tool_call("noesis_conclude", solved)]}),
-    );
     let harness = engine_harness(&home, cli.clone()).await;
     let created = harness.create(json!({"mode": "practice"})).await;
     harness.settled().await;
     let practitioner = agent_of(&created);
     assert_sealed(&harness, practitioner, SOLUTION_SECRET);
+    let solved = json!({"outcome": "solved", "rung": 0, "retest": false});
+    cli.queue(
+        "practitioner",
+        json!({"text": "Yes!", "tool_calls": [tool_call("noesis_conclude", solved)]}),
+    );
 
     let sent = json!({"cmd": "noesis_send", "session": created.id, "text": "Is it 5?",
         "idempotency_key": "practice-answer"});

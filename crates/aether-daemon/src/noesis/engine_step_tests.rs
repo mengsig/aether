@@ -115,38 +115,41 @@ async fn a_json_reply_becomes_text_and_tool_calls_in_order() {
 }
 
 #[tokio::test]
-async fn a_malformed_reply_is_retried_once_with_the_reason() {
-    let (inner, reply) = step(&["{\"text\": oops}", r#"{"text": "Fixed."}"#]).await;
-    assert_eq!(reply.expect("the retry parsed").text(), "Fixed.");
-    let sent = inner.requests();
-    assert_eq!(sent.len(), 2);
-    let retry = sent[1].messages[0].text();
-    assert!(retry.contains("Your previous reply was refused"), "{retry}");
-    assert!(retry.contains("{\"text\": oops}"), "{retry}");
-}
-
-#[tokio::test]
-async fn two_malformed_replies_fail_the_step_and_keep_what_both_spent() {
+async fn a_malformed_reply_fails_closed_with_its_usage_and_never_quotes_itself() {
+    let secret = "SEALED-KEY-77";
+    let raw = format!(
+        "Here you go: {{\"text\": \"Q\", \"tool_calls\": [{{\"name\": \"noesis_ask\", \
+         \"input\": {{\"answer_key\": \"{secret}\"}},}}]}}"
+    );
     let inner = Arc::new(ScriptedClient::new());
-    inner.push(ScriptedClient::text("{bad"));
-    inner.push(ScriptedClient::text("{worse}"));
+    inner.push(ScriptedClient::text(&raw));
     let client = EngineStepClient::new(inner.clone());
     let stream = client
         .stream(request(), CancellationToken::new())
         .await
         .expect("a stream");
     let failure = collect_partial(stream, |_| {}).await.expect_err("refused");
+    assert!(is_malformed(&failure.error), "{:?}", failure.error);
     assert!(
-        failure.error.message.contains("not the JSON object"),
+        !failure.error.message.contains(secret),
         "{}",
         failure.error.message
     );
-    let one = inner.requests().len();
-    assert_eq!(one, 2, "one retry, no more");
+    assert!(
+        failure.partial.text().is_empty(),
+        "no text of a refused reply streams"
+    );
     assert!(
         failure.partial.usage.total_tokens() > 0,
-        "both attempts' usage is reported"
+        "the attempt's usage is reported"
     );
+    assert_eq!(
+        inner.requests().len(),
+        1,
+        "the step, not the client, retries"
+    );
+    let note = retry_note().text();
+    assert!(!note.contains(secret) && note.contains("refused"), "{note}");
 }
 
 #[tokio::test]
@@ -180,10 +183,13 @@ fn plain_prose_is_a_text_reply_and_empty_objects_are_refused() {
         parse_reply("{bad").is_err(),
         "an object that does not close"
     );
-    let braces = parse_reply("The set {1, 2} has two members.").expect("prose");
-    assert_eq!(
-        braces.text.as_deref(),
-        Some("The set {1, 2} has two members.")
+    assert!(
+        parse_reply("The set {1, 2} has two members.").is_err(),
+        "a brace that is no reply object fails closed"
+    );
+    assert!(
+        parse_reply("Note: {\"text\": \"Hi\",}").is_err(),
+        "a trailing comma"
     );
     let embedded = parse_reply("Here: {\"text\": \"Hi\"}").expect("embedded");
     assert_eq!(embedded.text.as_deref(), Some("Hi"));

@@ -5,6 +5,7 @@ import type {
   QuestionKind,
   QuestionOption,
   QuestionResult,
+  QuestionStep,
 } from "../../protocol.ts";
 
 /**
@@ -21,4 +22,5 @@ export interface Question {
   "plan_node"?: string | null;
   "posed_at": string;
   "prompt": string;
+  "step"?: QuestionStep | null;
 }

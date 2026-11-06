@@ -1,7 +1,7 @@
 // The Aether daemon protocol as TypeScript types and command builders.
 // Generated from clients/protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: 3eced3372e13ae22e3c788801f1ad910514ed529240ce1a26ade2aba2626582c
+// Schema SHA-256: 38f460e825949a7f257af77a44757b68b5a86c1ee9f482c32827890146c588ad
 
 export const PROTOCOL_VERSION = 26;
 export const MIN_PROTOCOL_VERSION = 17;
@@ -2997,6 +2997,26 @@ export interface NewApprovalRule {
   "scope": RuleScope;
 }
 
+export type NoesisBilling = "subscription" | "api";
+
+/**
+ * The strong slot resolved: `model` when one would run, else `refusal`.
+ */
+export interface NoesisModelChoice {
+  "model"?: string | null;
+  "refusal"?: string | null;
+}
+
+/**
+ * A model as Noesis sees it: how it is paid for and whether a step on it
+ * could run now (an engine detected and signed in, an API provider keyed).
+ */
+export interface NoesisModelOffer {
+  "billing": NoesisBilling;
+  "id": string;
+  "ready": boolean;
+}
+
 /**
  * Where a proposition or chain came from.
  */
@@ -3058,9 +3078,11 @@ export interface NoesisStatus {
   "effective": NoesisSettingsView;
   "enabled": boolean;
   "jobs_running": number;
+  "models"?: Array<NoesisModelOffer>;
   "prompt_overrides": Array<string>;
   "settings": NoesisSettingsView;
   "spend_today": SpendToday;
+  "teaching_model"?: NoesisModelChoice | null;
 }
 
 /**
@@ -3520,6 +3542,7 @@ export interface Question {
   "plan_node"?: string | null;
   "posed_at": string;
   "prompt": string;
+  "step"?: QuestionStep | null;
 }
 
 export type QuestionKind = "choice" | "recall" | "goal";
@@ -3535,6 +3558,12 @@ export interface QuestionResult {
   "explanation"?: string | null;
   "question": string;
 }
+
+/**
+ * What a question does in the lesson: a probe measures, a teach-phase
+ * question predicts before a step or checks after it.
+ */
+export type QuestionStep = "measure" | "predict" | "check" | "goal" | "practice";
 
 /**
  * A subscription usage window as an engine reported it. Opaque JSON on the
