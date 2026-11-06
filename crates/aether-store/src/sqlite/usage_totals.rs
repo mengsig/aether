@@ -35,21 +35,27 @@ pub fn register(conn: &Connection) -> rusqlite::Result<()> {
             ValueRef::Text(bytes) => std::str::from_utf8(bytes).ok(),
             _ => None,
         };
-        Ok(counted_usage(text(0), text(1)))
+        counted_usage(text(0), text(1))
     })
 }
 
-/// What [`COUNTED_USAGE`] answers for one row.
-fn counted_usage(id: Option<&str>, body: Option<&str>) -> Option<String> {
-    let (id, body) = (id?, body?);
-    let agent: Agent = serde_json::from_str(body).ok()?;
+/// What [`COUNTED_USAGE`] answers for one row. A row that fails to serialize
+/// fails the write, never counting the agent nowhere.
+fn counted_usage(id: Option<&str>, body: Option<&str>) -> rusqlite::Result<Option<String>> {
+    let (Some(id), Some(body)) = (id, body) else {
+        return Ok(None);
+    };
+    let Ok(agent) = serde_json::from_str::<Agent>(body) else {
+        return Ok(None);
+    };
     if agent.id.to_string() != id {
-        return None;
+        return Ok(None);
     }
     let row = LedgerUsage::of(&agent.stats.usage);
-    let json = serde_json::to_string(&row).expect("a ledger row always serializes");
+    let json = serde_json::to_string(&row)
+        .map_err(|error| rusqlite::Error::UserFunctionError(Box::new(error)))?;
     debug_assert!(!json.is_empty(), "a counted agent has a row");
-    Some(json)
+    Ok(Some(json))
 }
 
 /// One agent's usage as `agent_usage` holds it. Counters are clamped to

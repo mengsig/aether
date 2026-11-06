@@ -90,7 +90,7 @@ pub fn tree_page_of(mut scope: Vec<Agent>, query: &TreeQuery) -> Result<TreePage
         "a page holds 1 to {TREE_PAGE_MAX} agents"
     );
     debug_assert!(scope.iter().all(|agent| query.selects(agent)));
-    scope.sort_by(|a, b| b.id.cmp(&a.id));
+    scope.sort_by_key(|agent| std::cmp::Reverse(agent.id));
     let by_id: HashMap<AgentId, Agent> = scope.iter().map(|a| (a.id, a.clone())).collect();
     let is_root = |agent: &Agent| query.root == Some(agent.id);
     let mut agents: Vec<Agent> = Vec::new();

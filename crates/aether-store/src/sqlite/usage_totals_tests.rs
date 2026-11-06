@@ -57,8 +57,8 @@ pub(crate) fn shaped(n: usize) -> Usage {
         cache_read_tokens: n as u64 % 5,
         cache_write_tokens: n as u64 % 4,
         cache_write_1h_tokens: n as u64 % 2,
-        reasoning_tokens: (n % 3 == 0).then_some(n as u64),
-        cost_usd: if n % 5 == 0 {
+        reasoning_tokens: n.is_multiple_of(3).then_some(n as u64),
+        cost_usd: if n.is_multiple_of(5) {
             0.0
         } else {
             (n % 9) as f64 / 64.0
@@ -68,7 +68,7 @@ pub(crate) fn shaped(n: usize) -> Usage {
         cost_basis: BASES[n % BASES.len()],
         estimated_cost_usd: (n % 7 == 2).then_some((n % 4) as f64 / 64.0),
     };
-    if n % 11 == 0 {
+    if n.is_multiple_of(11) {
         usage = Usage::default();
     }
     assert!(usage.cache_write_1h_tokens <= usage.cache_write_tokens);
@@ -170,21 +170,17 @@ fn the_counting_function_answers_only_for_a_whole_agent_under_its_own_id() {
     let whole = agent(RunId::new(), shaped(6));
     let body = serde_json::to_string(&whole).unwrap();
     let id = whole.id.to_string();
-    let counted = counted_usage(Some(&id), Some(&body)).expect("a whole agent is counted");
+    fn counted(id: Option<&str>, body: Option<&str>) -> Option<String> {
+        counted_usage(id, body).expect("a row serializes")
+    }
+    let whole_row = counted(Some(&id), Some(&body)).expect("a whole agent is counted");
     let expected = serde_json::to_string(&LedgerUsage::of(&whole.stats.usage)).unwrap();
-    assert_eq!(counted, expected);
-    assert_eq!(counted_usage(Some(&id), Some("{broken")), None);
-    assert_eq!(
-        counted_usage(Some("agt_e"), Some(r#"{"id":"agt_e"}"#)),
-        None
-    );
-    assert_eq!(
-        counted_usage(Some("agt_other"), Some(&body)),
-        None,
-        "id mismatch"
-    );
-    assert_eq!(counted_usage(None, Some(&body)), None);
-    assert_eq!(counted_usage(Some(&id), None), None);
+    assert_eq!(whole_row, expected);
+    assert_eq!(counted(Some(&id), Some("{broken")), None);
+    assert_eq!(counted(Some("agt_e"), Some(r#"{"id":"agt_e"}"#)), None);
+    assert_eq!(counted(Some("agt_other"), Some(&body)), None, "id mismatch");
+    assert_eq!(counted(None, Some(&body)), None);
+    assert_eq!(counted(Some(&id), None), None);
 }
 
 #[test]
