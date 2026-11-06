@@ -5,6 +5,7 @@
 //! call is admitted by the service budget and passes the runtime's one
 //! [`NoesisCharge::before_invocation`] hook before it is sent.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -35,19 +36,81 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
 use super::budget::{ServiceBudget, spend_of};
+use super::engine_step::EngineStepClient;
 
 /// What every engine of one running service shares.
 pub(super) struct EngineHost {
     pub runtime: Arc<Runtime>,
     pub models: Arc<Models>,
     pub budget: Arc<ServiceBudget>,
-    /// Replaces the provider's client in tests, as the runtime's override does.
+    /// Replaces an API provider's client in tests, as the runtime's override
+    /// does; an engine model's steps always go to its engine.
     pub client: Option<Arc<dyn ModelClient>>,
     /// Cancelled when the service stops, ending a model call in flight.
     pub cancel: CancellationToken,
     pub prompt_overrides: Option<PathBuf>,
     /// The one run every Noesis agent is created in.
     pub run: RunId,
+}
+
+impl EngineHost {
+    /// Whether `model` runs on an engine CLI (a subscription), not an API.
+    fn is_engine(&self, model: &ModelRef) -> bool {
+        self.models
+            .registry()
+            .provider(&model.provider)
+            .is_some_and(|provider| provider.protocol.is_engine())
+    }
+
+    /// Every listed model, ready only when a step on it could run now: an
+    /// engine detected and launchable with its CLI signed in, an API
+    /// provider with credentials (or the test client standing in for it).
+    pub(super) async fn model_offers(&self) -> Vec<ModelInfo> {
+        let mut signed_in: HashMap<String, bool> = HashMap::new();
+        let mut offers = Vec::new();
+        for info in self.models.list() {
+            let provider = info.model.provider.clone();
+            let engine = self.is_engine(&info.model);
+            if !signed_in.contains_key(&provider) {
+                let status = self.models.auth_status(&provider).await;
+                signed_in.insert(provider.clone(), status.configured);
+            }
+            let credentials = signed_in.get(&provider).copied().unwrap_or(false);
+            let ready = if engine {
+                credentials && self.runtime.engine_launchable(&info.model) == Some(true)
+            } else {
+                credentials || self.client.is_some()
+            };
+            offers.push(ModelInfo {
+                id: info.model.to_string(),
+                billing: if engine {
+                    Billing::Subscription
+                } else {
+                    Billing::Api
+                },
+                ready,
+            });
+        }
+        debug_assert!(offers.iter().all(|offer| !offer.id.is_empty()));
+        offers
+    }
+
+    /// The client a step of `agent` is sent to: its engine for an engine
+    /// model, else the test client or the provider's own.
+    async fn client_for(&self, agent: &Agent) -> Result<Arc<dyn ModelClient>, EngineError> {
+        if self.is_engine(&agent.model) {
+            let inner = self
+                .runtime
+                .noesis_engine_client(agent)
+                .await
+                .map_err(not_sent)?;
+            return Ok(Arc::new(EngineStepClient::new(inner)));
+        }
+        match &self.client {
+            Some(client) => Ok(client.clone()),
+            None => self.models.client(&agent.model).await.map_err(not_sent),
+        }
+    }
 }
 
 /// The engine for one teaching call; cheap, it borrows the host. Like a
@@ -226,10 +289,7 @@ impl AetherEngine<'_> {
         let cancel = host.cancel.child_token();
         tokio::task::block_in_place(|| {
             handle.block_on(async {
-                let client = match &host.client {
-                    Some(client) => client.clone(),
-                    None => host.models.client(&agent.model).await.map_err(not_sent)?,
-                };
+                let client = host.client_for(agent).await?;
                 let ended = agent_ended(&host.runtime, agent.id);
                 tokio::pin!(ended);
                 let stream = tokio::select! {
@@ -293,6 +353,27 @@ impl AetherEngine<'_> {
         }
     }
 
+    /// The reply failed mid-stream: what the provider reported spending is
+    /// charged and recorded, so a failed step still counts against the budget.
+    fn record_broken(&mut self, agent: AgentId, mut spent: Usage, error: String) -> EngineError {
+        debug_assert!(!error.is_empty(), "a broken reply says why");
+        spent.mark_cost_gap(CostGap::Interrupted);
+        if let Some(open) = self.charge.as_mut() {
+            debug_assert_eq!(open.agent, agent, "the call ran under its own admission");
+            open.spent += spent;
+        }
+        match self
+            .host
+            .runtime
+            .record_noesis_call(agent, spent, |_, _| {})
+        {
+            Ok(_) => failed(error),
+            Err(record) => failed(format!(
+                "{error}; and the call's spend was not recorded: {record}"
+            )),
+        }
+    }
+
     fn request(&self, agent: &Agent, history: Vec<Message>) -> Result<ModelRequest, EngineError> {
         let Some(kind) = agent_for_role(agent.role.as_str()) else {
             return Err(not_sent("not a Noesis role"));
@@ -320,27 +401,8 @@ impl AetherEngine<'_> {
 
 impl Engine for AetherEngine<'_> {
     fn models(&self) -> Vec<ModelInfo> {
-        let registry = self.host.models.registry();
-        self.host
-            .models
-            .list()
-            .into_iter()
-            .map(|info| {
-                let engine = registry
-                    .provider(&info.model.provider)
-                    .is_none_or(|provider| provider.protocol.is_engine());
-                // Engine CLIs are driven by the runtime's turns, not by this loop.
-                ModelInfo {
-                    id: info.model.to_string(),
-                    billing: if engine {
-                        Billing::Subscription
-                    } else {
-                        Billing::Api
-                    },
-                    ready: !engine,
-                }
-            })
-            .collect()
+        let handle = tokio::runtime::Handle::current();
+        tokio::task::block_in_place(|| handle.block_on(self.host.model_offers()))
     }
 
     fn spawn(&mut self, spec: AgentSpec) -> Result<String, EngineError> {
@@ -407,6 +469,7 @@ impl Engine for AetherEngine<'_> {
         let response = match self.invoke(&row, request)? {
             CallEnd::Replied(response) => response,
             CallEnd::AgentEnded(spent) => return Err(self.record_cut_short(row.id, spent)),
+            CallEnd::Broke(spent, error) => return Err(self.record_broken(row.id, spent, error)),
         };
         if let Some(open) = self.charge.as_mut() {
             open.spent += response.usage;
@@ -423,6 +486,9 @@ enum CallEnd {
     Replied(ModelResponse),
     /// The agent ended mid-call: the usage the provider reported so far.
     AgentEnded(Usage),
+    /// The reply broke off with an error after the provider reported usage,
+    /// which is charged as a cut-short call's is.
+    Broke(Usage, String),
 }
 
 /// Resolves once `agent` is in a terminal state, as a cancel leaves it.
@@ -486,7 +552,7 @@ async fn read_reply(
         let event = match item {
             None => break,
             Some(Ok(event)) => event,
-            Some(Err(error)) => return Err(failed(error)),
+            Some(Err(error)) => return Ok(CallEnd::Broke(usage, error.to_string())),
         };
         if let StreamEvent::Usage { usage: reading } = &event {
             usage = *reading;

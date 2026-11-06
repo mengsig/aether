@@ -216,6 +216,8 @@ pub(super) async fn compaction_client(
         engine,
         context: ctx.launch_context(&runtime.engine_spawns),
         pricing: crate::turn_engine::TurnPricing::of(runtime, &resolved),
+        purpose: "Checkpoint",
+        timeout: crate::compaction_client::CHECKPOINT_TIMEOUT,
         turn: aether_engine::EngineTurn {
             redactor: runtime.tool_runtime.redactor().clone(),
             prompt: String::new(),

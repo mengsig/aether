@@ -1,5 +1,7 @@
-//! Run checkpoint generation in a fresh engine session without the Aether bridge.
+//! Run one isolated prompt (checkpoint generation, a Noesis step) in a
+//! fresh engine session without the Aether bridge or any tool.
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::turn_engine::TurnPricing;
 
@@ -17,7 +19,13 @@ pub(crate) struct CompactionClient {
     pub turn: EngineTurn,
     pub context: aether_engine::EngineLaunchContext,
     pub pricing: TurnPricing,
+    /// What the launch is for, as its errors name it: `Checkpoint`.
+    pub purpose: &'static str,
+    pub timeout: Duration,
 }
+
+/// How long a checkpoint launch may run.
+pub(crate) const CHECKPOINT_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// What one engine launch spent, priced and marked where its receipt fell short.
 #[derive(Default)]
@@ -121,7 +129,9 @@ impl ModelClient for CompactionClient {
         request: ModelRequest,
         cancel: CancellationToken,
     ) -> Result<ModelStream, ModelError> {
+        debug_assert!(!self.purpose.is_empty() && !self.timeout.is_zero());
         let turn = checkpoint_turn(self.turn.clone(), &request);
+        let purpose = self.purpose;
         let child = cancel.child_token();
         let _cleanup = child.clone().drop_guard();
         let mut accounting = Accounting {
@@ -129,18 +139,19 @@ impl ModelClient for CompactionClient {
             ..Default::default()
         };
         let run = tokio::time::timeout(
-            std::time::Duration::from_secs(180),
+            self.timeout,
             collect_checkpoint(
                 self.engine.as_ref(),
                 turn,
                 self.context.clone(),
                 child.clone(),
                 &mut accounting,
+                purpose,
             ),
         );
         let result = tokio::select! {
-            result = run => result.unwrap_or_else(|_| Err(failure("Checkpoint engine timed out"))),
-            _ = cancel.cancelled() => Err(ModelError::new(ModelErrorClass::Cancelled, "Checkpoint generation cancelled")),
+            result = run => result.unwrap_or_else(|_| Err(failure(format!("{purpose} engine timed out")))),
+            _ = cancel.cancelled() => Err(ModelError::new(ModelErrorClass::Cancelled, format!("{purpose} generation cancelled"))),
         };
         child.cancel();
         accounting.finish(cancel.is_cancelled());
@@ -177,6 +188,7 @@ async fn collect_checkpoint(
     context: aether_engine::EngineLaunchContext,
     cancel: CancellationToken,
     accounting: &mut Accounting,
+    purpose: &str,
 ) -> Result<String, ModelError> {
     debug_assert!(turn.session.is_none());
     debug_assert!(accounting.usage.is_none() && !accounting.closing_received);
@@ -207,7 +219,7 @@ async fn collect_checkpoint(
             }
             EngineEvent::Done(outcome) => {
                 accounting.close(&outcome);
-                return checkpoint_result(outcome, text);
+                return checkpoint_result(outcome, text, purpose);
             }
             _ => {}
         }
@@ -215,10 +227,10 @@ async fn collect_checkpoint(
     Err(if cancel.is_cancelled() {
         ModelError::new(
             ModelErrorClass::Cancelled,
-            "Checkpoint generation cancelled",
+            format!("{purpose} generation cancelled"),
         )
     } else {
-        failure("Checkpoint engine ended without a result")
+        failure(format!("{purpose} engine ended without a result"))
     })
 }
 
@@ -243,17 +255,21 @@ pub(crate) async fn refuse_checkpoint_input(
         .map_err(|error| failure(error.to_string()))
 }
 
-fn checkpoint_result(outcome: EngineOutcome, text: String) -> Result<String, ModelError> {
+fn checkpoint_result(
+    outcome: EngineOutcome,
+    text: String,
+    purpose: &str,
+) -> Result<String, ModelError> {
     if outcome.is_error {
         return Err(failure(
             outcome
                 .error
-                .unwrap_or_else(|| "Checkpoint engine failed".into()),
+                .unwrap_or_else(|| format!("{purpose} engine failed")),
         ));
     }
     let text = outcome.text.unwrap_or(text);
     if text.trim().is_empty() {
-        return Err(failure("Checkpoint engine returned no text"));
+        return Err(failure(format!("{purpose} engine returned no text")));
     }
     Ok(text)
 }
@@ -426,6 +442,8 @@ mod tests {
                 spawns: Default::default(),
             },
             pricing: TurnPricing::default(),
+            purpose: "Checkpoint",
+            timeout: CHECKPOINT_TIMEOUT,
             engine: Arc::new(CheckpointEngine {
                 ending,
                 caller: cancel.clone(),
