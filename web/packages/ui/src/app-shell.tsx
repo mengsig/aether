@@ -28,6 +28,7 @@ export interface AppShellProps {
   readonly connections?: readonly ConnectionInfo[];
   readonly notices?: readonly ToastMessage[];
   readonly onDismissNotice?: (id: ToastMessage["id"]) => void;
+  readonly onDismissAllNotices?: () => void;
   /** Extra palette commands, after navigation and theme. */
   readonly commands?: readonly Command[];
   /** The header of each route with no nav entry, by route path. */
@@ -105,7 +106,7 @@ export function AppShell(props: AppShellProps) {
             <RouteView match={props.match} hash={hash} capabilities={capabilities} hasRoutes={sections.length > 0} home={props.home} />
           </main>
         </div>
-        <ToastRegion toasts={props.notices ?? []} onDismiss={props.onDismissNotice ?? (() => undefined)} />
+        <ToastRegion toasts={props.notices ?? []} onDismiss={props.onDismissNotice ?? (() => undefined)} onDismissAll={props.onDismissAllNotices} />
         <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
       </div>
     </EntityActionProvider>

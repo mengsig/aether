@@ -25,14 +25,14 @@ test("shows live events, backward store pages, filters, and agent links", async 
   h = await connected({ agents: [agent], events: [event(20)], script: { get_events: () => ({ tag: "events", data: [event(10)] }) } });
   const root = await h.mount(<ActivityScreen />);
   await act(async () => { h.daemon.emit(agent.id, { type: "invocation.completed" }); }); await h.settle();
-  expect(root.textContent).toContain("invocation.completed");
+  expect(root.textContent).toContain("Invocation completed");
   expect(h.daemon.commands("get_events")[0]).toMatchObject({ after: 0, limit: 100, query: { before: Number.MAX_SAFE_INTEGER } });
   expect(h.app.store.get().reads[h.conn]?.[`activity:before:${Number.MAX_SAFE_INTEGER}`]?.value).toEqual([event(10)]);
   await click(h, root, "Show older"); await h.settle();
   expect(h.daemon.commands("get_events").at(-1)).toMatchObject({ after: 0, limit: 100, query: { before: 10 } });
   expect(root.querySelectorAll('a[href*="#/agents/"]').length).toBe(2);
   expect(root.querySelector('a[href*="#/controls/"]')).not.toBeNull();
-  await pick(h, root, "Kind family", "invocation");
+  await pick(h, root, "Kind family", "Invocation");
   expect(root.querySelectorAll("article")).toHaveLength(1);
   await pick(h, root, "Agent filter", agent.name);
   expect(root.querySelectorAll("article")).toHaveLength(1);
@@ -111,7 +111,7 @@ test("history retries errors, pages backwards, and stops at an empty page", asyn
   expect(root.textContent).toContain("History unavailable");
   fail = false;
   await click(h, root, "Try again"); await h.settle();
-  expect(root.textContent).toContain("agent.ready");
+  expect(root.textContent).toContain("Agent ready");
   await click(h, root, "Show older"); await h.settle();
   expect(h.daemon.commands("get_events").at(-1)).toMatchObject({ query: { before: 10 } });
   expect(buttonNamed(root, "Beginning of history").disabled).toBe(true);

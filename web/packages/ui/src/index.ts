@@ -16,7 +16,7 @@ export { Field, type FieldProps } from "./field.tsx";
 export { Menu, nextEnabled, type MenuItem, type MenuProps } from "./menu.tsx";
 export { Dialog, Sheet, type DialogProps } from "./dialog.tsx";
 export { Tabs, type TabItem, type TabsProps } from "./tabs.tsx";
-export { Toast, ToastRegion, type ToastMessage } from "./toast.tsx";
+export { Toast, ToastRegion, type ToastMessage, type ToastRegionProps } from "./toast.tsx";
 export { Tooltip } from "./tooltip.tsx";
 export { Badge, StatusPill, statusToken, STATUSES, type Status, type Tone } from "./badge.tsx";
 export { Skeleton, EmptyState, ErrorState, type EmptyStateProps, type ErrorStateProps } from "./states.tsx";

@@ -122,6 +122,11 @@ test("operator: empty, then loaded, then error states", async ({ page, stack }) 
     await p.mouse.move(0, 0);
   } });
   await shoot(page, stack, "Controls", "operator", `#/controls/${encodeURIComponent(conn)}/${agentId}`, ".b3-action");
+  await shoot(page, stack, "Controls", "model-limits", `#/controls/${encodeURIComponent(conn)}/${agentId}`, { ready: ".b3-action", prepare: async (p) => {
+    await p.getByRole("tab", { name: "Model & limits" }).click();
+    await expect(p.getByTestId("configure-model")).toBeVisible();
+    await p.mouse.move(0, 0);
+  } });
   await shoot(page, stack, "Memory", "review", `#/memory/${encodeURIComponent(conn)}`);
   await shoot(page, stack, "Activity", "loaded", "#/activity");
   await shoot(page, stack, "Queue", "paused", "#/archon/queue", ".queue-row");

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { aether } from "@aether-ui/protocol";
-import { defaultModel, defaultWorkspace } from "./data.ts";
+import { defaultModel, defaultWorkspace, familyLabel, kindLabel } from "./data.ts";
 
 const workspace = (path: string, exists: boolean, active_at: string): aether.Workspace => ({ path, exists, active_at, agents: 0, running: 0 });
 const model = (name: string, configured = true, is_default = false): aether.ModelInfo => ({ name, configured, is_default,
@@ -22,5 +22,14 @@ describe("start defaults", () => {
     expect(defaultModel([model("offline", false, true), model("ready")])).toBe("test/ready");
     expect(defaultModel([model("offline", false)])).toBe("");
     expect(defaultModel([])).toBe("");
+  });
+});
+
+describe("event words", () => {
+  test("a kind reads as words, a family as its name", () => {
+    expect(kindLabel("agent.turn_completed")).toBe("Agent turn completed");
+    expect(kindLabel("tool.succeeded")).toBe("Tool succeeded");
+    expect(kindLabel("custom")).toBe("Custom event");
+    expect(familyLabel("memory")).toBe("Memory");
   });
 });

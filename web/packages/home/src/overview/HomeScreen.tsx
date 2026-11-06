@@ -1,9 +1,9 @@
 // `#/` home: an overview of every connection, each tile a number, a line of context and a link into
 // the screen that owns it. With nothing paired it is one guided start instead.
 
-import { useSelector } from "@aether-ui/core";
+import { useNow, useSelector } from "@aether-ui/core";
 import { EmptyState } from "@aether-ui/ui";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { ActivityTile, AgentsTile, NeedsTile, SpendTile } from "./aether-tiles.tsx";
 import { GithubTile, LearnTile, QueueTile } from "./archon-tiles.tsx";
 import { deriveHome, type HomeView } from "./derive.ts";
@@ -28,15 +28,6 @@ const TILES: readonly { readonly area: string; readonly label: string; readonly 
   { area: "github", label: "GitHub", Tile: GithubTile },
 ];
 
-function useNow(): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), TICK_MS);
-    return () => clearInterval(timer);
-  }, []);
-  return now;
-}
-
 function ConnectFirst() {
   return (
     <EmptyState title="Connect to Aether" className="home-start"
@@ -48,7 +39,7 @@ function ConnectFirst() {
 }
 
 export function HomeScreen() {
-  const now = useNow();
+  const now = useNow(TICK_MS);
   const dayStart = startOfDay(now);
   const select = useMemo(() => selectHomeSources(dayStart), [dayStart]);
   const sources = useSelector(select, sameHomeSources);

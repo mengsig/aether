@@ -37,3 +37,19 @@ export function defaultModel(models: readonly aether.ModelInfo[]): string {
   const model = ready.find(m => m.is_default) ?? ready[0];
   return model ? `${model.model.provider}/${model.model.model}` : "";
 }
+
+/** "agent.turn_completed" as "Agent turn completed"; a bare "custom" is "Custom event". */
+export function kindLabel(type: string): string {
+  invariant(type.length > 0, "an event kind is named");
+  const words = type.split(/[._]/).filter(word => word.length > 0);
+  invariant(words.length > 0, `an event kind has words: ${type}`);
+  if (words.length === 1 && words[0] === "custom") return "Custom event";
+  const [first, ...rest] = words as [string, ...string[]];
+  return [first[0]?.toUpperCase() + first.slice(1), ...rest].join(" ");
+}
+
+/** The family an event kind belongs to, as the filter shows it: "agent" as "Agent". */
+export function familyLabel(family: string): string {
+  invariant(family.length > 0, "a family is named");
+  return family[0]?.toUpperCase() + family.slice(1);
+}

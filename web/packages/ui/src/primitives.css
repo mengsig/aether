@@ -125,6 +125,7 @@
   .ui-toast-text { flex: 1; display: grid; gap: var(--space-0-5); padding-block: var(--space-1); font-size: var(--text-sm); }
   .ui-toast-title { font-size: var(--text-md); font-weight: var(--weight-medium); }
   .ui-toast-body { color: var(--color-text-muted); }
+  .ui-toasts-clear { justify-self: end; background: var(--color-surface-1); box-shadow: var(--elevation-1); }
 
   .ui-tooltip-anchor { position: relative; display: inline-flex; }
   .ui-tooltip {

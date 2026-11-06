@@ -44,7 +44,7 @@ function ModelSection({ conn, agent, run }: { readonly conn: ConnId; readonly ag
       <div className="b3-form">
         <Models conn={conn} screen="configure" value={model} onChange={model => draft.update({ model })}
           testId="configure-model" defaultLabel={`Keep ${refText(agent.model)}`} />
-        <Segmented label="Effort" value={effort} onChange={effort => draft.update({ effort })}
+        <Segmented className="b3-span" label="Effort" value={effort} onChange={effort => draft.update({ effort })}
           options={[{ id: "", label: `Keep ${agent.config.effort ?? "default"}` }, ...EFFORTS.map(id => ({ id, label: id.replace("_", " ") }))]} />
         <Action conn={conn} command={{ cmd: "update_agent", id: agent.id, patch: {} }} label="Apply model" busy={run.status.state === "busy"}
           blocked={!model && !effort ? "Choose a model or an effort first" : null}

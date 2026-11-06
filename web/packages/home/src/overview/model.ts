@@ -1,10 +1,12 @@
 // Pure derivations the overview renders: counts by state, hourly buckets, relative times, today's
 // spend and the next step a tile offers when it has nothing to show yet. Nothing here reads a daemon.
 
-import type { ArchonItem } from "@aether-ui/core";
+import { parseTime, relativeTime, type ArchonItem } from "@aether-ui/core";
 import type { aether, archon, ConnectionInfo } from "@aether-ui/protocol";
 import type { ChartPoint, ChartTone } from "./charts.ts";
 import { invariant } from "./invariant.ts";
+
+export { parseTime, relativeTime };
 
 export const HOUR_MS = 3_600_000;
 export const SPARK_HOURS = 12;
@@ -14,11 +16,6 @@ export const RECENT_OUTCOMES = 5;
 /** A reply checked at the boundary: its value, or why it cannot be shown. */
 export type Parsed<T> = { readonly value: T } | { readonly problem: string };
 
-export function parseTime(at: string | null | undefined): number | null {
-  if (typeof at !== "string") return null;
-  const time = Date.parse(at);
-  return Number.isNaN(time) ? null : time;
-}
 
 /** Local midnight of the day `now` falls in. */
 export function startOfDay(now: number): number {
@@ -29,16 +26,6 @@ export function startOfDay(now: number): number {
   return day.getTime();
 }
 
-/** "just now", "5 min ago", "3 h ago", "2 d ago"; the raw text when it does not parse. */
-export function relativeTime(at: string, now: number): string {
-  const time = parseTime(at);
-  if (time === null) return at;
-  const minutes = Math.floor((now - time) / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} min ago`;
-  if (minutes < 24 * 60) return `${Math.floor(minutes / 60)} h ago`;
-  return `${Math.floor(minutes / (24 * 60))} d ago`;
-}
 
 const hourLabel = (time: number): string => `${String(new Date(time).getHours()).padStart(2, "0")}:00`;
 

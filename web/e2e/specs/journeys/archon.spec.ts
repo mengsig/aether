@@ -74,15 +74,17 @@ async function queueItem(page: Page): Promise<void> {
 test("archon journey: register a repository, queue an item, see it through", async () => {
   const { window, stack } = journey();
   await connectionsReady(journey());
-  await setPaused(stack, false);
+  // Paused until the graph is seen: the faux engine finishes an item within seconds, and a finished item leaves the graph.
+  await setPaused(stack, true);
   await registerRepo(window, stack, await scratchRepo(stack, REPO));
   await queueItem(window);
   const item = await until(() => items(stack), (rows) => rows.some((row) => row.title === TITLE), "the queued item", 30_000);
   const id = item.find((row) => row.title === TITLE)?.id as string;
   await open(window, "Task graph", "#/archon/graph");
-  await expect(window.getByRole("complementary", { name: "Graph overview" }), "the task graph shows the open item").toBeVisible();
+  await expect(window.getByRole("complementary", { name: "Graph overview" }), "the task graph shows the queued item").toBeVisible();
   await expect(window.locator(".dag-canvas[aria-busy='false']:not([data-pending])"), "the graph is laid out").toBeVisible();
   await shootWindow(window, "task-graph", "rendered");
+  await setPaused(stack, false);
   const outcome = await until(() => itemState(stack, id), (state) => !ACTIVE.has(state), "the item to reach an outcome", OUTCOME_MS);
   test.info().annotations.push({ type: "outcome", description: `${TITLE}: ${outcome}` });
   assert.ok((await itemHistory(stack, id)).length >= 2, "the item moved at least once");
