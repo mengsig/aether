@@ -68,7 +68,8 @@ export async function installGhStub(layout: Layout, objects: readonly GithubObje
   for (const object of objects) await writeFile(path.join(dir, `${object.number}.http`), http(object));
   await writeFile(log, "");
   const stub = path.join(layout.bin, "gh");
-  assert.ok(String(layout.env.PATH).startsWith(`${layout.bin}:`), "the stack's PATH finds its own bin first");
+  const dirs = String(layout.env.PATH).split(":");
+  assert.ok(dirs.slice(0, dirs.indexOf("/usr/local/bin")).includes(layout.bin), "the stack's PATH finds its own bin before the system's");
   await writeFile(stub, script(dir, log), { mode: 0o755 });
   return {
     log,

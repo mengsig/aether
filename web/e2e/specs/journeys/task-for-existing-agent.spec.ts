@@ -7,14 +7,14 @@ import { until } from "../../harness/process.ts";
 import { agent, cancelLive, createAgentOn, taskObjectives } from "./daemon.ts";
 import { connectionsReady, journeyHooks } from "./journey.ts";
 import { shootWindow } from "./capture.ts";
-import { findInConversation, landOnAgent, objectiveField, openStart, startSheet, submitStart } from "./steps.ts";
+import { agentPage, landOnAgent, objectiveField, openStart, startSheet, submitStart } from "./steps.ts";
 import { choose, need } from "./ui.ts";
 
 const journey = journeyHooks({ archon: false });
 const OWNER = "Journey owner";
 const TASK = "Write the release note for the journey task.";
 // The owner runs on the faux model in both variants, so its turns are free. It starts with no
-// objective, so it idles holding no task and may take this one; the task reaches it as a message.
+// objective, so it idles holding no task and may take this one; its page then names the task.
 const FAUX_MODEL = { provider: "mock", model: "mock-1" } as const;
 const IDLE = new Set(["ready", "waiting"]);
 
@@ -35,7 +35,7 @@ test("task-for-existing-agent journey: a task in task mode lands on its owner", 
     const tasks = await until(() => taskObjectives(stack, owner), (objectives) => objectives.includes(TASK), "the task on its owner", 30_000);
     assert.equal(tasks.filter((objective) => objective === TASK).length, 1, "one task was created");
     await landOnAgent(window, owner);
-    await expect(await findInConversation(window, TASK), "the task reaches the owner's conversation").toBeVisible();
+    await expect(await need(agentPage(window), "agent-fact-task"), "the owner's page names its task").toContainText(TASK);
     await shootWindow(window, "agent", "task-found");
   } finally {
     await cancelLive(stack, [owner]);

@@ -40,6 +40,22 @@ function budgetFact(config: aether.AgentConfig): Fact | null {
   return parts.length === 0 ? null : { label: "Budget", value: parts.join(" · ") };
 }
 
+const ENDED = new Set<aether.TaskStatusKind>(["completed", "failed", "cancelled"]);
+
+/** The task the agent is on: the one it holds, else its newest unfinished one; null when it has none. */
+export function currentTask(agent: aether.Agent, tasks: readonly aether.Task[]): aether.Task | null {
+  invariant(tasks.every((task) => task.owner === agent.id), `every listed task belongs to ${agent.id}`);
+  const held = tasks.find((task) => task.id === agent.current_task);
+  if (held !== undefined) return held;
+  const open = tasks.filter((task) => !ENDED.has(task.status.state));
+  return open.reduce<aether.Task | null>((newest, task) => (newest === null || task.created_at > newest.created_at ? task : newest), null);
+}
+
+export function taskFact(task: aether.Task): Fact {
+  invariant(task.objective.trim() !== "", `task ${task.id} has an objective`);
+  return { label: "Task", value: task.objective, hint: task.status.state.replaceAll("_", " ") };
+}
+
 const HEADLINE: Readonly<Record<string, (value: string) => string>> = {
   Model: (value) => value,
   Cost: (value) => value,

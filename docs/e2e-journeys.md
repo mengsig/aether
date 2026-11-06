@@ -8,7 +8,7 @@ temp root removed after the file, and the runner checks that afterwards.
 | Journey | Spec | What it walks through |
 | --- | --- | --- |
 | 1 first launch | `first-launch.spec.ts` | Smoke: the window connects, the fleet renders, Start-agent shows. Then: start an agent from Activity, see the reply and its shell call, message it, stop and resume. Records `first-launch.webm`. |
-| 2 task for an existing agent | `task-for-existing-agent.spec.ts` | Task mode in the start sheet, then an owner: the task lands on that agent. |
+| 2 task for an existing agent | `task-for-existing-agent.spec.ts` | Task mode in the start sheet, then an owner: the task lands on that agent, and its page names it. |
 | 3 approvals | `approvals.spec.ts` | A tool call waits for approval, Inbox approves it, and the agent goes on. Then a rule is added from Controls. |
 | 4 schedules | `schedules.spec.ts` | Create a weekday cron schedule that starts a new agent, see it listed, delete it. |
 | 5 memory | `memory.spec.ts` | Create a global memory, then find it by search. |
@@ -98,8 +98,9 @@ on the same root:
 - **CLIs.** The two CLIs are found on your PATH and linked into the stack root. They read their
   logins in place: `CLAUDE_CONFIG_DIR` defaults to `~/.claude` and `CODEX_HOME` to `~/.codex`.
   Override them with `E2E_CLAUDE_CONFIG_DIR` and `E2E_CODEX_HOME`, and the search path with
-  `E2E_USER_PATH`. Nothing is copied, and daemon state stays in the temp root. The CLIs may write
-  their own caches in their login dirs.
+  `E2E_USER_PATH`. `bwrap` and `socat`, which the engines' network-denied sandboxes need, are
+  linked from the same search path when they are there. Nothing is copied, and daemon state stays
+  in the temp root. The CLIs may write their own caches in their login dirs.
 - **Readiness.** `list_models` must show both `claude-code/claude-haiku-5-5` and
   `codex/gpt-6-luna` as configured within two minutes. Otherwise every journey skips and says
   which model is missing and how to log in.

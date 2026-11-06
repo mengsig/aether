@@ -23,6 +23,8 @@ export const RUN_BUDGET_USD = 1;
 export const AGENT_LIMITS = { cost_budget: 0.25, max_turns: 4 } as const;
 const READY_MS = 120_000;
 const SYSTEM_PATH = ["/usr/local/bin", "/usr/bin", "/bin"];
+/** What the engines' network-denied sandboxes run on Linux; linked from the user's PATH when there. */
+const SANDBOX_TOOLS = ["bwrap", "socat"] as const;
 
 export function isRealModel(model: { provider: string; model: string }): boolean {
   return REAL_MODELS.some((real) => real.provider === model.provider && real.model === model.model);
@@ -36,6 +38,18 @@ export function realConfigToml(port: number): string {
     "[scheduler]", "max_concurrent_engine_turns = 1", `run_budget_usd = ${RUN_BUDGET_USD.toFixed(2)}`, `run_hard_stop_usd = ${RUN_HARD_STOP_USD.toFixed(2)}`, "",
     "[remote]", `address = "127.0.0.1:${port}"`, "",
   ].join("\n");
+}
+
+/**
+ * Links the programs a network-denied turn's sandbox needs (`bwrap`, `socat`) beside the CLIs,
+ * from wherever the user's PATH has them. One that is missing stays missing: the engine then says so.
+ */
+async function linkSandboxTools(engines: string, searchPath: string): Promise<void> {
+  assert.ok(path.isAbsolute(engines), `the engines dir is absolute: ${engines}`);
+  for (const tool of SANDBOX_TOOLS) {
+    const found = await findCli(tool, searchPath).then((file) => file, () => null);
+    if (found !== null) await symlink(found, path.join(engines, tool));
+  }
 }
 
 /** The first executable named `name` on `searchPath`, resolved through symlinks. */
@@ -66,6 +80,7 @@ export async function realEngineEnv(stack: Stack, env: NodeJS.ProcessEnv = proce
   await mkdir(engines, { mode: 0o700 });
   const searchPath = env.E2E_USER_PATH ?? env.PATH ?? "";
   for (const { cli } of REAL_MODELS) await symlink(await findCli(cli, searchPath), path.join(engines, cli));
+  await linkSandboxTools(engines, searchPath);
   const logins = loginDirs(env);
   // The CLIs write caches under HOME; the stack's empty home is read-only by default.
   await chmod(layout.home, 0o700);
