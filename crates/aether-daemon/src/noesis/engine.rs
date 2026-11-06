@@ -316,7 +316,7 @@ impl AetherEngine<'_> {
                         return Ok(stopped(settled_usage(opening).await));
                     }
                 };
-                read_reply(stream, &cancel, ended, &mut live).await
+                read_reply(stream, &cancel, ended, &mut |text| live.text(text)).await
             })
         })
     }
@@ -581,7 +581,7 @@ async fn read_reply(
     mut stream: ModelStream,
     cancel: &CancellationToken,
     mut ended: Pin<&mut impl Future<Output = ()>>,
-    live: &mut NoesisStepStream,
+    on_text: &mut impl FnMut(&str),
 ) -> Result<CallEnd, EngineError> {
     let mut reply = StreamAccumulator::new();
     let mut usage = Usage::default();
@@ -590,9 +590,9 @@ async fn read_reply(
             item = stream.next() => item,
             () = &mut ended => {
                 cancel.cancel();
-                return Ok(CallEnd::AgentEnded(usage));
+                return Ok(CallEnd::AgentEnded(drained_usage(&mut stream, usage).await));
             }
-            () = cancel.cancelled() => return Ok(stopped(usage)),
+            () = cancel.cancelled() => return Ok(stopped(drained_usage(&mut stream, usage).await)),
         };
         let event = match item {
             None => break,
@@ -601,7 +601,7 @@ async fn read_reply(
         };
         match &event {
             StreamEvent::Usage { usage: reading } => usage = *reading,
-            StreamEvent::TextDelta { text, .. } => live.text(text),
+            StreamEvent::TextDelta { text, .. } => on_text(text),
             _ => {}
         }
         reply
@@ -620,27 +620,36 @@ async fn read_reply(
 const SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The usage a call cancelled while opening reports once it has settled;
-/// none if it does not settle in time, which the cost gap then records.
+/// none if it does not open in time, which the cost gap then records.
 async fn settled_usage(
     opening: Pin<&mut impl Future<Output = Result<ModelStream, ModelError>>>,
 ) -> Usage {
+    match tokio::time::timeout(SETTLE_TIMEOUT, opening).await {
+        Ok(Ok(mut stream)) => drained_usage(&mut stream, Usage::default()).await,
+        Ok(Err(_)) => Usage::default(),
+        Err(_) => {
+            tracing::warn!("a cancelled Noesis model call did not settle in time");
+            Usage::default()
+        }
+    }
+}
+
+/// The latest usage reading left in a cancelled call's stream, read for at
+/// most [`SETTLE_TIMEOUT`]; `seen` when it holds none.
+async fn drained_usage(stream: &mut ModelStream, seen: Usage) -> Usage {
+    let mut usage = seen;
     let drained = tokio::time::timeout(SETTLE_TIMEOUT, async {
-        let Ok(mut stream) = opening.await else {
-            return Usage::default();
-        };
-        let mut usage = Usage::default();
         while let Some(Ok(event)) = stream.next().await {
             if let StreamEvent::Usage { usage: reading } = event {
                 usage = reading;
             }
         }
-        usage
     })
     .await;
     if drained.is_err() {
         tracing::warn!("a cancelled Noesis model call did not report its usage in time");
     }
-    drained.unwrap_or_default()
+    usage
 }
 
 /// The service stopped mid-call: the call is charged as a broken one.
@@ -764,6 +773,63 @@ fn step_of(response: &ModelResponse) -> Step {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cancelled call's stream as an engine client settles it.
+    fn settled_stream(spent: Usage) -> ModelStream {
+        let events = vec![
+            Ok(StreamEvent::MessageStart {
+                provider_message_id: None,
+                model: None,
+            }),
+            Ok(StreamEvent::Usage { usage: spent }),
+            Err(ModelError::new(ModelErrorClass::Cancelled, "cancelled")),
+        ];
+        Box::pin(futures::stream::iter(events))
+    }
+
+    #[tokio::test]
+    async fn a_stop_racing_a_settled_stream_still_charges_its_usage() {
+        let spent = Usage {
+            input_tokens: 500,
+            output_tokens: 9,
+            ..Usage::default()
+        };
+        // The select is unbiased: repeat so both branch orders are taken.
+        for _ in 0..64 {
+            let cancel = CancellationToken::new();
+            cancel.cancel();
+            let ended = std::future::pending::<()>();
+            tokio::pin!(ended);
+            let mut texts = Vec::new();
+            let mut on_text = |text: &str| texts.push(text.to_string());
+            let end = read_reply(settled_stream(spent), &cancel, ended, &mut on_text).await;
+            let Ok(CallEnd::Broke(usage, error)) = end else {
+                panic!("a stopped call breaks");
+            };
+            assert_eq!(usage, spent, "the settled usage is charged");
+            assert_eq!(error.class, ModelErrorClass::Cancelled);
+            assert!(texts.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn an_agent_end_racing_a_settled_stream_still_charges_its_usage() {
+        let spent = Usage {
+            input_tokens: 300,
+            ..Usage::default()
+        };
+        for _ in 0..64 {
+            let cancel = CancellationToken::new();
+            let ended = std::future::ready(());
+            tokio::pin!(ended);
+            let end = read_reply(settled_stream(spent), &cancel, ended, &mut |_| {}).await;
+            let usage = match end {
+                Ok(CallEnd::AgentEnded(usage) | CallEnd::Broke(usage, _)) => usage,
+                _ => panic!("the call ended without a reply"),
+            };
+            assert_eq!(usage, spent, "the settled usage is charged");
+        }
+    }
 
     #[test]
     fn tool_names_round_trip_through_their_wire_form() {
