@@ -175,6 +175,26 @@ test("task owner and priority selections preserve ids and protocol priority", as
   expect(h.daemon.commands("create_task")[0]).toMatchObject({ objective: "Urgent review", owner: agent.id, priority: "critical" });
 });
 
+test("an agent that already owns a task is listed but cannot be chosen as the owner", async () => {
+  const busy = fauxAgent("agt_busy", { name: "busy", current_task: "task_held" });
+  h = await connected({ agents: [agent, busy], script });
+  const root = await h.mount(<ActivityScreen />);
+  await click(h, root, "Start an agent");
+  await click(h, document.body, "Task for an existing agent");
+  await type(h, document.body, "Objective", "Urgent review");
+  const trigger = document.querySelector<HTMLButtonElement>('[data-testid="start-owner"]');
+  await act(async () => trigger?.click());
+  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(o => o.textContent?.includes("busy"));
+  expect(option?.getAttribute("aria-disabled")).toBe("true");
+  expect(option?.textContent).toContain("Already working on a task");
+  await act(async () => trigger?.click());
+  const submit = document.querySelector<HTMLButtonElement>('[data-testid="start-submit"]');
+  expect(submit?.disabled).toBe(true);
+  expect(document.getElementById(submit?.getAttribute("aria-describedby") ?? "")?.textContent).toContain("Choose an agent that has no current task");
+  await pick(h, document.body, "Owner", agent.name);
+  expect(document.querySelector<HTMLButtonElement>('[data-testid="start-submit"]')?.disabled).toBe(false);
+});
+
 test("advanced role and approval selections become the exact create command fields", async () => {
   h = await connected({ script });
   const root = await h.mount(<ActivityScreen />);

@@ -52,15 +52,16 @@ export const AETHER_BY_FIELD: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * What Archon lets a device send (archon-remote `allow.rs`, Archon 9a8d63d1) that is `Read`
- * or `Change` (`RequestClass`). `answer` and `say` are `OperatorChange`, so they stay out.
+ * The archond requests that are `Read` or `Change` for the web app's standing (archon-core
+ * `Request::class`). `answer` and `say` are `OperatorChange`, so they stay out; `repo_add` is
+ * `Change` only without `auto_merge` or `github_watch`, which `archonRefusal` checks.
  */
 export const ARCHON_PASS: ReadonlySet<string> = new Set([
-  "hello", "status", "repo_list", "list_items", "list_item_summaries", "get_item", "get_stage",
+  "hello", "status", "repo_list", "repo_add", "list_items", "list_item_summaries", "get_item", "get_stage",
   "resolve_item", "list_pipelines", "list_questions", "feed_history", "subscribe_feed", "list_reports",
   "orchestrator_status", "cost_report", "list_artifacts", "read_artifact", "item_diff", "settings",
-  "autonomy", "subscribe_changes", "changes_page", "item_history", "task_graph", "run_plan", "item_links",
-  "issue_items", "list_github_objects", "enqueue", "cancel_item", "retry_item", "pause", "resume",
+  "autonomy", "github_watcher", "subscribe_changes", "changes_page", "item_history", "task_graph", "run_plan",
+  "item_links", "issue_items", "list_github_objects", "enqueue", "cancel_item", "retry_item", "pause", "resume",
   "link_issue", "unlink_issue", "import_issue",
 ]);
 
@@ -174,5 +175,8 @@ function archonRefusal(cmd: string, frame: Frame): string | undefined {
     return `the desktop app greets archond as ${ARCHON_APP_CLIENT}, not ${String(frame.client).slice(0, 32)}`;
   }
   if ((cmd === "pause" || cmd === "resume") && frame.hard === true) return `${cmd} with hard is for the archon CLI`;
+  if (cmd === "repo_add" && (frame.auto_merge === true || frame.github_watch === true)) {
+    return "repo_add with auto_merge or github_watch is for the archon CLI";
+  }
   return undefined;
 }

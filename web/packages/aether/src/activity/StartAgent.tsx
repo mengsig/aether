@@ -26,7 +26,7 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
       scope: { workspace_root: validation?.path }, model: selected?.model, approval: { require_for: [d.approval] }, config: { effort: d.effort } };
   const disabled = usePermission(conn, command).refusal !== null;
   const blocked = !d.objective.trim() ? "Describe the work to start" : d.mode === "task" ?
-    (agents.some(a => a.id === d.owner) ? null : "Choose an active owner") : !selected ? "Choose a configured model" :
+    (agents.some(a => a.id === d.owner && !a.current_task) ? null : "Choose an agent that has no current task") : !selected ? "Choose a configured model" :
       validation?.valid ? null : "Choose a valid workspace";
   const submit = async () => {
     const reply = await run.send(command);
@@ -41,13 +41,18 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
       options={[{ id: "agent", label: "New agent" }, { id: "task", label: "Task for an existing agent" }]} /></div>
     <TextArea label="Objective" data-testid="start-objective" data-autofocus rows={3} value={d.objective} disabled={disabled} onChange={e => draft.update({ objective: e.target.value })} />
     {d.mode === "task" ? <><Picker label="Owner" data-testid="start-owner" value={d.owner} disabled={disabled} onChange={owner => draft.update({ owner })}
-      options={agents.map(a => ({ id: a.id, label: a.name, description: a.id, group: a.status.state }))} />
+      options={agents.map(a => ({ id: a.id, label: a.name, group: a.status.state, ...ownerAvailability(a) }))} />
       <Segmented label="Priority" value={d.priority} onChange={priority => draft.update({ priority })} options={options(["low", "normal", "high", "critical"])} /></> :
       <AgentFields conn={conn} draft={d} edit={draft.update} model={ref} disabled={disabled} />}
     <Action conn={conn} command={command} label={d.mode === "task" ? "Create task" : "Start agent"} data-testid="start-submit" variant="primary"
       blocked={blocked} busy={run.status.state === "busy"} onRun={submit} />
     <RunNote status={run.status} />
   </div></Sheet>;
+}
+
+/** An agent carries one task at a time, so one that holds a task is listed but cannot be chosen. */
+function ownerAvailability(agent: { id: string; current_task?: string | null }) {
+  return agent.current_task ? { description: "Already working on a task", disabled: true } : { description: agent.id };
 }
 
 function AgentFields({ conn, draft: d, edit, model, disabled }: { conn: string; draft: StartDraft; edit: (patch: Partial<StartDraft>) => void; model: string; disabled: boolean }) {
