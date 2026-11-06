@@ -98,9 +98,11 @@ impl SqliteStore {
         );
         let (live_sql, finished_sql, args) = page_sql(query);
         let (wanted, next_after) = {
-            let conn = self.read_conn()?;
+            let mut conn = self.read_conn()?;
+            // One snapshot: an agent finishing between two reads would be both live and finished.
+            let tx = conn.transaction()?;
             let ids = |sql: &str, args: &[String]| -> Result<Vec<String>> {
-                let mut statement = conn.prepare_cached(sql)?;
+                let mut statement = tx.prepare_cached(sql)?;
                 let rows = statement
                     .query_map(rusqlite::params_from_iter(args), |row| row.get(0))?
                     .collect::<rusqlite::Result<Vec<String>>>()?;
@@ -126,7 +128,13 @@ impl SqliteStore {
             let above = ids(&above_sql, &above_args)?;
             let shown: std::collections::HashSet<&String> = wanted.iter().collect();
             let above: Vec<String> = above.into_iter().filter(|id| !shown.contains(id)).collect();
+            assert_eq!(
+                shown.len(),
+                wanted.len(),
+                "no agent is both live and finished"
+            );
             wanted.extend(above);
+            tx.commit()?;
             (wanted, next_after)
         };
         let agents = self.agents_by_id(&wanted)?;
