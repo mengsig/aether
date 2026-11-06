@@ -14,13 +14,23 @@ export interface SwitchProps {
   readonly "data-testid"?: string | undefined;
 }
 
+const TOGGLE_KEYS: ReadonlySet<string> = new Set([" ", "Enter"]);
+
 /** A whole-row switch: the text and the track are one button, so the target is large. */
 export function Switch({ label, checked, onChange, hint, disabled = false, className, ...rest }: SwitchProps) {
   invariant(label.trim().length > 0, "a switch needs a label");
+  invariant(typeof checked === "boolean", `switch ${label} needs a boolean checked`);
   const id = useId();
+  // Space and Enter toggle on keydown; the defaults are held back so the button's own click cannot toggle twice.
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (!TOGGLE_KEYS.has(event.key)) return;
+    event.preventDefault();
+    if (!event.repeat && !disabled) onChange(!checked);
+  };
+  const onKeyUp = (event: KeyboardEvent) => { if (event.key === " ") event.preventDefault(); };
   return (
     <button type="button" role="switch" aria-checked={checked} aria-describedby={hint === undefined ? undefined : `${id}-hint`} disabled={disabled}
-      className={classes("ui-switch", className)} data-testid={rest["data-testid"]} onClick={() => onChange(!checked)}>
+      className={classes("ui-switch", className)} data-testid={rest["data-testid"]} onClick={() => onChange(!checked)} onKeyDown={onKeyDown} onKeyUp={onKeyUp}>
       <span className="ui-switch-text">
         <span className="ui-switch-label">{label}</span>
         {hint === undefined ? null : <span className="ui-switch-hint" id={`${id}-hint`}>{hint}</span>}

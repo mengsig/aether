@@ -2,7 +2,8 @@
 // Arrows move, type-ahead jumps, Enter chooses, Escape closes; a long list gets a search box.
 // It changes only how a value is chosen: `onChange` receives the option's id, nothing else.
 
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { useDismissOnOutside } from "./outside.ts";
 import { classes, invariant } from "./classes.ts";
 import { filterOptions, groupOptions, moveIndex, typeAhead, type PickerOption } from "./picker-model.ts";
 
@@ -38,25 +39,62 @@ interface ListState {
 const CLOSED: ListState = { open: false, active: -1, query: "" };
 
 export function Picker(props: PickerProps) {
-  const { label, value, onChange, options, disabled = false, error, hint } = props;
+  const { label, value, options, disabled = false, error, hint } = props;
   invariant(label.trim().length > 0, "a picker needs a label");
   const id = useId();
-  const [state, setState] = useState<ListState>(CLOSED);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
-  const typed = useRef<{ text: string; at: number }>({ text: "", at: 0 });
   const searchable = props.searchable ?? options.length >= SEARCH_FROM;
-  const shown = state.query === "" ? options : filterOptions(options, state.query);
+  const control = usePickerControl(props, searchable, trigger);
+  const { state } = control;
+  useDismissOnOutside(root, state.open, () => control.close(false));
   const selected = options.find((option) => option.id === value);
+  const hintId = hint === undefined ? undefined : `${id}-hint`;
+  const errorId = error === undefined ? undefined : `${id}-error`;
+  const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
+  return (
+    <div className={classes("ui-field ui-picker", props.className)} ref={root} data-invalid={error === undefined ? undefined : "true"} data-size={props.size ?? "md"}>
+      <label className={classes("ui-field-label", props.hideLabel && "ui-visually-hidden")} id={`${id}-label`} htmlFor={`${id}-trigger`}>{label}</label>
+      <button type="button" className="ui-field-input ui-picker-trigger" id={`${id}-trigger`} ref={trigger} role="combobox" disabled={disabled}
+        aria-haspopup="listbox" aria-expanded={state.open} aria-controls={state.open ? `${id}-list` : undefined} aria-labelledby={`${id}-label ${id}-trigger`}
+        aria-describedby={describedBy} aria-invalid={error === undefined ? undefined : true} data-testid={props["data-testid"]} data-placeholder={selected === undefined ? "true" : undefined}
+        onClick={() => (state.open ? control.close(false) : control.open())} onKeyDown={control.onTriggerKey}>
+        <span className="ui-picker-value">{selected === undefined ? props.placeholder ?? "Choose…" : selected.label}</span>
+        {selected?.badge === undefined ? null : <span className="ui-picker-tag" data-tone={selected.badgeTone ?? "neutral"}>{selected.badge}</span>}
+        <Chevron />
+      </button>
+      {state.open ? (
+        <PickerList id={id} label={label} shown={control.shown} active={state.active} value={value} searchable={searchable} query={state.query}
+          emptyText={props.emptyText ?? "Nothing matches"} onQuery={control.onQuery} onKeyDown={control.onListKey} onHover={control.move} onChoose={control.choose} />
+      ) : null}
+      {hint === undefined ? null : <p className="ui-field-hint" id={hintId}>{hint}</p>}
+      {error === undefined ? null : <p className="ui-field-error" id={errorId}>{error}</p>}
+    </div>
+  );
+}
 
-  useEffect(() => {
-    if (!state.open) return undefined;
-    const outside = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) setState(CLOSED);
-    };
-    document.addEventListener("pointerdown", outside);
-    return () => document.removeEventListener("pointerdown", outside);
-  }, [state.open]);
+interface PickerControl {
+  readonly state: ListState;
+  /** The options the open list draws, in drawing order; keyboard indices point into it. */
+  readonly shown: readonly PickerOption[];
+  readonly open: () => void;
+  readonly close: (refocus: boolean) => void;
+  readonly choose: (option: PickerOption) => void;
+  readonly move: (index: number) => void;
+  readonly onQuery: (query: string) => void;
+  readonly onListKey: (event: KeyboardEvent) => void;
+  readonly onTriggerKey: (event: KeyboardEvent) => void;
+}
+
+/** The picker's list state and every way to change it: open, close, move, type ahead, search, choose. */
+function usePickerControl(props: PickerProps, searchable: boolean, trigger: RefObject<HTMLButtonElement | null>): PickerControl {
+  const { value, onChange, options, disabled = false } = props;
+  const [stored, setState] = useState<ListState>(CLOSED);
+  const typed = useRef<{ text: string; at: number }>({ text: "", at: 0 });
+  const ordered = inListOrder(options);
+  const shown = stored.query === "" ? ordered : inListOrder(filterOptions(options, stored.query));
+  // Options can shrink while the list is open; a cursor past the end then points at nothing.
+  const state = stored.active < shown.length ? stored : { ...stored, active: -1 };
 
   const open = () => {
     if (disabled) return;
@@ -80,10 +118,9 @@ export function Picker(props: PickerProps) {
     const found = typeAhead(shown, state.active, text);
     if (found >= 0) move(found);
   };
-
+  const onQuery = (query: string) => setState({ open: true, query, active: moveIndex(inListOrder(filterOptions(options, query)), -1, 1) });
   const onListKey = (event: KeyboardEvent) => {
-    const handled = listKey(event, { shown, active: state.active, move, choose, close, typeKey, searchable });
-    if (handled) event.preventDefault();
+    if (listKey(event, { shown, active: state.active, move, choose, close, typeKey, searchable })) event.preventDefault();
   };
   const onTriggerKey = (event: KeyboardEvent) => {
     if (state.open) return;
@@ -91,34 +128,18 @@ export function Picker(props: PickerProps) {
       event.preventDefault();
       open();
     } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      const found = typeAhead(options, options.findIndex((option) => option.id === value), event.key);
-      if (found >= 0) choose(options[found] as PickerOption);
+      const found = typeAhead(ordered, ordered.findIndex((option) => option.id === value), event.key);
+      if (found >= 0) choose(ordered[found] as PickerOption);
     }
   };
+  return { state, shown, open, close, choose, move, onQuery, onListKey, onTriggerKey };
+}
 
-  const hintId = hint === undefined ? undefined : `${id}-hint`;
-  const errorId = error === undefined ? undefined : `${id}-error`;
-  const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
-  return (
-    <div className={classes("ui-field ui-picker", props.className)} ref={root} data-invalid={error === undefined ? undefined : "true"} data-size={props.size ?? "md"}>
-      <label className={classes("ui-field-label", props.hideLabel && "ui-visually-hidden")} id={`${id}-label`} htmlFor={`${id}-trigger`}>{label}</label>
-      <button type="button" className="ui-field-input ui-picker-trigger" id={`${id}-trigger`} ref={trigger} role="combobox" disabled={disabled}
-        aria-haspopup="listbox" aria-expanded={state.open} aria-controls={state.open ? `${id}-list` : undefined} aria-labelledby={`${id}-label ${id}-trigger`}
-        aria-describedby={describedBy} aria-invalid={error === undefined ? undefined : true} data-testid={props["data-testid"]} data-placeholder={selected === undefined ? "true" : undefined}
-        onClick={() => (state.open ? close(false) : open())} onKeyDown={onTriggerKey}>
-        <span className="ui-picker-value">{selected === undefined ? props.placeholder ?? "Choose…" : selected.label}</span>
-        {selected?.badge === undefined ? null : <span className="ui-picker-tag" data-tone={selected.badgeTone ?? "neutral"}>{selected.badge}</span>}
-        <Chevron />
-      </button>
-      {state.open ? (
-        <PickerList id={id} label={label} shown={shown} active={state.active} value={value} searchable={searchable} query={state.query}
-          emptyText={props.emptyText ?? "Nothing matches"} onQuery={(query) => setState({ open: true, query, active: moveIndex(filterOptions(options, query), -1, 1) })}
-          onKeyDown={onListKey} onHover={move} onChoose={choose} />
-      ) : null}
-      {hint === undefined ? null : <p className="ui-field-hint" id={hintId}>{hint}</p>}
-      {error === undefined ? null : <p className="ui-field-error" id={errorId}>{error}</p>}
-    </div>
-  );
+/** Options in the order the list draws them, group by group, so keyboard indices match the rows. */
+function inListOrder(options: readonly PickerOption[]): PickerOption[] {
+  const ordered = groupOptions(options).flatMap((group) => group.options);
+  invariant(ordered.length === options.length, "grouping keeps every option");
+  return ordered;
 }
 
 interface ListKeyContext {
@@ -187,10 +208,10 @@ function PickerList(props: PickerListProps) {
     if (node !== null && typeof node.scrollIntoView === "function") node.scrollIntoView({ block: "nearest" });
   }, [activeId]);
   const groups = groupOptions(shown);
-  let index = -1;
+  const positions = new Map(shown.map((item, at) => [item.id, at]));
   const option = (item: PickerOption): ReactNode => {
-    index += 1;
-    const at = index;
+    const at = positions.get(item.id);
+    invariant(at !== undefined, `option ${item.id} is in the shown list`);
     return (
       <li key={item.id} id={`${id}-option-${at}`} role="option" className="ui-picker-option" aria-selected={item.id === props.value} aria-disabled={item.disabled || undefined}
         data-active={at === active ? "true" : undefined} onPointerMove={() => { if (at !== active) props.onHover(at); }}

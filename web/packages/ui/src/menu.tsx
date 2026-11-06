@@ -15,6 +15,7 @@ export interface MenuProps {
   readonly label: string;
   readonly items: readonly MenuItem[];
   readonly variant?: ButtonVariant;
+  readonly size?: "sm" | "md";
   readonly className?: string;
 }
 
@@ -29,7 +30,7 @@ export function nextEnabled(items: readonly MenuItem[], from: number, step: 1 | 
 }
 
 /** A menu button (WAI-ARIA APG): arrows move, Enter selects, Escape and Tab close it. */
-export function Menu({ label, items, variant = "secondary", className }: MenuProps) {
+export function Menu({ label, items, variant = "secondary", size = "md", className }: MenuProps) {
   invariant(items.length > 0, `menu ${label} has no items`);
   const id = useId();
   const [active, setActive] = useState(-1);
@@ -77,7 +78,7 @@ export function Menu({ label, items, variant = "secondary", className }: MenuPro
 
   return (
     <div className={classes("ui-menu", className)} ref={root}>
-      <Button ref={trigger} variant={variant} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined}
+      <Button ref={trigger} variant={variant} size={size} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined}
         onClick={() => (open ? close(false) : openAt(nextEnabled(items, -1, 1)))}
         onKeyDown={(event) => {
           if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;

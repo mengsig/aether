@@ -111,6 +111,55 @@ describe("Tabs", () => {
   });
 });
 
+describe("Tabs keys and indicator", () => {
+  const THREE = [{ id: "a", label: "Alpha", panel: "A" }, { id: "b", label: "Beta", panel: "B" }, { id: "c", label: "Gamma", panel: "C" }];
+
+  test("Home, End and ArrowLeft move the selection and focus, wrapping at the start", async () => {
+    const { container } = await render(<Tabs label="Greek" tabs={THREE} />);
+    const tab = (text: string) => byText(container, "[role=tab]", text);
+    await press(tab("Alpha"), "End");
+    expect(document.activeElement).toBe(tab("Gamma"));
+    await press(tab("Gamma"), "Home");
+    expect(tab("Alpha").getAttribute("aria-selected")).toBe("true");
+    await press(tab("Alpha"), "ArrowLeft");
+    expect(document.activeElement).toBe(tab("Gamma"));
+    expect(container.querySelector("[role=tabpanel]")?.textContent).toBe("C");
+  });
+
+  test("one indicator slides under the selected tab once the tabs have a size, and none before", async () => {
+    const unmeasured = await render(<Tabs label="Greek" tabs={THREE} />);
+    expect(unmeasured.container.querySelector(".ui-tab-indicator")).toBeNull();
+    expect(unmeasured.container.querySelector("[role=tablist]")?.hasAttribute("data-measured")).toBe(false);
+    await unmeasured.unmount();
+    const boxes: Record<string, [number, number]> = { Alpha: [0, 40], Beta: [64, 32], Gamma: [120, 48] };
+    const box = (node: HTMLElement) => boxes[node.textContent ?? ""] ?? [0, 0];
+    const width = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) { return box(this)[1]; });
+    const left = vi.spyOn(HTMLElement.prototype, "offsetLeft", "get").mockImplementation(function (this: HTMLElement) { return box(this)[0]; });
+    const { container } = await render(<Tabs label="Greek" tabs={THREE} />);
+    const indicator = () => container.querySelector<HTMLElement>(".ui-tab-indicator");
+    expect(container.querySelector("[role=tablist]")?.getAttribute("data-measured")).toBe("true");
+    expect(indicator()?.getAttribute("aria-hidden")).toBe("true");
+    expect(indicator()?.style.inlineSize).toBe("40px");
+    await press(byText(container, "[role=tab]", "Alpha"), "ArrowRight");
+    expect(indicator()?.style.inlineSize).toBe("32px");
+    expect(indicator()?.style.translate).toBe("64px 0");
+    expect(container.querySelectorAll(".ui-tab-indicator")).toHaveLength(1);
+    width.mockRestore();
+    left.mockRestore();
+  });
+});
+
+describe("Dialog close button", () => {
+  test("the close button is named after the dialog and asks the owner to close", async () => {
+    const onClose = vi.fn();
+    const { container } = await render(<Dialog open onClose={onClose} title="Rename agent"><p>Body</p></Dialog>);
+    const close = container.querySelector<HTMLButtonElement>("[aria-label='Close Rename agent']");
+    expect(close?.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    await click(close as HTMLButtonElement);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("Toast and Tooltip", () => {
   test("a danger toast is an alert, others are status, and dismiss names the toast", async () => {
     const onDismiss = vi.fn();

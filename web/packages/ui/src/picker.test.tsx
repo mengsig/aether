@@ -42,6 +42,10 @@ describe("picker model", () => {
     expect(typeAhead(FRUIT, 1, "p")).toBe(3);
     expect(typeAhead(FRUIT, -1, "pl")).toBe(-1);
     expect(typeAhead(FRUIT, -1, "pe")).toBe(1);
+    expect(typeAhead(FRUIT, 1, "pe")).toBe(1);
+    expect(typeAhead(FRUIT, 1, "pea")).toBe(1);
+    expect(typeAhead(FRUIT, 1, "peac")).toBe(3);
+    expect(() => typeAhead(FRUIT, 9, "p")).toThrow(/out of range/);
   });
 });
 
@@ -99,6 +103,62 @@ describe("Picker", () => {
     expect(options(container).map((o) => o.textContent)).toEqual([expect.stringContaining("Pear")]);
     await type(search, "zzz");
     expect(container.textContent).toContain("Nothing matches");
+    await unmount();
+  });
+
+  test("Home and End jump to the first and last enabled options", async () => {
+    const { container, unmount } = await render(<Harness initial="pear" />);
+    await press(trigger(container), "Enter");
+    const list = container.querySelector("[role=listbox]") as HTMLElement;
+    expect(active(container)).toContain("Pear");
+    await press(list, "End");
+    expect(active(container)).toContain("Peach");
+    await press(list, "Home");
+    expect(active(container)).toContain("Apple");
+    expect(list.getAttribute("aria-activedescendant")).toBe(options(container)[0]?.id);
+    await unmount();
+  });
+
+  test("type-ahead on the closed trigger chooses the next match without opening", async () => {
+    const chosen: string[] = [];
+    const { container, unmount } = await render(<Harness initial="apple" onChange={(id) => chosen.push(id)} />);
+    await press(trigger(container), "p");
+    expect(chosen).toEqual(["pear"]);
+    expect(container.querySelector("[role=listbox]")).toBeNull();
+    await press(trigger(container), "p");
+    expect(chosen).toEqual(["pear", "peach"]);
+    await unmount();
+  });
+
+  test("search narrows the list; arrows and Enter choose among the matches; Escape closes", async () => {
+    const chosen: string[] = [];
+    const { container, unmount } = await render(<Harness searchable onChange={(id) => chosen.push(id)} />);
+    await click(trigger(container));
+    const search = container.querySelector<HTMLInputElement>("[role=searchbox]") as HTMLInputElement;
+    await type(search, "pe");
+    expect(options(container).map((o) => o.textContent)).toEqual([expect.stringContaining("Pear"), expect.stringContaining("Peach")]);
+    expect(active(container)).toContain("Pear");
+    await press(search, "ArrowDown");
+    expect(search.getAttribute("aria-activedescendant")).toBe(options(container)[1]?.id);
+    await press(search, "Enter");
+    expect(chosen).toEqual(["peach"]);
+    await click(trigger(container));
+    await press(container.querySelector("[role=searchbox]") as HTMLElement, "Escape");
+    expect(container.querySelector("[role=listbox]")).toBeNull();
+    expect(document.activeElement).toBe(trigger(container));
+    await unmount();
+  });
+
+  test("keyboard order follows the drawn groups even when the options interleave them", async () => {
+    const mixed: PickerOption[] = [{ id: "a", label: "Ant", group: "Small" }, { id: "b", label: "Bear", group: "Large" }, { id: "c", label: "Cat", group: "Small" }];
+    const { container, unmount } = await render(<Picker label="Animal" value={null} options={mixed} onChange={() => undefined} />);
+    await press(trigger(container), "ArrowDown");
+    const list = container.querySelector("[role=listbox]") as HTMLElement;
+    const drawn = options(container).map((o) => o.textContent);
+    expect(drawn).toEqual([expect.stringContaining("Ant"), expect.stringContaining("Cat"), expect.stringContaining("Bear")]);
+    await press(list, "ArrowDown");
+    expect(active(container)).toContain("Cat");
+    expect(list.getAttribute("aria-activedescendant")).toBe(options(container)[1]?.id);
     await unmount();
   });
 

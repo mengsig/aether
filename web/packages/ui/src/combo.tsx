@@ -2,7 +2,8 @@
 // autocomplete). The text stays the value; a suggestion only fills it in. For open values that
 // still have known candidates: paths, timezones, repository roots.
 
-import { useEffect, useId, useRef, useState, type InputHTMLAttributes, type KeyboardEvent, type ReactNode } from "react";
+import { useId, useRef, useState, type InputHTMLAttributes, type KeyboardEvent, type ReactNode } from "react";
+import { useDismissOnOutside } from "./outside.ts";
 import { classes, invariant } from "./classes.ts";
 import { moveIndex, type PickerOption } from "./picker-model.ts";
 
@@ -13,7 +14,7 @@ export interface ComboProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 
   /** Suggestions for the current text; each id is the text a pick fills in. */
   readonly suggestions: readonly PickerOption[];
   /** Called after a pick, with the option, once the text is set. */
-  readonly onPick?: (option: PickerOption) => void | undefined;
+  readonly onPick?: (option: PickerOption) => void;
   readonly hint?: string | undefined;
   readonly error?: string | undefined;
   /** Shown under the list while suggestions load, so an empty list is not mistaken for "none". */
@@ -29,21 +30,13 @@ export function Combo({ label, value, onChange, suggestions, onPick, hint, error
   const id = useId();
   const root = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(-1);
+  const [cursor, setActive] = useState(-1);
+  // New suggestions can be shorter than the old cursor; past their end nothing is active.
+  const active = cursor < suggestions.length ? cursor : -1;
   const listed = open && (suggestions.length > 0 || status !== undefined || emptyText !== undefined);
   const activeId = active >= 0 && suggestions[active] !== undefined ? `${id}-option-${active}` : undefined;
 
-  useEffect(() => {
-    if (active >= suggestions.length) setActive(-1);
-  }, [active, suggestions.length]);
-  useEffect(() => {
-    if (!open) return undefined;
-    const outside = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", outside);
-    return () => document.removeEventListener("pointerdown", outside);
-  }, [open]);
+  useDismissOnOutside(root, open, () => setOpen(false));
 
   const pick = (option: PickerOption) => {
     if (option.disabled) return;
@@ -79,24 +72,41 @@ export function Combo({ label, value, onChange, suggestions, onPick, hint, error
           onFocus={(event) => { setOpen(true); input.onFocus?.(event); }} onClick={() => setOpen(true)} onKeyDown={onKeyDown} />
         {trailing === undefined ? null : <div className="ui-combo-trailing">{trailing}</div>}
       </div>
-      {listed ? (
-        <ul className="ui-picker-pop ui-picker-list ui-combo-list" id={`${id}-list`} role="listbox" aria-label={`${label} suggestions`}>
-          {suggestions.map((option, index) => (
-            <li key={option.id} id={`${id}-option-${index}`} role="option" className="ui-picker-option" aria-selected={index === active} aria-disabled={option.disabled || undefined}
-              data-active={index === active ? "true" : undefined} onPointerMove={() => setActive(index)} onMouseDown={(event) => event.preventDefault()} onClick={() => pick(option)}>
-              <span className="ui-picker-option-main">
-                <span className="ui-picker-option-label">{option.label}</span>
-                {option.badge === undefined ? null : <span className="ui-picker-tag" data-tone={option.badgeTone ?? "neutral"}>{option.badge}</span>}
-              </span>
-              {option.description === undefined ? null : <span className="ui-picker-option-description">{option.description}</span>}
-            </li>
-          ))}
-          {suggestions.length === 0 && status === undefined && emptyText !== undefined ? <li className="ui-picker-empty" role="presentation">{emptyText}</li> : null}
-          {status === undefined ? null : <li className="ui-picker-empty" role="presentation" aria-live="polite">{status}</li>}
-        </ul>
-      ) : null}
+      {listed ? <ComboList id={id} label={label} suggestions={suggestions} active={active} status={status} emptyText={emptyText} onHover={setActive} onPick={pick} /> : null}
       {hint === undefined ? null : <p className="ui-field-hint" id={hintId}>{hint}</p>}
       {error === undefined ? null : <p className="ui-field-error" id={errorId}>{error}</p>}
     </div>
+  );
+}
+
+interface ComboListProps {
+  readonly id: string;
+  readonly label: string;
+  readonly suggestions: readonly PickerOption[];
+  readonly active: number;
+  readonly status: string | undefined;
+  readonly emptyText: string | undefined;
+  readonly onHover: (index: number) => void;
+  readonly onPick: (option: PickerOption) => void;
+}
+
+/** The suggestion list under the input; a press on a row never takes focus from the input. */
+function ComboList({ id, label, suggestions, active, status, emptyText, onHover, onPick }: ComboListProps) {
+  invariant(active >= -1 && active < Math.max(suggestions.length, 1), `combo cursor ${active} is out of range`);
+  return (
+    <ul className="ui-picker-pop ui-picker-list ui-combo-list" id={`${id}-list`} role="listbox" aria-label={`${label} suggestions`}>
+      {suggestions.map((option, index) => (
+        <li key={option.id} id={`${id}-option-${index}`} role="option" className="ui-picker-option" aria-selected={index === active} aria-disabled={option.disabled || undefined}
+          data-active={index === active ? "true" : undefined} onPointerMove={() => onHover(index)} onMouseDown={(event) => event.preventDefault()} onClick={() => onPick(option)}>
+          <span className="ui-picker-option-main">
+            <span className="ui-picker-option-label">{option.label}</span>
+            {option.badge === undefined ? null : <span className="ui-picker-tag" data-tone={option.badgeTone ?? "neutral"}>{option.badge}</span>}
+          </span>
+          {option.description === undefined ? null : <span className="ui-picker-option-description">{option.description}</span>}
+        </li>
+      ))}
+      {suggestions.length === 0 && status === undefined && emptyText !== undefined ? <li className="ui-picker-empty" role="presentation">{emptyText}</li> : null}
+      {status === undefined ? null : <li className="ui-picker-empty" role="presentation" aria-live="polite">{status}</li>}
+    </ul>
   );
 }

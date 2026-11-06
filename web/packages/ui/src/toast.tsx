@@ -1,5 +1,6 @@
 import { Button } from "./button.tsx";
 import { invariant } from "./classes.ts";
+import { CloseGlyph } from "./dialog.tsx";
 import type { Tone } from "./badge.tsx";
 
 export interface ToastMessage {
@@ -18,7 +19,7 @@ export function Toast({ toast, onDismiss }: { readonly toast: ToastMessage; read
         <p className="ui-toast-title">{toast.title}</p>
         {toast.body === undefined ? null : <p className="ui-toast-body">{toast.body}</p>}
       </div>
-      <Button variant="quiet" size="sm" aria-label={`Dismiss: ${toast.title}`} onClick={() => onDismiss(toast.id)}>✕</Button>
+      <Button variant="quiet" size="sm" className="ui-icon-button" aria-label={`Dismiss: ${toast.title}`} onClick={() => onDismiss(toast.id)}><CloseGlyph /></Button>
     </div>
   );
 }

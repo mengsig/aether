@@ -40,7 +40,7 @@ function ModalSurface({ kind, open, onClose, title, description, children, foote
         <div className="ui-dialog-frame">
           <div className="ui-dialog-header">
             <h2 className="ui-dialog-title" id={`${id}-title`}>{title}</h2>
-            <Button variant="quiet" size="sm" aria-label={`Close ${title}`} onClick={onClose}>✕</Button>
+            <Button variant="quiet" size="sm" className="ui-icon-button" aria-label={`Close ${title}`} onClick={onClose}><CloseGlyph /></Button>
           </div>
           {description === undefined ? null : <p className="ui-dialog-description" id={`${id}-description`}>{description}</p>}
           <div className="ui-dialog-body">{children}</div>
@@ -58,4 +58,13 @@ export function Dialog(props: DialogProps) {
 /** A modal panel that slides in from the inline end (the bottom on narrow screens). */
 export function Sheet(props: DialogProps) {
   return <ModalSurface {...props} kind="sheet" />;
+}
+
+/** The 16 px cross of every close and dismiss button. */
+export function CloseGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
+      <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
 }

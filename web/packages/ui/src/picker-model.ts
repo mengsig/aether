@@ -57,11 +57,13 @@ export function moveIndex(options: readonly PickerOption[], from: number, step: 
   return -1;
 }
 
-/** Type-ahead: the first enabled option after `from` whose label starts with `typed`, wrapping. */
+/** Type-ahead: the first enabled option after `from` whose label starts with `typed`, wrapping.
+    A longer prefix may keep the option at `from`; with nothing active (-1) it searches from the top. */
 export function typeAhead(options: readonly PickerOption[], from: number, typed: string): number {
+  invariant(from >= -1 && from < Math.max(options.length, 1), `type-ahead index ${from} is out of range`);
   const prefix = normalize(typed);
   if (prefix.length === 0 || options.length === 0) return -1;
-  const start = prefix.length === 1 ? from : from - 1;
+  const start = prefix.length === 1 ? from : Math.max(from, 0) - 1;
   for (let offset = 1; offset <= options.length; offset += 1) {
     const index = (((start + offset) % options.length) + options.length) % options.length;
     const option = options[index];

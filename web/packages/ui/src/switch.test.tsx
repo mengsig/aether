@@ -26,6 +26,23 @@ describe("Switch", () => {
     expect(control.getAttribute("aria-checked")).toBe("true");
     await unmount();
   });
+
+  test("Space and Enter toggle it once per press, and a disabled switch ignores them", async () => {
+    const { container, unmount } = await render(<SwitchHarness />);
+    const control = container.querySelector("[role=switch]") as HTMLButtonElement;
+    await press(control, " ");
+    expect(control.getAttribute("aria-checked")).toBe("true");
+    await press(control, "Enter");
+    expect(control.getAttribute("aria-checked")).toBe("false");
+    await press(control, "Enter", { repeat: true });
+    expect(control.getAttribute("aria-checked")).toBe("false");
+    await unmount();
+    const changes: boolean[] = [];
+    const off = await render(<Switch label="Locked" checked={false} disabled onChange={(next) => changes.push(next)} />);
+    await press(off.container.querySelector("[role=switch]") as HTMLElement, " ");
+    expect(changes).toEqual([]);
+    await off.unmount();
+  });
 });
 
 describe("Segmented", () => {

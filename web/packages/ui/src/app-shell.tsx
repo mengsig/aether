@@ -32,6 +32,8 @@ export interface AppShellProps {
   readonly commands?: readonly Command[];
   /** The header of each route with no nav entry, by route path. */
   readonly titles?: Readonly<Record<string, string>>;
+  /** The overview shown at "", "#" and "#/" in place of the "Pick a screen" prompt. */
+  readonly home?: ReactNode;
 }
 
 type RouteComponent = ComponentType<RouteProps>;
@@ -63,7 +65,6 @@ function paletteCommands(sections: readonly NavSection[], onNavigate: (href: str
   return commands;
 }
 
-/** The frame every screen renders in: the nav rail, a header, the routed screen and the toasts (CONTRACTS.md §2.5). */
 /** The header for the current route: its nav label, else its listed title, else the product name. */
 function screenTitle(match: ShellMatch | null, titles: Readonly<Record<string, string>> = {}): string {
   if (match === null) return "Overview";
@@ -71,6 +72,7 @@ function screenTitle(match: ShellMatch | null, titles: Readonly<Record<string, s
   return route.nav?.label ?? titles[route.path] ?? "Aether";
 }
 
+/** The frame every screen renders in: the nav rail, a header, the routed screen and the toasts (CONTRACTS.md §2.5). */
 export function AppShell(props: AppShellProps) {
   const { routes, capabilities, hash, onNavigate } = props;
   const theme = useTheme();
@@ -91,7 +93,8 @@ export function AppShell(props: AppShellProps) {
           <header className="ui-shell-header">
             <h1 className="ui-shell-title">{title}</h1>
             <div className="ui-shell-tools">
-              <Button className="ui-palette-trigger" onClick={() => setPaletteOpen(true)} aria-keyshortcuts="Control+K Meta+K">
+              <Button className="ui-palette-trigger" variant="quiet" size="sm" onClick={() => setPaletteOpen(true)} aria-keyshortcuts="Control+K Meta+K">
+                <SearchGlyph />
                 <span>Jump to…</span>
                 <kbd className="ui-kbd">Ctrl K</kbd>
               </Button>
@@ -99,7 +102,7 @@ export function AppShell(props: AppShellProps) {
             </div>
           </header>
           <main className="ui-shell-main" id="ui-main" tabIndex={-1}>
-            <RouteView match={props.match} hash={hash} capabilities={capabilities} hasRoutes={sections.length > 0} />
+            <RouteView match={props.match} hash={hash} capabilities={capabilities} hasRoutes={sections.length > 0} home={props.home} />
           </main>
         </div>
         <ToastRegion toasts={props.notices ?? []} onDismiss={props.onDismissNotice ?? (() => undefined)} />
@@ -137,10 +140,32 @@ function useScreenFocus(hash: string, title: string): void {
   }, [hash]);
 }
 
-function RouteView(props: { readonly match: ShellMatch | null; readonly hash: string; readonly capabilities: Capabilities; readonly hasRoutes: boolean }) {
+function SearchGlyph() {
+  return (
+    <svg className="ui-palette-trigger-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">
+      <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M10.5 10.5L14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+interface RouteViewProps {
+  readonly match: ShellMatch | null;
+  readonly hash: string;
+  readonly capabilities: Capabilities;
+  readonly hasRoutes: boolean;
+  readonly home: ReactNode | undefined;
+}
+
+function isHomeHash(hash: string): boolean {
+  return hash === "" || hash === "#" || hash === "#/";
+}
+
+function RouteView(props: RouteViewProps) {
   const { match } = props;
   if (match === null) {
-    const home = props.hash === "" || props.hash === "#" || props.hash === "#/";
+    const home = isHomeHash(props.hash);
+    if (home && props.home !== undefined) return <div className="ui-screen" key="home">{props.home}</div>;
     if (!home) return <EmptyState title="No screen here" action={<a className="ui-link" href="#/">Back to the overview</a>}>Nothing is registered at {props.hash}.</EmptyState>;
     return props.hasRoutes
       ? <EmptyState title="Pick a screen">Choose one from the navigation, or press Ctrl K to jump anywhere.</EmptyState>
