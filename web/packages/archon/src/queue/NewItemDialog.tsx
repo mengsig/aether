@@ -46,6 +46,8 @@ export function NewItemDialog({ access, open, repos, onClose }: {
   const { value: attempt, update: saveAttempt, clear: clearAttempt } = useDraft("archon/new-item-attempt", { key: "" });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // A field says what it needs once it was left empty, not before anything was typed.
+  const [left, setLeft] = useState<{ readonly title?: true; readonly brief?: true }>({});
   const catalog = useRead<archon.CatalogListing>(access, open ? { cmd: "list_pipelines", repo: draft.repo || null } : null, ["catalog"]);
   const valid = !!draft.title.trim() && !!draft.brief.trim() && (draft.repo === "" || repos.some((repo) => repo.id === draft.repo));
   const submit = async (event: FormEvent) => {
@@ -64,8 +66,10 @@ export function NewItemDialog({ access, open, repos, onClose }: {
   return (
     <Dialog open={open} onClose={onClose} title="New item" description="Archon queues it and starts when a slot is free. Your draft is kept when you close this dialog.">
       <form className="queue-form" onSubmit={(event) => void submit(event)} noValidate>
-        <Field label="Title" value={draft.title} onChange={(event) => set({ title: event.target.value })} data-autofocus data-testid="new-item-title" {...(!draft.title.trim() ? { error: "Give this item a title." } : {})} />
-        <TextArea label="Brief" rows={5} value={draft.brief} onChange={(event) => set({ brief: event.target.value })} data-testid="new-item-brief" error={!draft.brief.trim() ? "Describe the work to do." : undefined} />
+        <Field label="Title" value={draft.title} onChange={(event) => set({ title: event.target.value })} onBlur={() => setLeft((was) => ({ ...was, title: true }))}
+          data-autofocus data-testid="new-item-title" {...(left.title && !draft.title.trim() ? { error: "Give this item a title." } : {})} />
+        <TextArea label="Brief" rows={5} value={draft.brief} onChange={(event) => set({ brief: event.target.value })} onBlur={() => setLeft((was) => ({ ...was, brief: true }))}
+          data-testid="new-item-brief" error={left.brief && !draft.brief.trim() ? "Describe the work to do." : undefined} />
         <ItemChoices draft={draft} set={set} repos={repos} catalog={catalog.data} />
         {catalog.error ? <p role="alert" className="queue-error">{catalog.error}</p> : null}
         {error ? <p role="alert" className="queue-error">{error}</p> : null}

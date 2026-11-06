@@ -79,6 +79,10 @@ test("archon journey: register a repository, queue an item, see it through", asy
   await queueItem(window);
   const item = await until(() => items(stack), (rows) => rows.some((row) => row.title === TITLE), "the queued item", 30_000);
   const id = item.find((row) => row.title === TITLE)?.id as string;
+  await open(window, "Task graph", "#/archon/graph");
+  await expect(window.getByRole("complementary", { name: "Graph overview" }), "the task graph shows the open item").toBeVisible();
+  await expect(window.locator(".dag-canvas[aria-busy='false']:not([data-pending])"), "the graph is laid out").toBeVisible();
+  await shootWindow(window, "task-graph", "rendered");
   const outcome = await until(() => itemState(stack, id), (state) => !ACTIVE.has(state), "the item to reach an outcome", OUTCOME_MS);
   test.info().annotations.push({ type: "outcome", description: `${TITLE}: ${outcome}` });
   assert.ok((await itemHistory(stack, id)).length >= 2, "the item moved at least once");
@@ -87,9 +91,6 @@ test("archon journey: register a repository, queue an item, see it through", asy
   await open(window, TITLE, `#/archon/items/${id}`);
   await expect(window.getByRole("heading", { name: TITLE }), "the item's page shows").toBeVisible();
   await shootWindow(window, "item", "outcome");
-  await open(window, "Task graph", "#/archon/graph");
-  await expect(window.getByRole("complementary", { name: "Graph overview" }).or(window.getByText("Nothing in the graph")).first(), "the task graph renders").toBeVisible();
-  await shootWindow(window, "task-graph", "rendered");
   await open(window, "History", "#/archon/history");
   const row = window.getByRole("list", { name: "Items" }).getByText(TITLE).first();
   await expect(row, "History lists the item").toBeVisible();

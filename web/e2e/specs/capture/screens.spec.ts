@@ -126,7 +126,7 @@ test("operator: empty, then loaded, then error states", async ({ page, stack }) 
   await shoot(page, stack, "Activity", "loaded", "#/activity");
   await shoot(page, stack, "Queue", "paused", "#/archon/queue", ".queue-row");
   await shoot(page, stack, "Item", "queued", `#/archon/items/${itemId}`, "#item-title");
-  await shoot(page, stack, "Task graph", "loaded", "#/archon/graph", '[data-testid="graph-legend"]');
+  await shoot(page, stack, "Task graph", "loaded", "#/archon/graph", '.dag-canvas[aria-busy="false"]:not([data-pending])');
   await shoot(page, stack, "History", "loaded", "#/archon/history");
   await shoot(page, stack, "Queue", "new-item", "#/archon/queue", { ready: ".queue-row", prepare: async (p) => {
     await p.getByRole("button", { name: "New item" }).click();

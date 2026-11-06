@@ -4,7 +4,7 @@
 import { useDraft, routeHref, selectAgents, selectAttention, useSelector } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
 import { aether } from "@aether-ui/protocol";
-import { Badge, TextArea } from "@aether-ui/ui";
+import { Badge, EmptyState, TextArea } from "@aether-ui/ui";
 import { useMemo } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import { Action, RunNote, Section, useRun } from "../controls/kit.tsx";
@@ -72,7 +72,13 @@ export function DaemonAttention({ conn, label }: { readonly conn: ConnId; readon
   const name = (id: string) => agents[id]?.name ?? id;
   const approvals = attention.approvals.filter((a) => (a.status as { state: string }).state === "pending");
   const flagged = attention.agents.filter((a) => a.kind !== "approval" && a.kind !== "question");
-  if (attention.questions.length + approvals.length + flagged.length === 0) return <p className="b3-meta">Nothing on {label} needs you.</p>;
+  if (attention.questions.length + approvals.length + flagged.length === 0) {
+    return (
+      <EmptyState title={`Nothing on ${label} needs you`}>
+        Questions, tool calls waiting for approval, and agents that failed or got stuck show up here. <a className="ui-link" href="#/fleet">See the fleet</a>
+      </EmptyState>
+    );
+  }
   return (
     <>
       {attention.questions.length > 0 ? (

@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { act } from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { archonHarness, byText, click, CONN, pick, type, type ArchonHarness } from "./test/harness.tsx";
 import { QueueScreen } from "./QueueScreen.tsx";
@@ -153,6 +154,21 @@ describe("the queue's changes", () => {
     expect(h.faux.commands("list_pipelines").at(-1)).toMatchObject({ repo: "repo_api" });
     expect(location.hash).toBe("#/archon/items/qi_new_7");
     await h.until(() => total(container) === "5 of 8 items", "the new item in the queue");
+  });
+
+  test("the new-item fields ask for what they need once left empty, not before", async () => {
+    const { h, container } = await queue();
+    await click(h, byText(container, "button", "New item"));
+    const dialog = document.querySelector("dialog[open]") as HTMLElement;
+    expect(dialog.textContent).not.toContain("Give this item a title.");
+    expect(dialog.textContent).not.toContain("Describe the work to do.");
+    const title = dialog.querySelector('[data-testid="new-item-title"]') as HTMLInputElement;
+    await act(async () => { title.focus(); title.blur(); });
+    await h.tick();
+    expect(dialog.textContent).toContain("Give this item a title.");
+    expect(dialog.textContent).not.toContain("Describe the work to do.");
+    await type(h, title, "Add a status page");
+    expect(dialog.textContent).not.toContain("Give this item a title.");
   });
 
   test("messages the orchestrator", async () => {
