@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { Markdown, safeHref } from "./markdown.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -257,5 +257,43 @@ describe("hostile size", () => {
     const { root, ms } = await timed(text);
     expect(root.textContent?.length).toBeGreaterThan(0);
     expect(ms).toBeLessThan(2000);
+  });
+});
+
+describe("code blocks, tables and math", () => {
+  test("a fenced block names its language and copies its code", async () => {
+    const writeText = vi.fn((text: string) => Promise.resolve(text).then(() => undefined));
+    const had = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    try {
+      const root = await render("Run:\n\n```sh\nnpm run check\nnpm test\n```");
+      expect(root.querySelector(".md-lang")?.textContent).toBe("sh");
+      const copy = root.querySelector<HTMLButtonElement>(".md-codeblock .conv-copy");
+      expect(copy?.getAttribute("aria-label")).toBe("Copy the sh code");
+      await act(async () => copy?.click());
+      expect(writeText).toHaveBeenCalledWith("npm run check\nnpm test");
+      expect(copy?.textContent).toBe("Copied");
+    } finally {
+      if (had) Object.defineProperty(navigator, "clipboard", had);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
+  test("a pipe table becomes a table with its alignment", async () => {
+    const root = await render("| Name | Cost |\n| :--- | ---: |\n| opus | $7.43 |\n| haiku | $0.10 |\n\nAfter.");
+    const table = root.querySelector("table.md-table");
+    expect([...(table?.querySelectorAll("th") ?? [])].map((cell) => cell.textContent)).toEqual(["Name", "Cost"]);
+    expect([...(table?.querySelectorAll("tbody tr") ?? [])].map((tr) => [...tr.children].map((cell) => cell.textContent))).toEqual([["opus", "$7.43"], ["haiku", "$0.10"]]);
+    expect((table?.querySelector("td:last-child") as HTMLElement | null)?.style.textAlign).toBe("right");
+    expect(root.querySelector(":scope > p")?.textContent).toBe("After.");
+  });
+
+  test("inline and display math are set apart, and prices are not math", async () => {
+    const root = await render("Energy $E = mc^2$ costs $5 and $10.\n\n$$\n\\sum_i x_i\n$$");
+    const math = [...root.querySelectorAll(".md-math")];
+    expect(math.map((node) => node.getAttribute("aria-label"))).toEqual(["E = mc^2", "\\sum_i x_i"]);
+    expect(math[0]?.textContent).toBe("E = mc²");
+    expect(math[1]?.classList.contains("md-math-display")).toBe(true);
+    expect(root.textContent).toContain("costs $5 and $10.");
   });
 });

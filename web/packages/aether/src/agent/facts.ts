@@ -40,6 +40,23 @@ function budgetFact(config: aether.AgentConfig): Fact | null {
   return parts.length === 0 ? null : { label: "Budget", value: parts.join(" · ") };
 }
 
+const HEADLINE: Readonly<Record<string, (value: string) => string>> = {
+  Model: (value) => value,
+  Cost: (value) => value,
+  Turns: (value) => `${value} turn${value === "1" ? "" : "s"}`,
+};
+
+/** The few facts the header shows inline, in this order: model, cost and turns. */
+export function headlineFacts(facts: readonly Fact[]): Fact[] {
+  invariant(facts.length > 0, "an agent always has facts to pick from");
+  const picked = Object.entries(HEADLINE).flatMap(([label, shown]) => {
+    const fact = facts.find((candidate) => candidate.label === label);
+    return fact === undefined ? [] : [{ label, value: shown(fact.value) }];
+  });
+  invariant(picked.length <= facts.length, "the headline only picks existing facts");
+  return picked;
+}
+
 /** The facts grid, in reading order; optional facts appear only when the agent has them. */
 export function agentFacts(agent: aether.Agent): Fact[] {
   invariant(agent.id !== "" && agent.model.model !== "", `agent ${agent.id} has an id and a model`);

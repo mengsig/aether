@@ -1,0 +1,31 @@
+@layer app {
+  .md { display: grid; gap: var(--space-3); min-inline-size: 0; }
+  .md p, .md ul, .md ol, .md blockquote, .md figure, .md h3, .md h4, .md h5, .md h6 { margin: 0; }
+  .md h3, .md h4, .md h5, .md h6 { margin-block-start: var(--space-2); color: var(--color-text); font-family: var(--font-ui); font-weight: var(--weight-bold); line-height: var(--leading-tight); }
+  .md h3 { font-size: var(--text-xl); }
+  .md h4 { font-size: var(--text-lg); }
+  .md h5, .md h6 { font-size: var(--text-md); }
+  .md ul, .md ol { display: grid; gap: var(--space-1); padding-inline-start: var(--space-6); }
+  .md li::marker { color: var(--color-text-muted); }
+  .md hr { inline-size: 100%; margin: var(--space-2) 0; border: 0; border-block-start: 1px solid var(--color-border); }
+  .md strong { font-weight: var(--weight-bold); }
+  .md-quote { display: grid; gap: var(--space-2); padding-inline-start: var(--space-4); border-inline-start: var(--space-0-5) solid var(--color-border-strong); color: var(--color-text-muted); }
+  .md-link { color: var(--color-accent); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 0.2em; }
+  .md-link:hover { text-decoration-thickness: 2px; }
+  .md-code { padding: 0.1em 0.35em; border-radius: var(--radius-sm); background: var(--color-surface-3); font: 0.88em / 1 var(--font-mono); }
+
+  .md-codeblock { display: grid; min-inline-size: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-2); overflow: hidden; }
+  .md-codebar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3); border-block-end: 1px solid var(--color-border); }
+  .md-lang { color: var(--color-text-muted); font: var(--weight-medium) var(--text-xs) / 1 var(--font-mono); }
+  .md-pre { overflow: auto; max-block-size: calc(var(--leading-normal) * 30em); margin: 0; padding: var(--space-3); font: var(--text-sm) / var(--leading-normal) var(--font-mono); tab-size: 2; }
+
+  .md-table-wrap { overflow-x: auto; min-inline-size: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+  .md-table { inline-size: 100%; border-collapse: collapse; font: var(--text-sm) / var(--leading-normal) var(--font-ui); font-variant-numeric: tabular-nums; }
+  .md-table th, .md-table td { padding: var(--space-2) var(--space-3); border-block-end: 1px solid var(--color-border); text-align: start; vertical-align: top; }
+  .md-table th { background: var(--color-surface-2); color: var(--color-text); font-weight: var(--weight-bold); }
+  .md-table tbody tr:last-child td { border-block-end: 0; }
+
+  /* Without a TeX engine, math is shown as lightly prettified text in the prose face. */
+  .md-math { font-family: var(--font-prose); font-style: italic; white-space: pre-wrap; }
+  .md-math-display { display: block; padding-block: var(--space-2); font-size: var(--text-xl); text-align: center; overflow-x: auto; }
+}

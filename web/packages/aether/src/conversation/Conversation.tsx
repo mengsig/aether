@@ -1,28 +1,24 @@
 // An agent's transcript: committed entries and live tails, all read from core's store and drawn
-// through a measured virtual list. Opening it asks core to watch the agent, which subscribes to its
-// deltas and pages its transcript in with `get_transcript_page`; a delta gap rereads from the last entry.
+// through a measured virtual list, with find, a jump to the newest message and the composer below.
+// Opening it asks core to watch the agent, which subscribes to its deltas and pages its transcript in.
 
-import { selectConnection, selectEvents, selectStreams, selectTranscript, useApp, useSelector, type State } from "@aether-ui/core";
-import type { aether, ConnId } from "@aether-ui/protocol";
-import { EmptyState, Skeleton } from "@aether-ui/ui";
-import { useCallback, useEffect, useMemo } from "react";
+import { selectAgent, selectConnection, selectEvents, selectStreams, selectTranscript, useApp, useSelector, type State } from "@aether-ui/core";
+import type { aether, ConnId, ConnectionInfo } from "@aether-ui/protocol";
+import { Button, EmptyState } from "@aether-ui/ui";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { invariant } from "../fleet/invariant.ts";
+import { Composer } from "./Composer.tsx";
 import "./conversation.css";
-import { MeasuredList } from "./MeasuredList.tsx";
-import { estimateRow, MessageView } from "./Message.tsx";
-import { entryRows, invocationMeta, liveRows, pairTools, type ConversationRow } from "./rows.ts";
+import "./markdown.css";
+import type { ListHandle } from "./MeasuredList.tsx";
+import { AgentNameContext } from "./Message.tsx";
+import { entryRows, invocationMeta, liveRows, pairTools, rowCounts, toolActivity, type ConversationRow, type ToolActivity } from "./rows.ts";
+import { SearchBar, useTranscriptSearch } from "./SearchBar.tsx";
+import { ToggleContext, ToggleSet } from "./toggles.ts";
+import { ToolActivityContext } from "./ToolCall.tsx";
+import { TranscriptList, TranscriptSkeleton } from "./TranscriptList.tsx";
 
 const NO_ENTRIES: readonly aether.TranscriptEntry[] = Object.freeze([]);
-const estimates = new WeakMap<ConversationRow, number>();
-
-function cachedEstimate(row: ConversationRow): number {
-  let height = estimates.get(row);
-  if (height === undefined) {
-    height = estimateRow(row);
-    estimates.set(row, height);
-  }
-  return height;
-}
 
 /** Asks core to stream this agent while it is on screen; core resumes the watch after reconnects. */
 function useWatchAgent(conn: ConnId, agent: string): void {
@@ -38,52 +34,103 @@ function useWatchAgent(conn: ConnId, agent: string): void {
   }, [app, conn, agent, known]);
 }
 
+export interface ConversationRows {
+  readonly rows: readonly ConversationRow[];
+  readonly loaded: boolean;
+  /** How many rows are committed messages; the rest are live tails at the end. */
+  readonly committed: number;
+  readonly activity: ReadonlyMap<string, ToolActivity>;
+}
+
 /** Every row the screen shows, derived from the store: committed entries, then uncommitted live tails. */
-export function useConversationRows(conn: ConnId, agent: string): { rows: readonly ConversationRow[]; loaded: boolean } {
+export function useConversationRows(conn: ConnId, agent: string): ConversationRows {
   const transcript = useSelector(useMemo(() => selectTranscript(conn, agent), [conn, agent]));
   const streams = useSelector(useMemo(() => selectStreams(conn), [conn]));
   const events = useSelector(useMemo(() => selectEvents(conn), [conn]));
   const entries = transcript?.entries ?? NO_ENTRIES;
   const pairing = useMemo(() => pairTools(entries), [entries]);
   const meta = useMemo(() => invocationMeta(events, agent), [events, agent]);
+  const activity = useMemo(() => toolActivity(events, agent), [events, agent]);
   const committed = useMemo(() => entryRows(entries, pairing, meta), [entries, pairing, meta]);
   const live = useMemo(() => liveRows(streams, agent, pairing.committed), [streams, agent, pairing]);
   const rows = useMemo(() => (live.length === 0 ? committed : [...committed, ...live]), [committed, live]);
   invariant(rows.length >= committed.length, "live tails only add rows");
-  return { rows, loaded: transcript !== undefined };
+  return { rows, loaded: transcript !== undefined, committed: committed.length, activity };
+}
+
+const counted = (n: number, noun: string): string => `${n.toLocaleString("en")} ${noun}${n === 1 ? "" : "s"}`;
+
+/** A quiet line over the transcript while the connection is down; what arrived stays readable. */
+function ConnectionBanner({ info }: { readonly info: ConnectionInfo | undefined }) {
+  if (info?.state === "ready") return null;
+  const label = info?.label ?? "the daemon";
+  const text = info?.state === "pairing" ? `${label} asks to pair this device again.`
+    : info?.state === "closed" || info === undefined ? `Disconnected from ${label}. New messages appear once it is back.`
+      : `Connection to ${label} lost. Reconnecting…`;
+  return <p className="conv-banner" role="status" data-testid="conv-connection" data-state={info?.state ?? "closed"}>{text}</p>;
+}
+
+function TranscriptBody({ loaded, info, rows, children }: { readonly loaded: boolean; readonly info: ConnectionInfo | undefined; readonly rows: number; readonly children: ReactNode }) {
+  if (!loaded && info?.state !== "ready") {
+    return <EmptyState title="Not connected">The conversation loads once {info?.label ?? "the connection"} is connected.</EmptyState>;
+  }
+  if (!loaded) return <TranscriptSkeleton />;
+  if (rows === 0) {
+    return (
+      <EmptyState className="conv-empty" title="No messages yet">
+        The agent's replies, its tool calls and the messages it receives appear here as it works. Write to it in the box below.
+      </EmptyState>
+    );
+  }
+  return children;
 }
 
 export function Conversation({ conn, agent }: { readonly conn: ConnId; readonly agent: string }) {
   invariant(conn !== "" && agent !== "", "a conversation names its connection and agent");
   useWatchAgent(conn, agent);
   const info = useSelector(useMemo(() => selectConnection(conn), [conn]));
-  const { rows, loaded } = useConversationRows(conn, agent);
-  const rowKey = useCallback((index: number) => rows[index]?.key ?? String(index), [rows]);
-  const estimate = useCallback((index: number) => {
-    const row = rows[index];
-    return row === undefined ? 0 : cachedEstimate(row);
-  }, [rows]);
-  const renderRow = useCallback((index: number) => {
-    const row = rows[index];
-    invariant(row !== undefined, `the list asked for row ${index} of ${rows.length}`);
-    return <MessageView row={row} />;
-  }, [rows]);
-
-  if (!loaded && info?.state !== "ready") {
-    return <EmptyState title="Not connected">The conversation loads once {info?.label ?? conn} is connected.</EmptyState>;
-  }
-  if (!loaded) {
-    return (
-      <div className="ui-loading conv-loading" aria-busy="true" aria-label="Reading the transcript">
-        <Skeleton height="4rem" /><Skeleton height="6rem" /><Skeleton height="3rem" />
-      </div>
-    );
-  }
-  if (rows.length === 0) return <EmptyState title="No messages yet">The conversation appears here as the agent works.</EmptyState>;
+  const row = useSelector(useMemo(() => selectAgent(conn, agent), [conn, agent]));
+  const name = row?.name ?? "Agent";
+  const { rows, loaded, committed, activity } = useConversationRows(conn, agent);
+  const [toggles] = useState(() => new ToggleSet());
+  const list = useRef<ListHandle>(null);
+  const stage = useRef<HTMLDivElement>(null);
+  const search = useTranscriptSearch({ rows, list, stage, toggles });
+  const [focusFind, setFocusFind] = useState(0);
+  const counts = useMemo(() => rowCounts(rows), [rows]);
+  const openFind = () => {
+    search.show();
+    setFocusFind((n) => n + 1);
+  };
+  const closeFind = () => {
+    search.hide();
+    stage.current?.querySelector<HTMLElement>(".conv-list")?.focus();
+  };
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key.toLowerCase() !== "f" || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+    event.preventDefault();
+    openFind();
+  };
   return (
     <section className="conv" aria-label="Conversation">
-      <p className="conv-count">{rows.length.toLocaleString("en")} messages</p>
-      <MeasuredList label="Messages" count={rows.length} rowKey={rowKey} estimate={estimate} renderRow={renderRow} follow />
+      <header className="conv-bar" onKeyDown={onKeyDown}>
+        <p className="conv-count">{counted(counts.messages, "message")} · {counted(counts.tools, "tool call")}</p>
+        {search.open ? <SearchBar key={focusFind} search={search} onClose={closeFind} />
+          : <Button variant="quiet" size="sm" className="conv-find" aria-keyshortcuts="Control+F Meta+F" title="Find in the transcript (Ctrl+F or ⌘F)" onClick={openFind}>Find</Button>}
+      </header>
+      {loaded ? <ConnectionBanner info={info} /> : null}
+      <div className="conv-stage" ref={stage} onKeyDown={onKeyDown}>
+        <ToggleContext.Provider value={toggles}>
+          <ToolActivityContext.Provider value={activity}>
+            <AgentNameContext.Provider value={name}>
+              <TranscriptBody loaded={loaded} info={info} rows={rows.length}>
+                <TranscriptList conn={conn} agent={agent} rows={rows} committed={committed} currentRow={search.currentRow} handle={list} />
+              </TranscriptBody>
+            </AgentNameContext.Provider>
+          </ToolActivityContext.Provider>
+        </ToggleContext.Provider>
+      </div>
+      <Composer conn={conn} agent={agent} onSent={() => list.current?.scrollToEnd()} />
     </section>
   );
 }
