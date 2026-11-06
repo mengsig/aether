@@ -21,8 +21,11 @@ before updating.
   store: V29 marks each agent's subsystem and adds the paging indexes, V30
   gives each memory a tier and a state (existing memories become active,
   unchanged), V31 adds the stale marks and the retrieval holdout log, V32
-  moves only the version stamp, and V33 keeps each agent's usage in its own
-  table, for `status`. The migration is one way: Aether saves
+  moves only the version stamp, and V33 keeps each agent's usage and the
+  fleet's and each run's totals beside the agents, and each agent's archived
+  flag in a column, for `status` and `get_tree`. From then on a program
+  other than Aether cannot write an agent into the store (reading is
+  unaffected). The migration is one way: Aether saves
   the schema 28 database first (see
   [migration backups](https://github.com/mengsig/aether/blob/main/docs/migration-backups.md)),
   and 1.2.11 refuses to start on the migrated store (`store schema version
@@ -126,23 +129,26 @@ before updating.
 
 ### Fixed
 
-- **`status` and `get_tree` on a large, long-lived store.** Every status
-  section reads an index or a kept total: the fleet's usage from
-  `agent_usage`, the live agents by their status, a live run's members as
-  narrow rows instead of whole agents, and its usage receipts by run and
-  type, so a run days old with millions of events costs what a new one
-  does. A section not read within 500 ms, including those behind the
-  scheduler's and the MCP manager's locks, is listed in the reply's
-  `unavailable` and named in its problems, and the CLI, TUI and
-  `aether doctor` show it as unavailable instead of as zero. `get_tree`
-  with a root walks that root's subtree instead of the fleet, reads only
-  the tasks it shows, and is shared like `status`: past 800 ms it answers with
-  the last tree read for the same request, marked `stale`, which the TUI
-  and `aether run` do not take for a fresh one. The GitHub watcher's status
-  no longer waits on the commit lock and answers `unavailable` past 800 ms,
-  a timed-out client names the daemon's slowest recent status section or
-  the host's load, and a slow engine tool call is logged with its tool,
-  split into its wait for the turn and its own run.
+- **`status` and `get_tree` on a large, long-lived store.** The fleet's
+  usage and each run's are one row each, kept by triggers as agents are
+  written, which count exactly the agents the store can read, so a
+  quarantined one stays out. A live run's summary reads only its live members
+  and those with a usage receipt in the last 15 minutes, through an index; past
+  eight pages of receipts its rate is a floor, marked `rate_approximate` and
+  shown as "at least". Each status section has 750 ms and the reply comes back
+  within a second; a section not read in time is listed in `unavailable` and
+  named in its problems, and the CLI, TUI and `aether doctor` show it as
+  unavailable instead of as zero. `get_tree` filters by run, root, role and
+  archived state before it reads an agent and answers one page: every live
+  agent, the root, and the newest finished agents, 500 at most, with
+  `next_after` for the rest (`after` and `limit`, feature `tree_pages`); the
+  board says when older finished agents are left out. It is shared like
+  `status`: past 750 ms it answers with the last tree read for the same
+  request, marked `stale`. The GitHub watcher's status shares one read and
+  answers `unavailable` past 750 ms. A timed-out client names the daemon's
+  slowest recent status section or the host's load, and a slow engine tool
+  call is logged with its tool, split into its wait for the turn and its own
+  run. BENCH_NUMBERS
 - **A tool call that never returns (archon#393).** After 15 minutes
   outstanding with no sign of life from the engine, Aether stops the turn,
   records `agent.tool_call_overdue` and wakes the agent to read its inbox;
