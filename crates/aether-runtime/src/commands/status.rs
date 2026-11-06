@@ -97,7 +97,7 @@ type Answer = (&'static str, Result<Figure>);
 /// A reader thread and the sections it answers, in the order it answers them.
 struct Reader {
     sections: &'static [&'static str],
-    read: fn(&Runtime, &mpsc::Sender<Answer>),
+    read: fn(&Runtime, &mut Answers),
 }
 
 const READERS: [Reader; 8] = [
@@ -174,7 +174,15 @@ const SECTIONS: [&str; 12] = [
     section::WRITES,
 ];
 
-/// Marks a reader in flight until its thread ends, however it ends.
+/// Where a reader sends its answers, and its in-flight mark, held until its
+/// last section is answered or its thread ends, however it ends.
+struct Answers {
+    send: mpsc::Sender<Answer>,
+    last: &'static str,
+    in_flight: Option<InFlight>,
+}
+
+/// Marks a reader in flight until it is dropped.
 struct InFlight {
     runtime: Arc<Runtime>,
     key: &'static str,
@@ -189,19 +197,23 @@ impl Drop for InFlight {
 
 /// Times `read` and hands it to the waiting `status`, or logs a failure
 /// that came too late for it.
-fn answer(to: &mpsc::Sender<Answer>, section: &'static str, read: impl FnOnce() -> Result<Figure>) {
+fn answer(to: &mut Answers, section: &'static str, read: impl FnOnce() -> Result<Figure>) {
     debug_assert!(
         SECTIONS.contains(&section),
         "an answer names a known section"
     );
     let figure = timed(section, read);
-    if let Err(mpsc::SendError((section, Err(error)))) = to.send((section, figure)) {
+    if section == to.last {
+        // Unmarked before the answer is sent: a `status` that follows it reads it again.
+        assert!(to.in_flight.take().is_some(), "{section} is answered once");
+    }
+    if let Err(mpsc::SendError((section, Err(error)))) = to.send.send((section, figure)) {
         tracing::warn!(section, %error, "status section failed after its status gave up on it");
     }
 }
 
 /// The live agents, then the live runs' spend, which is read from them.
-fn read_live_and_runs(rt: &Runtime, to: &mpsc::Sender<Answer>) {
+fn read_live_and_runs(rt: &Runtime, to: &mut Answers) {
     let mut live = None;
     answer(to, section::LIVE_AGENTS, || {
         let agents = rt.store.agents(&AgentFilter {
@@ -222,7 +234,7 @@ fn read_live_and_runs(rt: &Runtime, to: &mpsc::Sender<Answer>) {
 
 /// What is held in memory behind locks, and the store files' sizes: each
 /// waits on a lock or the filesystem, so each is read under the deadline too.
-fn read_held_in_memory(rt: &Runtime, to: &mpsc::Sender<Answer>) {
+fn read_held_in_memory(rt: &Runtime, to: &mut Answers) {
     answer(to, section::ENGINES, || {
         let (engines, running) = rt.engines_status();
         Ok(Figure::Engines(engines, running))
@@ -381,15 +393,18 @@ impl Runtime {
                 busy.extend(reader.sections);
                 continue;
             }
-            let in_flight = InFlight {
-                runtime: me.clone(),
-                key,
+            let mut answers = Answers {
+                send: sender.clone(),
+                last: reader.sections[reader.sections.len() - 1],
+                in_flight: Some(InFlight {
+                    runtime: me.clone(),
+                    key,
+                }),
             };
-            let sender = sender.clone();
-            let read = reader.read;
+            let (runtime, read) = (me.clone(), reader.read);
             std::thread::Builder::new()
                 .name(format!("status-{key}"))
-                .spawn(move || read(&in_flight.runtime, &sender))
+                .spawn(move || read(&runtime, &mut answers))
                 .map_err(|error| {
                     RuntimeError::Internal(format!("cannot start the {key} status read: {error}"))
                 })?;

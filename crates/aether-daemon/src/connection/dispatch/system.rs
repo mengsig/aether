@@ -271,12 +271,13 @@ fn stale_problem(stale: &StatusStale, at: aether_core::time::Timestamp) -> Strin
     }
 }
 
-/// The watcher's settings and state: a few meta rows read by key, so a read
-/// past the patience means a stalled store, and the reply says so instead of waiting.
+/// The watcher's settings and state: a few meta rows read by key. The read is
+/// shared, so a stalled store holds one; past the patience the reply says so.
 async fn github_watcher(daemon: &Daemon) -> Result<Reply, ErrorReply> {
     let reading = daemon.runtime.clone();
-    let read = blocking(move || reading.github_watcher_status().map_err(map_err));
-    let Ok(watcher) = tokio::time::timeout(PATIENCE, read).await else {
+    let read = move || reading.github_watcher_status().map_err(map_err);
+    let answer = daemon.watcher_reads.answer(PATIENCE, read).await?;
+    let Answer::Fresh(watcher) = answer else {
         return Err(ErrorReply::new(
             ErrorCode::Unavailable,
             format!(
@@ -286,7 +287,7 @@ async fn github_watcher(daemon: &Daemon) -> Result<Reply, ErrorReply> {
             ),
         ));
     };
-    Ok(Reply::GithubWatcher(watcher??))
+    Ok(Reply::GithubWatcher((*watcher).clone()))
 }
 
 async fn mcp_servers(

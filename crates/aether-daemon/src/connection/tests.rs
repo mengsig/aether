@@ -222,6 +222,7 @@ pub(super) async fn daemon_with_config(
             remote: Default::default(),
             status_reads: Default::default(),
             tree_reads: Default::default(),
+            watcher_reads: Default::default(),
         },
         config_dir,
     )

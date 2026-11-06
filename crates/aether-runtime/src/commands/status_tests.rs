@@ -212,3 +212,18 @@ async fn a_held_scheduler_costs_only_the_sections_behind_it() {
     }
     runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_status_right_after_another_reads_every_section_again() {
+    let dir = tempfile::tempdir().expect("dir");
+    let runtime = runtime(dir.path()).await;
+    for attempt in 0..50 {
+        let status = runtime.status().expect("status");
+        assert_eq!(
+            status.unavailable,
+            Vec::new(),
+            "attempt {attempt}: a reader that answered is no longer in flight"
+        );
+    }
+    runtime.shutdown().await;
+}

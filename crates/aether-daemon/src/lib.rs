@@ -188,6 +188,8 @@ pub struct Daemon {
     pub(crate) status_reads: status_reads::StatusReads<status_reads::Figures>,
     /// The reads behind `get_tree`, shared per request shape.
     pub(crate) tree_reads: tree_reads::TreeReads,
+    /// The reads behind `get_github_watcher`: one at a time, however many ask.
+    pub(crate) watcher_reads: status_reads::StatusReads<aether_core::github::GithubWatcherStatus>,
     /// Noesis, dormant unless `[noesis] enabled`; the runtime's guard follows it.
     pub(crate) noesis: Arc<noesis::NoesisService>,
 }
@@ -512,6 +514,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             remote: remote::RemoteSlot::default(),
             status_reads: Default::default(),
             tree_reads: Default::default(),
+            watcher_reads: Default::default(),
             noesis: noesis.clone(),
         });
         noesis.resume_teaching(&runtime);

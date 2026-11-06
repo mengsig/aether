@@ -105,6 +105,7 @@ async fn daemon_shutdown_releases_an_engine_tool_waiting_for_approval() {
         remote: Default::default(),
         status_reads: Default::default(),
         tree_reads: Default::default(),
+        watcher_reads: Default::default(),
     });
     let shutdown = CancellationToken::new();
     let (client, server) = tokio::io::duplex(16 * 1024);

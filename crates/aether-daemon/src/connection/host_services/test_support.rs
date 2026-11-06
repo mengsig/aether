@@ -41,6 +41,7 @@ pub(super) async fn daemon() -> (Daemon, tempfile::TempDir) {
         remote: Default::default(),
         status_reads: Default::default(),
         tree_reads: Default::default(),
+        watcher_reads: Default::default(),
     };
     (daemon, config_dir)
 }
