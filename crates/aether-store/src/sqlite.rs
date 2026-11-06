@@ -24,6 +24,7 @@ mod engine_sessions;
 mod event_blobs;
 mod event_queries;
 mod history_retention;
+mod integrity;
 mod quarantine;
 mod read_pool;
 pub use history_retention::{HistoryScreen, RunExpiry};
@@ -147,6 +148,7 @@ impl SqliteStore {
             std::fs::create_dir_all(dir)?;
         }
         let mut store = Self::init(conn, artifact_dir)?;
+        integrity::verify_memory_tables(&store.conn.lock())?;
         // Optional: a store that cannot be converted (a full disk) still
         // works, it just keeps its size; the next open tries again.
         if let Err(error) = vacuum::convert_to_incremental(&store.conn.lock(), path) {
