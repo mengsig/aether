@@ -9,7 +9,7 @@ use aether_core::provider::ProviderHealth;
 use aether_core::task::TaskStatusKind;
 use aether_core::time::{Timestamp, now};
 use aether_protocol::{UnavailableSection, status_sections as section};
-use aether_store::{AgentFilter, EventFilter, TaskFilter};
+use aether_store::{AgentFilter, EventFilter};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -137,8 +137,9 @@ const READERS: [Reader; 8] = [
         sections: &[section::PENDING_APPROVALS],
         read: |rt, to| {
             answer(to, section::PENDING_APPROVALS, || {
+                let pending = rt.store.count_pending_approvals()?;
                 Ok(Figure::PendingApprovals(
-                    rt.store.pending_approvals()?.len() as u32,
+                    u32::try_from(pending).unwrap_or(u32::MAX),
                 ))
             })
         },
@@ -322,10 +323,24 @@ const RECEIPT_PAGE: usize = 256;
 /// fifteen minutes is a run billing too often to rate exactly in a `status`.
 const RECEIPT_PAGES: usize = 8;
 
+/// Billers whose billing before the window one run's rate looks up, each
+/// by an index; more is a run too wide to rate exactly in a `status`.
+const BASELINE_LOOKUPS: usize = 64;
+
+/// One page of a run's receipts, newest first.
+struct ReceiptPage {
+    events: Vec<aether_core::event::Event>,
+    /// Older receipts may remain past it.
+    more: bool,
+    /// Newer receipts between it and the page before it may have gone unread.
+    partial: bool,
+}
+
 /// What a run's members had billed when the rate window opened.
 struct WindowStart {
     at_window_start: BTreeMap<AgentId, f64>,
-    /// The walk stopped at [`RECEIPT_PAGES`] before reaching the window's start.
+    /// The walk stopped at [`RECEIPT_PAGES`] before reaching the window's
+    /// start, or [`BASELINE_LOOKUPS`] billers were looked up and more remain.
     approximate: bool,
 }
 
@@ -344,6 +359,28 @@ impl Runtime {
             run_hard_stop_tokens: self.config.run_hard_stop.tokens,
             ..Default::default()
         }
+    }
+
+    /// [`Self::status_settings`] with every section named unavailable: what
+    /// `status` reports before any read of its sections has finished.
+    pub fn status_unread(&self) -> RuntimeStatus {
+        let unavailable: Vec<UnavailableSection> = SECTIONS
+            .into_iter()
+            .map(|section| UnavailableSection {
+                section: section.to_owned(),
+                reason: section::TIMED_OUT.to_owned(),
+            })
+            .collect();
+        assert_eq!(unavailable.len(), SECTIONS.len(), "every section is named");
+        let status = RuntimeStatus {
+            unavailable,
+            ..self.status_settings()
+        };
+        assert!(
+            status.runs.is_empty() && status.agents_live == 0,
+            "nothing was read"
+        );
+        status
     }
 
     /// Every section of `status`, however long the store takes to answer.
@@ -425,11 +462,12 @@ impl Runtime {
     }
 
     fn count_active_tasks(&self) -> Result<Figure> {
-        let active = self.store.tasks(&TaskFilter {
-            statuses: vec![TaskStatusKind::Active, TaskStatusKind::Assigned],
-            ..Default::default()
-        })?;
-        Ok(Figure::TasksActive(active.len() as u32))
+        let active = self
+            .store
+            .count_tasks(&[TaskStatusKind::Active, TaskStatusKind::Assigned])?;
+        Ok(Figure::TasksActive(
+            u32::try_from(active).unwrap_or(u32::MAX),
+        ))
     }
 
     /// Every live run's spend, rated over the receipts of its recent window.
@@ -500,27 +538,73 @@ impl Runtime {
 
     /// What each agent of `run` with a usage receipt after `since` had billed
     /// then: its last receipt before it, or the start of the turn that billed.
-    /// Reads at most [`RECEIPT_PAGES`] pages of the run's newest receipts;
-    /// past them the billing is `approximate`, read from those alone.
+    /// Reads at most [`RECEIPT_PAGES`] pages of the run's newest receipts and
+    /// [`BASELINE_LOOKUPS`] billers; past them the billing is `approximate`.
     fn billing_at(&self, run: RunId, since: Timestamp) -> Result<WindowStart> {
         let receipts = EventFilter {
             run: Some(run),
             types: vec!["agent.usage_updated".into()],
             ..Default::default()
         };
+        let (first_in_window, mut approximate) = self.first_receipts_in_window(&receipts, since)?;
+        let mut at_window_start = BTreeMap::new();
+        for (n, (agent, (seq, turn_start))) in first_in_window.into_iter().enumerate() {
+            if n == BASELINE_LOOKUPS {
+                // A biller left out lowers the rate, so it stays a floor.
+                approximate = true;
+                break;
+            }
+            let own = EventFilter {
+                agent: Some(agent),
+                exclude_children: true,
+                ..receipts.clone()
+            };
+            let before = match self.store.events_before(seq, 1, &own) {
+                Ok(before) => before,
+                // Retention removed the receipts before it: none is kept.
+                Err(aether_store::StoreError::HistoryExpired { .. }) => Vec::new(),
+                Err(error) => return Err(error.into()),
+            };
+            let cost = match before.first().map(|event| &event.kind) {
+                Some(EventKind::AgentUsageUpdated { total, .. }) => total.cost_usd,
+                _ => turn_start,
+            };
+            debug_assert!(cost >= 0.0, "a cumulative cost is never negative");
+            at_window_start.insert(agent, cost);
+        }
+        assert!(
+            at_window_start.len() <= BASELINE_LOOKUPS,
+            "the lookups are bounded"
+        );
+        Ok(WindowStart {
+            at_window_start,
+            approximate,
+        })
+    }
+
+    /// Each agent's first receipt at or after `since`, by seq, with what its
+    /// turn had billed before it, and whether some of the window went unread.
+    fn first_receipts_in_window(
+        &self,
+        receipts: &EventFilter,
+        since: Timestamp,
+    ) -> Result<(BTreeMap<AgentId, (u64, f64)>, bool)> {
         // Newest first, so the last receipt seen per agent is its first in the window.
         let mut first_in_window: BTreeMap<AgentId, (u64, f64)> = BTreeMap::new();
-        let mut page = self.store.latest_events(RECEIPT_PAGE, &receipts)?;
-        let mut pages = 1;
         let mut approximate = false;
-        'pages: while !page.is_empty() {
-            let full = page.len() == RECEIPT_PAGE;
-            let mut oldest = u64::MAX;
-            for event in &page {
-                debug_assert!(event.seq < oldest, "a page runs newest first");
+        let mut before = None;
+        for _ in 0..RECEIPT_PAGES {
+            let page = self.receipts_before(before, receipts)?;
+            approximate |= page.partial;
+            let mut oldest = before.unwrap_or(u64::MAX);
+            for event in &page.events {
+                assert!(
+                    event.seq < oldest,
+                    "a page runs newest first, below the last"
+                );
                 oldest = event.seq;
                 if event.at < since {
-                    break 'pages;
+                    return Ok((first_in_window, approximate));
                 }
                 if let (Some(agent), EventKind::AgentUsageUpdated { total, turn_usage }) =
                     (event.agent_id, &event.kind)
@@ -529,35 +613,44 @@ impl Runtime {
                     first_in_window.insert(agent, (event.seq, turn_start));
                 }
             }
-            if !full {
-                break;
+            if !page.more {
+                return Ok((first_in_window, approximate));
             }
-            if pages == RECEIPT_PAGES {
-                approximate = true;
-                break;
+            before = Some(oldest);
+        }
+        Ok((first_in_window, true))
+    }
+
+    /// A page of `receipts` older than `before` (the newest with none), newest
+    /// first. Retention may have removed some: the page then holds those kept after.
+    fn receipts_before(&self, before: Option<u64>, receipts: &EventFilter) -> Result<ReceiptPage> {
+        let read = match before {
+            None => self.store.latest_events(RECEIPT_PAGE, receipts),
+            Some(before) => self.store.events_before(before, RECEIPT_PAGE, receipts),
+        };
+        let expired_until = match read {
+            Ok(events) => {
+                let more = events.len() == RECEIPT_PAGE;
+                return Ok(ReceiptPage {
+                    events,
+                    more,
+                    partial: false,
+                });
             }
-            page = self.store.events_before(oldest, RECEIPT_PAGE, &receipts)?;
-            pages += 1;
-        }
-        assert!(pages <= RECEIPT_PAGES, "the walk is bounded");
-        let mut at_window_start = BTreeMap::new();
-        for (agent, (seq, turn_start)) in first_in_window {
-            let own = EventFilter {
-                agent: Some(agent),
-                exclude_children: true,
-                ..receipts.clone()
-            };
-            let before = self.store.events_before(seq, 1, &own)?;
-            let cost = match before.first().map(|event| &event.kind) {
-                Some(EventKind::AgentUsageUpdated { total, .. }) => total.cost_usd,
-                _ => turn_start,
-            };
-            debug_assert!(cost >= 0.0, "a cumulative cost is never negative");
-            at_window_start.insert(agent, cost);
-        }
-        Ok(WindowStart {
-            at_window_start,
-            approximate,
+            Err(aether_store::StoreError::HistoryExpired { last_seq, .. }) => last_seq,
+            Err(error) => return Err(error.into()),
+        };
+        // Nothing older than the span is kept, so the walk ends here.
+        let mut events = self.store.events(expired_until, RECEIPT_PAGE, receipts)?;
+        let full = events.len() == RECEIPT_PAGE;
+        events.retain(|event| before.is_none_or(|before| event.seq < before));
+        events.reverse();
+        assert!(events.iter().all(|event| event.seq > expired_until));
+        // A full read from the span's end may stop short of the newest receipts.
+        Ok(ReceiptPage {
+            events,
+            more: false,
+            partial: full,
         })
     }
 

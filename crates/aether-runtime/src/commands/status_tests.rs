@@ -7,13 +7,18 @@ use aether_store::{ImportedEvent, Mutation};
 use std::sync::Arc;
 
 async fn runtime(dir: &std::path::Path) -> Arc<Runtime> {
+    let store = aether_store::SqliteStore::open_in_memory().expect("store");
+    runtime_on(dir, Arc::new(store)).await
+}
+
+async fn runtime_on(dir: &std::path::Path, store: Arc<dyn aether_store::Store>) -> Arc<Runtime> {
     Runtime::start_with_engines(
         RuntimeConfig {
             default_model: Some(ModelRef::new("anthropic", "claude-sonnet-5-5")),
             workspace_root: Some(dir.to_path_buf()),
             ..Default::default()
         },
-        Arc::new(aether_store::SqliteStore::open_in_memory().expect("store")),
+        store,
         Arc::new(aether_model::Models::load(Some(dir.to_path_buf())).expect("models")),
         Arc::new(aether_tools::ToolRegistry::with_builtins()),
         None,
@@ -34,6 +39,16 @@ fn billed(cost: f64) -> Usage {
 /// One agent whose receipts land `minutes_ago`, each the agent's running total
 /// and the running total of its turn, and whose row bills `total` now.
 fn bill(runtime: &Runtime, receipts: &[(i64, f64, f64)], total: f64) -> Agent {
+    bill_in(runtime, None, receipts, total)
+}
+
+/// [`bill`], in `run` when one is given.
+fn bill_in(
+    runtime: &Runtime,
+    run: Option<RunId>,
+    receipts: &[(i64, f64, f64)],
+    total: f64,
+) -> Agent {
     let (mut agent, _) = runtime
         .create_agent(
             CreateAgentSpec {
@@ -43,6 +58,7 @@ fn bill(runtime: &Runtime, receipts: &[(i64, f64, f64)], total: f64) -> Agent {
             Actor::user(),
         )
         .expect("agent");
+    agent.run = run.unwrap_or(agent.run);
     let at = now();
     let events = receipts
         .iter()
@@ -225,5 +241,91 @@ async fn a_status_right_after_another_reads_every_section_again() {
             "attempt {attempt}: a reader that answered is no longer in flight"
         );
     }
+    runtime.shutdown().await;
+}
+
+/// Before any read has finished, every section is named unavailable, so no
+/// client reads its zeros as counts.
+#[tokio::test]
+async fn an_unread_status_names_every_section_unavailable() {
+    let dir = tempfile::tempdir().expect("dir");
+    let runtime = runtime(dir.path()).await;
+    let unread = runtime.status_unread();
+    let named: Vec<&str> = unread
+        .unavailable
+        .iter()
+        .map(|u| u.section.as_str())
+        .collect();
+    assert_eq!(named, SECTIONS, "every section, in order");
+    assert!(
+        unread
+            .unavailable
+            .iter()
+            .all(|u| u.reason == section::TIMED_OUT)
+    );
+    assert_eq!(
+        unread.max_concurrent_turns,
+        runtime.config.max_concurrent_turns
+    );
+    runtime.shutdown().await;
+}
+
+/// Retention removed the receipt before the window: the rate opens at the
+/// billing turn, as with none kept, rather than failing the whole `status`.
+#[tokio::test]
+async fn a_receipt_removed_by_retention_opens_the_window_at_the_turn() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("aether.db");
+    let store = aether_store::SqliteStore::open(&path).expect("store");
+    let runtime = runtime_on(dir.path(), Arc::new(store)).await;
+    let agent = bill(
+        &runtime,
+        &[(90, 400.0, 400.0), (10, 12.0, 2.0), (5, 14.0, 4.0)],
+        14.0,
+    );
+    let conn = rusqlite::Connection::open(&path).expect("raw connection");
+    let oldest: i64 = conn
+        .query_row(
+            "SELECT MIN(seq) FROM events WHERE agent_id = ?1 AND type = 'agent.usage_updated'",
+            [agent.id.to_string()],
+            |row| row.get(0),
+        )
+        .expect("the oldest receipt");
+    conn.execute(
+        "INSERT INTO expired_event_spans SELECT run, COALESCE(agent_id,''), \
+         COALESCE(parent_agent_id,''), COALESCE(task_id,''), type, family, seq, seq \
+         FROM events WHERE seq = ?1",
+        [oldest],
+    )
+    .expect("expiry span");
+    assert_eq!(
+        conn.execute("DELETE FROM events WHERE seq = ?1", [oldest])
+            .unwrap(),
+        1
+    );
+    let run = run_of(&runtime, &agent);
+    // From the turn's start at $10 to $14, in a quarter of an hour.
+    assert!((run.rate_usd_per_hour - 16.0).abs() < 1e-9, "{run:?}");
+    assert!(
+        !run.rate_approximate,
+        "every kept receipt was read: {run:?}"
+    );
+    runtime.shutdown().await;
+}
+
+/// A run with more billers in the window than a `status` looks up is rated
+/// on those it did, and says the rate is a floor.
+#[tokio::test]
+async fn a_run_with_more_billers_than_one_read_looks_up_is_a_floor() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let runtime = runtime(dir.path()).await;
+    let first = bill(&runtime, &[(5, 2.0, 1.0)], 2.0);
+    for _ in 0..BASELINE_LOOKUPS {
+        bill_in(&runtime, Some(first.run), &[(5, 2.0, 1.0)], 2.0);
+    }
+    let run = run_of(&runtime, &first);
+    assert!(run.rate_approximate, "{run:?}");
+    let looked_up = BASELINE_LOOKUPS as f64 * 4.0;
+    assert!((run.rate_usd_per_hour - looked_up).abs() < 1e-9, "{run:?}");
     runtime.shutdown().await;
 }

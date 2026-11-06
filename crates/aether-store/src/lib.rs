@@ -858,6 +858,16 @@ pub trait Store: Send + Sync {
 
     fn task(&self, id: TaskId) -> Result<Option<Task>>;
     fn tasks(&self, filter: &TaskFilter) -> Result<Vec<Task>>;
+    /// How many tasks have one of `statuses`, which is not empty. The SQLite
+    /// store counts them by its status index, decoding none.
+    fn count_tasks(&self, statuses: &[TaskStatusKind]) -> Result<u64> {
+        assert!(!statuses.is_empty(), "a count names the statuses it counts");
+        let tasks = self.tasks(&TaskFilter {
+            statuses: statuses.to_vec(),
+            ..Default::default()
+        })?;
+        Ok(tasks.len() as u64)
+    }
 
     /// Inbox items with `seq > after`, ascending.
     fn inbox(&self, agent: AgentId, after: u64) -> Result<Vec<InboxItem>>;
@@ -901,6 +911,11 @@ pub trait Store: Send + Sync {
 
     fn approval(&self, id: ApprovalId) -> Result<Option<ApprovalRequest>>;
     fn pending_approvals(&self) -> Result<Vec<ApprovalRequest>>;
+    /// How many approvals wait on a decision; the SQLite store counts them by
+    /// its state index, decoding none.
+    fn count_pending_approvals(&self) -> Result<u64> {
+        Ok(self.pending_approvals()?.len() as u64)
+    }
 
     /// The outcome committed for `key` while driving `invocation`, if any.
     /// Scoped to the invocation and the call, so only a re-drive of that

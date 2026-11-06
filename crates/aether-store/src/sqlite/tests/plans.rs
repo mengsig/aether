@@ -511,3 +511,32 @@ fn a_runs_receipt_page_costs_the_same_however_long_its_other_history() {
         "the run's other events cost {steps} steps, against {short_steps} with few"
     );
 }
+
+#[test]
+fn the_active_tasks_and_pending_approvals_are_counted_by_index() {
+    use crate::sqlite::fleet_reads::{COUNT_PENDING_APPROVALS_SQL, COUNT_TASKS_SQL};
+    let store = SqliteStore::open_in_memory().expect("open");
+    let args = boxed(vec![r#"["active","assigned"]"#.to_owned()]);
+    let steps = plan(&store, COUNT_TASKS_SQL, &args);
+    assert!(
+        steps
+            .iter()
+            .any(|s| s.2 == "SEARCH t USING INDEX tasks_status (status=?)"),
+        "{steps:?}"
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|s| s.2.starts_with("SEARCH m USING") && s.2.contains("(key=?)")),
+        "{steps:?}"
+    );
+    assert!(
+        steps.iter().all(|s| !s.2.starts_with("SCAN t")),
+        "{steps:?}"
+    );
+    let steps = plan(&store, COUNT_PENDING_APPROVALS_SQL, &Vec::new());
+    assert_eq!(
+        steps.iter().map(|s| s.2.as_str()).collect::<Vec<_>>(),
+        ["SEARCH approvals USING COVERING INDEX approvals_state (state=?)"]
+    );
+}

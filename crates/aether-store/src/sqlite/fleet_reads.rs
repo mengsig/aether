@@ -1,19 +1,48 @@
 //! Reads `status` and the GitHub watcher make on every poll, kept off the
-//! wide tables: the fleet's and a run's usage from the totals V33 keeps, and
-//! several meta keys from one snapshot instead of under the commit lock.
+//! wide tables: the fleet's and a run's usage from the totals V33 keeps,
+//! counts by index, and meta keys from one snapshot, not under the commit lock.
 
 use std::collections::BTreeMap;
 
 use aether_core::budget::RunTotals;
 use aether_core::id::{AgentId, RunId};
 use aether_core::model::Usage;
+use aether_core::task::TaskStatusKind;
 use rusqlite::OptionalExtension;
 
 use super::SqliteStore;
 use super::usage_totals::{FLEET, read_agent_usages, read_run_start, read_totals};
 use crate::{Result, StoreError};
 
+/// Tasks of the statuses bound as a JSON list, by the status index. One
+/// quarantined as unreadable is left out, as listing the tasks leaves it out.
+pub(super) const COUNT_TASKS_SQL: &str = "SELECT COUNT(*) FROM tasks t
+     WHERE t.status IN (SELECT value FROM json_each(?1))
+     AND NOT EXISTS (SELECT 1 FROM meta m WHERE m.key = 'quarantine.tasks.' || t.id)";
+
+pub(super) const COUNT_PENDING_APPROVALS_SQL: &str =
+    "SELECT COUNT(*) FROM approvals WHERE state = 'pending'";
+
 impl SqliteStore {
+    pub(super) fn count_tasks_of(&self, statuses: &[TaskStatusKind]) -> Result<u64> {
+        assert!(!statuses.is_empty(), "a count names the statuses it counts");
+        let wanted: Vec<&str> = statuses.iter().map(|status| status.as_str()).collect();
+        let wanted = serde_json::to_string(&wanted)?;
+        let count: i64 = self
+            .read_conn()?
+            .query_row(COUNT_TASKS_SQL, [wanted], |row| row.get(0))?;
+        assert!(count >= 0, "a count is never negative");
+        Ok(count as u64)
+    }
+
+    pub(super) fn count_pending(&self) -> Result<u64> {
+        let count: i64 = self
+            .read_conn()?
+            .query_row(COUNT_PENDING_APPROVALS_SQL, [], |row| row.get(0))?;
+        assert!(count >= 0, "a count is never negative");
+        Ok(count as u64)
+    }
+
     /// Every non-imported agent's usage, from the fleet's one totals row.
     pub(super) fn read_fleet_usage(&self) -> Result<Usage> {
         let (members, usage) = read_totals(&*self.read_conn()?, FLEET)?;

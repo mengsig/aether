@@ -448,6 +448,14 @@ impl Store for SqliteStore {
         self.read_agent_usages_by_id(agents)
     }
 
+    fn count_tasks(&self, statuses: &[aether_core::task::TaskStatusKind]) -> Result<u64> {
+        self.count_tasks_of(statuses)
+    }
+
+    fn count_pending_approvals(&self) -> Result<u64> {
+        self.count_pending()
+    }
+
     fn tree_page(&self, query: &crate::TreeQuery) -> Result<crate::TreePage> {
         self.read_tree_page(query)
     }

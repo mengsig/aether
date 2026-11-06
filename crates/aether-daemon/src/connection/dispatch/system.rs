@@ -138,7 +138,7 @@ async fn status(daemon: &Daemon) -> Result<Reply, ErrorReply> {
     let (figures, stale) = resolve(answer);
     let (mut s, last_seq) = match figures {
         Some(figures) => (figures.runtime.clone(), figures.last_seq),
-        None => (rt.status_settings(), 0),
+        None => (rt.status_unread(), 0),
     };
     if let Some(stale) = &stale {
         s.problems
