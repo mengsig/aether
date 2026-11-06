@@ -5,10 +5,11 @@ import { StatusPill } from "@aether-ui/ui";
 import { BarChart, Donut, StatTile } from "./charts.ts";
 import type { HomeView } from "./derive.ts";
 import { invariant } from "./invariant.ts";
-import { relativeTime } from "./model.ts";
+import { keptForCli, relativeTime } from "./model.ts";
 import { nextStep } from "./steps.ts";
 import { hintOf, LoadingTile, NextStep, plural, presenceValue } from "./tile-parts.tsx";
 
+const OPEN_OVERVIEW = { label: "See the cached issues and pull requests", href: "#/github" } as const;
 const OUTCOME_LABEL = { succeeded: "Succeeded", failed: "Failed", cancelled: "Cancelled" } as const;
 
 export function QueueTile({ view }: { readonly view: HomeView }) {
@@ -45,6 +46,9 @@ export function GithubTile({ view }: { readonly view: HomeView }) {
   const { facts, github } = view;
   if (facts.archon === "connecting" || (facts.archon === "ready" && github.state === "loading")) return <LoadingTile label="GitHub" />;
   const step = nextStep("github", facts);
+  if (github.state === "problem" && keptForCli(github.problem)) {
+    return <StatTile label="GitHub" value="CLI" hint="The watcher reports to the archon CLI" href="#/github"><NextStep step={OPEN_OVERVIEW} /></StatTile>;
+  }
   if (github.state === "problem") {
     return <StatTile label="GitHub" value="Unknown" hint="The watcher could not be read" tone="danger" href="#/github"><p className="home-problem">{github.problem}</p></StatTile>;
   }

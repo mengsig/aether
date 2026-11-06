@@ -151,6 +151,16 @@ describe("with seeded data", () => {
     expect(text(container, "github", ".ui-chart-tile-value")).toBe("Unknown");
     expect(text(container, "github", ".home-problem")).toBe("archond refused github_watcher");
     expect(text(container, "learn", ".home-problem")).toBe("Mastery could not be read: Noesis is busy");
+  });
+
+  test("the GitHub tile points at the overview when archond keeps the watcher for the CLI", async () => {
+    const replies = { ...REPLIES, github_watcher: new Error("github_watcher is not available from the web app; use the archon CLI") };
+    const { container } = await open([aetherInfo(), archonInfo()], true, replies);
+    await h?.frame();
+    expect(text(container, "github", ".ui-chart-tile-value")).toBe("CLI");
+    expect(text(container, "github", ".ui-chart-tile-hint")).toBe("The watcher reports to the archon CLI");
+    expect(container.querySelector('[data-tile="github"] .home-problem')).toBeNull();
+    expect(step(container, "github")).toEqual(["See the cached issues and pull requests →", "#/github"]);
     expect(text(container, "spend", ".ui-chart-tile-value")).toBe("$2.25");
   });
 });

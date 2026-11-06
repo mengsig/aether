@@ -280,6 +280,9 @@ export function currentSession(sessions: Readonly<Record<string, aether.NoesisSe
   return newest;
 }
 
+/** archond keeps `github_watcher` for the CLI on remote devices; the same test the GitHub overview makes. */
+export const keptForCli = (problem: string): boolean => /not available from the web app/i.test(problem);
+
 export interface WatcherSummary { readonly enabled: boolean; readonly repos: number; readonly dispatched: number; readonly ignored: number; readonly lastPoll: string | null; readonly errors: number }
 
 /** Each archond's `github_watcher` view, checked at the boundary and summed. */
