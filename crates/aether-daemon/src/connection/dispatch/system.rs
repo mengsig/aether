@@ -186,6 +186,7 @@ async fn status(daemon: &Daemon) -> Result<Reply, ErrorReply> {
             .as_ref()
             .map(|bridge| bridge.command.display().to_string()),
         stale,
+        unavailable: Vec::new(),
     }))
 }
 

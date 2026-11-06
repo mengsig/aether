@@ -117,6 +117,7 @@ fn reply_status(app: &mut App, then: Then, agents_suspended: u32) {
             writes: None,
             bridge: None,
             stale: None,
+            unavailable: Vec::new(),
         })),
     });
 }
@@ -388,6 +389,7 @@ pub fn populated_app() -> App {
             writes: None,
             bridge: None,
             stale: None,
+            unavailable: Vec::new(),
         })),
     });
     let ev = |seq, kind| {

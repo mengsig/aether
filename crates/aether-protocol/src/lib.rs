@@ -265,7 +265,7 @@ mod replies;
 pub use replies::{
     AgentTree, AuthInfo, DaemonStatus, ENGINES_STARTING, ErrorCode, ErrorReply, MessageDelivery,
     ModelInfo, NOESIS_DISABLED, ProviderInfo, Reply, RunListing, StatusStale, SubmissionResolution,
-    TranscriptEntry, TreeNode,
+    TranscriptEntry, TreeNode, UnavailableSection, status_sections,
 };
 mod frames;
 pub use frames::{ClientFrame, Delta, ServerFrame, decode, encode};

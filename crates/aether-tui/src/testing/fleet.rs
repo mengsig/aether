@@ -166,6 +166,7 @@ pub fn loaded_app(agents: usize, events: usize, messages: usize) -> App {
             writes: None,
             bridge: None,
             stale: None,
+            unavailable: Vec::new(),
         })),
     });
 
