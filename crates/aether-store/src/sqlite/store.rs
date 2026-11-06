@@ -434,17 +434,7 @@ impl Store for SqliteStore {
     }
 
     fn fleet_usage(&self) -> Result<Usage> {
-        let agents = self.record_list(
-            "agents",
-            "SELECT id, body FROM agents WHERE status != ?1",
-            &[&AgentStatusKind::Imported.as_str()],
-            |agent: &Agent| agent.id.to_string(),
-        )?;
-        let mut total = Usage::default();
-        for agent in agents {
-            total += agent.stats.usage;
-        }
-        Ok(total)
+        self.read_fleet_usage()
     }
 
     fn subtree_ids(&self, root: AgentId) -> Result<BTreeSet<AgentId>> {
@@ -974,6 +964,10 @@ impl Store for SqliteStore {
             .optional()?)
     }
 
+    fn metas(&self, keys: &[String]) -> Result<Vec<Option<String>>> {
+        self.read_metas(keys)
+    }
+
     fn instance_id(&self) -> Result<String> {
         self.meta("instance_id")?
             .ok_or_else(|| StoreError::Corrupt("missing instance_id".into()))
@@ -992,6 +986,22 @@ pub(super) fn agent_list_sql(filter: &AgentFilter, args: &mut Arguments) -> Stri
     sql
 }
 
+/// `status IN (...)` over the statuses that are not terminal, which the status
+/// index answers one status at a time.
+fn live_status_clause() -> String {
+    // Off `is_terminal`, not a list typed here: a new terminal status must
+    // not silently start counting as live.
+    let live: Vec<String> = AgentStatusKind::ALL
+        .iter()
+        .filter(|k| !k.is_terminal())
+        .map(|k| k.as_str())
+        .inspect(|name| assert!(name.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')))
+        .map(|name| format!("'{name}'"))
+        .collect();
+    assert!(!live.is_empty(), "some status is live");
+    format!("status IN ({})", live.join(", "))
+}
+
 /// The `WHERE` condition selecting `filter`'s agents by their columns.
 pub(super) fn agent_predicate(filter: &AgentFilter, args: &mut Arguments) -> String {
     debug_assert!(args.is_empty(), "placeholders are numbered from 1");
@@ -1005,17 +1015,8 @@ pub(super) fn agent_predicate(filter: &AgentFilter, args: &mut Arguments) -> Str
         sql.push_str(&format!(" AND run = ?{}", args.len()));
     }
     if filter.live_only {
-        // Off `is_terminal`, not a list typed here: a new terminal status
-        // must not silently start counting as live.
-        let terminal: Vec<String> = AgentStatusKind::ALL
-            .iter()
-            .filter(|k| k.is_terminal())
-            .map(|k| {
-                args.push(Box::new(k.as_str().to_owned()));
-                format!("?{}", args.len())
-            })
-            .collect();
-        sql.push_str(&format!(" AND status NOT IN ({})", terminal.join(",")));
+        // An `IN` the status index answers: `NOT IN` scanned every agent kept.
+        sql.push_str(&format!(" AND {}", live_status_clause()));
     }
     if !filter.statuses.is_empty() {
         let placeholders: Vec<String> = filter

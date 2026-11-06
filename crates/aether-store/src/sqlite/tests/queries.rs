@@ -509,7 +509,7 @@ fn before_cursor_uses_the_agent_sequence_index() {
         .unwrap();
     assert!(
         plan.iter()
-            .any(|s| s.contains("INDEX events_agent (agent_id=? AND seq>? AND seq<?)")),
+            .any(|s| s.contains("INDEX events_agent (agent_id=? AND seq<?)")),
         "{plan:?}"
     );
     assert!(!plan.iter().any(|s| s.contains("TEMP B-TREE")), "{plan:?}");

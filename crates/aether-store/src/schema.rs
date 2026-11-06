@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::{Result, StoreError};
 
-pub const SCHEMA_VERSION: u32 = 32;
+pub const SCHEMA_VERSION: u32 = 33;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -552,9 +552,43 @@ CREATE INDEX IF NOT EXISTS memory_holdouts_memory ON memory_holdouts(memory_id, 
 // stamp still moves, so opening a V31 store takes its pre-migration backup.
 const V32: &str = "";
 
+// Each agent's billed usage beside its row, kept by triggers on every write
+// path, so the fleet total reads one narrow table instead of every agent's
+// body. A NULL `usage` is the record's default; an imported agent, or a body
+// that is not its row's record, has no row. Idempotent: a replay over a
+// rewound stamp rebuilds the rows.
+const V33: &str = r#"
+CREATE TABLE IF NOT EXISTS agent_usage (
+    agent_id TEXT PRIMARY KEY,
+    usage    TEXT
+) WITHOUT ROWID;
+CREATE TRIGGER IF NOT EXISTS agent_usage_inserted AFTER INSERT ON agents BEGIN
+    DELETE FROM agent_usage WHERE agent_id = new.id;
+    INSERT INTO agent_usage(agent_id, usage)
+    SELECT new.id, json_extract(new.body, '$.stats.usage')
+    WHERE new.status != 'imported'
+      AND CASE WHEN json_valid(new.body) THEN json_extract(new.body, '$.id') END = new.id;
+END;
+CREATE TRIGGER IF NOT EXISTS agent_usage_updated AFTER UPDATE ON agents BEGIN
+    DELETE FROM agent_usage WHERE agent_id = old.id OR agent_id = new.id;
+    INSERT INTO agent_usage(agent_id, usage)
+    SELECT new.id, json_extract(new.body, '$.stats.usage')
+    WHERE new.status != 'imported'
+      AND CASE WHEN json_valid(new.body) THEN json_extract(new.body, '$.id') END = new.id;
+END;
+CREATE TRIGGER IF NOT EXISTS agent_usage_deleted AFTER DELETE ON agents BEGIN
+    DELETE FROM agent_usage WHERE agent_id = old.id;
+END;
+DELETE FROM agent_usage;
+INSERT INTO agent_usage(agent_id, usage)
+SELECT id, json_extract(body, '$.stats.usage') FROM agents
+WHERE status != 'imported'
+  AND CASE WHEN json_valid(body) THEN json_extract(body, '$.id') END = id;
+"#;
+
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31, V32,
+    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31, V32, V33,
 ];
 
 /// Rewrites that SQL cannot express, run in the same transaction as the
@@ -776,3 +810,5 @@ pub fn migrate(conn: &Connection) -> Result<()> {
 mod tests;
 #[cfg(test)]
 mod v32_tests;
+#[cfg(test)]
+mod v33_tests;

@@ -38,22 +38,21 @@ fn under_subquery(steps: &[(i64, i64, String)], step: &(i64, i64, String)) -> bo
 #[test]
 fn full_agent_and_task_listings_stream_in_creation_order() {
     let store = SqliteStore::open_in_memory().expect("open");
-    let live = AgentFilter {
-        live_only: true,
-        ..Default::default()
-    };
-    for filter in [AgentFilter::default(), live] {
-        let mut args = Vec::new();
-        let steps = plan(&store, &agent_list_sql(&filter, &mut args), &args);
-        assert!(
-            steps.iter().any(|s| s.2.contains("INDEX agents_created")),
-            "{steps:?}"
-        );
-        assert!(
-            !steps.iter().any(|s| s.2.contains("TEMP B-TREE")),
-            "{steps:?}"
-        );
-    }
+    // The live agents alone are sought by status and sorted, see below.
+    let mut args = Vec::new();
+    let steps = plan(
+        &store,
+        &agent_list_sql(&AgentFilter::default(), &mut args),
+        &args,
+    );
+    assert!(
+        steps.iter().any(|s| s.2.contains("INDEX agents_created")),
+        "{steps:?}"
+    );
+    assert!(
+        !steps.iter().any(|s| s.2.contains("TEMP B-TREE")),
+        "{steps:?}"
+    );
     let mut args = Vec::new();
     let steps = plan(
         &store,
@@ -269,5 +268,114 @@ fn a_runs_receipt_page_does_not_walk_every_other_runs_receipts() {
     assert!(
         steps < quiet_steps * 2,
         "other runs' receipts cost {steps} steps, against {quiet_steps} without them"
+    );
+}
+
+#[test]
+fn the_live_agents_are_sought_by_status_not_scanned() {
+    // `status` lists them on every poll: `NOT IN` over the terminal statuses
+    // walked every agent the store ever kept. Sorting the few live ones is cheap.
+    let store = SqliteStore::open_in_memory().expect("open");
+    let live = AgentFilter {
+        live_only: true,
+        ..Default::default()
+    };
+    let blocked = AgentFilter {
+        statuses: vec![aether_core::agent::AgentStatusKind::Blocked],
+        ..live.clone()
+    };
+    for filter in [live, blocked] {
+        let mut args = Vec::new();
+        let steps = plan(&store, &agent_list_sql(&filter, &mut args), &args);
+        assert!(
+            steps
+                .iter()
+                .any(|s| s.2.contains("INDEX agents_status (status=?)")),
+            "{steps:?}"
+        );
+        assert!(
+            !steps.iter().any(|s| s.2.starts_with("SCAN agents")),
+            "{steps:?}"
+        );
+    }
+}
+
+#[test]
+fn a_runs_receipts_are_read_from_the_run_and_type_index_in_order() {
+    let store = SqliteStore::open_in_memory().expect("open");
+    let filter = EventFilter {
+        run: Some(RunId::new()),
+        types: vec!["agent.usage_updated".into()],
+        ..Default::default()
+    };
+    for (ascending, before) in [(false, None), (false, Some(900)), (true, None)] {
+        let mut args = Vec::new();
+        let predicate = crate::sqlite::event_queries::filter_predicate(&filter, &mut args);
+        let sql = crate::sqlite::event_queries::page_sql(
+            "seq, body",
+            &predicate,
+            0,
+            before,
+            256,
+            ascending,
+            &mut args,
+        );
+        let steps = plan(&store, &sql, &args);
+        assert!(
+            steps
+                .iter()
+                .any(|s| s.2.contains("INDEX events_run_type (run=? AND type=?")),
+            "{steps:?}"
+        );
+        assert!(
+            !steps.iter().any(|s| s.2.contains("TEMP B-TREE")),
+            "{steps:?}"
+        );
+    }
+}
+
+#[test]
+fn the_fleet_usage_reads_the_narrow_usage_table_alone() {
+    let store = SqliteStore::open_in_memory().expect("open");
+    let steps = plan(
+        &store,
+        "SELECT agent_id, usage FROM agent_usage",
+        &Vec::new(),
+    );
+    assert!(steps.iter().all(|s| !s.2.contains("agents ")), "{steps:?}");
+    assert_eq!(steps.len(), 1, "one scan of agent_usage: {steps:?}");
+}
+
+/// Virtual-machine steps to read a run's receipt page of 256, newest first.
+fn receipt_page_steps(store: &SqliteStore, run: RunId) -> i32 {
+    run_receipt_page_work(store, run).1
+}
+
+#[test]
+fn a_runs_receipt_page_costs_the_same_however_long_its_other_history() {
+    // A run alive for days writes far more events than receipts: walking its
+    // events for 256 receipts read its whole history (#414 follow-up).
+    let lived = |filler: usize| {
+        let (store, run) = receipts_among_others(15, 1);
+        let noise = (0..filler).fold(Commit::new(), |commit, _| {
+            commit.event(
+                EventDraft::new(Actor::System, EventKind::AgentReady)
+                    .agent(AgentId::new())
+                    .run(run),
+            )
+        });
+        store.commit(noise).expect("the run's other events");
+        (store, run)
+    };
+    let (short, short_run) = lived(100);
+    let (long, long_run) = lived(5_000);
+    let (short_steps, steps) = (
+        receipt_page_steps(&short, short_run),
+        receipt_page_steps(&long, long_run),
+    );
+    assert!(steps > 0 && short_steps > 0, "both pages ran");
+    assert!(
+        steps < short_steps * 2,
+        "the run's other events cost {steps} steps, against {short_steps} with few"
     );
 }

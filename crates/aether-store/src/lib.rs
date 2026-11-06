@@ -1029,6 +1029,11 @@ pub trait Store: Send + Sync {
     fn transcript(&self, agent: AgentId, after: u64) -> Result<Vec<TranscriptEntry>>;
 
     fn meta(&self, key: &str) -> Result<Option<String>>;
+    /// The value of each of `keys`, in order. The SQLite store reads them
+    /// from one snapshot, so no commit lands between two of them.
+    fn metas(&self, keys: &[String]) -> Result<Vec<Option<String>>> {
+        keys.iter().map(|key| self.meta(key)).collect()
+    }
     /// Stable id of this store, minted on first open.
     fn instance_id(&self) -> Result<String>;
 }
