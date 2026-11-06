@@ -20,6 +20,12 @@ const VARIANTS = [
   { name: "narrow-light", width: 390, height: 844, scheme: "light" },
   { name: "narrow-dark", width: 390, height: 844, scheme: "dark" },
 ] as const;
+/** The Learn screens at a laptop's size, light and dark. */
+const LEARN_VARIANTS = [
+  { name: "learn-light", width: 1440, height: 900, scheme: "light" },
+  { name: "learn-dark", width: 1440, height: 900, scheme: "dark" },
+] as const;
+type Variant = (typeof VARIANTS)[number] | (typeof LEARN_VARIANTS)[number];
 const NO_ITEM = `qi_${"0".repeat(26)}`;
 const NO_AGENT = `agt_${"0".repeat(26)}`;
 const SETTLE_MS = 350;
@@ -38,7 +44,8 @@ test.afterAll(async () => {
 });
 
 /** Opens `hash`, waits for `ready` (or for the screen's chunk), then shoots it in every variant. */
-async function shoot(page: Page, stack: Stack, screen: string, state: string, hash: string, ready?: string, readyMs = 15_000): Promise<void> {
+async function shoot(page: Page, stack: Stack, screen: string, state: string, hash: string, ready?: string, readyMs = 15_000,
+  variants: readonly Variant[] = VARIANTS): Promise<void> {
   assert.ok(OUT !== undefined, "E2E_CAPTURE is set");
   assert.ok(hash.startsWith("#/") || hash.startsWith("/"), `a route or path: ${hash}`);
   await mkdir(OUT, { recursive: true });
@@ -48,13 +55,14 @@ async function shoot(page: Page, stack: Stack, screen: string, state: string, ha
   await page.mouse.move(0, 0);
   if (ready !== undefined) await expect(page.locator(ready).first(), `${screen} (${state}) shows ${ready}`).toBeVisible({ timeout: readyMs });
   const file = `${String(manifest.length + 1).padStart(2, "0")}-${screen}-${state}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
-  for (const variant of VARIANTS) {
+  assert.ok(variants.length > 0, `${screen} is shot in some variant`);
+  for (const variant of variants) {
     await page.setViewportSize({ width: variant.width, height: variant.height });
     await page.emulateMedia({ colorScheme: variant.scheme, reducedMotion: "reduce" });
     await page.waitForTimeout(SETTLE_MS);
     await page.screenshot({ path: path.join(OUT, `${file}--${variant.name}.png`), fullPage: true });
   }
-  manifest.push({ screen, state, file, variants: VARIANTS.map((variant) => variant.name) });
+  manifest.push({ screen, state, file, variants: variants.map((variant) => variant.name) });
 }
 
 test("unpaired: the shell and both pairing screens", async ({ page, stack }) => {
@@ -133,6 +141,23 @@ test("noesis: the learning screens off, then on", async ({ page, stack }) => {
     await shoot(page, stack, "Knowledge", "empty", "#/learn/graph");
     await shoot(page, stack, "My understanding", "empty", "#/learn/me");
     await shoot(page, stack, "Session", "error", `#/learn/sessions/ns_${"0".repeat(26)}`);
+  } finally {
+    await configureNoesis(stack, { enabled: false, engineering_context: false });
+  }
+});
+
+test("noesis: the Learn screens at 1440x900", async ({ page, stack }) => {
+  await pairBoth(page, stack, { aether: "operator", archon: "operator" }, "Design audit learn");
+  await configureNoesis(stack, { enabled: true, engineering_context: false });
+  try {
+    const conn = await openAgent(page, stack, "Idle reviewer");
+    const agentId = /agt_[0-9A-Z]{26}/.exec(page.url())?.[0];
+    assert.ok(agentId !== undefined, "the agent route names the agent");
+    const understand = `#/learn?understand=agent&conn=${encodeURIComponent(conn)}&id=${agentId}`;
+    await shoot(page, stack, "Learn from this", "work off", understand, '[data-testid="understand-off"]', 15_000, LEARN_VARIANTS);
+    await shoot(page, stack, "Learn settings", "models", "#/learn?panel=settings", "#learn-model-strong", 15_000, LEARN_VARIANTS);
+    await shoot(page, stack, "Learn sessions", "1440", "#/learn", undefined, 15_000, LEARN_VARIANTS);
+    await shoot(page, stack, "Knowledge", "1440", "#/learn/graph", ".learn-segmented", 15_000, LEARN_VARIANTS);
   } finally {
     await configureNoesis(stack, { enabled: false, engineering_context: false });
   }
