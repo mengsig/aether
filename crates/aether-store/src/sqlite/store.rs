@@ -437,6 +437,13 @@ impl Store for SqliteStore {
         self.read_fleet_usage()
     }
 
+    fn run_members(
+        &self,
+        run: aether_core::id::RunId,
+    ) -> Result<Vec<aether_core::budget::RunMember>> {
+        self.read_run_members(run)
+    }
+
     fn subtree_ids(&self, root: AgentId) -> Result<BTreeSet<AgentId>> {
         let conn = self.read_conn()?;
         let mut stmt = conn.prepare_cached(

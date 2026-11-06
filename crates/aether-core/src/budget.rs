@@ -60,8 +60,12 @@ pub struct RunSummary {
 /// reduction `active_runs` and the scheduler's run budget both read, so a
 /// refused delegation and the run a projection reports can never disagree.
 pub fn run_usage<'a>(agents: impl IntoIterator<Item = &'a Agent>) -> Usage {
-    agents.into_iter().fold(Usage::default(), |mut total, a| {
-        total += a.stats.usage;
+    sum_usage(agents.into_iter().map(|a| a.stats.usage))
+}
+
+fn sum_usage(usages: impl Iterator<Item = Usage>) -> Usage {
+    usages.fold(Usage::default(), |mut total, usage| {
+        total += usage;
         total
     })
 }
@@ -149,26 +153,58 @@ pub fn average_turn_usage<'a>(agents: impl IntoIterator<Item = &'a Agent>) -> Us
     }
 }
 
-/// One summary per run that still has a live agent, oldest run first.
-///
-/// `window_start` holds, for each agent with a receipt in the last
-/// `RATE_WINDOW_MINUTES`, its billed dollars when the window opened; an agent
-/// absent from it billed nothing since, so a run with none is idle.
+/// What a run summary reads of one member: no body beyond its usage.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RunMember {
+    pub id: AgentId,
+    pub run: RunId,
+    pub live: bool,
+    pub created_at: Timestamp,
+    pub usage: Usage,
+}
+
+impl RunMember {
+    pub fn of(agent: &Agent) -> Self {
+        Self {
+            id: agent.id,
+            run: agent.run,
+            live: agent.is_live(),
+            created_at: agent.created_at,
+            usage: agent.stats.usage,
+        }
+    }
+}
+
+/// [`active_runs_of`] over whole agents.
 pub fn active_runs(
     agents: &[Agent],
     window_start: &BTreeMap<AgentId, f64>,
     now: Timestamp,
 ) -> Vec<RunSummary> {
-    let mut by_run: BTreeMap<RunId, Vec<&Agent>> = BTreeMap::new();
-    for agent in agents {
-        by_run.entry(agent.run).or_default().push(agent);
+    let members: Vec<RunMember> = agents.iter().map(RunMember::of).collect();
+    active_runs_of(&members, window_start, now)
+}
+
+/// One summary per run that still has a live agent, oldest run first.
+///
+/// `window_start` holds, for each agent with a receipt in the last
+/// `RATE_WINDOW_MINUTES`, its billed dollars when the window opened; an agent
+/// absent from it billed nothing since, so a run with none is idle.
+pub fn active_runs_of(
+    members: &[RunMember],
+    window_start: &BTreeMap<AgentId, f64>,
+    now: Timestamp,
+) -> Vec<RunSummary> {
+    let mut by_run: BTreeMap<RunId, Vec<&RunMember>> = BTreeMap::new();
+    for member in members {
+        by_run.entry(member.run).or_default().push(member);
     }
     by_run
         .into_iter()
-        .filter(|(_, members)| members.iter().any(|a| a.is_live()))
+        .filter(|(_, members)| members.iter().any(|m| m.live))
         .map(|(run, members)| {
-            let usage = run_usage(members.iter().copied());
-            let started_at = members.iter().map(|a| a.created_at).min().unwrap_or(now);
+            let usage = sum_usage(members.iter().map(|m| m.usage));
+            let started_at = members.iter().map(|m| m.created_at).min().unwrap_or(now);
             // The floor, like everything else derived from a cost: a run with
             // an unpriced agent forecasts what it is known to be spending,
             // marked by `usage.cost_complete`, never a confident zero.
@@ -177,7 +213,7 @@ pub fn active_runs(
             RunSummary {
                 run,
                 agents: members.len() as u32,
-                agents_live: members.iter().filter(|a| a.is_live()).count() as u32,
+                agents_live: members.iter().filter(|m| m.live).count() as u32,
                 usage,
                 started_at,
                 rate_usd_per_hour: rate,
@@ -190,18 +226,18 @@ pub fn active_runs(
 /// Dollars per hour the run's agents billed inside the window, over the part
 /// of the window the run has existed for.
 fn recent_rate(
-    members: &[&Agent],
+    members: &[&RunMember],
     window_start: &BTreeMap<AgentId, f64>,
     started_at: Timestamp,
     now: Timestamp,
 ) -> f64 {
     let spent: f64 = members
         .iter()
-        .filter_map(|a| {
-            let before = window_start.get(&a.id)?;
+        .filter_map(|m| {
+            let before = window_start.get(&m.id)?;
             debug_assert!(*before >= 0.0, "a cumulative cost is never negative");
             // Cumulative cost only grows; a reading above it is a stale row.
-            Some((a.stats.usage.cost_usd - before).max(0.0))
+            Some((m.usage.cost_usd - before).max(0.0))
         })
         .sum();
     let window = chrono::Duration::minutes(RATE_WINDOW_MINUTES);

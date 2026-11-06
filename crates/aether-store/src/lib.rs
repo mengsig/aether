@@ -774,6 +774,18 @@ pub trait Store: Send + Sync {
     /// Usage summed over every agent that is not an imported archive, decoding
     /// each row's usage alone rather than the whole agent.
     fn fleet_usage(&self) -> Result<aether_core::model::Usage>;
+    /// What a run summary reads of each of `run`'s agents. The SQLite store
+    /// reads columns and `agent_usage`, never the agents' bodies.
+    fn run_members(&self, run: RunId) -> Result<Vec<aether_core::budget::RunMember>> {
+        let agents = self.agents(&AgentFilter {
+            run: Some(run),
+            ..Default::default()
+        })?;
+        Ok(agents
+            .iter()
+            .map(aether_core::budget::RunMember::of)
+            .collect())
+    }
     /// Whether any agent, including archived and terminal agents, carries this repository scope.
     fn any_agent_in_repository(&self, repository: &str) -> Result<bool>;
 

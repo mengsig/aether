@@ -231,4 +231,88 @@ fn fleet_usage_reads_an_agent_without_stats_as_default_usage() {
     assert_eq!(store.fleet_usage().unwrap().input_tokens, 7);
 }
 
+#[test]
+fn fleet_usage_follows_every_commit_as_the_whole_agent_sum_does() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let mut agents: Vec<Agent> = (1..=4u64)
+        .map(|n| {
+            let mut agent = agent();
+            agent.stats.usage.input_tokens = n;
+            agent.stats.usage.cost_usd = n as f64 / 4.0;
+            agent
+        })
+        .collect();
+    let mut first = Commit::new();
+    for agent in &agents {
+        first = first.mutate(Mutation::UpsertAgent(agent.clone()));
+    }
+    store.commit(first).unwrap();
+    agents[0].stats.usage.output_tokens = 9;
+    agents[1].archived = true;
+    agents[2].status = AgentStatus::Imported {
+        was: aether_core::agent::AgentStatusKind::Completed,
+    };
+    let mut second = Commit::new();
+    for agent in &agents[..3] {
+        second = second.mutate(Mutation::UpsertAgent(agent.clone()));
+    }
+    store.commit(second).unwrap();
+
+    let decoded = store.agents(&AgentFilter::default()).unwrap();
+    assert_eq!(
+        decoded.len(),
+        4,
+        "archiving hides nothing from a store walk"
+    );
+    let mut summed = aether_core::model::Usage::default();
+    for agent in decoded
+        .iter()
+        .filter(|a| !matches!(a.status, AgentStatus::Imported { .. }))
+    {
+        summed += agent.stats.usage;
+    }
+    assert_eq!(summed.output_tokens, 9, "the update is in the sum");
+    assert_eq!(store.fleet_usage().unwrap(), summed);
+}
+
+#[test]
+fn run_members_read_what_whole_agents_say_without_their_bodies() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let run = RunId::new();
+    let mut commit = Commit::new();
+    for (n, status) in [
+        AgentStatus::Running,
+        AgentStatus::Completed { summary: None },
+        AgentStatus::Imported {
+            was: aether_core::agent::AgentStatusKind::Completed,
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut member = agent();
+        member.run = run;
+        member.status = status;
+        member.stats.usage.input_tokens = n as u64 + 1;
+        member.stats.usage.cost_usd = 0.5;
+        commit = commit.mutate(Mutation::UpsertAgent(member));
+    }
+    commit = commit.mutate(Mutation::UpsertAgent(agent()));
+    store.commit(commit).unwrap();
+
+    let whole: Vec<_> = store
+        .agents(&AgentFilter {
+            run: Some(run),
+            ..Default::default()
+        })
+        .unwrap()
+        .iter()
+        .map(aether_core::budget::RunMember::of)
+        .collect();
+    let mut narrow = store.run_members(run).unwrap();
+    narrow.sort_by_key(|m| whole.iter().position(|w| w.id == m.id));
+    assert_eq!(whole.len(), 3, "the other run's agent is not a member");
+    assert_eq!(narrow, whole);
+}
+
 mod engine_sessions;

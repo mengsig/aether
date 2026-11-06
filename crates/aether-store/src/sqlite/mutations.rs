@@ -19,7 +19,8 @@ impl SqliteStore {
                     "INSERT INTO agents(id, parent, role, status, run, created_at, updated_at, body)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                      ON CONFLICT(id) DO UPDATE SET parent = excluded.parent, role = excluded.role,
-                       status = excluded.status, updated_at = excluded.updated_at, body = excluded.body",
+                       status = excluded.status, created_at = excluded.created_at,
+                       updated_at = excluded.updated_at, body = excluded.body",
                     params![
                         agent.id.to_string(),
                         agent.parent.map(|p| p.to_string()),

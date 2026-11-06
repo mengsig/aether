@@ -346,6 +346,26 @@ fn the_fleet_usage_reads_the_narrow_usage_table_alone() {
     assert_eq!(steps.len(), 1, "one scan of agent_usage: {steps:?}");
 }
 
+#[test]
+fn a_runs_members_are_sought_by_run_and_joined_by_key() {
+    let store = SqliteStore::open_in_memory().expect("open");
+    let args: Arguments = vec![Box::new(RunId::new().to_string())];
+    let steps = plan(&store, crate::sqlite::fleet_reads::RUN_MEMBERS_SQL, &args);
+    assert!(
+        steps
+            .iter()
+            .any(|s| s.2.starts_with("SEARCH a USING INDEX agents_run")),
+        "{steps:?}"
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|s| s.2.starts_with("SEARCH u USING PRIMARY KEY")),
+        "{steps:?}"
+    );
+    assert!(steps.iter().all(|s| !s.2.starts_with("SCAN")), "{steps:?}");
+}
+
 /// Virtual-machine steps to read a run's receipt page of 256, newest first.
 fn receipt_page_steps(store: &SqliteStore, run: RunId) -> i32 {
     run_receipt_page_work(store, run).1

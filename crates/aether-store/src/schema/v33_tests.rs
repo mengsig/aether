@@ -144,3 +144,110 @@ fn agent_usage_follows_inserts_updates_imports_and_deletes() {
         .unwrap();
     assert!(read(&conn).is_empty(), "a deleted agent leaves the total");
 }
+
+/// A whole agent, as the store writes it, with `status` and `usage`.
+fn whole_agent(status: aether_core::agent::AgentStatus, usage: Usage) -> aether_core::agent::Agent {
+    use aether_core::agent::{Agent, AgentConfig, AgentStats, Role, Scope};
+    use aether_core::id::{AgentId, RunId};
+    let at = aether_core::time::now();
+    Agent {
+        id: AgentId::new(),
+        parent: None,
+        role: Role::new("worker"),
+        name: "worker".into(),
+        scope: Scope::default(),
+        model: aether_core::model::ModelRef::new("mock", "m"),
+        fallbacks: Vec::new(),
+        status,
+        current_task: None,
+        inbox_cursor: 0,
+        checkpoint: None,
+        engine_session: None,
+        engine_usage: None,
+        engine_sent: None,
+        status_since: None,
+        archived: false,
+        paused: false,
+        paused_via: None,
+        resume_wait: None,
+        restarted_from: None,
+        restarted_as: None,
+        engine_alive: false,
+        last_event_at: None,
+        config: AgentConfig::default(),
+        stats: AgentStats {
+            usage,
+            ..AgentStats::default()
+        },
+        run: RunId::new(),
+        created_at: at,
+        updated_at: at,
+    }
+}
+
+/// Usages that exercise every part of the fold: bases, gaps, reasoning and estimates.
+fn assorted_usages() -> Vec<Usage> {
+    use aether_core::model::{CostBasis, CostGap};
+    let listed = Usage {
+        cost_basis: CostBasis::ListPrice,
+        ..usage(10, 1.5)
+    };
+    let reported = Usage {
+        cost_basis: CostBasis::ProviderReported,
+        reasoning_tokens: Some(4),
+        ..usage(20, 0.25)
+    };
+    let unpriced = Usage {
+        cost_usd: 0.0,
+        cost_complete: false,
+        cost_gap: Some(CostGap::Unpriced),
+        estimated_cost_usd: Some(0.5),
+        ..usage(30, 0.0)
+    };
+    let interrupted = Usage {
+        cost_complete: false,
+        cost_gap: Some(CostGap::Interrupted),
+        ..usage(40, 2.0)
+    };
+    vec![listed, reported, unpriced, interrupted, Usage::default()]
+}
+
+#[test]
+fn v33_backfill_sums_what_the_whole_agent_reader_summed() {
+    use aether_core::agent::{AgentStatus, AgentStatusKind};
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("aether.db");
+    let previous = database_at(&path, 28);
+    let statuses = [
+        AgentStatus::Running,
+        AgentStatus::Completed { summary: None },
+        AgentStatus::Imported {
+            was: AgentStatusKind::Completed,
+        },
+        AgentStatus::Created,
+    ];
+    let mut agents = Vec::new();
+    for (n, usage) in assorted_usages().into_iter().enumerate() {
+        for status in &statuses {
+            let mut agent = whole_agent(status.clone(), usage);
+            agent.archived = n % 2 == 0;
+            let body = serde_json::to_string(&agent).expect("an agent serializes");
+            let id = agent.id.to_string();
+            insert_agent(&previous, &id, agent.status.kind().as_str(), &body);
+            agents.push(agent);
+        }
+    }
+    drop(previous);
+    assert_eq!(agents.len(), 20, "five usages under four statuses");
+
+    let store = crate::SqliteStore::open(&path).expect("a 1.2.11 store opens and migrates");
+    let mut summed = Usage::default();
+    for agent in agents
+        .iter()
+        .filter(|a| a.status.kind() != AgentStatusKind::Imported)
+    {
+        summed += agent.stats.usage;
+    }
+    assert!(!summed.cost_complete, "the fold saw a gap");
+    assert_eq!(store.fleet_usage().unwrap(), summed);
+}

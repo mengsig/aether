@@ -23,7 +23,7 @@ mod devices;
 mod engine_sessions;
 mod event_blobs;
 mod event_queries;
-mod fleet_reads;
+pub(super) mod fleet_reads;
 mod history_retention;
 mod quarantine;
 mod read_pool;
