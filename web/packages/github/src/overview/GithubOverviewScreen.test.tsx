@@ -53,7 +53,7 @@ describe("GitHub overview", () => {
   it("shows cached objects, relationships, chart descriptions and filters without changing reads", async () => {
     h = await harness({ world: world(), aether: true });
     const root = await h.mount(<GithubOverviewScreen />);
-    await h.until(() => root.querySelectorAll("tbody tr").length === 2, "cached objects");
+    await h.until(() => root.querySelectorAll(".gh-object-table tbody tr").length === 2, "cached objects");
     expect(root.querySelector('a[href="#/github/github.com/example-org/site/1"]')?.textContent).toContain("Improve navigation");
     expect(root.querySelector('[data-status="pr-merged"]')).not.toBeNull();
     expect(root.querySelector('[data-testid="gh-graph"]')?.textContent).toContain("Navigation work");
@@ -64,8 +64,8 @@ describe("GitHub overview", () => {
     await pick("gh-filter-repo", "example-org/site");
     await pick("gh-filter-kind", "Pull requests");
     await pick("gh-filter-state", "merged");
-    expect(root.querySelectorAll("tbody tr")).toHaveLength(1);
-    expect(root.querySelector("tbody")?.textContent).toContain("Ship navigation");
+    expect(root.querySelectorAll(".gh-object-table tbody tr")).toHaveLength(1);
+    expect(root.querySelector(".gh-object-table tbody")?.textContent).toContain("Ship navigation");
     expect(h.faux.commands("issue_items")[0]).toMatchObject({ ref: { host: "github.com", repo: "example-org/site", kind: "issue", number: 1 } });
   });
   it("shows failed watcher reads with a retry and Settings next step", async () => {

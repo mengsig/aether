@@ -1,11 +1,10 @@
 import { routeHref, useDraft, useReread } from "@aether-ui/core";
 import { GraphCanvas } from "@aether-ui/graph";
 import { archon, type ConnectionInfo } from "@aether-ui/protocol";
-import { Badge, Button, EmptyState, ErrorState, Picker, Skeleton, StatusPill } from "@aether-ui/ui";
+import { Badge, BarChart, Button, Donut, EmptyState, ErrorState, Picker, Skeleton, Sparkline, StatTile, StatusPill } from "@aether-ui/ui";
 import { useMemo, useState } from "react";
 import { useAether, useArchonConnection, useChangeKey, useNow, STALE_CHECK_MS, OBJECTS_LIMIT } from "../issue/data.ts";
 import { issueFact, pullRequestFact } from "../issue/facts.ts";
-import { BarChart, Donut, Sparkline, StatTile } from "./charts.tsx";
 import { useOverviewRows } from "./data.ts";
 import { DEFAULT_FILTERS, filterRows, itemsPerPr, objectHref, objectId, relationshipGraph, relationshipLayout, weeklyBuckets, type ObjectRow, type OverviewFilters } from "./model.ts";
 import "./overview.css";
@@ -117,7 +116,7 @@ function Overview({ info }: { readonly info: ConnectionInfo }) {
     {!view && !watcher?.error ? <Skeleton height="5rem" /> : null}
     {view ? <><div className="gh-overview-stats"><StatTile label="Watcher" value={view.enabled ? "On" : "Off"} tone={view.enabled ? "success" : "neutral"} />
       <StatTile label="Poll interval" value={`${view.poll_interval_secs} s`} /><StatTile label="Last poll" value={relativeTime(lastPoll, now)} />
-      <StatTile label="Watched repositories" value={repositories.length} /></div><ul className="gh-watched" aria-label="Watched repositories">
+      <StatTile label="Watched repositories" value={String(repositories.length)} /></div><ul className="gh-watched" aria-label="Watched repositories">
       {view.repositories.map((repo) => <li key={repo.repository}><strong>{repo.repository}</strong><Badge tone={repo.enabled ? "success" : "neutral"}>{repo.enabled ? "Watching" : "Disabled"}</Badge>
         <span>{repo.dispatched} dispatched · {repo.ignored} ignored · {relativeTime(repo.last_poll_at, now)}</span>{repo.last_error ? <p role="alert">{repo.last_error}</p> : null}</li>)}</ul></> : null}
     {view?.enabled && !watcher?.error ? <CachedObjects info={info} repositories={repositories} refresh={refresh} now={now} onRefresh={reload} interval={view.poll_interval_secs} />

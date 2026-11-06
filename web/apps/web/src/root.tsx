@@ -1,6 +1,7 @@
 import { navigate, selectConnections, selectReports, useApp, useCapabilities, useEntityActions, useRoute, useRoutes, useSelector } from "@aether-ui/core";
 import type { Report } from "@aether-ui/core";
 import type { EntityAction } from "@aether-ui/protocol";
+import { HomeScreen } from "@aether-ui/home";
 import { AppShell, type ToastMessage } from "@aether-ui/ui";
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { screenTitles } from "./titles.ts";
@@ -48,6 +49,7 @@ export function ShellRoot() {
 
   return (
     <AppShell routes={routes} actions={actions} capabilities={capabilities} match={match} hash={hash}
-      onNavigate={navigate} onActionError={onActionError} connections={connections} notices={notices} onDismissNotice={dismiss} titles={screenTitles} />
+      onNavigate={navigate} onActionError={onActionError} connections={connections} notices={notices} onDismissNotice={dismiss} titles={screenTitles}
+      home={<HomeScreen />} />
   );
 }

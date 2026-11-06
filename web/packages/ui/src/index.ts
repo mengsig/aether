@@ -6,6 +6,7 @@ import "./tokens.css";
 import "./base.css";
 import "./primitives.css";
 import "./shell.css";
+import "./charts.css";
 
 export { classes } from "./classes.ts";
 export { ThemeProvider, useTheme, resolveTheme, applyTheme, systemPrefersDark, isThemePreference, THEME_PREFERENCES } from "./theme.tsx";
@@ -34,3 +35,4 @@ export { Combo, type ComboProps } from "./combo.tsx";
 export { Switch, Segmented, type SwitchProps, type SegmentedProps, type SegmentOption } from "./switch.tsx";
 export { TextArea, type TextAreaProps } from "./textarea.tsx";
 export { ModelPicker, modelOptions, modelRefText, billingOf, type ModelPickerProps, type ModelOptionsSettings, type Billing } from "./model-picker.tsx";
+export { BarChart, Donut, Sparkline, StatTile, donutArcs, sparkPath, type ChartPoint, type ChartTone, type DonutArc } from "./charts.tsx";
