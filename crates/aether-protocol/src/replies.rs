@@ -145,6 +145,14 @@ pub mod status_sections {
     pub const PENDING_APPROVALS: &str = "pending_approvals";
     /// `low_disk`.
     pub const LOW_DISK: &str = "low_disk";
+    /// `engines` and `engine_turns_running`.
+    pub const ENGINES: &str = "engines";
+    /// `resource_leases`.
+    pub const RESOURCE_LEASES: &str = "resource_leases";
+    /// `mcp`.
+    pub const MCP: &str = "mcp";
+    /// `writes`.
+    pub const WRITES: &str = "writes";
     /// The reason of a section whose read did not finish before the deadline.
     pub const TIMED_OUT: &str = "timed out";
 }

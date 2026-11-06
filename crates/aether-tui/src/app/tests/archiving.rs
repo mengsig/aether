@@ -124,15 +124,25 @@ fn a_stale_empty_tree_keeps_the_tree_shown_and_says_why() {
     let stale = AgentTree {
         stale: Some(aether_protocol::StatusStale {
             read_at: None,
-            waited_ms: 3_000,
+            waited_ms: 800,
         }),
         roots: vec![],
         nodes: std::collections::BTreeMap::new(),
     };
-    app.reduce(AppEvent::Reply {
+    let effects = app.reduce(AppEvent::Reply {
         then: Then::Tree,
         result: Ok(Reply::Tree(stale)),
     });
+    assert!(
+        effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Request {
+                command: aether_protocol::Command::GetTree { .. },
+                ..
+            }
+        )),
+        "a fresh tree is asked for again: {effects:?}"
+    );
     assert_eq!(app.selected, Some(id), "the selection stays");
     assert!(app.tree.nodes.contains_key(&id), "the tree shown stays");
     let flash = app.live_flash().unwrap_or_default().to_owned();

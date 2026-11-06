@@ -74,12 +74,7 @@ pub(super) async fn dispatch(
             "a resolution is answered before dispatch",
         )),
         Command::McpServers { refresh, server } => mcp_servers(daemon, refresh, server).await,
-        Command::GetGithubWatcher => {
-            let reading = rt.clone();
-            let watcher =
-                blocking(move || reading.github_watcher_status().map_err(map_err)).await??;
-            Ok(Reply::GithubWatcher(watcher))
-        }
+        Command::GetGithubWatcher => github_watcher(daemon).await,
         Command::ConfigureGithubWatcher {
             config,
             expected_revision,
@@ -249,32 +244,50 @@ fn unavailable_problem(unavailable: &[aether_protocol::UnavailableSection]) -> O
         "a section has a name"
     );
     Some(format!(
-        "status sections unavailable ({}): the store did not answer them within {}s, so their \
+        "status sections unavailable ({}): the daemon did not read them within {} ms, so their \
          figures read zero because they were not read, not because they are zero",
         names.join(", "),
-        aether_runtime::STATUS_DEADLINE.as_secs()
+        aether_runtime::STATUS_DEADLINE.as_millis()
     ))
 }
 
 /// The line a stale status leads its problems with, which older clients
 /// show too: they do not know `stale`.
 fn stale_problem(stale: &StatusStale, at: aether_core::time::Timestamp) -> String {
-    let waited = stale.waited_ms as f64 / 1000.0;
+    let waited = stale.waited_ms;
     match stale.read_at {
         Some(read_at) => {
             let age = (at - read_at).num_seconds().max(0);
             format!(
                 "status is {age}s old: reading the store and scheduler took longer than \
-                 {waited:.0}s, so these figures are from {}; a fresh read is still running",
+                 {waited} ms, so these figures are from {}; a fresh read is still running",
                 read_at.format("%Y-%m-%dT%H:%M:%SZ")
             )
         }
         None => format!(
             "status figures are unknown: the daemon's first read of the store and scheduler \
-             has taken longer than {waited:.0}s and is still running, so the counts are zero \
+             has taken longer than {waited} ms and is still running, so the counts are zero \
              because they are not known"
         ),
     }
+}
+
+/// The watcher's settings and state: a few meta rows read by key, so a read
+/// past the patience means a stalled store, and the reply says so instead of waiting.
+async fn github_watcher(daemon: &Daemon) -> Result<Reply, ErrorReply> {
+    let reading = daemon.runtime.clone();
+    let read = blocking(move || reading.github_watcher_status().map_err(map_err));
+    let Ok(watcher) = tokio::time::timeout(PATIENCE, read).await else {
+        return Err(ErrorReply::new(
+            ErrorCode::Unavailable,
+            format!(
+                "the GitHub watcher's status is unavailable: timed out, the store did not \
+                 answer within {} ms",
+                PATIENCE.as_millis()
+            ),
+        ));
+    };
+    Ok(Reply::GithubWatcher(watcher??))
 }
 
 async fn mcp_servers(

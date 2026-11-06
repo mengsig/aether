@@ -16,9 +16,9 @@ use aether_protocol::ErrorReply;
 use parking_lot::Mutex;
 use tokio::sync::watch;
 
-/// How long a `status` request waits for a fresh read before it answers with
-/// the last one: long enough for a healthy store, short of any client's timeout.
-pub(crate) const PATIENCE: Duration = Duration::from_secs(3);
+/// How long a `status` or `get_tree` request waits for a fresh read before it
+/// answers with the last one: dozens of healthy reads, and well under a second.
+pub(crate) const PATIENCE: Duration = Duration::from_millis(800);
 
 type Read<T> = Arc<dyn Fn() -> Result<T, ErrorReply> + Send + Sync>;
 
@@ -80,6 +80,13 @@ impl<T> Default for StatusReads<T> {
             })),
             finished: Arc::new(watch::Sender::new(0)),
         }
+    }
+}
+
+impl<T> StatusReads<T> {
+    /// Whether a read is in flight, which its caller may have stopped waiting for.
+    pub(crate) fn reading(&self) -> bool {
+        self.state.lock().running.is_some()
     }
 }
 

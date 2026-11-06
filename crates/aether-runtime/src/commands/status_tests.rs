@@ -152,7 +152,10 @@ fn every_section_is_answered_by_exactly_one_reader() {
 async fn a_status_with_patience_reads_every_section_of_a_quiet_store() {
     let dir = tempfile::tempdir().expect("dir");
     let runtime = runtime(dir.path()).await;
-    let status = runtime.status_within(STATUS_DEADLINE).expect("status");
+    // Generous, so a loaded test host cannot make a quiet store look late.
+    let status = runtime
+        .status_within(Duration::from_secs(10))
+        .expect("status");
     assert_eq!(
         status.unavailable,
         Vec::new(),
@@ -167,4 +170,45 @@ async fn a_status_with_patience_reads_every_section_of_a_quiet_store() {
         );
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+#[tokio::test]
+async fn a_held_scheduler_costs_only_the_sections_behind_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let runtime = runtime(dir.path()).await;
+    let held = runtime.sched.lock();
+    let started = Instant::now();
+    let status = runtime
+        .status_within(Duration::from_millis(300))
+        .expect("status");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "status kept to its deadline with the scheduler held"
+    );
+    drop(held);
+    let late: Vec<&str> = status
+        .unavailable
+        .iter()
+        .map(|u| u.section.as_str())
+        .collect();
+    assert!(late.contains(&section::ENGINES), "{late:?}");
+    for read in [
+        section::USAGE_TOTAL,
+        section::PENDING_APPROVALS,
+        section::TASKS_ACTIVE,
+    ] {
+        assert!(
+            !late.contains(&read),
+            "{read} does not wait on the scheduler: {late:?}"
+        );
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !runtime.status_in_flight.lock().is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "the held readers ended once released"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    runtime.shutdown().await;
 }

@@ -72,9 +72,9 @@ fn timed<T>(section: &'static str, f: impl FnOnce() -> T) -> T {
     out
 }
 
-/// How long the daemon's `status` waits on the store; under its patience,
-/// so a stalled section costs only its own figures.
-pub const STATUS_DEADLINE: Duration = Duration::from_secs(2);
+/// How long the daemon's `status` waits on its sections; under its patience,
+/// so a stalled section costs only its own figures. Healthy ones take milliseconds.
+pub const STATUS_DEADLINE: Duration = Duration::from_millis(500);
 
 /// One store-backed `status` section, read on a thread of its own.
 enum Figure {
@@ -86,6 +86,10 @@ enum Figure {
     TasksActive(u32),
     PendingApprovals(u32),
     LowDisk(Option<aether_core::disk::LowDisk>),
+    Engines(Vec<String>, u32),
+    ResourceLeases(Vec<aether_core::lease::ResourceHolding>),
+    Mcp(Vec<aether_core::mcp::McpServerHealth>),
+    Writes(aether_core::write_stats::WriteStats),
 }
 
 type Answer = (&'static str, Result<Figure>);
@@ -96,7 +100,7 @@ struct Reader {
     read: fn(&Runtime, &mpsc::Sender<Answer>),
 }
 
-const READERS: [Reader; 7] = [
+const READERS: [Reader; 8] = [
     Reader {
         sections: &[section::PROBLEMS],
         read: |rt, to| {
@@ -143,10 +147,19 @@ const READERS: [Reader; 7] = [
         sections: &[section::LOW_DISK],
         read: |rt, to| answer(to, section::LOW_DISK, || Ok(Figure::LowDisk(rt.low_disk()))),
     },
+    Reader {
+        sections: &[
+            section::ENGINES,
+            section::RESOURCE_LEASES,
+            section::MCP,
+            section::WRITES,
+        ],
+        read: read_held_in_memory,
+    },
 ];
 
 /// Every section a reader answers.
-const SECTIONS: [&str; 8] = [
+const SECTIONS: [&str; 12] = [
     section::PROBLEMS,
     section::PROVIDERS,
     section::LIVE_AGENTS,
@@ -155,6 +168,10 @@ const SECTIONS: [&str; 8] = [
     section::TASKS_ACTIVE,
     section::PENDING_APPROVALS,
     section::LOW_DISK,
+    section::ENGINES,
+    section::RESOURCE_LEASES,
+    section::MCP,
+    section::WRITES,
 ];
 
 /// Marks a reader in flight until its thread ends, however it ends.
@@ -200,6 +217,24 @@ fn read_live_and_runs(rt: &Runtime, to: &mpsc::Sender<Answer>) {
     };
     answer(to, section::RUNS, || {
         rt.run_summaries(&live).map(Figure::Runs)
+    });
+}
+
+/// What is held in memory behind locks, and the store files' sizes: each
+/// waits on a lock or the filesystem, so each is read under the deadline too.
+fn read_held_in_memory(rt: &Runtime, to: &mpsc::Sender<Answer>) {
+    answer(to, section::ENGINES, || {
+        let (engines, running) = rt.engines_status();
+        Ok(Figure::Engines(engines, running))
+    });
+    answer(to, section::RESOURCE_LEASES, || {
+        Ok(Figure::ResourceLeases(rt.resource_holdings()))
+    });
+    answer(to, section::MCP, || Ok(Figure::Mcp(rt.mcp_health())));
+    answer(to, section::WRITES, || {
+        Ok(Figure::Writes(
+            rt.store.write_stats().top(WRITE_KINDS_SHOWN),
+        ))
     });
 }
 
@@ -255,6 +290,13 @@ fn apply(status: &mut RuntimeStatus, figure: Figure) {
         Figure::TasksActive(count) => status.tasks_active = count,
         Figure::PendingApprovals(count) => status.pending_approvals = count,
         Figure::LowDisk(low) => status.low_disk = low,
+        Figure::Engines(engines, running) => {
+            status.engines = engines;
+            status.engine_turns_running = running;
+        }
+        Figure::ResourceLeases(leases) => status.resource_leases = leases,
+        Figure::Mcp(mcp) => status.mcp = mcp,
+        Figure::Writes(writes) => status.writes = writes,
     }
 }
 
@@ -296,7 +338,7 @@ impl Runtime {
     fn read_status(&self, deadline: Option<Instant>) -> Result<RuntimeStatus> {
         let started = Instant::now();
         let (answers, busy) = self.start_status_readers()?;
-        let mut status = self.status_in_memory();
+        let mut status = self.status_settings();
         let unavailable = collect_answers(&answers, &busy, deadline, &mut status)?;
         status.unavailable = unavailable
             .into_iter()
@@ -313,23 +355,16 @@ impl Runtime {
         Ok(status)
     }
 
-    /// The sections held in memory: no store read, so they are never late.
-    fn status_in_memory(&self) -> RuntimeStatus {
+    /// The engines found, sorted, and how many turns run on one: the
+    /// scheduler's lock is held for the count alone.
+    fn engines_status(&self) -> (Vec<String>, u32) {
         let mut engines: Vec<String> = match self.engines.now() {
             Ok(detected) => detected.usable.values().map(|e| e.adapter()).collect(),
             Err(_) => vec![aether_protocol::ENGINES_STARTING.to_owned()],
         };
         engines.sort();
-        // Read before the literal: the guard of a field expression lives to its end.
-        let engine_turns_running = self.sched.lock().on_engine() as u32;
-        RuntimeStatus {
-            engine_turns_running,
-            engines,
-            resource_leases: timed("resource_leases", || self.resource_holdings()),
-            mcp: timed("mcp", || self.mcp_health()),
-            writes: self.store.write_stats().top(WRITE_KINDS_SHOWN),
-            ..self.status_settings()
-        }
+        let running = self.sched.lock().on_engine() as u32;
+        (engines, running)
     }
 
     /// One thread per reader not still running for an earlier `status`, and

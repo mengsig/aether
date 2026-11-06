@@ -131,17 +131,18 @@ before updating.
   `agent_usage`, the live agents by their status, a live run's members as
   narrow rows instead of whole agents, and its usage receipts by run and
   type, so a run days old with millions of events costs what a new one
-  does. A section the store does not answer within 2 s is listed in the
-  reply's `unavailable` and named in its problems, and the CLI, TUI and
+  does. A section not read within 500 ms, including those behind the
+  scheduler's and the MCP manager's locks, is listed in the reply's
+  `unavailable` and named in its problems, and the CLI, TUI and
   `aether doctor` show it as unavailable instead of as zero. `get_tree`
   with a root walks that root's subtree instead of the fleet, reads only
-  the tasks it shows, and is shared like `status`: past 3 s it answers with
+  the tasks it shows, and is shared like `status`: past 800 ms it answers with
   the last tree read for the same request, marked `stale`, which the TUI
   and `aether run` do not take for a fresh one. The GitHub watcher's status
-  no longer waits on the commit lock, a timed-out client names the
-  daemon's slowest recent status section or the host's load, and a slow
-  engine tool call is logged with its tool, split into its wait for the
-  turn and its own run.
+  no longer waits on the commit lock and answers `unavailable` past 800 ms,
+  a timed-out client names the daemon's slowest recent status section or
+  the host's load, and a slow engine tool call is logged with its tool,
+  split into its wait for the turn and its own run.
 - **A tool call that never returns (archon#393).** After 15 minutes
   outstanding with no sign of life from the engine, Aether stops the turn,
   records `agent.tool_call_overdue` and wakes the agent to read its inbox;

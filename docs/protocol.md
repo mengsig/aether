@@ -364,7 +364,8 @@ and is refused when any of that history expired.
 
 `status` reads its sections behind a lock or the store (`problems`,
 `providers`, `live_agents`, `runs`, `usage_total`, `tasks_active`,
-`pending_approvals`, `low_disk`) side by side and waits 2 s for them. A
+`pending_approvals`, `low_disk`, `engines`, `resource_leases`, `mcp`,
+`writes`) side by side and waits 500 ms for them. A
 section not read by then is listed in `unavailable`, each entry `{section,
 reason}` with reason `timed out`; its fields hold their defaults, which are
 not figures, and `problems` leads with a line naming the sections, for a
@@ -375,11 +376,12 @@ that read ends. `stale` is separate: it marks a whole answer replayed from an
 earlier read.
 
 `get_tree` is shared the same way, per request shape (run, archived, role
-prefix, root): a request waits 3 s for a read that started after it arrived,
+prefix, root): a request waits 800 ms for a read that started after it arrived,
 and past that is answered with the last tree read for the same shape, with
 `stale` `{read_at, waited_ms}` set. A stale tree is no newer than any tree the
 client already holds; with no `read_at` it is empty because nothing was read,
-not because there are no agents.
+not because there are no agents. Reads for 64 shapes are kept; while all 64
+still read, a new shape starts none and is answered stale after the same wait.
 
 ## Delta order
 

@@ -60,6 +60,8 @@ impl App {
         // A stale tree is no newer than the one shown, which deltas kept current.
         if tree.stale.is_some() {
             self.flash("the daemon did not read the agent tree in time; showing the last one");
+            // Asked again until a fresh one comes: the daemon shares the read in flight.
+            self.tree_stale = true;
         } else {
             self.apply_tree(tree, effects);
         }
