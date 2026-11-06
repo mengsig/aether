@@ -372,29 +372,24 @@ impl Runtime {
     }
 
     /// Every live run's spend, rated over the receipts of its recent window.
-    /// `live` is the live agents; each live run's members are read by run, so
-    /// a fleet of finished runs is never decoded.
+    /// `live` is the live agents; each live run's members are read by run, as
+    /// narrow rows, so no member's body is decoded and no finished run is read.
     fn run_summaries(&self, live: &[Agent]) -> Result<Vec<RunSummary>> {
         let at = now();
         let since = at - chrono::Duration::minutes(RATE_WINDOW_MINUTES);
         let live_runs: BTreeSet<RunId> = live.iter().map(|a| a.run).collect();
         let mut members = Vec::new();
         for run in &live_runs {
-            members.extend(self.store.agents(&AgentFilter {
-                run: Some(*run),
-                ..Default::default()
-            })?);
+            members.extend(self.store.run_members(*run)?);
         }
         debug_assert!(live.iter().all(|l| members.iter().any(|m| m.id == l.id)));
         let mut window_start = BTreeMap::new();
         for run in live_runs {
             window_start.extend(self.billing_at(run, since)?);
         }
-        Ok(aether_core::budget::active_runs(
-            &members,
-            &window_start,
-            at,
-        ))
+        let runs = aether_core::budget::active_runs_of(&members, &window_start, at);
+        assert!(runs.len() <= members.len(), "a run summary has a member");
+        Ok(runs)
     }
 
     /// What each agent of `run` with a usage receipt after `since` had billed
