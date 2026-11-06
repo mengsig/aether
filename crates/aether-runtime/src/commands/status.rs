@@ -444,13 +444,13 @@ impl Runtime {
         }
         let mut runs = Vec::with_capacity(live_by_run.len());
         for (run, members) in live_by_run {
-            // A live agent read a moment ago is a member: none means it was
-            // pruned since, and so is no longer live.
+            let billing = self.billing_at(run, since)?;
+            let window = self.window_billing(&members, &billing.at_window_start)?;
+            // Read last, so every agent read live or billing above is counted:
+            // none means the run was pruned since, and so is no longer live.
             let Some(totals) = self.store.run_totals(run)? else {
                 continue;
             };
-            let billing = self.billing_at(run, since)?;
-            let window = self.window_billing(&members, &billing.at_window_start)?;
             let live_members = (members.len() as u32).min(totals.agents);
             runs.push(aether_core::budget::run_summary(
                 run,
