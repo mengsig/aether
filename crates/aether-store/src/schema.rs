@@ -715,24 +715,30 @@ CREATE TABLE IF NOT EXISTS agent_tree (
     PRIMARY KEY (ancestor, descendant)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS agent_tree_descendant ON agent_tree(descendant);
+-- NOT EXISTS, not OR IGNORE: an agent upsert's ABORT overrides a trigger's
+-- conflict clause, and a parent cycle repeats a pair.
 CREATE TRIGGER IF NOT EXISTS agent_tree_inserted AFTER INSERT ON agents BEGIN
-    INSERT OR IGNORE INTO agent_tree(ancestor, descendant)
+    INSERT INTO agent_tree(ancestor, descendant)
     SELECT up.ancestor, down.descendant
     FROM (SELECT new.id AS ancestor
           UNION SELECT t.ancestor FROM agent_tree t WHERE t.descendant = new.parent) AS up,
          (SELECT new.id AS descendant
           UNION SELECT t.descendant FROM agents c JOIN agent_tree t ON t.ancestor = c.id
-          WHERE c.parent = new.id) AS down;
+          WHERE c.parent = new.id) AS down
+    WHERE NOT EXISTS (SELECT 1 FROM agent_tree e
+                      WHERE e.ancestor = up.ancestor AND e.descendant = down.descendant);
 END;
 CREATE TRIGGER IF NOT EXISTS agent_tree_moved AFTER UPDATE OF parent ON agents
 WHEN old.parent IS NOT new.parent BEGIN
     DELETE FROM agent_tree
     WHERE descendant IN (SELECT descendant FROM agent_tree WHERE ancestor = new.id)
       AND ancestor NOT IN (SELECT descendant FROM agent_tree WHERE ancestor = new.id);
-    INSERT OR IGNORE INTO agent_tree(ancestor, descendant)
+    INSERT INTO agent_tree(ancestor, descendant)
     SELECT up.ancestor, down.descendant
     FROM (SELECT t.ancestor FROM agent_tree t WHERE t.descendant = new.parent) AS up,
-         (SELECT t.descendant FROM agent_tree t WHERE t.ancestor = new.id) AS down;
+         (SELECT t.descendant FROM agent_tree t WHERE t.ancestor = new.id) AS down
+    WHERE NOT EXISTS (SELECT 1 FROM agent_tree e
+                      WHERE e.ancestor = up.ancestor AND e.descendant = down.descendant);
 END;
 CREATE TRIGGER IF NOT EXISTS agent_tree_deleted AFTER DELETE ON agents BEGIN
     DELETE FROM agent_tree

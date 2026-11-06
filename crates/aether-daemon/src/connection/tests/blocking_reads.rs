@@ -81,9 +81,13 @@ fn status_answers_stale_while_its_read_cannot_run() {
         assert_eq!(stale.read_at, None, "nothing was read yet");
         assert_eq!(status.agents_live, 0);
         assert!(
-            status.problems[0].contains("unknown"),
+            status.problems.iter().any(|p| p.contains("unknown")),
             "{:?}",
             status.problems
+        );
+        assert!(
+            !status.unavailable.is_empty(),
+            "before any read, its sections are named unavailable"
         );
         assert!(
             status.max_concurrent_turns.is_some_and(|turns| turns > 0),

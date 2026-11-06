@@ -10,7 +10,7 @@ use aether_core::model::Usage;
 use crate::sqlite::SqliteStore;
 use crate::sqlite::usage_totals::read_totals;
 use crate::sqlite::usage_totals::tests::{agent, shaped};
-use crate::{Commit, Mutation, Store, TreeUsage, tree_usages_of};
+use crate::{AgentFilter, Commit, Mutation, Store, TreeUsage, tree_usages_of};
 
 /// Agents over two runs, each under an earlier one or a root, written
 /// children first so the closure must link a subtree when its parent arrives.
@@ -199,6 +199,32 @@ fn assert_sums_hold(
         expected += agent.stats.usage;
     }
     assert_eq!(roots_total, expected, "each agent below a shown one, once");
+}
+
+/// A parent cycle, which only a corrupt store holds, is still written: an
+/// agent upsert never fails on a closure pair the cycle repeats.
+#[test]
+fn a_parent_cycle_is_written_not_refused() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let run = RunId::new();
+    let a = agent(run, shaped(1));
+    let mut b = agent(run, shaped(2));
+    b.parent = Some(a.id);
+    let (mut c, mut d) = (agent(run, shaped(3)), agent(run, shaped(4)));
+    (c.parent, d.parent) = (Some(d.id), Some(c.id));
+    let mut a_under_b = a.clone();
+    a_under_b.parent = Some(b.id);
+    for written in [&a, &b, &a_under_b, &c, &d] {
+        let commit = Commit::new().mutate(Mutation::UpsertAgent(written.clone()));
+        store.commit(commit).expect("a cycle is written");
+    }
+    let stored = store.agents(&AgentFilter::default()).unwrap();
+    let parents: BTreeMap<AgentId, Option<AgentId>> = stored
+        .iter()
+        .map(|agent| (agent.id, agent.parent))
+        .collect();
+    let written = [&a_under_b, &b, &c, &d].map(|agent| (agent.id, agent.parent));
+    assert_eq!(parents, BTreeMap::from(written), "each kept as written");
 }
 
 /// A page's copy of a shown child still names the parent it left: its
