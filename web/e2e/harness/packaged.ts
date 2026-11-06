@@ -54,12 +54,16 @@ export async function startSway(root: string): Promise<Sway> {
   await mkdir(runtime, { recursive: true, mode: 0o700 });
   const env = { PATH: SYSTEM_PATH, HOME: root, XDG_RUNTIME_DIR: runtime, WLR_BACKENDS: "headless", WLR_LIBINPUT_NO_DEVICES: "1", WLR_RENDERER: "pixman" };
   const sway = spawnLogged("/usr/bin/sway", ["-c", "/dev/null"], { env, cwd: root, log: path.join(root, "sway.log") });
-  const stop = () => stopGroup(sway);
+  let keyboard: Spawned | undefined;
+  const stop = async () => { if (keyboard !== undefined) await stopGroup(keyboard); await stopGroup(sway); };
   try {
     const display = path.join(runtime, "wayland-1");
     await until(async () => sway.child.exitCode === null && await access(display).then(() => true, () => false), Boolean, "sway's Wayland socket", START_MS);
     const ipc = await until(() => swayIpc(runtime), (found) => found !== undefined, "sway's IPC socket", START_MS);
     assert.ok(ipc !== undefined, "sway opened its IPC socket");
+    // A headless seat has no keyboard until a virtual one exists; this one stays, so every
+    // client sees a keyboard from its first frame and the key presses later reach its dialogs.
+    keyboard = spawnLogged("/usr/bin/wtype", ["-s", String(KEYBOARD_MS)], { env: { ...env, WAYLAND_DISPLAY: "wayland-1" }, cwd: root, log: path.join(root, "keyboard.log") });
     return { display, runtime, ipc, stop };
   } catch (error) {
     await stop();
@@ -225,6 +229,8 @@ async function closesWithin(sway: Sway, title: string, timeoutMs: number): Promi
  */
 export const DIALOG_PRESSES: ReadonlyArray<readonly string[]> = [["Right", "Return"], ["Tab", "Tab", "Return"], ["Tab", "Return"]];
 const KEY_GAP_MS = "150";
+/** How long the seat's standing virtual keyboard sleeps: longer than any journey. */
+const KEYBOARD_MS = 6 * 60 * 60 * 1000;
 
 async function focusDialog(sway: Sway, title: string, timeoutMs: number): Promise<void> {
   const env = swayEnv(sway);

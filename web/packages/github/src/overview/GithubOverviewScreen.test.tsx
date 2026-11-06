@@ -35,19 +35,20 @@ describe("GitHub overview", () => {
   it("registers a navigable GitHub overview route", () => {
     expect(routes[0]).toMatchObject({ path: "#/github", owner: "D4", nav: { label: "Overview", section: "github" } });
   });
-  it("guides an operator when watching is off", async () => {
-    h = await harness({ world: world(), before: (faux) => { faux.watcher.enabled = false; } });
+  it("guides an operator to import an issue when watching is off and no item links to GitHub", async () => {
+    h = await harness({ world: { ...world(), items: new Map(), links: [] }, before: (faux) => { faux.watcher.enabled = false; } });
     const root = await h.mount(<GithubOverviewScreen />);
-    await h.until(() => root.textContent?.includes("GitHub watcher is off") === true, "watcher guidance");
-    expect(root.querySelector('a[href="#/settings"]')?.textContent).toBe("Open Settings");
+    await h.until(() => root.textContent?.includes("No GitHub repository yet") === true, "import guidance");
+    expect(root.querySelector('a[href="#/archon/queue"]')?.textContent).toBe("Open the queue");
+    expect(root.textContent).toContain("Off");
     expect(h.faux.commands("list_github_objects")).toHaveLength(0);
   });
   it("offers refresh with the actual poll interval for an empty cache", async () => {
     const empty = world(); empty.objects.length = 0;
     h = await harness({ world: empty });
     const root = await h.mount(<GithubOverviewScreen />);
-    await h.until(() => root.textContent?.includes("Nothing fetched yet") === true, "empty cache");
-    expect(root.textContent).toContain("polls every 120 s");
+    await h.until(() => root.textContent?.includes("polls every 120 s") === true, "empty cache with the watcher's interval");
+    expect(root.textContent).toContain("Nothing fetched yet");
     expect(h.faux.commands("list_github_objects")[0]).toMatchObject({ repo: "example-org/site", limit: 500 });
   });
   it("shows cached objects, relationships, chart descriptions and filters without changing reads", async () => {
@@ -68,21 +69,30 @@ describe("GitHub overview", () => {
     expect(root.querySelector(".gh-object-table tbody")?.textContent).toContain("Ship navigation");
     expect(h.faux.commands("issue_items")[0]).toMatchObject({ ref: { host: "github.com", repo: "example-org/site", kind: "issue", number: 1 } });
   });
-  it("shows failed watcher reads with a retry and Settings next step", async () => {
-    h = await harness({ world: world(), before: (faux) => faux.failing.add("github_watcher") });
-    const root = await h.mount(<GithubOverviewScreen />);
-    await h.until(() => root.textContent?.includes("Watcher unreachable") === true, "watcher error");
-    expect(root.textContent).toContain("github_watcher failed");
-    expect(root.querySelector('a[href="#/settings"]')).not.toBeNull();
-  });
   it("reads the repositories the items link to when archond keeps the watcher for the CLI", async () => {
     h = await harness({ world: world(), before: (faux) => faux.refusing.set("github_watcher", "github_watcher is not available from the web app; use the archon CLI") });
     const root = await h.mount(<GithubOverviewScreen />);
+    await h.until(() => root.textContent?.includes("The watcher reports to the archon CLI") === true, "the CLI note");
     await h.until(() => root.querySelector('[data-testid="gh-graph"]') !== null, "the cached objects of example-org/site");
-    expect(root.textContent).toContain("The watcher reports to the archon CLI");
     expect(root.textContent).not.toContain("Watcher unreachable");
     expect(root.textContent).not.toContain("Reconnect the GitHub watcher");
     expect(root.textContent).toContain("Improve navigation");
+    expect(h.faux.commands("list_github_objects").map((command) => (command as { repo?: string }).repo)).toEqual(["example-org/site"]);
+  });
+  it("still reads the items' repositories when the watcher read fails", async () => {
+    h = await harness({ world: world(), before: (faux) => faux.failing.add("github_watcher") });
+    const root = await h.mount(<GithubOverviewScreen />);
+    await h.until(() => root.textContent?.includes("Watcher unavailable") === true, "the watcher's error");
+    await h.until(() => root.querySelector('[data-testid="gh-graph"]') !== null, "the cached objects of example-org/site");
+    expect(root.textContent).toContain("github_watcher failed");
+    expect(root.textContent).toContain("Improve navigation");
+    expect(root.textContent).not.toContain("Reconnect the GitHub watcher");
+  });
+  it("reads the items' repositories beside an off watcher's none", async () => {
+    h = await harness({ world: world(), before: (faux) => { faux.watcher.enabled = false; } });
+    const root = await h.mount(<GithubOverviewScreen />);
+    await h.until(() => root.textContent?.includes("The watcher is off; these are the cached issues") === true, "the off note");
+    await h.until(() => root.querySelector('[data-testid="gh-graph"]') !== null, "the cached objects of example-org/site");
     expect(h.faux.commands("list_github_objects").map((command) => (command as { repo?: string }).repo)).toEqual(["example-org/site"]);
   });
   it("guides an operator to import an issue when no item links to GitHub and the watcher is CLI-only", async () => {

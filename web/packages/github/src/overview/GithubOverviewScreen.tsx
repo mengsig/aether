@@ -127,7 +127,11 @@ function WatcherTiles({ view, now }: { readonly view: archon.GithubWatcherView; 
       <span>{repo.dispatched} dispatched · {repo.ignored} ignored · {relativeTime(repo.last_poll_at, now)}</span>{repo.last_error ? <p role="alert">{repo.last_error}</p> : null}</li>)}</ul></>;
 }
 
-/** Where the overview's repositories come from: the watcher's view, or the items once archond keeps the watcher for its CLI. */
+/**
+ * Where the overview reads from. The repositories are the watcher's, when it answers and is on,
+ * and always the ones the items link to: archond keeps the watcher view for its CLI, or cannot
+ * run one beside the operator's Aether, and the cache still serves the items' repositories.
+ */
 interface Source {
   readonly kind: "loading" | "watcher" | "items" | "failed";
   readonly view: archon.GithubWatcherView | undefined;
@@ -139,21 +143,22 @@ function source(watcher: ReadEntry | undefined, fromItems: readonly string[]): S
   const view = (watcher?.value ?? undefined) as archon.GithubWatcherView | undefined;
   const error = watcher?.error ?? null;
   if (error !== null && keptForCli(error)) return { kind: "items", view: undefined, repositories: fromItems, error: null };
-  if (error !== null) return { kind: "failed", view, repositories: [], error };
-  if (view === undefined) return { kind: "loading", view, repositories: [], error: null };
+  if (error !== null) return { kind: "failed", view, repositories: fromItems, error };
+  if (view === undefined) return { kind: "loading", view, repositories: fromItems, error: null };
   invariant(Array.isArray(view.repositories), "a watcher view lists its repositories");
-  return { kind: "watcher", view, repositories: view.enabled ? view.repositories.map((repo) => repo.repository) : [], error: null };
+  const watched = view.enabled ? view.repositories.map((repo) => repo.repository) : [];
+  return { kind: "watcher", view, repositories: [...new Set([...watched, ...fromItems])].sort(), error: null };
 }
 
 function OverviewBody({ info, from, now, refresh, reload }: { readonly info: ConnectionInfo; readonly from: Source; readonly now: number; readonly refresh: string; readonly reload: () => void }) {
   if (from.repositories.length > 0) {
-    return <CachedObjects info={info} repositories={from.repositories} refresh={refresh} now={now} onRefresh={reload} interval={from.view?.poll_interval_secs ?? null} />;
-  }
-  if (from.kind === "items") {
-    return <EmptyState title="No GitHub repository yet" action={<a className="ui-link" href="#/archon/queue">Open the queue</a>}>Import an issue or link an item to a pull request; its repository's cached issues and pull requests then show here.</EmptyState>;
+    return <CachedObjects info={info} repositories={from.repositories} refresh={refresh} now={now} onRefresh={reload} interval={from.view?.enabled ? from.view.poll_interval_secs : null} />;
   }
   if (from.kind === "loading") return null;
-  return <EmptyState title={from.kind === "failed" ? "Reconnect the GitHub watcher" : "GitHub watcher is off"} action={<a className="ui-link" href="#/settings">Open Settings</a>}>The watcher is configured by the operator. Check the Archon connection in Settings, then refresh.</EmptyState>;
+  const watching = from.kind === "watcher" && from.view?.enabled === true;
+  return <EmptyState title={watching ? "Nothing watched yet" : "No GitHub repository yet"} action={<a className="ui-link" href="#/archon/queue">Open the queue</a>}>
+    Import an issue or link an item to a pull request; its repository's cached issues and pull requests then show here.{watching ? " The watcher lists what the archon CLI tells it to watch." : ""}
+  </EmptyState>;
 }
 
 function Overview({ info }: { readonly info: ConnectionInfo }) {
@@ -167,10 +172,11 @@ function Overview({ info }: { readonly info: ConnectionInfo }) {
   const now = useNow(STALE_CHECK_MS);
   const reload = () => setNonce((value) => value + 1);
   return <main className="gh-overview" aria-label="GitHub overview"><header><div><p className="gh-eyebrow">GitHub</p><h1>Overview</h1></div><Button onClick={reload}>Refresh</Button></header>
-    {from.kind === "failed" ? <ErrorState title="Watcher unreachable" message={from.error ?? ""} onRetry={reload} /> : null}
+    {from.kind === "failed" ? <ErrorState title="Watcher unavailable" message={from.error ?? ""} onRetry={reload} /> : null}
     {from.kind === "loading" ? <Skeleton height="5rem" /> : null}
     {from.view ? <WatcherTiles view={from.view} now={now} /> : null}
     {from.kind === "items" ? <p className="gh-overview-note" role="note">The watcher reports to the archon CLI; this overview shows the cached issues and pull requests of the repositories your items link to.</p> : null}
+    {from.kind === "watcher" && from.view?.enabled !== true && from.repositories.length > 0 ? <p className="gh-overview-note" role="note">The watcher is off; these are the cached issues and pull requests of the repositories your items link to.</p> : null}
     <OverviewBody info={info} from={from} now={now} refresh={refresh} reload={reload} />
   </main>;
 }

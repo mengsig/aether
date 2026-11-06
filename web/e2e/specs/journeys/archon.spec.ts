@@ -110,8 +110,9 @@ test("archon journey: the GitHub overview reads the repository an imported issue
   assert.match(String((imported.data as { id?: unknown }).id), /^qi_/, "archond imports the issue as an item");
   await open(window, "Overview", "#/github");
   const overview = window.getByRole("main", { name: "GitHub overview" });
-  await expect(overview.getByText("The watcher reports to the archon CLI"), "the desktop reads the cache on its own").toBeVisible();
+  // The test archond runs beside the operator's Aether, so it has no watcher; the items' repositories still read.
   await expect(overview.getByTestId("gh-graph"), "the imported issue's repository shows its cached objects").toBeVisible({ timeout: GH_SYNC_MS });
+  await expect(overview.getByRole("button", { name: "Open the queue" }), "the overview is no dead end").toHaveCount(0);
   await expect(overview.getByText(ISSUE.title).first(), "the issue is listed").toBeVisible();
   await shootWindow(window, "github", "overview");
 });
