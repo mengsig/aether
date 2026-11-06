@@ -46,7 +46,7 @@ The first start of 1.3.0 on a schema 28 store migrates it to 33 in one step:
 | V30 | Memory tiers and states, support, verification and refs; every existing memory becomes active, unchanged |
 | V31 | `memory_stale` and `memory_holdouts` |
 | V32 | No table change: only the version stamp moves |
-| V33 | `agent_usage`, each agent's usage kept by triggers and filled from the existing agents, so `status` sums one narrow table instead of every agent |
+| V33 | `agent_usage`, each agent's usage, and `usage_totals`, the fleet's and each run's, kept by triggers and filled from the existing agents, so `status` reads one row instead of every agent; `agents.archived` and its indexes, so `get_tree` filters before it reads an agent |
 
 Before it migrates, the daemon writes one verified backup,
 `migration-backups/schema-28-before-33-<id>.sqlite.zst`, beside `aether.db`
@@ -54,6 +54,11 @@ Before it migrates, the daemon writes one verified backup,
 migrates, if the backup cannot be written. The migration is one way: 1.2.11
 refuses to start on a schema 33 store (`store schema version 33 is newer than
 supported 28`).
+
+From schema 33, writing an agent into `aether.db` with another program, such
+as the `sqlite3` shell, fails: the triggers that keep the usage totals call a
+function only Aether registers, so no agent is written uncounted. Reading the
+store that way is unaffected.
 
 To go back to 1.2.11: stop the daemon, restore that backup as
 [Migration backups](migration-backups.md#restoring-a-backup) describes, and

@@ -278,7 +278,8 @@ client too: a client that lists it in `Hello.features` receives the
 `history_expired` error code (see [expired history](#expired-history)).
 
 `agents_paging` means the daemon serves `list_agents_page` and applies
-`get_tree`'s `root` and `role_prefix`; `transcript_paging` means it serves
+`get_tree`'s `root` and `role_prefix`; `tree_pages` means it applies
+`get_tree`'s `after` and `limit`; `transcript_paging` means it serves
 `get_transcript_page`; `usage_breakdown` means it serves `usage_breakdown`
 (see [read models](#read-models)). An older daemon refuses the commands as
 unknown and ignores the tree filters, answering with the whole tree; the
@@ -311,10 +312,16 @@ during it at most once. A stored agent that no longer decodes is quarantined
 and left out, so a page can hold fewer than `limit` agents while `next_after`
 is present: keep paging until it is absent.
 
-`get_tree {run?, include_archived, root?, role_prefix?}`: `root` keeps that
-agent and its descendants, `role_prefix` the agents whose role starts with it.
-An agent whose parent is filtered out is a root of the reply. Spend still rolls
-up over every agent: a filtered-out child's lands in its parent's
+`get_tree {run?, include_archived, root?, role_prefix?, after?, limit?}`:
+`root` keeps that agent and its descendants, `role_prefix` the agents whose
+role starts with it. The filters are applied before any agent is read, and the
+reply is one page: on the first, every live agent in scope and the `root`; on
+each, the newest finished agents by id, up to `limit` (1 to 500, default 500),
+older than `after` when it is given. A page also holds the in-scope parents of
+what it shows, so a later page can repeat one. `next_after` is present when
+older finished agents remain; send it as the next `after`. An agent whose
+parent is filtered out is a root of the reply. Spend still rolls up over every
+agent below a shown one: a child the page does not show lands in its parent's
 `hidden_usage`. An unknown `root` is `not_found`.
 
 `get_transcript_page {agent, after?, before?, limit?}` answers
@@ -365,23 +372,31 @@ and is refused when any of that history expired.
 `status` reads its sections behind a lock or the store (`problems`,
 `providers`, `live_agents`, `runs`, `usage_total`, `tasks_active`,
 `pending_approvals`, `low_disk`, `engines`, `resource_leases`, `mcp`,
-`writes`) side by side and waits 500 ms for them. A
-section not read by then is listed in `unavailable`, each entry `{section,
-reason}` with reason `timed out`; its fields hold their defaults, which are
-not figures, and `problems` leads with a line naming the sections, for a
-client that does not know `unavailable`. `live_agents` covers every `agents_*`
-count. The field is absent when every section was read. A section still being
-read for an earlier `status` is not read again; it stays unavailable until
-that read ends. `stale` is separate: it marks a whole answer replayed from an
-earlier read.
+`writes`) side by side and gives each 750 ms; the whole reply comes back
+within a second. A section not read by then is listed in `unavailable`, each
+entry `{section, reason}` with reason `timed out`; its fields hold their
+defaults, which are not figures, and `problems` leads with a line naming the
+sections, for a client that does not know `unavailable`. `live_agents` covers
+every `agents_*` count. The field is absent when every section was read. A
+section still being read for an earlier `status` is not read again; it stays
+unavailable until that read ends. `stale` is separate: it marks a whole answer
+replayed from an earlier read.
+
+`usage_total` and each run's `usage` and `agents` are read from totals the
+store keeps as agents are written. A run's `rate_usd_per_hour` comes from the
+usage receipts of the last 15 minutes, read newest first and at most eight
+pages of them; when more remain, the rate is read from those alone, is a
+floor, and the run carries `rate_approximate: true`.
 
 `get_tree` is shared the same way, per request shape (run, archived, role
-prefix, root): a request waits 800 ms for a read that started after it arrived,
-and past that is answered with the last tree read for the same shape, with
-`stale` `{read_at, waited_ms}` set. A stale tree is no newer than any tree the
-client already holds; with no `read_at` it is empty because nothing was read,
-not because there are no agents. Reads for 64 shapes are kept; while all 64
-still read, a new shape starts none and is answered stale after the same wait.
+prefix, root, page): a request waits 750 ms for a read that started after it
+arrived, and past that is answered with the last tree read for the same shape,
+with `stale` `{read_at, waited_ms}` set. A stale tree is no newer than any tree
+the client already holds; with no `read_at` it is empty because nothing was
+read, not because there are no agents. Reads for 64 shapes are kept; while all
+64 still read, a new shape starts none and is answered stale after the same
+wait. `get_github_watcher` shares one read the same way and answers
+`unavailable` past 750 ms.
 
 ## Delta order
 
