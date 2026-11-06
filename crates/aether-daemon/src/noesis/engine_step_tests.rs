@@ -153,6 +153,32 @@ async fn a_malformed_reply_fails_closed_with_its_usage_and_never_quotes_itself()
 }
 
 #[tokio::test]
+async fn tool_like_prose_fails_closed_and_streams_nothing() {
+    let secret = "SEALED-KEY-88";
+    let raw = format!("noesis_ask(answer_key=\"{secret}\")");
+    let inner = Arc::new(ScriptedClient::new());
+    inner.push(ScriptedClient::text(&raw));
+    let client = EngineStepClient::new(inner.clone());
+    let stream = client
+        .stream(request(), CancellationToken::new())
+        .await
+        .expect("a stream");
+    let mut deltas = String::new();
+    let failure = collect_partial(stream, |event| {
+        if let StreamEvent::TextDelta { text, .. } = event {
+            deltas.push_str(text);
+        }
+    })
+    .await
+    .expect_err("refused");
+    assert!(is_malformed(&failure.error), "{:?}", failure.error);
+    assert!(!failure.error.message.contains(secret));
+    assert!(deltas.is_empty() && failure.partial.text().is_empty());
+    assert!(failure.partial.usage.total_tokens() > 0, "usage is kept");
+    assert!(!retry_note().text().contains(secret));
+}
+
+#[tokio::test]
 async fn a_refused_first_call_is_not_sent_and_says_why() {
     let inner = Arc::new(ScriptedClient::new());
     inner.push(ScriptedClient::error(
@@ -171,10 +197,11 @@ async fn a_refused_first_call_is_not_sent_and_says_why() {
 }
 
 #[test]
-fn plain_prose_is_a_text_reply_and_empty_objects_are_refused() {
-    let plain = parse_reply("Well done, that is right.").expect("plain text");
-    assert_eq!(plain.text.as_deref(), Some("Well done, that is right."));
-    assert!(plain.calls.is_empty());
+fn plain_prose_and_empty_objects_are_refused() {
+    assert!(
+        parse_reply("Well done, that is right.").is_err(),
+        "bare prose"
+    );
     assert!(parse_reply("   ").is_err());
     assert!(parse_reply("{}").is_err(), "neither text nor a call");
     assert!(parse_reply(r#"{"tool_calls": [{"name": " "}]}"#).is_err());

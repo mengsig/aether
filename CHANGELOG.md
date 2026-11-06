@@ -131,7 +131,8 @@ before updating.
   Claude Code's shell cap is pinned at 10 minutes.
 - **Noesis on subscription engines.** Teaching and extraction run on
   `claude-code` and `codex` with `billing.allow_api = false`, with the same
-  tools, sealing and budgets. Engine models were never offered as ready, and
+  tools, sealing and budgets; a step on a `default` engine model is priced
+  from the model its session reports. Engine models were never offered as ready, and
   API models were ready without credentials. `noesis_status` now reports
   each model's readiness and billing and the resolved teaching model, and
   each posed question carries its step (`measure`, `check`, …).

@@ -216,19 +216,16 @@ struct Reply {
     calls: Vec<(String, String, Value)>,
 }
 
-/// The reply's text and calls. Prose with no `{` is plain text that ends the
-/// turn; anything else must hold one valid reply object, which is taken.
-/// Refusal reasons never quote the reply, which may hold a sealed value.
+/// The reply's text and calls, from the one reply object it must hold; text
+/// outside that object is dropped. Refusals never quote the reply: it may
+/// hold a sealed value, so bare prose is refused rather than shown.
 fn parse_reply(raw: &str) -> Result<Reply, String> {
     let raw = unfenced(raw.trim());
     if raw.is_empty() {
         return Err("the reply was empty".into());
     }
     let Some(start) = raw.find('{') else {
-        return Ok(Reply {
-            text: Some(raw.into()),
-            calls: Vec::new(),
-        });
+        return Err("the reply holds no JSON object".into());
     };
     let object = match raw.rfind('}') {
         Some(end) if end > start => &raw[start..=end],

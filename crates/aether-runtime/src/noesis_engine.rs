@@ -67,6 +67,7 @@ impl Runtime {
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| std::path::PathBuf::from("."));
         debug_assert!(!resolved.model.id.is_empty(), "a resolved model has an id");
+        let session_pricing = session_pricing(self, &resolved);
         Ok(Arc::new(crate::compaction_client::CompactionClient {
             engine,
             context: aether_engine::EngineLaunchContext {
@@ -78,6 +79,7 @@ impl Runtime {
             pricing: turn_engine::TurnPricing::of(self, &resolved),
             purpose: "Noesis step",
             timeout: NOESIS_STEP_TIMEOUT,
+            session_pricing: Some(session_pricing),
             turn: aether_engine::EngineTurn {
                 redactor: self.tool_runtime.redactor().clone(),
                 prompt: String::new(),
@@ -106,6 +108,19 @@ impl Runtime {
             },
         }))
     }
+}
+
+/// Prices a step from the model its engine session reports, as an ordinary
+/// turn is, so a `default` model's steps are estimated rather than free.
+fn session_pricing(
+    runtime: &Arc<Runtime>,
+    configured: &aether_model::ResolvedModel,
+) -> crate::compaction_client::SessionPricing {
+    let runtime = Arc::downgrade(runtime);
+    let configured = configured.clone();
+    Arc::new(move |reported: &str| {
+        turn_engine::TurnPricing::of_session(&runtime.upgrade()?, &configured, reported)
+    })
 }
 
 /// The live deltas of one Noesis step, so a client streams the lesson as it

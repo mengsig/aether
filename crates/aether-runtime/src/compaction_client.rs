@@ -22,7 +22,13 @@ pub(crate) struct CompactionClient {
     /// What the launch is for, as its errors name it: `Checkpoint`.
     pub purpose: &'static str,
     pub timeout: Duration,
+    /// Prices the model the engine session reports, for a configured model
+    /// with no price of its own (`codex/default`). `None` keeps `pricing`.
+    pub session_pricing: Option<SessionPricing>,
 }
+
+/// The pricing of an engine-reported model id, or `None` to keep the launch's.
+pub(crate) type SessionPricing = Arc<dyn Fn(&str) -> Option<TurnPricing> + Send + Sync>;
 
 /// How long a checkpoint launch may run.
 pub(crate) const CHECKPOINT_TIMEOUT: Duration = Duration::from_secs(180);
@@ -42,6 +48,22 @@ impl Accounting {
             pricing,
             ..Self::default()
         }
+    }
+
+    /// Prices the launch from the model its session reported, as an
+    /// ordinary turn does; only before any usage, so one rate covers it all.
+    pub(crate) fn repriced(&mut self, pricing: Option<TurnPricing>) {
+        debug_assert!(!self.closing_received, "a closed launch is not repriced");
+        let Some(pricing) = pricing else {
+            return;
+        };
+        if self.usage.is_some() {
+            tracing::warn!(
+                "engine session reported its model after usage; the launch keeps its pricing"
+            );
+            return;
+        }
+        self.pricing = pricing;
     }
 
     pub(crate) fn reported(&mut self, mut reported: Usage) {
@@ -146,7 +168,10 @@ impl ModelClient for CompactionClient {
                 self.context.clone(),
                 child.clone(),
                 &mut accounting,
-                purpose,
+                Launch {
+                    purpose,
+                    session_pricing: self.session_pricing.as_ref(),
+                },
             ),
         );
         let result = tokio::select! {
@@ -182,14 +207,22 @@ fn checkpoint_turn(mut turn: EngineTurn, request: &ModelRequest) -> EngineTurn {
     turn
 }
 
+/// What one launch is for and how its session's model is priced.
+#[derive(Clone, Copy)]
+struct Launch<'a> {
+    purpose: &'a str,
+    session_pricing: Option<&'a SessionPricing>,
+}
+
 async fn collect_checkpoint(
     engine: &dyn Engine,
     turn: EngineTurn,
     context: aether_engine::EngineLaunchContext,
     cancel: CancellationToken,
     accounting: &mut Accounting,
-    purpose: &str,
+    launch: Launch<'_>,
 ) -> Result<String, ModelError> {
+    let purpose = launch.purpose;
     debug_assert!(turn.session.is_none());
     debug_assert!(accounting.usage.is_none() && !accounting.closing_received);
     let mut run = engine
@@ -211,6 +244,10 @@ async fn collect_checkpoint(
                     accounting.reported(usage);
                 }
             }
+            EngineEvent::Session {
+                model: Some(reported),
+                ..
+            } => accounting.repriced(launch.session_pricing.and_then(|price| price(&reported))),
             EngineEvent::UsageDelta { usage } => accounting.reported(usage),
             EngineEvent::UsageRequest { request } => accounting.reported(request.delta()),
             EngineEvent::Permission { request_id, .. }
@@ -432,6 +469,35 @@ mod tests {
         }
     }
 
+    fn fixture_turn() -> EngineTurn {
+        EngineTurn {
+            redactor: Default::default(),
+            prompt: String::new(),
+            images: Vec::new(),
+            system_prompt: String::new(),
+            session: None,
+            session_usage: aether_core::model::Usage::default(),
+            session_model_usage: None,
+            new_session_id: String::new(),
+            session_recorder: None,
+            model: None,
+            effort: None,
+            cwd: "/unused-fixture".into(),
+            extra_dirs: vec![],
+            summary_only: true,
+            compact_session: false,
+            auto_compact_tokens: None,
+            lean_host_context: false,
+            network_access: true,
+            bypass_permissions: false,
+            hidden_env: vec![],
+            tool_hidden_env: vec![],
+            temp_dir: None,
+            build_env: Vec::new(),
+            mcp: None,
+        }
+    }
+
     async fn failed_checkpoint(ending: Ending) -> aether_model::PartialFailure {
         let cancel = CancellationToken::new();
         let client = CompactionClient {
@@ -444,36 +510,12 @@ mod tests {
             pricing: TurnPricing::default(),
             purpose: "Checkpoint",
             timeout: CHECKPOINT_TIMEOUT,
+            session_pricing: None,
             engine: Arc::new(CheckpointEngine {
                 ending,
                 caller: cancel.clone(),
             }),
-            turn: EngineTurn {
-                redactor: Default::default(),
-                prompt: String::new(),
-                images: Vec::new(),
-                system_prompt: String::new(),
-                session: None,
-                session_usage: aether_core::model::Usage::default(),
-                session_model_usage: None,
-                new_session_id: String::new(),
-                session_recorder: None,
-                model: None,
-                effort: None,
-                cwd: "/unused-fixture".into(),
-                extra_dirs: vec![],
-                summary_only: true,
-                compact_session: false,
-                auto_compact_tokens: None,
-                lean_host_context: false,
-                network_access: true,
-                bypass_permissions: false,
-                hidden_env: vec![],
-                tool_hidden_env: vec![],
-                temp_dir: None,
-                build_env: Vec::new(),
-                mcp: None,
-            },
+            turn: fixture_turn(),
         };
         let request = ModelRequest::new(
             ModelRef::new("claude-code", "sonnet"),
@@ -586,5 +628,134 @@ mod tests {
         assert!(usage.cost_complete);
         assert_eq!(usage.cost_gap, None);
         runtime.shutdown().await;
+    }
+
+    /// Says which model answered, spends, then ends or waits to be cancelled.
+    struct SessionEngine {
+        caller: Option<CancellationToken>,
+    }
+
+    #[async_trait::async_trait]
+    impl Engine for SessionEngine {
+        fn kind(&self) -> EngineKind {
+            EngineKind::CLAUDE_CODE
+        }
+        fn adapter(&self) -> String {
+            "session-fixture".into()
+        }
+        async fn run(
+            &self,
+            _turn: EngineTurn,
+            cancel: CancellationToken,
+        ) -> Result<EngineRun, EngineError> {
+            let (tx, events) = mpsc::channel(8);
+            let caller = self.caller.clone();
+            tokio::spawn(async move {
+                let session = EngineEvent::Session {
+                    id: "s".into(),
+                    model: Some("claude-haiku-5-5".into()),
+                    tools: vec![],
+                };
+                let spent = EngineEvent::UsageDelta {
+                    usage: Usage {
+                        input_tokens: 2_000_000,
+                        output_tokens: 1_000_000,
+                        ..Default::default()
+                    },
+                };
+                tx.send(session).await.expect("session");
+                tx.send(spent).await.expect("usage");
+                let Some(caller) = caller else {
+                    let done = EngineOutcome {
+                        closing_accounting: true,
+                        text: Some("{\"text\": \"ok\"}".into()),
+                        ..Default::default()
+                    };
+                    tx.send(EngineEvent::Done(done)).await.expect("done");
+                    return;
+                };
+                caller.cancel();
+                cancel.cancelled().await;
+            });
+            Ok(EngineRun {
+                events,
+                input: None,
+                decisions: None,
+                stop: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_default_model_is_priced_from_the_session_it_reports() {
+        let (runtime, _dir) = crate::test_runtime(|_| {}).await;
+        let configured = runtime
+            .models
+            .resolve(&ModelRef::new("claude-code", "default"))
+            .unwrap();
+        let unpriced = TurnPricing::of(&runtime, &configured);
+        let mut plain = Usage {
+            input_tokens: 1,
+            ..Default::default()
+        };
+        unpriced.apply(&mut plain);
+        assert!(plain.estimated_cost_usd.is_none() && plain.cost_usd == 0.0);
+        for cancelled in [false, true] {
+            let cancel = CancellationToken::new();
+            let (pricer, configured) = (runtime.clone(), configured.clone());
+            let pricing: SessionPricing = Arc::new(move |reported: &str| {
+                TurnPricing::of_session(&pricer, &configured, reported)
+            });
+            let client = CompactionClient {
+                engine: Arc::new(SessionEngine {
+                    caller: cancelled.then(|| cancel.clone()),
+                }),
+                context: aether_engine::EngineLaunchContext {
+                    run_id: aether_core::id::RunId::new(),
+                    agent_id: aether_core::id::AgentId::new(),
+                    task_id: None,
+                    spawns: Default::default(),
+                },
+                pricing: unpriced,
+                purpose: "Noesis step",
+                timeout: CHECKPOINT_TIMEOUT,
+                session_pricing: Some(pricing),
+                turn: fixture_turn(),
+            };
+            let request = ModelRequest::new(
+                ModelRef::new("claude-code", "default"),
+                vec![Message::user_text("teach")],
+            );
+            let stream = client.stream(request, cancel).await.expect("stream");
+            let usage = match aether_model::collect_partial(stream, |_| {}).await {
+                Ok(response) => response.usage,
+                Err(failure) => failure.partial.usage,
+            };
+            assert_eq!(usage.input_tokens, 2_000_000, "cancelled={cancelled}");
+            let spent = usage.estimated_cost_usd.unwrap_or(0.0) + usage.cost_usd;
+            assert!(spent > 0.0, "cancelled={cancelled}: {usage:?}");
+        }
+        runtime.shutdown().await;
+    }
+
+    #[test]
+    fn a_session_model_reported_after_usage_keeps_the_launch_pricing() {
+        let mut accounting = Accounting::default();
+        accounting.reported(Usage {
+            input_tokens: 5,
+            ..Default::default()
+        });
+        let estimate = TurnPricing {
+            billed: None,
+            estimate: Some(aether_core::model::ModelCost {
+                input_per_mtok: 1.0,
+                ..Default::default()
+            }),
+        };
+        accounting.repriced(Some(estimate));
+        assert!(accounting.pricing.estimate.is_none());
+        let mut fresh = Accounting::default();
+        fresh.repriced(Some(estimate));
+        assert!(fresh.pricing.estimate.is_some());
     }
 }
