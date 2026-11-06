@@ -60,8 +60,10 @@ fn tree(agent: Agent) -> AgentTree {
         },
     );
     AgentTree {
+        stale: None,
         roots: vec![id],
         nodes,
+        next_after: None,
     }
 }
 
@@ -333,6 +335,7 @@ fn daemon_error_hints_preserve_the_selected_socket() {
                 ClientError::TimedOut {
                     command: "hello".into(),
                     timeout: std::time::Duration::from_secs(1),
+                    queries: None,
                     host: None,
                 },
                 "stop",
@@ -341,6 +344,7 @@ fn daemon_error_hints_preserve_the_selected_socket() {
                 ClientError::TimedOut {
                     command: "status".into(),
                     timeout: std::time::Duration::from_secs(1),
+                    queries: None,
                     host: None,
                 },
                 "stop",

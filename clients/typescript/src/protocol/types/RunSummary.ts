@@ -13,6 +13,7 @@ export interface RunSummary {
   "agents": number;
   "agents_live": number;
   "forecast_usd_next_hour": number;
+  "rate_approximate"?: boolean;
   "rate_usd_per_hour": number;
   "run": RunId;
   "started_at": string;

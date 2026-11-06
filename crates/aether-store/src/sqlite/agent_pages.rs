@@ -95,8 +95,8 @@ impl SqliteStore {
             "a subsystem is named or absent"
         );
         let inserted = tx.execute(
-            "INSERT INTO agents(id, parent, role, status, run, created_at, updated_at, body, subsystem)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO agents(id, parent, role, status, run, created_at, updated_at, body, subsystem, archived)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 agent.id.to_string(),
                 agent.parent.map(|p| p.to_string()),
@@ -107,6 +107,7 @@ impl SqliteStore {
                 agent.updated_at.to_rfc3339(),
                 tally.json("agents", agent)?,
                 subsystem,
+                agent.archived,
             ],
         )?;
         debug_assert_eq!(inserted, 1, "a plain insert writes its one row or fails");

@@ -543,8 +543,12 @@ impl<W: Write> Printer<W> {
             }
             self.diagnostics.clone_from(&app.view_modes.diagnostics);
         }
-        // A stale status says nothing new of the disk: keep what was last said.
-        if let Some(status) = app.status.as_ref().filter(|s| s.stale.is_none()) {
+        // A stale or unavailable reading cannot change the disk gate.
+        if let Some(status) = app.status.as_ref().filter(|s| {
+            s.stale.is_none()
+                && s.unavailable(aether_protocol::status_sections::LOW_DISK)
+                    .is_none()
+        }) {
             let held = status.low_disk.is_some();
             if held != self.disk_held {
                 match &status.low_disk {
@@ -812,14 +816,15 @@ pub fn summary(app: &App, agent: AgentId) -> String {
         .unwrap_or(AgentStatusKind::Created);
     let mut out = format!("-- {name}: {}", status_word(kind));
     if let Some(status) = &app.status {
-        out.push_str(&format!(
-            " - fleet {} live, {} running, {} waiting, {} blocked",
-            status.agents_live, status.agents_running, status.agents_waiting, status.agents_blocked,
-        ));
-        if status.agents_suspended > 0 {
-            out.push_str(&format!(", {} suspended", status.agents_suspended));
+        out.push_str(&format!(" - fleet {}", fleet_summary(status)));
+        let usage = match status.unavailable(aether_protocol::status_sections::USAGE_TOTAL) {
+            Some(reason) => format!("usage unavailable: {reason}"),
+            None => format::cost(&status.usage_total),
+        };
+        out.push_str(&format!(" - {usage}"));
+        if let Some(reason) = status.unavailable(aether_protocol::status_sections::LOW_DISK) {
+            out.push_str(&format!(" - disk unavailable: {reason}"));
         }
-        out.push_str(&format!(" - {}", format::cost(&status.usage_total)));
         if let Some(stale) = &status.stale {
             out.push_str(&format!(" ({})", format::stale_status(stale)));
         }
@@ -828,6 +833,20 @@ pub fn summary(app: &App, agent: AgentId) -> String {
         out.push_str(" - not connected, reconnecting");
     }
     sanitise(&out)
+}
+
+fn fleet_summary(status: &aether_protocol::DaemonStatus) -> String {
+    if let Some(reason) = status.unavailable(aether_protocol::status_sections::LIVE_AGENTS) {
+        return format!("unavailable: {reason}");
+    }
+    let mut text = format!(
+        "{} live, {} running, {} waiting, {} blocked",
+        status.agents_live, status.agents_running, status.agents_waiting, status.agents_blocked
+    );
+    if status.agents_suspended > 0 {
+        text.push_str(&format!(", {} suspended", status.agents_suspended));
+    }
+    text
 }
 
 /// Plain mode has no glyphs, so the state becomes its name. Off the status
@@ -1073,6 +1092,71 @@ mod tests {
         let said = output(&out);
         assert_eq!(said.matches("Disk recovered").count(), 1, "{said}");
         assert_eq!(said.matches("Disk low").count(), 1, "{said}");
+    }
+
+    #[test]
+    fn unavailable_fleet_and_usage_replace_counts_and_cost() {
+        let mut app = populated_app();
+        let agent = app.selected.expect("selected agent");
+        let status = app.status.as_mut().expect("status");
+        for section in [
+            aether_protocol::status_sections::LIVE_AGENTS,
+            aether_protocol::status_sections::USAGE_TOTAL,
+        ] {
+            status
+                .unavailable
+                .push(aether_protocol::UnavailableSection {
+                    section: section.into(),
+                    reason: "timed out".into(),
+                });
+        }
+        let text = summary(&app, agent);
+        assert!(text.contains("fleet unavailable: timed out"), "{text}");
+        assert!(text.contains("usage unavailable: timed out"), "{text}");
+        assert!(!text.contains(" live,") && !text.contains('$'), "{text}");
+        app.status
+            .as_mut()
+            .expect("status")
+            .unavailable
+            .retain(|entry| entry.section != aether_protocol::status_sections::LIVE_AGENTS);
+        let text = summary(&app, agent);
+        assert!(
+            text.contains(" live,") && text.contains("usage unavailable: timed out"),
+            "{text}"
+        );
+        assert!(!text.contains('$'), "{text}");
+        app.status.as_mut().expect("status").unavailable.clear();
+        let text = summary(&app, agent);
+        assert!(text.contains(" live,") && text.contains('$'), "{text}");
+    }
+
+    #[test]
+    fn unavailable_disk_reads_do_not_announce_recovery() {
+        let mut app = populated_app();
+        app.selected = None;
+        app.approvals.clear();
+        let mut out = Printer::new(Vec::new());
+        let status = app.status.as_mut().expect("status");
+        status.low_disk = Some(aether_core::disk::LowDisk {
+            path: "/store".into(),
+            available_bytes: 1 << 30,
+            floor_bytes: 5 << 30,
+            since: app.now,
+        });
+        assert!(out.drain(&app).expect("hold"));
+        let status = app.status.as_mut().expect("status");
+        status.low_disk = None;
+        status
+            .unavailable
+            .push(aether_protocol::UnavailableSection {
+                section: aether_protocol::status_sections::LOW_DISK.into(),
+                reason: "timed out".into(),
+            });
+        assert!(!out.drain(&app).expect("unavailable read"));
+        assert!(!output(&out).contains("Disk recovered"));
+        app.status.as_mut().expect("status").unavailable.clear();
+        assert!(out.drain(&app).expect("fresh release"));
+        assert_eq!(output(&out).matches("Disk recovered").count(), 1);
     }
 
     #[test]

@@ -198,10 +198,12 @@ fn render_main(frame: &mut Frame, area: Rect, app: &App, cache: &mut ViewCache) 
     bottom::status_line::render(frame, at.status_line, app, theme);
     match &app.bottom.find {
         Some(bar)
-            if app
-                .status
-                .as_ref()
-                .is_none_or(|status| status.low_disk.is_none()) =>
+            if app.status.as_ref().is_none_or(|status| {
+                status.low_disk.is_none()
+                    && status
+                        .unavailable(aether_protocol::status_sections::LOW_DISK)
+                        .is_none()
+            }) =>
         {
             bottom::find::render(frame, at.hint, bar, app.live_flash(), theme)
         }

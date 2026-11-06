@@ -46,17 +46,43 @@ impl Client {
         }
     }
 
-    /// The live graph. `include_archived` brings back what `/clear` hid.
+    /// The live graph's first page. `include_archived` brings back what `/clear` hid.
     pub async fn tree(&self, run: Option<RunId>, include_archived: bool) -> Result<AgentTree> {
-        match self
-            .request(Command::GetTree {
-                role_prefix: None,
-                root: None,
-                run,
-                include_archived,
-            })
-            .await?
-        {
+        self.tree_request(Command::GetTree {
+            role_prefix: None,
+            root: None,
+            run,
+            include_archived,
+            after: None,
+            limit: None,
+        })
+        .await
+    }
+
+    /// `root` and what is live below it, with the subtree's whole usage
+    /// rolled up into `root`'s node, however many finished agents it holds.
+    /// A daemon without `agents_paging` cannot root a tree, nor page one, so
+    /// it is asked for `run`'s whole tree, which holds the same roll-up.
+    pub async fn subtree(&self, run: RunId, root: AgentId) -> Result<AgentTree> {
+        let rooted = self.welcome().is_some_and(|welcome| {
+            welcome
+                .features
+                .iter()
+                .any(|feature| feature == aether_protocol::features::AGENTS_PAGING)
+        });
+        self.tree_request(Command::GetTree {
+            role_prefix: None,
+            root: rooted.then_some(root),
+            run: Some(run),
+            include_archived: true,
+            after: None,
+            limit: None,
+        })
+        .await
+    }
+
+    async fn tree_request(&self, command: Command) -> Result<AgentTree> {
+        match self.request(command).await? {
             Reply::Tree(t) => Ok(t),
             other => Err(unexpected("tree", &other)),
         }
