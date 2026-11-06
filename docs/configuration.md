@@ -823,6 +823,12 @@ ready is refused, never replaced. The refusal names the ready alternatives.
 `subscription` or `api`, `ready`) and the resolved teaching model or its
 refusal in `teaching_model`.
 
+The built-in `prober`, `teacher` and `practitioner` prompts use `03-tools` for
+tool schemas and `04-rules` for behavior and presentation. Learner-facing text
+supports Markdown headings, lists, emphasis, comparison tables, language-tagged
+code fences, KaTeX formulas (`$…$` / `$$…$$`) and small `mermaid` diagrams.
+Answer options use inline Markdown only; HTML and images are unsupported.
+
 On an engine, each Noesis step is one fresh session without tools of its
 own: Aether gives it the agent's tools and transcript, sealed values as
 `"<sealed>"`, and runs the tool calls it answers with, so asking, sealing
