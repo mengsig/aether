@@ -1,6 +1,7 @@
 // Flow 6b: the Archon controls the desktop app window shows reach archond through main's bridge:
 // Message Archon, answering a question, and an initiative's detail. Each is checked on archond.
-// With E2E_SHOTS set, each step is shot at 1440x900 into that directory.
+// With E2E_DESKTOP_PACKAGED set it drives that packaged build instead of test/e2e/main.ts, and with
+// E2E_SHOTS set each step is shot at 1440x900 into that directory.
 
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -9,7 +10,8 @@ import { connection } from "../../../harness/pair.ts";
 import { expect, test, type Page } from "../../../harness/fixtures.ts";
 import { fixtureRepository } from "../gh-stub.ts";
 import { startPrivateStack, stopPrivateStack, type PrivateStack } from "../private.ts";
-import { launchDesktop, type DesktopApp } from "./electron.ts";
+import { launchDesktop } from "./electron.ts";
+import { launchPackaged, packagedBinary } from "./packaged.ts";
 import { route, setPaused } from "./state.ts";
 
 const SHOTS = process.env.E2E_SHOTS;
@@ -22,7 +24,7 @@ const CONTRACT = "Both members share one README section.";
 test.describe.configure({ mode: "serial" });
 
 let running: PrivateStack | undefined;
-let app: DesktopApp | undefined;
+let app: { readonly window: Page; close(): Promise<void> } | undefined;
 const pageErrors: string[] = [];
 
 function stack(): Stack {
@@ -46,7 +48,10 @@ test.beforeAll(async () => {
   running = await startPrivateStack();
   // Nothing the flow queues may start: its items only need to exist.
   await setPaused(stack(), true);
-  app = await launchDesktop({ aetherSocket: stack().layout.aether.socket, archonSocket: stack().layout.archon.socket });
+  const { aether, archon } = stack().layout;
+  const packaged = packagedBinary();
+  app = packaged === undefined ? await launchDesktop({ aetherSocket: aether.socket, archonSocket: archon.socket })
+    : await launchPackaged(packaged, { aether: aether.socket, archon: archon.socket });
   app.window.on("pageerror", (error) => pageErrors.push(error.message));
   await app.window.setViewportSize(VIEWPORT);
   await expect(connection(app.window, "archon")).toHaveAttribute("data-state", "ready", { timeout: 30_000 });
