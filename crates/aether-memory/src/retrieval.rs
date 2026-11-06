@@ -40,7 +40,7 @@ pub struct Considered {
 /// CONTRACTS.md §7's `[memory.retrieval]`, except the holdout: off here, so a
 /// service built without config never withholds; the daemon's config turns it
 /// on at 0.05. The relevance cutoff is off by default: an absolute cutoff
-/// drops relevant memories that share no word with the query (recall@6 0.89 to 0.78).
+/// drops relevant memories that share no word with the query.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RetrievalPolicy {
     /// Most memories one turn is shown.

@@ -117,6 +117,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn every_checked_memory_table_exists_in_the_schema() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("aether.db");
+        closed_store(&path);
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        for table in super::MEMORY_TABLES {
+            let found: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            // quick_check of a missing table answers "ok", so a stale name would go unchecked.
+            assert_eq!(found, 1, "{table} is checked at open but is not a table");
+        }
+    }
+
     fn sqlite_failure(code: i32) -> rusqlite::Error {
         rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None)
     }
