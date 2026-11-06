@@ -446,9 +446,34 @@ fn the_status_reply_carries_the_documented_shape() {
             background: BackgroundDisable::CancelAtModelBoundary,
         },
         prompt_overrides: vec!["01-teacher".into()],
+        models: vec![NoesisModelOffer {
+            id: "claude-code/haiku".into(),
+            billing: NoesisBilling::Subscription,
+            ready: true,
+        }],
+        teaching_model: Some(NoesisModelChoice {
+            model: Some("claude-code/haiku".into()),
+            refusal: None,
+        }),
     };
     let wire = serde_json::to_value(crate::Reply::NoesisStatus(status.clone())).unwrap();
     assert_eq!(wire["reply"], "noesis_status");
+    assert_eq!(
+        wire["data"]["models"],
+        json!([{"id": "claude-code/haiku", "billing": "subscription", "ready": true}])
+    );
+    assert_eq!(
+        wire["data"]["teaching_model"],
+        json!({"model": "claude-code/haiku"})
+    );
+    let mut older = wire.clone();
+    let data = older["data"].as_object_mut().unwrap();
+    data.remove("models");
+    data.remove("teaching_model");
+    let crate::Reply::NoesisStatus(older) = serde_json::from_value(older).unwrap() else {
+        panic!("a status reply");
+    };
+    assert!(older.models.is_empty() && older.teaching_model.is_none());
     assert_eq!(
         wire["data"]["disable_policy"],
         json!({"grace_seconds": 60, "background": "cancel_at_model_boundary"})

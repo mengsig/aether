@@ -236,6 +236,7 @@ impl RawQuestion {
             collapsed: self.collapsed,
             plan_node: self.plan_node,
             posed_at: self.posed_at,
+            step: None,
         };
         Ok(QuestionRow {
             question,

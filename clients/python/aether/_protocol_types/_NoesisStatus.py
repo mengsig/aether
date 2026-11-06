@@ -14,6 +14,8 @@ class NoesisStatus(TypedDict, total=False):
     effective: _protocol.NoesisSettingsView
     enabled: bool
     jobs_running: int
+    models: list[_protocol.NoesisModelOffer]  # optional
     prompt_overrides: list[str]
     settings: _protocol.NoesisSettingsView
     spend_today: _protocol.SpendToday
+    teaching_model: _protocol.NoesisModelChoice | None  # optional

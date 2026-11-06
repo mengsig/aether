@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use super::db::{self, SessionRow};
 use super::engine::{AgentSpec, Engine, EngineError, Input, NOESIS_RUN, SUBSYSTEM};
 use super::records::{
-    Answer, EvidenceDraft, EvidenceOutcome, Mode, NoesisEvent, Phase, QuestionKind, QuestionResult,
-    RevealedKey, SessionView,
+    Answer, EvidenceDraft, EvidenceOutcome, Mode, NoesisEvent, Phase, Question, QuestionKind,
+    QuestionResult, RevealedKey, SessionView,
 };
 use super::{TeachError, phase, plan, question, role_of};
 use crate::Noesis;
@@ -282,7 +282,15 @@ impl<'a, E: Engine> Teaching<'a, E> {
             )),
             None => None,
         };
-        let open_question = db::open_question(conn, &row.id)?.map(|open| open.question);
+        // An open question was posed in the session's current phase.
+        let open_question = db::open_question(conn, &row.id)?.map(|open| Question {
+            step: Some(question::step(
+                row.phase,
+                open.question.kind,
+                open.question.collapsed,
+            )),
+            ..open.question
+        });
         let active_problem = db::active_problem(conn, &row.id)?.map(|active| active.problem);
         Ok(SessionView {
             id: row.id.clone(),

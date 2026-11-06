@@ -117,6 +117,22 @@ pub struct Question {
     pub plan_node: Option<String>,
     pub concepts: Vec<ConceptId>,
     pub posed_at: Timestamp,
+    /// The lesson step the question is, for a client to render it as one.
+    /// Older daemons leave it out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<QuestionStep>,
+}
+
+/// What a question does in the lesson: a probe measures, a teach-phase
+/// question predicts before a step or checks after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionStep {
+    Measure,
+    Predict,
+    Check,
+    Goal,
+    Practice,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]

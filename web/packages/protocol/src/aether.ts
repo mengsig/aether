@@ -1,7 +1,7 @@
 // The Aether daemon protocol as TypeScript types and command builders.
 // Generated from clients/protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: c9bb45709243428b1ee938cb6e0545e3eaa92c1e0bb08ecc169bc62e8cf357be
+// Schema SHA-256: 38f460e825949a7f257af77a44757b68b5a86c1ee9f482c32827890146c588ad
 
 export const PROTOCOL_VERSION = 26;
 export const MIN_PROTOCOL_VERSION = 17;
@@ -267,7 +267,6 @@ export type AgentStatusKind = "created" | "ready" | "running" | "waiting" | "blo
 export interface AgentTree {
   "nodes": Record<string, unknown>;
   "roots": Array<AgentId>;
-  "stale"?: StatusStale | null;
 }
 
 /**
@@ -944,7 +943,6 @@ export interface DaemonStatus {
   "stale"?: StatusStale | null;
   "started_at": string;
   "tasks_active": number;
-  "unavailable"?: Array<UnavailableSection>;
   "usage_total": Usage;
   "version": string;
   "writes"?: WriteStats | null;
@@ -2999,6 +2997,26 @@ export interface NewApprovalRule {
   "scope": RuleScope;
 }
 
+export type NoesisBilling = "subscription" | "api";
+
+/**
+ * The strong slot resolved: `model` when one would run, else `refusal`.
+ */
+export interface NoesisModelChoice {
+  "model"?: string | null;
+  "refusal"?: string | null;
+}
+
+/**
+ * A model as Noesis sees it: how it is paid for and whether a step on it
+ * could run now (an engine detected and signed in, an API provider keyed).
+ */
+export interface NoesisModelOffer {
+  "billing": NoesisBilling;
+  "id": string;
+  "ready": boolean;
+}
+
 /**
  * Where a proposition or chain came from.
  */
@@ -3060,9 +3078,11 @@ export interface NoesisStatus {
   "effective": NoesisSettingsView;
   "enabled": boolean;
   "jobs_running": number;
+  "models"?: Array<NoesisModelOffer>;
   "prompt_overrides": Array<string>;
   "settings": NoesisSettingsView;
   "spend_today": SpendToday;
+  "teaching_model"?: NoesisModelChoice | null;
 }
 
 /**
@@ -3522,6 +3542,7 @@ export interface Question {
   "plan_node"?: string | null;
   "posed_at": string;
   "prompt": string;
+  "step"?: QuestionStep | null;
 }
 
 export type QuestionKind = "choice" | "recall" | "goal";
@@ -3537,6 +3558,12 @@ export interface QuestionResult {
   "explanation"?: string | null;
   "question": string;
 }
+
+/**
+ * What a question does in the lesson: a probe measures, a teach-phase
+ * question predicts before a step or checks after it.
+ */
+export type QuestionStep = "measure" | "predict" | "check" | "goal" | "practice";
 
 /**
  * A subscription usage window as an engine reported it. Opaque JSON on the
@@ -5215,14 +5242,6 @@ export type TurnOutcome =
   | TurnOutcomeFailed
   | TurnOutcomeInterrupted
   | TurnOutcomeNotStarted;
-
-/**
- * A [`DaemonStatus`] section left out of a reply, and why.
- */
-export interface UnavailableSection {
-  "reason": string;
-  "section": string;
-}
 
 /**
  * Why an absent receipt does not prove its key was never executed.
