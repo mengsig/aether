@@ -205,7 +205,6 @@ export async function windowTitles(sway: Sway): Promise<string[]> {
 
 const firstLine = (error: unknown): string => (error instanceof Error ? error.message : String(error)).split("\n")[0] ?? "";
 
-const DIALOG_ATTEMPTS = 3;
 const DIALOG_CLOSE_MS = 3_000;
 
 /** Whether the window titled `title` is gone within the bound; a failing swaymsg still throws. */
@@ -220,27 +219,49 @@ async function closesWithin(sway: Sway, title: string, timeoutMs: number): Promi
 }
 
 /**
- * Accepts the native confirmation titled `title` (security/confirm.ts): its buttons are Cancel
- * then the action, Cancel focused, so Right moves to the action and Return presses it. Keys go
- * only once sway gives the dialog the keyboard; a press that does not close it is tried again.
+ * Key presses that reach a confirmation's action button, by toolkit. GTK 3 focuses Cancel, so
+ * Right moves to the action; GTK 4 opens with nothing focused, so Tab lands on Cancel and a
+ * second Tab on the action; a GTK 4 dialog that did focus Cancel needs one Tab.
  */
-export async function acceptNativeDialog(sway: Sway, title: string, timeoutMs = 15_000): Promise<void> {
-  assert.ok(title.trim() !== "", "a native dialog is found by its title");
-  await until(() => windowTitles(sway), (titles) => titles.includes(title), `the native dialog "${title}"`, timeoutMs);
+export const DIALOG_PRESSES: ReadonlyArray<readonly string[]> = [["Right", "Return"], ["Tab", "Tab", "Return"], ["Tab", "Return"]];
+const KEY_GAP_MS = "150";
+
+async function focusDialog(sway: Sway, title: string, timeoutMs: number): Promise<void> {
   const env = swayEnv(sway);
   const criteria = `[title="^${title.replace(/[.*+?^${}()|[\]\\"]/g, "\\$&")}$"]`;
-  for (let attempt = 1; attempt <= DIALOG_ATTEMPTS; attempt += 1) {
-    await run("/usr/bin/swaymsg", [criteria, "focus"], { env, timeout: TOOL_MS });
-    const windows = await until(() => swayWindows(sway), (now) => now.some((window) => window.title === title && window.focused),
-      `the native dialog "${title}" to take the keyboard`, timeoutMs);
-    assert.ok(windows.some((window) => window.title === title && window.focused), "the dialog has the keyboard");
-    await run("/usr/bin/wtype", ["-k", "Right", "-k", "Return"], { env, timeout: TOOL_MS });
-    if (await closesWithin(sway, title, DIALOG_CLOSE_MS)) return;
-    console.warn(`the native dialog "${title}" stayed open after attempt ${attempt} of ${DIALOG_ATTEMPTS}`);
+  await run("/usr/bin/swaymsg", [criteria, "focus"], { env, timeout: TOOL_MS });
+  const windows = await until(() => swayWindows(sway), (now) => now.some((window) => window.title === title && window.focused),
+    `the native dialog "${title}" to take the keyboard`, timeoutMs);
+  assert.ok(windows.some((window) => window.title === title && window.focused), "the dialog has the keyboard");
+}
+
+/**
+ * Closes the native confirmation titled `title` (security/confirm.ts) with the key presses of
+ * DIALOG_PRESSES from `from` on, each tried once the dialog has the keyboard, until one closes
+ * it. Returns that one's index: a press can also land on Cancel, so the caller checks the
+ * effect and asks again from the next index when the action did not happen.
+ */
+export async function acceptNativeDialog(sway: Sway, title: string, from = 0, timeoutMs = 15_000): Promise<number> {
+  assert.ok(title.trim() !== "", "a native dialog is found by its title");
+  assert.ok(from >= 0 && from < DIALOG_PRESSES.length, `presses start within the list: ${from}`);
+  await until(() => windowTitles(sway), (titles) => titles.includes(title), `the native dialog "${title}"`, timeoutMs);
+  for (let index = from; index < DIALOG_PRESSES.length; index += 1) {
+    const presses = DIALOG_PRESSES[index] as readonly string[];
+    await focusDialog(sway, title, timeoutMs);
+    await run("/usr/bin/wtype", presses.flatMap((key) => ["-s", KEY_GAP_MS, "-k", key]), { env: swayEnv(sway), timeout: TOOL_MS });
+    if (await closesWithin(sway, title, DIALOG_CLOSE_MS)) return index;
+    console.warn(`the native dialog "${title}" stayed open after ${presses.join("+")}`);
   }
   const focused = (await swayWindows(sway)).find((window) => window.focused)?.title ?? "nothing";
   const evidence = await dialogEvidence(sway, title);
-  throw new Error(`the native dialog "${title}" did not close after ${DIALOG_ATTEMPTS} presses; sway's keyboard is on ${focused}; see ${evidence}`);
+  throw new Error(`the native dialog "${title}" did not close after ${DIALOG_PRESSES.length} key sequences; sway's keyboard is on ${focused}; the app maps ${await toolkitOf(running?.pid)}; see ${evidence}`);
+}
+
+/** The GTK libraries the app process maps: which toolkit drew the dialog. */
+async function toolkitOf(pid: number | undefined): Promise<string> {
+  if (pid === undefined) return "no app";
+  const maps = await readFile(`/proc/${pid}/maps`, "utf8").catch(() => "");
+  return [...new Set(maps.match(/libgtk-\d[^ /]*/g) ?? [])].join(" ") || "no GTK";
 }
 
 /** A screenshot of sway's output and its window tree, kept under the run's output for a dialog that would not close. */

@@ -74,8 +74,12 @@ only run through the journeys config.
 - **Headless sway.** `sway -c /dev/null` runs with `WLR_BACKENDS=headless` and its own
   `XDG_RUNTIME_DIR`. The app runs on it with `--ozone-platform=wayland`. Native confirmations
   (Noesis settings) are answered with `swaymsg` focus and `wtype`, once sway reports the dialog has
-  the keyboard; a press that does not close it is tried again, three times at most. This needs
-  `sway`, `swaymsg` and `wtype` on PATH.
+  the keyboard. Which keys reach the action button depends on the toolkit Electron drew it with
+  (GTK 3 focuses Cancel, GTK 4 nothing), so `DIALOG_PRESSES` lists the sequences and
+  `acceptNativeDialog` tries them in turn until the dialog closes; the journey then checks the
+  effect and, after a sequence that landed on Cancel, saves again with the next. A dialog that
+  stays open leaves a `grim` shot and sway's tree under `$E2E_OUT/journeys/dialogs/`. This needs
+  `sway`, `swaymsg`, `wtype` and `grim` on PATH.
 - **Sockets.** The app gets `AETHER_SOCKET` and `ARCHON_SOCKET` for the stack. Local sockets need
   no pairing, so the smoke records that as a `pairing` annotation. If a later UI asks to pair, the journey
   pairs with a code from the host, as `harness/pair.ts` does.
