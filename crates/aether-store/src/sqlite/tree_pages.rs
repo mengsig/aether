@@ -85,7 +85,10 @@ pub(super) fn walk_sql(query: &TreeQuery) -> (String, bool) {
         ),
         None => (
             "a.id",
-            format!("agents a WHERE {}", all_of(&[&scope.run, &scope.unarchived])),
+            format!(
+                "agents a WHERE {}",
+                all_of(&[&scope.run, &scope.unarchived])
+            ),
             [&scope.role, &none, &none],
         ),
     };
@@ -97,7 +100,10 @@ pub(super) fn walk_sql(query: &TreeQuery) -> (String, bool) {
         sql.push_str(&format!(" AND {key} < ?{last}"));
     }
     sql.push_str(&format!(" ORDER BY {key} DESC LIMIT ?{}", last + 1));
-    assert!(sql.matches(" LIMIT ").count() == 1, "one bound on the rows read");
+    assert!(
+        sql.matches(" LIMIT ").count() == 1,
+        "one bound on the rows read"
+    );
     (sql, checked)
 }
 
@@ -113,7 +119,12 @@ pub(super) fn walk_args(query: &TreeQuery, budget: usize) -> Vec<String> {
 /// whether it is in scope, and whether any condition is checked row by row.
 pub(super) fn pin_sql(query: &TreeQuery) -> (String, bool) {
     let scope = Scope::of(query);
-    let checks = [&scope.under_root, &scope.run, &scope.unarchived, &scope.role];
+    let checks = [
+        &scope.under_root,
+        &scope.run,
+        &scope.unarchived,
+        &scope.role,
+    ];
     let status = scope.args.len() + 1;
     let sql = format!(
         "SELECT a.id, {} FROM agents a WHERE a.status = ?{status}
@@ -144,7 +155,12 @@ fn root_sql(query: &TreeQuery) -> String {
 /// scope and at as many rows in all as bound last.
 pub(super) fn ancestors_sql(query: &TreeQuery) -> (String, Vec<String>) {
     let scope = Scope::of(query);
-    let filter = all_of(&[&scope.under_root, &scope.run, &scope.unarchived, &scope.role]);
+    let filter = all_of(&[
+        &scope.under_root,
+        &scope.run,
+        &scope.unarchived,
+        &scope.role,
+    ]);
     let ids = scope.args.len() + 1;
     // A LIMIT on the recursive step ends the recursion, the starting rows counted.
     let sql = format!(
@@ -208,7 +224,11 @@ fn scan(tx: &Connection, sql: &str, args: &[String], want: usize) -> Result<Scan
 /// read down the `(status, id)` index of each live status, then the root.
 fn pinned_ids(tx: &Connection, query: &TreeQuery) -> Result<Vec<String>> {
     let (sql, checked) = pin_sql(query);
-    let budget = if checked { TREE_SCAN_MAX } else { query.limit + 1 };
+    let budget = if checked {
+        TREE_SCAN_MAX
+    } else {
+        query.limit + 1
+    };
     let root = query.root.map(|root| root.to_string());
     let mut live = Vec::new();
     for status in live_statuses() {
@@ -240,7 +260,11 @@ fn page_ids(tx: &Connection, query: &TreeQuery) -> Result<(Vec<String>, Option<A
         Some(_) => Vec::new(),
     };
     let (walk, checked) = walk_sql(query);
-    let budget = if checked { TREE_SCAN_MAX } else { query.limit + 1 };
+    let budget = if checked {
+        TREE_SCAN_MAX
+    } else {
+        query.limit + 1
+    };
     assert!(query.limit < budget, "a budget reads past a full page");
     let mut walked = scan(tx, &walk, &walk_args(query, budget), query.limit + 1)?;
     let next_after = if walked.kept.len() > query.limit {

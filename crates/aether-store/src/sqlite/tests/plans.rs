@@ -430,7 +430,10 @@ fn a_tree_page_seeks_live_agents_by_status_and_finished_ones_by_index_order() {
         let query = tree_query(run, None, include_archived);
         let (pin, _) = pin_sql(&query);
         let steps = plan(&store, &pin, &boxed(pin_args(&query, "running", 501)));
-        assert!(seeks(&steps, "a", "agents_status_id (status=?)"), "{steps:?}");
+        assert!(
+            seeks(&steps, "a", "agents_status_id (status=?)"),
+            "{steps:?}"
+        );
         no_scan_or_sort(&steps);
         let (walk, checked) = walk_sql(&query);
         assert!(!checked, "the index applies every filter");
@@ -471,7 +474,10 @@ fn a_rooted_tree_page_walks_the_subtree_down_the_closure_key() {
     );
     let (pin, _) = pin_sql(&query);
     let steps = plan(&store, &pin, &boxed(pin_args(&query, "running", 4000)));
-    assert!(seeks(&steps, "a", "agents_status_id (status=?)"), "{steps:?}");
+    assert!(
+        seeks(&steps, "a", "agents_status_id (status=?)"),
+        "{steps:?}"
+    );
     assert!(
         steps.iter().any(|s| s.2.starts_with("SEARCH s ")
             && s.2.contains("descendant=?")
@@ -500,10 +506,18 @@ fn a_subtree_roll_up_reads_its_totals_and_links_by_key() {
     let store = SqliteStore::open_in_memory().expect("open");
     let id = AgentId::new().to_string();
     let children = serde_json::to_string(&[AgentId::new().to_string()]).unwrap();
-    for (own, run) in [(false, None), (true, None), (true, Some(RunId::new().to_string()))] {
+    for (own, run) in [
+        (false, None),
+        (true, None),
+        (true, Some(RunId::new().to_string())),
+    ] {
         let mut args = vec![id.clone(), children.clone()];
         args.extend(run.clone());
-        let steps = plan(&store, &subtree_totals_sql(own, run.is_some()), &boxed(args));
+        let steps = plan(
+            &store,
+            &subtree_totals_sql(own, run.is_some()),
+            &boxed(args),
+        );
         let seeks = steps
             .iter()
             .filter(|s| s.2 == "SEARCH usage_totals USING PRIMARY KEY (scope=?)")
@@ -519,13 +533,22 @@ fn a_subtree_roll_up_reads_its_totals_and_links_by_key() {
                 .any(|s| s.2.starts_with("SEARCH u USING PRIMARY KEY (agent_id=?)")),
             "{steps:?}"
         );
-        assert!(steps.iter().all(|s| !s.2.starts_with("SCAN usage_totals")), "{steps:?}");
+        assert!(
+            steps.iter().all(|s| !s.2.starts_with("SCAN usage_totals")),
+            "{steps:?}"
+        );
     }
     let steps = plan(&store, SHOWN_PARENTS_SQL, &boxed(vec![children.clone()]));
-    assert!(seeks(&steps, "p", "sqlite_autoindex_agents_1 (id=?)"), "{steps:?}");
+    assert!(
+        seeks(&steps, "p", "sqlite_autoindex_agents_1 (id=?)"),
+        "{steps:?}"
+    );
     no_scan_or_sort(&steps);
     let steps = plan(&store, &ancestors_read_sql(), &boxed(vec![id.clone()]));
-    assert!(seeks(&steps, "agent_tree", "agent_tree_descendant (descendant=?)"), "{steps:?}");
+    assert!(
+        seeks(&steps, "agent_tree", "agent_tree_descendant (descendant=?)"),
+        "{steps:?}"
+    );
     let steps = plan(&store, SEEK_ANCESTORS_SQL, &boxed(vec![id, children]));
     assert!(
         steps.iter().any(|s| s.2.starts_with("SEARCH t ")

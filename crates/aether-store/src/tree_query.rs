@@ -165,10 +165,7 @@ pub fn tree_usages_of(
 
 /// Each node's owner: the nearest shown agent at or above it among `nodes`,
 /// none when its walk up leaves them first.
-fn owners_of(
-    nodes: &[UsageNode],
-    visible: &HashSet<AgentId>,
-) -> HashMap<AgentId, Option<AgentId>> {
+fn owners_of(nodes: &[UsageNode], visible: &HashSet<AgentId>) -> HashMap<AgentId, Option<AgentId>> {
     let parents: HashMap<AgentId, Option<AgentId>> =
         nodes.iter().map(|node| (node.id, node.parent)).collect();
     let mut owners: HashMap<AgentId, Option<AgentId>> = HashMap::with_capacity(nodes.len());
@@ -194,7 +191,11 @@ fn owners_of(
         owners.entry(node.id).or_insert(owner);
     }
     assert_eq!(owners.len(), parents.len(), "an owner, or none, per node");
-    debug_assert!(visible.iter().all(|id| owners.get(id).is_none_or(|o| *o == Some(*id))));
+    debug_assert!(
+        visible
+            .iter()
+            .all(|id| owners.get(id).is_none_or(|o| *o == Some(*id)))
+    );
     owners
 }
 

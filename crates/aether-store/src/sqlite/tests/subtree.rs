@@ -377,7 +377,9 @@ fn a_selective_filter_reads_a_bounded_walk_and_goes_on_below_it() {
     };
     let first = store.tree_page(&query).unwrap();
     assert!(first.agents.is_empty(), "no reviewer among the newest read");
-    let stop = first.next_after.expect("the budget ran out, not the agents");
+    let stop = first
+        .next_after
+        .expect("the budget ran out, not the agents");
     assert_eq!(stop, agents[20].id, "it stops at the last agent read");
     query.after = Some(stop);
     let second = store.tree_page(&query).unwrap();
@@ -402,7 +404,10 @@ fn a_page_holds_at_most_limit_ancestors_nearest_first() {
     let page = store.tree_page(&query).unwrap();
     let shown: BTreeSet<AgentId> = page.agents.iter().map(|a| a.id).collect();
     let expected: BTreeSet<AgentId> = chain[24..].iter().map(|a| a.id).collect();
-    assert_eq!(shown, expected, "three walked, then their three nearest above");
+    assert_eq!(
+        shown, expected,
+        "three walked, then their three nearest above"
+    );
     assert_eq!(page.next_after, Some(chain[27].id));
     let memory = crate::tree_page_of(store.tree_scope(&query).unwrap(), &query).unwrap();
     assert_eq!(page, memory, "the in-memory page caps them alike");

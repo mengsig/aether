@@ -192,7 +192,10 @@ fn assert_sums_hold(
         .flat_map(|a| subtrees[&a.id].iter().copied())
         .collect();
     let mut expected = Usage::default();
-    for agent in agents.iter().filter(|a| below.contains(&a.id) && counted(a)) {
+    for agent in agents
+        .iter()
+        .filter(|a| below.contains(&a.id) && counted(a))
+    {
         expected += agent.stats.usage;
     }
     assert_eq!(roots_total, expected, "each agent below a shown one, once");

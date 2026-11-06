@@ -107,7 +107,11 @@ impl SqliteStore {
         }
         tx.commit()?;
         let usages = fold_subtrees(shown, &links, owned);
-        assert_eq!(usages.len(), links.depth.len(), "one roll-up per shown agent");
+        assert_eq!(
+            usages.len(),
+            links.depth.len(),
+            "one roll-up per shown agent"
+        );
         Ok(usages)
     }
 }
@@ -122,13 +126,18 @@ struct Links {
 /// [`Links`] for `shown`: a shown parent is the nearest; above any other, the
 /// shown ancestor in `agent_tree` with the most shown agents above it.
 fn shown_links(tx: &Connection, shown: &[Agent]) -> Result<Links> {
-    let by_text: HashMap<String, AgentId> =
-        shown.iter().map(|agent| (agent.id.to_string(), agent.id)).collect();
+    let by_text: HashMap<String, AgentId> = shown
+        .iter()
+        .map(|agent| (agent.id.to_string(), agent.id))
+        .collect();
     assert_eq!(by_text.len(), shown.len(), "each agent is shown once");
     let ids = serde_json::to_string(&by_text.keys().collect::<Vec<_>>())?;
     let parents = shown_parents(tx, &ids, &by_text)?;
     let mut above: HashMap<AgentId, Vec<AgentId>> = HashMap::new();
-    for agent in shown.iter().filter(|agent| !parents.contains_key(&agent.id)) {
+    for agent in shown
+        .iter()
+        .filter(|agent| !parents.contains_key(&agent.id))
+    {
         above.insert(agent.id, shown_ancestors(tx, agent.id, &ids, &by_text)?);
     }
     let depth = shown_depths(shown, &parents, &above)?;
@@ -138,7 +147,10 @@ fn shown_links(tx: &Connection, shown: &[Agent]) -> Result<Links> {
         let pick = candidates.into_iter().max_by_key(|id| (depth.get(id), *id));
         nearest.extend(pick.map(|pick| (agent, pick)));
     }
-    assert!(nearest.len() <= shown.len(), "at most one nearest per agent");
+    assert!(
+        nearest.len() <= shown.len(),
+        "at most one nearest per agent"
+    );
     Ok(Links { nearest, depth })
 }
 
@@ -151,7 +163,9 @@ fn shown_parents(
 ) -> Result<HashMap<AgentId, AgentId>> {
     let mut statement = tx.prepare_cached(SHOWN_PARENTS_SQL)?;
     let rows = statement
-        .query_map([ids], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+        .query_map([ids], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let mut parents = HashMap::with_capacity(rows.len());
     for (id, parent) in rows {
@@ -189,7 +203,10 @@ fn shown_ancestors(
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
     }
-    let shown: Vec<AgentId> = ancestors.iter().filter_map(|id| by_text.get(id).copied()).collect();
+    let shown: Vec<AgentId> = ancestors
+        .iter()
+        .filter_map(|id| by_text.get(id).copied())
+        .collect();
     assert!(shown.len() <= by_text.len(), "only shown agents");
     assert!(!shown.contains(&agent), "strictly above");
     Ok(shown)
@@ -202,8 +219,10 @@ fn shown_depths(
     parents: &HashMap<AgentId, AgentId>,
     above: &HashMap<AgentId, Vec<AgentId>>,
 ) -> Result<HashMap<AgentId, usize>> {
-    let mut depth: HashMap<AgentId, usize> =
-        above.iter().map(|(id, ancestors)| (*id, ancestors.len())).collect();
+    let mut depth: HashMap<AgentId, usize> = above
+        .iter()
+        .map(|(id, ancestors)| (*id, ancestors.len()))
+        .collect();
     for agent in shown {
         let mut chain = Vec::new();
         let mut at = agent.id;
@@ -223,7 +242,11 @@ fn shown_depths(
         }
     }
     assert_eq!(depth.len(), shown.len(), "a depth per shown agent");
-    debug_assert!(parents.iter().all(|(id, parent)| depth[id] == depth[parent] + 1));
+    debug_assert!(
+        parents
+            .iter()
+            .all(|(id, parent)| depth[id] == depth[parent] + 1)
+    );
     Ok(depth)
 }
 
@@ -268,7 +291,10 @@ fn fold_subtrees(
     deepest_first.sort_by_key(|agent| Reverse(links.depth[&agent.id]));
     for agent in deepest_first {
         // Listed under its parent only when the store still links it there.
-        let Some(parent) = agent.parent.filter(|p| links.nearest.get(&agent.id) == Some(p)) else {
+        let Some(parent) = agent
+            .parent
+            .filter(|p| links.nearest.get(&agent.id) == Some(p))
+        else {
             continue;
         };
         let child = usages[&agent.id].subtree;
@@ -313,7 +339,11 @@ pub(super) fn subtree_totals_sql(own: bool, run: bool) -> String {
         ));
     }
     assert_eq!(sums.len(), 20, "one sum per `usage_totals` column");
-    assert_eq!(parts.len(), 2 + usize::from(own), "the subtree, those below, its own row");
+    assert_eq!(
+        parts.len(),
+        2 + usize::from(own),
+        "the subtree, those below, its own row"
+    );
     format!(
         "SELECT {} FROM ({})",
         sums.join(", "),
