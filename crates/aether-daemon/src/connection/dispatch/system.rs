@@ -58,7 +58,6 @@ pub(super) async fn dispatch(
     by: Actor,
     auth: &AuthContext,
 ) -> Result<Reply, ErrorReply> {
-    let rt = &daemon.runtime;
     match command {
         Command::Hello(_) => Err(ErrorReply::invalid("already greeted")),
         // Nothing but a frame in: the point is to hold a quiet connection
