@@ -136,6 +136,12 @@ before updating.
 - **A store with damaged memory tables refuses to open.** The daemon checks
   those tables when it opens the store and names the damaged one, instead
   of starting and failing every turn's memory retrieval.
+- **A result written out as text keeps its structured part.** An agent that
+  ends its task by writing `complete_task`'s input as its answer (a bare or
+  fenced JSON object, `complete_task {...}` or `{"complete_task": {...}}`)
+  now hands its parent that object as `structured`, not only as summary
+  text. Codex models do this often; Archon read such a review as missing
+  its verdict and repaired the stage.
 
 ## 1.2.11
 
