@@ -12,7 +12,7 @@ temp root removed after the file, and the runner checks that afterwards.
 | 3 approvals | `approvals.spec.ts` | A tool call waits for approval, Inbox approves it, and the agent goes on. Then a rule is added from Controls. |
 | 4 schedules | `schedules.spec.ts` | Create a weekday cron schedule that starts a new agent, see it listed, delete it. |
 | 5 memory | `memory.spec.ts` | Create a global memory, then find it by search. |
-| 6 archon | `archon.spec.ts` | Register a scratch checkout with no origin to keep its work local (Watch GitHub stays the CLI's), queue an item on it, wait (bounded) for an outcome, then open the task graph and history. |
+| 6 archon | `archon.spec.ts` | Register a scratch checkout with no origin to keep its work local (Watch GitHub stays the CLI's), queue an item on it, wait (bounded) for an outcome, then open its page, the task graph and history. Then an issue imported from a stubbed `gh`, and the GitHub overview listing its repository's cached objects. |
 | 7 learn | `learn.spec.ts` | Turn Noesis on (main confirms natively), start a session, answer the Prober, get a practice problem. |
 | 8 drafts | `drafts.spec.ts` | An objective typed in the start sheet survives leaving Activity and coming back. |
 
@@ -53,6 +53,12 @@ npx playwright test -c web/e2e/specs/journeys/playwright.config.ts
 
 Reports go to `$E2E_OUT/journeys/` (default `web/e2e/.out/journeys/`): `report.json` and, per
 test, `results/` with the first-launch video.
+
+With `E2E_CAPTURE=<dir>` set, every journey also shoots the window at its key moments (the start
+sheet filled, a tool call unfolded, a queued message, Inbox with an approval, the schedule form,
+the GitHub overview, and so on) in light and dark, full page, to `<dir>/desktop/` with one
+`manifest.jsonl` line per shot (`screen`, `state`, `file`, `journey`, `variants`). Without it the
+shots are no-ops, so the journeys check the same things either way (`specs/journeys/capture.ts`).
 
 The base suite (`web/e2e/playwright.config.ts`) also lists these specs, but skips them there. They
 only run through the journeys config.

@@ -47,8 +47,8 @@ export async function pendingApprovals(stack: Stack, agentId: string): Promise<A
 }
 
 export async function approvalRuleTools(stack: Stack): Promise<string[]> {
-  const rows = await list(stack, { cmd: "list_approval_rules" }, "approval_rules") as Array<{ tool?: string | null }>;
-  return rows.map((rule) => String(rule.tool ?? ""));
+  const rows = await list(stack, { cmd: "list_approval_rules" }, "approval_rules") as Array<{ match?: { tool?: string | null } }>;
+  return rows.map((rule) => String(rule.match?.tool ?? ""));
 }
 
 /** Names of the schedules that will still fire: active or paused, not cancelled or ended. */

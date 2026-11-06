@@ -1,9 +1,9 @@
 // The fleet at 5,000 agents: mount, filter, scroll and one agent's row changing.
 
-import type { Store } from "@aether-ui/core";
+import { drafts, type Store } from "@aether-ui/core";
 import type { aether, ConnectionInfo } from "@aether-ui/protocol";
 import { act, createElement, type ComponentProps } from "react";
-import { afterAll, describe, expect, test, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { FleetScreen } from "../../packages/aether/src/fleet/FleetScreen.tsx";
 import { agentId, FLEET_SIZE, fleetAgents, fleetRoots } from "../fixtures/fleet.ts";
 import { heapUsed, mount, perfApp, Results, timed, type Mounted } from "../measure.tsx";
@@ -26,6 +26,8 @@ const INFO: ConnectionInfo = { id: CONN, daemon: "aether", state: "ready", proto
 const ROW_HEIGHT = 44;
 const results = new Results("fleet");
 afterAll(() => results.write());
+// The filter is a draft that outlives a mount, as it does across navigation; each scenario starts unfiltered.
+beforeEach(() => { for (const key of drafts.keys()) drafts.clear(key); });
 
 function seed(store: Store, agents: Record<string, aether.Agent>): void {
   store.update((state) => ({ ...state, connections: { ...state.connections, [CONN]: INFO } }));

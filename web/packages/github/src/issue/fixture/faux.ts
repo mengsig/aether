@@ -38,6 +38,8 @@ export class FauxArchon {
   readonly transport: Transport;
   /** Commands answered with an internal error, by name. */
   readonly failing = new Set<string>();
+  /** Commands refused with archond's own wording, by name. */
+  readonly refusing = new Map<string, string>();
   /** Commands left unanswered, by name. */
   readonly holding = new Set<string>();
   readonly world: GithubWorld;
@@ -67,6 +69,8 @@ export class FauxArchon {
     const name = String(command.cmd);
     if (this.holding.has(name)) return answerLater(opened, command, "hold");
     if (this.failing.has(name)) return answerLater(opened, command, { err: { code: "internal", message: `${name} failed in the faux archond` } });
+    const refusal = this.refusing.get(name);
+    if (refusal !== undefined) return answerLater(opened, command, { err: { code: "forbidden", message: refusal } });
     answerLater(opened, command, this.answer(command));
   }
 

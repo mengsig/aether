@@ -95,6 +95,7 @@ function MessageHead({ row }: { readonly row: ConversationRow }) {
       <span className="conv-role" title={row.speaker.from ?? undefined}>{name}</span>
       {row.at ? <time className="conv-time" dateTime={row.at}>{formatTime(row.at)}</time> : null}
       <LiveBadges row={row} />
+      {row.queued ? <Badge tone="info">Queued · reaches the agent at its next turn</Badge> : null}
       {row.meta ? <MetaLine meta={row.meta} /> : null}
     </header>
   );
@@ -105,7 +106,7 @@ export const MessageView = memo(function MessageView({ row, current = false }: {
   invariant(row.key !== "", "a row has a key");
   return (
     <article className="conv-msg" data-role={row.role} data-speaker={row.speaker.kind} data-live={live ? "true" : undefined}
-      data-seq={row.seq ?? undefined} data-invocation={row.invocation ?? undefined} data-current={current ? "true" : undefined}>
+      data-seq={row.seq ?? undefined} data-invocation={row.invocation ?? undefined} data-current={current ? "true" : undefined} data-queued={row.queued ? "true" : undefined}>
       <MessageHead row={row} />
       <div className="conv-msg-body">
         {row.live?.recovering && row.parts.length === 0 ? <p className="conv-note">Reading the transcript to catch up with the live output…</p> : null}

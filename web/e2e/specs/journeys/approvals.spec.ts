@@ -8,6 +8,7 @@ import { AGENT_LIMITS, REAL_MODELS } from "../../harness/real-engine.ts";
 import { approvalRuleTools, cancelLive, createAgentOn, pendingApprovals, transcriptText } from "./daemon.ts";
 import { connectionsReady, journeyHooks, type Journey } from "./journey.ts";
 import { APPROVED_REPLY, OBJECTIVES, REAL_OBJECTIVES } from "./scripts.ts";
+import { shootWindow } from "./capture.ts";
 import { openControls } from "./steps.ts";
 import { choose, confirmIfAsked, need, open, textField } from "./ui.ts";
 
@@ -33,6 +34,8 @@ test("approvals journey: Inbox approves a waiting tool call and the agent goes o
   const pending = await until(() => pendingApprovals(run.stack, id), (rows) => rows.length > 0, "the tool call's approval", WAIT_MS[run.variant]);
   assert.equal(pending.length, 1, "one tool call waits");
   await open(run.window, "Inbox", "#/inbox");
+  await expect(run.window.getByRole("button", { name: "Approve", exact: true }).first(), "Inbox offers to approve").toBeVisible();
+  await shootWindow(run.window, "inbox", "pending-approval");
   await run.window.getByRole("button", { name: "Approve", exact: true }).first().click();
   await confirmIfAsked(run.window, "Approve");
   await until(() => pendingApprovals(run.stack, id), (rows) => rows.length === 0, "the approval to be answered", WAIT_MS[run.variant]);
@@ -49,6 +52,7 @@ test("approvals journey: a standing rule added from Controls", async () => {
     await choose(run.window, await textField(await need(controls, "rule-tool")), "bash");
     const submit = await need(controls, "rule-submit");
     await expect(submit, "the rule is ready to add").toBeEnabled();
+    await shootWindow(run.window, "controls", "approvals-rule");
     await submit.click();
     await confirmIfAsked(run.window, "Add rule");
     const tools = await until(() => approvalRuleTools(run.stack), (now) => now.includes("bash"), "the rule for bash", 30_000);

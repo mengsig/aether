@@ -3,6 +3,7 @@
 
 import { expect, test } from "@playwright/test";
 import { connectionsReady, journeyHooks } from "./journey.ts";
+import { shootWindow } from "./capture.ts";
 import { openStart, startSheet } from "./steps.ts";
 import { need, open, textField } from "./ui.ts";
 
@@ -20,4 +21,5 @@ test("drafts journey: a typed objective is still there after navigating away", a
   await expect(window.getByRole("region", { name: "Fleet" }), "the window left Activity").toBeVisible();
   await openStart(window);
   await expect(await textField(await need(startSheet(window), "start-objective")), "the draft survived").toHaveValue(DRAFT);
+  await shootWindow(window, "start-agent", "draft-restored");
 });

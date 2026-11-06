@@ -3,7 +3,8 @@ import { GraphCanvas } from "@aether-ui/graph";
 import { archon, type ConnectionInfo } from "@aether-ui/protocol";
 import { Badge, BarChart, Button, Donut, EmptyState, ErrorState, Picker, Skeleton, Sparkline, StatTile, StatusPill } from "@aether-ui/ui";
 import { useMemo, useState } from "react";
-import { useAether, useArchonConnection, useChangeKey, useNow, STALE_CHECK_MS, OBJECTS_LIMIT } from "../issue/data.ts";
+import { useAether, useArchonConnection, useChangeKey, useItems, useNow, STALE_CHECK_MS, OBJECTS_LIMIT } from "../issue/data.ts";
+import { invariant } from "../issue/ref.ts";
 import { issueFact, pullRequestFact } from "../issue/facts.ts";
 import { useOverviewRows } from "./data.ts";
 import { DEFAULT_FILTERS, filterRows, itemsPerPr, objectHref, objectId, relationshipGraph, relationshipLayout, weeklyBuckets, type ObjectRow, type OverviewFilters } from "./model.ts";
@@ -84,7 +85,7 @@ function Activity({ rows, now, linked }: { readonly rows: readonly ObjectRow[]; 
 
 function CachedObjects({ info, repositories, refresh, now, onRefresh, interval }: {
   readonly info: ConnectionInfo; readonly repositories: readonly string[]; readonly refresh: string; readonly now: number;
-  readonly onRefresh: () => void; readonly interval: number;
+  readonly onRefresh: () => void; readonly interval: number | null;
 }) {
   const { value, update, clear } = useDraft("github/overview-filters", DEFAULT_FILTERS);
   const data = useOverviewRows(info, repositories, refresh);
@@ -94,11 +95,36 @@ function CachedObjects({ info, repositories, refresh, now, onRefresh, interval }
     <Filters value={value} update={update} repositories={repositories} />
     {data.error ? <ErrorState title="Could not refresh GitHub data" message={data.error} onRetry={onRefresh} /> : null}
     {data.loading ? <div aria-label="Reading cached objects" aria-busy="true"><Skeleton height="3rem" /></div> : null}
-    {!data.loading && !data.error && data.rows.length === 0 ? <EmptyState title="Nothing fetched yet" action={<Button onClick={onRefresh}>Refresh</Button>}>The watcher polls every {interval} s. Ask the operator to check the watched repositories if nothing arrives.</EmptyState> : null}
+    {!data.loading && !data.error && data.rows.length === 0 ? <EmptyState title="Nothing fetched yet" action={<Button onClick={onRefresh}>Refresh</Button>}>{interval === null ? "The cache has nothing for these repositories yet." : `The watcher polls every ${interval} s.`} Ask the operator to check the watched repositories if nothing arrives.</EmptyState> : null}
     {data.rows.length > 0 && rows.length === 0 ? <EmptyState title="No objects match" action={<Button onClick={clear}>Clear filters</Button>}>Choose another repository, kind, or state.</EmptyState> : null}
     {rows.length > 0 ? <><p>Showing {rows.length} cached objects; at most {OBJECTS_LIMIT} per repository.{data.linked ? "" : " This archond does not serve github_links; relationships are unavailable."}</p>
       <ObjectTable rows={rows} now={now} linked={data.linked} /><Relationships rows={rows} /><Activity rows={rows} now={now} linked={data.linked} /></> : null}
   </>;
+}
+
+/** archond refuses the watcher read to a remote device by design; the overview then reads the cache on its own. */
+export const webOnlyRefusal = (error: string): boolean => /not available from the web app/i.test(error);
+
+const isRepo = (value: unknown): value is string => typeof value === "string" && /^[^/\s]+\/[^/\s]+$/.test(value);
+
+/** The GitHub repositories the items link to (their issue, pull request or origin), sorted, each once. */
+export function linkedRepositories(items: Readonly<Record<string, { readonly summary: unknown }>>): string[] {
+  const repos = new Set<string>();
+  for (const item of Object.values(items)) {
+    const summary = item.summary as { issue?: { repo?: unknown } | null; pr?: { repo?: unknown } | null; origin?: { repository?: unknown } | null };
+    for (const repo of [summary.issue?.repo, summary.pr?.repo, summary.origin?.repository]) if (isRepo(repo)) repos.add(repo);
+  }
+  invariant([...repos].every(isRepo), "every linked repository is owner/name");
+  return [...repos].sort();
+}
+
+function WatcherTiles({ view, now }: { readonly view: archon.GithubWatcherView; readonly now: number }) {
+  const lastPoll = view.repositories.flatMap((repo) => repo.last_poll_at ? [repo.last_poll_at] : []).sort((a, b) => Date.parse(a) - Date.parse(b)).at(-1);
+  return <><div className="gh-overview-stats"><StatTile label="Watcher" value={view.enabled ? "On" : "Off"} tone={view.enabled ? "success" : "neutral"} />
+    <StatTile label="Poll interval" value={`${view.poll_interval_secs} s`} /><StatTile label="Last poll" value={relativeTime(lastPoll, now)} />
+    <StatTile label="Watched repositories" value={String(view.repositories.length)} /></div><ul className="gh-watched" aria-label="Watched repositories">
+    {view.repositories.map((repo) => <li key={repo.repository}><strong>{repo.repository}</strong><Badge tone={repo.enabled ? "success" : "neutral"}>{repo.enabled ? "Watching" : "Disabled"}</Badge>
+      <span>{repo.dispatched} dispatched · {repo.ignored} ignored · {relativeTime(repo.last_poll_at, now)}</span>{repo.last_error ? <p role="alert">{repo.last_error}</p> : null}</li>)}</ul></>;
 }
 
 function Overview({ info }: { readonly info: ConnectionInfo }) {
@@ -107,20 +133,23 @@ function Overview({ info }: { readonly info: ConnectionInfo }) {
   const refresh = `${change}:${nonce}`;
   const watcher = useReread(info.id, "github:overview:watcher", { cmd: "github_watcher" }, ["github_watcher"], refresh);
   const view = watcher?.value as archon.GithubWatcherView | undefined;
+  const items = useItems(info.id);
   const now = useNow(STALE_CHECK_MS);
   const reload = () => setNonce((value) => value + 1);
-  const repositories = (view?.repositories ?? []).map((repo) => repo.repository);
-  const lastPoll = (view?.repositories ?? []).flatMap((repo) => repo.last_poll_at ? [repo.last_poll_at] : []).sort((a, b) => Date.parse(a) - Date.parse(b)).at(-1);
+  // A remote device is not told about the watcher; the items say which repositories matter.
+  const cliOnly = watcher?.error !== undefined && watcher.error !== null && webOnlyRefusal(watcher.error);
+  const failed = watcher?.error && !cliOnly ? watcher.error : null;
+  const fromItems = useMemo(() => linkedRepositories(items), [items]);
+  const repositories = cliOnly ? fromItems : (view?.repositories ?? []).map((repo) => repo.repository);
+  const reads = cliOnly || (view?.enabled === true && failed === null);
   return <main className="gh-overview" aria-label="GitHub overview"><header><div><p className="gh-eyebrow">GitHub</p><h1>Overview</h1></div><Button onClick={reload}>Refresh</Button></header>
-    {watcher?.error ? <ErrorState title="Watcher unreachable" message={watcher.error} onRetry={reload} /> : null}
+    {failed ? <ErrorState title="Watcher unreachable" message={failed} onRetry={reload} /> : null}
     {!view && !watcher?.error ? <Skeleton height="5rem" /> : null}
-    {view ? <><div className="gh-overview-stats"><StatTile label="Watcher" value={view.enabled ? "On" : "Off"} tone={view.enabled ? "success" : "neutral"} />
-      <StatTile label="Poll interval" value={`${view.poll_interval_secs} s`} /><StatTile label="Last poll" value={relativeTime(lastPoll, now)} />
-      <StatTile label="Watched repositories" value={String(repositories.length)} /></div><ul className="gh-watched" aria-label="Watched repositories">
-      {view.repositories.map((repo) => <li key={repo.repository}><strong>{repo.repository}</strong><Badge tone={repo.enabled ? "success" : "neutral"}>{repo.enabled ? "Watching" : "Disabled"}</Badge>
-        <span>{repo.dispatched} dispatched · {repo.ignored} ignored · {relativeTime(repo.last_poll_at, now)}</span>{repo.last_error ? <p role="alert">{repo.last_error}</p> : null}</li>)}</ul></> : null}
-    {view?.enabled && !watcher?.error ? <CachedObjects info={info} repositories={repositories} refresh={refresh} now={now} onRefresh={reload} interval={view.poll_interval_secs} />
-      : view || watcher?.error ? <EmptyState title={watcher?.error ? "Reconnect the GitHub watcher" : "GitHub watcher is off"} action={<a className="ui-link" href="#/settings">Open Settings</a>}>The watcher is configured by the operator. Check the Archon connection and ask the operator to enable repository watching.</EmptyState> : null}
+    {view ? <WatcherTiles view={view} now={now} /> : null}
+    {cliOnly ? <p className="gh-overview-note" role="note">The watcher reports to the archon CLI; this overview shows the cached issues and pull requests of the repositories your items link to.</p> : null}
+    {reads && repositories.length > 0 ? <CachedObjects info={info} repositories={repositories} refresh={refresh} now={now} onRefresh={reload} interval={view?.poll_interval_secs ?? null} />
+      : cliOnly ? <EmptyState title="No GitHub repository yet" action={<a className="ui-link" href="#/archon/queue">Open the queue</a>}>Import an issue or link an item to a pull request; its repository's cached issues and pull requests then show here.</EmptyState>
+        : view || failed ? <EmptyState title={failed ? "Reconnect the GitHub watcher" : "GitHub watcher is off"} action={<a className="ui-link" href="#/settings">Open Settings</a>}>The watcher is configured by the operator. Check the Archon connection in Settings, then refresh.</EmptyState> : null}
   </main>;
 }
 

@@ -3,6 +3,7 @@
 // connection and sync, then checks what the screen shows. Daemon data reaches the screen only via the store.
 
 import type { aether } from "@aether-ui/protocol";
+import { act } from "react";
 import { afterEach, describe, expect, test } from "vitest";
 import { Conversation } from "./Conversation.tsx";
 import { connected, type Harness } from "./fixture/harness.test-util.tsx";
@@ -213,5 +214,35 @@ describe("a long transcript", () => {
     // A loaded host stalls one run by hundreds of ms; a regression slows every run, so the better of two is judged.
     const second = await timeSecondOpen(h);
     expect(Math.min(elapsed, second)).toBeLessThan(500);
+  });
+});
+
+describe("a message sent from the composer", () => {
+  async function sendFromComposer(h: Harness, container: HTMLElement, value: string) {
+    const input = container.querySelector<HTMLTextAreaElement>("[data-testid=composer-input]");
+    if (!input) throw new Error("the conversation draws its composer");
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    if (!setter) throw new Error("a text area has a value setter");
+    await act(async () => {
+      setter.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+    await h.settle();
+  }
+
+  test("shows as queued at the end until the daemon delivers it, then once as delivered", async () => {
+    const { h, container } = await open();
+    await sendFromComposer(h, container, "Ship it.");
+    expect(h.daemon.commands("send_message")).toHaveLength(1);
+    const queued = container.querySelectorAll(".conv-msg[data-queued]");
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.textContent).toContain("Ship it.");
+    expect(queued[0]?.textContent).toContain("Queued");
+    expect(shown(container).messages).toEqual([...SEED, "Ship it."]);
+    h.daemon.commit(FAUX_AGENT, text("user", "[inbox 1] Message from user:device:\nShip it."));
+    await h.settle();
+    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(0);
+    expect(shown(container).messages).toEqual([...SEED, "Ship it."]);
   });
 });

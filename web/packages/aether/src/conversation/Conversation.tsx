@@ -12,7 +12,7 @@ import "./conversation.css";
 import "./markdown.css";
 import type { ListHandle } from "./MeasuredList.tsx";
 import { AgentNameContext } from "./Message.tsx";
-import { entryRows, invocationMeta, liveRows, pairTools, rowCounts, toolActivity, type ConversationRow, type ToolActivity } from "./rows.ts";
+import { entryRows, invocationMeta, isDelivered, liveRows, pairTools, queuedRows, rowCounts, toolActivity, type ConversationRow, type QueuedMessage, type ToolActivity } from "./rows.ts";
 import { SearchBar, useTranscriptSearch } from "./SearchBar.tsx";
 import { ToggleContext, ToggleSet } from "./toggles.ts";
 import { ToolActivityContext } from "./ToolCall.tsx";
@@ -58,6 +58,26 @@ export function useConversationRows(conn: ConnId, agent: string): ConversationRo
   return { rows, loaded: transcript !== undefined, committed: committed.length, activity };
 }
 
+/** Messages sent from the composer and not yet delivered, per agent; kept while the app is open so a visit back still shows them. */
+const queuedMemory = new Map<string, readonly QueuedMessage[]>();
+
+/** The agent's queued messages, those sent here and not yet delivered, and a way to add one. */
+function useQueuedMessages(conn: ConnId, agent: string, rows: readonly ConversationRow[]): { queued: readonly QueuedMessage[]; add: (text: string) => void } {
+  const memoryKey = `${conn}/${agent}`;
+  const [sent, setSent] = useState<readonly QueuedMessage[]>(() => queuedMemory.get(memoryKey) ?? []);
+  const queued = useMemo(() => sent.filter((message) => !isDelivered(rows, message)), [sent, rows]);
+  const newestSeq = useRef(0);
+  useEffect(() => {
+    newestSeq.current = rows.reduce((top, row) => Math.max(top, row.seq ?? 0), 0);
+    queuedMemory.set(memoryKey, queued);
+  }, [rows, queued, memoryKey]);
+  const add = useCallback((text: string) => {
+    invariant(text.trim() !== "", "a queued message has text");
+    setSent([...(queuedMemory.get(memoryKey) ?? []), { text, at: new Date().toISOString(), afterSeq: newestSeq.current }]);
+  }, [memoryKey]);
+  return { queued, add };
+}
+
 const counted = (n: number, noun: string): string => `${n.toLocaleString("en")} ${noun}${n === 1 ? "" : "s"}`;
 
 /** A quiet line over the transcript while the connection is down; what arrived stays readable. */
@@ -95,9 +115,11 @@ export function Conversation({ conn, agent }: { readonly conn: ConnId; readonly 
   const [toggles] = useState(() => new ToggleSet());
   const list = useRef<ListHandle>(null);
   const stage = useRef<HTMLDivElement>(null);
-  const search = useTranscriptSearch({ rows, list, stage, toggles });
+  const sent = useQueuedMessages(conn, agent, rows);
+  const shown = useMemo(() => (sent.queued.length === 0 ? rows : [...rows, ...queuedRows(sent.queued)]), [rows, sent.queued]);
+  const search = useTranscriptSearch({ rows: shown, list, stage, toggles });
   const [focusFind, setFocusFind] = useState(0);
-  const counts = useMemo(() => rowCounts(rows), [rows]);
+  const counts = useMemo(() => rowCounts(shown), [shown]);
   const openFind = () => {
     search.show();
     setFocusFind((n) => n + 1);
@@ -123,14 +145,14 @@ export function Conversation({ conn, agent }: { readonly conn: ConnId; readonly 
         <ToggleContext.Provider value={toggles}>
           <ToolActivityContext.Provider value={activity}>
             <AgentNameContext.Provider value={name}>
-              <TranscriptBody loaded={loaded} info={info} rows={rows.length}>
-                <TranscriptList conn={conn} agent={agent} rows={rows} committed={committed} currentRow={search.currentRow} handle={list} />
+              <TranscriptBody loaded={loaded} info={info} rows={shown.length}>
+                <TranscriptList conn={conn} agent={agent} rows={shown} committed={committed} currentRow={search.currentRow} handle={list} />
               </TranscriptBody>
             </AgentNameContext.Provider>
           </ToolActivityContext.Provider>
         </ToggleContext.Provider>
       </div>
-      <Composer conn={conn} agent={agent} onSent={() => list.current?.scrollToEnd()} />
+      <Composer conn={conn} agent={agent} onSent={(text) => { sent.add(text); list.current?.scrollToEnd(); }} />
     </section>
   );
 }

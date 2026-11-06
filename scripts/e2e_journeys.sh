@@ -105,7 +105,7 @@ done
 for tool in sway swaymsg wtype; do command -v "$tool" > /dev/null || die "the journeys need $tool on PATH"; done
 [ -f web/node_modules/.package-lock.json ] || die "web/node_modules is missing; install it (npm ci in web) first"
 
-STATE=$(mktemp -d /tmp/ae-run-XXXXXX)
+STATE=$(mktemp -d "${E2E_RUN_BASE:-/var/tmp}/ae-run-XXXXXX")
 mkdir -m 700 "$STATE/t" "$STATE/home" "$STATE/xdg"
 export E2E_STATE=$STATE E2E_TMP=$STATE/t E2E_USER_HOME=$HOME E2E_USER_PATH=$PATH E2E_OUT=${E2E_OUT:-$REPO_ROOT/web/e2e/.out}
 export AETHER_BIN ARCHOND_BIN E2E_DESKTOP_EXEC JOURNEY_ENGINE

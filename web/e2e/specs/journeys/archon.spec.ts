@@ -1,12 +1,15 @@
 // Journey 6, Archon: a scratch checkout with no origin registered to keep its work local, an item
 // queued on it, a bounded wait for an outcome, then the task graph and the item's history. The
-// orchestrator runs on the faux engine.
+// orchestrator runs on the faux engine. Then an issue imported from a stubbed gh, and the GitHub
+// overview reading the repository it links to.
 
 import assert from "node:assert/strict";
 import { expect, test, type Page } from "@playwright/test";
 import { until } from "../../harness/process.ts";
 import type { Stack } from "../../harness/stack.ts";
 import { itemHistory, items, itemState, setPaused } from "../flows/desktop/state.ts";
+import { fixtureRepository, installGhStub, OWNER_REPO } from "../flows/gh-stub.ts";
+import { shootWindow } from "./capture.ts";
 import { scratchRepo } from "./daemon.ts";
 import { connectionsReady, journeyHooks } from "./journey.ts";
 import { choose, need, open, textField } from "./ui.ts";
@@ -17,6 +20,9 @@ const TITLE = "Journey item: say hello";
 const BRIEF = "Answer with one short greeting, then finish.";
 const OUTCOME_MS = 150_000;
 const ACTIVE = new Set(["queued", "dispatching", "spawning", "running", "ready"]);
+// archond reads GitHub on a sync that sleeps 60 s between passes.
+const GH_SYNC_MS = 75_000;
+const ISSUE = { number: 7, title: "Journey issue: name the release", state: "open", body: "Pick the release name." } as const;
 
 interface HeldRepo { readonly name: string; readonly ship: string }
 
@@ -38,6 +44,7 @@ async function registerRepo(page: Page, stack: Stack, repo: string): Promise<voi
   const name = await textField(await need(sheet, "repo-name"));
   await expect(name, "the name follows the folder").toHaveValue(REPO);
   await choose(page, sheet.getByRole("radiogroup", { name: "When work is done" }), "Keep it local");
+  await shootWindow(page, "queue", "register-sheet");
   await expect(sheet.getByRole("switch", { name: "Watch GitHub" }), "the desktop leaves watching GitHub to the archon CLI").toBeDisabled();
   const submit = await need(sheet, "repo-register-submit");
   await expect(submit, "the repository is ready to register").toBeEnabled();
@@ -57,6 +64,7 @@ async function queueItem(page: Page): Promise<void> {
   await (await textField(await need(dialog, "new-item-brief"))).fill(BRIEF);
   await expect((await need(dialog, "new-item-repo")).locator(".ui-picker-value"), "New item is on the new repository").toHaveText(REPO);
   await choose(page, await need(dialog, "new-item-pipeline"), /^ask$/);
+  await shootWindow(page, "queue", "new-item");
   const submit = await need(dialog, "new-item-submit");
   await expect(submit, "the item is ready to queue").toBeEnabled();
   await submit.click();
@@ -74,11 +82,36 @@ test("archon journey: register a repository, queue an item, see it through", asy
   const outcome = await until(() => itemState(stack, id), (state) => !ACTIVE.has(state), "the item to reach an outcome", OUTCOME_MS);
   test.info().annotations.push({ type: "outcome", description: `${TITLE}: ${outcome}` });
   assert.ok((await itemHistory(stack, id)).length >= 2, "the item moved at least once");
+  await open(window, "Queue", "#/archon/queue");
+  await shootWindow(window, "queue", "item-done");
+  await open(window, TITLE, `#/archon/items/${id}`);
+  await expect(window.getByRole("heading", { name: TITLE }), "the item's page shows").toBeVisible();
+  await shootWindow(window, "item", "outcome");
   await open(window, "Task graph", "#/archon/graph");
   await expect(window.getByRole("complementary", { name: "Graph overview" }).or(window.getByText("Nothing in the graph")).first(), "the task graph renders").toBeVisible();
+  await shootWindow(window, "task-graph", "rendered");
   await open(window, "History", "#/archon/history");
   const row = window.getByRole("list", { name: "Items" }).getByText(TITLE).first();
   await expect(row, "History lists the item").toBeVisible();
   await row.click();
   await expect(window.getByRole("complementary", { name: "Item history" }), "the item's history opens").toBeVisible();
+  await shootWindow(window, "history", "item-opened");
+});
+
+test("archon journey: the GitHub overview reads the repository an imported issue links to", async () => {
+  const { window, stack } = journey();
+  test.setTimeout(GH_SYNC_MS * 2);
+  // The import must not be dispatched: this test is about reading GitHub, not working the item.
+  await setPaused(stack, true);
+  await installGhStub(stack.layout, [ISSUE]);
+  const added = await stack.archon.request({ cmd: "repo_add", path: await fixtureRepository(stack.layout), name: "e2e-repo" });
+  assert.notEqual(added.reply, "error", `archond registers the fixture repository: ${JSON.stringify(added.data)}`);
+  const imported = await stack.archon.request({ cmd: "import_issue", ref: { host: "github.com", repo: OWNER_REPO, number: ISSUE.number, kind: "issue" } });
+  assert.match(String((imported.data as { id?: unknown }).id), /^qi_/, "archond imports the issue as an item");
+  await open(window, "Overview", "#/github");
+  const overview = window.getByRole("main", { name: "GitHub overview" });
+  await expect(overview.getByText("The watcher reports to the archon CLI"), "the desktop reads the cache on its own").toBeVisible();
+  await expect(overview.getByTestId("gh-graph"), "the imported issue's repository shows its cached objects").toBeVisible({ timeout: GH_SYNC_MS });
+  await expect(overview.getByText(ISSUE.title).first(), "the issue is listed").toBeVisible();
+  await shootWindow(window, "github", "overview");
 });

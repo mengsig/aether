@@ -32,7 +32,7 @@ function useHasDelegates(conn: ConnId, agent: string): boolean {
   }, [conn, agent]));
 }
 
-function useComposer(conn: ConnId, agentId: string, onSent: (() => void) | undefined) {
+function useComposer(conn: ConnId, agentId: string, onSent: ((text: string) => void) | undefined) {
   const agent = useSelector(useMemo(() => selectAgent(conn, agentId), [conn, agentId]));
   const info = useSelector(useMemo(() => selectConnection(conn), [conn]));
   const { refusal } = usePermission(conn, { cmd: "send_message", to: agentId });
@@ -49,7 +49,7 @@ function useComposer(conn: ConnId, agentId: string, onSent: (() => void) | undef
     if (reply === null) return;
     invariant(typeof reply === "object", "an accepted message has a reply");
     draft.clear();
-    onSent?.();
+    onSent?.(text.trim());
   }, [busy, empty, blocked, run, agentId, text, subtree, delegates, draft, onSent]);
   return { agent, draft, run, blocked, busy, empty, delegates, send };
 }
@@ -70,7 +70,7 @@ function SendNote({ status, empty, retry }: { readonly status: RunStatus; readon
   return null;
 }
 
-export function Composer({ conn, agent: agentId, onSent }: { readonly conn: ConnId; readonly agent: string; readonly onSent?: () => void }) {
+export function Composer({ conn, agent: agentId, onSent }: { readonly conn: ConnId; readonly agent: string; readonly onSent?: (text: string) => void }) {
   invariant(conn !== "" && agentId !== "", "a composer names its connection and agent");
   const { agent, draft, run, blocked, busy, empty, delegates, send } = useComposer(conn, agentId, onSent);
   const finished = agent !== undefined && FINISHED[agent.status.state] !== undefined;

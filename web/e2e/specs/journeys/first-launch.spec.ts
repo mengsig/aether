@@ -10,6 +10,7 @@ import { AGENT_LIMITS, isRealModel } from "../../harness/real-engine.ts";
 import { agent, agentIds, cancelLive, capAgent, transcriptText } from "./daemon.ts";
 import { connectionsReady, pairIfAsked, journeyHooks, type Journey } from "./journey.ts";
 import { FAUX_COMMANDS, LISTED_REPLY, OBJECTIVES, REAL_COMMANDS, REAL_OBJECTIVES, RELEASE_FILE } from "./scripts.ts";
+import { shootWindow } from "./capture.ts";
 import { chooseWorkspace, expectDefaultModel, landOnAgent, newAgentId, objectiveField, openStart, stopAndResume, submitStart, agentPage } from "./steps.ts";
 import { need, note, open, textField } from "./ui.ts";
 
@@ -23,8 +24,10 @@ test("first-launch smoke: paired, the fleet renders, Start-agent shows", async (
   await connectionsReady(run);
   await open(run.window, "Fleet", "#/fleet");
   await expect(run.window.getByRole("region", { name: "Fleet" }), "the fleet renders").toBeVisible();
+  await shootWindow(run.window, "fleet", "paired");
   await open(run.window, "Activity", "#/activity");
   await expect(run.window.getByRole("button", { name: "Start an agent", exact: true }).first(), "Activity offers Start an agent").toBeVisible();
+  await shootWindow(run.window, "activity", "start-offered");
 });
 
 /** Starts the journey's agent from Activity's sheet and lands on its page; returns its id. */
@@ -35,6 +38,7 @@ async function startFromActivity(run: Journey): Promise<string> {
   await (await objectiveField(window)).fill(variant === "faux" ? OBJECTIVES.firstLaunch : REAL_OBJECTIVES.firstLaunch);
   await chooseWorkspace(window, stack.layout.aether.work);
   await expectDefaultModel(window, variant);
+  await shootWindow(window, "start-agent", "filled");
   await submitStart(window, "Start agent");
   const id = await newAgentId(stack, before);
   if (variant === "real") await capAgent(stack, id, AGENT_LIMITS);
@@ -59,6 +63,7 @@ async function expectReplyAndToolCall(run: Journey, id: string): Promise<void> {
   await expect(toggle, "the shell call unfolds").toHaveAttribute("aria-expanded", "true");
   const output = page.getByTestId("conv-tool-output").filter({ hasText: command }).first();
   await expect(output, "the unfolded call shows its command").toBeVisible();
+  await shootWindow(window, "agent", "tool-unfolded");
   await until(() => transcriptText(stack, id), (text) => text.includes(RELEASE_FILE), "the agent to hold in its shell call", REPLY_MS[variant]);
   const held = await agent(stack, id);
   assert.ok(!["completed", "failed", "cancelled"].includes(held.state), `the held agent still works: ${held.state}`);
@@ -71,6 +76,7 @@ async function sendFromComposer(window: Page): Promise<void> {
   await (await need(page, "composer-send")).click();
   await expect(input, "sending empties the composer").toHaveValue("");
   await expect(page.getByText(MESSAGE).first(), "the message shows in the conversation").toBeVisible();
+  await shootWindow(window, "agent", "message-queued");
 }
 
 /** Releases the agent's held shell call; it then finishes its task. */

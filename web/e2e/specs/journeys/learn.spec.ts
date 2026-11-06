@@ -5,6 +5,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { acceptNativeDialog } from "../../harness/packaged.ts";
 import { until } from "../../harness/process.ts";
 import { noesisStatus } from "../noesis/noesis.ts";
+import { shootWindow } from "./capture.ts";
 import { connectionsReady, journeyHooks, type Journey } from "./journey.ts";
 import { PRACTICE_STATEMENT, PROBER_QUESTION } from "./scripts.ts";
 import { need, open, textField } from "./ui.ts";
@@ -31,6 +32,7 @@ async function turnNoesisOn(run: Journey): Promise<void> {
   await switchOn(sheet, "noesis-allow-api");
   const save = await need(sheet, "noesis-save");
   await expect(save, "the settings are ready to save").toBeEnabled();
+  await shootWindow(window, "noesis-settings", "turn-on");
   await save.click();
   await acceptNativeDialog(sway, "Noesis settings");
   await until(() => noesisStatus(stack), (status) => status.enabled, "Noesis to be on", 30_000);
@@ -56,8 +58,10 @@ test("learn journey: turn Noesis on, start a session, answer the Prober, get a p
   const transcript = await startSession(window);
   await expect(transcript.getByText(PROBER_QUESTION).first(), "the Prober asks").toBeVisible({ timeout: TEACH_MS });
   await expect(await need(window, "learn-reply"), "an open question is answered in its card, not the composer").toBeDisabled();
+  await shootWindow(window, "learn-session", "prober-question");
   const card = transcript.locator("form").filter({ has: window.getByTestId("learn-answer") }).last();
   await (await textField(await need(card, "learn-answer"))).fill("two times x");
   await card.getByRole("button", { name: "Answer", exact: true }).click();
   await expect(transcript.getByText(PRACTICE_STATEMENT).first(), "a practice problem appears").toBeVisible({ timeout: TEACH_MS });
+  await shootWindow(window, "learn-session", "practice-problem");
 });

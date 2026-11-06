@@ -52,6 +52,16 @@ export interface ConversationRow {
   readonly parts: readonly Part[];
   readonly live: LiveState | null;
   readonly meta: InvocationMeta | null;
+  /** Sent from the composer and not yet delivered by the daemon; drawn after every other row. */
+  readonly queued?: true;
+}
+
+/** A message the composer sent that the daemon has not yet delivered to the agent. */
+export interface QueuedMessage {
+  readonly text: string;
+  readonly at: string;
+  /** The newest committed seq when it was sent; its delivery commits after this. */
+  readonly afterSeq: number;
 }
 
 export interface Pairing {
@@ -176,6 +186,24 @@ export function liveRows(streams: Readonly<Record<string, StreamState>>, agent: 
   rows.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   invariant(new Set(rows.map((row) => row.key)).size === rows.length, "one live tail per invocation");
   return rows;
+}
+
+/** Rows for the messages still queued, in the order they were sent. */
+export function queuedRows(queued: readonly QueuedMessage[]): ConversationRow[] {
+  return queued.map((message, index) => {
+    invariant(message.text.trim() !== "", "a queued message has text");
+    invariant(message.afterSeq >= 0, "a queued message follows a committed seq");
+    return {
+      key: `q:${message.afterSeq}:${index}`, role: "user", speaker: OPERATOR, seq: null, at: message.at, invocation: null,
+      parts: [{ kind: "text", text: message.text }], live: null, meta: null, queued: true,
+    };
+  });
+}
+
+/** Whether a user row committed after the send carries the message: the daemon delivered it. */
+export function isDelivered(rows: readonly ConversationRow[], message: QueuedMessage): boolean {
+  return rows.some((row) => row.seq !== null && row.seq > message.afterSeq && row.speaker.kind === "user"
+    && row.parts.some((part) => part.kind === "text" && part.text.includes(message.text)));
 }
 
 const modelOf = (ref: aether.ModelRef): string => `${ref.provider}/${ref.model}`;

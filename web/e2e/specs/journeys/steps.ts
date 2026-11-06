@@ -8,6 +8,7 @@ import type { Stack } from "../../harness/stack.ts";
 import { aetherConn, route } from "../flows/desktop/state.ts";
 import { agent, agentIds } from "./daemon.ts";
 import type { Variant } from "./journey.ts";
+import { shootWindow } from "./capture.ts";
 import { choose, need, open, textField } from "./ui.ts";
 
 const AGENT_MS = 30_000;
@@ -93,6 +94,19 @@ export async function stopAndResume(page: Page, stack: Stack, id: string): Promi
   const controls = await openControls(page, stack, id, "Lifecycle");
   await controls.getByRole("button", { name: "Pause", exact: true }).click();
   await waitPaused(stack, id, true);
+  await shootWindow(page, "controls", "lifecycle-paused");
   await controls.getByRole("button", { name: "Resume", exact: true }).click();
   await waitPaused(stack, id, false);
+}
+
+/** Finds `text` through the conversation's own Find: the current match is scrolled into view. */
+export async function findInConversation(page: Page, text: string): Promise<Locator> {
+  assert.ok(text.trim() !== "", "a find looks for text");
+  const conversation = agentPage(page);
+  await conversation.getByRole("button", { name: "Find" }).click();
+  await (await need(conversation, "conv-search")).fill(text);
+  await expect(await need(conversation, "conv-search-count"), "the text is found once").toHaveText(/^1 of 1$/);
+  const current = conversation.locator('.conv-msg[data-current="true"]');
+  await expect(current, "the match is drawn").toContainText(text);
+  return current;
 }

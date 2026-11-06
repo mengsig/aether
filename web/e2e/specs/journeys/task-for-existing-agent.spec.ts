@@ -6,7 +6,8 @@ import { expect, test } from "@playwright/test";
 import { until } from "../../harness/process.ts";
 import { agent, cancelLive, createAgentOn, taskObjectives } from "./daemon.ts";
 import { connectionsReady, journeyHooks } from "./journey.ts";
-import { agentPage, landOnAgent, objectiveField, openStart, startSheet, submitStart } from "./steps.ts";
+import { shootWindow } from "./capture.ts";
+import { findInConversation, landOnAgent, objectiveField, openStart, startSheet, submitStart } from "./steps.ts";
 import { choose, need } from "./ui.ts";
 
 const journey = journeyHooks({ archon: false });
@@ -29,11 +30,13 @@ test("task-for-existing-agent journey: a task in task mode lands on its owner", 
     await choose(window, (await need(sheet, "start-mode")).getByRole("radiogroup", { name: "Work type" }), "Task for an existing agent");
     await (await objectiveField(window)).fill(TASK);
     await choose(window, await need(sheet, "start-owner"), OWNER);
+    await shootWindow(window, "start-agent", "task-mode");
     await submitStart(window, "Create task");
     const tasks = await until(() => taskObjectives(stack, owner), (objectives) => objectives.includes(TASK), "the task on its owner", 30_000);
     assert.equal(tasks.filter((objective) => objective === TASK).length, 1, "one task was created");
     await landOnAgent(window, owner);
-    await expect(agentPage(window).getByText(TASK).first(), "the task reaches the owner's conversation").toBeVisible();
+    await expect(await findInConversation(window, TASK), "the task reaches the owner's conversation").toBeVisible();
+    await shootWindow(window, "agent", "task-found");
   } finally {
     await cancelLive(stack, [owner]);
   }

@@ -6,6 +6,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { until } from "../../harness/process.ts";
 import { cancelLive, createAgentOn, scheduleNames } from "./daemon.ts";
 import { connectionsReady, journeyHooks } from "./journey.ts";
+import { shootWindow } from "./capture.ts";
 import { openControls } from "./steps.ts";
 import { choose, confirmIfAsked, need, textField } from "./ui.ts";
 
@@ -43,12 +44,14 @@ test("schedules journey: create a weekday schedule, see it listed, delete it", a
     await fillSchedule(window, controls, stack.layout.aether.work);
     const submit = await need(controls, "schedule-submit");
     await expect(submit, "the schedule is ready to create").toBeEnabled();
+    await shootWindow(window, "controls", "schedules-form");
     await submit.click();
     await confirmIfAsked(window, "Create schedule");
     await until(() => scheduleNames(stack), (names) => names.includes(NAME), "the schedule on the daemon", LIST_MS);
     await choose(window, controls.getByRole("radiogroup", { name: "Schedule scope" }), "All schedules");
     const row = controls.getByRole("listitem").filter({ hasText: NAME }).first();
     await expect(row, "the schedule is listed").toBeVisible();
+    await shootWindow(window, "controls", "schedules-list");
     await row.getByRole("button", { name: "Cancel schedule", exact: true }).click();
     await confirmIfAsked(window, "Cancel schedule");
     const left = await until(() => scheduleNames(stack), (names) => !names.includes(NAME), "the schedule to be deleted", LIST_MS);

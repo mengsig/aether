@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, constants, mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { access, constants, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { chromium, expect, type Browser, type Page } from "@playwright/test";
@@ -110,7 +110,7 @@ export async function launchPackaged(launch: PackagedLaunch): Promise<PackagedAp
       return await launchOnce(launch);
     } catch (error) {
       failures.push(error);
-      console.warn(`the packaged app did not start (attempt ${attempt} of ${LAUNCH_ATTEMPTS}): ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
+      console.warn(`the packaged app did not start (attempt ${attempt} of ${LAUNCH_ATTEMPTS}): ${firstLine(error)}; cause: ${firstLine(error instanceof Error ? error.cause : undefined)}`);
     }
   }
   assert.equal(failures.length, LAUNCH_ATTEMPTS, "every attempt failed");
@@ -203,6 +203,8 @@ export async function windowTitles(sway: Sway): Promise<string[]> {
   return (await swayWindows(sway)).map((window) => window.title);
 }
 
+const firstLine = (error: unknown): string => (error instanceof Error ? error.message : String(error)).split("\n")[0] ?? "";
+
 const DIALOG_ATTEMPTS = 3;
 const DIALOG_CLOSE_MS = 3_000;
 
@@ -237,5 +239,18 @@ export async function acceptNativeDialog(sway: Sway, title: string, timeoutMs = 
     console.warn(`the native dialog "${title}" stayed open after attempt ${attempt} of ${DIALOG_ATTEMPTS}`);
   }
   const focused = (await swayWindows(sway)).find((window) => window.focused)?.title ?? "nothing";
-  throw new Error(`the native dialog "${title}" did not close after ${DIALOG_ATTEMPTS} presses; sway's keyboard is on ${focused}`);
+  const evidence = await dialogEvidence(sway, title);
+  throw new Error(`the native dialog "${title}" did not close after ${DIALOG_ATTEMPTS} presses; sway's keyboard is on ${focused}; see ${evidence}`);
+}
+
+/** A screenshot of sway's output and its window tree, kept under the run's output for a dialog that would not close. */
+async function dialogEvidence(sway: Sway, title: string): Promise<string> {
+  const dir = path.join(process.env.E2E_OUT ?? tempBase(), "journeys", "dialogs");
+  await mkdir(dir, { recursive: true });
+  const stem = path.join(dir, `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now()}`);
+  const env = swayEnv(sway);
+  await run("/usr/bin/grim", [`${stem}.png`], { env, timeout: TOOL_MS });
+  const { stdout } = await run("/usr/bin/swaymsg", ["-t", "get_tree", "-r"], { env, timeout: TOOL_MS });
+  await writeFile(`${stem}.json`, stdout);
+  return `${stem}.png`;
 }

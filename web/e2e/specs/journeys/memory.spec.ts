@@ -7,6 +7,7 @@ import { until } from "../../harness/process.ts";
 import { aetherConn } from "../flows/desktop/state.ts";
 import { memoryTexts } from "./daemon.ts";
 import { connectionsReady, journeyHooks } from "./journey.ts";
+import { shootWindow } from "./capture.ts";
 import { choose, need, open, textField } from "./ui.ts";
 
 const journey = journeyHooks({ archon: false });
@@ -25,6 +26,7 @@ test("memory journey: create a global memory, then find it by search", async () 
   await (await textField(await need(sheet, "memory-create-text"))).fill(TEXT);
   await choose(window, sheet.getByRole("radiogroup", { name: "Memory scope" }), "Global");
   await expect(sheet.getByTestId("memory-create-repository"), "a global memory names no repository").toHaveCount(0);
+  await shootWindow(window, "memory", "create-sheet");
   const submit = await need(sheet, "memory-create-submit");
   await expect(submit, "the memory is ready to save").toBeEnabled();
   await submit.click();
@@ -33,4 +35,5 @@ test("memory journey: create a global memory, then find it by search", async () 
   assert.equal(held.filter((text) => text === TEXT).length, 1, "one memory was created");
   await (await textField(await need(window, "memory-search"))).fill(SEARCH);
   await expect(window.getByText(TEXT).first(), "the search finds the memory").toBeVisible();
+  await shootWindow(window, "memory", "search-hit");
 });

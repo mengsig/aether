@@ -75,4 +75,21 @@ describe("GitHub overview", () => {
     expect(root.textContent).toContain("github_watcher failed");
     expect(root.querySelector('a[href="#/settings"]')).not.toBeNull();
   });
+  it("reads the repositories the items link to when archond keeps the watcher for the CLI", async () => {
+    h = await harness({ world: world(), before: (faux) => faux.refusing.set("github_watcher", "github_watcher is not available from the web app; use the archon CLI") });
+    const root = await h.mount(<GithubOverviewScreen />);
+    await h.until(() => root.querySelector('[data-testid="gh-graph"]') !== null, "the cached objects of example-org/site");
+    expect(root.textContent).toContain("The watcher reports to the archon CLI");
+    expect(root.textContent).not.toContain("Watcher unreachable");
+    expect(root.textContent).not.toContain("Reconnect the GitHub watcher");
+    expect(root.textContent).toContain("Improve navigation");
+    expect(h.faux.commands("list_github_objects").map((command) => (command as { repo?: string }).repo)).toEqual(["example-org/site"]);
+  });
+  it("guides an operator to import an issue when no item links to GitHub and the watcher is CLI-only", async () => {
+    h = await harness({ world: { ...world(), items: new Map(), links: [] }, before: (faux) => faux.refusing.set("github_watcher", "github_watcher is not available from the web app; use the archon CLI") });
+    const root = await h.mount(<GithubOverviewScreen />);
+    await h.until(() => root.textContent?.includes("No GitHub repository yet") === true, "import guidance");
+    expect(root.querySelector('a[href="#/archon/queue"]')).not.toBeNull();
+    expect(h.faux.commands("list_github_objects")).toHaveLength(0);
+  });
 });
