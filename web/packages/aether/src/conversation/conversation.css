@@ -1,6 +1,11 @@
 @layer app {
   /* The conversation is a column: header, transcript (the only part that scrolls), composer. */
   .conv { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; block-size: 100%; min-block-size: 0; min-inline-size: 0; }
+  /* Each part keeps its row whether or not the connection banner is drawn, so the transcript always gets the free height. */
+  .conv-bar { grid-row: 1; }
+  .conv-banner { grid-row: 2; }
+  .conv-stage { grid-row: 3; }
+  .conv-composer { grid-row: 4; }
   .conv-bar {
     display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4);
     min-block-size: var(--space-11); padding-block: var(--space-1); border-block-end: 1px solid var(--color-border);

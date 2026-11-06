@@ -130,7 +130,9 @@
     .ui-navrail-section[data-solo] { padding-block-start: 0; border-block-start: 0; }
     .ui-navrail-section[data-section="settings"] { margin-block-start: 0; }
     .ui-navrail ul { display: flex; gap: var(--space-1); }
-    /* Hidden from sight only: the brand link and each section list keep their accessible names. */
+    /* Hidden from sight only: the brand link and each section list keep their accessible names.
+       Their boxes stay inside the scrolling rail, so they never widen the page. */
+    .ui-brand, .ui-navrail-section { position: relative; }
     .ui-brand-name, .ui-navrail-heading { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     .ui-navrail-link { min-block-size: var(--space-8); white-space: nowrap; }
     .ui-navrail-link::before { inset-inline: var(--space-3); inset-block: auto 0; inline-size: auto; block-size: var(--space-0-5); scale: 0.4 1; }
