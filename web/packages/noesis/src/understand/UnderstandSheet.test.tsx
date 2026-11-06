@@ -166,6 +166,17 @@ describe("off by default", () => {
     }
   });
 
+  test("the off state turns Learn from my work on as a plain change, then opens the preview", async () => {
+    const { h } = await open(ITEM, { status: statusWith(true, false) });
+    await click(h, byText($(document, "dialog[open] [data-testid=understand-off]"), "button", "Turn on Learn from my work"));
+    await h.settle();
+    expect(h.daemon.sent.filter((c) => c.cmd === "noesis_configure").map((c) => c.patch)).toEqual([{ engineering_context: true }]);
+    expect(h.daemon.privileged).toEqual([]);
+    expect(h.app.store.get().capabilities["noesis.engineering_context"]).toBe(true);
+    expect(document.querySelector("dialog[open] [data-testid=understand-off]")).toBeNull();
+    expect(pills().length).toBeGreaterThan(0);
+  });
+
   test("another daemon's engineering context does not open the selected daemon's sheet", async () => {
     const h = await connected(scenario(true, { status: statusWith(true, false) }), vi);
     harness = h;

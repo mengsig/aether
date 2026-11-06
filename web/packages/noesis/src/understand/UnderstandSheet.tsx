@@ -5,7 +5,7 @@ import { navigate, routeHref } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
 import { Button, EmptyState, ErrorState, Sheet, Skeleton, StatusPill, type Status } from "@aether-ui/ui";
 import { useCallback, useMemo, useState, useSyncExternalStore, type FormEvent } from "react";
-import { useGate, useNoesisChange, useOperateRefusal, type Gate } from "../learn/data.ts";
+import { useGate, useNoesisChange, useNoesisConfigure, useOperateRefusal, type Gate } from "../learn/data.ts";
 import { classifyRefusal, invariant } from "../learn/model.ts";
 import { RefusalNote } from "../learn/RefusalNote.tsx";
 import { BUNDLE_LIMIT_BYTES, checkBundle, formatBytes, parseUnderstand, type BundleCheck, type UnderstandRequest } from "./bundle.ts";
@@ -58,14 +58,32 @@ function OffNote({ gate }: { readonly gate: Gate }) {
     case "off":
       return <div data-testid="understand-off"><EmptyState title="Noesis is off">Learning from your work needs Noesis, which the daemon's host has not turned on. Nothing is read or sent.</EmptyState></div>;
     case "on":
-      return (
-        <div data-testid="understand-off">
-          <EmptyState title="Learning from your work is off">
-            The daemon's host has not turned on engineering context for Noesis. Until then nothing about this work is read or sent.
-          </EmptyState>
-        </div>
-      );
+      return <EnableWorkContext conn={gate.conn} />;
   }
+}
+
+/** The one switch between this sheet and its preview: turning it on rereads the status and opens the preview. */
+function EnableWorkContext({ conn }: { readonly conn: string }) {
+  const configure = useNoesisConfigure(conn);
+  const refusal = useOperateRefusal(conn);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const enable = async () => {
+    setBusy(true);
+    const result = await configure({ engineering_context: true });
+    setBusy(false);
+    setFailure(result.ok ? null : result.error);
+  };
+  return (
+    <div data-testid="understand-off">
+      <EmptyState title="Learning from your work is off"
+        action={<Button variant="primary" disabled={busy || refusal !== null} onClick={() => void enable()}>{busy ? "Turning on…" : "Turn on Learn from my work"}</Button>}>
+        Turn it on to start lessons from your own items, runs and pull requests. Nothing about this work is read until you do, and only what you pick is shown to the teaching model.
+      </EmptyState>
+      {refusal !== null && <p className="learn-muted">{refusal}</p>}
+      {failure !== null && <p className="learn-callout" role="alert">Could not turn it on: {failure}</p>}
+    </div>
+  );
 }
 
 function Preview({ conn, request }: { readonly conn: string; readonly request: UnderstandRequest }) {
