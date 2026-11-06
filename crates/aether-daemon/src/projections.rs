@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use aether_core::agent::Agent;
 
 use aether_core::id::{AgentId, RunId, TaskId};
+use aether_core::lease::Lease;
 use aether_core::model::Usage;
 use aether_core::replay::{self, ReplayFrame};
 use aether_core::report::{self, RunReport};
@@ -14,8 +15,8 @@ use aether_runtime::Runtime;
 use aether_store::{AgentFilter, EventFilter, Store, TREE_PAGE_MAX, TaskFilter, TreeQuery};
 
 /// Which agents `get_tree` projects. Spend is rolled up over every agent
-/// below a shown one, shown or not; a hidden child's lands in its parent's `hidden_usage`.
-/// Within a run, only that run's agents count.
+/// below a shown one up to the next shown ones; what is not shown lands in the
+/// `hidden_usage` of the nearest shown agent above it. Within a run, only that run's agents count.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TreeFilter {
     pub include_archived: bool,
@@ -61,13 +62,7 @@ pub fn build_tree(
     assert_eq!(visible.len(), agents.len(), "a page shows an agent once");
     let usages = store.tree_usages(&agents, run)?;
     assert_eq!(usages.len(), visible.len(), "every shown agent has a total");
-    let leases: BTreeMap<AgentId, _> = store
-        .leases()?
-        .into_iter()
-        .filter(|lease| visible.contains(&lease.agent_id))
-        .map(|l| (l.agent_id, l))
-        .collect();
-
+    let leases = shown_leases(store, &agents)?;
     let tasks = current_tasks(store, &agents)?;
     let mut nodes: BTreeMap<AgentId, TreeNode> = BTreeMap::new();
     let (roots, mut children) = link(&agents, &visible);
@@ -94,6 +89,23 @@ pub fn build_tree(
         stale: None,
         next_after: page.next_after,
     })
+}
+
+/// The lease each shown agent holds, read by its key: the fleet's leases are
+/// never all decoded for the few the tree shows.
+fn shown_leases(
+    store: &dyn Store,
+    agents: &[Agent],
+) -> aether_store::Result<BTreeMap<AgentId, Lease>> {
+    let mut leases = BTreeMap::new();
+    for agent in agents {
+        if let Some(lease) = store.lease(agent.id)? {
+            assert_eq!(lease.agent_id, agent.id, "a lease read by agent is its own");
+            leases.insert(agent.id, lease);
+        }
+    }
+    assert!(leases.len() <= agents.len(), "at most one lease per agent");
+    Ok(leases)
 }
 
 /// The task each shown agent is on, read by id: a long-lived store's task
@@ -632,7 +644,7 @@ mod tests {
     }
 
     /// Delegation may cross runs: a run filter keeps a same-run grandchild
-    /// whose intermediate parent ran elsewhere, and counts it in the root's roll-up.
+    /// whose intermediate parent ran elsewhere, counted at its own root only.
     #[test]
     fn a_rooted_run_filtered_tree_follows_a_cross_run_intermediate() {
         let store = aether_store::SqliteStore::open_in_memory().expect("open");
@@ -653,9 +665,42 @@ mod tests {
         assert_eq!(tree.roots.len(), 2, "the leaf's parent is not shown");
         let top = &tree.nodes[&root.id];
         assert_eq!(
-            top.subtree_usage.input_tokens, 101,
-            "run a's spend below, not b's"
+            top.subtree_usage.input_tokens, 1,
+            "the leaf is a root of its own, and b's spend is not counted"
         );
-        assert_eq!(top.hidden_usage.map(|u| u.input_tokens), Some(100));
+        assert_eq!(top.hidden_usage, None, "only b's agent is left out");
+        assert_eq!(tree.nodes[&leaf.id].subtree_usage.input_tokens, 100);
+        assert_eq!(roots_total(&tree), 101, "each agent of run a once");
+    }
+
+    /// What the shown roots sum to, as a client's total adds them up.
+    fn roots_total(tree: &AgentTree) -> u64 {
+        let total: u64 = tree
+            .roots
+            .iter()
+            .map(|root| tree.nodes[root].subtree_usage.input_tokens)
+            .sum();
+        assert!(tree.roots.iter().all(|root| tree.nodes.contains_key(root)));
+        total
+    }
+
+    /// A live agent under an archived one is shown apart from its shown
+    /// grandparent: its spend is counted at its own root, not hidden above it too.
+    #[test]
+    fn a_shown_agent_under_a_hidden_one_is_counted_once() {
+        let store = aether_store::SqliteStore::open_in_memory().expect("open");
+        let run = RunId::new();
+        let top = agent(None, run, false, 1);
+        let middle = agent(Some(top.id), run, true, 10);
+        let leaf = agent(Some(middle.id), run, false, 100);
+        for a in [&top, &middle, &leaf] {
+            upsert(&store, a);
+        }
+        let tree = build_tree(&store, Some(run), &TreeFilter::default()).expect("tree");
+        assert_eq!(tree.roots, vec![top.id, leaf.id]);
+        let shown = &tree.nodes[&top.id];
+        assert_eq!(shown.hidden_usage.map(|u| u.input_tokens), Some(10));
+        assert_eq!(shown.subtree_usage.input_tokens, 11);
+        assert_eq!(roots_total(&tree), 111, "each agent once");
     }
 }

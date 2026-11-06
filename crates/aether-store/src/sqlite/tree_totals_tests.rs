@@ -10,7 +10,7 @@ use aether_core::model::Usage;
 use crate::sqlite::SqliteStore;
 use crate::sqlite::usage_totals::read_totals;
 use crate::sqlite::usage_totals::tests::{agent, shaped};
-use crate::{Commit, Mutation, Store, tree_usages_of};
+use crate::{Commit, Mutation, Store, TreeUsage, tree_usages_of};
 
 /// Agents over two runs, each under an earlier one or a root, written
 /// children first so the closure must link a subtree when its parent arrives.
@@ -83,11 +83,17 @@ fn assert_tree_kept(store: &SqliteStore, agents: &[Agent]) {
     let mut scopes = 0;
     for (ancestor, members) in &subtrees {
         let mut by_run: BTreeMap<RunId, (u64, Usage)> = BTreeMap::new();
+        let mut every_run = (0, Usage::default());
         for member in members {
             let entry = by_run.entry(by_id[member].run).or_default();
             entry.0 += 1;
             entry.1 += by_id[member].stats.usage;
+            every_run.0 += 1;
+            every_run.1 += by_id[member].stats.usage;
         }
+        let read = read_totals(&conn, &format!("tree:{ancestor}")).unwrap();
+        assert_eq!(read, every_run, "agent {ancestor}'s subtree over every run");
+        scopes += 1;
         for (run, expected) in by_run {
             let read = read_totals(&conn, &format!("tree:{ancestor}:{run}")).unwrap();
             assert_eq!(read, expected, "agent {ancestor}'s subtree in run {run}");
@@ -152,6 +158,77 @@ fn the_kept_closure_and_subtree_totals_follow_inserts_moves_and_deletes() {
     assert_tree_kept(&store, &agents);
 }
 
+/// `usages` add up as a client adds them: each subtree is its agent's own
+/// usage, its hidden part and its shown children's subtrees, and the shown
+/// roots count every agent below a shown one exactly once.
+fn assert_sums_hold(
+    agents: &[Agent],
+    shown: &[Agent],
+    run: Option<RunId>,
+    usages: &BTreeMap<AgentId, TreeUsage>,
+) {
+    let visible: BTreeSet<AgentId> = shown.iter().map(|a| a.id).collect();
+    let counted = |a: &Agent| run.is_none_or(|run| a.run == run);
+    let mut roots_total = Usage::default();
+    for agent in shown {
+        let mut rebuilt = Usage::default();
+        if counted(agent) {
+            rebuilt += agent.stats.usage;
+        }
+        if let Some(hidden) = usages[&agent.id].hidden {
+            rebuilt += hidden;
+        }
+        for child in shown.iter().filter(|c| c.parent == Some(agent.id)) {
+            rebuilt += usages[&child.id].subtree;
+        }
+        assert_eq!(rebuilt, usages[&agent.id].subtree, "agent {}", agent.id);
+        if agent.parent.is_none_or(|parent| !visible.contains(&parent)) {
+            roots_total += usages[&agent.id].subtree;
+        }
+    }
+    let subtrees = subtrees_of(agents);
+    let below: BTreeSet<AgentId> = shown
+        .iter()
+        .flat_map(|a| subtrees[&a.id].iter().copied())
+        .collect();
+    let mut expected = Usage::default();
+    for agent in agents.iter().filter(|a| below.contains(&a.id) && counted(a)) {
+        expected += agent.stats.usage;
+    }
+    assert_eq!(roots_total, expected, "each agent below a shown one, once");
+}
+
+#[test]
+fn a_deep_chain_finds_its_nearest_shown_agent_by_seeking_it() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let run = RunId::new();
+    let mut chain: Vec<Agent> = Vec::new();
+    for n in 0..100 {
+        let mut next = agent(run, shaped(n));
+        next.parent = chain.last().map(|a| a.id);
+        chain.push(next);
+    }
+    let commit = chain.iter().fold(Commit::new(), |commit, a| {
+        commit.mutate(Mutation::UpsertAgent(a.clone()))
+    });
+    store.commit(commit).unwrap();
+    let shown = vec![chain[0].clone(), chain[30].clone(), chain[99].clone()];
+    let ids: Vec<AgentId> = shown.iter().map(|a| a.id).collect();
+    let read = store.tree_usages(&shown, None).unwrap();
+    let folded = tree_usages_of(store.subtree_usages(&ids).unwrap(), &shown, None);
+    assert_eq!(read, folded, "past 64 ancestors, as below them");
+    assert_sums_hold(&chain, &shown, None, &read);
+    let mut middle = Usage::default();
+    for agent in &chain[31..99] {
+        middle += agent.stats.usage;
+    }
+    assert_eq!(
+        read[&chain[30].id].hidden,
+        Some(middle),
+        "the agents between it and the deep one shown apart"
+    );
+}
+
 #[test]
 fn a_roll_up_read_from_the_kept_totals_is_the_fold_of_its_subtree() {
     let store = SqliteStore::open_in_memory().unwrap();
@@ -174,6 +251,7 @@ fn a_roll_up_read_from_the_kept_totals_is_the_fold_of_its_subtree() {
             let read = store.tree_usages(shown, run).unwrap();
             let folded = tree_usages_of(store.subtree_usages(&ids).unwrap(), shown, run);
             assert_eq!(read, folded, "{} shown, run {run:?}", shown.len());
+            assert_sums_hold(&agents, shown, run, &read);
             some_hidden |= read.values().any(|usage| usage.hidden.is_some());
         }
     }

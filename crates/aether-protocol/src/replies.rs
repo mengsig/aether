@@ -198,10 +198,12 @@ pub struct TreeNode {
     pub waiting_on: Vec<TaskId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease: Option<Lease>,
-    /// Usage rolled up over this agent and its descendants.
+    /// Usage of this agent, its `hidden_usage` and its children's subtrees: a
+    /// descendant whose parent is not shown is a root, counted there instead.
     pub subtree_usage: Usage,
-    /// Usage of child subtrees omitted from this tree (for example archived children).
-    /// Kept separately so live clients can replace visible usage without losing it.
+    /// Usage of the descendants omitted from this tree (for example archived
+    /// children), up to the next shown ones. Kept separately so live clients
+    /// can replace visible usage without losing it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hidden_usage: Option<Usage>,
 }
@@ -215,7 +217,7 @@ pub struct AgentTree {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stale: Option<StatusStale>,
     /// Older agents in scope were left out of this page: ask again with this
-    /// as `after` for them. Absent when the tree is whole.
+    /// as `after` for them, even when the page is short. Absent when the tree is whole.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_after: Option<AgentId>,
 }

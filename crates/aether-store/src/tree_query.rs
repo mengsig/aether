@@ -42,18 +42,20 @@ impl TreeQuery {
 
 /// One page of a tree's agents: on the first, the newest live ones and a
 /// rooted tree's root; then the walk's agents, live or finished, newest first;
-/// then the in-scope ancestors of those not already shown. A later page may
-/// repeat one.
+/// then up to `limit` in-scope ancestors of those, nearest first, not already
+/// shown. A later page may repeat one.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TreePage {
     pub agents: Vec<Agent>,
-    /// The oldest agent the walk showed, when older ones were left for the
-    /// next page: pass it as [`TreeQuery::after`].
+    /// Where the walk stopped, when older agents were left for the next page:
+    /// pass it as [`TreeQuery::after`]. A walk checking a filter row by row
+    /// stops after a bounded number of rows, so a short page may have one.
     pub next_after: Option<AgentId>,
 }
 
-/// What a shown agent and every agent below it spent, and the part of that
-/// spent at or below its children the page leaves out; `None` when none counts.
+/// A shown agent's spend with that of every agent below it up to the next shown
+/// ones, plus its shown children's subtrees; `hidden` is the agents below it
+/// alone, `None` when none counts. Shown roots never share an agent.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TreeUsage {
     pub subtree: Usage,
@@ -109,7 +111,7 @@ pub fn tree_page_of(mut scope: Vec<Agent>, query: &TreeQuery) -> Result<TreePage
             .into_iter()
             .filter(|agent| !pinned.contains(&agent.id)),
     );
-    let above = ancestors_of(&agents, &by_id);
+    let above = ancestors_of(&agents, &by_id, query.limit);
     agents.extend(above);
     assert!(
         agents.len() <= by_id.len(),
@@ -135,95 +137,124 @@ pub fn tree_usages_of(
             .map(UsageNode::of),
     );
     let visible: HashSet<AgentId> = shown.iter().map(|agent| agent.id).collect();
-    let mut children: HashMap<AgentId, Vec<AgentId>> = HashMap::new();
-    for node in &nodes {
-        if let Some(parent) = node.parent {
-            children.entry(parent).or_default().push(node.id);
+    let owners = owners_of(&nodes, &visible);
+    let mut owned: HashMap<AgentId, Usage> = HashMap::with_capacity(visible.len());
+    let mut hidden: HashMap<AgentId, (u64, Usage)> = HashMap::new();
+    for node in nodes.iter().filter(|n| run.is_none_or(|run| n.run == run)) {
+        let Some(owner) = owners.get(&node.id).copied().flatten() else {
+            continue;
+        };
+        *owned.entry(owner).or_default() += node.usage;
+        if owner != node.id {
+            let left_out = hidden.entry(owner).or_default();
+            left_out.0 += 1;
+            left_out.1 += node.usage;
         }
     }
-    let rolled = roll_up(&nodes, &children, run);
+    let subtrees = fold_shown(shown, &visible, &owned);
     let mut usages = BTreeMap::new();
     for agent in shown {
-        let (_, subtree) = rolled[&agent.id];
-        let mut hidden = (0, Usage::default());
-        let left_out = children.get(&agent.id).into_iter().flatten();
-        for child in left_out.filter(|child| !visible.contains(*child)) {
-            let (members, usage) = rolled[child];
-            hidden.0 += members;
-            hidden.1 += usage;
-        }
-        let hidden = (hidden.0 > 0).then_some(hidden.1);
+        let hidden = hidden.get(&agent.id).map(|(_, usage)| *usage);
+        let subtree = subtrees.get(&agent.id).copied().unwrap_or_default();
         usages.insert(agent.id, TreeUsage { subtree, hidden });
     }
     assert_eq!(usages.len(), visible.len(), "one roll-up per shown agent");
+    debug_assert!(hidden.values().all(|(members, _)| *members > 0));
     usages
 }
 
-/// Each node's counted members at or below it and their usage, folded from
-/// the default by a post-order walk, so a child is in before its parent.
-fn roll_up(
+/// Each node's owner: the nearest shown agent at or above it among `nodes`,
+/// none when its walk up leaves them first.
+fn owners_of(
     nodes: &[UsageNode],
-    children: &HashMap<AgentId, Vec<AgentId>>,
-    run: Option<RunId>,
-) -> HashMap<AgentId, (u64, Usage)> {
-    let mut rolled: HashMap<AgentId, (u64, Usage)> = HashMap::with_capacity(nodes.len());
+    visible: &HashSet<AgentId>,
+) -> HashMap<AgentId, Option<AgentId>> {
+    let parents: HashMap<AgentId, Option<AgentId>> =
+        nodes.iter().map(|node| (node.id, node.parent)).collect();
+    let mut owners: HashMap<AgentId, Option<AgentId>> = HashMap::with_capacity(nodes.len());
     for node in nodes {
-        let counted = run.is_none_or(|run| node.run == run);
-        let mut own = (0, Usage::default());
-        if counted {
-            own = (1, Usage::default());
-            own.1 += node.usage;
-        }
-        rolled.insert(node.id, own);
+        let mut chain = Vec::new();
+        let mut at = Some(node.id);
+        let owner = loop {
+            let Some(id) = at else { break None };
+            if let Some(known) = owners.get(&id) {
+                break *known;
+            }
+            if visible.contains(&id) {
+                break Some(id);
+            }
+            // Off the nodes read, or round a corrupt parent cycle: no shown agent above.
+            let Some(parent) = parents.get(&id).filter(|_| chain.len() < nodes.len()) else {
+                break None;
+            };
+            chain.push(id);
+            at = *parent;
+        };
+        owners.extend(chain.into_iter().map(|id| (id, owner)));
+        owners.entry(node.id).or_insert(owner);
     }
-    let roots: Vec<AgentId> = nodes
-        .iter()
-        .filter(|n| n.parent.is_none_or(|p| !rolled.contains_key(&p)))
-        .map(|n| n.id)
-        .collect();
-    let mut done: HashSet<AgentId> = HashSet::with_capacity(nodes.len());
+    assert_eq!(owners.len(), parents.len(), "an owner, or none, per node");
+    debug_assert!(visible.iter().all(|id| owners.get(id).is_none_or(|o| *o == Some(*id))));
+    owners
+}
+
+/// Each shown agent's subtree: what it owns and its shown children's
+/// subtrees, folded children first by a post-order walk from the shown roots.
+fn fold_shown(
+    shown: &[Agent],
+    visible: &HashSet<AgentId>,
+    owned: &HashMap<AgentId, Usage>,
+) -> HashMap<AgentId, Usage> {
+    let mut children: HashMap<AgentId, Vec<AgentId>> = HashMap::new();
+    let mut roots = Vec::new();
+    for agent in shown {
+        match agent.parent.filter(|parent| visible.contains(parent)) {
+            Some(parent) => children.entry(parent).or_default().push(agent.id),
+            None => roots.push(agent.id),
+        }
+    }
+    let mut subtrees: HashMap<AgentId, Usage> = HashMap::with_capacity(shown.len());
     for root in roots {
         let mut stack = vec![(root, false)];
         while let Some((id, post)) = stack.pop() {
             let kids = children.get(&id).map(Vec::as_slice).unwrap_or_default();
             if !post {
-                // A repeated id is a parent cycle in a corrupt store: walk it once.
-                if done.insert(id) {
-                    stack.push((id, true));
-                    stack.extend(kids.iter().map(|kid| (*kid, false)));
-                }
+                stack.push((id, true));
+                stack.extend(kids.iter().map(|kid| (*kid, false)));
                 continue;
             }
-            let mut total = rolled[&id];
+            let mut total = owned.get(&id).copied().unwrap_or_default();
             for kid in kids {
-                let (members, usage) = rolled[kid];
-                total.0 += members;
-                total.1 += usage;
+                total += subtrees.get(kid).copied().unwrap_or_default();
             }
-            rolled.insert(id, total);
+            subtrees.insert(id, total);
         }
     }
-    assert_eq!(rolled.len(), nodes.len(), "one total per node");
-    rolled
+    assert!(subtrees.len() <= shown.len(), "a subtree per shown agent");
+    debug_assert!(subtrees.keys().all(|id| visible.contains(id)));
+    subtrees
 }
 
-/// The agents of `scope` above `shown` and not among them, nearest first.
-fn ancestors_of(shown: &[Agent], scope: &HashMap<AgentId, Agent>) -> Vec<Agent> {
+/// Up to `cap` agents of `scope` above `shown` and not among them, level by
+/// level in `shown`'s order, as SQLite's recursive walk queues them.
+fn ancestors_of(shown: &[Agent], scope: &HashMap<AgentId, Agent>, cap: usize) -> Vec<Agent> {
     let mut seen: HashSet<AgentId> = shown.iter().map(|agent| agent.id).collect();
-    let mut above = Vec::new();
-    for agent in shown {
-        let mut parent = agent.parent;
-        while let Some(id) = parent {
-            let Some(ancestor) = scope.get(&id) else {
-                break;
+    let mut above: Vec<Agent> = Vec::new();
+    let mut level: Vec<&Agent> = shown.iter().collect();
+    while !level.is_empty() && above.len() < cap {
+        let mut next = Vec::new();
+        for agent in level {
+            let Some(parent) = agent.parent.and_then(|id| scope.get(&id)) else {
+                continue;
             };
-            if !seen.insert(id) {
-                break;
+            if above.len() < cap && seen.insert(parent.id) {
+                above.push(parent.clone());
+                next.push(parent);
             }
-            parent = ancestor.parent;
-            above.push(ancestor.clone());
         }
+        level = next;
     }
+    assert!(above.len() <= cap, "at most `cap` ancestors");
     debug_assert!(above.len() <= scope.len(), "each ancestor is added once");
     above
 }

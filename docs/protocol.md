@@ -318,14 +318,19 @@ role starts with it. The filters are applied before any agent is read, and the
 reply is one page: on the first, the newest live agents in scope, up to
 `limit` (1 to 500, default 500), and the `root`; on each, the newest agents by
 id of any state, up to `limit`, older than `after` when it is given. A page
-also holds the in-scope parents of what it shows, so a later page can repeat
-one, as it can a live agent the first page pinned. `next_after` is present when
-older agents remain; send it as the next `after`. An agent whose parent is
-filtered out is a root of the reply. Spend still rolls up over every agent
-below a shown one, read from totals the store keeps per subtree, so a page
-costs the same however many agents are below it: a child the page does not
-show lands in its parent's `hidden_usage`. Within a `run`, only that run's
-agents are counted. An unknown `root` is `not_found`.
+also holds up to `limit` in-scope parents of what it shows, nearest first, so
+a later page can repeat one, as it can a live agent the first page pinned.
+`next_after` is present when older agents remain; send it as the next `after`.
+A filter no index answers (`role_prefix`, and under a `root` any filter) is
+checked on at most 4000 agents per page, and per live status for the pin, so a
+page can hold fewer than `limit` agents, or none, while `next_after` is
+present. An agent whose parent is not shown is a root of the reply. Spend rolls
+up over every agent below a shown one, up to the next shown agents, read from
+totals the store keeps per subtree, so a page costs the same however many
+agents are below it: what the page leaves out lands in the `hidden_usage` of
+the nearest shown agent above it, and no two roots count the same agent.
+Within a `run`, only that run's agents are counted. An unknown `root` is
+`not_found`.
 
 `get_transcript_page {agent, after?, before?, limit?}` answers
 `transcript_page {entries, has_before, has_after, last_seq}`. Entries are the

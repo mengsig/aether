@@ -553,15 +553,16 @@ CREATE INDEX IF NOT EXISTS memory_holdouts_memory ON memory_holdouts(memory_id, 
 const V32: &str = "";
 
 // Each agent's usage beside its row, and per scope (the fleet, `''`, each
-// run, and `tree:<agent>:<run>` for each agent's subtree within each run) one
-// row of totals, kept by triggers on every write: `status`, a run summary and
-// a tree's roll-up read rows by key instead of agents' bodies. `agent_tree`
-// holds each agent's ancestors by parent link, itself included, up to the
-// first parent not stored. `agent_usage` holds an agent only when
-// `aether_counted_usage` (sqlite/usage_totals.rs) decodes its body, as a
-// whole-agent read does; the fleet's totals leave imported agents out. Plus
-// `agents.archived` (added by `add_missing_column`) and the indexes `get_tree`
-// pages by. Idempotent: a replay over a rewound stamp rebuilds it.
+// run, and for each agent's subtree `tree:<agent>` over every run and
+// `tree:<agent>:<run>` within each) one row of totals, kept by triggers on
+// every write: `status`, a run summary and a tree's roll-up read rows by key
+// instead of agents' bodies. `agent_tree` holds each agent's ancestors by
+// parent link, itself included, up to the first parent not stored.
+// `agent_usage` holds an agent only when `aether_counted_usage`
+// (sqlite/usage_totals.rs) decodes its body, as a whole-agent read does; the
+// fleet's totals leave imported agents out. Plus `agents.archived` (added by
+// `add_missing_column`) and the indexes `get_tree` pages by, `(status, id)`
+// in place of `(status)`. Idempotent: a replay over a rewound stamp rebuilds it.
 const V33: &str = r#"
 CREATE TABLE IF NOT EXISTS agent_usage (
     agent_id              TEXT PRIMARY KEY,
@@ -621,6 +622,8 @@ CREATE TRIGGER IF NOT EXISTS usage_totals_added AFTER INSERT ON agent_usage BEGI
         new.figure AND new.cost_basis = 'mixed'
     FROM (SELECT new.run AS scope UNION ALL SELECT '' WHERE NOT new.imported
         UNION ALL SELECT 'tree:' || t.ancestor || ':' || new.run
+        FROM agent_tree t WHERE t.descendant = new.agent_id
+        UNION ALL SELECT 'tree:' || t.ancestor
         FROM agent_tree t WHERE t.descendant = new.agent_id) WHERE true
     ON CONFLICT(scope) DO UPDATE SET
         members = members + 1,
@@ -669,10 +672,14 @@ CREATE TRIGGER IF NOT EXISTS usage_totals_removed AFTER DELETE ON agent_usage BE
         basis_mixed = basis_mixed - (old.figure AND old.cost_basis = 'mixed')
     WHERE scope IN (SELECT old.run UNION ALL SELECT '' WHERE NOT old.imported
         UNION ALL SELECT 'tree:' || t.ancestor || ':' || old.run
+        FROM agent_tree t WHERE t.descendant = old.agent_id
+        UNION ALL SELECT 'tree:' || t.ancestor
         FROM agent_tree t WHERE t.descendant = old.agent_id);
     -- An emptied scope goes, so no rounding left in its sums outlives its members.
     DELETE FROM usage_totals WHERE members = 0 AND scope IN (SELECT old.run UNION ALL SELECT ''
         UNION ALL SELECT 'tree:' || t.ancestor || ':' || old.run
+        FROM agent_tree t WHERE t.descendant = old.agent_id
+        UNION ALL SELECT 'tree:' || t.ancestor
         FROM agent_tree t WHERE t.descendant = old.agent_id);
 END;
 CREATE TRIGGER IF NOT EXISTS agent_usage_inserted AFTER INSERT ON agents BEGIN
@@ -738,7 +745,8 @@ CREATE TRIGGER IF NOT EXISTS agent_tree_added AFTER INSERT ON agent_tree BEGIN
         cost_usd, estimated_members, estimated_cost_usd, gap_unreported, gap_unpriced,
         gap_interrupted, gap_mixed, gap_unknown, basis_unknown, basis_list_price,
         basis_provider_reported, basis_mixed)
-    SELECT 'tree:' || new.ancestor || ':' || u.run, 1, u.input_tokens, u.output_tokens,
+    SELECT 'tree:' || new.ancestor || CASE WHEN s.by_run THEN ':' || u.run ELSE '' END,
+        1, u.input_tokens, u.output_tokens,
         u.cache_read_tokens, u.cache_write_tokens, u.cache_write_1h_tokens,
         u.reasoning_tokens IS NOT NULL, COALESCE(u.reasoning_tokens, 0), u.cost_usd,
         u.estimated_cost_usd IS NOT NULL, COALESCE(u.estimated_cost_usd, 0.0),
@@ -747,7 +755,8 @@ CREATE TRIGGER IF NOT EXISTS agent_tree_added AFTER INSERT ON agent_tree BEGIN
         u.figure AND u.cost_basis = 'list_price',
         u.figure AND u.cost_basis = 'provider_reported',
         u.figure AND u.cost_basis = 'mixed'
-    FROM agent_usage u WHERE u.agent_id = new.descendant
+    FROM agent_usage u CROSS JOIN (SELECT 1 AS by_run UNION ALL SELECT 0) s
+    WHERE u.agent_id = new.descendant
     ON CONFLICT(scope) DO UPDATE SET
         members = members + 1,
         input_tokens = input_tokens + excluded.input_tokens,
@@ -794,10 +803,12 @@ CREATE TRIGGER IF NOT EXISTS agent_tree_removed AFTER DELETE ON agent_tree BEGIN
             - (u.figure AND u.cost_basis = 'provider_reported'),
         basis_mixed = usage_totals.basis_mixed - (u.figure AND u.cost_basis = 'mixed')
     FROM agent_usage u
-    WHERE u.agent_id = old.descendant AND usage_totals.scope = 'tree:' || old.ancestor || ':' || u.run;
+    WHERE u.agent_id = old.descendant
+      AND usage_totals.scope IN ('tree:' || old.ancestor || ':' || u.run, 'tree:' || old.ancestor);
     DELETE FROM usage_totals WHERE members = 0 AND scope IN (
         SELECT 'tree:' || old.ancestor || ':' || u.run FROM agent_usage u
-        WHERE u.agent_id = old.descendant);
+        WHERE u.agent_id = old.descendant
+        UNION ALL SELECT 'tree:' || old.ancestor);
 END;
 DELETE FROM agent_usage;
 DELETE FROM usage_totals;
@@ -823,6 +834,8 @@ UPDATE agents SET archived = 1
 WHERE archived = 0 AND json_valid(body) AND json_extract(body, '$.archived') = 1;
 CREATE INDEX IF NOT EXISTS agents_archived_id ON agents(archived, id);
 CREATE INDEX IF NOT EXISTS agents_run_archived_id ON agents(run, archived, id);
+DROP INDEX IF EXISTS agents_status;
+CREATE INDEX IF NOT EXISTS agents_status_id ON agents(status, id);
 "#;
 
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [

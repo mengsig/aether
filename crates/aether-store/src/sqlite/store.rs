@@ -1021,19 +1021,27 @@ pub(super) fn agent_list_sql(filter: &AgentFilter, args: &mut Arguments) -> Stri
     sql
 }
 
-/// `status IN (...)` over the statuses that are not terminal, which the status
-/// index answers one status at a time.
-pub(super) fn live_status_clause() -> String {
+/// The statuses that are not terminal, as the `status` column stores them.
+pub(super) fn live_statuses() -> Vec<&'static str> {
     // Off `is_terminal`, not a list typed here: a new terminal status must
     // not silently start counting as live.
-    let live: Vec<String> = AgentStatusKind::ALL
+    let live: Vec<&'static str> = AgentStatusKind::ALL
         .iter()
         .filter(|k| !k.is_terminal())
         .map(|k| k.as_str())
         .inspect(|name| assert!(name.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')))
-        .map(|name| format!("'{name}'"))
         .collect();
     assert!(!live.is_empty(), "some status is live");
+    live
+}
+
+/// `status IN (...)` over the statuses that are not terminal, which the status
+/// index answers one status at a time.
+pub(super) fn live_status_clause() -> String {
+    let live: Vec<String> = live_statuses()
+        .into_iter()
+        .map(|name| format!("'{name}'"))
+        .collect();
     format!("status IN ({})", live.join(", "))
 }
 

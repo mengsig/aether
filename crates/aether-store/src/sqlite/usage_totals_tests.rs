@@ -156,8 +156,8 @@ fn an_emptied_scope_leaves_no_row_behind() {
     };
     assert_eq!(
         rows(&conn),
-        3,
-        "the run's row, the fleet's and its own subtree's"
+        4,
+        "the run's row, the fleet's and its own subtree's, over every run and in its own"
     );
     conn.execute("DELETE FROM agents WHERE id = ?1", [only.id.to_string()])
         .unwrap();

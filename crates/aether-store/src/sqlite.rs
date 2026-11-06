@@ -28,6 +28,7 @@ mod history_retention;
 mod quarantine;
 mod read_pool;
 mod tree_pages;
+mod tree_usages;
 pub(crate) mod usage_totals;
 pub use history_retention::{HistoryScreen, RunExpiry};
 mod ledger;

@@ -1031,7 +1031,7 @@ fn a_v22_store_gains_the_creation_order_listing_indexes() {
             "agents_run_archived_id",
             "agents_run_created",
             "agents_run_id",
-            "agents_status",
+            "agents_status_id",
             "tasks_created",
             "tasks_owner",
             "tasks_parent",
