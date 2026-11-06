@@ -1,26 +1,27 @@
-// `#/learn/graph`: the knowledge graph in a force layout, coloured by mastery, with a panel for the
-// chosen proposition. Deleting a proposition or a source asks first.
+// `#/learn/graph`: the knowledge graph, coloured by mastery, as a drawing or a list, with a panel for
+// the chosen proposition. It stays current while extraction jobs finish.
 
-import { routeHref } from "@aether-ui/core";
-import { forceLayout, GraphCanvas } from "@aether-ui/graph";
-import type { aether, GraphModel, Layout } from "@aether-ui/protocol";
-import { Button, Dialog, EmptyState, ErrorState } from "@aether-ui/ui";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { errorText, useLearn, useNoesisChange, useNoesisRead, useOperateRefusal } from "./data.ts";
-import { knowledgeGraph, knowledgeModel, masteryByProposition, spreadForLabels, structureKey } from "./graph-model.ts";
+import { layeredLayout } from "@aether-ui/graph";
+import { Button, EmptyState, ErrorState } from "@aether-ui/ui";
+import { useMemo, useState, type FormEvent } from "react";
+import { useLearn, useNoesisRead } from "./data.ts";
+import { useGraphFreshness } from "./graph-jobs.ts";
+import { knowledgeGraph, knowledgeModel, masteryByProposition } from "./graph-model.ts";
+import { GraphView, PropositionList, type LayoutFn } from "./GraphView.tsx";
 import { LearnFrame, type OpenGate } from "./LearnFrame.tsx";
 import { MasteryBadge } from "./Mastery.tsx";
-import { MASTERY_ORDER, type Mastery } from "./model.ts";
+import { MASTERY_ORDER } from "./model.ts";
+import { PropositionPanel } from "./PropositionPanel.tsx";
 import { learnerConcepts } from "./UnderstandingScreen.tsx";
 
-export type LayoutFn = (model: GraphModel) => Promise<Layout>;
+type Shown = "graph" | "list";
 
-type Pending = { readonly kind: "proposition"; readonly id: string } | { readonly kind: "source"; readonly id: string };
-
-export function GraphScreen({ conn, layout = forceLayout }: OpenGate & { layout?: LayoutFn }) {
+export function GraphScreen({ conn, layout = layeredLayout }: OpenGate & { layout?: LayoutFn }) {
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
+  const [shown, setShown] = useState<Shown>("graph");
   const read = useNoesisRead(conn, search === "" ? { kind: "graph" } : { kind: "graph", query: search });
+  useGraphFreshness(conn, read.reload);
   useNoesisRead(conn, { kind: "learner" });
   const learn = useLearn(conn);
   const held = learn.reads[search === "" ? "graph" : `graph?${search}`];
@@ -44,6 +45,9 @@ export function GraphScreen({ conn, layout = forceLayout }: OpenGate & { layout?
         <input className="ui-field-input learn-search" type="search" aria-label="Search the knowledge graph" placeholder="Search statements" value={query} onChange={(e) => setQuery(e.target.value)} />
         <Button type="submit">Search</Button>
         {search !== "" && <Button variant="quiet" onClick={() => { setQuery(""); setSearch(""); }}>Show all</Button>}
+        <div className="learn-segmented" role="group" aria-label="Show as">
+          {(["graph", "list"] as const).map((view) => <Button key={view} size="sm" variant="quiet" aria-pressed={shown === view} onClick={() => setShown(view)}>{view === "graph" ? "Graph" : "List"}</Button>)}
+        </div>
         <ul className="learn-legend" aria-label="Mastery colours">
           {MASTERY_ORDER.map((state) => <li key={state}><MasteryBadge state={state} /></li>)}
         </ul>
@@ -52,87 +56,12 @@ export function GraphScreen({ conn, layout = forceLayout }: OpenGate & { layout?
       {graph.nodes.length === 0
         ? <EmptyState title={search === "" ? "The graph is empty" : "Nothing matches"}>{search === "" ? "Noesis adds true statements here when you add a session to the knowledge graph." : "Try other words."}</EmptyState>
         : <div className="learn-graph-main">
-            <GraphView model={model} layout={layout} selected={selected} onSelect={setSelected} />
+            {shown === "graph"
+              ? <GraphView model={model} layout={layout} selected={selected} onSelect={setSelected} />
+              : <PropositionList nodes={graph.nodes} mastery={mastery} selected={selected} onSelect={setSelected} />}
             {chosen && <PropositionPanel conn={conn} proposition={chosen} mastery={mastery.get(chosen.id) ?? "unseen"} onClose={() => setSelected(undefined)} />}
           </div>}
     </div>
-  );
-}
-
-function GraphView({ model, layout, selected, onSelect }: { model: GraphModel; layout: LayoutFn; selected: string | undefined; onSelect: (id: string) => void }) {
-  const key = useMemo(() => structureKey(model), [model]);
-  const [placed, setPlaced] = useState<{ key: string; layout: Layout } | undefined>();
-  const [failure, setFailure] = useState<string | undefined>();
-  const [attempt, setAttempt] = useState(0);
-  // The latest model of this structure; a mastery change redraws without a relayout.
-  const structural = useMemo(() => model, [key]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    let live = true;
-    layout(structural).then(
-      (next) => { if (live) { setPlaced({ key, layout: spreadForLabels(next) }); setFailure(undefined); } },
-      (error: unknown) => { if (live) setFailure(errorText(error)); },
-    );
-    return () => { live = false; };
-  }, [layout, structural, key, attempt]);
-  if (failure !== undefined) return <ErrorState title="The graph could not be laid out" message={failure} onRetry={() => setAttempt((n) => n + 1)} />;
-  return (
-    <div className="learn-graph-canvas" data-settled={placed?.key === key || undefined}>
-      <GraphCanvas model={model} layout={placed?.key === key ? placed.layout : undefined} label="Knowledge graph" {...(selected === undefined ? {} : { selected })} onActivate={onSelect} />
-    </div>
-  );
-}
-
-function PropositionPanel({ conn, proposition, mastery, onClose }: { conn: string; proposition: aether.Proposition; mastery: Mastery; onClose: () => void }) {
-  const change = useNoesisChange(conn);
-  const refusal = useOperateRefusal(conn);
-  const [pending, setPending] = useState<Pending | null>(null);
-  const [sourceGraph, setSourceGraph] = useState<"preserve" | "delete_unsupported">("preserve");
-  const [failure, setFailure] = useState<string | null>(null);
-  const sources = [...new Set(proposition.provenance.map((p) => p.source))];
-  const confirm = async () => {
-    if (pending === null) return;
-    const command = pending.kind === "proposition"
-      ? { cmd: "noesis_delete_proposition", proposition: pending.id }
-      : { cmd: "noesis_delete_source", source: pending.id, graph: sourceGraph };
-    const result = await change(command);
-    if (!result.ok) return setFailure(result.error);
-    setPending(null);
-    setFailure(null);
-    if (pending.kind === "proposition") onClose();
-  };
-  return (
-    <aside className="learn-panel" aria-label="Proposition">
-      <div className="learn-panel-head">
-        <h2 className="learn-subtitle">{proposition.name}</h2>
-        <Button variant="quiet" size="sm" onClick={onClose}>Close</Button>
-      </div>
-      <MasteryBadge state={mastery} />
-      <p>{proposition.statement}</p>
-      {proposition.aliases.length > 0 && <p className="learn-muted">Also called: {proposition.aliases.join(", ")}</p>}
-      <h3 className="learn-subtitle">Where it came from</h3>
-      <ul className="learn-sources">
-        {sources.map((source) => (
-          <li key={source}>
-            {source.startsWith("ns_") ? <a className="ui-link" href={routeHref("#/learn/sessions/:id", { id: source })}>A session</a> : <span>Imported notes <code>{source}</code></span>}
-            {source.startsWith("s_") && <Button size="sm" variant="quiet" disabled={refusal !== null} onClick={() => setPending({ kind: "source", id: source })}>Delete source…</Button>}
-          </li>
-        ))}
-      </ul>
-      <Button variant="danger" disabled={refusal !== null} onClick={() => setPending({ kind: "proposition", id: proposition.id })}>Delete statement…</Button>
-      {failure !== null && <p className="learn-callout" role="alert">{failure}</p>}
-      <Dialog open={pending !== null} onClose={() => setPending(null)} title={pending?.kind === "source" ? "Delete this source?" : "Delete this statement?"}
-        description={pending?.kind === "source" ? "Noesis forgets the imported notes." : "The statement leaves the graph, with every chain that uses it."}
-        footer={<><Button onClick={() => setPending(null)} data-autofocus>Keep it</Button><Button variant="danger" onClick={() => void confirm()}>Delete</Button></>}>
-        {pending?.kind === "source" && (
-          <fieldset className="learn-fieldset">
-            <legend>Statements it added</legend>
-            <label className="learn-toggle"><input type="radio" name="source-graph" checked={sourceGraph === "preserve"} onChange={() => setSourceGraph("preserve")} />Keep them in the graph</label>
-            <label className="learn-toggle"><input type="radio" name="source-graph" checked={sourceGraph === "delete_unsupported"} onChange={() => setSourceGraph("delete_unsupported")} />Remove those nothing else supports</label>
-          </fieldset>
-        )}
-        <p className="learn-muted">What Noesis knows about your understanding stays as it is.</p>
-      </Dialog>
-    </aside>
   );
 }
 
