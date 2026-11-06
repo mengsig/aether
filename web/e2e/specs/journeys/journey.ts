@@ -45,27 +45,30 @@ export interface JourneyOptions {
   readonly x11?: boolean;
 }
 
-/** Runs every step even when one fails, then fails with all of them. */
-async function runAll(what: string, steps: ReadonlyArray<() => Promise<unknown>>): Promise<void> {
+/** Runs every step even when one fails; what failed. */
+async function failuresOf(steps: ReadonlyArray<() => Promise<unknown>>): Promise<unknown[]> {
   const failures: unknown[] = [];
   for (const step of steps) await step().catch((error: unknown) => { failures.push(error); });
-  if (failures.length > 0) throw new AggregateError(failures, `${what} did not stop cleanly: ${failures.map(String).join("; ")}`);
+  return failures;
 }
 
 interface Parts { stack?: Stack; audit?: Audit; swayRoot?: string; sway?: Sway; app?: PackagedApp }
 
+/** Every part is stopped whatever else fails, the audit always, and every failure is reported together. */
 async function teardown(parts: Parts): Promise<void> {
-  await runAll("the journey", [
+  const failures = await failuresOf([
     async () => parts.app?.close(),
     async () => parts.sway?.stop(),
     async () => { if (parts.swayRoot !== undefined) await rm(parts.swayRoot, { recursive: true, force: true, maxRetries: 3 }); },
     async () => parts.stack?.stop(),
   ]);
   const audit = parts.audit;
-  if (audit === undefined) return;
-  audit.stop();
-  assert.ok(audit.samples > 0, "the journey's hermetic audit sampled");
-  if (audit.violations.length > 0) throw new Error(`The hermetic audit saw:\n${audit.violations.join("\n")}`);
+  if (audit !== undefined) {
+    audit.stop();
+    if (audit.samples === 0) failures.push(new Error("the journey's hermetic audit never sampled"));
+    if (audit.violations.length > 0) failures.push(new Error(`The hermetic audit saw:\n${audit.violations.join("\n")}`));
+  }
+  if (failures.length > 0) throw new AggregateError(failures, `the journey did not stop cleanly: ${failures.map(String).join("; ")}`);
 }
 
 /** The faux variant is audited like the suite: loopback only, daemon files inside the root. */

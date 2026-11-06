@@ -9,6 +9,22 @@ const MIN_QUERY = 1;
 /** Matches past this many per row are not counted: one huge tool output must not stall typing. */
 const MAX_PER_ROW = 1_000;
 
+/** `text` lower-cased one character at a time, with the offset each folded code unit came from, so a match maps back. */
+export function foldCase(text: string): { readonly folded: string; readonly origin: readonly number[] } {
+  let folded = "";
+  const origin: number[] = [];
+  let at = 0;
+  for (const ch of text) {
+    const low = ch.toLowerCase();
+    for (let unit = 0; unit < low.length; unit += 1) origin.push(at);
+    folded += low;
+    at += ch.length;
+  }
+  origin.push(text.length);
+  invariant(origin.length === folded.length + 1, "one origin per folded code unit, and the end");
+  return { folded, origin };
+}
+
 /** The text a person could see in one part once it is open, lower-cased for matching. */
 function partText(part: Part): string {
   switch (part.kind) {
@@ -24,7 +40,7 @@ const texts = new WeakMap<ConversationRow, readonly string[]>();
 function rowTexts(row: ConversationRow): readonly string[] {
   let cached = texts.get(row);
   if (cached === undefined) {
-    cached = row.parts.map((part) => partText(part).toLowerCase());
+    cached = row.parts.map((part) => foldCase(partText(part)).folded);
     texts.set(row, cached);
   }
   return cached;
@@ -48,7 +64,7 @@ export interface SearchResult {
 export const NO_RESULT: SearchResult = { query: "", rows: [], ends: [], total: 0 };
 
 export function searchRows(rows: readonly ConversationRow[], query: string): SearchResult {
-  const needle = query.trim().toLowerCase();
+  const needle = foldCase(query.trim()).folded;
   if (needle.length < MIN_QUERY) return NO_RESULT;
   const hits: number[] = [];
   const ends: number[] = [];

@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { until } from "../../harness/process.ts";
-import { cancelLive, createAgentOn, scheduleNames } from "./daemon.ts";
+import { cancelLive, createAgentOn, scheduleNamed, scheduleNames, type SavedSchedule } from "./daemon.ts";
 import { connectionsReady, journeyHooks } from "./journey.ts";
 import { shootWindow } from "./capture.ts";
 import { openControls } from "./steps.ts";
@@ -35,6 +35,17 @@ async function fillSchedule(page: Page, controls: Locator, work: string): Promis
   await controls.getByLabel("Objective for each new agent", { exact: true }).fill("Check the workspace, then finish.");
 }
 
+/** What the form chose must be what the daemon holds: the weekday cron in UTC, spawning a new faux-model agent in the workspace. */
+function checkSaved(saved: SavedSchedule, work: string): void {
+  assert.deepEqual(saved.recurrence, { kind: "cron", expression: CRON, timezone: "UTC" }, "the saved recurrence is the weekday cron in UTC");
+  assert.equal(saved.target ?? null, null, "a schedule for a new agent names no existing one");
+  const spawn = saved.spawn as { model?: unknown; objective?: unknown } | null | undefined;
+  assert.ok(spawn, "the schedule spawns a new agent");
+  assert.deepEqual(spawn.model, FAUX_MODEL, "the new agent runs on the chosen model");
+  assert.equal(spawn.objective, "Check the workspace, then finish.", "the new agent gets the objective typed");
+  assert.ok(JSON.stringify(spawn).includes(work), `the new agent works in ${work}`);
+}
+
 test("schedules journey: create a weekday schedule, see it listed, delete it", async () => {
   const { window, stack } = journey();
   await connectionsReady(journey(), false);
@@ -47,7 +58,8 @@ test("schedules journey: create a weekday schedule, see it listed, delete it", a
     await shootWindow(window, "controls", "schedules-form");
     await submit.click();
     await confirmIfAsked(window, "Create schedule");
-    await until(() => scheduleNames(stack), (names) => names.includes(NAME), "the schedule on the daemon", LIST_MS);
+    const saved = await until(() => scheduleNamed(stack, NAME), (found) => found !== undefined, "the schedule on the daemon", LIST_MS);
+    checkSaved(saved as SavedSchedule, stack.layout.aether.work);
     await choose(window, controls.getByRole("radiogroup", { name: "Schedule scope" }), "All schedules");
     const row = controls.getByRole("listitem").filter({ hasText: NAME }).first();
     await expect(row, "the schedule is listed").toBeVisible();

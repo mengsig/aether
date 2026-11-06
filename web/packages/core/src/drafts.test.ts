@@ -47,6 +47,26 @@ describe("DraftStore", () => {
     expect(mirror.map.has(DRAFT_STORAGE_KEY)).toBe(false);
   });
 
+  test("a full mirror keeps the smaller drafts and never brings a cleared draft back", () => {
+    const mirror = memoryMirror();
+    const limited: DraftMirror = { ...mirror, setItem: (key, value) => { if (value.length > 900) throw new Error("QuotaExceededError"); mirror.map.set(key, value); } };
+    const store = new DraftStore(limited);
+    store.set("controls/a", { text: "a".repeat(300) });
+    store.set("controls/b", { text: "b".repeat(300) });
+    store.set("controls/c", { text: "c".repeat(500) });
+    expect(Object.keys(JSON.parse(mirror.map.get(DRAFT_STORAGE_KEY) ?? "{}")).sort()).toEqual(["controls/a", "controls/b"]);
+    expect(store.keys().sort()).toEqual(["controls/a", "controls/b", "controls/c"]);
+    store.clear("controls/a");
+    const again = new DraftStore(limited);
+    expect(again.get("controls/a")).toBeUndefined();
+    expect(again.keys().sort()).toEqual(["controls/b", "controls/c"]);
+    const tiny: DraftMirror = { ...mirror, setItem: () => { throw new Error("QuotaExceededError"); } };
+    const none = new DraftStore(tiny);
+    none.set("controls/d", { text: "d" });
+    expect(mirror.map.has(DRAFT_STORAGE_KEY)).toBe(false);
+    expect(none.get("controls/d")).toEqual({ text: "d" });
+  });
+
   test("a corrupt mirror is dropped instead of breaking the forms", () => {
     const mirror = memoryMirror();
     mirror.setItem(DRAFT_STORAGE_KEY, "{not json");

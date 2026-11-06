@@ -163,11 +163,11 @@ async function launchOnce(launch: PackagedLaunch): Promise<PackagedApp> {
   assert.ok(path.isAbsolute(launch.aetherSocket) && path.isAbsolute(launch.archonSocket), "the app gets absolute socket paths");
   const dir = await mkdtemp(path.join(tempBase(), "pk-"));
   record("roots", dir);
-  for (const sub of ["home", "config", "cache", "data"]) await mkdir(path.join(dir, sub), { mode: 0o700 });
   const log = path.join(dir, "app.log");
   let app: Spawned | undefined;
   let browser: Browser | undefined;
   try {
+    for (const sub of ["home", "config", "cache", "data"]) await mkdir(path.join(dir, sub), { mode: 0o700 });
     const platform = launch.sway.x11Display === undefined ? "wayland" : "x11";
     app = spawnLogged(launch.exec, [`--ozone-platform=${platform}`, "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1"],
       { env: appEnv(dir, launch), cwd: dir, log });
@@ -180,12 +180,27 @@ async function launchOnce(launch: PackagedLaunch): Promise<PackagedApp> {
     running = packagedApp(browser, window, started, dir);
     return running;
   } catch (error) {
-    await browser?.close();
-    if (app !== undefined) await stopGroup(app);
     const output = await tail(log);
-    await rm(dir, { recursive: true, force: true, maxRetries: 3 });
-    throw new Error(`the packaged app did not start. Its log:\n${output}`, { cause: error });
+    const started = app;
+    // Every part is cleaned up whatever else fails, so a half-started app leaks nothing; every failure is reported.
+    const failures = await failuresOf([() => browser?.close(), () => (started === undefined ? undefined : stopGroup(started)), () => removeRoot(dir)]);
+    throw new AggregateError([error, ...failures], `the packaged app did not start. Its log:\n${output}`, { cause: error });
   }
+}
+
+const removeRoot = (dir: string): Promise<void> => rm(dir, { recursive: true, force: true, maxRetries: 3 });
+
+/** Runs every step even when one fails; what failed. */
+async function failuresOf(steps: ReadonlyArray<() => Promise<unknown> | unknown>): Promise<unknown[]> {
+  const failures: unknown[] = [];
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (failure) {
+      failures.push(failure);
+    }
+  }
+  return failures;
 }
 
 async function appWindow(browser: Browser): Promise<Page> {
@@ -211,10 +226,7 @@ function packagedApp(browser: Browser, window: Page, app: Spawned, dir: string):
       closed = true;
       running = undefined;
       // Every step runs even when one fails, so a stuck app leaks nothing else.
-      const failures: unknown[] = [];
-      for (const step of [() => browser.close(), () => stopGroup(app), () => rm(dir, { recursive: true, force: true, maxRetries: 3 })]) {
-        await step().catch((error: unknown) => { failures.push(error); });
-      }
+      const failures = await failuresOf([() => browser.close(), () => stopGroup(app), () => removeRoot(dir)]);
       if (failures.length > 0) throw new AggregateError(failures, `the packaged app (pid ${app.pid}) did not close cleanly`);
     },
   };

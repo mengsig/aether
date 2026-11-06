@@ -58,6 +58,17 @@ export async function scheduleNames(stack: Stack): Promise<string[]> {
   return rows.filter((row) => row.status.state === "active" || row.status.state === "paused").map((row) => row.name);
 }
 
+export interface SavedSchedule { readonly name: string; readonly recurrence: unknown; readonly target?: unknown; readonly spawn?: unknown }
+
+/** The live schedule called `name` as the daemon holds it, or undefined. */
+export async function scheduleNamed(stack: Stack, name: string): Promise<SavedSchedule | undefined> {
+  assert.ok(name !== "", "a schedule has a name");
+  const rows = await list(stack, { cmd: "list_schedules" }, "schedules") as Array<SavedSchedule & { status: { state: string } }>;
+  const live = rows.filter((row) => row.name === name && (row.status.state === "active" || row.status.state === "paused"));
+  assert.ok(live.length <= 1, `one live schedule is called ${name}`);
+  return live[0];
+}
+
 export async function memoryTexts(stack: Stack, text: string): Promise<string[]> {
   assert.ok(text.trim() !== "", "a memory search has text");
   // Not `proposed`: that lists only proposals, and a memory the host creates is active at once.
@@ -142,7 +153,10 @@ export async function createAgentOn(stack: Stack, spec: NewAgent): Promise<strin
   return String(data.id);
 }
 
-interface Block { readonly type: string; readonly text?: unknown; readonly input?: unknown; readonly content?: unknown; readonly is_error?: unknown }
+interface Block {
+  readonly type: string; readonly id?: unknown; readonly name?: unknown; readonly text?: unknown; readonly input?: unknown;
+  readonly tool_use_id?: unknown; readonly content?: unknown; readonly is_error?: unknown;
+}
 interface Entry { readonly message: { readonly role: string; readonly content: Block[] } }
 
 /** The transcript's content blocks with their message's role, in order; the objective is the first user message. */
@@ -175,6 +189,31 @@ export async function toolResults(stack: Stack, id: string): Promise<Array<{ tex
     const parts = Array.isArray(block.content) ? (block.content as Block[]) : [];
     return { text: parts.filter((part) => part.type === "text").map((part) => String(part.text ?? "")).join("\n"), failed: block.is_error === true };
   });
+}
+
+export interface ToolCall { readonly name: string; readonly input: string; readonly result: { text: string; failed: boolean } | null }
+
+/** Every tool call the agent made with the result it got back, paired by the call's id; null while unanswered. */
+export async function toolCalls(stack: Stack, id: string): Promise<ToolCall[]> {
+  const blocks = (await transcriptBlocks(stack, id)).map(({ block }) => block);
+  const results = new Map<string, { text: string; failed: boolean }>();
+  for (const block of blocks.filter((block) => block.type === "tool_result")) {
+    const parts = Array.isArray(block.content) ? (block.content as Block[]) : [];
+    results.set(String(block.tool_use_id), { text: parts.filter((part) => part.type === "text").map((part) => String(part.text ?? "")).join("\n"), failed: block.is_error === true });
+  }
+  const calls = blocks.filter((block) => block.type === "tool_use").map((block) => ({
+    name: String(block.name ?? ""), input: JSON.stringify(block.input ?? null), result: results.get(String(block.id)) ?? null,
+  }));
+  assert.ok(results.size <= calls.length, "no tool result without its call");
+  return calls;
+}
+
+/** The decision an approval was resolved with, or null while it is pending. */
+export async function approvalDecision(stack: Stack, approvalId: string): Promise<string | null> {
+  const rows = await list(stack, { cmd: "list_approvals" }, "approvals") as Array<{ id: string; status: { state: string; decision?: string } }>;
+  const row = rows.find((candidate) => candidate.id === approvalId);
+  assert.ok(row !== undefined, `the daemon still lists approval ${approvalId}`);
+  return row.status.state === "resolved" ? String(row.status.decision) : null;
 }
 
 /** A global memory created on the daemon directly, as a neighbour for what the screen creates. */

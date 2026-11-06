@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { expect, test } from "@playwright/test";
 import { until } from "../../harness/process.ts";
 import { AGENT_LIMITS, REAL_MODELS } from "../../harness/real-engine.ts";
-import { agent, approvalRuleTools, assistantText, cancelLive, createAgentOn, pendingApprovals, toolResults } from "./daemon.ts";
+import { agent, approvalDecision, approvalRuleTools, assistantText, cancelLive, createAgentOn, pendingApprovals, toolCalls, toolResults } from "./daemon.ts";
 import { connectionsReady, journeyHooks, type Journey } from "./journey.ts";
 import { APPROVED_REPLY, OBJECTIVES, REAL_OBJECTIVES } from "./scripts.ts";
 import { shootWindow } from "./capture.ts";
@@ -75,9 +75,12 @@ test("approvals journey: Inbox approves a waiting tool call and the agent goes o
   assert.ok(first !== undefined, "the waiting call has an id");
   await approveFromInbox(run, true);
   await until(() => pendingApprovals(run.stack, id), (rows) => rows.every((row) => row.id !== first), "the approval to be answered", WAIT_MS[run.variant]);
+  assert.equal(await approvalDecision(run.stack, first), "approved", "the Inbox's Approve approved the call");
   if (run.variant === "real") {
     await approveUntilFinished(run, id);
     assert.equal((await agent(run.stack, id)).state, "completed", "the agent finished through its approved call");
+    const finishes = (await toolCalls(run.stack, id)).filter((call) => call.name.endsWith("complete_task"));
+    assert.ok(finishes.some((call) => call.result !== null && !call.result.failed), `the approved complete_task call ran and answered: ${JSON.stringify(finishes)}`);
     return;
   }
   await until(() => assistantText(run.stack, id), (said) => said.includes(APPROVED_REPLY), "the agent to go on", WAIT_MS.faux);

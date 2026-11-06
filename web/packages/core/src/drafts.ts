@@ -91,19 +91,35 @@ export class DraftStore {
     for (const listener of this.#listeners.get(key) ?? []) listener();
   }
 
-  /** Mirrors every draft under the size limit; an oversized one stays in memory without holding the others back. */
+  /**
+   * Mirrors every draft under the size limit, smallest first. When the mirror refuses the whole, the
+   * largest are left out until it fits, so the mirror never keeps a stale snapshot of cleared drafts.
+   */
   #persist(): void {
     if (this.#mirror === null) return;
-    const mirrored: Record<string, DraftValue> = {};
-    for (const [key, value] of this.#drafts) {
-      if (JSON.stringify(value).length <= MIRROR_LIMIT_BYTES) mirrored[key] = value;
+    const entries = [...this.#drafts].map(([key, value]) => ({ key, text: JSON.stringify(value) }))
+      .filter((entry) => entry.text.length <= MIRROR_LIMIT_BYTES)
+      .sort((a, b) => a.text.length - b.text.length);
+    while (entries.length > 0) {
+      const text = `{${entries.map((entry) => `${JSON.stringify(entry.key)}:${entry.text}`).join(",")}}`;
+      if (this.#mirrorTakes(text)) return;
+      entries.pop();
     }
-    const keys = Object.keys(mirrored);
     try {
-      if (keys.length === 0) this.#mirror.removeItem(DRAFT_STORAGE_KEY);
-      else this.#mirror.setItem(DRAFT_STORAGE_KEY, JSON.stringify(mirrored));
+      this.#mirror.removeItem(DRAFT_STORAGE_KEY);
     } catch {
-      // A full or disabled sessionStorage loses only the reload mirror; the in-memory draft stands.
+      // A disabled sessionStorage has nothing to remove; the drafts live in memory only.
+    }
+  }
+
+  /** Whether the mirror stored `text`; a full or disabled sessionStorage refuses it. */
+  #mirrorTakes(text: string): boolean {
+    invariant(this.#mirror !== null, "a mirror is there to take the drafts");
+    try {
+      this.#mirror.setItem(DRAFT_STORAGE_KEY, text);
+      return true;
+    } catch {
+      return false;
     }
   }
 }

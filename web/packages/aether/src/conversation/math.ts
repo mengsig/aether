@@ -1,6 +1,6 @@
 // A readable stand-in for TeX: common commands become their Unicode symbols, digits and simple
-// letters after ^ and _ become super- and subscripts, \frac{a}{b} becomes a⁄b. It is a fallback
-// presentation, not a typesetter; the source stays available as the span's label.
+// letters after ^ and _ become super- and subscripts, \frac{a}{b} becomes a⁄b with compound parts in
+// parentheses. It is a fallback presentation, not a typesetter; the source stays as the span's label.
 
 import { invariant } from "../fleet/invariant.ts";
 
@@ -29,6 +29,12 @@ const SUBSCRIPTS: Readonly<Record<string, string>> = {
   "(": "₍", ")": "₎", i: "ᵢ", j: "ⱼ", k: "ₖ", n: "ₙ", m: "ₘ", x: "ₓ",
 };
 
+/** A fraction's part as it reads beside ⁄: a single number, name or symbol as is, anything compound in parentheses. */
+function fractionPart(part: string): string {
+  const trimmed = part.trim();
+  return /^(?:[A-Za-z0-9.]+|\\[A-Za-z]+)$/.test(trimmed) ? trimmed : `(${trimmed})`;
+}
+
 /** The script form of `text` when every character has one, else the text marked with ^ or _. */
 function script(text: string, table: Readonly<Record<string, string>>, mark: string): string {
   let out = "";
@@ -46,7 +52,7 @@ export function prettyTex(tex: string): string {
   const out = tex
     .replace(/\\(?:left|right|displaystyle)\b/g, "")
     .replace(/\\(?:text|mathrm|mathbf|mathit|operatorname)\{([^{}]*)\}/g, "$1")
-    .replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "$1⁄$2")
+    .replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, (_whole, over: string, under: string) => `${fractionPart(over)}⁄${fractionPart(under)}`)
     .replace(/\\sqrt\{([^{}]*)\}/g, "√($1)")
     .replace(/\\([A-Za-z]+)/g, (whole, name: string) => SYMBOLS[name] ?? whole)
     .replace(/\\[,;: !]/g, " ")

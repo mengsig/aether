@@ -4,7 +4,7 @@ import type { aether } from "@aether-ui/protocol";
 import { describe, expect, test } from "vitest";
 import { prettyTex } from "./math.ts";
 import { speakerOf, toolActivity, type ConversationRow, type Part } from "./rows.ts";
-import { foldsToOpen, locate, searchRows, stepMatch } from "./search.ts";
+import { foldCase, foldsToOpen, locate, searchRows, stepMatch } from "./search.ts";
 import { argumentSummary, toolGlyph } from "./tool-summary.ts";
 
 describe("a tool row's summary", () => {
@@ -37,6 +37,8 @@ describe("the TeX fallback", () => {
     ["x^2 + y^2 = z^2", "x² + y² = z²"],
     ["\\alpha \\cdot \\beta", "α · β"],
     ["\\frac{a}{b}", "a⁄b"],
+    ["\\frac{1}{2+3}", "1⁄(2+3)"],
+    ["\\frac{x^2}{\\pi}", "(x²)⁄π"],
     ["\\sqrt{x}", "√(x)"],
     ["a_{ij} \\leq \\infty", "aᵢⱼ ≤ ∞"],
     ["\\text{cost} = \\sum_i c_i", "cost = ∑ᵢ cᵢ"],
@@ -67,6 +69,13 @@ describe("find", () => {
     expect(result).toMatchObject({ query: "needle", rows: [0, 2], ends: [2, 4], total: 4 });
     expect([0, 1, 2, 3].map((n) => locate(result, n))).toEqual([{ row: 0, nth: 0 }, { row: 0, nth: 1 }, { row: 2, nth: 0 }, { row: 2, nth: 1 }]);
     expect(searchRows(rows, "  ").total).toBe(0);
+  });
+
+  test("folds case one character at a time, so a letter that grows when lowered still maps back", () => {
+    const { folded, origin } = foldCase("İstanbul");
+    expect(folded.length).toBe(9);
+    expect(origin).toEqual([0, 0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(searchRows([row("e:9", [{ kind: "text", text: "İstanbul" }])], "L").total).toBe(1);
   });
 
   test("names the folded parts to open for a match", () => {
