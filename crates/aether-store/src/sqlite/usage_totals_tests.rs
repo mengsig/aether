@@ -5,7 +5,7 @@ use aether_core::agent::{AgentConfig, AgentStats, AgentStatus, AgentStatusKind, 
 use aether_core::id::RunId;
 use aether_core::model::ModelRef;
 
-fn agent(run: RunId, usage: Usage) -> Agent {
+pub(crate) fn agent(run: RunId, usage: Usage) -> Agent {
     let at = aether_core::time::now();
     Agent {
         id: AgentId::new(),
@@ -44,7 +44,7 @@ fn agent(run: RunId, usage: Usage) -> Agent {
 
 /// The `n`th of a spread of usages over every gap, basis, estimate and
 /// reasoning shape. Costs are multiples of 1/64, so sums are exact.
-fn shaped(n: usize) -> Usage {
+pub(crate) fn shaped(n: usize) -> Usage {
     let gap = [
         None,
         Some(None),

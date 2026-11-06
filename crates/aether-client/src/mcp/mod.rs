@@ -108,14 +108,14 @@ pub fn fleet_tools() -> Vec<Value> {
         ),
         tool(
             "get_tree",
-            "The live graph: a run's live agents and its newest finished ones, with children and usage. A reply with `next_after` has older finished agents: pass it as `after`.",
+            "The live graph: a run's newest live agents and its newest agents of any state, with children and usage. A reply with `next_after` has older agents: pass it as `after`.",
             json!({
                 "type": "object",
                 "properties": {
                     "run": {"type": "string"},
                     "include_archived": {"type": "boolean", "description": "Include agents cleared from the default view (default false)."},
-                    "after": {"type": "string", "description": "The `next_after` of the page before: continue with older finished agents."},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "At most this many finished agents (default and most 500)."}
+                    "after": {"type": "string", "description": "The `next_after` of the page before: continue with older agents."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "At most this many agents, and as many live ones on the first page (default and most 500)."}
                 }
             }),
         ),

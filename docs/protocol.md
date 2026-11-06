@@ -315,14 +315,17 @@ is present: keep paging until it is absent.
 `get_tree {run?, include_archived, root?, role_prefix?, after?, limit?}`:
 `root` keeps that agent and its descendants, `role_prefix` the agents whose
 role starts with it. The filters are applied before any agent is read, and the
-reply is one page: on the first, every live agent in scope and the `root`; on
-each, the newest finished agents by id, up to `limit` (1 to 500, default 500),
-older than `after` when it is given. A page also holds the in-scope parents of
-what it shows, so a later page can repeat one. `next_after` is present when
-older finished agents remain; send it as the next `after`. An agent whose
-parent is filtered out is a root of the reply. Spend still rolls up over every
-agent below a shown one: a child the page does not show lands in its parent's
-`hidden_usage`. An unknown `root` is `not_found`.
+reply is one page: on the first, the newest live agents in scope, up to
+`limit` (1 to 500, default 500), and the `root`; on each, the newest agents by
+id of any state, up to `limit`, older than `after` when it is given. A page
+also holds the in-scope parents of what it shows, so a later page can repeat
+one, as it can a live agent the first page pinned. `next_after` is present when
+older agents remain; send it as the next `after`. An agent whose parent is
+filtered out is a root of the reply. Spend still rolls up over every agent
+below a shown one, read from totals the store keeps per subtree, so a page
+costs the same however many agents are below it: a child the page does not
+show lands in its parent's `hidden_usage`. Within a `run`, only that run's
+agents are counted. An unknown `root` is `not_found`.
 
 `get_transcript_page {agent, after?, before?, limit?}` answers
 `transcript_page {entries, has_before, has_after, last_seq}`. Entries are the

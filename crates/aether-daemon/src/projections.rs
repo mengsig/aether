@@ -11,12 +11,11 @@ use aether_core::report::{self, RunReport};
 use aether_core::task::Task;
 use aether_protocol::{AgentTree, RunListing, TranscriptEntry, TreeNode};
 use aether_runtime::Runtime;
-use aether_store::{
-    AgentFilter, EventFilter, Store, TREE_PAGE_MAX, TaskFilter, TreeQuery, UsageNode,
-};
+use aether_store::{AgentFilter, EventFilter, Store, TREE_PAGE_MAX, TaskFilter, TreeQuery};
 
 /// Which agents `get_tree` projects. Spend is rolled up over every agent
 /// below a shown one, shown or not; a hidden child's lands in its parent's `hidden_usage`.
+/// Within a run, only that run's agents count.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TreeFilter {
     pub include_archived: bool,
@@ -24,9 +23,9 @@ pub struct TreeFilter {
     pub role_prefix: Option<String>,
     /// Only this agent and its descendants.
     pub root: Option<AgentId>,
-    /// The page of finished agents older than this one.
+    /// The page of agents older than this one.
     pub after: Option<AgentId>,
-    /// At most this many finished agents; [`TREE_PAGE_MAX`] when absent.
+    /// At most this many agents walked; [`TREE_PAGE_MAX`] when absent.
     pub limit: Option<usize>,
 }
 
@@ -60,13 +59,8 @@ pub fn build_tree(
     agents.sort_unstable_by_key(|agent| agent.id);
     let visible: BTreeSet<AgentId> = agents.iter().map(|agent| agent.id).collect();
     assert_eq!(visible.len(), agents.len(), "a page shows an agent once");
-    let nodes = usage_nodes(store, run, &agents)?;
-    let all_children = children_of(&nodes);
-    let subtree_usage = roll_up_usage(&nodes, &all_children);
-    assert!(
-        visible.iter().all(|id| subtree_usage.contains_key(id)),
-        "every shown agent has a total"
-    );
+    let usages = store.tree_usages(&agents, run)?;
+    assert_eq!(usages.len(), visible.len(), "every shown agent has a total");
     let leases: BTreeMap<AgentId, _> = store
         .leases()?
         .into_iter()
@@ -80,10 +74,7 @@ pub fn build_tree(
     for agent in agents {
         let task = agent.current_task.and_then(|id| tasks.get(&id).cloned());
         let waiting_on = Runtime::waiting_on(&agent).into_iter().collect();
-        let subtree = subtree_usage.get(&agent.id).copied().unwrap_or_default();
-        let hidden_usage = all_children
-            .get(&agent.id)
-            .and_then(|children| hidden_usage(children, &visible, &subtree_usage));
+        let usage = usages.get(&agent.id).copied();
         nodes.insert(
             agent.id,
             TreeNode {
@@ -91,8 +82,8 @@ pub fn build_tree(
                 task,
                 waiting_on,
                 lease: leases.get(&agent.id).cloned(),
-                subtree_usage: subtree,
-                hidden_usage,
+                subtree_usage: usage.map(|usage| usage.subtree).unwrap_or_default(),
+                hidden_usage: usage.and_then(|usage| usage.hidden),
                 agent,
             },
         );
@@ -103,30 +94,6 @@ pub fn build_tree(
         stale: None,
         next_after: page.next_after,
     })
-}
-
-/// The shown agents and everything below them, as a usage roll-up reads them:
-/// no hidden descendant's body is decoded. Cut to `run` when the tree is.
-fn usage_nodes(
-    store: &dyn Store,
-    run: Option<RunId>,
-    shown: &[Agent],
-) -> aether_store::Result<Vec<UsageNode>> {
-    let ids: Vec<AgentId> = shown.iter().map(|agent| agent.id).collect();
-    let mut nodes = store.subtree_usages(&ids)?;
-    if let Some(run) = run {
-        nodes.retain(|node| node.run == run);
-    }
-    // A shown agent written after the roll-up's read began counts as it was shown.
-    let read: BTreeSet<AgentId> = nodes.iter().map(|node| node.id).collect();
-    nodes.extend(
-        shown
-            .iter()
-            .filter(|agent| !read.contains(&agent.id))
-            .map(UsageNode::of),
-    );
-    debug_assert!(run.is_none_or(|run| nodes.iter().all(|node| node.run == run)));
-    Ok(nodes)
 }
 
 /// The task each shown agent is on, read by id: a long-lived store's task
@@ -153,18 +120,6 @@ fn current_tasks(
     Ok(tasks)
 }
 
-/// Every node's children, in the order `nodes` lists them.
-fn children_of(nodes: &[UsageNode]) -> BTreeMap<AgentId, Vec<AgentId>> {
-    let mut children: BTreeMap<AgentId, Vec<AgentId>> = BTreeMap::new();
-    for node in nodes {
-        if let Some(parent) = node.parent {
-            children.entry(parent).or_default().push(node.id);
-        }
-    }
-    debug_assert!(children.values().map(Vec::len).sum::<usize>() <= nodes.len());
-    children
-}
-
 /// The shown agents without a shown parent, and each shown agent's shown children.
 fn link(
     agents: &[Agent],
@@ -183,57 +138,6 @@ fn link(
         agents.len()
     );
     (roots, children)
-}
-
-/// The spend under an agent's children that are not shown; `None` when all are.
-fn hidden_usage(
-    children: &[AgentId],
-    visible: &BTreeSet<AgentId>,
-    subtree_usage: &BTreeMap<AgentId, Usage>,
-) -> Option<Usage> {
-    let mut hidden = children.iter().filter(|id| !visible.contains(*id));
-    let mut total = subtree_usage[hidden.next()?];
-    for child in hidden {
-        total += subtree_usage[child];
-    }
-    Some(total)
-}
-
-/// Each agent's own usage plus every descendant's, by a post-order walk over
-/// the parent/child structure, so a child is always folded in before its
-/// parent. Not by creation order: the wall clock may step backwards between
-/// a parent's creation and its child's.
-fn roll_up_usage(
-    nodes: &[UsageNode],
-    all_children: &BTreeMap<AgentId, Vec<AgentId>>,
-) -> BTreeMap<AgentId, Usage> {
-    let all_ids: BTreeSet<AgentId> = nodes.iter().map(|n| n.id).collect();
-    let mut subtree_usage: BTreeMap<AgentId, Usage> =
-        nodes.iter().map(|n| (n.id, n.usage)).collect();
-    let roots = nodes
-        .iter()
-        .filter(|n| n.parent.is_none_or(|p| !all_ids.contains(&p)))
-        .map(|n| n.id);
-    for root in roots {
-        let mut stack = vec![(root, false)];
-        while let Some((id, post)) = stack.pop() {
-            let Some(kids) = all_children.get(&id) else {
-                continue;
-            };
-            if post {
-                let mut total = subtree_usage[&id];
-                for child in kids {
-                    total += subtree_usage[child];
-                }
-                subtree_usage.insert(id, total);
-                continue;
-            }
-            stack.push((id, true));
-            stack.extend(kids.iter().map(|c| (*c, false)));
-        }
-    }
-    assert_eq!(subtree_usage.len(), all_ids.len(), "one total per agent");
-    subtree_usage
 }
 
 /// Every run the store knows about, newest first. Projected from agents and
@@ -728,14 +632,14 @@ mod tests {
     }
 
     /// Delegation may cross runs: a run filter keeps a same-run grandchild
-    /// whose intermediate parent ran elsewhere.
+    /// whose intermediate parent ran elsewhere, and counts it in the root's roll-up.
     #[test]
     fn a_rooted_run_filtered_tree_follows_a_cross_run_intermediate() {
         let store = aether_store::SqliteStore::open_in_memory().expect("open");
         let (run_a, run_b) = (RunId::new(), RunId::new());
         let root = agent(None, run_a, false, 1);
-        let middle = agent(Some(root.id), run_b, false, 1);
-        let leaf = agent(Some(middle.id), run_a, false, 1);
+        let middle = agent(Some(root.id), run_b, false, 10);
+        let leaf = agent(Some(middle.id), run_a, false, 100);
         for a in [&root, &middle, &leaf] {
             upsert(&store, a);
         }
@@ -747,5 +651,11 @@ mod tests {
         let shown: BTreeSet<_> = tree.nodes.keys().copied().collect();
         assert_eq!(shown, BTreeSet::from([root.id, leaf.id]));
         assert_eq!(tree.roots.len(), 2, "the leaf's parent is not shown");
+        let top = &tree.nodes[&root.id];
+        assert_eq!(
+            top.subtree_usage.input_tokens, 101,
+            "run a's spend below, not b's"
+        );
+        assert_eq!(top.hidden_usage.map(|u| u.input_tokens), Some(100));
     }
 }

@@ -1,6 +1,7 @@
-//! V33: each agent's usage moves beside its row and the fleet's and each
-//! run's totals into one row each, backfilled from a 1.2.11 store (V28) and
-//! kept by triggers. The backfill must count what the 1.2.11 reader counted.
+//! V33: each agent's usage moves beside its row and the fleet's, each run's
+//! and each subtree's totals into one row each, backfilled from a 1.2.11
+//! store (V28) and kept by triggers. The backfill must count what the 1.2.11
+//! reader counted.
 
 use super::tests::{database_at, version};
 use super::*;
@@ -107,10 +108,16 @@ fn whole_agent(run: RunId, status: AgentStatus, usage: Usage) -> Agent {
 
 /// An agent row as a 1.2.11 binary wrote it: its columns, then the body.
 fn insert_row(conn: &Connection, id: &str, status: &str, run: &str, body: &str) {
+    insert_child_row(conn, id, None, [status, run, body]);
+}
+
+/// [`insert_row`] under `parent`; `row` is the status, run and body.
+fn insert_child_row(conn: &Connection, id: &str, parent: Option<&str>, row: [&str; 3]) {
+    let [status, run, body] = row;
     conn.execute(
         "INSERT INTO agents(id, parent, role, status, run, created_at, updated_at, body)
-         VALUES (?1, NULL, 'worker', ?2, ?3, '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', ?4)",
-        [id, status, run, body],
+         VALUES (?1, ?2, 'worker', ?3, ?4, '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', ?5)",
+        rusqlite::params![id, parent, status, run, body],
     )
     .expect("agent row");
 }
@@ -118,13 +125,9 @@ fn insert_row(conn: &Connection, id: &str, status: &str, run: &str, body: &str) 
 fn insert_agent(conn: &Connection, agent: &Agent) {
     let body = serde_json::to_string(agent).expect("an agent serializes");
     let id = agent.id.to_string();
-    insert_row(
-        conn,
-        &id,
-        agent.status.kind().as_str(),
-        &agent.run.to_string(),
-        &body,
-    );
+    let parent = agent.parent.map(|parent| parent.to_string());
+    let row = [agent.status.kind().as_str(), &agent.run.to_string(), &body];
+    insert_child_row(conn, &id, parent.as_deref(), row);
 }
 
 /// The 1.2.11 `fleet_usage`: every row not imported whose body decodes as an
@@ -219,6 +222,64 @@ fn v33_counts_exactly_what_the_1_2_11_reader_counted() {
     }
     drop(store);
     assert_the_previous_binary_refuses(&path, directory.path());
+}
+
+/// `agent_tree` and the subtree totals, row by row.
+fn subtree_rows(conn: &Connection) -> Vec<String> {
+    super::tests::dump(conn)
+        .into_iter()
+        .filter(|line| line.starts_with("agent_tree ") || line.starts_with("usage_totals "))
+        .filter(|line| !line.starts_with("usage_totals ") || line.contains("\"tree:"))
+        .collect()
+}
+
+/// Agents of [`assorted_usages`] over two runs, each under an earlier one or
+/// none, and one under an agent never written.
+fn a_1_2_11_forest(runs: [RunId; 2]) -> Vec<Agent> {
+    let mut agents: Vec<Agent> = Vec::new();
+    for (n, usage) in assorted_usages().into_iter().cycle().take(30).enumerate() {
+        let mut agent = whole_agent(runs[n % 3 / 2], AgentStatus::Running, usage);
+        agent.parent = match n % 4 {
+            0 => None,
+            1 => Some(AgentId::new()),
+            _ => Some(agents[n * 7 % agents.len()].id),
+        };
+        agents.push(agent);
+    }
+    assert!(agents.iter().filter(|a| a.parent.is_some()).count() > 15);
+    agents
+}
+
+#[test]
+fn v33_backfills_each_subtree_as_its_triggers_keep_it() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("aether.db");
+    let previous = database_at(&path, 28);
+    let runs = [RunId::new(), RunId::new()];
+    let forest = a_1_2_11_forest(runs);
+    // Children before parents, as no binary writes them: the backfill walks links, not order.
+    for agent in forest.iter().rev() {
+        insert_agent(&previous, agent);
+    }
+    drop(previous);
+    drop(crate::SqliteStore::open(&path).expect("a 1.2.11 store opens and migrates"));
+
+    let kept = database_at(&directory.path().join("kept.db"), SCHEMA_VERSION);
+    for agent in &forest {
+        insert_agent(&kept, agent);
+    }
+    let migrated = Connection::open(&path).unwrap();
+    let backfilled = subtree_rows(&migrated);
+    assert!(
+        backfilled.len() > forest.len() * 2,
+        "links above the agents themselves"
+    );
+    assert!(
+        backfilled
+            .iter()
+            .any(|line| line.starts_with("usage_totals "))
+    );
+    assert_eq!(backfilled, subtree_rows(&kept));
 }
 
 fn assert_the_previous_binary_refuses(path: &std::path::Path, directory: &std::path::Path) {

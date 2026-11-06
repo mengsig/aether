@@ -203,7 +203,7 @@ fn print_timing(name: &str, ms: &mut [u64]) {
 }
 
 /// `get_tree`'s store reads for the whole fleet: every agent decoded, as
-/// before V33, against one page and its usage roll-up from `agent_usage`.
+/// before V33, against one page and its roll-ups from the kept subtree totals.
 fn report_tree_reads(store: &SqliteStore) {
     let (mut whole, mut paged) = (Vec::new(), Vec::new());
     let query = TreeQuery {
@@ -221,16 +221,78 @@ fn report_tree_reads(store: &SqliteStore) {
         whole.push(started.elapsed().as_millis() as u64);
         let started = Instant::now();
         let page = store.tree_page(&query).expect("page");
-        let ids: Vec<AgentId> = page.agents.iter().map(|agent| agent.id).collect();
-        let nodes = store.subtree_usages(&ids).expect("roll-up");
+        let usages = store.tree_usages(&page.agents, None).expect("roll-up");
         assert!(
-            nodes.len() >= ids.len() && page.next_after.is_some(),
+            usages.len() == page.agents.len() && page.next_after.is_some(),
             "a page of many"
         );
         paged.push(started.elapsed().as_millis() as u64);
     }
     print_timing("tree (every agent)", &mut whole);
     print_timing("tree (one page)", &mut paged);
+    report_rooted_tree_reads(store);
+}
+
+/// The big run's oldest member as the parent of the rest, once: a lead with
+/// hundreds of descendants, as a long-lived orchestrator's tree is.
+fn nest_the_big_run(store: &SqliteStore) -> AgentId {
+    let live = AgentFilter {
+        live_only: true,
+        ..AgentFilter::default()
+    };
+    let run = store.agents(&live).expect("live agents")[0].run;
+    let run_only = AgentFilter {
+        run: Some(run),
+        ..AgentFilter::default()
+    };
+    let mut members = store.agents(&run_only).expect("the big run");
+    members.sort_by_key(|agent| agent.id);
+    assert_eq!(members.len(), RUN_MEMBERS, "the big run's members");
+    let lead = members[0].id;
+    let mut nest = aether_store::Commit::new();
+    let mut moved = 0;
+    for member in members.iter_mut().skip(1).filter(|m| m.parent.is_none()) {
+        member.parent = Some(lead);
+        nest = nest.mutate(Mutation::UpsertAgent(member.clone()));
+        moved += 1;
+    }
+    // A reused store was nested by an earlier run.
+    if moved > 0 {
+        store.commit(nest).expect("nested");
+    }
+    lead
+}
+
+/// A rooted tree over that lead: its whole subtree decoded, as a walk by
+/// parent links did, against one page of 50 and its roll-ups.
+fn report_rooted_tree_reads(store: &SqliteStore) {
+    let lead = nest_the_big_run(store);
+    let query = TreeQuery {
+        run: None,
+        root: Some(lead),
+        include_archived: false,
+        role_prefix: None,
+        after: None,
+        limit: 50,
+    };
+    let (mut whole, mut paged) = (Vec::new(), Vec::new());
+    for _ in 0..SAMPLES {
+        let started = Instant::now();
+        let subtree = store.subtree_agents(lead).expect("subtree");
+        assert_eq!(subtree.len(), RUN_MEMBERS, "the lead and every member");
+        whole.push(started.elapsed().as_millis() as u64);
+        let started = Instant::now();
+        let page = store.tree_page(&query).expect("page");
+        let usages = store.tree_usages(&page.agents, None).expect("roll-up");
+        assert!(page.next_after.is_some() && page.agents.len() <= 2 * 50 + 1);
+        assert!(
+            usages[&lead].hidden.is_some(),
+            "the page leaves members out"
+        );
+        paged.push(started.elapsed().as_millis() as u64);
+    }
+    print_timing("rooted (subtree)", &mut whole);
+    print_timing("rooted (one page)", &mut paged);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -278,7 +278,7 @@ pub struct BoardSummary {
     pub agents: usize,
     pub running: usize,
     pub total_cost: Option<Cost>,
-    /// The daemon sent the newest finished agents and left older ones out.
+    /// The daemon sent the newest agents and left older ones out.
     pub older_left_out: bool,
 }
 

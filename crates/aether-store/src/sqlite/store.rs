@@ -464,6 +464,14 @@ impl Store for SqliteStore {
         self.read_subtree_usages(roots)
     }
 
+    fn tree_usages(
+        &self,
+        shown: &[Agent],
+        run: Option<aether_core::id::RunId>,
+    ) -> Result<BTreeMap<AgentId, crate::TreeUsage>> {
+        self.read_tree_usages(shown, run)
+    }
+
     fn subtree_ids(&self, root: AgentId) -> Result<BTreeSet<AgentId>> {
         let conn = self.read_conn()?;
         let mut stmt = conn.prepare_cached(

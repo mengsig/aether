@@ -49,7 +49,9 @@ pub use migration_backup::backup_database;
 pub use schema::SCHEMA_VERSION;
 pub use sqlite::usage_totals::register as register_sql_functions;
 pub use sqlite::{HistoryScreen, PushSubscriptionRow, RunExpiry, SqliteStore};
-pub use tree_query::{TREE_PAGE_MAX, TreePage, TreeQuery, UsageNode, tree_page_of};
+pub use tree_query::{
+    TREE_PAGE_MAX, TreePage, TreeQuery, TreeUsage, UsageNode, tree_page_of, tree_usages_of,
+};
 
 /// The single write path, shared by everything that commits to one store.
 ///
@@ -802,8 +804,8 @@ pub trait Store: Send + Sync {
         Ok(usages)
     }
     /// One page of the agents a tree shows, filtered before any is decoded:
-    /// on the first page every live agent in scope and the root, and on each
-    /// page the newest finished ones, up to `query.limit`.
+    /// on the first page the newest live agents in scope and the root, and on
+    /// each page the newest agents older than `query.after`, `query.limit` of each.
     fn tree_page(&self, query: &TreeQuery) -> Result<TreePage> {
         tree_page_of(self.tree_scope(query)?, query)
     }
@@ -833,6 +835,16 @@ pub trait Store: Send + Sync {
             }
         }
         Ok(nodes)
+    }
+    /// [`TreeUsage`] for each of `shown`, counting every agent below it or
+    /// only those of `run`; the SQLite store reads its kept subtree totals by key.
+    fn tree_usages(
+        &self,
+        shown: &[Agent],
+        run: Option<RunId>,
+    ) -> Result<BTreeMap<AgentId, TreeUsage>> {
+        let ids: Vec<AgentId> = shown.iter().map(|agent| agent.id).collect();
+        Ok(tree_usages_of(self.subtree_usages(&ids)?, shown, run))
     }
     /// Whether any agent, including archived and terminal agents, carries this repository scope.
     fn any_agent_in_repository(&self, repository: &str) -> Result<bool>;

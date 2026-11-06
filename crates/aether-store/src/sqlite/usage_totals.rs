@@ -159,7 +159,7 @@ pub(super) const TOTALS_COLUMNS: &str = "members, input_tokens, output_tokens, c
 
 /// One `usage_totals` row as the usage the fold of its members gives: sums
 /// for the counters, and the flags from how many members carried each value.
-fn totals_from(row: &Row<'_>) -> rusqlite::Result<(u64, Usage)> {
+pub(super) fn totals_from(row: &Row<'_>) -> rusqlite::Result<(u64, Usage)> {
     let members = tokens(row, 0)?;
     let reasoning_members = tokens(row, 6)?;
     let estimated_members = tokens(row, 9)?;
@@ -326,4 +326,4 @@ pub(super) fn read_agent_usages(
 
 #[cfg(test)]
 #[path = "usage_totals_tests.rs"]
-mod tests;
+pub(crate) mod tests;

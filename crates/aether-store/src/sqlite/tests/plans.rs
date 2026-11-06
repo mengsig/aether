@@ -450,22 +450,37 @@ fn a_tree_page_seeks_live_agents_by_status_and_finished_ones_by_index_order() {
 }
 
 #[test]
-fn a_rooted_tree_page_walks_the_subtree_by_parent_links() {
+fn a_rooted_tree_page_walks_the_subtree_down_the_closure_key() {
     use crate::sqlite::tree_pages::{ancestors_sql, page_sql};
     let store = SqliteStore::open_in_memory().expect("open");
     let query = tree_query(None, Some(AgentId::new()), false);
-    let (_, finished, args) = page_sql(&query);
-    let steps = plan(&store, &finished, &boxed(args));
+    let (pinned, walk, args) = page_sql(&query);
+    let steps = plan(&store, &walk, &boxed(args.clone()));
     assert!(
         steps
             .iter()
-            .any(|s| s.2 == "SEARCH c USING INDEX agents_parent (parent=?)"),
+            .any(|s| s.2 == "SEARCH t USING PRIMARY KEY (ancestor=? AND descendant<?)"),
+        "{steps:?}"
+    );
+    no_scan_or_sort(&steps);
+    assert!(
+        steps.iter().all(|s| !s.2.starts_with("SCAN t")),
+        "{steps:?}"
+    );
+    let steps = plan(&store, &pinned, &boxed(args[..args.len() - 1].to_vec()));
+    assert!(
+        steps
+            .iter()
+            .any(|s| s.2 == "SEARCH a USING INDEX agents_status (status=?)"),
         "{steps:?}"
     );
     assert!(
-        steps.iter().all(|s| !s.2.starts_with("SCAN a")),
-        "{steps:?}"
+        steps
+            .iter()
+            .any(|s| s.2 == "SEARCH s USING PRIMARY KEY (ancestor=? AND descendant=?)"),
+        "the root is checked by key, not by walking its subtree: {steps:?}"
     );
+    no_scan_or_sort(&steps);
     let (above, mut args) = ancestors_sql(&query);
     args.push("[]".to_owned());
     let steps = plan(&store, &above, &boxed(args));
@@ -476,6 +491,46 @@ fn a_rooted_tree_page_walks_the_subtree_by_parent_links() {
         "{steps:?}"
     );
     no_scan_or_sort(&steps);
+}
+
+#[test]
+fn a_subtree_roll_up_reads_its_totals_by_key() {
+    use crate::sqlite::tree_pages::subtree_totals_sql;
+    let store = SqliteStore::open_in_memory().expect("open");
+    let id = AgentId::new().to_string();
+    let children = serde_json::to_string(&[AgentId::new().to_string()]).unwrap();
+    for run in [None, Some(RunId::new().to_string())] {
+        let mut args = vec![id.clone(), children.clone()];
+        args.extend(run.clone());
+        let steps = plan(
+            &store,
+            &subtree_totals_sql(true, run.is_some()),
+            &boxed(args),
+        );
+        let by_scope = if run.is_some() {
+            "(scope=?)"
+        } else {
+            "(scope>? AND scope<?)"
+        };
+        let seeks = steps
+            .iter()
+            .filter(|s| s.2 == format!("SEARCH usage_totals USING PRIMARY KEY {by_scope}"))
+            .count();
+        assert_eq!(
+            seeks, 2,
+            "the agent's subtree and each child's, by key: {steps:?}"
+        );
+        assert!(
+            steps
+                .iter()
+                .any(|s| s.2.starts_with("SEARCH u USING PRIMARY KEY (agent_id=?)")),
+            "{steps:?}"
+        );
+        assert!(
+            steps.iter().all(|s| !s.2.starts_with("SCAN usage_totals")),
+            "{steps:?}"
+        );
+    }
 }
 
 /// Virtual-machine steps to read a run's receipt page of 256, newest first.

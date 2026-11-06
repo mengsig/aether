@@ -84,11 +84,12 @@ pub enum Command {
         /// Only this agent and its descendants. Needs `features::AGENTS_PAGING`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         root: Option<AgentId>,
-        /// The page of finished agents older than this one, from an earlier
-        /// page's `next_after`; that page holds no live agent. Needs `features::TREE_PAGES`.
+        /// The page of agents older than this one, from an earlier page's
+        /// `next_after`; only the first page pins live agents. Needs `features::TREE_PAGES`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         after: Option<AgentId>,
-        /// At most this many finished agents. Needs `features::TREE_PAGES`.
+        /// At most this many agents walked, and live ones pinned on the first
+        /// page. Needs `features::TREE_PAGES`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
     },

@@ -139,10 +139,14 @@ before updating.
   within a second; a section not read in time is listed in `unavailable` and
   named in its problems, and the CLI, TUI and `aether doctor` show it as
   unavailable instead of as zero. `get_tree` filters by run, root, role and
-  archived state before it reads an agent and answers one page: every live
-  agent, the root, and the newest finished agents, 500 at most, with
-  `next_after` for the rest (`after` and `limit`, feature `tree_pages`); the
-  board says when older finished agents are left out. It is shared like
+  archived state before it reads an agent and answers one page: the newest
+  live agents and the root, then the newest agents of any state, 500 of each
+  at most, with `next_after` for the rest (`after` and `limit`, feature
+  `tree_pages`); the board says when older agents are left out. A rooted page
+  walks a kept table of each agent's ancestors, and each shown agent's
+  roll-up is read from its subtree's kept totals, so a page costs the same
+  however many agents are below it. Within a run, a roll-up counts that run's
+  agents below, even under an agent of another run. It is shared like
   `status`: past 750 ms it answers with the last tree read for the same
   request, marked `stale`. The GitHub watcher's status shares one read and
   answers `unavailable` past 750 ms. A timed-out client names the daemon's

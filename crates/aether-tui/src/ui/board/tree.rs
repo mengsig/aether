@@ -99,7 +99,7 @@ fn summary(model: &BoardModel, theme: &Theme) -> String {
         parts.push(cost_text(s.total_cost));
     }
     if s.older_left_out {
-        parts.push("older finished not shown".to_owned());
+        parts.push("older agents not shown".to_owned());
     }
     parts.join(&format!(" {dot} "))
 }
