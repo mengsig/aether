@@ -1,9 +1,9 @@
 // `#/archon/history`: find items by text and when they last moved (`list_items` filters), then read one
 // item's transitions (`item_history`). Searches and histories are stored by core; this keeps the query.
 
-import { searchKey, selectItem, selectItems, selectSearch, useApp, useSelector, type ItemSearch } from "@aether-ui/core";
+import { searchKey, selectItem, selectItems, selectSearch, useApp, useDraft, useSelector, type ItemSearch } from "@aether-ui/core";
 import type { ConnectionInfo } from "@aether-ui/protocol";
-import { Button, EmptyState, ErrorState, Field, Skeleton, StatusPill } from "@aether-ui/ui";
+import { Button, EmptyState, ErrorState, Field, Picker, Skeleton, StatusPill } from "@aether-ui/ui";
 import { useCallback, useMemo, useState, type FormEvent } from "react";
 import "../dag/dag.css";
 import { useStoreRead } from "../initiatives/read.ts";
@@ -18,7 +18,13 @@ import "./history.css";
 export const SETTLE_MS = 1_000;
 
 function SearchBar({ initial, onSearch }: { readonly initial: SearchForm; readonly onSearch: (query: ItemSearch) => void }) {
-  const [form, setForm] = useState(initial);
+  const { value: form, update: setForm } = useDraft("archon/history-filters", { ...initial, range: "7" });
+  const chooseRange = (range: string) => {
+    if (range === "custom") return setForm({ range });
+    const days = Number(range);
+    invariant([1, 7, 30].includes(days), "a preset is a supported day count");
+    setForm({ range, from: new Date(Date.now() - (days - 1) * 86_400_000).toISOString().slice(0, 10), to: "" });
+  };
   const [error, setError] = useState<string>();
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -31,8 +37,9 @@ function SearchBar({ initial, onSearch }: { readonly initial: SearchForm; readon
   return (
     <form className="history-search" role="search" onSubmit={submit}>
       <Field label="Search" placeholder="Title or brief" maxLength={200} {...field("text")} className="history-text" />
-      <Field label="Moved from" type="date" hint="Whole days, in UTC" {...field("from")} />
-      <Field label="Until" type="date" {...field("to")} {...(error === undefined ? {} : { error })} />
+      <Picker label="Date range" value={form.range} onChange={chooseRange} data-testid="history-filter-range" options={[{ id: "1", label: "Today" }, { id: "7", label: "7 days" }, { id: "30", label: "30 days" }, { id: "custom", label: "Custom" }]} />
+      {form.range === "custom" ? <><Field label="Moved from" type="date" hint="Whole days, in UTC" {...field("from")} />
+      <Field label="Until" type="date" {...field("to")} {...(error === undefined ? {} : { error })} /></> : null}
       <Button type="submit" variant="primary">Search</Button>
     </form>
   );
@@ -95,7 +102,11 @@ function useTitle(conn: string, query: ItemSearch, item: string | undefined): st
 function Explorer({ info }: { readonly info: ConnectionInfo }) {
   const access = useArchonAccess(info);
   const [initial] = useState(() => defaultForm(Date.now()));
-  const [query, setQuery] = useState<ItemSearch>(() => queryOf(initial));
+  const saved = useDraft("archon/history-filters", { ...initial, range: "7" });
+  const [query, setQuery] = useState<ItemSearch>(() => {
+    const result = searchOf(saved.value);
+    return "query" in result ? result.query : queryOf(initial);
+  });
   // Only the selection's id is kept; everything shown about it is read from core.
   const [picked, setPicked] = useState<string>();
   const title = useTitle(access.conn, query, picked);

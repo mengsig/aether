@@ -43,7 +43,7 @@ export function Details({ detail, repoName, pipeline, prUrl }: {
 }
 
 export function Runs({ item, runs, now }: { readonly item: string; readonly runs: readonly archon.PipelineRun[]; readonly now: number }) {
-  if (runs.length === 0) return <EmptyState title="No runs yet">A run starts when Archon dispatches the item.</EmptyState>;
+  if (runs.length === 0) return <EmptyState title="No runs yet">A run starts when Archon dispatches the item. Check the queue for waiting reasons.</EmptyState>;
   return (
     <ol className="item-list">
       {runs.map((run, index) => {
@@ -83,7 +83,7 @@ export function StageNode({ stage, now }: { readonly stage: archon.StageRun; rea
 }
 
 export function Stages({ detail, now }: { readonly detail: archon.ItemDetail; readonly now: number }) {
-  if (detail.stages.length === 0) return <EmptyState title="No stages yet">Stages appear here once the item is dispatched.</EmptyState>;
+  if (detail.stages.length === 0) return <EmptyState title="No stages yet">Stages appear here once the item is dispatched. Check the queue for waiting reasons.</EmptyState>;
   const numbers = new Map(detail.runs.map((run, index) => [run.id, index + 1]));
   const groups: { run: string; stages: archon.StageRun[] }[] = [];
   for (const stage of detail.stages) {
@@ -138,7 +138,7 @@ function pageHref(ref: archon.GithubRef): string | null {
 
 /** Each link with what GitHub last said of it; its text is untrusted, so it is shown, never followed blindly. */
 export function Links({ links, objects }: { readonly links: readonly archon.GithubLink[]; readonly objects: readonly archon.GithubObject[] }) {
-  if (links.length === 0) return <EmptyState title="No GitHub links">Issues and pull requests linked to this item show up here.</EmptyState>;
+  if (links.length === 0) return <EmptyState title="No GitHub links" action={<a className="ui-link" href="#/github">Open GitHub overview</a>}>Open the GitHub overview to find an issue and import it as work.</EmptyState>;
   return (
     <ul className="item-list">
       {links.map((link) => {

@@ -162,9 +162,18 @@ describe("importing an issue", () => {
     expect(dialog?.textContent).toContain("Export the dashboard as CSV");
     expect(dialog?.textContent).toContain("grants no authority");
     expect(h.faux.commands("import_issue")).toEqual([]);
+    const picker = container.querySelector<HTMLElement>('[data-testid="gh-import-priority"]');
+    if (!picker) throw new Error("priority picker is mounted");
+    await click(h, picker);
+    const high = [...container.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent === "high");
+    if (!high) throw new Error("high priority is offered");
+    await click(h, high);
+    await click(h, buttonNamed(container, "Not now"));
+    await click(h, buttonNamed(container, "Import as Archon work"));
+    expect(container.querySelector('[data-testid="gh-import-priority"]')?.textContent).toBe("high");
     await click(h, buttonNamed(container, "Import"));
     expect(h.faux.commands("import_issue").map(({ ref, priority }) => ({ ref, priority }))).toEqual([
-      { ref: { host: "github.com", repo: "acme/site", number: 77, kind: "issue" }, priority: "normal" },
+      { ref: { host: "github.com", repo: "acme/site", number: 77, kind: "issue" }, priority: "high" },
     ]);
     await h.until(() => itemCard(container, "qi_import_77") !== null, "the imported item", 3_000);
     expect(container.querySelector('[role="status"]')?.textContent).toBe("Imported as Export the dashboard as CSV");

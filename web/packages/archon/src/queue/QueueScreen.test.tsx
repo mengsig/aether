@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { archonHarness, byText, click, CONN, type, type ArchonHarness } from "./test/harness.tsx";
+import { archonHarness, byText, click, CONN, pick, type, type ArchonHarness } from "./test/harness.tsx";
 import { QueueScreen } from "./QueueScreen.tsx";
 
 let h: ArchonHarness | null = null;
@@ -48,14 +48,14 @@ describe("the queue list", () => {
     await type(h, container.querySelector('input[type="search"]') as Element, "hero");
     expect(titles(container)).toEqual(["Compress the hero images"]);
     await type(h, container.querySelector('input[type="search"]') as Element, "");
-    const [repo, pipeline, priority] = [...container.querySelectorAll(".queue-selects select")];
-    await type(h, repo as Element, "repo_api");
+
+    await pick(h, "queue-filter-repo", "api");
     expect(chip(container, "All").textContent).toBe("All 2");
-    await type(h, priority as Element, "critical");
+    await pick(h, "queue-filter-priority", "Critical");
     expect(titles(container)).toEqual(["Rate-limit the claim endpoint"]);
-    await type(h, priority as Element, "");
-    await type(h, repo as Element, "");
-    await type(h, pipeline as Element, "direct");
+    await pick(h, "queue-filter-priority", "Any priority");
+    await pick(h, "queue-filter-repo", "All repositories");
+    await pick(h, "queue-filter-pipeline", "direct");
     expect(titles(container)).toEqual(["Refresh the landing page copy", "Remove the legacy flag"]);
   });
 
@@ -138,17 +138,15 @@ describe("the queue's changes", () => {
     await click(h, byText(container, "button", "New item"));
     const dialog = document.querySelector("dialog[open]");
     expect(dialog).not.toBeNull();
-    await click(h, byText(document, "button", "Queue item"));
-    expect(document.querySelector("dialog[open] [role=alert]")?.textContent).toBe("An item needs a title and a brief.");
-    const fields = dialog?.querySelectorAll("input, textarea, select") ?? [];
-    await type(h, fields[0] as Element, "Add a status page");
-    await type(h, fields[1] as Element, "Serve /status with the build id.");
-    await type(h, fields[2] as Element, "repo_api");
-    await h.until(() => (dialog?.querySelectorAll("select")[1]?.options.length ?? 0) === 3, "the pipeline catalog");
-    await type(h, fields[3] as Element, "direct");
-    await type(h, fields[4] as Element, "high");
-    await type(h, fields[5] as Element, "strict");
-    await click(h, byText(document, "button", "Queue item"));
+    expect(document.querySelector<HTMLButtonElement>('[data-testid="new-item-submit"]')?.disabled).toBe(true);
+    await type(h, dialog?.querySelector('[data-testid="new-item-title"]') as Element, "Add a status page");
+    await type(h, dialog?.querySelector('[data-testid="new-item-brief"]') as Element, "Serve /status with the build id.");
+    await pick(h, "new-item-repo", "api");
+    await h.tick();
+    await pick(h, "new-item-pipeline", "direct");
+    await pick(h, "new-item-priority", "High");
+    await pick(h, "new-item-review", "Strict");
+    await click(h, byText(document, "dialog[open] button", "Queue item"));
     const [sent] = h.faux.commands("enqueue");
     expect(sent).toMatchObject({ repo: "repo_api", pipeline: "direct", title: "Add a status page", brief: "Serve /status with the build id.", priority: "high", budget_usd: null, autonomy: { review: "strict" } });
     expect(String(sent?.idempotency_key)).toMatch(/^[0-9a-f-]{36}$/);

@@ -77,6 +77,11 @@ export class FauxArchond {
       }
       case "get_item": { const entry = this.entry(command.item); return entry ? reply("item_detail", entry.detail) : missing; }
       case "status": return reply("status", this.status());
+      case "repo_add": {
+        const repo = { id: `repo_${this.world.repos.length}`, name: command.name, path: command.path, default_pipeline: command.default_pipeline, base_branch: command.base_branch, ship: "pr", added_at: new Date().toISOString() };
+        this.world.repos.push(repo);
+        return reply("repo", repo);
+      }
       case "repo_list": return reply("repos", this.world.repos);
       case "list_questions": return reply("questions", this.world.questions);
       case "list_reports": return reply("reports", this.world.reports);

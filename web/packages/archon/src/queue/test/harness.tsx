@@ -1,7 +1,7 @@
 // Mounts Archon screens under a real core app connected to a faux archond. Timers are fake, so tests move
 // time on purpose: the protocol 23 fallback backoff, core's debounces and the screens' polling.
 
-import { AppProvider, createApp, type App } from "@aether-ui/core";
+import { AppProvider, createApp, drafts, type App } from "@aether-ui/core";
 import { EntityActionProvider, ThemeProvider } from "@aether-ui/ui";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -33,6 +33,7 @@ export interface ArchonHarness {
 
 export async function archonHarness(options: FauxOptions, world: World = demoWorld()): Promise<ArchonHarness> {
   invariant(vi.isFakeTimers(), "the Archon harness runs on fake timers");
+  for (const key of ["archon/new-item", "archon/new-item-attempt", "archon/queue-filters", "archon/register-repository", "archon/message", "archon/question-q_review_gate"]) drafts.clear(key);
   const frames: (() => void)[] = [];
   const memory = new Map<string, unknown>();
   const faux = new FauxArchond(world, options);
@@ -54,7 +55,7 @@ export async function archonHarness(options: FauxOptions, world: World = demoWor
   };
   await act(async () => { await app.start(); });
   await until(() => app.store.get().connections[CONN]?.state === "ready", "the faux archond to be ready");
-  await until(() => Object.keys(app.store.get().archon[CONN]?.items ?? {}).length > 0, "the queue summaries");
+  await until(() => app.store.get().archon[CONN] !== undefined && Object.keys(app.store.get().archon[CONN]?.items ?? {}).length === world.items.size, "the queue summaries");
   const mount = async (node: ReactNode) => {
     document.documentElement.lang = "en";
     const container = document.createElement("main");
@@ -108,5 +109,15 @@ export async function type(h: ArchonHarness, element: Element, value: string): P
     setter.call(element, value);
     element.dispatchEvent(new Event(element instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
   });
+  await h.tick();
+}
+
+export async function pick(h: Pick<ArchonHarness, "tick">, testid: string, label: string): Promise<void> {
+  const trigger = document.querySelector<HTMLElement>(`[data-testid="${testid}"]`);
+  invariant(trigger !== null, `picker ${testid} is mounted`);
+  await act(async () => trigger.click());
+  const option = byText<HTMLElement>(document, '[role="option"]', label);
+  invariant(option !== undefined, `picker offers ${label}`);
+  await act(async () => option.click());
   await h.tick();
 }

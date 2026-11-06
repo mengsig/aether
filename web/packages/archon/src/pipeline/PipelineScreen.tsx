@@ -83,7 +83,7 @@ function RunView({ access, detail, run, title }: { readonly access: ArchonAccess
         </div>
         {waitingForPlan ? <Skeleton height="1.5rem" width="40%" /> : <PlanSource view={view} error={error} />}
       </header>
-      {view.steps.length === 0 ? <EmptyState title="No stages yet">Stages appear once the run starts its first one.</EmptyState> : (
+      {view.steps.length === 0 ? <EmptyState title="No stages yet">Stages appear once the run starts its first one. Open the item to check its waiting reasons.</EmptyState> : (
         <ol className="pipeline-steps" aria-label="Pipeline">
           {view.steps.map((step, index) => <Step key={step.id} step={step} index={index} fromPlan={view.source === "plan"} now={now} />)}
         </ol>

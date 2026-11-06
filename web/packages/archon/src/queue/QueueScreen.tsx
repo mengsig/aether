@@ -2,9 +2,9 @@
 // priority and text, with the waiting reasons and spend. Rows come from core's store, which the change
 // stream keeps current; against protocol 23 core refetches them after feed items instead.
 
-import { routeHref, selectItems, useSelector, type ArchonItem } from "@aether-ui/core";
+import { routeHref, selectItems, useSelector, useDraft, type ArchonItem } from "@aether-ui/core";
 import type { archon, ConnectionInfo } from "@aether-ui/protocol";
-import { Badge, Button, EmptyState, StatusPill, VirtualList } from "@aether-ui/ui";
+import { Badge, Button, EmptyState, ErrorState, Field, Picker, StatusPill, VirtualList } from "@aether-ui/ui";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useActivity, useArchonAccess, useArchonConnection, useRead, useSettled } from "./archon.ts";
 import {
@@ -12,6 +12,8 @@ import {
   type QueueQuery, type QueueRow,
 } from "./model.ts";
 import "./queue.css";
+import { EMPTY_ITEM, NewItemDialog, SayDialog } from "./NewItemDialog.tsx";
+import { RegisterRepository } from "./RegisterRepository.tsx";
 import { QueueStatus } from "./QueueStatus.tsx";
 
 export const ROW_HEIGHT = 68;
@@ -62,15 +64,9 @@ const QueueRowView = memo(function QueueRowView({ row, repo, now }: { readonly r
 });
 
 function Select(props: { readonly label: string; readonly value: string; readonly all: string; readonly options: readonly (readonly [string, string])[]; readonly onChange: (value: string) => void }) {
-  return (
-    <label className="queue-select">
-      <span className="ui-field-label">{props.label}</span>
-      <select className="ui-field-input" value={props.value} onChange={(event) => props.onChange(event.target.value)}>
-        <option value="">{props.all}</option>
-        {props.options.map(([value, text]) => <option key={value} value={value}>{text}</option>)}
-      </select>
-    </label>
-  );
+  return <Picker label={props.label} size="sm" value={props.value} onChange={props.onChange}
+    data-testid={`queue-filter-${props.label === "Repository" ? "repo" : props.label.toLowerCase()}`}
+    options={[{ id: "", label: props.all }, ...props.options.map(([id, label]) => ({ id, label }))]} />;
 }
 
 function QueueFilters({ query, onChange, counts, repos, pipelines }: {
@@ -88,10 +84,9 @@ function QueueFilters({ query, onChange, counts, repos, pipelines }: {
         ))}
       </div>
       <div className="queue-selects">
-        <label className="queue-select queue-search">
-          <span className="ui-field-label">Search</span>
-          <input className="ui-field-input" type="search" value={query.text} placeholder="Title, brief, id or repository" onChange={(event) => onChange({ ...query, text: event.target.value })} />
-        </label>
+        <Field label="Search" className="queue-search" type="search" value={query.text} placeholder="Title, brief, id or repository" onChange={(event) => onChange({ ...query, text: event.target.value })} />
+        <Picker label="State" size="sm" value={query.filter} data-testid="queue-filter-state" onChange={(filter) => onChange({ ...query, filter: filter as QueueQuery["filter"] })}
+          options={FILTERS.map((filter, index) => ({ id: filter.id, label: filter.label, badge: String(counts[index]) }))} />
         <Select label="Repository" all="All repositories" value={query.repo} options={repos} onChange={(repo) => onChange({ ...query, repo })} />
         <Select label="Pipeline" all="All pipelines" value={query.pipeline} options={pipelines.map((name) => [name, name] as const)} onChange={(pipeline) => onChange({ ...query, pipeline })} />
         <Select label="Priority" all="Any priority" value={query.priority} options={PRIORITIES.map((p) => [p, priorityLabel(p)] as const)} onChange={(priority) => onChange({ ...query, priority })} />
@@ -122,24 +117,36 @@ function Queue({ info }: { readonly info: ConnectionInfo }) {
   const activity = useActivity(access.conn);
   const settled = useSettled(activity, 1_000);
   const { items, rows } = useRows(access.conn);
-  const repos = useRead<archon.Repo[]>(access, { cmd: "repo_list" }, ["repos"]);
-  const names = useMemo(() => new Map((repos.data ?? []).map((repo) => [repo.id, repo.name])), [repos.data]);
-  const [query, setQuery] = useState<QueueQuery>(NO_QUERY);
+  const repos = useRead<archon.Repo[]>(access, { cmd: "repo_list" }, ["repos"], settled);
+  const catalog = useRead<archon.CatalogListing>(access, { cmd: "list_pipelines", repo: null }, ["catalog"], settled);
+  const [dialog, setDialog] = useState<"item" | "say" | "repo" | null>(null);
+  const [registered, setRegistered] = useState<archon.Repo | null>(null);
+  const itemDraft = useDraft("archon/new-item", EMPTY_ITEM);
+  const available = useMemo(() => registered && !repos.data?.some((repo) => repo.id === registered.id) ? [...(repos.data ?? []), registered] : repos.data ?? [], [repos.data, registered]);
+  const names = useMemo(() => new Map(available.map((repo) => [repo.id, repo.name])), [available]);
+  const { value: query, update: setQuery } = useDraft("archon/queue-filters", { ...NO_QUERY });
   const now = useNow();
   const scoped = useMemo(() => rows.filter((row) => inScope(row, query, names)), [rows, query, names]);
   const counts = useMemo(() => FILTERS.map((filter) => scoped.filter(filter.test).length), [scoped]);
   const active = FILTERS.find((filter) => filter.id === query.filter) ?? FILTERS[0];
   invariant(active !== undefined, "the queue has a state filter");
   const shown = useMemo(() => scoped.filter(active.test), [scoped, active]);
-  const pipelines = useMemo(() => [...new Set(rows.map((row) => row.pipeline))].sort(), [rows]);
+  const pipelines = useMemo(() => [...new Set([...(catalog.data?.pipelines ?? []).map((pipeline) => pipeline.name), ...rows.map((row) => row.pipeline)])].sort(), [rows, catalog.data]);
   return (
     <section className="queue" aria-label="Queue">
-      <QueueStatus access={access} items={items} names={names} settled={settled} />
+      <QueueStatus access={access} items={items} names={names} settled={settled} onDialog={setDialog} />
       <QueueFilters query={query} onChange={setQuery} counts={counts} repos={[...names.entries()]} pipelines={pipelines} />
       <p className="queue-total" aria-live="polite">{shown.length} of {rows.length} items{access.live ? "" : " · refreshed after each feed event (protocol 23)"}</p>
       {shown.length > 0 ? <QueueList rows={shown} names={names} now={now} />
-        : rows.length === 0 ? <EmptyState title="Nothing queued yet">Queue work with New item.</EmptyState>
+        : repos.data?.length === 0 ? <EmptyState title="Register a repository" action={access.refusal === null ? <Button variant="primary" data-testid="repo-register" onClick={() => setDialog("repo")}>Register a repository</Button> : undefined}>Choose a checkout and its pipeline to queue your first item. {access.refusal ? "Ask an operator to register it." : ""}</EmptyState>
+          : rows.length === 0 ? <EmptyState title="Nothing queued yet">{access.refusal ? "Ask an operator to queue work." : "Queue work with New item."}</EmptyState>
           : <EmptyState title="No item matches" action={<Button onClick={() => setQuery(NO_QUERY)}>Clear filters</Button>}>Every filter must match.</EmptyState>}
+      {repos.error ? <ErrorState title="Could not read repositories" message={repos.error} onRetry={repos.reload} /> : null}
+      <NewItemDialog access={access} open={dialog === "item"} repos={available} onClose={() => setDialog(null)} />
+      <SayDialog access={access} open={dialog === "say"} onClose={() => setDialog(null)} />
+      <RegisterRepository access={access} open={dialog === "repo"} onClose={() => setDialog(null)} onRegistered={(repo) => {
+        setRegistered(repo); repos.reload(); itemDraft.update({ repo: repo.id, pipeline: repo.default_pipeline ?? "" }); setDialog("item");
+      }} />
     </section>
   );
 }

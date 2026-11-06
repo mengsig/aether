@@ -1,7 +1,7 @@
 // Open questions with their options and a free-text answer. A gate waits on its question, so answering
 // here decides the gate, as the retired app's inbox did.
 
-import { routeHref } from "@aether-ui/core";
+import { routeHref, useDraft } from "@aether-ui/core";
 import type { archon } from "@aether-ui/protocol";
 import { Button } from "@aether-ui/ui";
 import { useState, type FormEvent } from "react";
@@ -12,7 +12,8 @@ function QuestionCard({ access, question, title, onAnswered }: {
   readonly access: ArchonAccess; readonly question: archon.Question; readonly title: string | null; readonly onAnswered: () => void;
 }) {
   const change = useChange(access);
-  const [text, setText] = useState("");
+  const { value: draft, update, clear } = useDraft(`archon/question-${question.id}`, { text: "" });
+  const text = draft.text;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const answer = async (value: string) => {
@@ -22,6 +23,7 @@ function QuestionCard({ access, question, title, onAnswered }: {
     setBusy(false);
     if (!result.ok) return setError(result.error);
     setError(null);
+    clear();
     onAnswered();
   };
   const submit = (event: FormEvent) => {
@@ -43,7 +45,7 @@ function QuestionCard({ access, question, title, onAnswered }: {
         </div>
       ) : null}
       <form className="queue-answer" onSubmit={submit} noValidate>
-        <input className="ui-field-input" aria-label={`Answer ${label}`} value={text} disabled={disabled} placeholder="Write an answer" onChange={(event) => setText(event.target.value)} />
+        <input className="ui-field-input" aria-label={`Answer ${label}`} value={text} disabled={disabled} placeholder="Write an answer" onChange={(event) => update({ text: event.target.value })} />
         <Button type="submit" variant="primary" size="sm" disabled={disabled} title={access.refusal ?? undefined}>Send</Button>
       </form>
       {error ? <p role="alert" className="queue-error">{error}</p> : null}

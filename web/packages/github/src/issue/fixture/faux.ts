@@ -32,6 +32,9 @@ function answerLater(link: Link, command: Json, answer: Answer): void {
 
 export class FauxArchon {
   readonly sent: Json[] = [];
+  watcher: Json = { enabled: true, poll_interval_secs: 120, revision: 1, mention_regex: "", label_regex: "", repositories: [
+    { repository: "example-org/site", enabled: true, dispatched: 0, ignored: 0, target: { mode: "automatic" } },
+  ] };
   readonly transport: Transport;
   /** Commands answered with an internal error, by name. */
   readonly failing = new Set<string>();
@@ -85,6 +88,7 @@ export class FauxArchon {
         const at = command.ref as Json;
         return reply("issue_items", { links: this.world.links.filter((entry) => samePlace(entry.ref as Json, at) && (entry.ref as Json).kind === at.kind) });
       }
+      case "github_watcher": return reply("github_watcher", this.watcher);
       case "list_github_objects": return reply("github_objects", { objects: this.world.objects.filter((entry) => String((entry.ref as Json).repo).toLowerCase() === String(command.repo).toLowerCase()), synced_at: "2026-11-04T09:55:00Z" });
       case "import_issue": return this.importIssue(command.ref as Json);
       default: return { err: { code: "unknown_command", message: `${String(command.cmd)} is not scripted` } };

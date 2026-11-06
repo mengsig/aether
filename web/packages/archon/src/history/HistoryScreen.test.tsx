@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { click, CONN, graphHarness, type, type GraphHarness } from "../dag/test/harness.tsx";
-import { byText } from "../queue/test/harness.tsx";
+import { drafts } from "@aether-ui/core";
+import { byText, pick } from "../queue/test/harness.tsx";
 import RECORDED from "./fixture/item-history.json";
 import HistoryScreen from "./HistoryScreen.tsx";
 import { actorLabel } from "./model.ts";
@@ -27,7 +28,7 @@ async function openHistory(h: GraphHarness, root: HTMLElement, title: string) {
 }
 
 let h: GraphHarness;
-beforeEach(() => { vi.useFakeTimers({ now: Date.parse("2026-11-04T10:00:00Z") }); });
+beforeEach(() => { drafts.clear("archon/history-filters"); vi.useFakeTimers({ now: Date.parse("2026-11-04T10:00:00Z") }); });
 afterEach(() => { h.stop(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("the history explorer", () => {
@@ -52,6 +53,7 @@ describe("the history explorer", () => {
     expect(first).toMatchObject({ updated_since: "2026-10-29T00:00:00.000Z", limit: 200 });
     expect(first).not.toHaveProperty("before");
     await type(h, root.querySelector("input[placeholder='Title or brief']") as HTMLInputElement, "sync");
+    await pick(h, "history-filter-range", "Custom");
     await type(h, root.querySelectorAll<HTMLInputElement>("input[type='date']")[1] as HTMLInputElement, "2026-11-04");
     await click(h, byText(root, "button", "Search"));
     await h.until(() => listed(root).every((title) => /sync/i.test(title)), "the narrowed results");
@@ -64,6 +66,7 @@ describe("the history explorer", () => {
     const root = await h.mount(<HistoryScreen />);
     await h.until(() => root.querySelector(".history-row") !== null, "the search results");
     const sent = h.faux.inner.sent.length;
+    await pick(h, "history-filter-range", "Custom");
     await type(h, root.querySelectorAll<HTMLInputElement>("input[type='date']")[1] as HTMLInputElement, "2026-10-01");
     await click(h, byText(root, "button", "Search"));
     expect(root.textContent).toContain("The range starts after it ends.");
@@ -93,4 +96,16 @@ describe("the history explorer", () => {
     await h.until(() => steps(root).length === RECORDED.data.transitions.length + 1, "the new transition");
     expect(steps(root).at(-1)).toMatch(/ Running→Succeeded - Archon$/);
   });
+});
+
+it.each([["Today", "2026-11-04"], ["30 days", "2026-10-06"], ["7 days", "2026-10-29"]])("maps the %s preset to unchanged list_items time filters", async (label, day) => {
+  h = await graphHarness();
+  const root = await h.mount(<HistoryScreen />);
+  await h.until(() => root.querySelector(".history-row") !== null, "initial results");
+  await pick(h, "history-filter-range", label);
+  await click(h, byText(root, "button", "Search"));
+  await h.tick(100);
+  const commands = h.faux.inner.sent.filter((command) => command.cmd === "list_items");
+  expect(commands.at(-1)).toMatchObject({ updated_since: `${day}T00:00:00.000Z`, limit: 200 });
+  expect(root.querySelector('input[type="date"]')).toBeNull();
 });
