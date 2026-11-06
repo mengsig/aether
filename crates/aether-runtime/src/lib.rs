@@ -22,6 +22,7 @@ pub mod memory_context;
 pub mod memory_curation;
 mod memory_feedback;
 pub mod memory_v2;
+mod noesis_engine;
 pub mod noesis_guard;
 pub mod noesis_seal;
 pub mod notes;
@@ -69,6 +70,7 @@ pub use bus::{BusMessage, DeltaKind, DeltaStream, EventBus};
 pub use commands::{
     AgentUpdate, CreateAgentSpec, CreateTaskSpec, MessageDelivery, RuntimeStatus, pending_question,
 };
+pub use noesis_engine::NoesisStepStream;
 pub use retention::HistorySweep;
 
 #[derive(Debug, thiserror::Error)]

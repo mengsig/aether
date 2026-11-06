@@ -159,8 +159,8 @@ pub(super) fn has_budgeted_lineage(runtime: &Runtime, agent: AgentId) -> Result<
 /// [`aether_model::Registry::api_equivalent_price`] guarantees.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct TurnPricing {
-    pub(super) billed: Option<ModelCost>,
-    pub(super) estimate: Option<ModelCost>,
+    pub(crate) billed: Option<ModelCost>,
+    pub(crate) estimate: Option<ModelCost>,
 }
 
 impl TurnPricing {
@@ -184,7 +184,7 @@ impl TurnPricing {
     /// nobody could price - `codex/default`, `claude-code/default`, where the
     /// CLI picks. `None` keeps the pricing the turn started with: an
     /// unknown session model is left unpriced rather than given a price.
-    pub(super) fn of_session(
+    pub(crate) fn of_session(
         runtime: &Arc<Runtime>,
         configured: &ResolvedModel,
         reported: &str,

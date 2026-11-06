@@ -15,7 +15,7 @@ use aether_core::id::{AgentId, ArtifactId, TaskId};
 use aether_core::model::{MessageRole, ModelRef};
 use aether_core::task::TaskStatus;
 use aether_noesis::Noesis;
-use aether_noesis::budget::Spend;
+use aether_noesis::budget::{Billing, Spend};
 use aether_noesis::extract::jobs::fail_interrupted;
 use aether_noesis::extract::session_origin;
 use aether_noesis::extract::{
@@ -30,6 +30,7 @@ use aether_store::{Commit, Store};
 use aether_tools::Redactor;
 
 use crate::noesis::budget::ServiceBudget;
+use crate::noesis::engine::model_offers;
 
 /// The largest source an import reads (parity X8).
 pub(super) const MAX_SOURCE_BYTES: u64 = 25 * 1024 * 1024;
@@ -45,6 +46,7 @@ pub(in crate::noesis) struct Extraction {
     flags: parking_lot::Mutex<HashMap<String, CancelFlag>>,
     budget: Arc<ServiceBudget>,
     model: Option<ModelRef>,
+    allow_api: bool,
     /// Both switches of engineering extraction, as this service started.
     engineering_in_effect: bool,
     stopped: AtomicBool,
@@ -87,6 +89,7 @@ impl Extraction {
             flags: parking_lot::Mutex::new(HashMap::new()),
             budget,
             model,
+            allow_api: settings.billing_allow_api,
             engineering_in_effect: aether_noesis::evidence::in_effect(&noesis.effective()),
             stopped: AtomicBool::new(false),
         }))
@@ -166,7 +169,10 @@ impl Extraction {
         announce(runtime, JobEvent::Updated(job.clone()));
         let mut model = AgentModel {
             runtime: runtime.clone(),
-            model: self.model.clone(),
+            model: match &self.model {
+                Some(model) => Ok(Some(model.clone())),
+                None => unset_slot_model(runtime, self.allow_api),
+            },
             cancel: flag.clone(),
         };
         let mut budget = GuardBudget(self.budget.clone());
@@ -184,6 +190,31 @@ impl Extraction {
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
+}
+
+/// An unset cheap slot takes the first ready subscription model. With none,
+/// the runtime default stands only while the guard refuses a billed one.
+fn unset_slot_model(runtime: &Arc<Runtime>, allow_api: bool) -> Result<Option<ModelRef>, String> {
+    let handle = tokio::runtime::Handle::current();
+    let offers = handle.block_on(model_offers(runtime, runtime.models(), false));
+    let chosen = offers
+        .into_iter()
+        .find(|offer| offer.ready && offer.billing == Billing::Subscription);
+    let Some(chosen) = chosen else {
+        if allow_api {
+            return Err("no subscription model is ready for extraction; set \
+                        noesis.models.cheap to name the model it may use"
+                .into());
+        }
+        return Ok(None);
+    };
+    let model = ModelRef::parse(&chosen.id);
+    assert!(
+        model.is_some(),
+        "an offer's id is provider/model: {}",
+        chosen.id
+    );
+    Ok(model)
 }
 
 /// Record a job's progress as a durable `noesis` event.
@@ -214,13 +245,15 @@ impl BackgroundBudget for GuardBudget {
 /// result carries the reply. A cancel cancels the agent and ends the wait.
 struct AgentModel {
     runtime: Arc<Runtime>,
-    model: Option<ModelRef>,
+    /// The model each call runs on, or why there is none.
+    model: Result<Option<ModelRef>, String>,
     cancel: CancelFlag,
 }
 
 impl ExtractModel for AgentModel {
     fn invoke(&mut self, role: Role, prompt: &str) -> Result<Reply, ModelError> {
         assert!(!prompt.trim().is_empty(), "a model call needs a prompt");
+        let model = self.model.clone().map_err(ModelError::NotSent)?;
         let spec = CreateAgentSpec {
             role: role.aether_role().into(),
             name: Some(role.aether_role().replace('.', " ")),
@@ -228,7 +261,7 @@ impl ExtractModel for AgentModel {
                 "{prompt}\n\nWhen you have the JSON object, finish by calling complete_task \
                  with exactly that JSON object as its summary."
             )),
-            model: self.model.clone(),
+            model,
             subsystem: Some(NOESIS_SUBSYSTEM.into()),
             start: true,
             ..CreateAgentSpec::default()

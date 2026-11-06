@@ -55,6 +55,18 @@ string_enum!(
     Intent { Check = "check", Predict = "predict" }
 );
 
+string_enum!(
+    /// The lesson step a question is, for a client to render it as one:
+    /// a probe measures, a teach-phase question predicts or checks.
+    QuestionStep {
+        Measure = "measure",
+        Predict = "predict",
+        Check = "check",
+        Goal = "goal",
+        Practice = "practice"
+    }
+);
+
 string_enum!(PracticeMode {
     Recall = "recall",
     Discrimination = "discrimination",
@@ -129,6 +141,9 @@ pub struct Question {
     pub plan_node: Option<String>,
     pub concepts: Vec<String>,
     pub posed_at: String,
+    /// Set when posed and when read with its session; a bare row has none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step: Option<QuestionStep>,
 }
 
 /// A recorded answer's reveal: the only place a question's key and
