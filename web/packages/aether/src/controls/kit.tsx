@@ -2,9 +2,9 @@
 // (disabled with the reason shown, host-only marked), an explicit confirm step for destructive or
 // privileged actions, and the outcome of a run. Nothing here holds daemon data.
 
-import { checkAllowed, codeOf, isKeyed, usePermission, useApp, useCommand, useSelector, type CommandInput, type LocalAction, type ReadEntry } from "@aether-ui/core";
+import { drafts, useDraft, checkAllowed, codeOf, isKeyed, usePermission, useApp, useCommand, useSelector, type CommandInput, type LocalAction, type ReadEntry } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
-import { Badge, Button, Dialog, EmptyState, ErrorState, Skeleton, type ButtonVariant } from "@aether-ui/ui";
+import { Badge, Button, Dialog, TextArea, EmptyState, ErrorState, Skeleton, type ButtonVariant } from "@aether-ui/ui";
 import { useCallback, useId, useState, type ReactNode } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import "./kit.css";
@@ -50,13 +50,14 @@ export function useRun(conn: ConnId): Run {
     setStatus({ state: "busy" });
     try {
       const reply = await command(json);
+      drafts.clear(confirmationDraftKey(conn, json));
       setStatus({ state: "done", message: done });
       return reply;
     } catch (error) {
       fail(error, json);
       return null;
     }
-  }, [command, fail]);
+  }, [command, fail, conn]);
   const privileged = useCallback(async (action: LocalAction, done = "Done") => {
     setStatus({ state: "busy" });
     try {
@@ -94,6 +95,7 @@ export interface Confirm {
 
 export interface ActionProps {
   readonly conn: ConnId;
+  readonly "data-testid"?: string;
   /** The command as it will be sent; it decides the access check, so pass it even for a privileged action. */
   readonly command: CommandInput;
   readonly label: string;
@@ -124,13 +126,14 @@ function useHostOnlyRefusal(conn: ConnId, hostOnly: boolean): string | null {
  * One command button. It is disabled, with the reason beside it, whenever core would refuse the
  * command for this device; a host-only command is marked; a `confirm` asks before anything is sent.
  */
-export function Action({ conn, command, label, onRun, confirm, variant = "secondary", busy = false, blocked = null, hostOnly = false }: ActionProps) {
+export function Action({ conn, command, label, onRun, confirm, variant = "secondary", busy = false, blocked = null, hostOnly = false, "data-testid": testId }: ActionProps) {
   const permission = usePermission(conn, command);
   const hostRefusal = useHostOnlyRefusal(conn, hostOnly);
   const access = hostOnly ? "host_only" : permission.access;
   const refusal = permission.refusal ?? hostRefusal;
   const [asking, setAsking] = useState(false);
-  const [reason, setReason] = useState("");
+  const reasonDraft = useDraft(confirmationDraftKey(conn, command as Json), { reason: "" });
+  const { reason } = reasonDraft.value;
   const reasonId = useId();
   const why = refusal ?? blocked;
   const start = () => {
@@ -140,11 +143,10 @@ export function Action({ conn, command, label, onRun, confirm, variant = "second
   const confirmed = () => {
     setAsking(false);
     void onRun(reason.trim());
-    setReason("");
   };
   return (
     <span className="b3-action" data-refused={refusal === null ? undefined : "true"}>
-      <Button variant={variant} size="sm" disabled={why !== null || busy} aria-describedby={why === null ? undefined : reasonId} onClick={start}>{label}</Button>
+      <Button data-testid={testId} variant={variant} size="sm" disabled={why !== null || busy} aria-describedby={why === null ? undefined : reasonId} onClick={start}>{label}</Button>
       {access === "host_only" ? <Badge tone="info">Host only</Badge> : null}
       {why === null ? null : <span className="b3-reason" id={reasonId}>{why}</span>}
       {confirm ? (
@@ -158,10 +160,8 @@ export function Action({ conn, command, label, onRun, confirm, variant = "second
             </>
           )}>
           {confirm.reason ? (
-            <label className="b3-field">
-              <span className="ui-field-label">{confirm.reason === "required" ? "Reason" : "Reason (optional)"}</span>
-              <textarea className="b3-textarea" value={reason} rows={3} onChange={(event) => setReason(event.target.value)} />
-            </label>
+            <TextArea label={confirm.reason === "required" ? "Reason" : "Reason (optional)"} value={reason} rows={3}
+              onChange={event => reasonDraft.update({ reason: event.target.value })} />
           ) : null}
         </Dialog>
       ) : null}
@@ -220,3 +220,11 @@ export function ReadView<T>({ entry, what, empty, guard, isEmpty, retry, childre
 }
 
 export const isList = (value: unknown): value is readonly unknown[] => Array.isArray(value);
+
+function confirmationDraftKey(conn: string, command: Json): string {
+  invariant(conn.length > 0, "a confirmation belongs to a connection");
+  invariant(typeof command.cmd === "string", "a confirmation names its command");
+  const target = command.id ?? command.agent ?? command.to ?? command.target ?? command.scope ?? "all";
+  const identity = encodeURIComponent(JSON.stringify(target)).replaceAll("%", "_").replace(/[!'()*]/g, "_");
+  return `controls/${conn}/${command.cmd}/${identity}/confirmation`;
+}

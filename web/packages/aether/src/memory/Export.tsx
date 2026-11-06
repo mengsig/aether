@@ -1,8 +1,10 @@
+import { useDraft } from "@aether-ui/core";
+import { useScopeSuggestions } from "./Repository.tsx";
 // Export every memory of a scope, or of the store, as the JSON Lines artifact (MEMORY-V2.md §2.4),
 // offered as a download with its record count and SHA-256 digest.
 
 import type { aether, ConnId } from "@aether-ui/protocol";
-import { Field } from "@aether-ui/ui";
+import { Combo } from "@aether-ui/ui";
 import { useEffect, useMemo, useState } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import { Action, RunNote, useRun } from "../controls/kit.tsx";
@@ -11,7 +13,9 @@ import { parseScope, SCOPE_HINT } from "./scope.ts";
 import { replyData } from "./v2.ts";
 
 export function ExportTool({ conn }: { conn: ConnId }) {
-  const [text, setText] = useState("");
+  const draft = useDraft("memory/export", { text: "" });
+  const { text } = draft.value;
+  const suggestions = useScopeSuggestions(conn);
   const [result, setResult] = useState<aether.MemoryExport | null>(null);
   const run = useRun(conn);
   const parsed = parseScope(text);
@@ -22,13 +26,14 @@ export function ExportTool({ conn }: { conn: ConnId }) {
     if (!reply) return;
     const data = replyData<aether.MemoryExport>(reply, "memory_export", ["artifact", "records", "digest"]);
     invariant(/^[0-9a-f]{64}$/.test(data.digest), "the digest is SHA-256 hex");
+    draft.clear();
     setResult(data);
   };
   return <div className="mem-tool" aria-label="Export">
     <h4 className="mem-tool-title">Export</h4>
     <p className="b3-meta">Every memory in the scope, candidates and forgotten ones included, as one JSON Lines file.</p>
-    <Field label="Export scope" hint={SCOPE_HINT} value={text} {...("error" in parsed ? { error: parsed.error } : {})}
-      onChange={e => { setText(e.target.value); setResult(null); }} spellCheck={false} autoComplete="off" />
+    <Combo label="Export scope" suggestions={suggestions} hint={SCOPE_HINT} value={text} {...("error" in parsed ? { error: parsed.error } : {})}
+      onChange={text => { draft.update({ text }); setResult(null); }} spellCheck={false} autoComplete="off" />
     <div className="b3-row">
       <Action conn={conn} command={command} label="Export memories" busy={run.status.state === "busy"} blocked={"error" in parsed ? parsed.error : null} onRun={exportIt} />
     </div>

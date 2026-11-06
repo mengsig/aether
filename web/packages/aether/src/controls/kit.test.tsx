@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
+import { drafts } from "@aether-ui/core";
 // The shared control: refused with the reason shown, host-only marked, confirmed before sending,
 // and a lost reply reported as unconfirmed and left in core's outbox for the recovery review.
 
 import { selectOutbox } from "@aether-ui/core";
-import { afterEach, describe, expect, test } from "vitest";
+import { beforeEach, afterEach, describe, expect, test } from "vitest";
 import { connected, click, buttonNamed, type Harness } from "./fixture/harness.test-util.tsx";
 import { Action, RunNote, useRun } from "./kit.tsx";
 
@@ -50,3 +51,5 @@ describe("Action", () => {
     expect(selectOutbox(h.conn)(h.app.store.get())).toHaveLength(1);
   });
 });
+
+beforeEach(() => { for (const key of drafts.keys()) drafts.clear(key); });

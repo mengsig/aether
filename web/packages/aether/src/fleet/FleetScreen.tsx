@@ -1,16 +1,17 @@
 // `#/fleet`: every agent of every Aether connection in one virtualized list, filtered by run,
 // role, state and model. core pages the agents in (`list_agents_page`); the list draws only what is on screen.
 
-import { routeHref, useSelector } from "@aether-ui/core";
+import { routeHref, useDraft, useSelector } from "@aether-ui/core";
 import { Badge, Button, EmptyState, StatusPill, VirtualList } from "@aether-ui/ui";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useMemo } from "react";
 import "./fleet.css";
+import { StartAgentButton } from "../activity/StartAgent.tsx";
 import { FleetFilters } from "./FleetFilters.tsx";
 import { invariant } from "./invariant.ts";
 import { roleLabel } from "./roles.ts";
 import {
   agentStatus, filterRows, fleetFacets, fleetRows, modelName, NO_FILTER, runKey, runNames, sameSources, selectFleetSources,
-  type FleetFilter, type FleetRow,
+  type FleetRow,
 } from "./rows.ts";
 
 export const ROW_HEIGHT = 44;
@@ -63,9 +64,11 @@ export function FleetScreen() {
   const rows = useMemo(() => fleetRows(sources), [sources]);
   const names = useMemo(() => runNames(rows), [rows]);
   const facets = useMemo(() => fleetFacets(rows, names), [rows, names]);
-  const [filter, setFilter] = useState<FleetFilter>(NO_FILTER);
+  const draft = useDraft("fleet/filters", { ...NO_FILTER });
+  const filter = draft.value;
+  const setFilter = draft.update;
   const shown = useMemo(() => filterRows(rows, filter), [rows, filter]);
-  const clear = useCallback(() => setFilter(NO_FILTER), []);
+  const clear = draft.clear;
 
   if (sources.length === 0) {
     return <EmptyState title="No Aether daemon connected">The fleet lists the agents of every connected Aether daemon.</EmptyState>;
@@ -78,7 +81,7 @@ export function FleetScreen() {
         <a className="ui-link" href="#/fleet/topology">Delegation topology</a>
       </div>
       {shown.length > 0 ? <FleetList rows={shown} names={names} />
-        : rows.length === 0 ? <EmptyState title="No agents yet">Agents appear here as soon as a daemon creates them.</EmptyState>
+        : rows.length === 0 ? <EmptyState title="No agents yet" action={<StartAgentButton conn={sources[0]?.conn ?? ""} label="Start your first agent" />}>Choose an objective and workspace to begin.</EmptyState>
           : <EmptyState title="No agent matches" action={<Button onClick={clear}>Clear filters</Button>}>Every filter must match.</EmptyState>}
     </section>
   );

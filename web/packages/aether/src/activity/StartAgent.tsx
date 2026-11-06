@@ -1,45 +1,71 @@
 import { useState } from "react";
-import { selectAgents, selectRead, useApp, usePermission, useReread, useSelector } from "@aether-ui/core";
-import { Field, Sheet, Tabs, Button, EmptyState } from "@aether-ui/ui";
+import { navigate, routeHref, selectAgents, selectRead, useDraft, usePermission, useSelector } from "@aether-ui/core";
+import { Field, Sheet, Segmented, Button, Picker, TextArea } from "@aether-ui/ui";
 import { Action, RunNote, StandingNotice, useRun } from "../controls/kit.tsx";
-import { ReadNote } from "../memory/shared.tsx";
-import { configuredModels, workspaceValidation } from "./data.ts";
+import { invariant } from "../fleet/invariant.ts";
+import { configuredModels, defaultModel, workspaceValidation } from "./data.ts";
+import { Models } from "./Models.tsx";
 import { Workspace } from "./Workspace.tsx";
 
+const INITIAL = { mode: "agent", name: "", objective: "", path: "", model: "", effort: "medium", owner: "", priority: "normal", role: "worker", approval: "external" };
+type StartDraft = typeof INITIAL;
+const options = (values: string[]) => values.map(id => ({ id, label: id.replaceAll("_", " ") }));
+
 export function StartAgent({ conn, close }: { conn: string; close: () => void }) {
-  const app = useApp();
   const run = useRun(conn);
-  const [mode, setMode] = useState("agent");
-  const [name, setName] = useState("");
-  const [objective, setObjective] = useState("");
-  const [path, setPath] = useState("");
-  const [model, setModel] = useState("");
-  const [effort, setEffort] = useState("medium");
-  const [owner, setOwner] = useState("");
+  const draft = useDraft("activity/start-agent", INITIAL);
+  const d = draft.value;
   const agents = Object.values(useSelector(selectAgents(conn))).filter(a => !["completed", "failed", "cancelled"].includes(a.status.state));
-  const models = useReread(conn, "start:models", { cmd: "list_models" }, ["models"]);
-  const choices = configuredModels(models?.value);
-  const selected = choices.find(m => `${m.model.provider}/${m.model.model}` === model) ?? choices.find(m => m.is_default) ?? choices[0];
-  const validation = workspaceValidation(useSelector(selectRead(conn, `start:validation:${path}`))?.value);
-  const command = mode === "task" ? { cmd: "create_task", objective: objective.trim(), owner, priority: "normal" } :
-    { cmd: "create_agent", name: name.trim() || null, role: "worker", objective: objective.trim(), start: true,
-      scope: { workspace_root: validation?.path }, model: selected?.model, approval: { require_for: ["external"] }, config: { effort } };
+  const models = configuredModels(useSelector(selectRead(conn, "start:models"))?.value);
+  const ref = d.model || defaultModel(models);
+  const selected = models.find(m => `${m.model.provider}/${m.model.model}` === ref && m.configured);
+  const validationRead = useSelector(selectRead(conn, `start:validation:${d.path}`));
+  const validation = workspaceValidation(validationRead?.error ? undefined : validationRead?.value);
+  const command = d.mode === "task" ? { cmd: "create_task", objective: d.objective.trim(), owner: d.owner, priority: d.priority } :
+    { cmd: "create_agent", name: d.name.trim() || null, role: d.role, objective: d.objective.trim(), start: true,
+      scope: { workspace_root: validation?.path }, model: selected?.model, approval: { require_for: [d.approval] }, config: { effort: d.effort } };
   const disabled = usePermission(conn, command).refusal !== null;
-  const blocked = !objective.trim() ? "Describe the work to start" : mode === "task" ?
-    (agents.some(a => a.id === owner) ? null : "Choose an active owner") : !selected ? "Choose a configured model" :
-      validation?.valid && validation.path?.startsWith("/") ? null : "Validate the workspace first";
+  const blocked = !d.objective.trim() ? "Describe the work to start" : d.mode === "task" ?
+    (agents.some(a => a.id === d.owner) ? null : "Choose an active owner") : !selected ? "Choose a configured model" :
+      validation?.valid ? null : "Choose a valid workspace";
+  const submit = async () => {
+    const reply = await run.send(command);
+    if (!reply) return;
+    const agent = d.mode === "task" ? d.owner : (reply.data as { id?: string } | undefined)?.id;
+    invariant(typeof agent === "string" && agent.length > 0, "successful start identifies the agent");
+    invariant(d.mode === "task" || reply.reply === "agent", "create_agent returns an agent");
+    draft.clear(); close(); navigate(routeHref("#/agents/:conn/:agent", { conn, agent }));
+  };
   return <Sheet open onClose={close} title="Start an agent"><div className="b3-stack"><StandingNotice conn={conn} />
-    <Tabs label="Work type" selected={mode} onSelect={setMode} tabs={[{ id: "agent", label: "New agent", panel: null }, { id: "task", label: "Existing agent task", panel: null }]} />
-    <Field label="Objective" value={objective} disabled={disabled} onChange={e => setObjective(e.target.value)} />
-    {mode === "task" ? <div className="b3-row">{agents.map(a => <Button key={a.id} disabled={disabled} aria-pressed={owner === a.id} onClick={() => setOwner(a.id)}>{a.name}</Button>)}</div> : <>
-      <Field label="Name" value={name} disabled={disabled} onChange={e => setName(e.target.value)} />
-      <Workspace conn={conn} path={path} change={setPath} />
-      <ReadNote entry={models} retry={() => app.reread(conn, "start:models", { cmd: "list_models" }, ["models"])} />
-      <div className="b3-row">{choices.map(m => <Button key={`${m.model.provider}/${m.model.model}`} disabled={disabled} aria-pressed={selected === m} onClick={() => setModel(`${m.model.provider}/${m.model.model}`)}>{m.name}</Button>)}</div>
-      {models?.issued && choices.length === 0 ? <EmptyState title="Connect a model provider on your host" /> : null}
-      <div className="b3-row" aria-label="Effort">{["low", "medium", "high", "x_high", "max"].map(value => <Button key={value} disabled={disabled} aria-pressed={effort === value} onClick={() => setEffort(value)}>{value}</Button>)}</div>
-    </>}
-    <Action conn={conn} command={command} label={mode === "task" ? "Create task" : "Start agent"} blocked={blocked} busy={run.status.state === "busy"} onRun={() => run.send(command)} />
+    <div data-testid="start-mode"><Segmented label="Work type" value={d.mode} onChange={mode => draft.update({ mode })}
+      options={[{ id: "agent", label: "New agent" }, { id: "task", label: "Task for an existing agent" }]} /></div>
+    <TextArea label="Objective" data-testid="start-objective" data-autofocus rows={3} value={d.objective} disabled={disabled} onChange={e => draft.update({ objective: e.target.value })} />
+    {d.mode === "task" ? <><Picker label="Owner" data-testid="start-owner" value={d.owner} disabled={disabled} onChange={owner => draft.update({ owner })}
+      options={agents.map(a => ({ id: a.id, label: a.name, description: a.id, group: a.status.state }))} />
+      <Segmented label="Priority" value={d.priority} onChange={priority => draft.update({ priority })} options={options(["low", "normal", "high", "critical"])} /></> :
+      <AgentFields conn={conn} draft={d} edit={draft.update} model={ref} disabled={disabled} />}
+    <Action conn={conn} command={command} label={d.mode === "task" ? "Create task" : "Start agent"} data-testid="start-submit" variant="primary"
+      blocked={blocked} busy={run.status.state === "busy"} onRun={submit} />
     <RunNote status={run.status} />
   </div></Sheet>;
+}
+
+function AgentFields({ conn, draft: d, edit, model, disabled }: { conn: string; draft: StartDraft; edit: (patch: Partial<StartDraft>) => void; model: string; disabled: boolean }) {
+  const agents = Object.values(useSelector(selectAgents(conn)));
+  const roles = [...new Set(["worker", "lead", "reviewer", ...agents.map(agent => agent.role).filter(Boolean)])];
+  return <>
+    <Field label="Name" hint="Optional" data-testid="start-name" value={d.name} disabled={disabled} onChange={e => edit({ name: e.target.value })} />
+    <Workspace conn={conn} path={d.path} change={path => edit({ path })} defaults />
+    <Models conn={conn} screen="start" value={model} onChange={model => edit({ model })} disabled={disabled} testId="start-model" />
+    <div data-testid="start-effort"><Segmented label="Effort" value={d.effort} disabled={disabled} onChange={effort => edit({ effort })} options={options(["low", "medium", "high", "x_high", "max"])} /></div>
+    <details><summary>Advanced</summary><div className="b3-stack">
+      <Picker label="Approval policy" disabled={disabled} value={d.approval} onChange={approval => edit({ approval })} options={options(["external", "mutation", "idempotent_mutation", "read_only"])} />
+      <Picker label="Role" disabled={disabled} value={d.role} onChange={role => edit({ role })} options={options(roles)} />
+    </div></details>
+  </>;
+}
+
+export function StartAgentButton({ conn, label = "Start an agent" }: { conn: string; label?: string }) {
+  const [open, setOpen] = useState(false);
+  return <><Button variant="primary" onClick={() => setOpen(true)}>{label}</Button>{open ? <StartAgent conn={conn} close={() => setOpen(false)} /> : null}</>;
 }

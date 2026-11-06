@@ -22,3 +22,18 @@ export function orderedEvents(events: readonly aether.Event[]): aether.Event[] {
   invariant(events.every(e => Number.isSafeInteger(e.seq) && e.seq > 0), "events have positive durable sequences");
   return [...new Map(events.map(e => [e.id, e])).values()].sort((a, b) => b.seq - a.seq);
 }
+
+export function defaultWorkspace(workspaces: readonly aether.Workspace[], home?: aether.PathCompletions): string {
+  invariant(workspaces.every(w => typeof w.path === "string" && typeof w.exists === "boolean"), "workspaces report paths and existence");
+  invariant(home === undefined || Array.isArray(home.entries), "home completion is a list");
+  const recent = [...workspaces].filter(w => w.exists).sort((a, b) => (b.active_at ?? "").localeCompare(a.active_at ?? ""));
+  return recent[0]?.path ?? home?.entries.find(p => p.is_dir)?.path ?? "";
+}
+
+export function defaultModel(models: readonly aether.ModelInfo[]): string {
+  invariant(models.every(m => typeof m.configured === "boolean"), "model readiness is explicit");
+  invariant(models.every(m => m.model.provider && m.model.model), "models have qualified identities");
+  const ready = models.filter(m => m.configured);
+  const model = ready.find(m => m.is_default) ?? ready[0];
+  return model ? `${model.model.provider}/${model.model.model}` : "";
+}

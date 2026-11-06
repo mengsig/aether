@@ -1,8 +1,10 @@
+import { useDraft } from "@aether-ui/core";
+import { useScopeSuggestions } from "./Repository.tsx";
 // Merge near-duplicate memories (MEMORY-V2.md §2.2): a dry run plans the clusters, and only an
 // explicit confirm of that plan's scope writes anything.
 
 import type { aether, ConnId } from "@aether-ui/protocol";
-import { Badge, Field } from "@aether-ui/ui";
+import { Badge, Combo } from "@aether-ui/ui";
 import { useState } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import { Action, RunNote, useRun } from "../controls/kit.tsx";
@@ -14,7 +16,9 @@ type Plan = { readonly scope: aether.MemoryScope | null; readonly result: aether
 const FIELDS = ["dry_run", "scanned", "clusters"];
 
 export function ConsolidateTool({ conn, known, refresh }: { conn: ConnId; known: ReadonlyMap<string, string>; refresh: () => Promise<unknown> }) {
-  const [text, setText] = useState("");
+  const draft = useDraft("memory/consolidate", { text: "" });
+  const { text } = draft.value;
+  const suggestions = useScopeSuggestions(conn);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [done, setDone] = useState<aether.MemoryConsolidation | null>(null);
   const run = useRun(conn);
@@ -36,6 +40,7 @@ export function ConsolidateTool({ conn, known, refresh }: { conn: ConnId; known:
     const result = replyData<aether.MemoryConsolidation>(reply, "memory_consolidation", FIELDS);
     invariant(!result.dry_run, "a confirmed run writes");
     setPlan(null);
+    draft.clear();
     setDone(result);
     await refresh();
   };
@@ -43,8 +48,8 @@ export function ConsolidateTool({ conn, known, refresh }: { conn: ConnId; known:
   return <div className="mem-tool" aria-label="Consolidate">
     <h4 className="mem-tool-title">Consolidate</h4>
     <p className="b3-meta">Merges near-duplicates into one survivor. Plan first; nothing is written until you confirm.</p>
-    <Field label="Consolidation scope" hint={SCOPE_HINT} value={text} {...("error" in parsed ? { error: parsed.error } : {})}
-      onChange={e => { setText(e.target.value); setPlan(null); }} spellCheck={false} autoComplete="off" />
+    <Combo label="Consolidation scope" suggestions={suggestions} hint={SCOPE_HINT} value={text} {...("error" in parsed ? { error: parsed.error } : {})}
+      onChange={text => { draft.update({ text }); setPlan(null); }} spellCheck={false} autoComplete="off" />
     <div className="b3-row">
       <Action conn={conn} command={command(true, scope)} label="Plan consolidation" busy={run.status.state === "busy"} blocked={"error" in parsed ? parsed.error : null} onRun={planIt} />
       {plan && clusters > 0 ? <Action conn={conn} command={command(false, plan.scope)} label="Consolidate" variant="primary" busy={run.status.state === "busy"} onRun={apply}

@@ -1,11 +1,11 @@
 // What needs a person on one daemon, from core's synced attention: questions to answer, tool calls
 // to approve or deny, and agents that failed or are blocked, with the way to their controls.
 
-import { routeHref, selectAgents, selectAttention, useSelector } from "@aether-ui/core";
+import { useDraft, routeHref, selectAgents, selectAttention, useSelector } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
 import { aether } from "@aether-ui/protocol";
-import { Badge } from "@aether-ui/ui";
-import { useMemo, useState } from "react";
+import { Badge, TextArea } from "@aether-ui/ui";
+import { useMemo } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import { Action, RunNote, Section, useRun } from "../controls/kit.tsx";
 
@@ -16,7 +16,8 @@ function when(iso: string): string {
 
 function Question({ conn, question }: { readonly conn: ConnId; readonly question: aether.PendingQuestion }) {
   const run = useRun(conn);
-  const [answer, setAnswer] = useState("");
+  const draft = useDraft(`inbox/${question.agent}/${question.question_seq}/answer`, { answer: "" });
+  const { answer } = draft.value;
   const name = question.agent_name ?? question.agent;
   const command = aether.replyToQuestion({ to: question.agent, question_seq: question.question_seq, content: answer.trim() });
   return (
@@ -26,13 +27,10 @@ function Question({ conn, question }: { readonly conn: ConnId; readonly question
         <span className="b3-meta">{when(question.asked_at)}</span>
       </div>
       <p className="b3-prose">{question.question}</p>
-      <label className="b3-field">
-        <span className="ui-field-label">Answer {name}</span>
-        <textarea className="b3-textarea" rows={2} value={answer} onChange={(event) => setAnswer(event.target.value)} />
-      </label>
+      <TextArea label={`Answer ${name}`} rows={2} value={answer} onChange={event => draft.update({ answer: event.target.value })} />
       <div className="b3-row">
         <Action conn={conn} command={command} label="Send answer" variant="primary" busy={run.status.state === "busy"} blocked={answer.trim() === "" ? "Write an answer first" : null}
-          onRun={async () => { if (await run.send(command, "Answer sent")) setAnswer(""); }} />
+          onRun={async () => { if (await run.send(command, "Answer sent")) draft.clear(); }} />
       </div>
       <RunNote status={run.status} />
     </li>

@@ -1,9 +1,9 @@
 // `#/controls/:conn/:agent`: every control the old PWA offered for one agent, grouped in tabs. The
 // agent comes from core's store; each control is disabled, with its reason, where this device may not act.
 
-import { routeHref, selectAgent, selectConnection, useSelector } from "@aether-ui/core";
+import { useDraft, routeHref, selectAgent, selectConnection, useSelector } from "@aether-ui/core";
 import type { aether, ConnId, RouteProps } from "@aether-ui/protocol";
-import { Badge, EmptyState, Skeleton, StatusPill, Tabs } from "@aether-ui/ui";
+import { Badge, EmptyState, Skeleton, StatusPill, Tabs, TextArea, Switch } from "@aether-ui/ui";
 import { useMemo, useState } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import { agentStatus } from "../fleet/rows.ts";
@@ -17,14 +17,14 @@ import { SchedulesPanel } from "./schedules.tsx";
 
 function SteerPanel({ conn, agent }: { readonly conn: ConnId; readonly agent: aether.Agent }) {
   const run = useRun(conn);
-  const [text, setText] = useState("");
-  const [subtree, setSubtree] = useState(false);
+  const draft = useDraft(`controls/${agent.id}/message`, { text: "", subtree: false });
+  const { text, subtree } = draft.value;
   const [problem, setProblem] = useState<string | null>(null);
   const send = async () => {
     try {
       const command = sendCommand(agent.id, text, subtree);
       setProblem(null);
-      if (await run.send(command, "Sent")) setText("");
+      if (await run.send(command, "Sent")) draft.clear();
     } catch (error) {
       if (!(error instanceof DraftError)) throw error;
       setProblem(error.message);
@@ -32,16 +32,10 @@ function SteerPanel({ conn, agent }: { readonly conn: ConnId; readonly agent: ae
   };
   return (
     <Section title="Steer" hint="A message reaches the agent at its next turn; with its delegates, each of them gets it too.">
-      <label className="b3-field">
-        <span className="ui-field-label">Message</span>
-        <textarea className="b3-textarea" rows={3} value={text} onChange={(event) => setText(event.target.value)} />
-      </label>
+      <TextArea label="Message" rows={3} value={text} onChange={event => draft.update({ text: event.target.value })} />
       <div className="b3-row">
-        <label className="b3-check">
-          <input type="checkbox" checked={subtree} onChange={(event) => setSubtree(event.target.checked)} />
-          <span>Also send to the agents it delegated to</span>
-        </label>
-        <Action conn={conn} command={{ cmd: "send_message", to: agent.id }} label="Send" variant="primary" busy={run.status.state === "busy"} onRun={send} />
+        <Switch label="Also send to the agents it delegated to" checked={subtree} onChange={subtree => draft.update({ subtree })} />
+        <Action conn={conn} command={{ cmd: "send_message", to: agent.id }} label="Send" blocked={text.trim() ? null : "Write a message"} variant="primary" busy={run.status.state === "busy"} onRun={send} />
       </div>
       {problem ? <p className="b3-note" role="alert" data-state="failed">{problem}</p> : null}
       <RunNote status={run.status} />

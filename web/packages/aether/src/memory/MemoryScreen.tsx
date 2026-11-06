@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
-import { useApp, useReadPermission, useReread } from "@aether-ui/core";
+import { useApp, useDraft, useReadPermission, useReread } from "@aether-ui/core";
 import type { aether, RouteProps } from "@aether-ui/protocol";
-import { Button, EmptyState, Field, Tabs } from "@aether-ui/ui";
+import { Button, EmptyState, Field, Segmented, Switch } from "@aether-ui/ui";
 import { invariant } from "../fleet/invariant.ts";
 import { Section, StandingNotice } from "../controls/kit.tsx";
+import { Repository } from "./Repository.tsx";
 import { CreateMemory, kinds } from "./CreateMemory.tsx";
 import { MemoryRow } from "./MemoryRow.tsx";
 import { AgentPicker, records, ReadNote } from "./shared.tsx";
@@ -13,12 +14,8 @@ const proposed = { cmd: "memories", query: { proposed: true } };
 export default function MemoryScreen({ params }: RouteProps) {
   const conn = params.conn ?? "";
   const app = useApp();
-  const [text, setText] = useState("");
-  const [scope, setScope] = useState("all");
-  const [repository, setRepository] = useState("");
-  const [agent, setAgent] = useState("");
-  const [kind, setKind] = useState("all");
-  const [forgotten, setForgotten] = useState(false);
+  const draft = useDraft("memory/search", { text: "", scope: "all", repository: "", agent: "", kind: "all", forgotten: false });
+  const { text, scope, repository, agent, kind, forgotten } = draft.value;
   const [open, setOpen] = useState(false);
   const search = text.trim();
   // A blank text must be omitted: the store orders by FTS rank whenever text is present.
@@ -36,13 +33,14 @@ export default function MemoryScreen({ params }: RouteProps) {
   return <div className="ui-page b3-screen mem-screen"><header className="ui-page-head b3-screen-head"><h1 className="ui-visually-hidden b3-screen-title">Memory</h1>
     <p className="ui-page-lede b3-screen-sub">Review what stays with your agents.</p><Button onClick={() => setOpen(true)}>Create memory</Button></header>
     <StandingNotice conn={conn} />
-    <Section title="Memories"><Field label="Search memories" value={text} onChange={e => setText(e.target.value)} />
-      <Tabs label="Scope" selected={scope} onSelect={setScope} tabs={[{ id: "all", label: "All scopes", panel: null }, { id: "global", label: "Global", panel: null }, { id: "repository", label: "Repository", panel: <Field label="Repository filter" value={repository} onChange={e => setRepository(e.target.value)} /> },
-        { id: "agent", label: "Agent", panel: <AgentPicker conn={conn} label="Agent filter" value={agent} onChange={setAgent} /> }]} />
-      <Tabs label="Kind" selected={kind} onSelect={setKind} tabs={["all", ...kinds].map(id => ({ id, label: id, panel: null }))} />
-      <label className="b3-check"><input type="checkbox" checked={forgotten} onChange={e => setForgotten(e.target.checked)} /><span>Include forgotten</span></label>
+    <Section title="Memories"><Field label="Search memories" data-testid="memory-search" value={text} onChange={e => draft.update({ text: e.target.value })} />
+      <Segmented label="Scope" value={scope} onChange={scope => draft.update({ scope })} options={[{ id: "all", label: "All scopes" }, { id: "global", label: "Global" }, { id: "repository", label: "Repository" }, { id: "agent", label: "Agent" }]} />
+      {scope === "repository" ? <Repository conn={conn} label="Repository filter" value={repository} onChange={repository => draft.update({ repository })} filter /> : null}
+      {scope === "agent" ? <AgentPicker conn={conn} label="Agent filter" value={agent} onChange={agent => draft.update({ agent })} /> : null}
+      <Segmented label="Kind" value={kind} onChange={kind => draft.update({ kind })} options={["all", ...kinds].map(id => ({ id, label: id }))} />
+      <Switch label="Include forgotten" checked={forgotten} onChange={forgotten => draft.update({ forgotten })} />
       <ReadNote entry={entry} retry={refresh} />
-      {entry?.issued && !rows.length ? <EmptyState title="No memories yet" /> : null}
+      {entry?.issued && !rows.length ? <EmptyState title="No memories yet" action={<Button variant="primary" onClick={() => setOpen(true)}>Create a memory</Button>} /> : null}
       {rows.map(memory => <MemoryRow key={memory.id} conn={conn} memory={memory} refresh={refresh} />)}
     </Section>
     <Section title="Proposals" hint="Host only · Review proposed memories before accepting them.">
@@ -58,5 +56,6 @@ function scopeFilter(scope: string, repository: string, agent: string): aether.M
   invariant(typeof repository === "string" && typeof agent === "string", "filter drafts are strings");
   if (scope === "all") return null;
   if (scope === "global") return { scope: "global" };
+  if (scope === "repository" && repository === "") return null;
   return scope === "repository" ? { scope: "repository", id: repository } : { scope: "agent", id: agent };
 }

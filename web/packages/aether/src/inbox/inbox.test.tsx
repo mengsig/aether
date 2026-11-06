@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
+import { drafts } from "@aether-ui/core";
 // The inbox answers questions and approvals from core's attention, and the recovery review never
 // resends a lost change on its own: it checks with resolve_submission, then the operator chooses.
 
 import { act } from "react";
-import { afterEach, describe, expect, test } from "vitest";
+import { beforeEach, afterEach, describe, expect, test } from "vitest";
 import { AGENT_ID, CHILD_ID, controlsScript, demoAgents } from "../controls/fixture/demo.ts";
 import { stamp, type Answer, type ScriptOptions } from "../controls/fixture/daemon.ts";
 import { buttonNamed, click, connected, type, type Harness } from "../controls/fixture/harness.test-util.tsx";
@@ -183,4 +184,17 @@ describe("describeCommand", () => {
     expect(describeCommand({ cmd: "send_message", to: "agt_1", content: "x".repeat(200) }, {}).detail).toHaveLength(140);
     expect(() => describeCommand({}, {})).toThrow();
   });
+});
+
+beforeEach(() => { for (const key of drafts.keys()) drafts.clear(key); });
+
+test("an answer draft survives remount and clears only after sending", async () => {
+  const first = await open();
+  await type(first.h, first.root, "Answer changelog-writer", "Keep my answer");
+  first.h.unmount();
+  const second = await open();
+  expect(second.root.querySelector("textarea")?.value).toBe("Keep my answer");
+  await click(second.h, second.root, "Send answer");
+  expect(second.h.daemon.commands("reply_to_question")[0]).toMatchObject({ to: CHILD_ID, question_seq: 7, content: "Keep my answer" });
+  expect(drafts.get(`inbox/${CHILD_ID}/7/answer`)).toBeUndefined();
 });

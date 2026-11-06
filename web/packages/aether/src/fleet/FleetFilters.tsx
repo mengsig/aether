@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { Picker } from "@aether-ui/ui";
 import { invariant } from "./invariant.ts";
 import { FILTER_KEYS, type Facets, type FilterKey, type FleetFilter } from "./rows.ts";
 
@@ -9,20 +9,12 @@ const encode = (value: string | null): string => (value === null ? ALL : `=${val
 const decode = (option: string): string | null => (option === ALL ? null : option.slice(1));
 
 function FilterSelect(props: { readonly name: FilterKey; readonly facets: Facets; readonly value: string | null; readonly onPick: (value: string | null) => void }) {
-  const id = useId();
   const options = props.facets[props.name];
   // A chosen value that has since left the fleet stays listed, so the select never shows a value it lacks.
   const missing = props.value !== null && !options.some((option) => option.value === props.value);
-  return (
-    <div className="ui-field fleet-filter">
-      <label className="ui-field-label" htmlFor={id}>{LABELS[props.name]}</label>
-      <select id={id} className="ui-field-input" value={encode(props.value)} onChange={(event) => props.onPick(decode(event.currentTarget.value))}>
-        <option value={ALL}>All</option>
-        {missing ? <option value={encode(props.value)}>{props.value} (0)</option> : null}
-        {options.map((option) => <option key={option.value} value={encode(option.value)}>{option.label} ({option.count})</option>)}
-      </select>
-    </div>
-  );
+  return <Picker label={LABELS[props.name]} size="sm" value={encode(props.value)} onChange={value => props.onPick(decode(value))}
+    options={[{ id: ALL, label: "All" }, ...(missing ? [{ id: encode(props.value), label: `${props.value} (0)` }] : []),
+      ...options.map(option => ({ id: encode(option.value), label: `${option.label} (${option.count})` }))]} />;
 }
 
 /** One select per filter; each lists the values the fleet holds now. */

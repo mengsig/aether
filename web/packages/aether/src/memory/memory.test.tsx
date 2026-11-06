@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
-import { afterEach, expect, test, vi } from "vitest";
+import { drafts } from "@aether-ui/core";
+import { beforeEach, afterEach, expect, test, vi } from "vitest";
 import type { aether, DesktopBridge } from "@aether-ui/protocol";
-import { connected, click, buttonNamed, type, type Harness } from "../controls/fixture/harness.test-util.tsx";
+import { connected, click, buttonNamed, pick, type, type Harness } from "../controls/fixture/harness.test-util.tsx";
 import { AGENT_ID, demoAgents } from "../controls/fixture/demo.ts";
 import MemoryScreen from "./MemoryScreen.tsx";
 import { MemoryRow } from "./MemoryRow.tsx";
@@ -137,10 +138,10 @@ test("scope and kind filters and forgotten toggle use exact query fields", async
   await click(h, root, "Global");
   expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "global" } } });
   await click(h, root, "Repository");
+  await pick(h, root, "Repository filter", "Another repository…");
   await type(h, root, "Repository filter", "/repo");
   await click(h, root, "decision");
-  const checkbox = root.querySelector('input[type="checkbox"]') as HTMLInputElement;
-  await import("react").then(({ act }) => act(async () => checkbox.click()));
+  await click(h, root, "Include forgotten");
   await h.settle();
   expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "repository", id: "/repo" }, kinds: ["decision"], include_forgotten: true, limit: 100 } });
 });
@@ -151,13 +152,42 @@ test("an agent-scoped memory is created, filtered and shown by its agent", async
   const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
   expect(root.textContent).toContain(`Agent ${AGENT_ID}`);
   await click(h, root, "Agent");
-  await type(h, root, "Agent filter", AGENT_ID);
+  await pick(h, root, "Agent filter", demoAgents()[0]?.name ?? "");
   expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "agent", id: AGENT_ID } } });
   await click(h, root, "Create memory");
   await type(h, document.body, "Memory text", "Agent note");
   await click(h, document.querySelector('[aria-label="Memory scope"]') as HTMLElement, "Agent");
   expect(buttonNamed(document.body, "Save memory").disabled).toBe(true);
-  await type(h, document.body, "Agent", AGENT_ID);
+  await pick(h, document.body, "Agent", demoAgents()[0]?.name ?? "");
   await click(h, document.body, "Save memory");
   expect(h.daemon.commands("create_memory")[0]).toMatchObject({ spec: { text: "Agent note", scope: { scope: "agent", id: AGENT_ID } } });
 });
+
+test("repository suggestions combine agent roots, recent workspaces and recorded scopes", async () => {
+  const scoped = { ...memory, scope: { scope: "repository", id: "/recorded" } } as aether.MemoryRecord;
+  h = await connected({ agents: demoAgents().map(a => ({ ...a, scope: { workspace_root: "/agent-root" } })), script: {
+    memories: () => ({ tag: "memories", data: [scoped] }),
+    list_workspaces: () => ({ tag: "workspaces", data: [{ path: "/recent", exists: true }] }),
+    create_memory: () => ({ tag: "memory", data: scoped }),
+  } });
+  const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
+  await click(h, root, "Repository");
+  await pick(h, root, "Repository filter", "/recent");
+  expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "repository", id: "/recent" } } });
+  await pick(h, root, "Repository filter", "All");
+  expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: null } });
+  await click(h, root, "Create memory");
+  await click(h, document.querySelector('[aria-label="Memory scope"]') as HTMLElement, "Repository");
+  await type(h, document.body, "Memory text", "Repository lesson");
+  await click(h, document.querySelector('[aria-label="Memory kind"]') as HTMLElement, "lesson");
+  await type(h, document.body, "Repository root", "/agent");
+  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(o => o.textContent === "/agent-root");
+  expect(option).toBeDefined();
+  await import("react").then(({ act }) => act(async () => option?.click()));
+  await type(h, document.body, "Tags", "one, two");
+  expect(document.querySelectorAll("dialog .ui-badge").length).toBeGreaterThanOrEqual(2);
+  await click(h, document.body, "Save memory");
+  expect(h.daemon.commands("create_memory")[0]).toMatchObject({ spec: { kind: "lesson", text: "Repository lesson", scope: { scope: "repository", id: "/agent-root" }, tags: ["one", "two"] } });
+});
+
+beforeEach(() => { for (const key of drafts.keys()) drafts.clear(key); });
