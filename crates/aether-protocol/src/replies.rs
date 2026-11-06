@@ -121,8 +121,8 @@ pub struct DaemonStatus {
 pub struct UnavailableSection {
     /// The section as the daemon's log names it: one of [`status_sections`].
     pub section: String,
-    /// Why it is missing: [`status_sections::TIMED_OUT`] when the read ran
-    /// past the deadline, else the error the read failed with.
+    /// Why it is missing: [`status_sections::TIMED_OUT`], the read ran past
+    /// the deadline. A read that fails fails the whole `status` instead.
     pub reason: String,
 }
 

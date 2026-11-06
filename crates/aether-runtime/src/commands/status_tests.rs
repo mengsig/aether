@@ -129,3 +129,42 @@ async fn without_an_earlier_receipt_the_window_opens_at_the_turn() {
     assert!((run.rate_usd_per_hour - 12.0).abs() < 1e-9, "{run:?}");
     runtime.shutdown().await;
 }
+
+#[test]
+fn every_section_is_answered_by_exactly_one_reader() {
+    let answered: Vec<&str> = READERS
+        .iter()
+        .flat_map(|r| r.sections.iter().copied())
+        .collect();
+    assert_eq!(
+        answered, SECTIONS,
+        "readers answer the sections, once each, in order"
+    );
+    let keys: BTreeSet<&str> = READERS.iter().map(|r| r.sections[0]).collect();
+    assert_eq!(
+        keys.len(),
+        READERS.len(),
+        "each reader has its own in-flight key"
+    );
+}
+
+#[tokio::test]
+async fn a_status_with_patience_reads_every_section_of_a_quiet_store() {
+    let dir = tempfile::tempdir().expect("dir");
+    let runtime = runtime(dir.path()).await;
+    let status = runtime.status_within(STATUS_DEADLINE).expect("status");
+    assert_eq!(
+        status.unavailable,
+        Vec::new(),
+        "nothing is late on a quiet store"
+    );
+    // A reader leaves the set just after it answers, so give it a moment.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !runtime.status_in_flight.lock().is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "every reader left the in-flight set"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
