@@ -11,7 +11,7 @@ temp root removed after the file, and the runner checks that afterwards.
 | 2 task for an existing agent | `task-for-existing-agent.spec.ts` | Task mode in the start sheet, then an owner: the task lands on that agent, and its page names it. |
 | 3 approvals | `approvals.spec.ts` | A tool call waits for approval, Inbox approves it, and the agent goes on. Then a rule is added from Controls. On a real engine the waiting call is `complete_task`, since its own shell runs under the user's native permission settings; its permission prompt and the call itself are each approved from the Inbox until the agent has finished. |
 | 4 schedules | `schedules.spec.ts` | Create a weekday cron schedule that starts a new agent, see it listed, delete it. |
-| 5 memory | `memory.spec.ts` | Create a global memory, then find it by search. |
+| 5 memory | `memory.spec.ts` | Create a global memory, then find it by search; a second memory made through the daemon must drop out of the search. |
 | 6 archon | `archon.spec.ts` | Register a scratch checkout with no origin to keep its work local (Watch GitHub stays the CLI's), queue an item on it with dispatch paused so the task graph shows it queued, resume, wait (bounded) for an outcome, then open its page, the task graph and history. Then an issue imported from a stubbed `gh`, and the GitHub overview listing its repository's cached objects. |
 | 7 learn | `learn.spec.ts` | Turn Noesis on (main confirms natively; the app runs on Xwayland for it), start a session, answer the Prober, get a practice problem. |
 | 8 drafts | `drafts.spec.ts` | An objective typed in the start sheet survives leaving Activity and coming back. |
