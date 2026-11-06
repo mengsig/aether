@@ -122,6 +122,16 @@ before updating.
   navigation rail on the page's own ground, and motion that runs only on the
   kit's duration tokens and stops under `prefers-reduced-motion`. See
   [the final pass report](https://github.com/mengsig/aether/blob/main/docs/design/vnext-final/index.html).
+- **Guided inputs, kept drafts and a home dashboard.** Every choice in the
+  web app is a picker fed by the daemon: models grouped by provider with
+  readiness and billing, workspaces with a folder dialog, agents, tools,
+  cron presets and time zones, repositories and pipelines; typing stays only
+  for prose. Forms keep their drafts across screens and reloads until they
+  submit. The sidebar reads as group labels over links, the landing screen
+  is an overview dashboard, the agent screen is a full-height chat with
+  folded tool calls, find and a composer, graphs get styled nodes, controls
+  and legends, and a GitHub overview joins the navigation. See
+  [the UX overhaul report](https://github.com/mengsig/aether/blob/main/docs/design/vnext-ux/index.html).
 
 ### Fixed
 
