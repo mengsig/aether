@@ -147,7 +147,13 @@ before updating.
   offers "Keep it local" for a checkout without an origin remote; the Start
   sheet lists an agent that already holds a task as unavailable; a message
   sent from the composer shows at once as queued until the agent's
-  transcript carries it.
+  transcript carries it. An agent's page names the task it holds, which
+  the daemon had kept in the agent's context alone; the home's GitHub tile
+  reads the watcher's "kept for the CLI" answer as a neutral tile rather
+  than a failure; the chat's transcript, not its composer, takes the free
+  height; narrow pages no longer scroll sideways behind the rail; an empty
+  inbox and the New item sheet guide instead of a faint line or errors
+  before anything was typed.
 - **A tool call that never returns (archon#393).** After 15 minutes
   outstanding with no sign of life from the engine, Aether stops the turn,
   records `agent.tool_call_overdue` and wakes the agent to read its inbox;
