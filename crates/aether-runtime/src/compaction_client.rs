@@ -649,6 +649,7 @@ mod tests {
             cancel: CancellationToken,
         ) -> Result<EngineRun, EngineError> {
             let (tx, events) = mpsc::channel(8);
+            let (decisions, mut replies) = mpsc::channel::<PermissionDecision>(1);
             let caller = self.caller.clone();
             tokio::spawn(async move {
                 let session = EngineEvent::Session {
@@ -674,13 +675,20 @@ mod tests {
                     tx.send(EngineEvent::Done(done)).await.expect("done");
                     return;
                 };
+                // The refusal acknowledges that the usage before it was read.
+                let question = EngineEvent::Question {
+                    request_id: "q".into(),
+                    prompt: "input".into(),
+                };
+                tx.send(question).await.expect("question");
+                assert!(!replies.recv().await.expect("refusal").allow);
                 caller.cancel();
                 cancel.cancelled().await;
             });
             Ok(EngineRun {
                 events,
                 input: None,
-                decisions: None,
+                decisions: Some(decisions),
                 stop: None,
             })
         }
