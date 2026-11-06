@@ -22,12 +22,19 @@ POLL_SECONDS = 0.002
 # What undoes the newest migration block, for when the previous release is
 # already on this build's schema. Add the next block's undo when it lands.
 REWINDS = {
-    # V33 is a table its triggers fill; it replays in full, backfill included.
+    # V33's triggers name its tables and its indexes the column, so they go
+    # first; V33 adds the column back and replays in full, backfill included.
     33: (
         "DROP TRIGGER agent_usage_deleted",
         "DROP TRIGGER agent_usage_updated",
         "DROP TRIGGER agent_usage_inserted",
+        "DROP TRIGGER usage_totals_removed",
+        "DROP TRIGGER usage_totals_added",
+        "DROP TABLE usage_totals",
         "DROP TABLE agent_usage",
+        "DROP INDEX agents_run_archived_id",
+        "DROP INDEX agents_archived_id",
+        "ALTER TABLE agents DROP COLUMN archived",
     ),
     # V32 is the empty Memory 2.0 slot: only the stamp goes back.
     32: (),
