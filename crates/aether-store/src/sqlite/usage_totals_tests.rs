@@ -207,3 +207,29 @@ fn a_ledger_row_reads_back_as_the_usage_it_was_written_from() {
         assert_eq!(read[&agent.id], expected, "{}", agent.id);
     }
 }
+
+#[test]
+fn totals_that_disagree_with_their_members_read_as_a_corrupt_store() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let run = RunId::new();
+    let member = agent(run, shaped(3));
+    store
+        .commit(Commit::new().mutate(Mutation::UpsertAgent(member)))
+        .unwrap();
+    assert!(store.run_totals(run).unwrap().is_some());
+    let conn = store.conn.lock();
+    // Written past the triggers, which keep the totals and members in step.
+    conn.execute("UPDATE usage_totals SET members = 0", [])
+        .unwrap();
+    drop(conn);
+    let run_read = store.run_totals(run);
+    assert!(
+        matches!(run_read, Err(crate::StoreError::Corrupt(_))),
+        "a first agent without members: {run_read:?}"
+    );
+    let fleet_read = store.fleet_usage();
+    assert!(
+        matches!(fleet_read, Err(crate::StoreError::Corrupt(_))),
+        "an empty fleet that billed: {fleet_read:?}"
+    );
+}

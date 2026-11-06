@@ -17,30 +17,36 @@ impl SqliteStore {
     /// Every non-imported agent's usage, from the fleet's one totals row.
     pub(super) fn read_fleet_usage(&self) -> Result<Usage> {
         let (members, usage) = read_totals(&*self.read_conn()?, FLEET)?;
-        assert!(
-            members > 0 || usage == Usage::default(),
-            "an empty fleet billed nothing"
-        );
+        if members == 0 && usage != Usage::default() {
+            return Err(StoreError::Corrupt(
+                "the fleet's usage totals bill an empty fleet".into(),
+            ));
+        }
         debug_assert!(usage.cost_usd.is_finite(), "a sum of finite costs");
         Ok(usage)
     }
 
-    /// `run`'s kept totals and its first agent's creation, both by index.
+    /// `run`'s kept totals and its first agent's creation, both by index and
+    /// from one snapshot, so a commit between the two reads cannot split them.
     pub(super) fn read_run_totals(&self, run: RunId) -> Result<Option<RunTotals>> {
         let key = run.to_string();
-        let (members, usage, started) = {
-            let conn = self.read_conn()?;
-            let (members, usage) = read_totals(&conn, &key)?;
-            (members, usage, read_run_start(&conn, &key)?)
-        };
-        let Some(started) = started else {
-            assert_eq!(members, 0, "a run with members has a first one");
-            return Ok(None);
+        let mut conn = self.read_conn()?;
+        let tx = conn.transaction()?;
+        let (members, usage) = read_totals(&tx, &key)?;
+        let started = read_run_start(&tx, &key)?;
+        tx.commit()?;
+        let started = match (members, started) {
+            (0, None) => return Ok(None),
+            (1.., Some(started)) => started,
+            (members, started) => {
+                return Err(StoreError::Corrupt(format!(
+                    "run {run}'s totals count {members} agents but its first is {started:?}"
+                )));
+            }
         };
         let started_at = chrono::DateTime::parse_from_rfc3339(&started)
             .map_err(|_| StoreError::Corrupt(format!("run {run} has an unreadable created_at")))?
             .with_timezone(&chrono::Utc);
-        assert!(members > 0, "a run with a first agent has members");
         Ok(Some(RunTotals {
             agents: u32::try_from(members).unwrap_or(u32::MAX),
             usage,
