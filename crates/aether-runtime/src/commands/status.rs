@@ -336,6 +336,10 @@ struct ReceiptPage {
     partial: bool,
 }
 
+/// Each agent's first receipt in the rate window: its seq, and what its turn
+/// had billed before it.
+type FirstReceipts = BTreeMap<AgentId, (u64, f64)>;
+
 /// What a run's members had billed when the rate window opened.
 struct WindowStart {
     at_window_start: BTreeMap<AgentId, f64>,
@@ -588,9 +592,9 @@ impl Runtime {
         &self,
         receipts: &EventFilter,
         since: Timestamp,
-    ) -> Result<(BTreeMap<AgentId, (u64, f64)>, bool)> {
+    ) -> Result<(FirstReceipts, bool)> {
         // Newest first, so the last receipt seen per agent is its first in the window.
-        let mut first_in_window: BTreeMap<AgentId, (u64, f64)> = BTreeMap::new();
+        let mut first_in_window = FirstReceipts::new();
         let mut approximate = false;
         let mut before = None;
         for _ in 0..RECEIPT_PAGES {
