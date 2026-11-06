@@ -140,7 +140,8 @@ function luminance(colour: Rgb): number {
 
 /** WCAG contrast ratio, from 1 (equal) to 21 (black on white). */
 function contrast(a: Rgb, b: Rgb): number {
-  const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  const high = Math.max(luminance(a), luminance(b));
+  const low = Math.min(luminance(a), luminance(b));
   const ratio = (high + 0.05) / (low + 0.05);
   expect(ratio).toBeGreaterThanOrEqual(1);
   return ratio;
@@ -150,7 +151,8 @@ function contrast(a: Rgb, b: Rgb): number {
 function mix(a: Rgb, b: Rgb, share: number): Rgb {
   expect(share).toBeGreaterThan(0);
   expect(share).toBeLessThan(1);
-  return [0, 1, 2].map((index) => Math.round(a[index] * share + b[index] * (1 - share))) as unknown as Rgb;
+  const channel = (index: 0 | 1 | 2): number => Math.round(a[index] * share + b[index] * (1 - share));
+  return [channel(0), channel(1), channel(2)];
 }
 
 describe("text contrast", () => {
