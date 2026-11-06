@@ -27,6 +27,8 @@ pub(super) mod fleet_reads;
 mod history_retention;
 mod quarantine;
 mod read_pool;
+mod tree_pages;
+pub(crate) mod usage_totals;
 pub use history_retention::{HistoryScreen, RunExpiry};
 mod ledger;
 mod memories;

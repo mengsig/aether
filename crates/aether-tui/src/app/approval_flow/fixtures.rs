@@ -69,6 +69,7 @@ pub(crate) fn fleet() -> Fleet {
         stale: None,
         roots: vec![root_id],
         nodes: BTreeMap::new(),
+        next_after: None,
     };
     insert(&mut app, root, vec![implementer_id, researcher_id]);
     insert(&mut app, implementer, vec![tester_id]);

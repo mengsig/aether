@@ -83,6 +83,7 @@ pub(crate) fn projection(agent: Agent, history: Vec<Event>) -> App {
             stale: None,
             roots: vec![id],
             nodes: [(id, node)].into(),
+            next_after: None,
         })),
     });
     app.reduce(AppEvent::Reply {

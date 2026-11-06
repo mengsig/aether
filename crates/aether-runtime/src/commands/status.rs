@@ -1,7 +1,7 @@
 use super::RuntimeStatus;
 use crate::{Result, Runtime, RuntimeError};
 use aether_core::agent::{Agent, AgentStatus, AgentStatusKind, BlockReason};
-use aether_core::budget::{RATE_WINDOW_MINUTES, RunSummary};
+use aether_core::budget::{RATE_WINDOW_MINUTES, RunSummary, WindowBilling};
 use aether_core::event::EventKind;
 use aether_core::id::{AgentId, RunId, TaskId};
 use aether_core::model::Usage;
@@ -74,7 +74,7 @@ fn timed<T>(section: &'static str, f: impl FnOnce() -> T) -> T {
 
 /// How long the daemon's `status` waits on its sections; under its patience,
 /// so a stalled section costs only its own figures. Healthy ones take milliseconds.
-pub const STATUS_DEADLINE: Duration = Duration::from_millis(500);
+pub const STATUS_DEADLINE: Duration = Duration::from_millis(750);
 
 /// One store-backed `status` section, read on a thread of its own.
 enum Figure {
@@ -318,6 +318,17 @@ const WRITE_KINDS_SHOWN: usize = 8;
 /// Receipts read per page while walking a run's recent billing back in time.
 const RECEIPT_PAGE: usize = 256;
 
+/// Pages of receipts one run's rate reads at most: thousands of receipts in
+/// fifteen minutes is a run billing too often to rate exactly in a `status`.
+const RECEIPT_PAGES: usize = 8;
+
+/// What a run's members had billed when the rate window opened.
+struct WindowStart {
+    at_window_start: BTreeMap<AgentId, f64>,
+    /// The walk stopped at [`RECEIPT_PAGES`] before reaching the window's start.
+    approximate: bool,
+}
+
 impl Runtime {
     /// What `status` reports from configuration alone, with every count at
     /// zero: it reads no lock, store or disk, so it is there when they stall.
@@ -422,30 +433,76 @@ impl Runtime {
     }
 
     /// Every live run's spend, rated over the receipts of its recent window.
-    /// `live` is the live agents; each live run's members are read by run, as
-    /// narrow rows, so no member's body is decoded and no finished run is read.
+    /// Each run's totals are the store's kept ones; the only members read are
+    /// `live` and those with a receipt in the window, each by an index.
     fn run_summaries(&self, live: &[Agent]) -> Result<Vec<RunSummary>> {
         let at = now();
         let since = at - chrono::Duration::minutes(RATE_WINDOW_MINUTES);
-        let live_runs: BTreeSet<RunId> = live.iter().map(|a| a.run).collect();
-        let mut members = Vec::new();
-        for run in &live_runs {
-            members.extend(self.store.run_members(*run)?);
+        let mut live_by_run: BTreeMap<RunId, Vec<&Agent>> = BTreeMap::new();
+        for agent in live {
+            live_by_run.entry(agent.run).or_default().push(agent);
         }
-        debug_assert!(live.iter().all(|l| members.iter().any(|m| m.id == l.id)));
-        let mut window_start = BTreeMap::new();
-        for run in live_runs {
-            window_start.extend(self.billing_at(run, since)?);
+        let mut runs = Vec::with_capacity(live_by_run.len());
+        for (run, members) in live_by_run {
+            // A live agent read a moment ago is a member: none means it was
+            // pruned since, and so is no longer live.
+            let Some(totals) = self.store.run_totals(run)? else {
+                continue;
+            };
+            let billing = self.billing_at(run, since)?;
+            let window = self.window_billing(&members, &billing.at_window_start)?;
+            let live_members = (members.len() as u32).min(totals.agents);
+            runs.push(aether_core::budget::run_summary(
+                run,
+                totals,
+                live_members,
+                &window,
+                billing.approximate,
+                at,
+            ));
         }
-        let runs = aether_core::budget::active_runs_of(&members, &window_start, at);
-        assert!(runs.len() <= members.len(), "a run summary has a member");
+        assert!(runs.len() <= live.len(), "a run summary has a live member");
         Ok(runs)
+    }
+
+    /// What each member billing in the window has billed by now: a live one
+    /// from `live`, any other from the store's usage of it, by id.
+    fn window_billing(
+        &self,
+        live: &[&Agent],
+        at_window_start: &BTreeMap<AgentId, f64>,
+    ) -> Result<Vec<WindowBilling>> {
+        let mut billed_now: BTreeMap<AgentId, f64> = live
+            .iter()
+            .filter(|agent| at_window_start.contains_key(&agent.id))
+            .map(|agent| (agent.id, agent.stats.usage.cost_usd))
+            .collect();
+        let finished: Vec<AgentId> = at_window_start
+            .keys()
+            .filter(|id| !billed_now.contains_key(*id))
+            .copied()
+            .collect();
+        for (id, usage) in self.store.agent_usages(&finished)? {
+            billed_now.insert(id, usage.cost_usd);
+        }
+        let window: Vec<WindowBilling> = at_window_start
+            .iter()
+            .filter_map(|(id, before)| {
+                Some(WindowBilling {
+                    now: *billed_now.get(id)?,
+                    at_window_start: *before,
+                })
+            })
+            .collect();
+        assert!(window.len() <= at_window_start.len(), "one per biller");
+        Ok(window)
     }
 
     /// What each agent of `run` with a usage receipt after `since` had billed
     /// then: its last receipt before it, or the start of the turn that billed.
-    /// One run at a time, so an expired run's history is never in range.
-    fn billing_at(&self, run: RunId, since: Timestamp) -> Result<BTreeMap<AgentId, f64>> {
+    /// Reads at most [`RECEIPT_PAGES`] pages of the run's newest receipts;
+    /// past them the billing is `approximate`, read from those alone.
+    fn billing_at(&self, run: RunId, since: Timestamp) -> Result<WindowStart> {
         let receipts = EventFilter {
             run: Some(run),
             types: vec!["agent.usage_updated".into()],
@@ -454,6 +511,8 @@ impl Runtime {
         // Newest first, so the last receipt seen per agent is its first in the window.
         let mut first_in_window: BTreeMap<AgentId, (u64, f64)> = BTreeMap::new();
         let mut page = self.store.latest_events(RECEIPT_PAGE, &receipts)?;
+        let mut pages = 1;
+        let mut approximate = false;
         'pages: while !page.is_empty() {
             let full = page.len() == RECEIPT_PAGE;
             let mut oldest = u64::MAX;
@@ -473,9 +532,15 @@ impl Runtime {
             if !full {
                 break;
             }
+            if pages == RECEIPT_PAGES {
+                approximate = true;
+                break;
+            }
             page = self.store.events_before(oldest, RECEIPT_PAGE, &receipts)?;
+            pages += 1;
         }
-        let mut billing = BTreeMap::new();
+        assert!(pages <= RECEIPT_PAGES, "the walk is bounded");
+        let mut at_window_start = BTreeMap::new();
         for (agent, (seq, turn_start)) in first_in_window {
             let own = EventFilter {
                 agent: Some(agent),
@@ -488,9 +553,12 @@ impl Runtime {
                 _ => turn_start,
             };
             debug_assert!(cost >= 0.0, "a cumulative cost is never negative");
-            billing.insert(agent, cost);
+            at_window_start.insert(agent, cost);
         }
-        Ok(billing)
+        Ok(WindowStart {
+            at_window_start,
+            approximate,
+        })
     }
 
     /// Tasks that a waiting agent is blocked on, for the live graph.

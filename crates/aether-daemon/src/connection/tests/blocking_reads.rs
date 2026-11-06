@@ -34,6 +34,8 @@ fn heavy_reads_wait_off_the_async_worker_and_ping_still_answers() {
                 root: None,
                 run: None,
                 include_archived: false,
+                after: None,
+                limit: None,
             },
         ];
         for read in reads {
@@ -134,6 +136,8 @@ fn get_tree_answers_stale_while_its_read_cannot_run() {
             root: None,
             run: None,
             include_archived: false,
+            after: None,
+            limit: None,
         };
         let bound = crate::status_reads::PATIENCE * 3;
         let reply = tokio::time::timeout(bound, run(&daemon, &AuthContext::Local, tree())).await;

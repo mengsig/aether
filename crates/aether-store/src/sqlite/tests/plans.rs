@@ -334,36 +334,148 @@ fn a_runs_receipts_are_read_from_the_run_and_type_index_in_order() {
     }
 }
 
-#[test]
-fn the_fleet_usage_reads_the_narrow_usage_table_alone() {
-    let store = SqliteStore::open_in_memory().expect("open");
-    let steps = plan(
-        &store,
-        "SELECT agent_id, usage FROM agent_usage",
-        &Vec::new(),
+fn no_scan_or_sort(steps: &[(i64, i64, String)]) {
+    assert!(
+        steps
+            .iter()
+            .all(|s| !s.2.starts_with("SCAN a") && !s.2.starts_with("SCAN agents")),
+        "{steps:?}"
     );
-    assert!(steps.iter().all(|s| !s.2.contains("agents ")), "{steps:?}");
-    assert_eq!(steps.len(), 1, "one scan of agent_usage: {steps:?}");
+    assert!(
+        steps.iter().all(|s| !s.2.contains("TEMP B-TREE")),
+        "{steps:?}"
+    );
 }
 
 #[test]
-fn a_runs_members_are_sought_by_run_and_joined_by_key() {
+fn the_fleet_and_run_totals_are_one_row_read_by_key() {
+    use crate::sqlite::usage_totals::TOTALS_COLUMNS;
     let store = SqliteStore::open_in_memory().expect("open");
+    let args: Arguments = vec![Box::new(String::new())];
+    let sql = format!("SELECT {TOTALS_COLUMNS} FROM usage_totals WHERE scope = ?1");
+    let steps = plan(&store, &sql, &args);
+    assert_eq!(
+        steps.iter().map(|s| s.2.as_str()).collect::<Vec<_>>(),
+        ["SEARCH usage_totals USING PRIMARY KEY (scope=?)"]
+    );
     let args: Arguments = vec![Box::new(RunId::new().to_string())];
-    let steps = plan(&store, crate::sqlite::fleet_reads::RUN_MEMBERS_SQL, &args);
+    let steps = plan(
+        &store,
+        "SELECT MIN(created_at) FROM agent_usage WHERE run = ?1",
+        &args,
+    );
+    assert_eq!(
+        steps.iter().map(|s| s.2.as_str()).collect::<Vec<_>>(),
+        ["SEARCH agent_usage USING COVERING INDEX agent_usage_run (run=?)"]
+    );
+}
+
+#[test]
+fn a_members_usage_is_read_by_key() {
+    use crate::sqlite::usage_totals::USAGE_COLUMNS;
+    let store = SqliteStore::open_in_memory().expect("open");
+    let args: Arguments = vec![Box::new(AgentId::new().to_string())];
+    let sql =
+        format!("SELECT u.agent_id, {USAGE_COLUMNS} FROM agent_usage u WHERE u.agent_id = ?1");
+    let steps = plan(&store, &sql, &args);
+    assert_eq!(
+        steps.iter().map(|s| s.2.as_str()).collect::<Vec<_>>(),
+        ["SEARCH u USING PRIMARY KEY (agent_id=?)"]
+    );
+}
+
+fn tree_query(
+    run: Option<RunId>,
+    root: Option<AgentId>,
+    include_archived: bool,
+) -> crate::TreeQuery {
+    crate::TreeQuery {
+        run,
+        root,
+        include_archived,
+        role_prefix: None,
+        after: Some(AgentId::new()),
+        limit: crate::TREE_PAGE_MAX,
+    }
+}
+
+fn boxed(args: Vec<String>) -> Arguments {
+    args.into_iter()
+        .map(|arg| Box::new(arg) as Box<dyn rusqlite::ToSql>)
+        .collect()
+}
+
+#[test]
+fn a_tree_page_seeks_live_agents_by_status_and_finished_ones_by_index_order() {
+    use crate::sqlite::tree_pages::page_sql;
+    let store = SqliteStore::open_in_memory().expect("open");
+    let cases = [
+        (None, "agents_archived_id (archived=? AND id<?)"),
+        (
+            Some(RunId::new()),
+            "agents_run_archived_id (run=? AND archived=? AND id<?)",
+        ),
+    ];
+    for (run, finished_index) in cases {
+        let query = tree_query(run, None, false);
+        let (pinned, finished, args) = page_sql(&query);
+        let pinned_args = boxed(args[..args.len() - 1].to_vec());
+        let steps = plan(&store, &pinned, &pinned_args);
+        assert!(
+            steps
+                .iter()
+                .any(|s| s.2 == "SEARCH a USING INDEX agents_status (status=?)"),
+            "{steps:?}"
+        );
+        no_scan_or_sort(&steps);
+        let steps = plan(&store, &finished, &boxed(args));
+        assert!(
+            steps
+                .iter()
+                .any(|s| s.2 == format!("SEARCH a USING INDEX {finished_index}")),
+            "{steps:?}"
+        );
+        no_scan_or_sort(&steps);
+    }
+    let query = tree_query(Some(RunId::new()), None, true);
+    let (_, finished, args) = page_sql(&query);
+    let steps = plan(&store, &finished, &boxed(args));
     assert!(
         steps
             .iter()
-            .any(|s| s.2.starts_with("SEARCH a USING INDEX agents_run")),
+            .any(|s| s.2 == "SEARCH a USING INDEX agents_run_id (run=? AND id<?)"),
         "{steps:?}"
     );
+    no_scan_or_sort(&steps);
+}
+
+#[test]
+fn a_rooted_tree_page_walks_the_subtree_by_parent_links() {
+    use crate::sqlite::tree_pages::{ancestors_sql, page_sql};
+    let store = SqliteStore::open_in_memory().expect("open");
+    let query = tree_query(None, Some(AgentId::new()), false);
+    let (_, finished, args) = page_sql(&query);
+    let steps = plan(&store, &finished, &boxed(args));
     assert!(
         steps
             .iter()
-            .any(|s| s.2.starts_with("SEARCH u USING PRIMARY KEY")),
+            .any(|s| s.2 == "SEARCH c USING INDEX agents_parent (parent=?)"),
         "{steps:?}"
     );
-    assert!(steps.iter().all(|s| !s.2.starts_with("SCAN")), "{steps:?}");
+    assert!(
+        steps.iter().all(|s| !s.2.starts_with("SCAN a")),
+        "{steps:?}"
+    );
+    let (above, mut args) = ancestors_sql(&query);
+    args.push("[]".to_owned());
+    let steps = plan(&store, &above, &boxed(args));
+    assert!(
+        steps
+            .iter()
+            .any(|s| s.2 == "SEARCH c USING INDEX sqlite_autoindex_agents_1 (id=?)"),
+        "{steps:?}"
+    );
+    no_scan_or_sort(&steps);
 }
 
 /// Virtual-machine steps to read a run's receipt page of 256, newest first.

@@ -1,154 +1,74 @@
-//! V33: the fleet's usage moves beside the agents table, backfilled from
-//! every row a 1.2.11 store (V28) holds, and kept by triggers from then on.
+//! V33: each agent's usage moves beside its row and the fleet's and each
+//! run's totals into one row each, backfilled from a 1.2.11 store (V28) and
+//! kept by triggers. The backfill must count what the 1.2.11 reader counted.
 
 use super::tests::{database_at, version};
 use super::*;
 use crate::Store;
-use aether_core::model::Usage;
+use aether_core::agent::{
+    Agent, AgentConfig, AgentStats, AgentStatus, AgentStatusKind, Role, Scope,
+};
+use aether_core::id::{AgentId, RunId};
+use aether_core::model::{CostBasis, CostGap, Usage};
 
-fn usage(input_tokens: u64, cost_usd: f64) -> Usage {
+/// Costs are multiples of 1/64, so every sum and difference is exact in an
+/// f64 and the triggers' running totals must equal the fold to the bit.
+fn usage(input_tokens: u64, sixty_fourths: u32) -> Usage {
     Usage {
         input_tokens,
-        cost_usd,
+        cost_usd: f64::from(sixty_fourths) / 64.0,
         cost_complete: true,
         ..Default::default()
     }
 }
 
-/// An agent row as any version wrote it: the columns, and a body holding
-/// what V33 reads from it.
-fn insert_agent(conn: &Connection, id: &str, status: &str, body: &str) {
-    conn.execute(
-        "INSERT INTO agents(id, parent, role, status, run, created_at, updated_at, body)
-         VALUES (?1, NULL, 'worker', ?2, 'run_1', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', ?3)",
-        [id, status, body],
-    )
-    .expect("agent row");
-}
-
-fn body(id: &str, usage: &Usage) -> String {
-    serde_json::json!({ "id": id, "stats": { "usage": usage } }).to_string()
-}
-
-#[test]
-fn v33_backfills_the_fleet_usage_of_a_1_2_11_store_from_every_readable_row() {
-    let directory = tempfile::tempdir().expect("directory");
-    let path = directory.path().join("aether.db");
-    let previous = database_at(&path, 28);
-    let (running, done) = (usage(10, 1.5), usage(5, 0.25));
-    insert_agent(&previous, "agt_a", "running", &body("agt_a", &running));
-    insert_agent(&previous, "agt_b", "completed", &body("agt_b", &done));
-    insert_agent(
-        &previous,
-        "agt_c",
-        "imported",
-        &body("agt_c", &usage(1_000, 9.0)),
-    );
-    insert_agent(&previous, "agt_d", "failed", "{broken");
-    insert_agent(&previous, "agt_e", "created", r#"{"id":"agt_e"}"#);
-    insert_agent(
-        &previous,
-        "agt_f",
-        "running",
-        &body("agt_other", &usage(7, 7.0)),
-    );
-    drop(previous);
-
-    let store = crate::SqliteStore::open(&path).expect("a 1.2.11 store opens and migrates");
-    assert_eq!(
-        store.meta("schema_version").unwrap(),
-        Some(SCHEMA_VERSION.to_string())
-    );
-    let mut expected = Usage::default();
-    for counted in [running, done, Usage::default()] {
-        expected += counted;
-    }
-    assert_eq!(store.fleet_usage().unwrap(), expected);
-    drop(store);
-
-    let backups: Vec<String> = std::fs::read_dir(directory.path().join("migration-backups"))
-        .expect("a backup was taken")
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
-    assert!(
-        backups
-            .iter()
-            .any(|name| name.starts_with("schema-28-before-33-")),
-        "{backups:?}"
-    );
-    let conn = Connection::open(&path).unwrap();
-    assert_eq!(version(&conn), SCHEMA_VERSION);
-    assert!(
-        matches!(
-            refuse_newer_store(current_version(&conn).unwrap(), 32),
-            Err(StoreError::SchemaTooNew {
-                found: 33,
-                supported: 32
-            })
-        ),
-        "the previous binary refuses the migrated store and restores the backup"
-    );
-}
-
-#[test]
-fn v33_replays_over_a_rewound_stamp_without_counting_an_agent_twice() {
-    let directory = tempfile::tempdir().expect("directory");
-    let path = directory.path().join("aether.db");
-    drop(database_at(&path, SCHEMA_VERSION));
-    let conn = Connection::open(&path).unwrap();
-    insert_agent(&conn, "agt_a", "running", &body("agt_a", &usage(3, 0.5)));
-    conn.execute(
-        "UPDATE meta SET value = '32' WHERE key = 'schema_version'",
-        [],
-    )
-    .unwrap();
-    migrate(&conn).expect("the replay");
-    let rows: i64 = conn
-        .query_row("SELECT COUNT(*) FROM agent_usage", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(rows, 1);
-    assert_eq!(version(&conn), SCHEMA_VERSION);
-}
-
-#[test]
-fn agent_usage_follows_inserts_updates_imports_and_deletes() {
-    let directory = tempfile::tempdir().expect("directory");
-    let path = directory.path().join("aether.db");
-    let conn = database_at(&path, SCHEMA_VERSION);
-    let read = |conn: &Connection| -> Vec<(String, Option<String>)> {
-        conn.prepare("SELECT agent_id, usage FROM agent_usage ORDER BY agent_id")
-            .unwrap()
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-            .unwrap()
-            .collect::<rusqlite::Result<_>>()
-            .unwrap()
+/// Usages that exercise every part of the fold: bases, gaps, reasoning,
+/// estimates, cache counters, and a member with no cost figure at all.
+fn assorted_usages() -> Vec<Usage> {
+    let listed = Usage {
+        cost_basis: CostBasis::ListPrice,
+        cache_write_tokens: 6,
+        cache_write_1h_tokens: 2,
+        ..usage(10, 96)
     };
-    insert_agent(&conn, "agt_a", "running", &body("agt_a", &usage(1, 0.1)));
-    insert_agent(&conn, "agt_b", "running", &body("agt_b", &usage(2, 0.2)));
-    conn.execute(
-        "UPDATE agents SET body = ?1 WHERE id = 'agt_a'",
-        [body("agt_a", &usage(4, 0.4))],
-    )
-    .unwrap();
-    let rows = read(&conn);
-    assert_eq!(rows.len(), 2);
-    let a: Usage = serde_json::from_str(rows[0].1.as_deref().unwrap()).unwrap();
-    assert_eq!(a, usage(4, 0.4), "an update replaces the usage");
-    conn.execute(
-        "UPDATE agents SET status = 'imported' WHERE id = 'agt_a'",
-        [],
-    )
-    .unwrap();
-    assert_eq!(read(&conn).len(), 1, "an imported agent is not the fleet's");
-    conn.execute("DELETE FROM agents WHERE id = 'agt_b'", [])
-        .unwrap();
-    assert!(read(&conn).is_empty(), "a deleted agent leaves the total");
+    let reported = Usage {
+        cost_basis: CostBasis::ProviderReported,
+        reasoning_tokens: Some(4),
+        cache_read_tokens: 3,
+        ..usage(20, 16)
+    };
+    let unpriced = Usage {
+        cost_complete: false,
+        cost_gap: Some(CostGap::Unpriced),
+        estimated_cost_usd: Some(0.5),
+        ..usage(30, 0)
+    };
+    let interrupted = Usage {
+        cost_complete: false,
+        cost_gap: Some(CostGap::Interrupted),
+        cost_basis: CostBasis::Mixed,
+        ..usage(40, 128)
+    };
+    let gap_without_name = Usage {
+        cost_complete: false,
+        cost_gap: None,
+        output_tokens: 9,
+        ..usage(0, 0)
+    };
+    let tokens_without_basis = usage(50, 0);
+    vec![
+        listed,
+        reported,
+        unpriced,
+        interrupted,
+        gap_without_name,
+        tokens_without_basis,
+        Usage::default(),
+    ]
 }
 
-/// A whole agent, as the store writes it, with `status` and `usage`.
-fn whole_agent(status: aether_core::agent::AgentStatus, usage: Usage) -> aether_core::agent::Agent {
-    use aether_core::agent::{Agent, AgentConfig, AgentStats, Role, Scope};
-    use aether_core::id::{AgentId, RunId};
+/// A whole agent as the store writes it, fully deserializable.
+fn whole_agent(run: RunId, status: AgentStatus, usage: Usage) -> Agent {
     let at = aether_core::time::now();
     Agent {
         id: AgentId::new(),
@@ -179,45 +99,70 @@ fn whole_agent(status: aether_core::agent::AgentStatus, usage: Usage) -> aether_
             usage,
             ..AgentStats::default()
         },
-        run: RunId::new(),
+        run,
         created_at: at,
         updated_at: at,
     }
 }
 
-/// Usages that exercise every part of the fold: bases, gaps, reasoning and estimates.
-fn assorted_usages() -> Vec<Usage> {
-    use aether_core::model::{CostBasis, CostGap};
-    let listed = Usage {
-        cost_basis: CostBasis::ListPrice,
-        ..usage(10, 1.5)
-    };
-    let reported = Usage {
-        cost_basis: CostBasis::ProviderReported,
-        reasoning_tokens: Some(4),
-        ..usage(20, 0.25)
-    };
-    let unpriced = Usage {
-        cost_usd: 0.0,
-        cost_complete: false,
-        cost_gap: Some(CostGap::Unpriced),
-        estimated_cost_usd: Some(0.5),
-        ..usage(30, 0.0)
-    };
-    let interrupted = Usage {
-        cost_complete: false,
-        cost_gap: Some(CostGap::Interrupted),
-        ..usage(40, 2.0)
-    };
-    vec![listed, reported, unpriced, interrupted, Usage::default()]
+/// An agent row as a 1.2.11 binary wrote it: its columns, then the body.
+fn insert_row(conn: &Connection, id: &str, status: &str, run: &str, body: &str) {
+    conn.execute(
+        "INSERT INTO agents(id, parent, role, status, run, created_at, updated_at, body)
+         VALUES (?1, NULL, 'worker', ?2, ?3, '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', ?4)",
+        [id, status, run, body],
+    )
+    .expect("agent row");
 }
 
-#[test]
-fn v33_backfill_sums_what_the_whole_agent_reader_summed() {
-    use aether_core::agent::{AgentStatus, AgentStatusKind};
-    let directory = tempfile::tempdir().expect("directory");
-    let path = directory.path().join("aether.db");
-    let previous = database_at(&path, 28);
+fn insert_agent(conn: &Connection, agent: &Agent) {
+    let body = serde_json::to_string(agent).expect("an agent serializes");
+    let id = agent.id.to_string();
+    insert_row(
+        conn,
+        &id,
+        agent.status.kind().as_str(),
+        &agent.run.to_string(),
+        &body,
+    );
+}
+
+/// The 1.2.11 `fleet_usage`: every row not imported whose body decodes as an
+/// agent with the row's id, folded; any other row it quarantined, unsummed.
+fn fleet_usage_as_1_2_11_read_it(conn: &Connection) -> (Usage, usize) {
+    let mut statement = conn
+        .prepare("SELECT id, body FROM agents WHERE status != 'imported'")
+        .unwrap();
+    let rows: Vec<(String, String)> = statement
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    let mut total = Usage::default();
+    let mut quarantined = 0;
+    for (id, body) in rows {
+        match serde_json::from_str::<Agent>(&body) {
+            Ok(agent) if agent.id.to_string() == id => total += agent.stats.usage,
+            _ => quarantined += 1,
+        }
+    }
+    (total, quarantined)
+}
+
+/// Rows the 1.2.11 reader quarantined: not JSON, JSON but not an agent, and
+/// a whole agent stored under another row's id.
+fn insert_unreadable_rows(conn: &Connection, run: RunId) {
+    let run = run.to_string();
+    insert_row(conn, &AgentId::new().to_string(), "failed", &run, "{broken");
+    insert_row(conn, "agt_e", "created", &run, r#"{"id":"agt_e"}"#);
+    let elsewhere = whole_agent(RunId::new(), AgentStatus::Running, usage(7, 448));
+    let body = serde_json::to_string(&elsewhere).unwrap();
+    insert_row(conn, &AgentId::new().to_string(), "running", &run, &body);
+}
+
+/// A V28 store holding every usage under every status, half archived, over
+/// two runs, beside the rows its reader quarantined.
+fn a_1_2_11_store(conn: &Connection, runs: [RunId; 2]) -> Vec<Agent> {
     let statuses = [
         AgentStatus::Running,
         AgentStatus::Completed { summary: None },
@@ -228,26 +173,162 @@ fn v33_backfill_sums_what_the_whole_agent_reader_summed() {
     ];
     let mut agents = Vec::new();
     for (n, usage) in assorted_usages().into_iter().enumerate() {
-        for status in &statuses {
-            let mut agent = whole_agent(status.clone(), usage);
-            agent.archived = n % 2 == 0;
-            let body = serde_json::to_string(&agent).expect("an agent serializes");
-            let id = agent.id.to_string();
-            insert_agent(&previous, &id, agent.status.kind().as_str(), &body);
+        for (k, status) in statuses.iter().enumerate() {
+            let mut agent = whole_agent(runs[(n + k) % 2], status.clone(), usage);
+            agent.archived = (n + k) % 3 == 0;
+            insert_agent(conn, &agent);
             agents.push(agent);
         }
     }
+    insert_unreadable_rows(conn, runs[0]);
+    assert_eq!(agents.len(), 28, "seven usages under four statuses");
+    agents
+}
+
+#[test]
+fn v33_counts_exactly_what_the_1_2_11_reader_counted() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("aether.db");
+    let previous = database_at(&path, 28);
+    let runs = [RunId::new(), RunId::new()];
+    let agents = a_1_2_11_store(&previous, runs);
+    let (read_by_1_2_11, quarantined) = fleet_usage_as_1_2_11_read_it(&previous);
+    assert_eq!(quarantined, 3, "the three unreadable rows");
+    assert!(!read_by_1_2_11.cost_complete, "the fold saw a gap");
     drop(previous);
-    assert_eq!(agents.len(), 20, "five usages under four statuses");
 
     let store = crate::SqliteStore::open(&path).expect("a 1.2.11 store opens and migrates");
-    let mut summed = Usage::default();
-    for agent in agents
-        .iter()
-        .filter(|a| a.status.kind() != AgentStatusKind::Imported)
-    {
-        summed += agent.stats.usage;
+    assert_eq!(
+        store.meta("schema_version").unwrap(),
+        Some(SCHEMA_VERSION.to_string())
+    );
+    assert_eq!(store.fleet_usage().unwrap(), read_by_1_2_11);
+    let mut whole = Usage::default();
+    for agent in store.agents(&crate::AgentFilter::default()).unwrap() {
+        if agent.status.kind() != AgentStatusKind::Imported {
+            whole += agent.stats.usage;
+        }
     }
-    assert!(!summed.cost_complete, "the fold saw a gap");
-    assert_eq!(store.fleet_usage().unwrap(), summed);
+    assert_eq!(whole, read_by_1_2_11, "today's whole-agent reader agrees");
+    for run in runs {
+        let members: Vec<Agent> = agents.iter().filter(|a| a.run == run).cloned().collect();
+        let totals = store.run_totals(run).unwrap().expect("a run with agents");
+        let expected = aether_core::budget::RunTotals::of(&members).unwrap();
+        assert_eq!(totals.agents, expected.agents, "imported members count");
+        assert_eq!(totals.usage, expected.usage);
+    }
+    drop(store);
+    assert_the_previous_binary_refuses(&path, directory.path());
+}
+
+fn assert_the_previous_binary_refuses(path: &std::path::Path, directory: &std::path::Path) {
+    let backups: Vec<String> = std::fs::read_dir(directory.join("migration-backups"))
+        .expect("a backup was taken")
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        backups
+            .iter()
+            .any(|name| name.starts_with("schema-28-before-33-")),
+        "{backups:?}"
+    );
+    let conn = Connection::open(path).unwrap();
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    assert!(
+        matches!(
+            refuse_newer_store(current_version(&conn).unwrap(), 32),
+            Err(StoreError::SchemaTooNew {
+                found: 33,
+                supported: 32
+            })
+        ),
+        "the previous binary refuses the migrated store and restores the backup"
+    );
+}
+
+#[test]
+fn v33_copies_the_archived_flag_out_of_each_readable_body() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("aether.db");
+    let previous = database_at(&path, 28);
+    let agents = a_1_2_11_store(&previous, [RunId::new(), RunId::new()]);
+    drop(previous);
+    drop(crate::SqliteStore::open(&path).expect("migrates"));
+
+    let conn = Connection::open(&path).unwrap();
+    let archived_column = |id: AgentId| -> bool {
+        conn.query_row(
+            "SELECT archived FROM agents WHERE id = ?1",
+            [id.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert!(agents.iter().any(|a| a.archived) && agents.iter().any(|a| !a.archived));
+    for agent in &agents {
+        assert_eq!(archived_column(agent.id), agent.archived, "{}", agent.id);
+    }
+    let unreadable: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM agents WHERE archived = 1 AND NOT json_valid(body)",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(unreadable, 0, "a body that is not JSON stays unarchived");
+}
+
+#[test]
+fn v33_replays_over_a_rewound_stamp_without_counting_an_agent_twice() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("aether.db");
+    let conn = database_at(&path, SCHEMA_VERSION);
+    let run = RunId::new();
+    let agents: Vec<Agent> = assorted_usages()
+        .into_iter()
+        .map(|u| whole_agent(run, AgentStatus::Running, u))
+        .collect();
+    for agent in &agents {
+        insert_agent(&conn, agent);
+    }
+    conn.execute(
+        "UPDATE meta SET value = '32' WHERE key = 'schema_version'",
+        [],
+    )
+    .unwrap();
+    migrate(&conn).expect("the replay");
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    let (members, total) =
+        crate::sqlite::usage_totals::read_totals(&conn, crate::sqlite::usage_totals::FLEET)
+            .unwrap();
+    assert_eq!(members, agents.len() as u64, "each agent counted once");
+    let mut expected = Usage::default();
+    for agent in &agents {
+        expected += agent.stats.usage;
+    }
+    assert_eq!(total, expected);
+}
+
+#[test]
+fn a_connection_without_the_counting_function_cannot_write_an_agent() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("aether.db");
+    drop(database_at(&path, SCHEMA_VERSION));
+    let bare = Connection::open(&path).unwrap();
+    let agent = whole_agent(RunId::new(), AgentStatus::Running, usage(1, 1));
+    let body = serde_json::to_string(&agent).unwrap();
+    let written = bare.execute(
+        "INSERT INTO agents(id, parent, role, status, run, created_at, updated_at, body)
+         VALUES (?1, NULL, 'worker', 'running', ?2, '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', ?3)",
+        [agent.id.to_string(), agent.run.to_string(), body],
+    );
+    let error = written.expect_err("the trigger needs the function");
+    assert!(
+        error.to_string().contains("aether_counted_usage"),
+        "the failure names what is missing: {error}"
+    );
+    let rows: i64 = bare
+        .query_row("SELECT COUNT(*) FROM agents", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(rows, 0, "nothing was written uncounted");
 }

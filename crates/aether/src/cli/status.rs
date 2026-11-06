@@ -391,12 +391,17 @@ fn run_line(r: &aether_core::budget::RunSummary, at: Timestamp) -> String {
     );
     if r.rate_usd_per_hour > 0.0 {
         let by = (at + chrono::Duration::hours(1)).with_timezone(&chrono::Local);
+        // Past the receipt walk's cap the rate is read from the newest receipts alone: a floor.
+        let approx = if r.rate_approximate {
+            "at least"
+        } else {
+            aether_core::model::Usage::APPROX
+        };
         line.push_str(&format!(
             " · {approx} ${:.2}/h now · {approx} ${:.2} total by {}",
             r.rate_usd_per_hour,
             r.forecast_usd_next_hour,
             by.format("%H:%M"),
-            approx = aether_core::model::Usage::APPROX,
         ));
     }
     line

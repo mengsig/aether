@@ -69,20 +69,27 @@ pub(super) async fn dispatch(daemon: &Daemon, command: Command) -> Result<Reply,
             include_archived,
             role_prefix,
             root,
+            after,
+            limit,
         } => {
             if role_prefix.as_deref().is_some_and(str::is_empty) {
                 return Err(ErrorReply::invalid("role_prefix must not be empty"));
             }
+            let limit = page_limit(limit)?;
             let key = crate::tree_reads::TreeKey {
                 run,
                 include_archived,
                 role_prefix: role_prefix.clone(),
                 root,
+                after,
+                limit,
             };
             let filter = TreeFilter {
                 include_archived,
                 role_prefix,
                 root,
+                after,
+                limit,
             };
             let store = rt.store().clone();
             let tree = daemon
@@ -93,6 +100,21 @@ pub(super) async fn dispatch(daemon: &Daemon, command: Command) -> Result<Reply,
         }
         _ => unreachable!("routed to the wrong command family"),
     }
+}
+
+/// A tree page's limit, checked: 1 to [`aether_store::TREE_PAGE_MAX`].
+fn page_limit(limit: Option<u32>) -> Result<Option<usize>, ErrorReply> {
+    let Some(limit) = limit else {
+        return Ok(None);
+    };
+    let max = aether_store::TREE_PAGE_MAX;
+    let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+    if !(1..=max).contains(&limit) {
+        return Err(ErrorReply::invalid(format!(
+            "limit must be 1 to {max}, got {limit}"
+        )));
+    }
+    Ok(Some(limit))
 }
 
 /// The tree `filter` asks for; a root the store does not know is not found.

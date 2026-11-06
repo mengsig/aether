@@ -96,6 +96,7 @@ impl Store {
             stale: None,
             roots: self.agents.iter().map(|a| a.id).collect(),
             nodes,
+            next_after: None,
         }
     }
 

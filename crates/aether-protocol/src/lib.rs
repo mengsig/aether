@@ -238,6 +238,9 @@ pub mod features {
     /// The daemon serves `list_agents_page` and the `root` and `role_prefix`
     /// filters of `get_tree`.
     pub const AGENTS_PAGING: &str = "agents_paging";
+    /// The daemon pages `get_tree`: `after` and `limit` on the command, and
+    /// `AgentTree.next_after` when older finished agents were left out.
+    pub const TREE_PAGES: &str = "tree_pages";
     /// The daemon serves `get_transcript_page`.
     pub const TRANSCRIPT_PAGING: &str = "transcript_paging";
     /// Listed by a client, delta frames carry `invocation_seq` and tool input

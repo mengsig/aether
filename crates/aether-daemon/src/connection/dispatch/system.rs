@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::connection::dispatch::blocking;
 use crate::connection::{host_services, map_err, providers, push, remote_admin, store_err};
-use crate::status_reads::{Answer, Figures, PATIENCE};
+use crate::status_reads::{Answer, Figures, PATIENCE, READ_BUDGET};
 
 pub(super) fn owns(command: &Command) -> bool {
     matches!(
@@ -276,14 +276,14 @@ fn stale_problem(stale: &StatusStale, at: aether_core::time::Timestamp) -> Strin
 async fn github_watcher(daemon: &Daemon) -> Result<Reply, ErrorReply> {
     let reading = daemon.runtime.clone();
     let read = move || reading.github_watcher_status().map_err(map_err);
-    let answer = daemon.watcher_reads.answer(PATIENCE, read).await?;
+    let answer = daemon.watcher_reads.answer(READ_BUDGET, read).await?;
     let Answer::Fresh(watcher) = answer else {
         return Err(ErrorReply::new(
             ErrorCode::Unavailable,
             format!(
                 "the GitHub watcher's status is unavailable: timed out, the store did not \
                  answer within {} ms",
-                PATIENCE.as_millis()
+                READ_BUDGET.as_millis()
             ),
         ));
     };

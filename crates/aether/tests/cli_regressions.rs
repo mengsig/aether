@@ -543,6 +543,7 @@ async fn cli_with_socket(
                         stale: None,
                         roots: vec![a.id],
                         nodes: [(a.id, node)].into(),
+                        next_after: None,
                     }))
                 }
                 Command::CreateMemory { spec, .. } => {

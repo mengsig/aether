@@ -552,38 +552,163 @@ CREATE INDEX IF NOT EXISTS memory_holdouts_memory ON memory_holdouts(memory_id, 
 // stamp still moves, so opening a V31 store takes its pre-migration backup.
 const V32: &str = "";
 
-// Each agent's billed usage beside its row, kept by triggers on every write
-// path, so the fleet total reads one narrow table instead of every agent's
-// body. A NULL `usage` is the record's default; an imported agent, or a body
-// that is not its row's record, has no row. Idempotent: a replay over a
-// rewound stamp rebuilds the rows.
+// Each agent's usage beside its row, and per scope (the fleet, `''`, and each
+// run) one row of totals, kept by triggers on every write: `status` and a run
+// summary read one row instead of every agent's body. `agent_usage` holds an
+// agent only when `aether_counted_usage` (sqlite/usage_totals.rs) decodes its
+// body, as a whole-agent read does; the fleet's totals leave imported agents
+// out. Plus `agents.archived` (added by `add_missing_column`) and the indexes
+// `get_tree` pages by. Idempotent: a replay over a rewound stamp rebuilds it.
 const V33: &str = r#"
 CREATE TABLE IF NOT EXISTS agent_usage (
-    agent_id TEXT PRIMARY KEY,
-    usage    TEXT
+    agent_id              TEXT PRIMARY KEY,
+    run                   TEXT NOT NULL,
+    imported              INTEGER NOT NULL,
+    created_at            TEXT NOT NULL,
+    input_tokens          INTEGER NOT NULL,
+    output_tokens         INTEGER NOT NULL,
+    cache_read_tokens     INTEGER NOT NULL,
+    cache_write_tokens    INTEGER NOT NULL,
+    cache_write_1h_tokens INTEGER NOT NULL,
+    reasoning_tokens      INTEGER,
+    cost_usd              REAL NOT NULL,
+    estimated_cost_usd    REAL,
+    cost_gap              TEXT,
+    cost_basis            TEXT NOT NULL,
+    figure                INTEGER NOT NULL
 ) WITHOUT ROWID;
-CREATE TRIGGER IF NOT EXISTS agent_usage_inserted AFTER INSERT ON agents BEGIN
-    DELETE FROM agent_usage WHERE agent_id = new.id;
-    INSERT INTO agent_usage(agent_id, usage)
-    SELECT new.id, json_extract(new.body, '$.stats.usage')
-    WHERE new.status != 'imported'
-      AND CASE WHEN json_valid(new.body) THEN json_extract(new.body, '$.id') END = new.id;
+CREATE INDEX IF NOT EXISTS agent_usage_run ON agent_usage(run, created_at);
+CREATE TABLE IF NOT EXISTS usage_totals (
+    scope                   TEXT PRIMARY KEY,
+    members                 INTEGER NOT NULL,
+    input_tokens            INTEGER NOT NULL,
+    output_tokens           INTEGER NOT NULL,
+    cache_read_tokens       INTEGER NOT NULL,
+    cache_write_tokens      INTEGER NOT NULL,
+    cache_write_1h_tokens   INTEGER NOT NULL,
+    reasoning_members       INTEGER NOT NULL,
+    reasoning_tokens        INTEGER NOT NULL,
+    cost_usd                REAL NOT NULL,
+    estimated_members       INTEGER NOT NULL,
+    estimated_cost_usd      REAL NOT NULL,
+    gap_unreported          INTEGER NOT NULL,
+    gap_unpriced            INTEGER NOT NULL,
+    gap_interrupted         INTEGER NOT NULL,
+    gap_mixed               INTEGER NOT NULL,
+    gap_unknown             INTEGER NOT NULL,
+    basis_unknown           INTEGER NOT NULL,
+    basis_list_price        INTEGER NOT NULL,
+    basis_provider_reported INTEGER NOT NULL,
+    basis_mixed             INTEGER NOT NULL
+) WITHOUT ROWID;
+CREATE TRIGGER IF NOT EXISTS usage_totals_added AFTER INSERT ON agent_usage BEGIN
+    INSERT INTO usage_totals(scope, members, input_tokens, output_tokens, cache_read_tokens,
+        cache_write_tokens, cache_write_1h_tokens, reasoning_members, reasoning_tokens,
+        cost_usd, estimated_members, estimated_cost_usd, gap_unreported, gap_unpriced,
+        gap_interrupted, gap_mixed, gap_unknown, basis_unknown, basis_list_price,
+        basis_provider_reported, basis_mixed)
+    SELECT scope, 1, new.input_tokens, new.output_tokens, new.cache_read_tokens,
+        new.cache_write_tokens, new.cache_write_1h_tokens, new.reasoning_tokens IS NOT NULL,
+        COALESCE(new.reasoning_tokens, 0), new.cost_usd, new.estimated_cost_usd IS NOT NULL,
+        COALESCE(new.estimated_cost_usd, 0.0), new.cost_gap IS 'unreported',
+        new.cost_gap IS 'unpriced', new.cost_gap IS 'interrupted', new.cost_gap IS 'mixed',
+        new.cost_gap IS 'unknown', new.figure AND new.cost_basis = 'unknown',
+        new.figure AND new.cost_basis = 'list_price',
+        new.figure AND new.cost_basis = 'provider_reported',
+        new.figure AND new.cost_basis = 'mixed'
+    FROM (SELECT new.run AS scope UNION ALL SELECT '' WHERE NOT new.imported) WHERE true
+    ON CONFLICT(scope) DO UPDATE SET
+        members = members + 1,
+        input_tokens = input_tokens + excluded.input_tokens,
+        output_tokens = output_tokens + excluded.output_tokens,
+        cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
+        cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens,
+        cache_write_1h_tokens = cache_write_1h_tokens + excluded.cache_write_1h_tokens,
+        reasoning_members = reasoning_members + excluded.reasoning_members,
+        reasoning_tokens = reasoning_tokens + excluded.reasoning_tokens,
+        cost_usd = cost_usd + excluded.cost_usd,
+        estimated_members = estimated_members + excluded.estimated_members,
+        estimated_cost_usd = estimated_cost_usd + excluded.estimated_cost_usd,
+        gap_unreported = gap_unreported + excluded.gap_unreported,
+        gap_unpriced = gap_unpriced + excluded.gap_unpriced,
+        gap_interrupted = gap_interrupted + excluded.gap_interrupted,
+        gap_mixed = gap_mixed + excluded.gap_mixed,
+        gap_unknown = gap_unknown + excluded.gap_unknown,
+        basis_unknown = basis_unknown + excluded.basis_unknown,
+        basis_list_price = basis_list_price + excluded.basis_list_price,
+        basis_provider_reported = basis_provider_reported + excluded.basis_provider_reported,
+        basis_mixed = basis_mixed + excluded.basis_mixed;
 END;
-CREATE TRIGGER IF NOT EXISTS agent_usage_updated AFTER UPDATE ON agents BEGIN
-    DELETE FROM agent_usage WHERE agent_id = old.id OR agent_id = new.id;
-    INSERT INTO agent_usage(agent_id, usage)
-    SELECT new.id, json_extract(new.body, '$.stats.usage')
-    WHERE new.status != 'imported'
-      AND CASE WHEN json_valid(new.body) THEN json_extract(new.body, '$.id') END = new.id;
+CREATE TRIGGER IF NOT EXISTS usage_totals_removed AFTER DELETE ON agent_usage BEGIN
+    UPDATE usage_totals SET
+        members = members - 1,
+        input_tokens = input_tokens - old.input_tokens,
+        output_tokens = output_tokens - old.output_tokens,
+        cache_read_tokens = cache_read_tokens - old.cache_read_tokens,
+        cache_write_tokens = cache_write_tokens - old.cache_write_tokens,
+        cache_write_1h_tokens = cache_write_1h_tokens - old.cache_write_1h_tokens,
+        reasoning_members = reasoning_members - (old.reasoning_tokens IS NOT NULL),
+        reasoning_tokens = reasoning_tokens - COALESCE(old.reasoning_tokens, 0),
+        cost_usd = cost_usd - old.cost_usd,
+        estimated_members = estimated_members - (old.estimated_cost_usd IS NOT NULL),
+        estimated_cost_usd = estimated_cost_usd - COALESCE(old.estimated_cost_usd, 0.0),
+        gap_unreported = gap_unreported - (old.cost_gap IS 'unreported'),
+        gap_unpriced = gap_unpriced - (old.cost_gap IS 'unpriced'),
+        gap_interrupted = gap_interrupted - (old.cost_gap IS 'interrupted'),
+        gap_mixed = gap_mixed - (old.cost_gap IS 'mixed'),
+        gap_unknown = gap_unknown - (old.cost_gap IS 'unknown'),
+        basis_unknown = basis_unknown - (old.figure AND old.cost_basis = 'unknown'),
+        basis_list_price = basis_list_price - (old.figure AND old.cost_basis = 'list_price'),
+        basis_provider_reported = basis_provider_reported
+            - (old.figure AND old.cost_basis = 'provider_reported'),
+        basis_mixed = basis_mixed - (old.figure AND old.cost_basis = 'mixed')
+    WHERE scope = old.run OR (scope = '' AND NOT old.imported);
+    -- An emptied scope goes, so no rounding left in its sums outlives its members.
+    DELETE FROM usage_totals WHERE members = 0 AND (scope = old.run OR scope = '');
+END;
+CREATE TRIGGER IF NOT EXISTS agent_usage_inserted AFTER INSERT ON agents BEGIN
+    INSERT INTO agent_usage
+    SELECT new.id, new.run, new.status = 'imported', new.created_at,
+        json_extract(u, '$.input_tokens'), json_extract(u, '$.output_tokens'),
+        json_extract(u, '$.cache_read_tokens'), json_extract(u, '$.cache_write_tokens'),
+        json_extract(u, '$.cache_write_1h_tokens'), json_extract(u, '$.reasoning_tokens'),
+        json_extract(u, '$.cost_usd'), json_extract(u, '$.estimated_cost_usd'),
+        json_extract(u, '$.cost_gap'), json_extract(u, '$.cost_basis'),
+        json_extract(u, '$.figure')
+    FROM (SELECT aether_counted_usage(new.id, new.body) AS u) WHERE u IS NOT NULL;
+END;
+CREATE TRIGGER IF NOT EXISTS agent_usage_updated
+AFTER UPDATE OF id, status, run, created_at, body ON agents BEGIN
+    DELETE FROM agent_usage WHERE agent_id = old.id;
+    INSERT INTO agent_usage
+    SELECT new.id, new.run, new.status = 'imported', new.created_at,
+        json_extract(u, '$.input_tokens'), json_extract(u, '$.output_tokens'),
+        json_extract(u, '$.cache_read_tokens'), json_extract(u, '$.cache_write_tokens'),
+        json_extract(u, '$.cache_write_1h_tokens'), json_extract(u, '$.reasoning_tokens'),
+        json_extract(u, '$.cost_usd'), json_extract(u, '$.estimated_cost_usd'),
+        json_extract(u, '$.cost_gap'), json_extract(u, '$.cost_basis'),
+        json_extract(u, '$.figure')
+    FROM (SELECT aether_counted_usage(new.id, new.body) AS u) WHERE u IS NOT NULL;
 END;
 CREATE TRIGGER IF NOT EXISTS agent_usage_deleted AFTER DELETE ON agents BEGIN
     DELETE FROM agent_usage WHERE agent_id = old.id;
 END;
 DELETE FROM agent_usage;
-INSERT INTO agent_usage(agent_id, usage)
-SELECT id, json_extract(body, '$.stats.usage') FROM agents
-WHERE status != 'imported'
-  AND CASE WHEN json_valid(body) THEN json_extract(body, '$.id') END = id;
+DELETE FROM usage_totals;
+INSERT INTO agent_usage
+SELECT id, run, status = 'imported', created_at,
+    json_extract(u, '$.input_tokens'), json_extract(u, '$.output_tokens'),
+    json_extract(u, '$.cache_read_tokens'), json_extract(u, '$.cache_write_tokens'),
+    json_extract(u, '$.cache_write_1h_tokens'), json_extract(u, '$.reasoning_tokens'),
+    json_extract(u, '$.cost_usd'), json_extract(u, '$.estimated_cost_usd'),
+    json_extract(u, '$.cost_gap'), json_extract(u, '$.cost_basis'),
+    json_extract(u, '$.figure')
+FROM (SELECT id, run, status, created_at, aether_counted_usage(id, body) AS u FROM agents)
+WHERE u IS NOT NULL;
+UPDATE agents SET archived = 1
+WHERE archived = 0 AND json_valid(body) AND json_extract(body, '$.archived') = 1;
+CREATE INDEX IF NOT EXISTS agents_archived_id ON agents(archived, id);
+CREATE INDEX IF NOT EXISTS agents_run_archived_id ON agents(run, archived, id);
 "#;
 
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
@@ -597,6 +722,7 @@ const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
 fn schema_migration(tx: &Connection, to: u32) -> Result<()> {
     match to {
         29 => add_missing_column(tx, "agents", "subsystem", "TEXT"),
+        33 => add_missing_column(tx, "agents", "archived", "INTEGER NOT NULL DEFAULT 0"),
         _ => Ok(()),
     }
 }
@@ -775,6 +901,8 @@ fn refuse_newer_store(found: Option<u32>, supported: u32) -> Result<()> {
 
 /// Create or upgrade the schema. Refuses a store written by a newer version.
 pub fn migrate(conn: &Connection) -> Result<()> {
+    // The V33 triggers call it on every agent write, so it is there before them.
+    crate::sqlite::usage_totals::register(conn)?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
     )?;

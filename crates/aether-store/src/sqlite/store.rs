@@ -1,5 +1,5 @@
 use super::write_tally::WriteTally;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
@@ -437,11 +437,23 @@ impl Store for SqliteStore {
         self.read_fleet_usage()
     }
 
-    fn run_members(
+    fn run_totals(
         &self,
         run: aether_core::id::RunId,
-    ) -> Result<Vec<aether_core::budget::RunMember>> {
-        self.read_run_members(run)
+    ) -> Result<Option<aether_core::budget::RunTotals>> {
+        self.read_run_totals(run)
+    }
+
+    fn agent_usages(&self, agents: &[AgentId]) -> Result<BTreeMap<AgentId, Usage>> {
+        self.read_agent_usages_by_id(agents)
+    }
+
+    fn tree_page(&self, query: &crate::TreeQuery) -> Result<crate::TreePage> {
+        self.read_tree_page(query)
+    }
+
+    fn subtree_usages(&self, roots: &[AgentId]) -> Result<Vec<crate::UsageNode>> {
+        self.read_subtree_usages(roots)
     }
 
     fn subtree_ids(&self, root: AgentId) -> Result<BTreeSet<AgentId>> {
@@ -995,7 +1007,7 @@ pub(super) fn agent_list_sql(filter: &AgentFilter, args: &mut Arguments) -> Stri
 
 /// `status IN (...)` over the statuses that are not terminal, which the status
 /// index answers one status at a time.
-fn live_status_clause() -> String {
+pub(super) fn live_status_clause() -> String {
     // Off `is_terminal`, not a list typed here: a new terminal status must
     // not silently start counting as live.
     let live: Vec<String> = AgentStatusKind::ALL

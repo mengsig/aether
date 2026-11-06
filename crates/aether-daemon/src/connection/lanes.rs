@@ -344,6 +344,8 @@ mod tests {
             root: None,
             run: None,
             include_archived: false,
+            after: None,
+            limit: None,
         }));
         assert!(is_read(&Command::GetTranscript {
             agent: AgentId::new(),

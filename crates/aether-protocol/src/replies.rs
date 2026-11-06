@@ -214,6 +214,10 @@ pub struct AgentTree {
     /// last tree read for the same request, or empty if none finished yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stale: Option<StatusStale>,
+    /// Older finished agents in scope were left out of this page: ask again
+    /// with this as `after` for them. Absent when the tree is whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_after: Option<AgentId>,
 }
 
 /// One row of `aether runs list`, projected from a run's agents and tasks.

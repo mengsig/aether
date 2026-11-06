@@ -275,44 +275,4 @@ fn fleet_usage_follows_every_commit_as_the_whole_agent_sum_does() {
     assert_eq!(store.fleet_usage().unwrap(), summed);
 }
 
-#[test]
-fn run_members_read_what_whole_agents_say_without_their_bodies() {
-    let store = SqliteStore::open_in_memory().unwrap();
-    let run = RunId::new();
-    let mut commit = Commit::new();
-    for (n, status) in [
-        AgentStatus::Running,
-        AgentStatus::Completed { summary: None },
-        AgentStatus::Imported {
-            was: aether_core::agent::AgentStatusKind::Completed,
-        },
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let mut member = agent();
-        member.run = run;
-        member.status = status;
-        member.stats.usage.input_tokens = n as u64 + 1;
-        member.stats.usage.cost_usd = 0.5;
-        commit = commit.mutate(Mutation::UpsertAgent(member));
-    }
-    commit = commit.mutate(Mutation::UpsertAgent(agent()));
-    store.commit(commit).unwrap();
-
-    let whole: Vec<_> = store
-        .agents(&AgentFilter {
-            run: Some(run),
-            ..Default::default()
-        })
-        .unwrap()
-        .iter()
-        .map(aether_core::budget::RunMember::of)
-        .collect();
-    let mut narrow = store.run_members(run).unwrap();
-    narrow.sort_by_key(|m| whole.iter().position(|w| w.id == m.id));
-    assert_eq!(whole.len(), 3, "the other run's agent is not a member");
-    assert_eq!(narrow, whole);
-}
-
 mod engine_sessions;

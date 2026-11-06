@@ -16,9 +16,20 @@ use aether_protocol::ErrorReply;
 use parking_lot::Mutex;
 use tokio::sync::watch;
 
-/// How long a `status` or `get_tree` request waits for a fresh read before it
-/// answers with the last one: dozens of healthy reads, and well under a second.
-pub(crate) const PATIENCE: Duration = Duration::from_millis(800);
+/// How long a `status` request waits for a fresh read before it answers with
+/// the last one: past the runtime's section deadline, so a read that cut its
+/// slow sections still lands, and under a second for the whole reply.
+pub(crate) const PATIENCE: Duration = Duration::from_millis(900);
+
+/// How long a `get_tree` or `get_github_watcher` request waits for its read:
+/// the same budget each `status` section has.
+pub(crate) const READ_BUDGET: Duration = aether_runtime::STATUS_DEADLINE;
+
+const _: () = assert!(READ_BUDGET.as_millis() < PATIENCE.as_millis());
+const _: () = assert!(
+    PATIENCE.as_millis() < 1_000,
+    "a status reply comes within a second"
+);
 
 type Read<T> = Arc<dyn Fn() -> Result<T, ErrorReply> + Send + Sync>;
 

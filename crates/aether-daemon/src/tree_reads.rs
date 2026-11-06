@@ -8,7 +8,7 @@ use aether_core::id::{AgentId, RunId};
 use aether_protocol::{AgentTree, ErrorReply, StatusStale};
 use parking_lot::Mutex;
 
-use crate::status_reads::{Answer, PATIENCE, StatusReads};
+use crate::status_reads::{Answer, READ_BUDGET, StatusReads};
 
 /// What makes two `get_tree` requests the same read.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -17,6 +17,8 @@ pub(crate) struct TreeKey {
     pub(crate) include_archived: bool,
     pub(crate) role_prefix: Option<String>,
     pub(crate) root: Option<AgentId>,
+    pub(crate) after: Option<AgentId>,
+    pub(crate) limit: Option<usize>,
 }
 
 /// How many request shapes keep their last tree; past it the idle ones go.
@@ -41,10 +43,10 @@ impl TreeReads {
                 "get_tree: every kept request shape is still reading"
             );
             // Waited out like any stale answer, so a client asking again cannot spin.
-            tokio::time::sleep(PATIENCE).await;
+            tokio::time::sleep(READ_BUDGET).await;
             return Ok(stale_tree(None));
         };
-        let answer = reads.answer(PATIENCE, read).await?;
+        let answer = reads.answer(READ_BUDGET, read).await?;
         Ok(match answer {
             Answer::Fresh(tree) => {
                 debug_assert!(tree.stale.is_none(), "a tree read is fresh when built");
@@ -82,7 +84,7 @@ fn stale_tree(last: Option<(aether_core::time::Timestamp, Arc<AgentTree>)>) -> A
     assert!(tree.stale.is_none(), "only a finished read is kept");
     tree.stale = Some(StatusStale {
         read_at,
-        waited_ms: PATIENCE.as_millis() as u64,
+        waited_ms: READ_BUDGET.as_millis() as u64,
     });
     tree
 }
@@ -97,6 +99,8 @@ mod tests {
             include_archived: false,
             role_prefix: None,
             root,
+            after: None,
+            limit: None,
         }
     }
 
@@ -106,7 +110,7 @@ mod tests {
         assert!(tree.nodes.is_empty() && tree.roots.is_empty());
         let stale = tree.stale.expect("marked stale");
         assert_eq!(stale.read_at, None, "nothing was read");
-        assert_eq!(stale.waited_ms, PATIENCE.as_millis() as u64);
+        assert_eq!(stale.waited_ms, READ_BUDGET.as_millis() as u64);
     }
 
     #[test]

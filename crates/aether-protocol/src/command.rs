@@ -68,7 +68,10 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
     },
-    /// The live graph: every agent in the run (or all runs) with relations.
+    /// The live graph: the agents in the run (or all runs) with relations.
+    /// One page: every live agent, then the newest finished ones, at most
+    /// `limit` of those (1 to 500, 500 when absent); `AgentTree.next_after`
+    /// says older ones were left out.
     GetTree {
         run: Option<RunId>,
         /// Include agents cleared from the view.
@@ -81,6 +84,13 @@ pub enum Command {
         /// Only this agent and its descendants. Needs `features::AGENTS_PAGING`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         root: Option<AgentId>,
+        /// The page of finished agents older than this one, from an earlier
+        /// page's `next_after`; that page holds no live agent. Needs `features::TREE_PAGES`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<AgentId>,
+        /// At most this many finished agents. Needs `features::TREE_PAGES`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
     },
     UpdateAgent {
         id: AgentId,

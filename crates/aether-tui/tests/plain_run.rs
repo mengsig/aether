@@ -127,6 +127,7 @@ fn tree() -> AgentTree {
         stale: None,
         roots: vec![id],
         nodes,
+        next_after: None,
     }
 }
 

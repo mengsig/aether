@@ -108,12 +108,14 @@ pub fn fleet_tools() -> Vec<Value> {
         ),
         tool(
             "get_tree",
-            "The live graph: every agent in a run, with its children and usage.",
+            "The live graph: a run's live agents and its newest finished ones, with children and usage. A reply with `next_after` has older finished agents: pass it as `after`.",
             json!({
                 "type": "object",
                 "properties": {
                     "run": {"type": "string"},
-                    "include_archived": {"type": "boolean", "description": "Include agents cleared from the default view (default false)."}
+                    "include_archived": {"type": "boolean", "description": "Include agents cleared from the default view (default false)."},
+                    "after": {"type": "string", "description": "The `next_after` of the page before: continue with older finished agents."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "At most this many finished agents (default and most 500)."}
                 }
             }),
         ),
@@ -395,11 +397,15 @@ fn default_limit() -> usize {
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct RunArg {
+struct TreeArg {
     #[serde(default)]
     run: Option<String>,
     #[serde(default)]
     include_archived: bool,
+    #[serde(default)]
+    after: Option<String>,
+    #[serde(default)]
+    limit: Option<u32>,
 }
 
 /// Deserialize a tool's arguments, naming the tool in any complaint.
@@ -427,12 +433,14 @@ fn command_for(name: &str, arguments: Value) -> Result<Command, String> {
             Command::GetAgent { id: id(&a.id)? }
         }
         "get_tree" => {
-            let a: RunArg = args(name, arguments)?;
+            let a: TreeArg = args(name, arguments)?;
             Command::GetTree {
                 role_prefix: None,
                 root: None,
                 run: a.run.as_deref().map(id).transpose()?,
                 include_archived: a.include_archived,
+                after: a.after.as_deref().map(id).transpose()?,
+                limit: a.limit,
             }
         }
         "create_agent" => {

@@ -179,6 +179,7 @@ pub fn app_with_transcript(messages: &[&str]) -> App {
             stale: None,
             roots: vec![id],
             nodes,
+            next_after: None,
         })),
     });
     app.reduce(AppEvent::Reply {
@@ -323,6 +324,7 @@ pub fn populated_app() -> App {
             stale: None,
             roots: vec![id],
             nodes,
+            next_after: None,
         })),
     });
     app.reduce(AppEvent::Reply {
@@ -377,6 +379,7 @@ pub fn populated_app() -> App {
                 started_at: at,
                 rate_usd_per_hour: 2.5,
                 forecast_usd_next_hour: 2.5,
+                rate_approximate: false,
             }],
             approval_default: Default::default(),
             network_default: Default::default(),

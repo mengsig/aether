@@ -43,6 +43,8 @@ impl App {
                             root: None,
                             run: None,
                             include_archived: true,
+                            after: None,
+                            limit: None,
                         },
                         then: Then::BoardConfirm {
                             agent: id,

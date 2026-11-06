@@ -12,6 +12,7 @@ mod migration_backup;
 mod schedule_tests;
 mod schema;
 mod sqlite;
+mod tree_query;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -47,6 +48,7 @@ use aether_core::memory_feedback::{FeedbackTally, MemoryFeedback};
 pub use migration_backup::backup_database;
 pub use schema::SCHEMA_VERSION;
 pub use sqlite::{HistoryScreen, PushSubscriptionRow, RunExpiry, SqliteStore};
+pub use tree_query::{TREE_PAGE_MAX, TreePage, TreeQuery, UsageNode, tree_page_of};
 
 /// The single write path, shared by everything that commits to one store.
 ///
@@ -771,20 +773,65 @@ pub trait Store: Send + Sync {
     /// The stored agents among `ids` plus every stored ancestor of them, in no
     /// particular order. Unknown ids and missing parents are skipped.
     fn ancestry(&self, ids: &[AgentId]) -> Result<Vec<Agent>>;
-    /// Usage summed over every agent that is not an imported archive, decoding
-    /// each row's usage alone rather than the whole agent.
+    /// Usage summed over every agent that is not an imported archive. The
+    /// SQLite store reads it from one row its triggers keep as agents are written.
     fn fleet_usage(&self) -> Result<aether_core::model::Usage>;
-    /// What a run summary reads of each of `run`'s agents. The SQLite store
-    /// reads columns and `agent_usage`, never the agents' bodies.
-    fn run_members(&self, run: RunId) -> Result<Vec<aether_core::budget::RunMember>> {
+    /// What `run`'s agents billed between them, how many there are and when
+    /// the first was created; `None` for a run with no agent. The SQLite
+    /// store reads its kept totals, never the agents' bodies.
+    fn run_totals(&self, run: RunId) -> Result<Option<aether_core::budget::RunTotals>> {
         let agents = self.agents(&AgentFilter {
             run: Some(run),
             ..Default::default()
         })?;
-        Ok(agents
-            .iter()
-            .map(aether_core::budget::RunMember::of)
-            .collect())
+        Ok(aether_core::budget::RunTotals::of(&agents))
+    }
+    /// The usage of each of `agents` the store holds, read by id; the SQLite
+    /// store reads `agent_usage`, not the bodies. Unknown ids are left out.
+    fn agent_usages(
+        &self,
+        agents: &[AgentId],
+    ) -> Result<BTreeMap<AgentId, aether_core::model::Usage>> {
+        let mut usages = BTreeMap::new();
+        for id in agents {
+            if let Some(agent) = self.agent(*id)? {
+                usages.insert(*id, agent.stats.usage);
+            }
+        }
+        Ok(usages)
+    }
+    /// One page of the agents a tree shows, filtered before any is decoded:
+    /// on the first page every live agent in scope and the root, and on each
+    /// page the newest finished ones, up to `query.limit`.
+    fn tree_page(&self, query: &TreeQuery) -> Result<TreePage> {
+        tree_page_of(self.tree_scope(query)?, query)
+    }
+    /// The agents in `query`'s scope, unpaged: only for stores without
+    /// [`Store::tree_page`] of their own, such as test doubles.
+    fn tree_scope(&self, query: &TreeQuery) -> Result<Vec<Agent>> {
+        let mut agents = match query.root {
+            Some(root) => self.subtree_agents(root)?,
+            None => self.agents(&AgentFilter {
+                run: query.run,
+                ..Default::default()
+            })?,
+        };
+        agents.retain(|agent| query.selects(agent));
+        Ok(agents)
+    }
+    /// `roots` and every agent below them, across runs, as a usage roll-up
+    /// reads them; the SQLite store reads no body. Unknown roots are skipped.
+    fn subtree_usages(&self, roots: &[AgentId]) -> Result<Vec<UsageNode>> {
+        let mut nodes = Vec::new();
+        let mut seen = BTreeSet::new();
+        for root in roots {
+            for agent in self.subtree_agents(*root)? {
+                if seen.insert(agent.id) {
+                    nodes.push(UsageNode::of(&agent));
+                }
+            }
+        }
+        Ok(nodes)
     }
     /// Whether any agent, including archived and terminal agents, carries this repository scope.
     fn any_agent_in_repository(&self, repository: &str) -> Result<bool>;

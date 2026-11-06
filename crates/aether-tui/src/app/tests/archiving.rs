@@ -105,6 +105,7 @@ fn a_selection_removed_by_something_other_than_this_client_clears_on_the_next_re
         stale: None,
         roots: vec![],
         nodes: std::collections::BTreeMap::new(),
+        next_after: None,
     };
     app.reduce(AppEvent::Reply {
         then: Then::Tree,
@@ -128,6 +129,7 @@ fn a_stale_empty_tree_keeps_the_tree_shown_and_says_why() {
         }),
         roots: vec![],
         nodes: std::collections::BTreeMap::new(),
+        next_after: None,
     };
     let effects = app.reduce(AppEvent::Reply {
         then: Then::Tree,
