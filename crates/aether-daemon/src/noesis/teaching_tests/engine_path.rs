@@ -420,3 +420,96 @@ fn live_text(bus: &mut tokio::sync::broadcast::Receiver<BusMessage>, agent: Agen
     }
     text
 }
+
+/// Reports `spent` as soon as it starts, then holds until cancelled.
+struct HoldingCli {
+    spent: Usage,
+    started: CancellationToken,
+}
+
+#[async_trait::async_trait]
+impl aether_engine::Engine for HoldingCli {
+    fn kind(&self) -> EngineKind {
+        EngineKind::CLAUDE_CODE
+    }
+
+    fn adapter(&self) -> String {
+        "holding-claude-code/1".into()
+    }
+
+    async fn run(
+        &self,
+        _turn: aether_engine::EngineTurn,
+        cancel: CancellationToken,
+    ) -> Result<EngineRun, CliError> {
+        let (tx, events) = mpsc::channel(4);
+        let (spent, started) = (self.spent, self.started.clone());
+        tokio::spawn(async move {
+            if tx
+                .send(EngineEvent::UsageDelta { usage: spent })
+                .await
+                .is_err()
+            {
+                return;
+            }
+            started.cancel();
+            cancel.cancelled().await;
+        });
+        Ok(EngineRun {
+            events,
+            input: None,
+            decisions: None,
+            stop: None,
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_step_cancelled_mid_run_records_what_the_engine_reported() {
+    let home = Home::new();
+    let spent = Usage {
+        input_tokens: 900,
+        output_tokens: 40,
+        ..Default::default()
+    };
+    let started = CancellationToken::new();
+    let cli = HoldingCli {
+        spent,
+        started: started.clone(),
+    };
+    std::fs::write(home.config.path().join("providers.toml"), PROVIDERS).expect("providers");
+    let mut engines: HashMap<EngineKind, Arc<dyn aether_engine::Engine>> = HashMap::new();
+    engines.insert(EngineKind::CLAUDE_CODE, Arc::new(cli));
+    let harness = Harness::open_on_engines(&home, engines).await;
+    harness
+        .configure(NoesisSettingsPatch {
+            enabled: Some(true),
+            ..Default::default()
+        })
+        .await;
+    let created = harness.create(json!({})).await;
+    tokio::time::timeout(Duration::from_secs(10), started.cancelled())
+        .await
+        .expect("the step reached the engine");
+    harness
+        .daemon
+        .runtime
+        .cancel_agent(created.agent, Some("stop".into()), Actor::user())
+        .expect("cancelled");
+    harness.settled().await;
+
+    let row = harness
+        .daemon
+        .runtime
+        .store()
+        .agent(created.agent)
+        .expect("read");
+    let usage = row.expect("the agent").stats.usage;
+    assert_eq!(usage.input_tokens, spent.input_tokens, "{usage:?}");
+    assert_eq!(usage.output_tokens, spent.output_tokens, "{usage:?}");
+    assert!(
+        usage.cost_gap.is_some(),
+        "a cut-short call is marked: {usage:?}"
+    );
+    harness.close().await;
+}

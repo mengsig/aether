@@ -11,13 +11,15 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use aether_core::agent::{Agent, AgentConfig};
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::{AgentId, RunId};
 use aether_core::model::{
-    ContentBlock, CostGap, Message, MessageRole, ModelError, ModelRef, ModelRequest, ModelResponse,
-    StreamAccumulator, StreamEvent, SystemBlock, ToolResultBlock, ToolSpec, Usage,
+    ContentBlock, CostGap, Message, MessageRole, ModelError, ModelErrorClass, ModelRef,
+    ModelRequest, ModelResponse, StreamAccumulator, StreamEvent, SystemBlock, ToolResultBlock,
+    ToolSpec, Usage,
 };
 use aether_core::tool::ToolExposure;
 use aether_model::{ModelClient, ModelStream, Models};
@@ -302,13 +304,17 @@ impl AetherEngine<'_> {
                 let mut live = NoesisStepStream::start(host.runtime.clone(), agent.id, turn);
                 let ended = agent_ended(&host.runtime, agent.id);
                 tokio::pin!(ended);
+                let opening = client.stream(request, cancel.clone());
+                tokio::pin!(opening);
                 let stream = tokio::select! {
-                    stream = client.stream(request, cancel.clone()) => stream.map_err(not_sent)?,
+                    stream = &mut opening => stream.map_err(not_sent)?,
                     () = &mut ended => {
                         cancel.cancel();
-                        return Ok(CallEnd::AgentEnded(Usage::default()));
+                        return Ok(CallEnd::AgentEnded(settled_usage(opening).await));
                     }
-                    () = cancel.cancelled() => return Err(failed(SERVICE_STOPPED)),
+                    () = cancel.cancelled() => {
+                        return Ok(stopped(settled_usage(opening).await));
+                    }
                 };
                 read_reply(stream, &cancel, ended, &mut live).await
             })
@@ -586,7 +592,7 @@ async fn read_reply(
                 cancel.cancel();
                 return Ok(CallEnd::AgentEnded(usage));
             }
-            () = cancel.cancelled() => return Err(failed(SERVICE_STOPPED)),
+            () = cancel.cancelled() => return Ok(stopped(usage)),
         };
         let event = match item {
             None => break,
@@ -607,6 +613,42 @@ async fn read_reply(
         .map_err(|e| failed(format!("malformed model stream: {e}")))?;
     debug_assert_eq!(response.usage, usage, "the reply carries the last reading");
     Ok(CallEnd::Replied(response))
+}
+
+/// How long a cancelled call may take to report what it spent. An engine
+/// client settles its accounting as soon as it sees the cancel.
+const SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The usage a call cancelled while opening reports once it has settled;
+/// none if it does not settle in time, which the cost gap then records.
+async fn settled_usage(
+    opening: Pin<&mut impl Future<Output = Result<ModelStream, ModelError>>>,
+) -> Usage {
+    let drained = tokio::time::timeout(SETTLE_TIMEOUT, async {
+        let Ok(mut stream) = opening.await else {
+            return Usage::default();
+        };
+        let mut usage = Usage::default();
+        while let Some(Ok(event)) = stream.next().await {
+            if let StreamEvent::Usage { usage: reading } = event {
+                usage = reading;
+            }
+        }
+        usage
+    })
+    .await;
+    if drained.is_err() {
+        tracing::warn!("a cancelled Noesis model call did not report its usage in time");
+    }
+    drained.unwrap_or_default()
+}
+
+/// The service stopped mid-call: the call is charged as a broken one.
+fn stopped(usage: Usage) -> CallEnd {
+    CallEnd::Broke(
+        usage,
+        ModelError::new(ModelErrorClass::Cancelled, SERVICE_STOPPED),
+    )
 }
 
 /// The step's turn number for live deltas: one more than the replies so far.
