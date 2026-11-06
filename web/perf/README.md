@@ -49,3 +49,23 @@ sh ../scripts/ci_slot.sh node perf/run.ts --runs 6 --calibrate
 
 It prints each measure across the runs and the budgets they support; copy the ones that changed
 into `budgets.json` with the reason.
+
+## Rich lesson rendering
+
+Chat and Learn share the UI renderer. KaTeX and Mermaid enter through dynamic imports
+in `packages/ui/src/markdown/math.tsx` and `mermaid.tsx`; neither engine is needed to
+parse or paint ordinary messages. KaTeX emits native MathML, so it ships no font files
+or vendor stylesheet. Mermaid uses the maintained 11.x line: 12.x adds an ELK dependency
+outside the repository's licence allowlist. A scoped npm override makes Mermaid
+share the patched direct KaTeX 0.19 engine, avoiding both its vulnerable 0.16 dependency
+and a second math runtime.
+
+The initial-load byte budgets stay unchanged. Only total JavaScript, total distribution,
+gzipped JavaScript and largest-chunk budgets account for the measured lazy vendor cost.
+The service worker still precaches the whole distribution for offline use; lazy imports
+keep vendor parsing/execution out of the initial page, not out of that background cache.
+
+`packages/ui/src/markdown/lesson.perf.test.tsx` mounts 200 messages exceeding 200 KB,
+including tables, highlighted code and 400 math expressions, within five seconds.
+Additional 200 KB cases guard the highlighter against quadratic scans of unterminated
+strings/comments; the original parser's adversarial timing cases remain in its moved suite.

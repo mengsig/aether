@@ -2,7 +2,7 @@
 // concludes the problem, and the session read or the conclusion event reveals it.
 
 import type { aether } from "@aether-ui/protocol";
-import { LessonText } from "./LessonText.tsx";
+import { Markdown } from "@aether-ui/ui";
 import { invariant, OUTCOME_LABEL } from "./model.ts";
 import type { Conclusion } from "./timeline.ts";
 
@@ -20,7 +20,7 @@ export function ProblemCard({ problem, conclusion, active }: { problem: aether.P
   return (
     <article className="learn-q learn-problem" data-state={active && conclusion === undefined ? "open" : "answered"} aria-label="Practice problem">
       <p className="learn-q-kind">Practice · {MODE_LABEL[problem.mode]}</p>
-      <p className="learn-q-prompt"><LessonText text={problem.statement} /></p>
+      <div className="learn-q-prompt"><Markdown text={problem.statement} /></div>
       {active && <p className="learn-muted">Work it out below and send your answer. Ask for a hint whenever you need one.</p>}
       {conclusion !== undefined && (
         <div className="learn-reveal" role="status">
@@ -30,7 +30,7 @@ export function ProblemCard({ problem, conclusion, active }: { problem: aether.P
             {conclusion.miss_class ? ` · ${MISS_LABEL[conclusion.miss_class]}` : ""}
             {conclusion.retest ? " · Comes back for another try" : ""}
           </p>
-          <p><span className="learn-muted">Solution: </span><LessonText text={conclusion.solution} /></p>
+          <div><span className="learn-muted">Solution: </span><Markdown text={conclusion.solution} /></div>
         </div>
       )}
       {!active && conclusion === undefined && <p className="learn-muted">Concluded. The solution shows here once Noesis records it.</p>}

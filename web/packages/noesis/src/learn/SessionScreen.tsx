@@ -2,14 +2,13 @@
 // problems), the plan beside it and the way to answer. The teacher's reply streams in as it is written.
 
 import type { aether, RouteProps } from "@aether-ui/protocol";
-import { Button, EmptyState, ErrorState } from "@aether-ui/ui";
+import { Button, EmptyState, ErrorState, Markdown } from "@aether-ui/ui";
 import { useMemo } from "react";
 import { useLearn, useNoesisRead, useOperateRefusal } from "./data.ts";
 import { LearnFrame, type OpenGate } from "./LearnFrame.tsx";
 import { Composer } from "./Composer.tsx";
 import { CompletionCard, SourcesCard, UsageNote } from "./LessonCards.tsx";
 import { useLessonTurn } from "./lesson-turn.ts";
-import { LessonText } from "./LessonText.tsx";
 import { exhaustedBudget, invariant, PHASE_LABEL, planComplete, type BudgetUse, type Refusal } from "./model.ts";
 import { PlanTree } from "./PlanTree.tsx";
 import { ProblemCard } from "./ProblemCard.tsx";
@@ -83,7 +82,7 @@ function TimelineEntry({ item, onAnswer }: { item: TimelineItem; onAnswer: ((que
   if (item.kind === "message") {
     return (
       <div className="learn-bubble" data-role={item.role} data-live={item.live || undefined} aria-busy={item.live || undefined}>
-        <span className="ui-visually-hidden">{item.role === "teacher" ? "Teacher:" : "You:"}</span><LessonText text={item.text} />
+        <span className="ui-visually-hidden">{item.role === "teacher" ? "Teacher:" : "You:"}</span><Markdown text={item.text} />
       </div>
     );
   }

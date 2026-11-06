@@ -4,7 +4,7 @@
 import { Badge } from "@aether-ui/ui";
 import { memo, type ReactNode } from "react";
 import { formatBytes, formatCost, formatDuration, formatTime, formatTokens } from "./format.ts";
-import { Markdown } from "./markdown.tsx";
+import { Markdown } from "@aether-ui/ui";
 import type { ConversationRow, InvocationMeta, Part, ToolResultView } from "./rows.ts";
 
 /** Long tool input and output stay readable without one call filling the screen. */

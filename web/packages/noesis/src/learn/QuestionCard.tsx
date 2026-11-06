@@ -3,9 +3,8 @@
 // beside the daemon's reveal: right or wrong, the key and why.
 
 import type { aether } from "@aether-ui/protocol";
-import { Button } from "@aether-ui/ui";
+import { Button, InlineMarkdown, Markdown } from "@aether-ui/ui";
 import { useId, useState, type FormEvent } from "react";
-import { LessonText } from "./LessonText.tsx";
 import { CONFIDENCE_STOPS, invariant, type Confidence } from "./model.ts";
 
 export interface AnswerInput {
@@ -35,7 +34,7 @@ export function QuestionCard({ question, answer, result, open: posedOpen, onAnsw
   const answered = !open;
   const body = (
     <>
-      <p className="learn-q-prompt"><LessonText text={question.prompt} /></p>
+      <div className="learn-q-prompt"><Markdown text={question.prompt} /></div>
       {open && <AnswerForm question={question} onAnswer={onAnswer} />}
       {answered && <Reveal question={question} answer={answer} result={result} />}
     </>
@@ -45,7 +44,7 @@ export function QuestionCard({ question, answer, result, open: posedOpen, onAnsw
       <p className="learn-q-kind">{KIND_LABEL[question.kind]}{question.multi ? " · pick every one that fits" : ""}</p>
       {answered && question.collapsed ? (
         <details className="learn-q-details">
-          <summary><LessonText text={question.prompt} /><span className="learn-q-summary-result"> · {resultWord(result)}</span></summary>
+          <summary><InlineMarkdown text={question.prompt} /><span className="learn-q-summary-result"> · {resultWord(result)}</span></summary>
           <Reveal question={question} answer={answer} result={result} />
         </details>
       ) : body}
@@ -71,7 +70,7 @@ function GivenAnswer({ answer }: { answer: aether.RecordedAnswer }) {
   const sure = answer.confidence == null ? "" : ` · ${answer.confidence}% sure`;
   if (answer.dont_know) return <p className="learn-reveal-given"><span className="learn-muted">You said you did not know{sure}</span></p>;
   const given = (answer.chosen ?? []).length > 0 ? (answer.chosen ?? []).join(", ") : answer.text ?? "";
-  return <p className="learn-reveal-given"><span className="learn-muted">Your answer: </span><LessonText text={given} /><span className="learn-muted">{sure}</span></p>;
+  return <p className="learn-reveal-given"><span className="learn-muted">Your answer: </span><InlineMarkdown text={given} /><span className="learn-muted">{sure}</span></p>;
 }
 
 /** The daemon's reveal beside the learner's answer: right or wrong, the key in the labels they saw, and why. */
@@ -87,8 +86,8 @@ function Reveal({ question, answer, result }: { question: aether.Question; answe
     <div className="learn-reveal" role="status">
       {result.correct != null && <p className="learn-reveal-verdict" data-correct={result.correct}>{result.correct ? "✓ Correct" : "✗ Not quite"}</p>}
       {answer && <GivenAnswer answer={answer} />}
-      {labels.length > 0 && <p><span className="learn-muted">{wrong ? "Correct answer: " : "Answer: "}</span><LessonText text={labels.join(", ")} /></p>}
-      {result.explanation && <p className="learn-reveal-why">{wrong && <span className="learn-muted">Why: </span>}<LessonText text={result.explanation} /></p>}
+      {labels.length > 0 && <p><span className="learn-muted">{wrong ? "Correct answer: " : "Answer: "}</span>{labels.map((label, index) => <span key={index}>{index > 0 ? ", " : ""}<InlineMarkdown text={label} /></span>)}</p>}
+      {result.explanation && <div className="learn-reveal-why">{wrong && <span className="learn-muted">Why: </span>}<Markdown text={result.explanation} /></div>}
     </div>
   );
 }
@@ -131,7 +130,7 @@ function AnswerForm({ question, onAnswer }: { question: aether.Question; onAnswe
             <label key={option.value} className="learn-option">
               <input type={question.multi ? "checkbox" : "radio"} name={`${id}-choice`} value={option.value} checked={choices.includes(option.value)}
                 onChange={(e) => pick(option.value, e.target.checked)} />
-              <span><LessonText text={option.label} /></span>
+              <InlineMarkdown text={option.label} />
             </label>
           ))}
         </fieldset>

@@ -1,18 +1,25 @@
 // @vitest-environment happy-dom
 import { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, test } from "vitest";
-import { Markdown, safeHref } from "./markdown.tsx";
+import { Markdown } from "./markdown.tsx";
+import { safeHref } from "./url.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-afterEach(() => { document.body.innerHTML = ""; });
+const roots: Root[] = [];
+afterEach(async () => {
+  await act(async () => { for (const root of roots.splice(0)) root.unmount(); });
+  document.body.replaceChildren();
+});
 
 async function render(text: string): Promise<HTMLElement> {
   const container = document.createElement("div");
   document.body.append(container);
-  await act(async () => createRoot(container).render(<Markdown text={text} />));
+  const mounted = createRoot(container);
+  roots.push(mounted);
+  await act(async () => mounted.render(<Markdown text={text} />));
   const root = container.firstElementChild as HTMLElement | null;
   if (!root) throw new Error("Markdown rendered nothing");
   return root;
@@ -25,8 +32,6 @@ describe("safeHref", () => {
     ["https://example.com/a?b=1&c=2", "https://example.com/a?b=1&c=2"],
     ["HTTP://example.com", "HTTP://example.com"],
     ["mailto:me@example.com", "mailto:me@example.com"],
-    ["#section", "#section"],
-    ["/docs/page", "/docs/page"],
   ])("allows %s", (url, expected) => expect(safeHref(url)).toBe(expected));
 
   test.each([
@@ -44,7 +49,7 @@ describe("safeHref", () => {
     "//evil.example/x",
     "/\\evil.example/x",
     "\\\\evil.example",
-    "relative/path",
+    "relative/path", "#section", "/docs/page",
     "",
     `https://example.com/${"a".repeat(3000)}`,
   ])("rejects %j", (url) => expect(safeHref(url)).toBeNull());
@@ -191,7 +196,7 @@ describe("inline", () => {
     expect(anchor[0]?.getAttribute("href")).toBe("https://example.com/a_(b)");
     expect(anchor[0]?.getAttribute("target")).toBe("_blank");
     expect(anchor[0]?.getAttribute("rel")).toBe("noopener noreferrer nofollow");
-    expect(anchor[1]?.getAttribute("href")).toBe("#top");
+    expect(anchor).toHaveLength(1);
   });
 
   test("autolinks bare URLs without their trailing punctuation", async () => {

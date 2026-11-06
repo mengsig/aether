@@ -80,7 +80,7 @@
   .learn-timeline { display: grid; gap: var(--space-4); margin: 0; padding: 0; list-style: none; }
   .learn-timeline-item { animation: ui-rise var(--motion-base) var(--ease-standard); }
   .learn-bubble {
-    max-inline-size: 42rem; padding: var(--space-4) var(--space-5); border-radius: var(--radius-lg); white-space: pre-wrap; overflow-wrap: anywhere;
+    max-inline-size: 42rem; padding: var(--space-4) var(--space-5); border-radius: var(--radius-lg); overflow-wrap: anywhere;
     background: var(--color-surface-1); font: var(--text-md) / var(--leading-prose) var(--font-prose);
   }
   .learn-bubble[data-role="learner"] { justify-self: end; margin-inline-start: auto; background: var(--color-surface-3); font-family: var(--font-ui); }

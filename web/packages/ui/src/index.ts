@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 // @aether-ui/ui: tokens, primitives and the shell (CONTRACTS.md §2.1, §4).
-// It imports only React and protocol types (§2.2); the app wires it to core.
+// The shared renderer also uses KaTeX and lazy Mermaid; the app wires the kit to core.
 
 import "./tokens.css";
 import "./base.css";
@@ -26,3 +26,5 @@ export { EntityActionMenu, EntityActionProvider, actionsFor, runAction } from ".
 export { ConnectionList } from "./shell-parts.tsx";
 export { AppShell, screenFor, type AppShellProps, type ShellMatch } from "./app-shell.tsx";
 export { FOCUSABLE } from "./focus.ts";
+
+export { Markdown, InlineMarkdown } from "./markdown/markdown.tsx";
