@@ -157,7 +157,8 @@ before updating.
   than a failure; the chat's transcript, not its composer, takes the free
   height; narrow pages no longer scroll sideways behind the rail; an empty
   inbox and the New item sheet guide instead of a faint line or errors
-  before anything was typed.
+  before anything was typed; a missing item is told in place, without a
+  refresh toast over it.
 - **`status` and `get_tree` on a large, long-lived store.** The fleet's
   usage and each run's are one row each, kept by triggers as agents are
   written, which count exactly the agents the store can read, so a
