@@ -37,8 +37,18 @@ test.afterAll(async () => {
   await writeFile(path.join(OUT, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 });
 
+interface ShootOptions {
+  readonly ready?: string;
+  readonly readyMs?: number;
+  /** Runs after the screen is open, before the shots: opens a sheet, expands a row. */
+  readonly prepare?: (page: Page) => Promise<void>;
+}
+
 /** Opens `hash`, waits for `ready` (or for the screen's chunk), then shoots it in every variant. */
-async function shoot(page: Page, stack: Stack, screen: string, state: string, hash: string, ready?: string, readyMs = 15_000): Promise<void> {
+async function shoot(page: Page, stack: Stack, screen: string, state: string, hash: string, readyOrOptions?: string | ShootOptions, readyMs = 15_000): Promise<void> {
+  const options: ShootOptions = typeof readyOrOptions === "string" ? { ready: readyOrOptions, readyMs } : readyOrOptions ?? {};
+  const ready = options.ready;
+  const waitMs = options.readyMs ?? readyMs;
   assert.ok(OUT !== undefined, "E2E_CAPTURE is set");
   assert.ok(hash.startsWith("#/") || hash.startsWith("/"), `a route or path: ${hash}`);
   await mkdir(OUT, { recursive: true });
@@ -46,7 +56,8 @@ async function shoot(page: Page, stack: Stack, screen: string, state: string, ha
   await expect(page.locator(".ui-screen-skeleton"), `${screen} loads its screen`).toHaveCount(0);
   // Off every control, so no hover style shows in the shot.
   await page.mouse.move(0, 0);
-  if (ready !== undefined) await expect(page.locator(ready).first(), `${screen} (${state}) shows ${ready}`).toBeVisible({ timeout: readyMs });
+  if (ready !== undefined) await expect(page.locator(ready).first(), `${screen} (${state}) shows ${ready}`).toBeVisible({ timeout: waitMs });
+  if (options.prepare !== undefined) await options.prepare(page);
   const file = `${String(manifest.length + 1).padStart(2, "0")}-${screen}-${state}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
   for (const variant of VARIANTS) {
     await page.setViewportSize({ width: variant.width, height: variant.height });
@@ -57,7 +68,15 @@ async function shoot(page: Page, stack: Stack, screen: string, state: string, ha
   manifest.push({ screen, state, file, variants: VARIANTS.map((variant) => variant.name) });
 }
 
+async function openStartSheet(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Start an agent" }).first().click();
+  await expect(page.getByTestId("start-submit")).toBeVisible();
+  await page.getByTestId("start-objective").fill("Read the repository and list the three riskiest files.");
+  await page.mouse.move(0, 0);
+}
+
 test("unpaired: the shell and both pairing screens", async ({ page, stack }) => {
+  await shoot(page, stack, "Home", "unpaired", "#/", '[data-testid="home-dashboard"]');
   await shoot(page, stack, "Fleet", "unpaired", "#/fleet");
   await shoot(page, stack, "Pairing", "Aether", "#/pair/aether", "form");
   await shoot(page, stack, "Pairing", "Archon", "#/pair/archon", "form");
@@ -72,23 +91,44 @@ test("operator: empty, then loaded, then error states", async ({ page, stack }) 
   await shoot(page, stack, "History", "empty", "#/archon/history");
   await shoot(page, stack, "Task graph", "empty", "#/archon/graph");
 
+  await shoot(page, stack, "Home", "empty", "#/", '[data-testid="home-dashboard"][data-mode="tiles"]');
+  await shoot(page, stack, "GitHub overview", "off", "#/github", ".ui-state");
+  await shoot(page, stack, "Activity", "start-sheet", "#/activity", { prepare: openStartSheet });
+
+  // The worker's first turn is a scripted shell call, so the conversation shows a tool row and its output.
+  stack.engine.setScript((request) => (request.toolResults.length === 0 && /Answer briefly/.test(request.lastUserText)
+    ? { toolCall: { name: "bash", arguments: { command: "ls -1" }, text: "Let me look at the workspace first." } }
+    : "The workspace holds the fixture files listed above. Nothing else to do; finishing."));
   await createAgent(stack, "Design audit worker", "Answer briefly, then finish.");
   await createAgent(stack, "Idle reviewer", "Wait for work.", false);
   const itemId = await enqueueItem(stack, "Polish the queue rows");
   await enqueueItem(stack, "Tighten the empty states");
+  await shoot(page, stack, "Home", "loaded", "#/", '[data-testid="home-dashboard"][data-mode="tiles"]');
   await shoot(page, stack, "Fleet", "loaded", "#/fleet", ".fleet-count");
-  await shoot(page, stack, "Topology", "loaded", "#/fleet/topology");
+  await shoot(page, stack, "Topology", "loaded", "#/fleet/topology", '[data-testid="graph-legend"]');
   const conn = await openAgent(page, stack, "Design audit worker");
   const agentId = /agt_[0-9A-Z]{26}/.exec(page.url())?.[0];
   assert.ok(agentId !== undefined, "the agent route names the agent");
-  await shoot(page, stack, "Agent", "conversation", `#/agents/${encodeURIComponent(conn)}/${agentId}`, ".agent-name");
+  const agentHash = `#/agents/${encodeURIComponent(conn)}/${agentId}`;
+  await shoot(page, stack, "Agent", "conversation", agentHash, { ready: '[data-testid="conv-tool-toggle"]', readyMs: 60_000 });
+  await shoot(page, stack, "Agent", "tool-open", agentHash, { ready: '[data-testid="conv-tool-toggle"]', prepare: async (p) => {
+    await p.getByTestId("conv-tool-toggle").first().click();
+    await expect(p.getByTestId("conv-tool-output").first()).toBeVisible();
+    await p.getByTestId("composer-input").fill("Thanks. Now summarise what you found in one line.");
+    await p.mouse.move(0, 0);
+  } });
   await shoot(page, stack, "Controls", "operator", `#/controls/${encodeURIComponent(conn)}/${agentId}`, ".b3-action");
   await shoot(page, stack, "Memory", "review", `#/memory/${encodeURIComponent(conn)}`);
   await shoot(page, stack, "Activity", "loaded", "#/activity");
   await shoot(page, stack, "Queue", "paused", "#/archon/queue", ".queue-row");
   await shoot(page, stack, "Item", "queued", `#/archon/items/${itemId}`, "#item-title");
-  await shoot(page, stack, "Task graph", "loaded", "#/archon/graph");
+  await shoot(page, stack, "Task graph", "loaded", "#/archon/graph", '[data-testid="graph-legend"]');
   await shoot(page, stack, "History", "loaded", "#/archon/history");
+  await shoot(page, stack, "Queue", "new-item", "#/archon/queue", { ready: ".queue-row", prepare: async (p) => {
+    await p.getByRole("button", { name: "New item" }).click();
+    await expect(p.getByTestId("new-item-submit")).toBeVisible();
+    await p.mouse.move(0, 0);
+  } });
   for (const tab of ["connections", "devices", "remote", "providers", "notifications"]) {
     await shoot(page, stack, "Settings", tab, `#/settings/${tab}`, '[role="tabpanel"]');
   }
@@ -126,10 +166,15 @@ test("observer: the read-only controls, queue and item", async ({ page, stack })
 test("noesis: the learning screens off, then on", async ({ page, stack }) => {
   await pairBoth(page, stack, { aether: "operator", archon: "operator" }, "Design audit noesis");
   await shoot(page, stack, "Learn", "off", "#/learn", '[data-testid="noesis-off"]');
+  await shoot(page, stack, "Learn", "settings-sheet", "#/learn", { ready: '[data-testid="noesis-off"]', prepare: async (p) => {
+    await p.getByRole("button", { name: "Open Noesis settings" }).click();
+    await expect(p.getByTestId("noesis-save")).toBeVisible();
+    await p.mouse.move(0, 0);
+  } });
   await configureNoesis(stack, { enabled: true, engineering_context: true });
   try {
     await page.reload();
-    await shoot(page, stack, "Learn sessions", "empty", "#/learn");
+    await shoot(page, stack, "Learn sessions", "empty", "#/learn", '[data-testid="learn-goal"]');
     await shoot(page, stack, "Knowledge", "empty", "#/learn/graph");
     await shoot(page, stack, "My understanding", "empty", "#/learn/me");
     await shoot(page, stack, "Session", "error", `#/learn/sessions/ns_${"0".repeat(26)}`);
@@ -165,6 +210,7 @@ test("github: an issue and a merged pull request", async ({ page }) => {
     await page.goto(`${stack.aether.origin}/#/github/github.com/${OWNER_REPO}/8`);
     await page.reload();
     await shoot(page, stack, "GitHub pull request", "merged", `#/github/github.com/${OWNER_REPO}/8`, ".gh-fact", GH_SYNC_MS);
+    await shoot(page, stack, "GitHub overview", "loaded", "#/github", { ready: '[data-testid="gh-graph"]', readyMs: GH_SYNC_MS });
   } finally {
     await stopPrivateStack(github);
   }
