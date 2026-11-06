@@ -41,6 +41,8 @@ export interface JourneyOptions {
   readonly archon?: boolean;
   /** Why this journey does not run on real engines, when it does not. */
   readonly fauxOnly?: string;
+  /** The app on Xwayland instead of Wayland: its native dialogs are then driven with xdotool. */
+  readonly x11?: boolean;
 }
 
 /** Runs every step even when one fails, then fails with all of them. */
@@ -90,7 +92,7 @@ async function boot(parts: Parts, variant: Variant, options: JourneyOptions): Pr
   }
   parts.swayRoot = await mkdtemp(path.join(tempBase(), "sw-"));
   record("roots", parts.swayRoot);
-  const sway = await startSway(parts.swayRoot);
+  const sway = await startSway(parts.swayRoot, { xwayland: options.x11 === true });
   parts.sway = sway;
   const app = await launchPackaged({ exec, sway, aetherSocket: stack.layout.aether.socket, archonSocket: stack.layout.archon.socket });
   parts.app = app;

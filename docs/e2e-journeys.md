@@ -9,11 +9,11 @@ temp root removed after the file, and the runner checks that afterwards.
 | --- | --- | --- |
 | 1 first launch | `first-launch.spec.ts` | Smoke: the window connects, the fleet renders, Start-agent shows. Then: start an agent from Activity, see the reply and its shell call, message it, stop and resume. Records `first-launch.webm`. |
 | 2 task for an existing agent | `task-for-existing-agent.spec.ts` | Task mode in the start sheet, then an owner: the task lands on that agent, and its page names it. |
-| 3 approvals | `approvals.spec.ts` | A tool call waits for approval, Inbox approves it, and the agent goes on. Then a rule is added from Controls. |
+| 3 approvals | `approvals.spec.ts` | A tool call waits for approval, Inbox approves it, and the agent goes on. Then a rule is added from Controls. On a real engine the waiting call is `complete_task`, since its own shell runs under the user's native permission settings; its permission prompt and the call itself are each approved from the Inbox until the agent has finished. |
 | 4 schedules | `schedules.spec.ts` | Create a weekday cron schedule that starts a new agent, see it listed, delete it. |
 | 5 memory | `memory.spec.ts` | Create a global memory, then find it by search. |
-| 6 archon | `archon.spec.ts` | Register a scratch checkout with no origin to keep its work local (Watch GitHub stays the CLI's), queue an item on it, wait (bounded) for an outcome, then open its page, the task graph and history. Then an issue imported from a stubbed `gh`, and the GitHub overview listing its repository's cached objects. |
-| 7 learn | `learn.spec.ts` | Turn Noesis on (main confirms natively), start a session, answer the Prober, get a practice problem. |
+| 6 archon | `archon.spec.ts` | Register a scratch checkout with no origin to keep its work local (Watch GitHub stays the CLI's), queue an item on it with dispatch paused so the task graph shows it queued, resume, wait (bounded) for an outcome, then open its page, the task graph and history. Then an issue imported from a stubbed `gh`, and the GitHub overview listing its repository's cached objects. |
+| 7 learn | `learn.spec.ts` | Turn Noesis on (main confirms natively; the app runs on Xwayland for it), start a session, answer the Prober, get a practice problem. |
 | 8 drafts | `drafts.spec.ts` | An objective typed in the start sheet survives leaving Activity and coming back. |
 
 ## Running
@@ -72,14 +72,17 @@ only run through the journeys config.
   On a loaded host that connection can time out; the harness then stops that instance and
   launches once more before it fails the journey.
 - **Headless sway.** `sway -c /dev/null` runs with `WLR_BACKENDS=headless` and its own
-  `XDG_RUNTIME_DIR`. The app runs on it with `--ozone-platform=wayland`. Native confirmations
-  (Noesis settings) are answered with `swaymsg` focus and `wtype`, once sway reports the dialog has
-  the keyboard. Which keys reach the action button depends on the toolkit Electron drew it with
-  (GTK 3 focuses Cancel, GTK 4 nothing), so `DIALOG_PRESSES` lists the sequences and
-  `acceptNativeDialog` tries them in turn until the dialog closes; the journey then checks the
-  effect and, after a sequence that landed on Cancel, saves again with the next. A dialog that
-  stays open leaves a `grim` shot and sway's tree under `$E2E_OUT/journeys/dialogs/`. This needs
-  `sway`, `swaymsg`, `wtype` and `grim` on PATH.
+  `XDG_RUNTIME_DIR`. The app runs on it with `--ozone-platform=wayland`. A journey that answers a
+  native confirmation (Noesis settings) asks for `x11: true` instead: sway then starts an
+  Xwayland (`xwayland force`), the app runs on it with `--ozone-platform=x11`, and the dialog's
+  keys are pressed with `xdotool` after `swaymsg` focus, since the seat's virtual Wayland keyboard
+  (`wtype`) never reaches the GTK dialog Electron draws. Which keys reach the action button
+  depends on the toolkit (GTK 3 focuses Cancel, GTK 4 nothing), so `DIALOG_PRESSES` lists the
+  sequences and `acceptNativeDialog` tries them in turn until the dialog closes; the journey then
+  checks the effect and, after a sequence that landed on Cancel, saves again with the next. A
+  dialog that stays open leaves a `grim` shot and sway's tree under `$E2E_OUT/journeys/dialogs/`.
+  This needs `sway`, `swaymsg`, `wtype` and `grim` on PATH, and `Xwayland` with `xdotool` for the
+  journey on X11.
 - **Sockets.** The app gets `AETHER_SOCKET` and `ARCHON_SOCKET` for the stack. Local sockets need
   no pairing, so the smoke records that as a `pairing` annotation. If a later UI asks to pair, the journey
   pairs with a code from the host, as `harness/pair.ts` does.

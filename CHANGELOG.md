@@ -158,7 +158,12 @@ before updating.
   height; narrow pages no longer scroll sideways behind the rail; an empty
   inbox and the New item sheet guide instead of a faint line or errors
   before anything was typed; a missing item is told in place, without a
-  refresh toast over it.
+  refresh toast over it. Repeated failures fold into one toast that counts
+  them, the newest few show at once, each goes after a while, and a
+  "Dismiss all" clears them; the controls' model form stacks at narrow
+  widths instead of overlapping, and no screen scrolls sideways at the
+  smallest window; Activity says each event in words, with its time as
+  "3 min ago" and the exact moment on hover.
 - **`status` and `get_tree` on a large, long-lived store.** The fleet's
   usage and each run's are one row each, kept by triggers as agents are
   written, which count exactly the agents the store can read, so a

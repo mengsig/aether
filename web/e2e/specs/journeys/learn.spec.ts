@@ -10,7 +10,8 @@ import { connectionsReady, journeyHooks, type Journey } from "./journey.ts";
 import { PRACTICE_STATEMENT, PROBER_QUESTION } from "./scripts.ts";
 import { need, note, open, textField } from "./ui.ts";
 
-const journey = journeyHooks({ archon: false, fauxOnly: "a learning session spawns several teaching agents; the real variant spends only on journey 1's checks" });
+// On X11: main's confirmation is a GTK dialog, which the seat's virtual Wayland keyboard never reaches.
+const journey = journeyHooks({ archon: false, x11: true, fauxOnly: "a learning session spawns several teaching agents; the real variant spends only on journey 1's checks" });
 const TEACH_MS = 60_000;
 // After a press that landed on Cancel the status never changes, so this wait is short.
 const CONFIRM_MS = 15_000;

@@ -20,7 +20,7 @@ export const OBJECTIVES = {
 /** The real variant's objectives: one cheap shell call, then one word. */
 export const REAL_OBJECTIVES = {
   firstLaunch: `Run \`echo pong\` with your shell tool and say pong. Then run \`${HOLD}\` with your shell tool in the foreground, and finish.`,
-  approval: "Run `echo approval-probe` with your shell tool, then reply with the word done and finish.",
+  approval: "Run `echo approval-probe` with your shell tool, then call your complete_task tool with the summary done.",
 } as const;
 /** The shell commands each journey's agent runs, faux and real alike. */
 export const FAUX_COMMANDS = { firstLaunch: "ls -la .", hold: HOLD, approval: "echo approval-probe" } as const;

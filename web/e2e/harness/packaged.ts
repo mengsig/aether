@@ -38,7 +38,30 @@ export interface Sway {
   readonly runtime: string;
   /** sway's IPC socket, for swaymsg. */
   readonly ipc: string;
+  /** The X display of the Xwayland sway hosts, when it was asked for one; the app then runs on X11. */
+  readonly x11Display?: string;
   stop(): Promise<void>;
+}
+
+export interface SwayOptions {
+  /**
+   * Host an Xwayland too, and run the app on it. The seat's virtual keyboard never reaches a
+   * GTK dialog of a Wayland app, but xdotool's presses reach one on X11.
+   */
+  readonly xwayland?: boolean;
+}
+
+/** The Xwayland that sway started in `runtime`: the one Xwayland process that inherited that dir. */
+async function xwaylandDisplay(runtime: string): Promise<string | undefined> {
+  const { stdout } = await run("/usr/bin/pgrep", ["-u", String(process.getuid?.() ?? ""), "-x", "Xwayland"], { timeout: TOOL_MS }).catch(() => ({ stdout: "" }));
+  for (const pid of stdout.split("\n").filter((line) => /^\d+$/.test(line))) {
+    const environ = await readFile(`/proc/${pid}/environ`, "utf8").catch(() => "");
+    if (!environ.split("\0").includes(`XDG_RUNTIME_DIR=${runtime}`)) continue;
+    const display = (await readFile(`/proc/${pid}/cmdline`, "utf8").catch(() => "")).split("\0")[1];
+    assert.ok(display !== undefined && /^:\d+$/.test(display), `Xwayland ${pid} names its display first: ${display}`);
+    return display;
+  }
+  return undefined;
 }
 
 async function swayIpc(runtime: string): Promise<string | undefined> {
@@ -47,13 +70,20 @@ async function swayIpc(runtime: string): Promise<string | undefined> {
   return socket === undefined ? undefined : path.join(runtime, socket);
 }
 
-/** `WLR_BACKENDS=headless sway -c /dev/null` in a runtime dir of its own under `root`. */
-export async function startSway(root: string): Promise<Sway> {
+/**
+ * `WLR_BACKENDS=headless sway` in a runtime dir of its own under `root`, on an empty config, or
+ * on one that starts Xwayland at once when the app is to run on X11.
+ */
+export async function startSway(root: string, options: SwayOptions = {}): Promise<Sway> {
   assert.ok(path.isAbsolute(root), `sway's root is absolute: ${root}`);
   const runtime = path.join(root, "run");
   await mkdir(runtime, { recursive: true, mode: 0o700 });
+  const xwayland = options.xwayland === true;
+  if (xwayland) await access(XDOTOOL, constants.X_OK).catch((error: unknown) => { throw new Error(`the app on X11 needs ${XDOTOOL} for its native dialogs`, { cause: error }); });
+  const config = xwayland ? path.join(root, "sway.conf") : "/dev/null";
+  if (xwayland) await writeFile(config, "xwayland force\n");
   const env = { PATH: SYSTEM_PATH, HOME: root, XDG_RUNTIME_DIR: runtime, WLR_BACKENDS: "headless", WLR_LIBINPUT_NO_DEVICES: "1", WLR_RENDERER: "pixman" };
-  const sway = spawnLogged("/usr/bin/sway", ["-c", "/dev/null"], { env, cwd: root, log: path.join(root, "sway.log") });
+  const sway = spawnLogged("/usr/bin/sway", ["-c", config], { env, cwd: root, log: path.join(root, "sway.log") });
   let keyboard: Spawned | undefined;
   const stop = async () => { if (keyboard !== undefined) await stopGroup(keyboard); await stopGroup(sway); };
   try {
@@ -64,7 +94,10 @@ export async function startSway(root: string): Promise<Sway> {
     // A headless seat has no keyboard until a virtual one exists; this one stays, so every
     // client sees a keyboard from its first frame and the key presses later reach its dialogs.
     keyboard = spawnLogged("/usr/bin/wtype", ["-s", String(KEYBOARD_MS)], { env: { ...env, WAYLAND_DISPLAY: "wayland-1" }, cwd: root, log: path.join(root, "keyboard.log") });
-    return { display, runtime, ipc, stop };
+    if (!xwayland) return { display, runtime, ipc, stop };
+    const x11Display = await until(() => xwaylandDisplay(runtime), (found) => found !== undefined, "sway's Xwayland display", START_MS);
+    assert.ok(x11Display !== undefined, "sway started its Xwayland");
+    return { display, runtime, ipc, x11Display, stop };
   } catch (error) {
     await stop();
     throw new Error(`sway did not start. Its log:\n${await tail(path.join(root, "sway.log"))}`, { cause: error });
@@ -87,12 +120,16 @@ export interface PackagedApp {
   close(): Promise<void>;
 }
 
-/** Only these reach the app: its own home and XDG dirs, the display and the two sockets. */
+/** Only these reach the app: its own home and XDG dirs, one display and the two sockets. */
 function appEnv(dir: string, launch: PackagedLaunch): NodeJS.ProcessEnv {
+  const { sway } = launch;
+  const display: NodeJS.ProcessEnv = sway.x11Display === undefined
+    ? { WAYLAND_DISPLAY: sway.display, XDG_SESSION_TYPE: "wayland" }
+    : { DISPLAY: sway.x11Display, XDG_SESSION_TYPE: "x11" };
   const env: NodeJS.ProcessEnv = {
     PATH: SYSTEM_PATH, HOME: path.join(dir, "home"),
     XDG_CONFIG_HOME: path.join(dir, "config"), XDG_CACHE_HOME: path.join(dir, "cache"), XDG_DATA_HOME: path.join(dir, "data"),
-    XDG_RUNTIME_DIR: launch.sway.runtime, WAYLAND_DISPLAY: launch.sway.display, XDG_SESSION_TYPE: "wayland",
+    XDG_RUNTIME_DIR: sway.runtime, ...display,
     AETHER_SOCKET: launch.aetherSocket, ARCHON_SOCKET: launch.archonSocket,
   };
   for (const name of ["LANG", "LC_ALL", "TZ"]) if (process.env[name] !== undefined) env[name] = process.env[name];
@@ -131,7 +168,8 @@ async function launchOnce(launch: PackagedLaunch): Promise<PackagedApp> {
   let app: Spawned | undefined;
   let browser: Browser | undefined;
   try {
-    app = spawnLogged(launch.exec, ["--ozone-platform=wayland", "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1"],
+    const platform = launch.sway.x11Display === undefined ? "wayland" : "x11";
+    app = spawnLogged(launch.exec, [`--ozone-platform=${platform}`, "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1"],
       { env: appEnv(dir, launch), cwd: dir, log });
     const started = app;
     const endpoint = await until(async () => DEVTOOLS_LINE.exec(await readFile(log, "utf8").catch(() => ""))?.[1],
@@ -229,6 +267,7 @@ async function closesWithin(sway: Sway, title: string, timeoutMs: number): Promi
  */
 export const DIALOG_PRESSES: ReadonlyArray<readonly string[]> = [["Right", "Return"], ["Tab", "Tab", "Return"], ["Tab", "Return"]];
 const KEY_GAP_MS = "150";
+const XDOTOOL = "/usr/bin/xdotool";
 /** How long the seat's standing virtual keyboard sleeps: longer than any journey. */
 const KEYBOARD_MS = 6 * 60 * 60 * 1000;
 
@@ -254,13 +293,23 @@ export async function acceptNativeDialog(sway: Sway, title: string, from = 0, ti
   for (let index = from; index < DIALOG_PRESSES.length; index += 1) {
     const presses = DIALOG_PRESSES[index] as readonly string[];
     await focusDialog(sway, title, timeoutMs);
-    await run("/usr/bin/wtype", presses.flatMap((key) => ["-s", KEY_GAP_MS, "-k", key]), { env: swayEnv(sway), timeout: TOOL_MS });
+    await press(sway, presses);
     if (await closesWithin(sway, title, DIALOG_CLOSE_MS)) return index;
     console.warn(`the native dialog "${title}" stayed open after ${presses.join("+")}`);
   }
   const focused = (await swayWindows(sway)).find((window) => window.focused)?.title ?? "nothing";
   const evidence = await dialogEvidence(sway, title);
   throw new Error(`the native dialog "${title}" did not close after ${DIALOG_PRESSES.length} key sequences; sway's keyboard is on ${focused}; the app maps ${await toolkitOf(running?.pid)}; see ${evidence}`);
+}
+
+/** `keys` to the focused window: through the seat's virtual keyboard, or xdotool when the app runs on X11. */
+async function press(sway: Sway, keys: readonly string[]): Promise<void> {
+  assert.ok(keys.length > 0 && keys.every((key) => /^[A-Za-z]+$/.test(key)), `key names only: ${keys.join(" ")}`);
+  if (sway.x11Display === undefined) {
+    await run("/usr/bin/wtype", keys.flatMap((key) => ["-s", KEY_GAP_MS, "-k", key]), { env: swayEnv(sway), timeout: TOOL_MS });
+    return;
+  }
+  await run(XDOTOOL, ["key", "--delay", KEY_GAP_MS, ...keys], { env: { ...swayEnv(sway), DISPLAY: sway.x11Display }, timeout: TOOL_MS });
 }
 
 /** The GTK libraries the app process maps: which toolkit drew the dialog. */
