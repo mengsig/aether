@@ -3,6 +3,7 @@
 
 import type { aether, NoesisSettingsPatch, PrivilegedAction, Transport } from "@aether-ui/protocol";
 import { invariant } from "../model.ts";
+import { SessionHistory } from "./faux-history.ts";
 
 type Json = Record<string, unknown>;
 type Result = { readonly reply: Json; readonly then: readonly Json[] };
@@ -26,6 +27,8 @@ export interface FauxNoesisOptions {
   readonly transport?: "ipc" | "ws-aether";
   /** The message `noesis_create_session` refuses with, as when no model may be used. */
   readonly refuse?: string;
+  /** The evidence each session started from, by session id. */
+  readonly contexts?: Readonly<Record<string, aether.EvidenceBundle>>;
 }
 
 const OK = (tag: string, data: unknown): Result => ({ reply: { Ok: { reply: tag, data } }, then: [] });
@@ -39,6 +42,12 @@ export class FauxNoesis {
   readonly transport: Transport;
   status: aether.NoesisStatus;
   refuse: string | undefined;
+  /** The message `noesis_send` and `noesis_answer` refuse with, as at a spent budget. */
+  refuseTurns: string | undefined;
+  /** Off, an answer is recorded without its `noesis.answer_recorded` event: only a reread shows it. */
+  answerEvents = true;
+  readonly history = new SessionHistory();
+  jobs: aether.Job[] = [];
   readonly sessions = new Map<string, aether.NoesisSession>();
   readonly held = new Map<string, HeldQuestion>();
   graph: { nodes: aether.Proposition[]; chains: aether.Chain[] };
@@ -46,6 +55,7 @@ export class FauxNoesis {
   private readonly agents = new Map<string, aether.Agent>();
   private readonly transcripts = new Map<string, aether.TranscriptEntry[]>();
   private durableSub: number | null = null;
+  private readonly deltaSubs = new Map<string, number>();
   private nextSub = 1;
   private seq = 0;
   private link: Link | null = null;
@@ -55,7 +65,7 @@ export class FauxNoesis {
     this.refuse = options.refuse;
     this.graph = { nodes: [...(options.graph?.nodes ?? [])], chains: [...(options.graph?.chains ?? [])] };
     this.concepts = [...(options.concepts ?? [])];
-    for (const session of options.sessions ?? []) this.addSession(session);
+    for (const session of options.sessions ?? []) this.addSession(session, options.contexts?.[session.id]);
     for (const [agent, messages] of Object.entries(options.transcripts ?? {})) for (const message of messages) this.append(agent, message);
     this.transport = {
       id: options.transport ?? "ws-aether",
@@ -73,29 +83,79 @@ export class FauxNoesis {
   }
 
   /** The teacher speaks: a committed assistant message on the session's agent, pushed as an event. */
-  teach(session: string, text: string): void {
+  teach(session: string, text: string, invocation: string | null = null): void {
     const agent = this.session(session).agent;
-    const entry = this.append(agent, { role: "assistant", content: [{ type: "text", text }] });
-    this.event(agent, { type: "agent.message", role: "assistant", content: entry.message.content, invocation: null });
+    const entry = this.append(agent, { role: "assistant", content: [{ type: "text", text }] }, invocation);
+    this.event(agent, { type: "agent.message", role: "assistant", content: entry.message.content, invocation });
+  }
+
+  /** The teacher's text while it is written: a delta on the agent's delta subscription, if one is open. */
+  stream(session: string, invocation: string, order: number, text: string): void {
+    const agent = this.session(session).agent;
+    const sub = this.deltaSubs.get(agent);
+    invariant(sub !== undefined, `a screen watches ${agent} for deltas`);
+    this.push({ frame: "delta", sub, agent, invocation, invocation_seq: order, delta: { delta: "text", text } });
+  }
+
+  /** Noesis writes to the session's agent: a user-role message that is never the learner's. */
+  internal(session: string, text: string): void {
+    const agent = this.session(session).agent;
+    const entry = this.append(agent, { role: "user", content: [{ type: "text", text }] });
+    this.history.internal(session, agent, entry.seq);
+  }
+
+  /** The session moves to a new agent, as the Prober hands over to the Teacher. */
+  handOff(session: string, phase: aether.Phase, role: aether.SessionRole): string {
+    this.seq += 1;
+    const agent = `agt_noesis_${role}_${this.seq}`;
+    this.agents.set(agent, noesisAgent(agent));
+    this.history.handOff(session, agent, role);
+    this.update(session, { agent, phase });
+    this.event(agent, { type: "noesis.phase_changed", session, phase });
+    return agent;
   }
 
   /** Poses a question: the session's open question, a `noesis.question_posed` event, and its key held back. */
   pose(session: string, held: HeldQuestion): void {
     const question = { ...held.question, posed_at: stamp(this.seq + 1) };
     this.held.set(question.id, { ...held, question });
+    this.history.posed(session, question);
     this.update(session, { open_question: question });
     this.event(this.session(session).agent, { type: "noesis.question_posed", session, question });
   }
 
   problem(session: string, posed: aether.Problem): void {
     const problem = { ...posed, posed_at: stamp(this.seq + 1) };
+    this.history.problem(session, problem);
     this.update(session, { active_problem: problem, phase: "practice" });
     this.event(this.session(session).agent, { type: "noesis.problem_posed", session, problem });
   }
 
   conclude(session: string, conclusion: Omit<aether.EventKindNoesisPracticeConcluded, "type" | "session">): void {
+    const { problem, ...ending } = conclusion;
+    this.history.concluded(session, problem, { ...ending, concluded_at: stamp(this.seq + 1) });
     this.update(session, { active_problem: null });
     this.event(this.session(session).agent, { type: "noesis.practice_concluded", session, ...conclusion });
+  }
+
+  /** A question asked and answered before this page ever ran: only the session read knows of it. */
+  answeredEarlier(session: string, held: HeldQuestion, given: { choices?: string[]; text?: string; dont_know: boolean; confidence?: number }): void {
+    this.seq += 1;
+    const question = { ...held.question, posed_at: stamp(this.seq) };
+    const correct = question.kind === "goal" ? null : !given.dont_know && sameChoices(given.choices ?? [], held.key);
+    this.history.posed(session, question);
+    this.history.answered(session, recorded(question, given, stamp(this.seq + 1)), { question: question.id, answer_key: held.key, correct, explanation: held.explanation });
+    this.seq += 1;
+  }
+
+  /** Moves a job to `state`, announcing it unless `quiet`, as when the event never reached the page. */
+  finishJob(id: string, state: aether.JobState, quiet = false): void {
+    const job = this.jobs.find((candidate) => candidate.id === id);
+    invariant(job !== undefined, `the faux daemon has job ${id}`);
+    this.seq += 1;
+    const next = { ...job, state, updated_at: stamp(this.seq) };
+    this.jobs = this.jobs.map((candidate) => (candidate.id === id ? next : candidate));
+    if (!quiet) this.event(null, { type: "noesis.job_updated", job: next });
   }
 
   drop(code = 1006): void {
@@ -113,9 +173,10 @@ export class FauxNoesis {
     return session;
   }
 
-  private addSession(session: aether.NoesisSession): void {
+  private addSession(session: aether.NoesisSession, context?: aether.EvidenceBundle): void {
     invariant(!this.sessions.has(session.id), `session ${session.id} is new`);
     this.sessions.set(session.id, session);
+    this.history.start(session, context);
     this.agents.set(session.agent, noesisAgent(session.agent));
     if (session.open_question) this.held.set(session.open_question.id, { question: session.open_question, key: [], explanation: "" });
   }
@@ -125,9 +186,9 @@ export class FauxNoesis {
     this.sessions.set(id, { ...this.session(id), ...patch, updated_at: stamp(this.seq) });
   }
 
-  private append(agent: string, message: aether.Message): aether.TranscriptEntry {
+  private append(agent: string, message: aether.Message, invocation: string | null = null): aether.TranscriptEntry {
     this.seq += 1;
-    const entry: aether.TranscriptEntry = { seq: this.seq, at: stamp(this.seq), invocation: null, message };
+    const entry: aether.TranscriptEntry = { seq: this.seq, at: stamp(this.seq), invocation, message };
     const entries = this.transcripts.get(agent) ?? [];
     entries.push(entry);
     this.transcripts.set(agent, entries);
@@ -164,7 +225,9 @@ export class FauxNoesis {
         features: ["deltas", "delta_order", "transcript_paging", "agents_paging", "noesis"], device: { id: "dev_faux", name: "faux", role: "operator" }, idle_timeout_secs: null,
       });
       case "subscribe": return this.subscribe(command);
-      case "unsubscribe": return OK("ok", null);
+      case "unsubscribe":
+        for (const [agent, sub] of this.deltaSubs) if (sub === command.id) this.deltaSubs.delete(agent);
+        return OK("ok", null);
       case "get_attention": return OK("attention", { agents: [], approvals: [], questions: [], last_seq: this.seq });
       case "list_agents_page": return OK("agents_page", { agents: [...this.agents.values()] });
       case "get_agent": return this.agents.has(String(command.id)) ? OK("agent", this.agents.get(String(command.id))) : ERR("not_found", "agent");
@@ -176,6 +239,7 @@ export class FauxNoesis {
   private subscribe(command: Json): Result {
     const id = this.nextSub++;
     if (command.deltas !== true) this.durableSub = id;
+    else this.deltaSubs.set(String((command.query as Json).agent), id);
     return OK("subscribed", { id, last_seq: this.seq });
   }
 
@@ -194,13 +258,14 @@ export class FauxNoesis {
       case "noesis_list_sessions": return OK("noesis_sessions", { sessions: [...this.sessions.values()] });
       case "noesis_get_session": {
         const session = this.sessions.get(String(command.session));
-        return session ? OK("noesis_session", session) : ERR("not_found", `session \`${String(command.session)}\``);
+        return session ? OK("noesis_session", this.history.read(session)) : ERR("not_found", `session \`${String(command.session)}\``);
       }
       case "noesis_create_session": return this.create(command);
-      case "noesis_send": return OK("ok", null);
-      case "noesis_answer": return this.answer(command);
-      case "noesis_delete_session": this.sessions.delete(String(command.session)); return OK("ok", null);
-      case "noesis_extract": return OK("noesis_job", { job: { id: "job_faux", state: "queued" } });
+      case "noesis_send": return this.refuseTurns === undefined ? OK("ok", null) : ERR("invalid_argument", this.refuseTurns);
+      case "noesis_answer": return this.refuseTurns === undefined ? this.answer(command) : ERR("invalid_argument", this.refuseTurns);
+      case "noesis_delete_session": this.sessions.delete(String(command.session)); this.history.forget(String(command.session)); return OK("ok", null);
+      case "noesis_extract": return this.extract(String(command.session));
+      case "noesis_jobs": return OK("noesis_jobs", { jobs: this.jobs });
       case "noesis_graph": return OK("noesis_graph", { ...this.graphSlice(command.query), clusters: [], truncated: false });
       case "noesis_learner": return OK("noesis_learner", { concepts: this.concepts });
       case "noesis_delete_proposition": return this.deleteProposition(String(command.proposition));
@@ -240,12 +305,21 @@ export class FauxNoesis {
     const session = this.session(String(command.session));
     const held = this.held.get(String(command.question));
     if (held === undefined || session.open_question?.id !== held.question.id) return ERR("conflict", "that question is not open");
-    const given = command.answer as { choices?: string[]; dont_know: boolean };
+    const given = command.answer as { choices?: string[]; text?: string; dont_know: boolean; confidence?: number };
     const correct = held.question.kind === "goal" ? null : !given.dont_know && sameChoices(given.choices ?? [], held.key);
     const result: aether.QuestionResult = { question: held.question.id, answer_key: held.key, correct, explanation: held.explanation };
     this.update(session.id, { open_question: null });
-    queueMicrotask(() => this.event(session.agent, { type: "noesis.answer_recorded", session: session.id, result }));
+    this.history.answered(session.id, recorded(held.question, given, stamp(this.seq)), result);
+    if (this.answerEvents) queueMicrotask(() => this.event(null, { type: "noesis.answer_recorded", session: session.id, result }));
     return OK("ok", null);
+  }
+
+  private extract(session: string): Result {
+    this.seq += 1;
+    const at = stamp(this.seq);
+    const job: aether.Job = { id: `job_faux_${this.seq}`, kind: "extract_session", state: "queued", target: session, created_at: at, updated_at: at, usage: ZERO_USAGE };
+    this.jobs = [...this.jobs, job];
+    return OK("noesis_job", { job });
   }
 
   private graphSlice(query: unknown): { nodes: aether.Proposition[]; chains: aether.Chain[] } {
@@ -281,7 +355,16 @@ function mergeSettings(settings: aether.NoesisSettingsView, patch: aether.Noesis
     budget: { ...settings.budget, ...definedOf(patch.budget) },
     models: { ...settings.models, ...definedOf(patch.models) },
     extraction: { ...settings.extraction, ...definedOf(patch.extraction) },
+    engineering_context: patch.engineering_context ?? settings.engineering_context,
   };
+}
+
+const ZERO_USAGE: aether.Usage = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: 0, cost_complete: true };
+
+/** The answer as the daemon records it: the chosen options by label, in the order they were shown. */
+function recorded(question: aether.Question, given: { choices?: string[]; text?: string; dont_know: boolean; confidence?: number }, at: string): aether.RecordedAnswer {
+  const chosen = (question.options ?? []).filter((option) => given.choices?.includes(option.value)).map((option) => option.label);
+  return { chosen, dont_know: given.dont_know, answered_at: at, ...(given.text ? { text: given.text } : {}), ...(given.confidence === undefined ? {} : { confidence: given.confidence }) };
 }
 
 function sameChoices(given: readonly string[], key: aether.AnswerKey): boolean {

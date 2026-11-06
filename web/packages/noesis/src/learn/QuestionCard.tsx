@@ -1,9 +1,11 @@
 // One posed question, for every kind the protocol defines (choice, recall, goal). The answer key is
-// never on the wire before the answer is recorded; the result shown after it is the daemon's reveal.
+// never on the wire before the answer is recorded; once it is, the card shows the learner's answer
+// beside the daemon's reveal: right or wrong, the key and why.
 
 import type { aether } from "@aether-ui/protocol";
 import { Button } from "@aether-ui/ui";
 import { useId, useState, type FormEvent } from "react";
+import { LessonText } from "./LessonText.tsx";
 import { CONFIDENCE_STOPS, invariant, type Confidence } from "./model.ts";
 
 export interface AnswerInput {
@@ -18,20 +20,24 @@ const KIND_LABEL: Readonly<Record<aether.QuestionKind, string>> = { choice: "Cho
 
 export interface QuestionCardProps {
   readonly question: aether.Question;
+  /** The learner's answer as the session read recorded it. */
+  readonly answer: aether.RecordedAnswer | undefined;
   readonly result: aether.QuestionResult | undefined;
   readonly open: boolean;
   /** Absent when this device may not answer. */
   readonly onAnswer?: ((answer: AnswerInput) => Promise<string | null>) | undefined;
 }
 
-export function QuestionCard({ question, result, open, onAnswer }: QuestionCardProps) {
+export function QuestionCard({ question, answer, result, open: posedOpen, onAnswer }: QuestionCardProps) {
   invariant(question.kind !== "choice" || (question.options?.length ?? 0) >= 2, "a choice question has at least two options");
+  // A result event can land before the session's reread closes the question: the result wins.
+  const open = posedOpen && result === undefined && answer === undefined;
   const answered = !open;
   const body = (
     <>
-      <p className="learn-q-prompt">{question.prompt}</p>
+      <p className="learn-q-prompt"><LessonText text={question.prompt} /></p>
       {open && <AnswerForm question={question} onAnswer={onAnswer} />}
-      {answered && <Reveal question={question} result={result} />}
+      {answered && <Reveal question={question} answer={answer} result={result} />}
     </>
   );
   return (
@@ -39,8 +45,8 @@ export function QuestionCard({ question, result, open, onAnswer }: QuestionCardP
       <p className="learn-q-kind">{KIND_LABEL[question.kind]}{question.multi ? " · pick every one that fits" : ""}</p>
       {answered && question.collapsed ? (
         <details className="learn-q-details">
-          <summary>{question.prompt}<span className="learn-q-summary-result"> · {resultWord(result)}</span></summary>
-          <Reveal question={question} result={result} />
+          <summary><LessonText text={question.prompt} /><span className="learn-q-summary-result"> · {resultWord(result)}</span></summary>
+          <Reveal question={question} answer={answer} result={result} />
         </details>
       ) : body}
     </article>
@@ -53,19 +59,36 @@ function resultWord(result: aether.QuestionResult | undefined): string {
   return "Answered";
 }
 
-/** The daemon's reveal: right or wrong, the key in the option labels the learner saw, and why. */
-function Reveal({ question, result }: { question: aether.Question; result: aether.QuestionResult | undefined }) {
-  if (result === undefined) return <p className="learn-muted">Answered. The result shows here once Noesis records it.</p>;
+/** The option labels for `values` in the order they were shown; a value no option carries reads as itself. */
+function labelsOf(question: aether.Question, values: readonly string[]): string[] {
+  const options = question.options ?? [];
+  return [...options.filter((option) => values.includes(option.value)).map((option) => option.label), ...values.filter((value) => !options.some((option) => option.value === value))];
+}
+
+/** What the learner answered, in their words or the options they chose, with how sure they were. */
+function GivenAnswer({ answer }: { answer: aether.RecordedAnswer }) {
+  invariant(answer.dont_know || (answer.chosen ?? []).length > 0 || (answer.text ?? "") !== "", "a recorded answer says something");
+  const sure = answer.confidence == null ? "" : ` · ${answer.confidence}% sure`;
+  if (answer.dont_know) return <p className="learn-reveal-given"><span className="learn-muted">You said you did not know{sure}</span></p>;
+  const given = (answer.chosen ?? []).length > 0 ? (answer.chosen ?? []).join(", ") : answer.text ?? "";
+  return <p className="learn-reveal-given"><span className="learn-muted">Your answer: </span><LessonText text={given} /><span className="learn-muted">{sure}</span></p>;
+}
+
+/** The daemon's reveal beside the learner's answer: right or wrong, the key in the labels they saw, and why. */
+function Reveal({ question, answer, result }: { question: aether.Question; answer: aether.RecordedAnswer | undefined; result: aether.QuestionResult | undefined }) {
+  if (result === undefined) {
+    return <div className="learn-reveal">{answer && <GivenAnswer answer={answer} />}<p className="learn-muted" aria-busy="true">Your answer is in. Its result shows here in a moment.</p></div>;
+  }
   invariant(result.question === question.id, "a result belongs to its question");
   const keys = result.answer_key == null ? [] : Array.isArray(result.answer_key) ? result.answer_key : [result.answer_key];
-  const options = question.options ?? [];
-  // In the order the options were shown; a key no option carries (a recall answer) reads as itself.
-  const labels = [...options.filter((option) => keys.includes(option.value)).map((option) => option.label), ...keys.filter((key) => !options.some((option) => option.value === key))];
+  const labels = labelsOf(question, keys);
+  const wrong = result.correct === false;
   return (
     <div className="learn-reveal" role="status">
       {result.correct != null && <p className="learn-reveal-verdict" data-correct={result.correct}>{result.correct ? "✓ Correct" : "✗ Not quite"}</p>}
-      {labels.length > 0 && <p><span className="learn-muted">Answer: </span>{labels.join(", ")}</p>}
-      {result.explanation && <p className="learn-reveal-why">{result.explanation}</p>}
+      {answer && <GivenAnswer answer={answer} />}
+      {labels.length > 0 && <p><span className="learn-muted">{wrong ? "Correct answer: " : "Answer: "}</span><LessonText text={labels.join(", ")} /></p>}
+      {result.explanation && <p className="learn-reveal-why">{wrong && <span className="learn-muted">Why: </span>}<LessonText text={result.explanation} /></p>}
     </div>
   );
 }
@@ -108,7 +131,7 @@ function AnswerForm({ question, onAnswer }: { question: aether.Question; onAnswe
             <label key={option.value} className="learn-option">
               <input type={question.multi ? "checkbox" : "radio"} name={`${id}-choice`} value={option.value} checked={choices.includes(option.value)}
                 onChange={(e) => pick(option.value, e.target.checked)} />
-              <span>{option.label}</span>
+              <span><LessonText text={option.label} /></span>
             </label>
           ))}
         </fieldset>

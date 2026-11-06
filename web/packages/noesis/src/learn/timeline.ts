@@ -1,0 +1,84 @@
+// The lesson's chat in time order: every agent's transcript prose (minus what Noesis wrote to them),
+// the questions with the learner's answers and results, the problems with their conclusions, and the
+// current agent's text still streaming. The session read is the record; events only arrive sooner.
+
+import { compareStamps, type NoesisCache, type StreamState } from "@aether-ui/core";
+import type { aether } from "@aether-ui/protocol";
+import { invariant, messageText } from "./model.ts";
+
+/** How a problem ended, from the session read or the `noesis.practice_concluded` event. */
+export type Conclusion = Pick<aether.ProblemConclusion, "outcome" | "rung" | "miss_class" | "retest" | "solution">;
+
+export type TimelineItem =
+  | { readonly kind: "message"; readonly key: string; readonly at: string; readonly role: "learner" | "teacher"; readonly text: string; readonly live: boolean }
+  | {
+    readonly kind: "question"; readonly key: string; readonly at: string; readonly question: aether.Question;
+    readonly answer: aether.RecordedAnswer | undefined; readonly result: aether.QuestionResult | undefined; readonly open: boolean;
+  }
+  | { readonly kind: "problem"; readonly key: string; readonly at: string; readonly problem: aether.Problem; readonly conclusion: Conclusion | undefined; readonly active: boolean };
+
+/** One agent's transcript as the lesson shows it. */
+export interface AgentTranscript {
+  readonly agent: aether.SessionAgent;
+  readonly entries: readonly aether.TranscriptEntry[];
+}
+
+/** The agents that ran the session, oldest first; a read without history still names the current one. */
+export function sessionAgents(session: aether.NoesisSession): readonly aether.SessionAgent[] {
+  const agents = session.agents ?? [];
+  invariant(new Set(agents.map((entry) => entry.agent)).size === agents.length, "a session names each agent once");
+  if (agents.some((entry) => entry.agent === session.agent)) return agents;
+  return [...agents, { agent: session.agent, role: session.mode === "practice" ? "practitioner" : "teacher" }];
+}
+
+function messageItems({ agent, entries }: AgentTranscript): TimelineItem[] {
+  const internal = new Set(agent.internal ?? []);
+  const items: TimelineItem[] = [];
+  for (const entry of entries) {
+    const role = entry.message.role === "assistant" ? "teacher" : entry.message.role === "user" ? "learner" : null;
+    // Noesis's own inputs (the opening context, a hand-off) are user-role but never the learner's words.
+    if (role === null || (role === "learner" && internal.has(entry.seq))) continue;
+    const text = messageText(entry.message);
+    if (text !== "") items.push({ kind: "message", key: `m${agent.agent}:${entry.seq}`, at: entry.at, role, text, live: false });
+  }
+  return items;
+}
+
+function questionItems(session: aether.NoesisSession, learn: NoesisCache): TimelineItem[] {
+  const asked = new Map((session.questions ?? []).map((entry) => [entry.question.id, entry]));
+  for (const { session: owner, question } of Object.values(learn.questions)) {
+    if (owner === session.id && !asked.has(question.id)) asked.set(question.id, { question });
+  }
+  return [...asked.values()].map(({ question, answer, result }) => {
+    const held = result ?? learn.results[question.id];
+    invariant(held === undefined || held.question === question.id, "a result belongs to its question");
+    return { kind: "question", key: question.id, at: question.posed_at, question, answer: answer ?? undefined, result: held, open: session.open_question?.id === question.id };
+  });
+}
+
+function problemItems(session: aether.NoesisSession, learn: NoesisCache): TimelineItem[] {
+  const posed = new Map((session.problems ?? []).map((entry) => [entry.problem.id, entry]));
+  for (const { session: owner, problem } of Object.values(learn.problems)) {
+    if (owner === session.id && !posed.has(problem.id)) posed.set(problem.id, { problem });
+  }
+  return [...posed.values()].map(({ problem, conclusion }) => ({
+    kind: "problem", key: problem.id, at: problem.posed_at, problem,
+    conclusion: conclusion ?? learn.conclusions[problem.id], active: session.active_problem?.id === problem.id,
+  }));
+}
+
+/** The current agent's uncommitted text, oldest invocation first: the committed message replaces it. */
+export function liveItems(streams: Readonly<Record<string, StreamState>>, agent: string): TimelineItem[] {
+  const live = Object.values(streams).filter((stream) => stream.agent === agent && !stream.committed && stream.text.trim() !== "");
+  live.sort((a, b) => a.invocation.localeCompare(b.invocation));
+  return live.map((stream) => ({ kind: "message", key: `live:${stream.invocation}`, at: "", role: "teacher", text: stream.text.trim(), live: true }));
+}
+
+export function buildTimeline(session: aether.NoesisSession, transcripts: readonly AgentTranscript[], learn: NoesisCache): TimelineItem[] {
+  const items = [...transcripts.flatMap(messageItems), ...questionItems(session, learn), ...problemItems(session, learn)];
+  const order = new Map(items.map((item, index) => [item, index]));
+  items.sort((a, b) => compareStamps(a.at, b.at) || (order.get(a) ?? 0) - (order.get(b) ?? 0));
+  invariant(items.filter((item) => item.kind === "question" && item.open).length <= 1, "a session has at most one open question");
+  invariant(new Set(items.map((item) => item.key)).size === items.length, "every timeline item has its own key");
+  return items;
+}

@@ -1,7 +1,8 @@
 // The screenshot page: the learning screens in the real shell, connected through core to the faux
 // Noesis daemon in the page. Nothing here reaches a real daemon or a model.
 // Query: `off` (Noesis disabled), `remote` (not the daemon's host), `refuse` (no usable model),
-// `pose` (vote|recall|multi|goal), `conclude` (a finished practice problem), `theme` (light|dark).
+// `pose` (vote|recall|multi|goal), `conclude` (a finished practice problem), `graded` (a lesson with
+// answered questions, sources and billing), `theme` (light|dark).
 
 import "@aether-ui/noesis";
 import { AppProvider, createApp, navigate, selectConnections, useCapabilities, useRoute, useRoutes, useSelector } from "@aether-ui/core";
@@ -10,7 +11,7 @@ import { StrictMode, useMemo, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { invariant } from "../model.ts";
 import { FauxNoesis, type HeldQuestion } from "./faux-noesis.ts";
-import { GOAL_QUESTION, LESSON, MULTI_QUESTION, PRACTICE, RECALL_QUESTION, scenario, VOTE_QUESTION } from "./scenario.ts";
+import { GOAL_QUESTION, LESSON, LESSON_CONTEXT, LESSON_USAGE, MULTI_QUESTION, PRACTICE, RECALL_QUESTION, scenario, VOTE_QUESTION } from "./scenario.ts";
 
 const params = new URLSearchParams(location.search);
 const theme: ResolvedTheme = params.get("theme") === "dark" ? "dark" : "light";
@@ -20,7 +21,14 @@ const NO_MODEL = "no ready model for Noesis: set noesis.billing.allow_api to use
 const daemon = new FauxNoesis(scenario(!params.has("off"), {
   transport: params.has("remote") ? "ws-aether" : "ipc",
   ...(params.has("refuse") ? { refuse: NO_MODEL } : {}),
+  ...(params.has("graded") ? { contexts: { [LESSON.id]: LESSON_CONTEXT } } : {}),
 }));
+if (params.has("graded")) {
+  daemon.internal(LESSON.id, "Noesis context: the learner opened this lesson from PR #42.");
+  daemon.answeredEarlier(LESSON.id, VOTE_QUESTION, { dont_know: false, choices: ["b"], confidence: 70 });
+  daemon.answeredEarlier(LESSON.id, MULTI_QUESTION, { dont_know: false, choices: ["t", "n"], confidence: 50 });
+  daemon.history.bill(LESSON.id, LESSON_USAGE);
+}
 
 /** Plays the teacher's side once the page has connected: a question, or a practice round. */
 function play(): void {
