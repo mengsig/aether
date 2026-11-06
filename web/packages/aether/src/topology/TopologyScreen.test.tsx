@@ -108,4 +108,18 @@ describe("the topology screen", () => {
     expect(container.querySelector("canvas")?.getAttribute("aria-label")).toBe("Delegation topology");
     expect([...container.querySelectorAll("li button")].filter((node) => node.textContent?.startsWith("Group Run ")).length).toBeGreaterThan(1);
   });
+  test("offers state context, agent details and a guided empty state", async () => {
+    const { h, container } = await topology(3);
+    expect(container.querySelector("[data-testid=graph-legend]")?.textContent).toContain("Completed");
+    const canvas = container.querySelector("canvas");
+    await act(async () => { canvas?.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true })); });
+    const details = container.querySelector("[data-testid=graph-details]");
+    expect(details?.textContent).toContain("Cost:");
+    expect(details?.querySelector("a")?.getAttribute("href")).toContain("#/agents/");
+    seedFleet(h.app.store, fixtureConnection(), fixtureAgents(0));
+    await h.frame();
+    expect(container.textContent).toContain("Start an agent from Activity.");
+    expect(container.querySelector("a[data-variant=primary]")?.getAttribute("href")).toBe("#/activity");
+  });
+
 });

@@ -13,6 +13,7 @@ import { DagCanvas } from "./DagCanvas.tsx";
 import { DagOverview, NodeInspector } from "./DagPanel.tsx";
 import type { LayoutFn } from "./layout.ts";
 import { criticalPath, dagData, heldUp, initiativeProgress } from "./model.ts";
+import { DagEmpty } from "./presentation.tsx";
 import "./dag.css";
 
 export interface DagWorkspaceProps {
@@ -34,14 +35,14 @@ export function DagWorkspace({ graph, items, layout }: DagWorkspaceProps) {
   const onSelect = useCallback((id: string) => setPicked(id), []);
   const onPath = useMemo(() => new Set(path.nodes), [path]);
   if (data.nodes.length === 0) {
-    return <EmptyState title="Nothing in the graph">The task graph shows open items and how they depend on each other. Enqueue an item to see it here.</EmptyState>;
+    return <DagEmpty />;
   }
   const summary = `${data.nodes.length.toLocaleString("en")} items · ${data.edges.length.toLocaleString("en")} links · ${progress.length} initiatives`;
   return (
     <div className="dag">
       <header className="dag-header">
         <p className="dag-muted">{summary}{data.truncated ? ` · showing the first ${data.nodes.length.toLocaleString("en")}` : ""}</p>
-        <Legend />
+        <p className="dag-muted">Select an item to inspect · drag to pan · scroll to zoom</p>
       </header>
       <div className="dag-body">
         <DagCanvas data={data} path={path} layout={layout} label="Task graph" selected={selected} onSelect={onSelect} />
@@ -52,17 +53,6 @@ export function DagWorkspace({ graph, items, layout }: DagWorkspaceProps) {
         </aside>
       </div>
     </div>
-  );
-}
-
-function Legend() {
-  return (
-    <ul className="dag-legend" aria-label="Legend">
-      <li><span className="dag-swatch" data-kind="path" aria-hidden="true" />Critical path</li>
-      <li><span className="dag-swatch" data-kind="blocked" aria-hidden="true" />Held up</li>
-      <li><span className="dag-swatch" data-kind="running" aria-hidden="true" />Running</li>
-      <li><span className="dag-swatch" data-kind="operator" aria-hidden="true" />Needs you</li>
-    </ul>
   );
 }
 

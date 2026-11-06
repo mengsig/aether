@@ -1,14 +1,15 @@
 // `#/fleet/topology`: who delegated to whom, grouped by run. A run collapses into one node; the
 // layout is asked for only when the structure changes, never for a status change (LayoutGate).
 
-import { navigate, routeHref, useSelector } from "@aether-ui/core";
+import { useSelector } from "@aether-ui/core";
 import { GraphCanvas, layeredLayout } from "@aether-ui/graph";
 import type { Layout } from "@aether-ui/protocol";
-import { Button, EmptyState, ErrorState } from "@aether-ui/ui";
+import { Button, ErrorState } from "@aether-ui/ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { sameSources, selectFleetSources } from "../fleet/rows.ts";
+import { fleetRows, sameSources, selectFleetSources } from "../fleet/rows.ts";
 import { buildTopology, collapsedRuns, overridesForAll, toggleRun, topologyModel, type RunOverrides } from "./graph.ts";
 import { LayoutGate, type LayoutFn } from "./relayout.ts";
+import { AgentDetails, agentNodeStyle, AGENT_LEGEND, TopologyEmpty } from "./presentation.tsx";
 import "./topology.css";
 
 const NO_OVERRIDES: RunOverrides = new Map();
@@ -23,6 +24,7 @@ export interface TopologyScreenProps {
 export function TopologyScreen({ layout = layeredLayout }: TopologyScreenProps) {
   const sources = useSelector(selectFleetSources, sameSources);
   const topology = useMemo(() => buildTopology(sources), [sources]);
+  const rows = useMemo(() => new Map(fleetRows(sources).map((row) => [row.key, row])), [sources]);
   const [overrides, setOverrides] = useState<RunOverrides>(NO_OVERRIDES);
   const model = useMemo(() => topologyModel(topology, collapsedRuns(topology, overrides)), [topology, overrides]);
   const gate = useMemo(() => new LayoutGate(layout), [layout]);
@@ -40,15 +42,8 @@ export function TopologyScreen({ layout = layeredLayout }: TopologyScreenProps) 
   }, [gate, model, attempt]);
 
   const toggle = useCallback((group: string) => setOverrides((old) => toggleRun(topology, old, group)), [topology]);
-  const activate = useCallback((id: string) => {
-    const ref = topology.agentOf.get(id);
-    if (ref !== undefined) navigate(routeHref("#/agents/:conn/:agent", { conn: ref.conn, agent: ref.agent }));
-  }, [topology]);
-
-  if (sources.length === 0) {
-    return <EmptyState title="No Aether daemon connected">The topology shows how the agents of every connected Aether daemon delegate.</EmptyState>;
-  }
-  if (topology.nodes.length === 0) return <EmptyState title="No agents yet">Agents and their delegations appear here as daemons create them.</EmptyState>;
+  if (sources.length === 0) return <TopologyEmpty disconnected />;
+  if (topology.nodes.length === 0) return <TopologyEmpty />;
   if (failure !== undefined) return <ErrorState title="The topology could not be laid out" message={failure} onRetry={() => setAttempt((n) => n + 1)} />;
   return (
     <section className="topology" aria-label="Delegation topology">
@@ -59,7 +54,9 @@ export function TopologyScreen({ layout = layeredLayout }: TopologyScreenProps) 
         <a className="ui-link" href="#/fleet">Fleet list</a>
       </div>
       <div className="topology-canvas">
-        <GraphCanvas model={model} layout={placed} label="Delegation topology" onActivate={activate} onToggleGroup={toggle} />
+        <GraphCanvas model={model} layout={placed} label="Delegation topology" onToggleGroup={toggle}
+          nodeStyle={(node) => agentNodeStyle(rows.get(node.id)?.agent)} legend={AGENT_LEGEND} emptyState={<TopologyEmpty />}
+          details={(node) => { const row = rows.get(node.id); return row === undefined ? <strong>{node.label}</strong> : <AgentDetails row={row} />; }} />
       </div>
     </section>
   );

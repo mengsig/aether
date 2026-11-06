@@ -5,6 +5,7 @@ import type { GGroup, GraphModel } from "@aether-ui/protocol";
 import { at, invariant, must } from "./invariant.ts";
 
 export interface VisibleNode {
+  weight?: number;
   id: string;
   label: string;
   status?: string;
@@ -76,6 +77,7 @@ function placement(chain: readonly GGroup[], collapsed: ReadonlySet<string>): { 
 function nodeIdSet(model: GraphModel): Set<string> {
   const ids = new Set<string>();
   for (const node of model.nodes) {
+    if (node.weight !== undefined && (!Number.isFinite(node.weight) || node.weight < 0)) throw new GraphModelError(`node ${node.id} has an invalid weight`);
     if (ids.has(node.id)) throw new GraphModelError(`node ${node.id} appears twice`);
     ids.add(node.id);
   }
@@ -99,6 +101,7 @@ export function visibleGraph(model: GraphModel): VisibleGraph {
     nodes.set(id, {
       id, label,
       ...(place.collapsed === undefined && node.status !== undefined ? { status: node.status } : {}),
+      ...(place.collapsed === undefined && node.weight !== undefined ? { weight: node.weight } : {}),
       ...(place.expanded !== undefined ? { group: place.expanded } : {}),
       ...(place.collapsed !== undefined ? { collapsedMembers: 1 } : {}),
     });
