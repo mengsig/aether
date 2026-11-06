@@ -69,14 +69,16 @@ impl Endpoints {
 
     pub(super) fn resolve(&self, value: &Value) -> Option<Endpoint> {
         match value {
-            Value::String(label) => self.named(label),
+            Value::String(label) => self.identifier(label).or_else(|| self.labeled(label)),
             Value::Object(fields) => {
                 let mut resolved = None;
                 for (key, label) in fields {
-                    if !matches!(key.as_str(), "key" | "id" | "name" | "statement" | "alias") {
-                        return None;
-                    }
-                    let endpoint = self.named(label.as_str()?)?;
+                    let label = label.as_str()?;
+                    let endpoint = match key.as_str() {
+                        "key" | "id" => self.identifier(label),
+                        "name" | "statement" | "alias" => self.labeled(label),
+                        _ => None,
+                    }?;
                     if resolved
                         .as_ref()
                         .is_some_and(|previous| self.identity(previous) != self.identity(&endpoint))
@@ -98,14 +100,17 @@ impl Endpoints {
         }
     }
 
-    fn named(&self, name: &str) -> Option<Endpoint> {
-        let name = name.trim();
+    fn identifier(&self, name: &str) -> Option<Endpoint> {
         if self.keys.contains_key(name) {
             return Some(Endpoint::Local(name.into()));
         }
         if self.ids.contains(name) {
             return Some(Endpoint::Existing(name.into()));
         }
+        None
+    }
+
+    fn labeled(&self, name: &str) -> Option<Endpoint> {
         self.labels
             .get(&ids::normalize(name))?
             .as_ref()

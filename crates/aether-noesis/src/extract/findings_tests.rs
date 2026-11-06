@@ -220,3 +220,56 @@ fn duplicate_wordings_and_existing_copies_do_not_make_labels_ambiguous() {
     assert_eq!(merged.graph.nodes.len(), 2);
     assert_eq!(merged.chains, 1);
 }
+
+#[test]
+fn explicit_label_references_are_not_shadowed_by_local_keys() {
+    let mut props = propositions();
+    props[0]["name"] = json!("b");
+    let out = parsed(
+        json!({"propositions": props, "chains": [
+            {"premises": [{"name": "b"}], "conclusion": {"key": "b"}, "anchor": "m1"}
+        ]}),
+        &Graph::default(),
+    );
+    assert_eq!(out.rejected, 0);
+    let merged = merge(
+        &Graph::default(),
+        &Extraction {
+            findings: out.findings,
+            chains: out.chains,
+        },
+    );
+    assert_eq!(merged.chains, 1);
+    let chain = merged.graph.chains.values().next().unwrap();
+    assert_eq!(
+        chain.premises,
+        BTreeSet::from([ids::proposition_id("The switch closes the circuit.")])
+    );
+    assert_eq!(
+        chain.conclusion,
+        ids::proposition_id("Current flows through the lamp.")
+    );
+}
+
+#[test]
+fn opaque_local_keys_keep_their_exact_spelling() {
+    let mut props = propositions();
+    props[0]["key"] = json!(" A ");
+    props[1]["key"] = json!(" B ");
+    let out = parsed(
+        json!({"propositions": props, "chains": [
+            {"premises": [" A "], "conclusion": {"key": " B "}, "anchor": "m1"}
+        ]}),
+        &Graph::default(),
+    );
+    assert_eq!(out.rejected, 0);
+    assert_eq!(out.chains.len(), 1);
+    let merged = merge(
+        &Graph::default(),
+        &Extraction {
+            findings: out.findings,
+            chains: out.chains,
+        },
+    );
+    assert_eq!(merged.chains, 1);
+}
