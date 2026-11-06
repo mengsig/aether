@@ -3,7 +3,7 @@
   .initiative-facts { display: flex; flex-wrap: wrap; gap: var(--space-4) var(--space-10); margin: var(--space-2) 0 0; padding-block: var(--space-4); border-block: 1px solid var(--color-border); }
   .initiative-facts div { display: grid; gap: var(--space-1); min-inline-size: 7rem; }
   .initiative-facts dt { color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-tight) var(--font-ui); }
-  .initiative-facts dd { margin: 0; font: var(--weight-bold) var(--text-xl) / 1 var(--font-display); letter-spacing: -0.01em; }
+  .initiative-facts dd { margin: 0; font: var(--weight-bold) var(--text-xl) / 1 var(--font-display); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
   .initiative-body { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: var(--space-4); align-items: start; }
   .initiative-card { gap: var(--space-3); }
   .initiative-order { grid-column: 1 / -1; }

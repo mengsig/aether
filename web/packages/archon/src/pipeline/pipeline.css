@@ -15,7 +15,7 @@
   .pipeline-step-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .pipeline-index {
     display: inline-grid; place-items: center; inline-size: var(--space-6); block-size: var(--space-6); border-radius: var(--radius-xl);
-    background: var(--color-surface-3); font: var(--weight-medium) var(--text-xs) / 1 var(--font-ui);
+    background: var(--color-surface-3); font: var(--weight-medium) var(--text-xs) / 1 var(--font-ui); font-variant-numeric: tabular-nums;
   }
   .pipeline-name { font-family: var(--font-mono); }
   .pipeline-terms { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
