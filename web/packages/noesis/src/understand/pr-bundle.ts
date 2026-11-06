@@ -3,8 +3,8 @@
 
 import type { aether, archon } from "@aether-ui/protocol";
 import { invariant } from "../learn/model.ts";
-import { bundleOf, evidence } from "./bundle.ts";
-import { prStatus } from "./archon-bundles.ts";
+import { bundleOf } from "./bundle.ts";
+import { attested, prStanding, type Standing } from "./archon-bundles.ts";
 
 export interface PrId {
   readonly host: string;
@@ -36,7 +36,10 @@ export function findPr(objects: readonly archon.GithubObject[], pr: PrId): archo
 function checksEvidence(ref: aether.EvidenceRef, checks: archon.ChecksSummary): aether.EvidenceItem {
   const passed = checks.total > 0 && checks.failed === 0 && checks.state === "success";
   const words = passed ? `All ${checks.total} checks passed` : `Checks ${checks.state}: ${checks.failed} of ${checks.total} failing`;
-  return evidence(ref, passed ? "verified" : "preliminary", words);
+  const standing: Standing = passed
+    ? { status: "verified", basis: "Verified: every check run passed." }
+    : { status: "preliminary", basis: "Preliminary: the checks have not all passed." };
+  return attested(ref, standing, words);
 }
 
 /** The PR's state and review, and its checks as a separate fact a check run established. */
@@ -54,7 +57,7 @@ export function prBundle(object: archon.GithubObject): aether.EvidenceBundle {
     object.author ? `Author: ${object.author}` : null,
     object.labels.length > 0 ? `Labels: ${object.labels.join(", ")}` : null,
   ].filter((line): line is string => line !== null);
-  const items = [evidence(evidenceRef, prStatus(object.state, object.review_decision), facts.join("\n"))];
+  const items = [attested(evidenceRef, prStanding(object.state, object.review_decision), facts.join("\n"))];
   if (object.checks) items.push(checksEvidence(evidenceRef, object.checks));
   return bundleOf(`#${ref.number} ${object.title}`, items);
 }
