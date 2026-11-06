@@ -498,6 +498,53 @@ fn a_rooted_tree_page_walks_the_subtree_down_the_closure_key() {
     no_scan_or_sort(&steps);
 }
 
+/// Whether `alias` is read, and only ever looked up by a key that binds its id.
+fn keyed_by_id(steps: &[(i64, i64, String)], alias: &str) -> bool {
+    let reads: Vec<&str> = steps
+        .iter()
+        .map(|s| s.2.as_str())
+        .filter(|d| {
+            *d == format!("SCAN {alias}")
+                || d.starts_with(&format!("SCAN {alias} "))
+                || d.starts_with(&format!("SEARCH {alias} "))
+        })
+        .collect();
+    !reads.is_empty()
+        && reads
+            .iter()
+            .all(|d| d.starts_with("SEARCH") && (d.contains("(id=?)") || d.contains(" id=?)")))
+}
+
+/// Each step up looks the parent up by id, never a range of the agents a filter keeps
+/// as the outer loop: that would read the fleet once per ancestor.
+#[test]
+fn a_page_climbs_to_its_ancestors_by_key_under_every_filter() {
+    use crate::sqlite::tree_pages::ancestors_sql;
+    let store = SqliteStore::open_in_memory().expect("open");
+    let mut shapes = 0;
+    for root in [None, Some(AgentId::new())] {
+        for run in [None, Some(RunId::new())] {
+            for include_archived in [false, true] {
+                for role_prefix in [None, Some("review".to_owned())] {
+                    let query = crate::TreeQuery {
+                        role_prefix,
+                        ..tree_query(run, root, include_archived)
+                    };
+                    let (above, mut args) = ancestors_sql(&query);
+                    args.push("[]".to_owned());
+                    args.push("1000".to_owned());
+                    let steps = plan(&store, &above, &boxed(args));
+                    assert!(keyed_by_id(&steps, "c"), "{steps:?}");
+                    assert!(keyed_by_id(&steps, "a"), "{steps:?}");
+                    no_scan_or_sort(&steps);
+                    shapes += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(shapes, 16, "every combination of the filters");
+}
+
 #[test]
 fn a_subtree_roll_up_reads_its_totals_and_links_by_key() {
     use crate::sqlite::tree_usages::{
@@ -543,6 +590,7 @@ fn a_subtree_roll_up_reads_its_totals_and_links_by_key() {
         seeks(&steps, "p", "sqlite_autoindex_agents_1 (id=?)"),
         "{steps:?}"
     );
+    assert!(keyed_by_id(&steps, "a"), "{steps:?}");
     no_scan_or_sort(&steps);
     let steps = plan(&store, &ancestors_read_sql(), &boxed(vec![id.clone()]));
     assert!(

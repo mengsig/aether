@@ -163,12 +163,13 @@ pub(super) fn ancestors_sql(query: &TreeQuery) -> (String, Vec<String>) {
     ]);
     let ids = scope.args.len() + 1;
     // A LIMIT on the recursive step ends the recursion, the starting rows counted.
+    // CROSS JOIN keeps each step a lookup by key, never a range over the filtered agents.
     let sql = format!(
         "WITH RECURSIVE up(id) AS (
              SELECT value FROM json_each(?{ids})
              UNION
-             SELECT a.id FROM up JOIN agents c ON c.id = up.id
-             JOIN agents a ON a.id = c.parent WHERE {filter} LIMIT ?{}
+             SELECT a.id FROM up CROSS JOIN agents c ON c.id = up.id
+             CROSS JOIN agents a ON a.id = c.parent WHERE {filter} LIMIT ?{}
          )
          SELECT id FROM up",
         ids + 1

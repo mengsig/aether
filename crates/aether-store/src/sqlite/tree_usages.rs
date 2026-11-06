@@ -20,7 +20,7 @@ const ANCESTORS_READ_MAX: usize = 64;
 
 /// Each agent of the JSON list ?1 beside its parent, when that parent is stored.
 pub(super) const SHOWN_PARENTS_SQL: &str = "SELECT a.id, p.id FROM json_each(?1) j
-    CROSS JOIN agents a ON a.id = j.value JOIN agents p ON p.id = a.parent";
+    CROSS JOIN agents a ON a.id = j.value CROSS JOIN agents p ON p.id = a.parent";
 
 /// The agents of the JSON list ?2 above the agent ?1, each sought by key.
 pub(super) const SEEK_ANCESTORS_SQL: &str = "SELECT j.value FROM json_each(?2) j
