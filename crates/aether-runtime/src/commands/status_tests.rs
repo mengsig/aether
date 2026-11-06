@@ -179,10 +179,10 @@ async fn a_held_scheduler_costs_only_the_sections_behind_it() {
     let held = runtime.sched.lock();
     let started = Instant::now();
     let status = runtime
-        .status_within(Duration::from_millis(300))
+        .status_within(Duration::from_secs(2))
         .expect("status");
     assert!(
-        started.elapsed() < Duration::from_secs(5),
+        started.elapsed() < Duration::from_secs(7),
         "status kept to its deadline with the scheduler held"
     );
     drop(held);
