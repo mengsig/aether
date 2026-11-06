@@ -29,7 +29,8 @@ test("the fleet and the queue work through one origin, and a queued item is on b
   const dialog = page.getByRole("dialog", { name: "New item" });
   await dialog.getByLabel("Title").fill(ITEM);
   await dialog.getByLabel("Brief").fill(BRIEF);
-  await dialog.getByLabel("Pipeline").selectOption("ask");
+  await dialog.getByTestId("new-item-pipeline").click();
+  await page.getByRole("option", { name: "ask", exact: true }).click();
   await dialog.getByRole("button", { name: "Queue item" }).click();
   await expect(dialog).toHaveCount(0);
   const article = page.getByRole("article", { name: ITEM });

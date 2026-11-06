@@ -82,6 +82,12 @@ describe("the boundaries", () => {
     expect(() => enqueueCommand({ title: "", brief: "B", repo: "", pipeline: "", priority: "normal", review: "" }, "k1")).toThrow(/title and brief/);
   });
 
+  test("an ask item needs no repository, so the enqueue sends null for it", () => {
+    const command = enqueueCommand({ title: "Q", brief: "B", repo: "", pipeline: "ask", priority: "normal", review: "" }, "k2");
+    expect(command).toMatchObject({ repo: null, pipeline: "ask" });
+    expect(() => enqueueCommand({ title: "Q", brief: "B", repo: "", pipeline: "ask", priority: "normal", review: "" }, "")).toThrow(/idempotency key/);
+  });
+
   test("formats money and ages", () => {
     expect([usd(0), usd(0.004), usd(3.185), usd(Number.NaN)]).toEqual(["$0.00", "<$0.01", "$3.19", "—"]);
     const now = Date.parse("2026-11-04T10:00:00Z");

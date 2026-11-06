@@ -13,7 +13,7 @@ export const EMPTY_ITEM: ItemDraft = { title: "", brief: "", repo: "", pipeline:
 
 export function enqueueCommand(draft: ItemDraft, key: string): Record<string, unknown> {
   invariant(draft.title.trim() !== "" && draft.brief.trim() !== "", "an item needs a title and brief");
-  invariant(draft.repo.length > 0 && key.length > 0, "an enqueue names a repository and idempotency key");
+  invariant(key.length > 0, "an enqueue carries an idempotency key");
   return {
     cmd: "enqueue", repo: draft.repo || null, pipeline: draft.pipeline || null, title: draft.title.trim(), brief: draft.brief.trim(),
     priority: draft.priority, budget_usd: null, idempotency_key: key, ...(draft.review ? { autonomy: { review: draft.review } } : {}),
@@ -25,8 +25,9 @@ function ItemChoices({ draft, set, repos, catalog }: {
   readonly repos: readonly archon.Repo[]; readonly catalog: archon.CatalogListing | undefined;
 }) {
   return <>
-    <Picker label="Repository" data-testid="new-item-repo" value={draft.repo} placeholder="Choose a repository" error={!draft.repo ? "Choose a repository." : undefined}
-      options={repos.map((repo) => ({ id: repo.id, label: repo.name, description: repo.path }))}
+    <Picker label="Repository" data-testid="new-item-repo" value={draft.repo} placeholder="Choose a repository"
+      hint={draft.repo ? undefined : "Only the ask pipeline runs without a repository."}
+      options={[{ id: "", label: "No repository" }, ...repos.map((repo) => ({ id: repo.id, label: repo.name, description: repo.path }))]}
       onChange={(repo) => set({ repo, pipeline: repos.find((entry) => entry.id === repo)?.default_pipeline ?? "" })} />
     <Picker label="Pipeline" data-testid="new-item-pipeline" value={draft.pipeline} onChange={(pipeline) => set({ pipeline })}
       options={[{ id: "", label: "The repository's default" }, ...(catalog?.pipelines ?? []).map((pipeline) => ({ id: pipeline.name, label: pipeline.name }))]} />
@@ -46,7 +47,7 @@ export function NewItemDialog({ access, open, repos, onClose }: {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const catalog = useRead<archon.CatalogListing>(access, open ? { cmd: "list_pipelines", repo: draft.repo || null } : null, ["catalog"]);
-  const valid = !!draft.title.trim() && !!draft.brief.trim() && repos.some((repo) => repo.id === draft.repo);
+  const valid = !!draft.title.trim() && !!draft.brief.trim() && (draft.repo === "" || repos.some((repo) => repo.id === draft.repo));
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!valid || busy || access.refusal) return;

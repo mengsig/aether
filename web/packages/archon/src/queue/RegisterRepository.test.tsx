@@ -46,7 +46,8 @@ it("keeps a new item draft across closing and clears it only on success", async 
   await click(h, byText(document, "dialog[open] button", "Cancel"));
   await click(h, byText(root, "button", "New item"));
   expect(document.querySelector<HTMLInputElement>('[data-testid="new-item-title"]')?.value).toBe("Keep my work");
-  expect(document.querySelector<HTMLButtonElement>('[data-testid="new-item-submit"]')?.disabled).toBe(true);
+  // An item without a repository is valid (ask items need none), so the submit is already enabled.
+  expect(document.querySelector<HTMLButtonElement>('[data-testid="new-item-submit"]')?.disabled).toBe(false);
   await pick(h, "new-item-repo", "site");
   await click(h, document.querySelector('[data-testid="new-item-submit"]') as Element);
   expect(drafts.get("archon/new-item")).toBeUndefined();
