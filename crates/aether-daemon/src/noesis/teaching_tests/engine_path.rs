@@ -14,6 +14,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::*;
 
+mod streaming;
+
 const ENGINE_MODEL: &str = "faux-engine/tutor";
 const KEY_SECRET: &str = "Paris has been the capital since 987.";
 const SOLUTION_SECRET: &str = "SOLUTION-FIVE-41";

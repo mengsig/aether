@@ -60,15 +60,10 @@ impl Runtime {
                 detected.reason(&kind),
             ))
         })?;
-        let temp_dir = crate::turn::agent_temp_dir(self, agent.id)?;
-        let cwd = temp_dir
-            .clone()
-            .or_else(|| self.config.workspace_root.clone())
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
         debug_assert!(!resolved.model.id.is_empty(), "a resolved model has an id");
+        debug_assert_eq!(agent.scope.backend, ExecutionBackend::Host);
         let session_pricing = session_pricing(self, &resolved);
-        Ok(Arc::new(crate::compaction_client::CompactionClient {
+        let client = crate::compaction_client::CompactionClient {
             engine,
             context: aether_engine::EngineLaunchContext {
                 run_id: agent.run,
@@ -80,34 +75,51 @@ impl Runtime {
             purpose: "Noesis step",
             timeout: NOESIS_STEP_TIMEOUT,
             session_pricing: Some(session_pricing),
-            turn: aether_engine::EngineTurn {
-                redactor: self.tool_runtime.redactor().clone(),
-                prompt: String::new(),
-                images: Vec::new(),
-                system_prompt: String::new(),
-                session: None,
-                session_usage: aether_core::model::Usage::default(),
-                session_model_usage: None,
-                new_session_id: aether_engine::new_session_id(),
-                session_recorder: Some(turn_engine::session_recorder(self, agent.id)),
-                model: Some(resolved.model.id),
-                effort: None,
-                cwd,
-                extra_dirs: Vec::new(),
-                summary_only: true,
-                compact_session: false,
-                auto_compact_tokens: None,
-                lean_host_context: true,
-                network_access: false,
-                bypass_permissions: false,
-                hidden_env: self.tools.engine_hidden_env().to_vec(),
-                tool_hidden_env: self.tools.hidden_env().to_vec(),
-                temp_dir,
-                build_env: Vec::new(),
-                mcp: None,
-            },
-        }))
+            turn: isolated_turn(self, agent, resolved.model.id)?,
+        };
+        Ok(Arc::new(crate::compaction_client::StreamingClient(client)))
     }
+}
+
+fn isolated_turn(
+    runtime: &Arc<Runtime>,
+    agent: &Agent,
+    model: String,
+) -> Result<aether_engine::EngineTurn> {
+    debug_assert!(!model.is_empty());
+    debug_assert_eq!(agent.scope.backend, ExecutionBackend::Host);
+    let temp_dir = crate::turn::agent_temp_dir(runtime, agent.id)?;
+    let cwd = temp_dir
+        .clone()
+        .or_else(|| runtime.config.workspace_root.clone())
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    Ok(aether_engine::EngineTurn {
+        redactor: runtime.tool_runtime.redactor().clone(),
+        prompt: String::new(),
+        images: Vec::new(),
+        system_prompt: String::new(),
+        session: None,
+        session_usage: aether_core::model::Usage::default(),
+        session_model_usage: None,
+        new_session_id: aether_engine::new_session_id(),
+        session_recorder: Some(turn_engine::session_recorder(runtime, agent.id)),
+        model: Some(model),
+        effort: None,
+        cwd,
+        extra_dirs: Vec::new(),
+        summary_only: true,
+        compact_session: false,
+        auto_compact_tokens: None,
+        lean_host_context: true,
+        network_access: false,
+        bypass_permissions: false,
+        hidden_env: runtime.tools.engine_hidden_env().to_vec(),
+        tool_hidden_env: runtime.tools.hidden_env().to_vec(),
+        temp_dir,
+        build_env: Vec::new(),
+        mcp: None,
+    })
 }
 
 /// Prices a step from the model its engine session reports, as an ordinary

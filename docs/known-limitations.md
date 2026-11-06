@@ -272,7 +272,10 @@ looks like a boundary and is not one.
 - Retention is not a full disk quota. Native sessions, backups, and workspaces
   have separate lifecycles.
 - A Noesis step on a subscription engine starts a fresh CLI session each
-  turn, and its text arrives in one piece when the step ends, not streamed.
+  turn. Public text streams when the engine emits deltas and follows the
+  leading `text` JSON protocol; a nonstandard prefix or field order falls
+  back to complete-reply validation. Engines that only report completed
+  messages cannot provide token-by-token updates.
 
 ## Platforms
 

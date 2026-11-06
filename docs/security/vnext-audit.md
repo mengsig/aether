@@ -276,7 +276,7 @@ headless security check"), from `make web`.
 | # | Check | Status | Evidence |
 | --- | --- | --- | --- |
 | n1 | Sealed fields are replaced where the call is persisted | ✅ | `seal_commit` runs in `Runtime::apply_held_by` before write and publish, and `seal_import` on import (`crates/aether-runtime/src/lib.rs`). `seal_event` and `seal_mutations` name every variant with no wildcard (`crates/aether-runtime/src/noesis_seal.rs`). `answer_key`, `explanation` and `solution` become `"<sealed>"`. Tests in `crates/aether-runtime/tests/kernel/noesis_seal.rs` and `noesis_seal/tests.rs`. |
-| n2 | No `tool_input` delta for a sealed call; no thinking for Noesis agents; no sequence gap | ✅ | `StreamSeal::admits` decides before a delta is numbered (`noesis_seal.rs`, `bus.rs`). Tests `a_stream_withholds_sealed_input_and_noesis_thinking_only` and `assert_deltas_sealed_and_gapless` (`crates/aether-daemon/src/noesis/teaching_tests.rs`). Noesis teaching turns publish no deltas at all (`crates/aether-daemon/src/noesis/engine.rs`). |
+| n2 | No `tool_input` delta for a sealed call; no thinking for Noesis agents; no sequence gap | ✅ | `StreamSeal::admits` decides before a delta is numbered (`noesis_seal.rs`, `bus.rs`). Tests `a_stream_withholds_sealed_input_and_noesis_thinking_only` and `assert_deltas_sealed_and_gapless` (`crates/aether-daemon/src/noesis/teaching_tests.rs`). Noesis teaching turns publish only turn bounds and public text (`crates/aether-daemon/src/noesis/engine.rs`). Subscription-engine JSON is decoded incrementally; tool inputs, including secrets split across chunks, never become text deltas. Tests `noesis_subscription_delivers_each_text_chunk_before_the_engine_finishes` and `noesis_subscription_withholds_secrets_split_across_engine_chunks`. |
 | n3 | No read before reveal | ✅ | `Question` and `Problem` have no key or solution field (`crates/aether-core/src/noesis.rs`). `QuestionResult` is built only after the answer commits. `solution` appears only in `noesis.practice_concluded`, after the conclusion commits. Tests `t11_answer_keys_are_sealed_until_the_answer_is_recorded`, `t11_the_solution_is_sealed_on_every_read_path_until_conclude_and_practice_never_writes_the_graph` (`crates/aether-noesis/src/teach/parity.rs`). |
 | n4 | Not in logs or error text | ✅ | No `tracing` call prints a tool input. Argument errors show the shape only (`crates/aether-noesis/src/tools/args.rs`). Unknown argument names are never echoed. `Sealer`'s `Debug` prints only a count. |
 | n5 | Evidence bundle ≤ 32 KiB, shape checked, refused before storing | ✅ | `validate_bundle` (`crates/aether-protocol/src/noesis.rs`) and `evidence::validate` (`crates/aether-noesis/src/evidence/mod.rs`); refused unless `engineering_context` is in effect. Tests in `crates/aether-noesis/src/evidence/tests.rs`. |
@@ -329,7 +329,8 @@ headless security check"), from `make web`.
   Noesis tools are not MCP tools. *Follow-up:* compute it from `sealed_view`.
 - **H3-L9 (Noesis).** A `ToolInput` delta with an empty tool name (no
   `BlockStart` seen) is admitted, because `sealed_fields("")` is `None`.
-  Teaching turns publish no deltas, so no sealed call streams today.
+  Teaching turns publish only text and turn bounds, so they never publish
+  `ToolInput`, including a nameless one.
   *Follow-up:* withhold nameless `ToolInput` deltas for sealing-capable agents.
 - **H3-L10 (Noesis, privacy).** The learner's optional `thinking` reaches the
   teacher's transcript as part of the answer tool result, where any observer

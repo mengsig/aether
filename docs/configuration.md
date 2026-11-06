@@ -843,8 +843,13 @@ Answer options use inline Markdown only; HTML and images are unsupported.
 On an engine, each Noesis step is one fresh session without tools of its
 own: Aether gives it the agent's tools and transcript, sealed values as
 `"<sealed>"`, and runs the tool calls it answers with, so asking, sealing
-and budgets behave as on an API model. The step's text reaches watchers as
-one delta when the step ends, not word by word.
+and budgets behave as on an API model. Subscribers using `deltas: true` for
+the agent receive its public text as the engine generates it. The subscription
+adapter incrementally decodes the leading JSON `text` string, including split
+escapes; it never forwards the raw JSON, thinking or tool inputs. Tool calls
+validate at the end of the reply. A reply with a nonstandard prefix or field
+order waits for complete validation before any public text is shown. Final
+engine receipts settle usage without repeating text already streamed.
 
 In the Learn screen's settings:
 

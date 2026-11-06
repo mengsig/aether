@@ -15,11 +15,15 @@ use aether_core::model::{
     BlockStart, ContentBlock, Message, MessageRole, ModelError, ModelErrorClass, ModelRequest,
     StreamEvent, SystemBlock, ToolResultBlock, ToolSpec, Usage,
 };
-use aether_model::{ModelClient, ModelStream, collect_partial};
-use futures::StreamExt;
+use aether_model::{ModelClient, ModelStream};
 use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
+
+#[path = "engine_step_stream.rs"]
+mod streaming;
+#[path = "engine_step_text.rs"]
+mod text;
 
 /// A step tries the engine twice: one corrective retry when a reply is not
 /// the JSON object asked for. Each attempt is gated and charged on its own.
@@ -61,8 +65,7 @@ impl ModelClient for EngineStepClient {
         let rendered = engine_request(&request);
         assert!(rendered.tools.is_empty(), "the engine gets no native tools");
         let stream = self.inner.stream(rendered, cancel).await?;
-        let events = futures::stream::once(parsed_events(stream)).flat_map(futures::stream::iter);
-        Ok(Box::pin(events))
+        Ok(streaming::parsed_events(stream))
     }
 }
 
@@ -74,26 +77,6 @@ pub(super) fn is_malformed(error: &ModelError) -> bool {
 /// The note a retried step's transcript ends with.
 pub(super) fn retry_note() -> Message {
     Message::user_text(RETRY_NOTE)
-}
-
-/// The engine's whole reply as an API reply's events. A failure reports the
-/// attempt's usage first, so the step charges what was spent.
-async fn parsed_events(stream: ModelStream) -> Vec<Result<StreamEvent, ModelError>> {
-    let reply = match collect_partial(stream, |_| {}).await {
-        Ok(reply) => reply,
-        Err(failure) => return failed_events(failure.partial.usage, failure.error),
-    };
-    match parse_reply(&reply.text()) {
-        Ok(parsed) => reply_events(reply.usage, parsed),
-        Err(reason) => {
-            let error = ModelError::new(
-                ModelErrorClass::Server,
-                format!("{MALFORMED_REPLY}: {reason}"),
-            );
-            debug_assert!(is_malformed(&error));
-            failed_events(reply.usage, error)
-        }
-    }
 }
 
 /// The request the engine reads: the agent's prompt and the reply protocol
@@ -124,6 +107,7 @@ fn protocol(tools: &[ToolSpec]) -> String {
          - Aether runs the calls in `tool_calls` in order once you reply, and gives you \
          their results in the next message.\n\
          - An empty `tool_calls` ends your turn: the learner reads `text` and answers.\n\
+         - Put `text` first, as a JSON string, so the learner can read it as you generate it.\n\
          - Each `input` follows its tool's input schema below.\n\
          - What the learner must not see yet (an answer key, an explanation, a solution) \
          goes only in a tool's input, never in `text`.\n\n## Tools\n",
@@ -276,27 +260,35 @@ fn reply_of(wire: WireReply) -> Result<Reply, String> {
     Ok(Reply { text, calls })
 }
 
-fn reply_events(usage: Usage, reply: Reply) -> Vec<Result<StreamEvent, ModelError>> {
+fn reply_events(
+    usage: Usage,
+    reply: Reply,
+    streamed: bool,
+) -> Vec<Result<StreamEvent, ModelError>> {
     debug_assert!(reply.text.is_some() || !reply.calls.is_empty());
-    let mut events = vec![
-        StreamEvent::MessageStart {
+    debug_assert!(!streamed || reply.text.is_some());
+    let mut events = Vec::new();
+    if !streamed {
+        events.push(StreamEvent::MessageStart {
             provider_message_id: None,
             model: None,
-        },
-        StreamEvent::Usage { usage },
-    ];
+        });
+    }
+    events.push(StreamEvent::Usage { usage });
     let offset = usize::from(reply.text.is_some());
     if let Some(text) = reply.text {
-        events.extend([
-            StreamEvent::BlockStart {
-                index: 0,
-                block: BlockStart::Text {
-                    text: String::new(),
+        if !streamed {
+            events.extend([
+                StreamEvent::BlockStart {
+                    index: 0,
+                    block: BlockStart::Text {
+                        text: String::new(),
+                    },
                 },
-            },
-            StreamEvent::TextDelta { index: 0, text },
-            StreamEvent::BlockStop { index: 0 },
-        ]);
+                StreamEvent::TextDelta { index: 0, text },
+            ]);
+        }
+        events.push(StreamEvent::BlockStop { index: 0 });
     }
     for (position, (id, name, input)) in reply.calls.into_iter().enumerate() {
         let index = offset + position;
