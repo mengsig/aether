@@ -143,6 +143,13 @@ pub struct PromptsPatch {
 pub struct SpendToday {
     pub interactive: Usage,
     pub background: Usage,
+    /// Today's use of both lanes on subscription engines: covered by the
+    /// learner's plan, so its dollars are a list-price estimate, not a charge.
+    #[serde(default)]
+    pub subscription: Usage,
+    /// Today's use of both lanes billed per request through an API key.
+    #[serde(default)]
+    pub api: Usage,
 }
 
 /// What a disable does to work in flight.

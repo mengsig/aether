@@ -55,6 +55,8 @@ impl NoesisService {
             spend_today: SpendToday {
                 interactive,
                 background,
+                subscription: Usage::default(),
+                api: Usage::default(),
             },
             disable_policy: DisablePolicy {
                 grace_seconds: settings.disable_grace_seconds,

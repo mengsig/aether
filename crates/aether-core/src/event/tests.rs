@@ -383,6 +383,11 @@ fn noesis_session() -> crate::noesis::NoesisSession {
         active_problem: None,
         created_at: now,
         updated_at: now,
+        agents: Vec::new(),
+        questions: Vec::new(),
+        problems: Vec::new(),
+        usage: None,
+        context: None,
     }
 }
 
