@@ -20,17 +20,6 @@
   .st-note[data-state="unconfirmed"] { color: var(--color-warning); }
   .st-note[data-state="done"] { color: var(--color-success); }
 
-  .st-field { display: grid; gap: var(--space-1); }
-  .st-textarea, .st-select {
-    padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border-strong); border-radius: var(--radius-md);
-    background: var(--color-surface-1); color: var(--color-text); font: inherit; font-size: var(--text-sm);
-    transition: border-color var(--motion-fast) var(--ease-standard);
-  }
-  .st-textarea:hover, .st-select:hover { border-color: var(--color-text-muted); }
-  .st-select { min-block-size: var(--space-9); }
-  .st-textarea { resize: vertical; min-block-size: var(--space-12); line-height: var(--leading-normal); }
-  .st-textarea:focus-visible, .st-select:focus-visible { outline: none; box-shadow: var(--focus-ring); border-color: var(--color-focus); }
-
   /* Items in a section are parted by hairlines, not boxed again inside the card. */
   .st-list { display: grid; margin: 0; padding: 0; list-style: none; }
   .st-item {

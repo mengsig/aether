@@ -1,24 +1,40 @@
 // `#/learn/graph`: the knowledge graph in a force layout, coloured by mastery, with a panel for the
 // chosen proposition. Deleting a proposition or a source asks first.
 
-import { routeHref } from "@aether-ui/core";
+import { routeHref, useDraft } from "@aether-ui/core";
 import { forceLayout, GraphCanvas } from "@aether-ui/graph";
 import type { aether, GraphModel, Layout } from "@aether-ui/protocol";
-import { Button, Dialog, EmptyState, ErrorState } from "@aether-ui/ui";
+import { Button, Dialog, EmptyState, ErrorState, Field, Segmented } from "@aether-ui/ui";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { errorText, useLearn, useNoesisChange, useNoesisRead, useOperateRefusal } from "./data.ts";
 import { knowledgeGraph, knowledgeModel, masteryByProposition, spreadForLabels, structureKey } from "./graph-model.ts";
 import { LearnFrame, type OpenGate } from "./LearnFrame.tsx";
 import { MasteryBadge } from "./Mastery.tsx";
-import { MASTERY_ORDER, type Mastery } from "./model.ts";
+import { invariant, MASTERY_ORDER, type Mastery } from "./model.ts";
 import { learnerConcepts } from "./UnderstandingScreen.tsx";
 
 export type LayoutFn = (model: GraphModel) => Promise<Layout>;
 
+export const SOURCE_GRAPH = [
+  { id: "preserve", label: "Keep them in the graph", hint: "Statements stay, even with nothing else behind them" },
+  { id: "delete_unsupported", label: "Remove those nothing else supports", hint: "Statements another source backs stay" },
+] as const;
+
+type SourceGraph = (typeof SOURCE_GRAPH)[number]["id"];
+
+function sourceGraphOf(id: string): SourceGraph {
+  const found = SOURCE_GRAPH.find((option) => option.id === id);
+  invariant(found !== undefined, `${id} is a source-graph option`);
+  return found.id;
+}
+
 type Pending = { readonly kind: "proposition"; readonly id: string } | { readonly kind: "source"; readonly id: string };
 
+const SEARCH_DRAFT = "learn/graph-search";
+const EMPTY_SEARCH: { readonly query: string } = { query: "" };
+
 export function GraphScreen({ conn, layout = forceLayout }: OpenGate & { layout?: LayoutFn }) {
-  const [query, setQuery] = useState("");
+  const draft = useDraft(SEARCH_DRAFT, EMPTY_SEARCH);
   const [search, setSearch] = useState("");
   const read = useNoesisRead(conn, search === "" ? { kind: "graph" } : { kind: "graph", query: search });
   useNoesisRead(conn, { kind: "learner" });
@@ -31,30 +47,60 @@ export function GraphScreen({ conn, layout = forceLayout }: OpenGate & { layout?
   const [selected, setSelected] = useState<string | undefined>();
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    setSearch(query.trim());
+    setSearch(draft.value.query.trim());
+  };
+  const showAll = () => {
+    draft.clear();
+    setSearch("");
   };
   if (graph === undefined || model === undefined) {
     if (read.error !== null) return <ErrorState title="Could not read the knowledge graph" message={read.error} onRetry={read.reload} />;
     return <p className="learn-muted" aria-busy="true">Reading the knowledge graph…</p>;
   }
+  if (graph.nodes.length === 0 && search === "") return <EmptyGraph />;
   const chosen = graph.nodes.find((node) => node.id === selected);
   return (
     <div className="learn-graph">
       <form className="learn-graph-bar" role="search" onSubmit={submit}>
-        <input className="ui-field-input learn-search" type="search" aria-label="Search the knowledge graph" placeholder="Search statements" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <Field className="learn-search" type="search" label="Search the knowledge graph" data-testid="learn-graph-search" placeholder="Search statements"
+          value={draft.value.query} onChange={(e) => draft.update({ query: e.target.value })} />
         <Button type="submit">Search</Button>
-        {search !== "" && <Button variant="quiet" onClick={() => { setQuery(""); setSearch(""); }}>Show all</Button>}
-        <ul className="learn-legend" aria-label="Mastery colours">
-          {MASTERY_ORDER.map((state) => <li key={state}><MasteryBadge state={state} /></li>)}
-        </ul>
+        {search !== "" && <Button variant="quiet" onClick={showAll}>Show all</Button>}
       </form>
+      <MasteryLegend />
       {graph.truncated && <p className="learn-muted">Showing part of a large graph. Search to narrow it.</p>}
       {graph.nodes.length === 0
-        ? <EmptyState title={search === "" ? "The graph is empty" : "Nothing matches"}>{search === "" ? "Noesis adds true statements here when you add a session to the knowledge graph." : "Try other words."}</EmptyState>
+        ? <EmptyState title="Nothing matches" action={<Button onClick={showAll}>Show all</Button>}>No statement uses those words. Try other words.</EmptyState>
         : <div className="learn-graph-main">
             <GraphView model={model} layout={layout} selected={selected} onSelect={setSelected} />
-            {chosen && <PropositionPanel conn={conn} proposition={chosen} mastery={mastery.get(chosen.id) ?? "unseen"} onClose={() => setSelected(undefined)} />}
+            {chosen
+              ? <PropositionPanel conn={conn} proposition={chosen} mastery={mastery.get(chosen.id) ?? "unseen"} onClose={() => setSelected(undefined)} />
+              : <p className="learn-graph-tip learn-muted">Choose a statement to see where it came from and how well you know it.</p>}
           </div>}
+    </div>
+  );
+}
+
+/** What appears here and how it gets here, with the one step that fills it. */
+function EmptyGraph() {
+  return (
+    <div data-testid="learn-graph-empty">
+      <EmptyState title="Your knowledge graph is empty" action={<a className="ui-button" data-variant="primary" data-size="md" href="#/learn">Start a session</a>}>
+        <p>True statements you learn appear here, linked by what follows from what, each coloured by how well you know it.</p>
+        <p>Start a session, then choose “Add to knowledge graph” from it.</p>
+      </EmptyState>
+    </div>
+  );
+}
+
+/** The mastery tones the canvas draws, each with its mark and words so colour is never the only signal. */
+function MasteryLegend() {
+  return (
+    <div className="learn-legend-row">
+      <ul className="learn-legend" aria-label="Mastery colours" data-testid="learn-graph-legend">
+        {MASTERY_ORDER.map((state) => <li key={state}><MasteryBadge state={state} /></li>)}
+      </ul>
+      <p className="learn-muted learn-graph-keys">Arrow keys move between statements · Enter opens one · + and − zoom · 0 fits the graph</p>
     </div>
   );
 }
@@ -86,7 +132,7 @@ function PropositionPanel({ conn, proposition, mastery, onClose }: { conn: strin
   const change = useNoesisChange(conn);
   const refusal = useOperateRefusal(conn);
   const [pending, setPending] = useState<Pending | null>(null);
-  const [sourceGraph, setSourceGraph] = useState<"preserve" | "delete_unsupported">("preserve");
+  const [sourceGraph, setSourceGraph] = useState<SourceGraph>("preserve");
   const [failure, setFailure] = useState<string | null>(null);
   const sources = [...new Set(proposition.provenance.map((p) => p.source))];
   const confirm = async () => {
@@ -124,11 +170,9 @@ function PropositionPanel({ conn, proposition, mastery, onClose }: { conn: strin
         description={pending?.kind === "source" ? "Noesis forgets the imported notes." : "The statement leaves the graph, with every chain that uses it."}
         footer={<><Button onClick={() => setPending(null)} data-autofocus>Keep it</Button><Button variant="danger" onClick={() => void confirm()}>Delete</Button></>}>
         {pending?.kind === "source" && (
-          <fieldset className="learn-fieldset">
-            <legend>Statements it added</legend>
-            <label className="learn-toggle"><input type="radio" name="source-graph" checked={sourceGraph === "preserve"} onChange={() => setSourceGraph("preserve")} />Keep them in the graph</label>
-            <label className="learn-toggle"><input type="radio" name="source-graph" checked={sourceGraph === "delete_unsupported"} onChange={() => setSourceGraph("delete_unsupported")} />Remove those nothing else supports</label>
-          </fieldset>
+          <div data-testid="learn-source-graph">
+            <Segmented label="Statements it added" layout="cards" options={SOURCE_GRAPH} value={sourceGraph} onChange={(id) => setSourceGraph(sourceGraphOf(id))} />
+          </div>
         )}
         <p className="learn-muted">What Noesis knows about your understanding stays as it is.</p>
       </Dialog>

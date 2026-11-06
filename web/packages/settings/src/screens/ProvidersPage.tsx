@@ -61,9 +61,9 @@ function ProviderRow({ conn, provider, auth, run, refreshAuth }: ProviderRowProp
         <div><dt>Sign-in source</dt><dd>{source ?? "None"}{auth?.subscription ? " (subscription)" : ""}</dd></div>
       </dl>
       {provider.engine && ENGINE_OF[provider.provider] !== undefined ? (
-        <Action conn={conn} command={{ cmd: "engine_tool" }} label="Sign in" onRun={signIn}
+        <Action conn={conn} command={{ cmd: "engine_tool" }} label="Sign in" variant={provider.configured ? "secondary" : "primary"} onRun={signIn}
           confirm={{ title: `Sign in to ${provider.name}?`, body: "A terminal opens on the host to finish signing in. Nothing you type there reaches this page.", confirmLabel: "Open terminal" }} />
-      ) : null}
+      ) : provider.configured ? null : <p className="st-meta">Not signed in. Give the daemon this provider's key on its host, then refresh.</p>}
     </li>
   );
 }
@@ -71,7 +71,9 @@ function ProviderRow({ conn, provider, auth, run, refreshAuth }: ProviderRowProp
 function ProviderList({ conn, value, auths, run, refreshAuth }: { readonly conn: ConnId; readonly value: unknown; readonly auths: unknown; readonly run: Run; readonly refreshAuth: () => Promise<void> }) {
   const providers = listOf<aether.ProviderInfo>(value);
   if (providers === null) return <Unexpected label="providers" />;
-  if (providers.length === 0) return <EmptyState title="No providers">The daemon lists no model providers.</EmptyState>;
+  if (providers.length === 0) {
+    return <EmptyState title="No providers">The daemon lists no model providers. Add one to the daemon's configuration on its host, then check again.</EmptyState>;
+  }
   const authList = listOf<aether.AuthInfo>(auths) ?? [];
   return (
     <ul className="st-list">

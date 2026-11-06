@@ -1,7 +1,7 @@
 // Mounts a learning screen under a real core app connected to the faux Noesis daemon (happy-dom).
 // Store updates commit only when a test settles, and timers advance only when a test says so.
 
-import { AppProvider, createApp, type App } from "@aether-ui/core";
+import { AppProvider, createApp, drafts, type App } from "@aether-ui/core";
 import type { DesktopBridge, HostAdapter } from "@aether-ui/protocol";
 import { ThemeProvider } from "@aether-ui/ui";
 import { act, type ReactNode } from "react";
@@ -26,6 +26,8 @@ export interface Harness {
   /** Lets replies run and commits store updates as frames would, moving timers on by `ms` after each frame. */
   settle(ms?: number): Promise<void>;
   mount(node: ReactNode): Promise<HTMLElement>;
+  /** Unmounts the screen and keeps the app, as leaving a screen and coming back does. */
+  remount(node: ReactNode): Promise<HTMLElement>;
   unmount(): void;
 }
 
@@ -75,6 +77,11 @@ export async function connected(options: FauxNoesisOptions, timers: TestTimers):
     await settle();
     return container;
   };
+  const remount = async (node: ReactNode) => {
+    act(() => root?.unmount());
+    document.body.innerHTML = "";
+    return mount(node);
+  };
   const unmount = () => {
     act(() => root?.unmount());
     app.stop();
@@ -83,8 +90,9 @@ export async function connected(options: FauxNoesisOptions, timers: TestTimers):
     restoreCanvas = null;
     document.body.innerHTML = "";
     location.hash = "";
+    for (const key of drafts.keys()) drafts.clear(key);
   };
-  return { app, daemon, settle, mount, unmount };
+  return { app, daemon, settle, mount, remount, unmount };
 }
 
 /** happy-dom does not announce a hash change by itself; a browser fires `hashchange` after `navigate`. */

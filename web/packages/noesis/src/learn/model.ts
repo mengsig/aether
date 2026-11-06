@@ -145,3 +145,32 @@ export function nextStep(session: aether.NoesisSession): string {
 
 export const dateTime = (stamp: string): string =>
   new Date(stamp).toLocaleString("en", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+/** A draft key `learn/<part>/…`; ids are reduced to the characters a draft key allows. */
+export function draftKey(...parts: readonly string[]): string {
+  invariant(parts.length > 0 && parts.every((part) => part.length > 0), "a draft key names its form");
+  const key = `learn/${parts.map((part) => part.replace(/[^a-z0-9:_.-]/gi, "-")).join("/")}`;
+  invariant(key.length <= 200, "a draft key stays short");
+  return key;
+}
+
+/** How far a session's plan has come: steps done of all, or null before there is a plan. */
+export function planProgress(session: aether.NoesisSession): { readonly done: number; readonly total: number } | null {
+  const nodes = session.plan?.nodes ?? [];
+  if (nodes.length === 0) return null;
+  const done = nodes.filter((node) => node.status === "visited").length;
+  invariant(done <= nodes.length, "a plan has no more done steps than steps");
+  return { done, total: nodes.length };
+}
+
+/** Recent goals, newest first and without repeats, offered as suggestions for a new session. */
+export function recentGoals(sessions: readonly aether.NoesisSession[], limit = 3): string[] {
+  invariant(limit > 0, "a positive number of suggestions");
+  const goals: string[] = [];
+  for (const session of sortSessions(sessions)) {
+    const goal = session.goal.trim();
+    if (goal !== "" && !goals.includes(goal)) goals.push(goal);
+    if (goals.length === limit) break;
+  }
+  return goals;
+}

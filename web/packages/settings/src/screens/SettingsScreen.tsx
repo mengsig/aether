@@ -42,7 +42,13 @@ function ConnectionPicker({ candidates, value, onPick }: { readonly candidates: 
 
 function pagePanel(page: Page, conn: ConnId | null): ReactNode {
   if (page === "connections") return <ConnectionsPage />;
-  if (conn === null) return <EmptyState title="No Aether daemon">Pair or start an Aether daemon to manage its settings.</EmptyState>;
+  if (conn === null) {
+    return (
+      <EmptyState title="No Aether daemon" action={<a className="ui-link" href="#/pair/aether">Pair a daemon</a>}>
+        Pair or start an Aether daemon to manage its settings.
+      </EmptyState>
+    );
+  }
   switch (page) {
     case "devices": return <DevicesPage key={conn} conn={conn} />;
     case "remote": return <RemotePage key={conn} conn={conn} />;
