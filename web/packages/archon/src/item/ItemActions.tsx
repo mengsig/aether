@@ -44,9 +44,10 @@ export function ItemActions({ access, item, kind, repoName, pause, onDone }: Ite
   const pauseCommand = (scope: "repo" | "pipeline", name: string, paused: boolean) => ({ cmd: paused ? "resume" : "pause", scope, name });
   return (
     <div className="item-actions" role="group" aria-label="Item actions">
-      <SteerItem access={access} item={item} active={canCancel(kind)} disabled={disabled || !access.live || !policy.data} policy={policy.data} onDone={onDone} />
+      <SteerItem access={access} item={item} active={canCancel(kind)} disabled={disabled || !access.live || !policy.data || kind === "dispatching"} policy={policy.data} onDone={onDone} />
       {kind === "queued" ? <ItemPriority access={access} item={item} disabled={disabled || !access.live || !policy.data} onDone={onDone} /> : null}
       {canCancel(kind) && policy.error ? <p className="item-muted">Steering is unavailable: {policy.error}</p> : null}
+      {kind === "dispatching" ? <p className="item-muted">Steering is available once the item has started.</p> : null}
       {canCancel(kind) && !access.live ? <p className="item-muted">Steering and editing require protocol 24.</p> : null}
       {canCancel(kind) && access.refusal ? <p className="item-muted">{access.refusal}</p> : null}
       {canCancel(kind) ? <Button variant="danger" disabled={disabled} title={title} onClick={() => setConfirm({

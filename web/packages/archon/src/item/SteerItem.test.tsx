@@ -82,3 +82,15 @@ test("disables steering with a visible reason when the daemon refuses the policy
   expect((byText(container, "button", "Update priority") as HTMLButtonElement).disabled).toBe(true);
   expect(container.textContent).toContain("model policy is unavailable");
 });
+
+test("waits until dispatch finishes before allowing a steer", async () => {
+  const world = demoWorld();
+  const entry = world.items.get("qi_rate_limit");
+  if (!entry) throw new Error("missing item");
+  entry.summary = { ...entry.summary, state: { state: "dispatching" } };
+  entry.detail.item = { ...entry.detail.item as object, state: { state: "dispatching" } };
+  h = await archonHarness({ protocol: 24 }, world);
+  const container = await h.mount(<ItemRoute params={{ item: "qi_rate_limit" }} />);
+  await h.until(() => container.textContent?.includes("Steering is available once") === true, "dispatch explanation");
+  expect((byText(container, "button", "Steer item") as HTMLButtonElement).disabled).toBe(true);
+});
