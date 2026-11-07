@@ -543,7 +543,11 @@ mod tests {
             )],
         );
         assert!(!reply_leaks(&live, &kept), "ids are not model text");
-        let numbered = call("call_01jabc_1", "noesis.graph_search", json!({"query": "cells"}));
+        let numbered = call(
+            "call_01jabc_1",
+            "noesis.graph_search",
+            json!({"query": "cells"}),
+        );
         assert!(
             !reply_leaks(&sealer(&["1"]), &reply("", vec![numbered])),
             "a numeric key never matches the engine's own call id"
@@ -642,37 +646,61 @@ mod tests {
         let secrets = call_secrets(&call("toolu_3", "noesis.ask", unreadable.clone()));
         assert_eq!(secrets, vec!["Paris".to_string()], "its key is read healed");
         let unreadable = reply("", vec![call("toolu_3", "noesis.ask", unreadable)]);
-        assert!(reply_leaks(&none, &unreadable), "kept until refused, so read");
+        assert!(
+            reply_leaks(&none, &unreadable),
+            "kept until refused, so read"
+        );
         let options = json!([{"value": "a", "label": "Paris"}, {"value": "b", "label": "Lyon"}]);
         let malformed = json!({"kind": "choice", "prompt": "Capital?", "options": options,
             "answer_key": ["a"], "multi": "sometimes"});
         let choice = call("toolu_5", "noesis.ask", malformed.clone());
-        assert!(tools::parse(ToolName::Ask, malformed).is_err(), "the form is refused");
+        assert!(
+            tools::parse(ToolName::Ask, malformed).is_err(),
+            "the form is refused"
+        );
         assert!(
             !reply_leaks(&none, &reply("", vec![choice])),
             "a malformed choice's options still name its key"
         );
         let spoiled = json!({"kind": "essay", "prompt": "It is Paris", "answer_key": "Paris"});
         let stringified = call("toolu_6", "noesis.ask", Value::String(spoiled.to_string()));
-        assert!(reply_leaks(&none, &reply("", vec![stringified])), "read as text too");
+        assert!(
+            reply_leaks(&none, &reply("", vec![stringified])),
+            "read as text too"
+        );
     }
 
     #[test]
     fn only_an_acceptable_conclusion_may_show_the_live_solution() {
         let live = Sealer::live(["x = 4"], Some("x = 4"));
         let concluding = |input: Value| {
-            reply("It was x = 4.", vec![call("toolu_4", "noesis.conclude", input)])
+            reply(
+                "It was x = 4.",
+                vec![call("toolu_4", "noesis.conclude", input)],
+            )
         };
         let solved = json!({"outcome": "solved", "rung": 0, "retest": false});
         assert!(!reply_leaks(&live, &concluding(solved)));
         let refused = json!({"outcome": "solved_with_hints", "retest": false});
-        assert!(reply_leaks(&live, &concluding(refused)), "refused: still sealed");
+        assert!(
+            reply_leaks(&live, &concluding(refused)),
+            "refused: still sealed"
+        );
         let malformed = json!({"outcome": "maybe"});
-        assert!(reply_leaks(&live, &concluding(malformed)), "unreadable: still sealed");
+        assert!(
+            reply_leaks(&live, &concluding(malformed)),
+            "unreadable: still sealed"
+        );
         let held = Sealer::live(["x = 4", "Paris"], Some("x = 4"));
         let solved = json!({"outcome": "solved", "rung": 0, "retest": false});
-        let both = reply("x = 4, and Paris", vec![call("t", "noesis.conclude", solved)]);
-        assert!(reply_leaks(&held, &both), "a conclusion reveals only the solution");
+        let both = reply(
+            "x = 4, and Paris",
+            vec![call("t", "noesis.conclude", solved)],
+        );
+        assert!(
+            reply_leaks(&held, &both),
+            "a conclusion reveals only the solution"
+        );
     }
 
     /// Replies made one by one from `script`, with the reminder each was told.

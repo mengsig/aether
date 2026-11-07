@@ -97,7 +97,10 @@ async fn a_pose_carrying_its_answer_streams_nothing_that_holds_it() {
     }
     assert_eq!(deltas, 0, "a lesson reply is buffered whole");
     let session = harness.session(&created.id).await.expect("session");
-    assert_eq!(session.open_question.expect("posed").prompt, "Name the code");
+    assert_eq!(
+        session.open_question.expect("posed").prompt,
+        "Name the code"
+    );
     assert_never_kept(&harness, prober, KEY);
     assert_eq!(reminded(&cli), 0, "a clean pose is kept at once");
     harness.close().await;

@@ -467,14 +467,20 @@ impl<E: Engine> Teaching<'_, E> {
 pub(super) fn conclusion_refusal(args: &ConcludeArgs) -> Option<&'static str> {
     let hinted = args.outcome == Outcome::SolvedWithHints;
     let unranked = args.rung.is_none_or(|rung| rung == 0);
-    debug_assert!(args.rung.is_none_or(|rung| rung <= 5), "parsing bounds the rung");
+    debug_assert!(
+        args.rung.is_none_or(|rung| rung <= 5),
+        "parsing bounds the rung"
+    );
     (hinted && unranked).then_some("solved_with_hints needs the highest hint rung used, 1 to 5")
 }
 
 /// Whether a problem's statement or a target names its own solution.
 pub(super) fn problem_shows_solution(args: &ProblemArgs) -> bool {
     let solution = Sealer::new([&args.solution]);
-    debug_assert!(!args.solution.trim().is_empty(), "parsing requires a solution");
+    debug_assert!(
+        !args.solution.trim().is_empty(),
+        "parsing requires a solution"
+    );
     solution.holds(&args.statement) || args.targets.iter().any(|t| solution.holds(t))
 }
 
