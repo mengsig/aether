@@ -16,7 +16,8 @@ fn tables(conn: &Connection) -> Vec<String> {
 
 fn add_session(conn: &Connection, id: &str) {
     conn.execute(
-        "INSERT INTO sessions VALUES (?1, 'learn rust', 'teach', 'probe', 'agt_1', 't0', 't0')",
+        "INSERT INTO sessions(id, goal, mode, phase, agent, created_at, updated_at)
+         VALUES (?1, 'learn rust', 'teach', 'probe', 'agt_1', 't0', 't0')",
         [id],
     )
     .unwrap();
@@ -46,6 +47,7 @@ fn the_migrations_create_every_table_the_contract_names() {
         "proposition_provenance",
         "propositions",
         "questions",
+        "session_agents",
         "session_messages",
         "sessions",
         "sources",
@@ -77,6 +79,126 @@ fn an_n1_store_upgrades_to_the_latest_keeping_its_rows() {
         .query_row("SELECT count(*) FROM sessions", [], |row| row.get(0))
         .unwrap();
     assert_eq!(sessions, 1);
+}
+
+/// An N3 store as the binary before N4 left it: a session handed to its
+/// Teacher, one in practice, and a question of each step it could infer.
+fn n3_store(path: &std::path::Path) {
+    let conn = Connection::open(path).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
+         INSERT INTO meta VALUES ('schema_version', '3');",
+    )
+    .unwrap();
+    for migration in &schema::MIGRATIONS[..3] {
+        conn.execute_batch(migration).unwrap();
+    }
+    conn.execute_batch(
+        "INSERT INTO sessions(id, goal, mode, phase, agent, created_at, updated_at) VALUES
+             ('ns_t', 'learn', 'teach', 'teach', 'agt_teacher', 't0', 't0'),
+             ('ns_p', 'practise', 'practice', 'practice', 'agt_practitioner', 't0', 't0');
+         INSERT INTO questions(id, session, kind, prompt, collapsed, plan_node, answer_key, posed_at,
+                               answer, answered_at) VALUES
+             ('q_probe', 'ns_t', 'choice', 'p', 0, NULL, '[\"a\"]', 't1', '{}', 't1'),
+             ('q_predict', 'ns_t', 'choice', 'p', 0, 'a', '[\"a\"]', 't2', '{}', 't2'),
+             ('q_check', 'ns_t', 'recall', 'p', 1, 'a', '[\"a\"]', 't3', '{}', 't3'),
+             ('q_goal', 'ns_t', 'goal', 'p', 0, NULL, '[]', 't4', NULL, NULL),
+             ('q_practice', 'ns_p', 'recall', 'p', 0, NULL, '[\"a\"]', 't1', NULL, NULL);",
+    )
+    .unwrap();
+}
+
+#[test]
+fn an_n3_store_upgrades_keeping_each_session_s_agent_and_inferring_each_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("noesis.db");
+    n3_store(&path);
+    let store = NoesisStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 4);
+    let conn = store.connection();
+    let mut statement = conn
+        .prepare("SELECT session, ord, agent, role, internal FROM session_agents ORDER BY session")
+        .unwrap();
+    let agents: Vec<(String, i64, String, String, String)> = statement
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let expected = [
+        ("ns_p", 0, "agt_practitioner", "practitioner", "[]"),
+        ("ns_t", 0, "agt_teacher", "teacher", "[]"),
+    ];
+    let expected: Vec<_> = expected
+        .iter()
+        .map(|(s, o, a, r, i)| {
+            (
+                s.to_string(),
+                *o,
+                a.to_string(),
+                r.to_string(),
+                i.to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(agents, expected);
+    let step = |id: &str| -> String {
+        conn.query_row("SELECT step FROM questions WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })
+        .unwrap()
+    };
+    let steps =
+        ["probe", "predict", "check", "goal", "practice"].map(|id| step(&format!("q_{id}")));
+    assert_eq!(steps, ["measure", "predict", "check", "goal", "practice"]);
+    let stalled: Option<String> = conn
+        .query_row(
+            "SELECT stalled FROM sessions WHERE id = 'ns_t'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stalled, None, "no session starts stalled");
+}
+
+#[test]
+fn a_session_lists_each_agent_once_and_only_known_roles_and_steps() {
+    let (_dir, store) = open_temp();
+    let conn = store.connection();
+    add_session(conn, "ns_1");
+    let add = |ord: i64, agent: &str, role: &str| {
+        conn.execute(
+            "INSERT INTO session_agents(session, ord, agent, role, started_at)
+             VALUES ('ns_1', ?1, ?2, ?3, 't0')",
+            rusqlite::params![ord, agent, role],
+        )
+    };
+    add(0, "agt_1", "prober").unwrap();
+    add(1, "agt_2", "teacher").unwrap();
+    assert!(add(2, "agt_1", "teacher").is_err(), "an agent ran twice");
+    assert!(
+        add(2, "agt_3", "extractor").is_err(),
+        "a role no session has"
+    );
+    let step = conn.execute(
+        "INSERT INTO questions (id, session, kind, prompt, answer_key, posed_at, step)
+         VALUES ('q_1', 'ns_1', 'recall', 'why?', '[]', 't1', 'lecture')",
+        [],
+    );
+    assert!(step.is_err(), "a step no question is");
+    conn.execute("DELETE FROM sessions WHERE id = 'ns_1'", [])
+        .unwrap();
+    let left: i64 = conn
+        .query_row("SELECT count(*) FROM session_agents", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(left, 0, "a session's agents go with it");
 }
 
 #[test]

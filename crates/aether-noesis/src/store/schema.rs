@@ -1,5 +1,6 @@
 //! The `noesis.db` schema. Migration numbers are pre-assigned by CONTRACTS.md
-//! §1.4: N1 (F1), N2 learner tables (F4), N3 evidence bundles (F6).
+//! §1.4: N1 (F1), N2 learner tables (F4), N3 evidence bundles (F6), N4 a
+//! session's history.
 //! Each later task appends exactly its own entry.
 
 use rusqlite::{Connection, OptionalExtension};
@@ -264,10 +265,47 @@ CREATE TABLE evidence_items (
 ) STRICT;
 "#;
 
-pub(crate) const MIGRATIONS: &[&str] = &[N1, N2, N3];
+/// N4: a session's history. Every agent that ran it, in order, with the
+/// transcript seqs of the inputs Noesis wrote for it; the lesson step each
+/// question was posed as; and why the session's last turn stalled. A session
+/// from before N4 keeps only its current agent, and an older question's step
+/// is inferred from what was stored with it.
+const N4: &str = r#"
+CREATE TABLE session_agents (
+    session    TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    ord        INTEGER NOT NULL CHECK (ord >= 0),
+    agent      TEXT NOT NULL CHECK (length(agent) > 0),
+    role       TEXT NOT NULL CHECK (role IN ('prober', 'teacher', 'practitioner')),
+    internal   TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(internal)),
+    started_at TEXT NOT NULL,
+    PRIMARY KEY (session, ord),
+    UNIQUE (session, agent)
+) STRICT;
+
+INSERT INTO session_agents(session, ord, agent, role, started_at)
+SELECT id, 0, agent,
+       CASE phase WHEN 'probe' THEN 'prober' WHEN 'practice' THEN 'practitioner' ELSE 'teacher' END,
+       created_at
+FROM sessions;
+
+ALTER TABLE questions ADD COLUMN step TEXT CHECK (step IS NULL OR step IN
+    ('measure', 'predict', 'check', 'goal', 'practice'));
+
+UPDATE questions SET step = CASE
+    WHEN kind = 'goal' THEN 'goal'
+    WHEN collapsed = 1 THEN 'check'
+    WHEN (SELECT mode FROM sessions WHERE id = questions.session) = 'practice' THEN 'practice'
+    WHEN plan_node IS NOT NULL THEN 'predict'
+    ELSE 'measure'
+END;
+
+ALTER TABLE sessions ADD COLUMN stalled TEXT CHECK (stalled IS NULL OR json_valid(stalled));
+"#;
+
+pub(crate) const MIGRATIONS: &[&str] = &[N1, N2, N3, N4];
 
 /// The schema version this binary writes and reads.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 const _: () = assert!(MIGRATIONS.len() == SCHEMA_VERSION as usize);
 
