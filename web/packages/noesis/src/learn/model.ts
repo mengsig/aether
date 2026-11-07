@@ -113,10 +113,16 @@ export function billingWords(usage: BillingSplit | null | undefined): string {
   const covered = `no per-request charge (≈${usd(spentUsd(usage.subscription))} at API list price)`;
   const parts: string[] = [];
   if (used(usage.api)) parts.push(`${usd(spentUsd(usage.api))} billed to your API key`);
-  if (used(usage.subscription)) parts.push(parts.length > 0 ? `the rest ran on your subscription — ${covered}` : `Ran on your subscription — ${covered}`);
+  if (used(usage.subscription)) parts.push(`${subscriptionLead(parts.length > 0, used(usage.unknown))} on your subscription — ${covered}`);
   const unknown = "ran on a provider no longer configured, so what paid for it is unknown";
   if (used(usage.unknown)) parts.push(parts.length > 0 ? `some ${unknown}` : `Some ${unknown}`);
   return parts.length === 0 ? "No model use recorded yet." : `${parts.join("; ")}.`;
+}
+
+/** How much of the use ran on the subscription: "the rest" only when API use alone shares it. */
+function subscriptionLead(afterApi: boolean, unknown: boolean): string {
+  if (unknown) return afterApi ? "some ran" : "Some ran";
+  return afterApi ? "the rest ran" : "Ran";
 }
 
 /** Every step of the plan is done: the lesson is complete. */
