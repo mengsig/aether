@@ -84,7 +84,7 @@ await_waiting "$testdir/waiter3.err"
 tries=0
 while :; do
     CI_HOST_SLOTS=1 timeout 5 sh "$slot" --status >"$testdir/status" || fail "--status failed"
-    grep -q "$holder" "$testdir/status" && break
+    grep -q "slot 0 holder: pid $holder, command" "$testdir/status" && break
     tries=$((tries + 1))
     [ "$tries" -le 50 ] || fail "status omitted the holder PID"
     sleep 0.1
@@ -95,6 +95,11 @@ grep -qi 'waiting since' "$testdir/status" || fail "status omitted waiting since
 grep -q "$testdir/order" "$testdir/status" || fail "status omitted the waiting command"
 
 mkdir "$testdir/mock-bin"
+cat > "$testdir/mock-bin/lslocks" <<'MOCK_LSLOCKS'
+#!/bin/sh
+printf '999999999 %s\n' "$XDG_RUNTIME_DIR/heavy-ci/slot-0.lock"
+MOCK_LSLOCKS
+chmod +x "$testdir/mock-bin/lslocks"
 cat > "$testdir/mock-bin/ps" <<'MOCK_PS'
 #!/bin/sh
 if [ "$1" = -eo ]; then
