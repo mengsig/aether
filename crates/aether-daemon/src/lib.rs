@@ -338,6 +338,12 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     if let Some(bytes) = models.config().storage.free_space_floor_bytes {
         disk_floor = (bytes > 0).then_some(aether_core::disk::DiskFloor::Bytes(bytes));
     }
+    let redactor = secrets::known_secrets_redactor(
+        models.config(),
+        models.registry(),
+        tcp.as_ref(),
+        |name| std::env::var(name).ok(),
+    )?;
     // Validate push settings before opening the store; fill in its identity afterwards.
     let mut push_config = push::configured(&models.config().remote, "", &config.store_path)?;
     let review_sweep_prs = models
@@ -383,12 +389,6 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         models.config().agents.temp_root.as_deref(),
         &store_path,
         &instance_id,
-    )?;
-    let redactor = secrets::known_secrets_redactor(
-        models.config(),
-        models.registry(),
-        tcp.as_ref(),
-        |name| std::env::var(name).ok(),
     )?;
     clock.finished("config");
     // Before any turn can start a container of its own, and before a resumed
