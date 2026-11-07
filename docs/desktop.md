@@ -267,23 +267,14 @@ calls that were denied or cancelled stay whole in every mode. **Details** (Ctrl+
 reveals everything the mode hides without leaving it. Switching keeps the draft
 and the row at the top of the view.
 
-An inbox turn holds several deliveries, and message bodies are not escaped, so
-a body can quote an `[inbox n]` header. The chat reads the agent's inbox records
-(`get_inbox`) and splits a turn only at headers a record of that seq and kind
-confirms, in ascending order; any other header line stays text of the delivery
-it sits in, and an operator's delivery must match its record word for word.
-Where the records are not read yet, are older than the turn, or leave a
-boundary in doubt, the turn is drawn verbatim as one card, quoted headers and
-all, whole in every mode. The records are read from the lowest seq the loaded
-turns name, then only the newer ones as deliveries arrive, so a long chat never
-rereads its history. A read checks the turns written before it, and only the
-seqs it returned move it on, so a header quoted in a body never stands for a
-delivery not yet read; a failed read is reported and leaves its turns verbatim.
-A delegated agent's first turn is its task only when the inbox did not deliver
-it.
+A user turn is drawn as the daemon wrote it. An inbox turn, which may hold
+several deliveries and quote headers in their bodies, is never split or parsed:
+it is drawn verbatim as the operator's text, whole in every mode. A delegated
+agent's first turn is its task only when it is the `Your task:` turn the daemon
+writes for a new transcript; any other first turn is drawn as the operator's.
 
-Delegations, messages between agents and a child's completion or failure are
-cards that open the other agent's chat and, for delegations and outcomes, the
-fleet graph. A line beside the picker says what the agent is working on or
-waiting for, and its open questions and approvals are pinned above the
-transcript until they are answered.
+The agent's own delegations, messages to other agents, waits and questions, and
+a delegated agent's task, are cards that open the other agent's chat and, for
+delegations, the fleet graph. A line beside the picker says what the agent is
+working on or waiting for, and its open questions and approvals are pinned above
+the transcript until they are answered.

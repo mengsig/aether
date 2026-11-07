@@ -1,5 +1,5 @@
-// Coordination as cards: a delegation, a message between agents, a child's outcome, a wait or a
-// question, each one line when compact, linking to the other agent's chat and to the task graph.
+// Coordination as cards: a delegation, a message to another agent, a wait, a question or the task
+// from the parent, each one line when compact, linking to the other agent's chat and to the task graph.
 
 import { routeHref } from "@aether-ui/core";
 import type { aether, ConnId } from "@aether-ui/protocol";
@@ -19,13 +19,13 @@ interface Card {
   readonly text: string;
   /** The other agent, when the card names one this daemon knows of or can name. */
   readonly agent: string | null;
-  readonly tone: "accent" | "success" | "danger" | "info" | "neutral";
+  readonly tone: "accent" | "info" | "neutral";
 }
 
-const CARD_KINDS: ReadonlySet<RowKind> = new Set<RowKind>(["spawned", "sent", "waiting", "question", "user_message", "user_task", "child_finished", "child_failed", "approval", "notice_status"]);
+const CARD_KINDS: ReadonlySet<RowKind> = new Set<RowKind>(["spawned", "sent", "waiting", "question", "user_task"]);
 
-/** Whether a part draws as a card: every inbox delivery does; a task's attached image draws as itself. */
-export const isCard = (view: ViewPart): boolean => view.part.kind === "inbox" || (CARD_KINDS.has(view.kind) && view.part.kind !== "attachment");
+/** Whether a part draws as a card; a task's attached image draws as itself. */
+export const isCard = (view: ViewPart): boolean => CARD_KINDS.has(view.kind) && view.part.kind !== "attachment";
 
 const AGENT_ID = /\bagt_[0-9A-Za-z]+\b/;
 
@@ -66,23 +66,10 @@ function toolCard(kind: RowKind, part: Extract<Part, { kind: "tool" }>, name: (i
 
 function cardOf(view: ViewPart, directory: Directory, parent: string | null): Card {
   const name = (id: string) => directory.agents[id]?.name ?? id;
-  const owner = (task: string) => Object.values(directory.agents).find((a) => a.current_task === task)?.id ?? null;
   const part = view.part;
   if (part.kind === "tool") return toolCard(view.kind, part, name);
-  if (part.kind === "text") {
-    invariant(view.kind === "user_task", "a text card is the task from the parent");
-    return { icon: "↘", title: parent === null ? "Task" : `Task from ${name(parent)}`, text: part.text, agent: parent, tone: "accent" };
-  }
-  invariant(part.kind === "inbox", `a ${part.kind} part draws no card`);
-  const segment = part.segment;
-  switch (segment.kind) {
-    case "message": return { icon: "←", title: `Message from ${name(segment.from)}`, text: segment.text, agent: AGENT_ID.test(segment.from) ? segment.from : null, tone: "info" };
-    case "done": return { icon: "✓", title: `${name(segment.subject)} completed`, text: segment.text, agent: AGENT_ID.test(segment.subject) ? segment.subject : owner(segment.subject), tone: "success" };
-    case "failed": return { icon: "!", title: `${name(segment.subject)} failed`, text: segment.text, agent: AGENT_ID.test(segment.subject) ? segment.subject : owner(segment.subject), tone: "danger" };
-    case "approval": return { icon: "✓", title: "Approval", text: segment.text, agent: null, tone: "neutral" };
-    case "notice": return { icon: "•", title: segment.text.split("\n", 1)[0] ?? "", text: segment.text.split("\n").slice(1).join("\n"), agent: null, tone: "neutral" };
-    case "verbatim": return { icon: "≡", title: "Inbox, as delivered", text: segment.text, agent: null, tone: "neutral" };
-  }
+  invariant(part.kind === "text" && view.kind === "user_task", `a ${part.kind} part draws no card`);
+  return { icon: "↘", title: parent === null ? "Task" : `Task from ${name(parent)}`, text: part.text, agent: parent, tone: "accent" };
 }
 
 export function CoordinationCard({ view, directory, parent }: { readonly view: ViewPart; readonly directory: Directory; readonly parent: string | null }) {
@@ -96,7 +83,7 @@ export function CoordinationCard({ view, directory, parent }: { readonly view: V
       {card.text === "" ? null : <span className="conv-card-text" title={compact ? card.text : undefined}>{card.text}</span>}
       <span className="conv-card-links">
         {card.agent === null ? null : <a className="ui-link" href={routeHref("#/agents/:conn/:agent", { conn: directory.conn, agent: card.agent })}>Open chat</a>}
-        {view.kind === "spawned" || view.kind.startsWith("child_") ? <a className="ui-link" href="#/fleet/topology">Graph</a> : null}
+        {view.kind === "spawned" ? <a className="ui-link" href="#/fleet/topology">Graph</a> : null}
       </span>
     </div>
   );

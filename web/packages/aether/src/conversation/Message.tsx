@@ -3,7 +3,6 @@
 
 import { Badge } from "@aether-ui/ui";
 import { memo, type ReactNode } from "react";
-import { invariant } from "../fleet/invariant.ts";
 import { CoordinationCard, FailedLine, isCard, type Directory } from "./Coordination.tsx";
 import { formatBytes, formatCost, formatDuration, formatTime, formatTokens } from "./format.ts";
 import { Markdown } from "./markdown.tsx";
@@ -77,8 +76,6 @@ function PartView({ part, live }: { readonly part: Part; readonly live: boolean 
           <p className="conv-reasoning-text">{part.text}</p>
         </details>
       );
-    case "inbox":
-      invariant(false, "an inbox delivery draws as a coordination card");
   }
 }
 

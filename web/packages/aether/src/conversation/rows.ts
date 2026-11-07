@@ -4,7 +4,6 @@
 import type { StreamState } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
 import { invariant } from "../fleet/invariant.ts";
-import { isInboxText, splitInbox, type Deliveries, type InboxSegment } from "./inbox.ts";
 
 export interface ToolResultView {
   readonly text: string;
@@ -18,8 +17,7 @@ export type Part =
   | { readonly kind: "tool"; readonly id: string | null; readonly name: string; readonly input: string; readonly result: ToolResultView | null }
   | { readonly kind: "orphan-result"; readonly toolUseId: string; readonly result: ToolResultView }
   | { readonly kind: "attachment"; readonly name: string; readonly mediaType: string; readonly sizeBytes: number | null }
-  | { readonly kind: "compaction"; readonly text: string }
-  | { readonly kind: "inbox"; readonly segment: Exclude<InboxSegment, { kind: "operator" }> };
+  | { readonly kind: "compaction"; readonly text: string };
 
 /** What `invocation.completed` or `invocation.failed` said about the invocation behind a message. */
 export interface InvocationMeta {
@@ -41,8 +39,6 @@ export interface ConversationRow {
   readonly seq: number | null;
   readonly at: string | null;
   readonly invocation: string | null;
-  /** A user turn of inbox deliveries: it never carries the agent's task. */
-  readonly delivered: boolean;
   readonly parts: readonly Part[];
   readonly live: LiveState | null;
   readonly meta: InvocationMeta | null;
@@ -100,37 +96,22 @@ function blockPart(block: aether.ContentBlock, pairing: Pairing): Part | null {
   }
 }
 
-/** A user turn's inbox text as one part per delivery; what a person typed stays text. */
-function inboxParts(text: string, records: Deliveries | null): Part[] {
-  return splitInbox(text, records).map((segment) => (segment.kind === "operator" ? { kind: "text", text: segment.text } : { kind: "inbox", segment }));
-}
-
-/**
- * Committed rows in seq order; a message left with nothing of its own to show has no row. `records`,
- * the agent's inbox items when read, decide where one delivery ends and the next begins in the turns
- * they cover; a later turn is drawn verbatim until they are read again.
- */
-export function entryRows(entries: readonly aether.TranscriptEntry[], pairing: Pairing, meta: ReadonlyMap<string, InvocationMeta>, records: Deliveries | null = null): ConversationRow[] {
+/** Committed rows in seq order; a message left with nothing of its own to show has no row. */
+export function entryRows(entries: readonly aether.TranscriptEntry[], pairing: Pairing, meta: ReadonlyMap<string, InvocationMeta>): ConversationRow[] {
   const rows: ConversationRow[] = [];
   let last = -Infinity;
   for (const entry of entries) {
     invariant(entry.seq > last, `transcript entries ascend by seq (${entry.seq} after ${last})`);
     last = entry.seq;
     const parts: Part[] = [];
-    let delivered = false;
     for (const block of entry.message.content) {
-      if (entry.message.role === "user" && block.type === "text" && isInboxText(block.text)) {
-        parts.push(...inboxParts(block.text, records !== null && entry.seq <= records.covers ? records : null));
-        delivered = true;
-        continue;
-      }
       const part = blockPart(block, pairing);
       if (part) parts.push(part);
     }
     if (parts.length === 0) continue;
     const invocation = entry.invocation ?? null;
     rows.push({
-      key: `e:${entry.seq}`, role: entry.message.role, seq: entry.seq, at: entry.at, invocation, delivered, parts, live: null,
+      key: `e:${entry.seq}`, role: entry.message.role, seq: entry.seq, at: entry.at, invocation, parts, live: null,
       meta: invocation === null ? null : meta.get(invocation) ?? null,
     });
   }
@@ -148,7 +129,7 @@ export function liveRows(streams: Readonly<Record<string, StreamState>>, agent: 
     for (const tool of stream.tools) parts.push({ kind: "tool", id: tool.id, name: tool.name, input: tool.input, result: null });
     if (parts.length === 0 && !stream.recovering) continue;
     rows.push({
-      key: `s:${stream.invocation}`, role: "assistant", seq: null, at: null, invocation: stream.invocation, delivered: false, parts,
+      key: `s:${stream.invocation}`, role: "assistant", seq: null, at: null, invocation: stream.invocation, parts,
       live: { partial: stream.partial, recovering: stream.recovering }, meta: null,
     });
   }

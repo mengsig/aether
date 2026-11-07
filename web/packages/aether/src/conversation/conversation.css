@@ -96,8 +96,7 @@
     border-radius: var(--radius-md); background: var(--color-surface-1); font: var(--text-sm) / var(--leading-normal) var(--font-ui);
   }
   .conv-card[data-tone="accent"] { --card-tone: var(--color-accent); }
-  .conv-card[data-tone="success"] { --card-tone: var(--color-success); }
-  .conv-card[data-tone="danger"], .conv-line { --card-tone: var(--color-danger); }
+  .conv-line { --card-tone: var(--color-danger); }
   .conv-card[data-tone="info"] { --card-tone: var(--color-info); }
   .conv-card-icon { color: var(--card-tone, var(--color-text-faint)); font-weight: var(--weight-bold); }
   .conv-card-title { font-weight: var(--weight-medium); }

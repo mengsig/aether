@@ -17,9 +17,10 @@ release is also the text of its GitHub release.
 - The desktop chat has the TUI's view modes: a picker, `/mode`, `/calm` and
   `/focus`, Details (Ctrl+T) and the choice remembered per agent; Archon's
   orchestrator opens in its Calm mode. Both apply one set of rules, pinned by a
-  shared fixture. Delegations, messages and outcomes are cards that link to the
-  other agent, open questions and approvals stay pinned until answered, and a
-  composer with a `/` menu sends, stops and keeps unsent drafts.
+  shared fixture. Delegations and messages to other agents are cards that link to
+  the other agent, inbox turns are drawn verbatim, open questions and approvals
+  stay pinned until answered, and a composer with a `/` menu sends, stops and
+  keeps unsent drafts.
 
 ## 1.3.0
 

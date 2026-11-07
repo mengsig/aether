@@ -22,11 +22,8 @@ export class FauxDaemon {
   readonly transport: Transport;
   readonly agents: Map<string, aether.Agent>;
   readonly hold: Set<string>;
-  /** Commands refused with an error while their name is here, as a daemon refuses a read. */
-  readonly refuse = new Set<string>();
   private readonly instance: string;
   private readonly transcripts = new Map<string, aether.TranscriptEntry[]>();
-  private readonly inboxes = new Map<string, aether.InboxItem[]>();
   private readonly events: aether.Event[] = [];
   /** Events committed without being pushed, as a lossy link would have lost them. */
   private readonly unsent: aether.Event[] = [];
@@ -61,14 +58,6 @@ export class FauxDaemon {
       this.lastSeq += 1;
       entries.push({ seq: this.lastSeq, at: stamp(this.lastSeq), invocation: invocation ?? null, message });
     }
-  }
-
-  /** Puts a delivery in an agent's inbox records, as `get_inbox` will answer it. */
-  deliver(agent: string, seq: number, kind: aether.InboxKind): void {
-    const inbox = this.inboxes.get(agent) ?? [];
-    invariant(inbox.every((item) => item.seq < seq), "inbox seqs ascend");
-    inbox.push({ id: `ibx_${seq}`, agent_id: agent, seq, delivered_at: stamp(seq), kind });
-    this.inboxes.set(agent, inbox);
   }
 
   /** Commits a message: a transcript entry and its `agent.message` event, pushed unless `silent`. */
@@ -165,8 +154,6 @@ export class FauxDaemon {
       case "list_agents_page": return ok("agents_page", { agents: [...this.agents.values()] });
       case "get_agent": return ok("agent", this.agents.get(String(command.id)));
       case "get_transcript_page": return ok("transcript_page", this.page(command));
-      case "get_inbox": if (this.refuse.has("get_inbox")) return { reply: { Err: { code: "unavailable", message: "the inbox store is busy" } }, then: [] };
-        return ok("inbox", (this.inboxes.get(String(command.agent)) ?? []).filter((item) => item.seq > Number(command.after)));
       default: return { reply: { Err: { code: "invalid_argument", message: `the faux daemon has no ${String(command.cmd)}` } }, then: [] };
     }
   }

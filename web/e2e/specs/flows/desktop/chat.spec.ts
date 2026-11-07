@@ -118,7 +118,7 @@ test("UX-007: an unsent draft survives navigating away and back", async () => {
 test("UX-010: the orchestrator opens in Calm; Standard and back by picker and by /calm keep the draft", async () => {
   await route(app.window, `#/agents/${conn}/${orchestrator}`);
   await expect(modeRadio(app.window, "Calm"), "the orchestrator defaults to its Calm mode").toBeChecked({ timeout: 30_000 });
-  await expect(app.window.getByText("[inbox", { exact: false }), "no routing envelope reaches the reader").toHaveCount(0);
+  await expect(app.window.getByText("What is running?", { exact: false }).first(), "Calm draws the operator's message whole").toBeVisible();
   await shoot(app.window, "orchestrator-calm");
   const field = composer(app.window, "Archon");
   await field.fill("draft kept across modes");
@@ -203,7 +203,7 @@ test("start a chat: a refused first message keeps its settings fixed, retries as
   await shoot(app.window, "chat-first-message-undelivered");
   await notice.getByRole("button", { name: "Send it as typed" }).click();
   await expect(notice).toHaveCount(0);
-  await expect(app.window.getByText("/calm please", { exact: true }).first(), "sent to the agent, never run as /calm").toBeVisible({ timeout: 30_000 });
+  await expect(app.window.getByText("/calm please", { exact: false }).first(), "sent to the agent, never run as /calm").toBeVisible({ timeout: 30_000 });
   expect(await assistants()).toBe(1);
   await shoot(app.window, "chat-first-message-delivered");
 });

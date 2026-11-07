@@ -41,9 +41,6 @@ function toolKind(part: Extract<Part, { kind: "tool" }>): RowKind {
   return EDITS.has(tool) ? "edit_failed" : "tool_failed";
 }
 
-/** A verbatim turn may hold the operator's text, so it is drawn as theirs is: whole in every mode. */
-const INBOX_KIND = { message: "user_message", done: "child_finished", failed: "child_failed", approval: "approval", notice: "notice_status", verbatim: "user_operator" } as const;
-
 /** A part's row kind; `task` marks the row that carried the agent's task from its parent. */
 export function partKind(part: Part, row: ConversationRow, task: boolean): RowKind {
   switch (part.kind) {
@@ -55,7 +52,6 @@ export function partKind(part: Part, row: ConversationRow, task: boolean): RowKi
     case "tool": return toolKind(part);
     case "orphan-result": return part.result.isError ? "tool_failed" : "tool_succeeded";
     case "compaction": return "compaction";
-    case "inbox": return INBOX_KIND[part.segment.kind];
   }
 }
 
@@ -93,14 +89,20 @@ export function viewRow(row: ConversationRow, options: ViewOptions): ViewRow | n
   return { row, parts, usage, slim };
 }
 
+/** The turn aether-context writes when a new transcript starts from its task (`ensure_ends_with_user`). */
+const TASK_TURN = "Your task:\n";
+
 /**
- * A delegated agent's first user turn is its task unless the inbox delivered it: what a person
- * typed there is theirs. A root's first turn is the operator's own.
+ * A delegated agent's task row: its first user turn, when that turn is the task as aether-context
+ * wrote it. Any other turn, an inbox delivery included, may be a person's text and is drawn as theirs.
  */
 export function taskRowKey(rows: readonly ConversationRow[], delegated: boolean): string | null {
   if (!delegated) return null;
   const first = rows.find((row) => row.role === "user");
-  return first !== undefined && !first.delivered && first.parts.some((p) => p.kind === "text") ? first.key : null;
+  const text = first?.parts[0];
+  if (first === undefined || text?.kind !== "text" || !text.text.startsWith(TASK_TURN)) return null;
+  invariant(first.seq !== null, "a task turn is a committed entry");
+  return first.key;
 }
 
 /** The rows a mode draws, in order; cached per row so appending one recomputes one. */
