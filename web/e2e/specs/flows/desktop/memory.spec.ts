@@ -68,7 +68,8 @@ test("repository creation, filtering and store counts agree", async () => {
   await sheet.getByLabel("Repository root").selectOption(running.stack.layout.aether.work);
   await sheet.getByRole("button", { name: "Save memory" }).click();
   await expect(sheet).toHaveCount(0);
-  await expect(page().getByRole("region", { name: "Store" })).toContainText("1");
+  const count = page().getByRole("region", { name: "Store" }).locator("dt").filter({ hasText: /^Memories$/ }).locator("..").locator("dd");
+  await expect(count).toHaveText("1");
   await page().getByRole("tab", { name: "Repository", exact: true }).click();
   const repository = page().getByLabel("Repository filter");
   await expect(repository.locator("option")).toHaveCount(3);
