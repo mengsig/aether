@@ -166,8 +166,7 @@ before updating.
   requests of the repositories the items link to, and guides to importing
   an issue when none does. A screen's background read that fails shows its
   error in place instead of a toast that covered the composer; registration
-  offers "Keep it local" for a checkout without an origin remote; the Start
-  sheet lists an agent that already holds a task as unavailable. An
+  offers "Keep it local" for a checkout without an origin remote. An
   agent's page names the task it holds, which
   the daemon had kept in the agent's context alone; the home's GitHub tile
   reads the watcher's "kept for the CLI" answer as a neutral tile rather

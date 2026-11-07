@@ -134,7 +134,10 @@ export function replaces(incoming: number | null, held: number | null): boolean 
   return held === null || incoming === null || incoming >= held;
 }
 
-export interface Report { readonly id: number; readonly conn?: ConnId; readonly message: string; readonly code?: string }
+export type ReportTone = "success" | "info" | "danger";
+
+/** A report is a failure unless its `tone` says otherwise. */
+export interface Report { readonly id: number; readonly conn?: ConnId; readonly message: string; readonly code?: string; readonly tone?: ReportTone }
 
 export interface State {
   readonly connections: Readonly<Record<ConnId, ConnectionInfo>>;
@@ -232,8 +235,8 @@ export class Store {
 
   private nextReport = 1;
 
-  report(message: string, conn?: ConnId, code?: string): void {
-    const entry: Report = { id: this.nextReport++, message, ...(conn === undefined ? {} : { conn }), ...(code === undefined ? {} : { code }) };
+  report(message: string, conn?: ConnId, code?: string, tone?: ReportTone): void {
+    const entry: Report = { id: this.nextReport++, message, ...(conn === undefined ? {} : { conn }), ...(code === undefined ? {} : { code }), ...(tone === undefined ? {} : { tone }) };
     this.update((state) => ({ ...state, reports: [...state.reports, entry].slice(-50) }));
   }
 }

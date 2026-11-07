@@ -1,64 +1,89 @@
-import { useEffect, useRef, useState } from "react";
-import { useApp, usePermission, useReread, useSelector, selectRead } from "@aether-ui/core";
+import { useId, useState } from "react";
+import { selectRead, useApp, usePermission, useReread, useSelector, type ReadEntry } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
-import { Button, Combo } from "@aether-ui/ui";
-import { defaultWorkspace, workspaceValidation } from "./data.ts";
-import { records, ReadNote } from "../memory/shared.tsx";
+import { Button, Field } from "@aether-ui/ui";
+import { Action } from "../controls/kit.tsx";
+import { ReadNote } from "../memory/shared.tsx";
+import { invariant } from "../fleet/invariant.ts";
+import { recentWorkspaces, splitPath, workspaceValidation } from "./data.ts";
 
 interface WorkspaceProps {
-  conn: string; path: string; change: (path: string) => void;
-  testId?: string; defaults?: boolean;
+  readonly conn: string;
+  /** The folder in effect: the user's pick, else the most recent workspace, "" when there is none. */
+  readonly path: string;
+  readonly change: (path: string) => void;
+  readonly recent: ReadEntry | undefined;
+  /** The test id of the whole field; the typed path is `<testId>-path`. */
+  readonly testId?: string;
 }
 
-export function Workspace({ conn, path, change, testId = "start-workspace", defaults = false }: WorkspaceProps) {
+export function Workspace({ conn, path, change, recent, testId = "start-workspace" }: WorkspaceProps) {
   const app = useApp();
-  const initialized = useRef(path !== "" || !defaults);
+  const name = useId();
+  const [other, setOther] = useState(false);
+  const [typed, setTyped] = useState("");
+  const folders = recentWorkspaces(recent?.value);
+  const validate = { cmd: "validate_workspace", path };
+  const disabled = usePermission(conn, validate).refusal !== null;
+  const validationKey = `start:validation:${path}`;
+  const validation = useReread(conn, validationKey, !disabled && path.startsWith("/") ? validate : null, ["workspace_validation"]);
+  const valid = workspaceValidation(validation?.value);
+  const pick = (folder: string) => { setOther(false); change(folder); };
+  const chooseOther = () => { setOther(true); change(typed.trim()); };
+  return <fieldset className="start-section" data-testid={testId}><legend className="start-section-title">Workspace</legend>
+    <ReadNote entry={recent} retry={() => app.reread(conn, "start:workspaces", { cmd: "list_workspaces" }, ["workspaces"])} />
+    <div role="radiogroup" aria-label="Workspace" className="start-section">
+      {folders.map(w => <FolderChoice key={w.path} group={name} path={w.path} checked={!other && path === w.path} disabled={disabled} onChoose={() => pick(w.path)} />)}
+      <label className="start-choice" data-disabled={disabled ? "" : undefined}>
+        <input type="radio" className="start-choice-radio" name={name} checked={other} disabled={disabled} onChange={chooseOther} />
+        <span className="start-choice-name">Other folder</span></label>
+    </div>
+    {other && <OtherFolder conn={conn} typed={typed} disabled={disabled} testId={testId} setTyped={setTyped} commit={value => change(value.trim())} />}
+    {validation && <ReadNote entry={validation} retry={() => app.reread(conn, validationKey, validate, ["workspace_validation"])} />}
+    {valid && !valid.valid && <p role="status" className="b3-note" data-state="failed">{valid.reason}</p>}
+    {valid?.valid && valid.path && <GitPreview conn={conn} path={valid.path} />}
+  </fieldset>;
+}
+
+function FolderChoice({ group, path, checked, disabled, onChoose }: {
+  readonly group: string; readonly path: string; readonly checked: boolean; readonly disabled: boolean; readonly onChoose: () => void;
+}) {
+  const { name, parent } = splitPath(path);
+  invariant(name.length > 0, "a folder choice shows a name");
+  return <label className="start-choice" title={path} data-disabled={disabled ? "" : undefined}>
+    <input type="radio" className="start-choice-radio" name={group} checked={checked} disabled={disabled} onChange={onChoose} />
+    <span className="start-choice-name">{name}</span>
+    <span className="start-choice-path" title={path}>{parent || "/"}</span></label>;
+}
+
+function OtherFolder({ conn, typed, disabled, testId, setTyped, commit }: {
+  readonly conn: string; readonly typed: string; readonly disabled: boolean; readonly testId: string;
+  readonly setTyped: (value: string) => void; readonly commit: (value: string) => void;
+}) {
+  const app = useApp();
   const [problem, setProblem] = useState<string>();
-  const recent = useReread(conn, "start:workspaces", { cmd: "list_workspaces" }, ["workspaces"]);
-  const home = useReread(conn, "start:home", { cmd: "complete_path", prefix: "~/", kind: "directory", limit: 50 }, ["path_completions"]);
-  const workspaces = records<aether.Workspace>(recent?.value);
-  const initial = defaultWorkspace(workspaces, (home?.value ?? undefined) as aether.PathCompletions | undefined);
-  const disabled = usePermission(conn, { cmd: "validate_workspace", path }).refusal !== null;
-  const { completion, validation, completionError } = useWorkspaceReads(conn, path, disabled);
-  const valid = workspaceValidation(validation?.error ? undefined : validation?.value);
-  useEffect(() => {
-    if (initialized.current || !recent?.issued || initial === "") return;
-    initialized.current = true;
-    change(initial);
-  }, [initial, recent?.issued, change]);
-  const edit = (next: string) => { initialized.current = true; setProblem(undefined); change(next); };
+  const completionKey = `start:completion:${typed}`;
+  const completion = useSelector(selectRead(conn, completionKey));
+  const complete = { cmd: "complete_path", prefix: typed, kind: "directory", limit: 50 };
+  const completions = completion?.value as aether.PathCompletions | undefined;
+  const absolute = typed.trim().startsWith("/");
+  const choose = (path: string) => { setTyped(path); commit(path); };
+  // The desktop app's folder picker; its failure is said here rather than lost.
   const browse = async () => {
-    try { const picked = await app.host.desktop?.pickDirectory("workspace"); if (picked) edit(picked); }
+    try { const picked = await app.host.desktop?.pickDirectory("workspace"); if (picked) choose(picked); }
     catch (error) { setProblem(error instanceof Error ? error.message : String(error)); }
   };
-  const paths = [...workspaces.filter(w => w.exists).map(w => w.path), ...(completion?.entries ?? []).filter(p => p.is_dir).map(p => p.path)];
-  const suggestions = [...new Set(paths)].filter(p => p.toLowerCase().includes(path.toLowerCase())).map(id => ({ id, label: id }));
-  return <div className="b3-stack"><Combo label="Workspace" data-testid={testId} value={path} disabled={disabled} onChange={edit}
-    suggestions={suggestions} hint="Choose the folder the agent works in" error={problem ?? validation?.error ?? (valid?.valid === false ? valid.reason ?? "Workspace is unavailable" : undefined)}
-    trailing={app.host.desktop ? <Button data-testid={`${testId}-browse`} disabled={disabled} onClick={() => { void browse(); }}>Browse</Button> : undefined} />
-    <ReadNote entry={recent} retry={() => app.reread(conn, "start:workspaces", { cmd: "list_workspaces" }, ["workspaces"])} />
-    {completionError ? <p role="alert">Path suggestions: {completionError}</p> : null}
-    {home?.error && workspaces.length === 0 ? <p role="alert">Home folders: {home.error}</p> : null}
-    {path.startsWith("/") && !valid && !validation?.error ? <p role="status">Validating…</p> : null}
-    {valid?.valid && valid.path ? <GitPreview conn={conn} path={valid.path} /> : null}
+  return <div className="start-section">
+    <Field label="Folder path" hint="An absolute path, such as /home/you/project" data-testid={`${testId}-path`} value={typed} disabled={disabled}
+      {...(typed !== "" && !absolute ? { error: "Start the path with /" } : {})}
+      onChange={e => setTyped(e.target.value)} onBlur={() => commit(typed)} onKeyDown={e => { if (e.key === "Enter") commit(typed); }} />
+    {app.host.desktop ? <Button data-testid={`${testId}-browse`} disabled={disabled} onClick={() => { void browse(); }}>Browse</Button> : null}
+    {problem ? <p role="alert">Could not open the folder picker: {problem}</p> : null}
+    <Action conn={conn} command={complete} label="Complete path" blocked={absolute ? null : "Type an absolute path first"}
+      onRun={() => app.reread(conn, completionKey, complete, ["path_completions"])} />
+    {completion && <ReadNote entry={completion} retry={() => app.reread(conn, completionKey, complete, ["path_completions"])} />}
+    {completions?.entries.map(p => <FolderChoice key={p.path} group={`${completionKey}`} path={p.path} checked={false} disabled={disabled} onChoose={() => choose(p.path)} />)}
   </div>;
-}
-
-function useWorkspaceReads(conn: string, path: string, disabled: boolean) {
-  const app = useApp();
-  const validationKey = `start:validation:${path}`;
-  const completionKey = `start:completion:${path}`;
-  const validation = useSelector(selectRead(conn, validationKey));
-  const completion = useSelector(selectRead(conn, completionKey));
-  useEffect(() => {
-    if (disabled || path === "") return;
-    const timer = setTimeout(() => {
-      void app.reread(conn, completionKey, { cmd: "complete_path", prefix: path, kind: "directory", limit: 50 }, ["path_completions"]);
-      if (path.startsWith("/")) void app.reread(conn, validationKey, { cmd: "validate_workspace", path }, ["workspace_validation"]);
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [app, conn, path, disabled, completionKey, validationKey]);
-  return { validation, completion: completion?.value as aether.PathCompletions | undefined, completionError: completion?.error };
 }
 
 function GitPreview({ conn, path }: { conn: string; path: string }) {
@@ -69,5 +94,5 @@ function GitPreview({ conn, path }: { conn: string; path: string }) {
   const entry = useReread(conn, key, permission.refusal === null ? command : null, ["git_summary"]);
   const summary = entry?.value as aether.GitSummary | undefined;
   return <div><ReadNote entry={entry} retry={() => app.reread(conn, key, command, ["git_summary"])} />
-    <p role="status">Ready{summary?.repository ? ` · ${summary.branch ?? "Detached HEAD"} · ${summary.dirty ? "uncommitted changes" : "clean"}` : ""}</p></div>;
+    {summary && <p className="b3-note" data-state="done">{summary.repository ? `${summary.branch ?? "Detached HEAD"} · ${summary.dirty ? "Uncommitted changes" : "Clean"}` : "Not a Git repository"}</p>}</div>;
 }

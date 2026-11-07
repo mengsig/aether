@@ -9,7 +9,10 @@ import { DaemonLink, type Frame } from "../bridge/daemon-link.ts";
 import { findDaemons } from "../discovery/daemons.ts";
 import { probe, PROBE_TIMEOUT_MS } from "../discovery/health.ts";
 import { machineOf, socketPath, type Machine } from "../discovery/socket-paths.ts";
-import { managedStartOn } from "../lifecycle/managed-start.ts";
+import { archonConfigFile } from "../lifecycle/archon-connect.ts";
+import { commandRunner } from "../lifecycle/commands.ts";
+import { managedStartOn, toolContext } from "../lifecycle/managed-start.ts";
+import { Setup } from "../lifecycle/setup.ts";
 import { DeepLinkRouter } from "../native/deep-links.ts";
 import { notificationSink, pickFolder, windowTarget } from "../native/electron.ts";
 import { FolderTokens } from "../native/folder-tokens.ts";
@@ -65,28 +68,48 @@ interface HostParts {
   push(owner: number, conn: string, frame: Frame): void;
 }
 
+type Daemons = ReturnType<typeof daemonsOf>;
+
 /** Discovery, health and managed start over this machine's sockets, the CLIs' own. */
 function daemonsOf(machine: Machine, preferences: PreferenceStore, hello: (kind: "aether" | "archon") => Frame) {
   const logDir = app.getPath("logs");
+  const isReachable = async (kind: "aether" | "archon") =>
+    (await probe(socketPath(kind, machine), { hello: hello(kind), timeoutMs: PROBE_TIMEOUT_MS })).reachable;
   const managed = managedStartOn(machine, process.cwd(), {
     isEnabled: () => preferences.get("desktop.managed_start") === true,
-    isReachable: async (kind) => (await probe(socketPath(kind, machine), { hello: hello(kind), timeoutMs: PROBE_TIMEOUT_MS })).reachable,
+    isReachable,
     logDir,
   });
-  return { find: () => findDaemons(machine, hello), start: (kind: "aether" | "archon") => managed.start(kind), logDir };
+  return { find: () => findDaemons(machine, hello), start: (kind: "aether" | "archon") => managed.start(kind), isReachable, logDir };
+}
+
+/** Setting up this computer: the CLIs run as managed start runs them, from the user's home. */
+function setupOf(machine: Machine, daemons: Daemons, preferences: PreferenceStore, confirm: BridgeHost["confirm"]): Setup {
+  const context = toolContext(machine, process.cwd());
+  return new Setup({
+    run: commandRunner(context),
+    archonConfig: archonConfigFile({ ...machine, env: context.env }),
+    isReachable: daemons.isReachable,
+    enableManagedStart: () => preferences.set("desktop.managed_start", true),
+    confirm,
+    start: daemons.start,
+    findDaemons: daemons.find,
+  });
 }
 
 function host(options: DesktopOptions, parts: HostParts): BridgeHost {
   const { remote, preferences, protocolVersions, push, deepLinks, folders } = parts;
   const version = app.getVersion();
-  const daemons = daemonsOf(machineOf(options.env, process.platform, os.userInfo().homedir), preferences,
-    (kind) => helloFrame(kind, protocolVersions[kind], version));
+  const machine = machineOf(options.env, process.platform, os.userInfo().homedir);
+  const daemons = daemonsOf(machine, preferences, (kind) => helloFrame(kind, protocolVersions[kind], version));
+  const confirm = options.confirm ?? confirmNatively;
+  const setup = setupOf(machine, daemons, preferences, confirm);
   const notifier = new Notifier(notificationSink(), (route) => (route === undefined ? deepLinks.focus() : deepLinks.open(route)));
   return {
     findDaemons: daemons.find,
     openLink: (socket) => DaemonLink.connect(socket),
     push,
-    confirm: options.confirm ?? confirmNatively,
+    confirm,
     openTerminal,
     notify: (note) => notifier.notify(note),
     startDaemon: daemons.start,
@@ -95,6 +118,7 @@ function host(options: DesktopOptions, parts: HostParts): BridgeHost {
     openRemote: async (origin) => { await remote.open(origin); },
     getPreference: (key) => preferences.get(key),
     setPreference: (key, value) => preferences.set(key, value),
+    setup: (owner, step) => setup.run(owner, step),
     versions: { app: version, build: options.build?.label ?? "unsigned build", electron: process.versions.electron ?? "", chrome: process.versions.chrome ?? "", node: process.versions.node },
     logPath: daemons.logDir,
     protocolVersions,

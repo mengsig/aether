@@ -91,6 +91,43 @@ describe("Dialog and Sheet", () => {
   });
 });
 
+describe("Dialog and Sheet focus return", () => {
+  const opener = () => {
+    const button = document.createElement("button");
+    document.body.append(button);
+    button.focus();
+    expect(document.activeElement).toBe(button);
+    return button;
+  };
+
+  test.each([["dialog", Dialog], ["sheet", Sheet]] as const)("a %s that closes hands focus back to the element that opened it", async (_kind, Surface) => {
+    const onClose = vi.fn();
+    const button = opener();
+    const { container, rerender } = await render(<Surface open={false} onClose={onClose} title="Start"><input aria-label="Inside" data-autofocus /></Surface>);
+    await rerender(<Surface open onClose={onClose} title="Start"><input aria-label="Inside" data-autofocus /></Surface>);
+    expect(container.querySelector("dialog")?.contains(document.activeElement)).toBe(true);
+    await rerender(<Surface open={false} onClose={onClose} title="Start" />);
+    expect(document.activeElement).toBe(button);
+  });
+
+  test.each([["dialog", Dialog], ["sheet", Sheet]] as const)("a %s that unmounts while open hands focus back to its opener", async (_kind, Surface) => {
+    const button = opener();
+    const { container, unmount } = await render(<Surface open onClose={vi.fn()} title="Start"><input aria-label="Inside" data-autofocus /></Surface>);
+    expect(container.querySelector("dialog")?.contains(document.activeElement)).toBe(true);
+    await unmount();
+    expect(document.activeElement).toBe(button);
+  });
+
+  test("focus is left alone when the opener left the page", async () => {
+    const button = opener();
+    const { rerender } = await render(<Sheet open={false} onClose={vi.fn()} title="Start" />);
+    await rerender(<Sheet open onClose={vi.fn()} title="Start" />);
+    button.remove();
+    await rerender(<Sheet open={false} onClose={vi.fn()} title="Start" />);
+    expect(document.activeElement).not.toBe(button);
+  });
+});
+
 describe("Tabs", () => {
   test("arrows select and focus the next tab, and the panel follows", async () => {
     const onSelect = vi.fn();

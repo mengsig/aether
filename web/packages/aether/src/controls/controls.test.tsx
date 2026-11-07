@@ -1,14 +1,15 @@
 // @vitest-environment happy-dom
+import { drafts } from "@aether-ui/core";
 // The agent controls: each control sends its command through core, destructive ones only after a
 // confirm step; an observer sees every control off with the reason; reads land in core's store.
 
 import { act } from "react";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, test, vi } from "vitest";
 import { invariant } from "../fleet/invariant.ts";
 import { ControlsScreen } from "./ControlsScreen.tsx";
 import { previewText } from "./records.tsx";
 import { AGENT_ID, controlsScript, demoAgents } from "./fixture/demo.ts";
-import { buttonNamed, click, connected, type, type Harness } from "./fixture/harness.test-util.tsx";
+import { buttonNamed, click, connected, pick, type, type Harness } from "./fixture/harness.test-util.tsx";
 import type { ScriptOptions } from "./fixture/daemon.ts";
 import { forgetDrafts } from "../composer/drafts.ts";
 
@@ -41,7 +42,7 @@ describe("ControlsScreen", () => {
   test("lifecycle controls send their commands; pause can include the delegates", async () => {
     const { h, root } = await open();
     await click(h, root, "Interrupt");
-    await act(async () => (root.querySelector(".b3-check input") as HTMLInputElement).click());
+    await click(h, root, "Include the agents it delegated to");
     await click(h, root, "Pause");
     await click(h, root, "Wake");
     await click(h, root, "Compact context");
@@ -96,10 +97,10 @@ describe("ControlsScreen", () => {
 
   test("steering sends a trimmed message, to the delegates when asked, and refuses an empty one", async () => {
     const { h, root } = await open({}, "Steer");
-    await click(h, root, "Send");
-    expect(root.textContent).toContain("Write a message first");
+    expect(buttonNamed(root, "Send").disabled).toBe(true);
+    expect(root.textContent).toContain("Write a message");
     await type(h, root, "Message", "  Hold the release until CI is green  ");
-    await act(async () => (root.querySelector(".b3-check input") as HTMLInputElement).click());
+    await click(h, root, "Also send to the agents it delegated to");
     await click(h, root, "Send");
     expect(sent(h, "send_message")).toEqual([{ cmd: "send_message", to: AGENT_ID, content: "Hold the release until CI is green", subtree: true }]);
   });
@@ -133,14 +134,12 @@ describe("ControlsScreen", () => {
 
   test("model and limits read the model list into the store and patch only what changed", async () => {
     const { h, root } = await open({}, "Model & limits");
-    expect(h.app.store.get().reads[h.conn]?.models?.value).toHaveLength(3);
-    const options = [...root.querySelectorAll("select")[0]?.querySelectorAll("option") ?? []].map((o) => o.textContent);
-    expect(options).toEqual(["Keep anthropic/claude-opus-5-5", "Opus 5.5 · Anthropic (default)", "Sonnet 5.5 · Anthropic"]);
-    await type(h, root, "Model", "anthropic/claude-sonnet-5-5");
-    await type(h, root, "Effort", "max");
+    expect(h.app.store.get().reads[h.conn]?.["configure:models"]?.value).toHaveLength(3);
+    await pick(h, root, "Model", "Sonnet 5.5");
+    await click(h, root, "max");
     await click(h, root, "Apply model");
     await type(h, root, "Turn limit", "2.5");
-    await click(h, root, "Apply limits");
+    expect(buttonNamed(root, "Apply limits").disabled).toBe(true);
     expect(root.textContent).toContain("The turn limit must be a whole number");
     await type(h, root, "Turn limit", "50");
     await type(h, root, "Cost budget (USD)", "12.5");
@@ -157,7 +156,7 @@ describe("ControlsScreen", () => {
   test("approvals: policy, standing rules from the store, add and confirmed revoke reread the rules", async () => {
     const { h, root } = await open({}, "Approvals");
     expect(buttonNamed(root, "Apply approval policy").disabled).toBe(true);
-    await act(async () => (root.querySelectorAll(".b3-check input")[2] as HTMLInputElement).click());
+    await click(h, root, "Changes");
     await click(h, root, "Apply approval policy");
     expect(sent(h, "set_approvals")).toEqual([{ cmd: "set_approvals", agent: AGENT_ID, policy: { require_for: ["mutation", "external"] } }]);
     const rules = root.querySelector('[aria-label="Standing rules"]');
@@ -204,11 +203,12 @@ describe("ControlsScreen", () => {
     await click(h, root, "History");
     expect(root.querySelector('[aria-label="Schedule history"]')?.textContent).toContain("delivered");
     await type(h, root, "Schedule name", "Hourly sweep");
-    await type(h, root, "Every (seconds)", "30");
+    await pick(h, root, "Every (seconds)", "Custom");
+    await type(h, root, "Custom interval (seconds)", "30");
     await type(h, root, "Message to deliver", "Sweep stale branches");
-    await click(h, root, "Create schedule");
+    expect(buttonNamed(root, "Create schedule").disabled).toBe(true);
     expect(root.textContent).toContain("The interval is at least 60 seconds");
-    await type(h, root, "Every (seconds)", "3600");
+    await pick(h, root, "Every (seconds)", "Hourly");
     await click(h, root, "Create schedule");
     expect(sent(h, "create_schedule")[0]).toMatchObject({ spec: { name: "Hourly sweep", target: AGENT_ID, recurrence: { kind: "interval", seconds: 3600 }, payload: "Sweep stale branches" } });
   });
@@ -250,6 +250,8 @@ describe("previewText", () => {
   });
 });
 
+beforeEach(() => { for (const key of drafts.keys()) drafts.clear(key); });
+
 test("approval tool suggestions include live requests and documented harness tools", async () => {
   const { h, root } = await open({}, "Approvals");
   await act(async () => { h.daemon.emit(AGENT_ID, { type: "approval.requested", approval: "apr_custom", call: "call_custom", tool: "custom_search", side_effect: "read_only", description: "Search" }); });
@@ -265,6 +267,7 @@ test("approval tool suggestions include live requests and documented harness too
   await click(h, openDialog(), "Add rule");
   expect(h.daemon.commands("add_approval_rule")[0]).toMatchObject({ match: { tool: "custom_search" } });
 });
+
 test("all approval policy switches preserve side-effect values and subtree", async () => {
   const { h, root } = await open({}, "Approvals");
   await click(h, root, "Reads");

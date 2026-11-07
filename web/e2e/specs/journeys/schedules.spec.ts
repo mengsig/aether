@@ -28,8 +28,10 @@ async function fillSchedule(page: Page, controls: Locator, work: string): Promis
   await choose(page, controls.getByRole("radiogroup", { name: "Send to" }), "A new agent");
   await weekdayCron(page, controls);
   await choose(page, await textField(await need(controls, "schedule-timezone")), "UTC");
-  const workspace = await textField(await need(controls, "schedule-workspace"));
+  await (await need(controls, "schedule-workspace")).getByRole("radio", { name: "Other folder" }).check();
+  const workspace = await textField(await need(controls, "schedule-workspace-path"));
   await workspace.fill(work);
+  await workspace.press("Enter");
   await expect(workspace, "the schedule's workspace").toHaveValue(work);
   await choose(page, await need(controls, "schedule-model"), "Faux model");
   await controls.getByLabel("Objective for each new agent", { exact: true }).fill("Check the workspace, then finish.");

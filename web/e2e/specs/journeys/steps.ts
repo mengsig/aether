@@ -37,20 +37,23 @@ export async function objectiveField(page: Page): Promise<Locator> {
   return textField(await need(startSheet(page), "start-objective"));
 }
 
-/** The workspace field holds `work`: typed over the sheet's default, then validated by the daemon. */
+/** The workspace is `work`: typed as another folder than the sheet's recent ones, then validated by the daemon. */
 export async function chooseWorkspace(page: Page, work: string): Promise<void> {
   assert.ok(work.startsWith("/"), `a workspace is absolute: ${work}`);
   const sheet = startSheet(page);
-  const field = await textField(await need(sheet, "start-workspace"));
+  const group = await need(sheet, "start-workspace");
+  await group.getByRole("radio", { name: "Other folder" }).check();
+  const field = await textField(await need(sheet, "start-workspace-path"));
   await field.fill(work);
+  await field.press("Enter");
   await expect(field, "the start sheet holds the workspace").toHaveValue(work);
-  await expect(sheet.getByRole("status").filter({ hasText: /^Ready/ }), "the daemon accepts the workspace").toBeVisible();
+  await expect(group.locator('.b3-note[data-state="done"]'), "the daemon accepts the workspace").toBeVisible();
 }
 
 /** The variant's model is the one preselected: the faux model, or Haiku on real engines. */
 export async function expectDefaultModel(page: Page, variant: Variant): Promise<void> {
   const name = variant === "faux" ? /Faux model/i : /Haiku/i;
-  await expect(await need(startSheet(page), "start-model"), "the default model is preselected").toContainText(name);
+  await expect((await need(startSheet(page), "start-model")).locator("option:checked"), "the default model is preselected").toContainText(name);
 }
 
 /** Submits the start sheet by [start-submit]; it closes and lands on the agent. */

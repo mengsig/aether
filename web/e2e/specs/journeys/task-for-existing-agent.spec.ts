@@ -29,9 +29,9 @@ test("task-for-existing-agent journey: a task in task mode lands on its owner", 
     const sheet = startSheet(window);
     await chooseWorkType(window, "Existing agent task");
     await (await objectiveField(window)).fill(TASK);
-    const ownerChoice = (await need(sheet, "start-owner")).getByRole("button", { name: OWNER, exact: true });
-    await ownerChoice.click();
-    await expect(ownerChoice, "the owner is chosen").toHaveAttribute("aria-pressed", "true");
+    const ownerChoice = await need(sheet, "start-owner");
+    await ownerChoice.selectOption({ label: OWNER });
+    await expect(ownerChoice, "the owner is chosen").toHaveValue(owner);
     await shootWindow(window, "start-agent", "task-mode");
     await submitStart(window, "Create task");
     const tasks = await until(() => taskObjectives(stack, owner), (objectives) => objectives.includes(TASK), "the task on its owner", 30_000);

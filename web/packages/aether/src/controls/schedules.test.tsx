@@ -8,6 +8,7 @@ import { AGENT_ID, controlsScript, demoAgents } from "./fixture/demo.ts";
 import { buttonNamed, click, connected, pick, type, type Harness } from "./fixture/harness.test-util.tsx";
 import type { ScriptOptions } from "./fixture/daemon.ts";
 import { SchedulesPanel } from "./schedules.tsx";
+import { invariant } from "../fleet/invariant.ts";
 
 let current: Harness | null = null;
 afterEach(() => { current?.unmount(); current = null; });
@@ -26,6 +27,17 @@ function openDialog(): HTMLElement {
   const dialog = document.querySelector<HTMLElement>("dialog[open]");
   expect(dialog).not.toBeNull();
   return dialog ?? document.body;
+}
+
+/** The spawn workspace is a folder typed as "Other folder" and committed with Enter. */
+async function typeFolder(h: Harness, root: ParentNode, folder: string): Promise<void> {
+  const other = [...root.querySelectorAll<HTMLLabelElement>(".start-choice")].find(l => l.textContent?.includes("Other folder"))?.querySelector("input");
+  invariant(other, "the Other folder choice");
+  await act(async () => other.click()); await h.settle();
+  await type(h, root, "Folder path", folder);
+  const field = [...root.querySelectorAll<HTMLInputElement>("input")].find(i => i.value === folder);
+  invariant(field, "the typed folder path");
+  await act(async () => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))); await h.settle();
 }
 
 describe("SchedulesPanel", () => {
@@ -69,7 +81,7 @@ describe("SchedulesPanel", () => {
     expect(root.textContent).not.toContain("When the agent is busy");
     await pick(h, root, "Every (seconds)", "Daily");
     await type(h, root, "Objective for each new agent", "Triage the backlog");
-    await type(h, root, "Workspace", "/srv/repo");
+    await typeFolder(h, root, "/srv/repo");
     await pick(h, root, "Model", "Sonnet 5.5");
     await click(h, root, "high");
     await type(h, root, "Maximum runs (blank for unlimited)", "7");

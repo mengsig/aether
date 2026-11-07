@@ -68,6 +68,19 @@ describe("AppShell", () => {
     expect(document.title).toBe("Agent · Aether");
   });
 
+  test("the overview shows the home the app gives it, and a banner sits above the screen", async () => {
+    const bare = await render(shell().node);
+    await settle();
+    expect(bare.container.textContent).toContain("Pick a screen");
+    expect(bare.container.querySelector(".ui-shell-banner")).toBeNull();
+    document.body.innerHTML = "";
+    const { container } = await render(shell({ home: <p className="home">Set up</p>, banner: <p className="fix">Connect</p> }).node);
+    await settle();
+    expect(container.querySelector(".home")?.textContent).toBe("Set up");
+    expect(container.textContent).not.toContain("Pick a screen");
+    expect(container.querySelector("#ui-main > .ui-shell-banner .fix")?.textContent).toBe("Connect");
+  });
+
   test("names a route with no nav entry by its listed title, else by the product", async () => {
     const route: RouteDef = { path: "#/archon/items/:item", owner: "C1", load };
     const match = { route, params: { item: "qi_1" } };

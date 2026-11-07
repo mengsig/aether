@@ -1,3 +1,4 @@
+import { useReread } from "@aether-ui/core";
 import { Combo, Field, Picker, Segmented, TextArea } from "@aether-ui/ui";
 import { Workspace } from "../activity/Workspace.tsx";
 import { Models } from "../activity/Models.tsx";
@@ -30,9 +31,10 @@ export function RecurrenceFields({ draft: d, edit }: { draft: ScheduleForm; edit
 }
 
 export function SpawnFields({ conn, draft: d, edit }: { conn: string; draft: ScheduleForm; edit: Edit }) {
+  const recent = useReread(conn, "start:workspaces", { cmd: "list_workspaces" }, ["workspaces"]);
   return <>
     <TextArea label="Objective for each new agent" rows={2} value={d.objective} onChange={e => edit({ objective: e.target.value })} />
-    <Workspace conn={conn} path={d.workspace} change={workspace => edit({ workspace })} testId="schedule-workspace" />
+    <Workspace conn={conn} path={d.workspace} change={workspace => edit({ workspace })} recent={recent} testId="schedule-workspace" />
     <Models conn={conn} screen="schedule" value={d.model} onChange={model => edit({ model })} testId="schedule-model" />
     <Segmented label="Effort" value={d.effort} onChange={effort => edit({ effort })}
       options={[{ id: "", label: "Model default" }, ...EFFORTS.map(id => ({ id, label: id.replace("_", " ") }))]} />

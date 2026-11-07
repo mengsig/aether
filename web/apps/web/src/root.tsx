@@ -1,6 +1,7 @@
 import { navigate, selectConnections, selectReports, useApp, useCapabilities, useEntityActions, useRoute, useRoutes, useSelector } from "@aether-ui/core";
 import type { EntityAction } from "@aether-ui/protocol";
 import { HomeScreen } from "@aether-ui/home";
+import { ArchonToolsNotice, Welcome } from "@aether-ui/settings";
 import { AppShell, type ToastMessage } from "@aether-ui/ui";
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { useNoticeLifetime } from "./notice-lifetime.ts";
@@ -14,6 +15,11 @@ function subscribeHash(listener: () => void): () => void {
 }
 
 const readHash = (): string => window.location.hash || "#/";
+
+/** Archon's screens say so, with the fix, when Archon's tools are not connected to Aether. */
+export function bannerFor(hash: string) {
+  return hash.startsWith("#/archon/") || hash === "#/archon" ? <ArchonToolsNotice /> : null;
+}
 
 export interface ShellRootProps {
   /** The palette's recent destinations to start from, and where each change is saved. */
@@ -50,6 +56,6 @@ export function ShellRoot({ initialRecents, onRecentsChange }: ShellRootProps) {
   return (
     <AppShell routes={routes} actions={actions} capabilities={capabilities} match={match} hash={hash}
       onNavigate={navigate} onActionError={onActionError} connections={connections} notices={notices} onDismissNotice={dismiss} onDismissAllNotices={dismissAll} titles={screenTitles}
-      home={<HomeScreen />} commands={paletteEntities} initialRecents={initialRecents} onRecentsChange={onRecentsChange} />
+      home={<Welcome connected={<HomeScreen />} />} banner={bannerFor(hash)} commands={paletteEntities} initialRecents={initialRecents} onRecentsChange={onRecentsChange} />
   );
 }

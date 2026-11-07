@@ -17,7 +17,7 @@ export function reportNotice(report: Report, times = 1): ToastMessage {
   const title = report.message.trim() === "" ? UNEXPLAINED_REPORT : report.message;
   const repeat = times > 1 ? `${times} times` : null;
   const body = [report.code, repeat].filter((part): part is string => part !== null && part !== undefined).join(" · ");
-  return { id: report.id, title, tone: "danger", ...(body === "" ? {} : { body }) };
+  return { id: report.id, title, tone: report.tone ?? "danger", ...(body === "" ? {} : { body }) };
 }
 
 const sameFailure = (report: Report): string => `${report.message.trim()}\n${report.code ?? ""}`;

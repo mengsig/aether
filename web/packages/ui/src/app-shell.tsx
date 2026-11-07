@@ -36,8 +36,10 @@ export interface AppShellProps {
   readonly onRecentsChange?: (recents: readonly string[]) => void;
   /** The header of each route with no nav entry, by route path. */
   readonly titles?: Readonly<Record<string, string>>;
-  /** The overview shown at "", "#" and "#/" in place of the "Pick a screen" prompt. */
+  /** What the overview at `#/` shows; a plain hint to pick a screen when absent. */
   readonly home?: ReactNode;
+  /** A notice above the routed screen, such as a fix the current screen needs. */
+  readonly banner?: ReactNode;
 }
 
 type RouteComponent = ComponentType<RouteProps>;
@@ -107,6 +109,7 @@ export function AppShell(props: AppShellProps) {
             </div>
           </header>
           <main className="ui-shell-main" id="ui-main" tabIndex={-1}>
+            {props.banner ? <div className="ui-shell-banner">{props.banner}</div> : null}
             <RouteView match={props.match} hash={hash} capabilities={capabilities} hasRoutes={sections.length > 0} home={props.home} />
           </main>
         </div>
