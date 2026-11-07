@@ -53,6 +53,10 @@ export interface MeasuredListProps {
   /** Keeps the last row in view while the list sits at its end, as a chat log does. */
   readonly follow?: boolean;
   readonly className?: string;
+  /** Names what the rows are drawn as; when it changes, the row in view stays in view. */
+  readonly layout?: string;
+  /** Where row i sits in an order every layout shares, non-decreasing; defaults to i. */
+  readonly position?: (index: number) => number;
 }
 
 interface Measures {
@@ -126,7 +130,44 @@ function useViewportHeight(ref: RefObject<HTMLDivElement | null>): number {
   return viewport;
 }
 
-export function MeasuredList({ label, count, rowKey, estimate, renderRow, follow = false, className }: MeasuredListProps) {
+/** The first row at or after `wanted` in the shared order, by binary search; `count` when none is. */
+export function firstAtOrAfter(count: number, position: (index: number) => number, wanted: number): number {
+  let low = 0;
+  let high = count;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (position(mid) < wanted) low = mid + 1;
+    else high = mid;
+  }
+  invariant(low === count || position(low) >= wanted, "the search lands on a row at or after the wanted one");
+  return low;
+}
+
+interface Anchor { readonly layout: string; readonly position: number; readonly within: number }
+
+/** Holds the row at the top of the view across a layout change, unless the list follows its end. */
+function useLayoutAnchor(ref: RefObject<HTMLDivElement | null>, offsets: Float64Array, top: number, layout: string, position: (index: number) => number, following: () => boolean): void {
+  const anchor = useRef<Anchor | null>(null);
+  const count = offsets.length - 1;
+  useLayoutEffect(() => {
+    const element = ref.current;
+    const held = anchor.current;
+    if (element === null || held === null || held.layout === layout || following()) return;
+    const index = firstAtOrAfter(count, position, held.position);
+    element.scrollTop = Math.max(0, (offsets[index] ?? 0) + (position(index) === held.position ? held.within : 0));
+  }, [ref, layout, offsets, count, position, following]);
+  // Runs after the restore above, so it reads the scroll that restore set, not the stale `top`.
+  useLayoutEffect(() => {
+    if (count === 0) return;
+    const y = ref.current?.scrollTop ?? top;
+    const index = Math.min(count - 1, rowAt(offsets, y));
+    anchor.current = { layout, position: position(index), within: y - (offsets[index] ?? 0) };
+  }, [ref, offsets, top, layout, count, position]);
+}
+
+const identity = (index: number): number => index;
+
+export function MeasuredList({ label, count, rowKey, estimate, renderRow, follow = false, className, layout = "", position = identity }: MeasuredListProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [top, setTop] = useState(0);
   const viewport = useViewportHeight(ref);
@@ -166,6 +207,8 @@ export function MeasuredList({ label, count, rowKey, estimate, renderRow, follow
   useLayoutEffect(() => {
     firstShown.current = rowAt(offsets, top);
   }, [offsets, top]);
+  const following = useCallback(() => follow && atEnd.current, [follow]);
+  useLayoutAnchor(ref, offsets, top, layout, position, following);
 
   const { start, end } = rowRange(offsets, top, viewport, OVERSCAN_PX);
   const rows: ReactNode[] = [];

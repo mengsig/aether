@@ -140,6 +140,7 @@ from ._protocol_commands.list import (
     list_runs,
     list_schedules,
     list_tasks,
+    list_view_modes,
     list_workspaces,
 )
 

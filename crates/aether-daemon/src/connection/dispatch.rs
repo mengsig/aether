@@ -16,6 +16,7 @@ mod runs;
 mod schedules;
 mod system;
 mod tasks;
+mod view_modes;
 
 /// Where to cut `bytes` at about `max` so that text stays text. Slicing at a
 /// byte offset can land inside a UTF-8 sequence, and a client decoding the

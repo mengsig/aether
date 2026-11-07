@@ -27,6 +27,7 @@ function hostWith(origins: unknown, opened: string[]): BridgeHost {
     openExternal: async (url) => { opened.push(`external ${url}`); },
     openRemote: async (origin) => { opened.push(origin); },
     getPreference: (key) => (key === "remote.origins" ? origins : undefined), setPreference: async () => {},
+    setup: async () => { throw new Error("no setup in this test"); },
     versions: {}, logPath: "/tmp/log", protocolVersions: { aether: 26, archon: 24 },
   };
 }

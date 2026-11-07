@@ -16,6 +16,7 @@ it up to date.
 5. [Installing](#installing)
 6. [Updates](#updates)
 7. [CI](#ci)
+8. [Chatting with an agent](#chatting-with-an-agent)
 
 ## Packages
 
@@ -135,9 +136,37 @@ The app says when it is unsigned:
   (`libfuse2`). Without it, run it with `--appimage-extract-and-run`.
 - **macOS**: open the dmg and drag Aether to Applications.
 
-The app never starts or stops a daemon unless you turn on managed start in
-its settings, and even then it never stops one. Install and run the daemons
-as [install.md](install.md) describes.
+Install the daemons as [install.md](install.md) describes. The app starts a
+daemon only when managed start is on, and it never stops one on its own.
+
+### Setting up this computer
+
+The app's setup runs in three steps, each one when you click it:
+
+1. **Find the programs.** It runs `aether version` and `archon --version`.
+   Apps opened from a dock or menu often get a shorter `PATH` than a
+   terminal, so the app adds `~/.local/bin`, `~/.cargo/bin`,
+   `/usr/local/bin` and, on macOS, `/opt/homebrew/bin` after your own `PATH`
+   when they exist. Managed start uses the same `PATH`.
+2. **Connect Archon's tools.** The app first asks in a native dialog. If
+   Aether is already running, the same dialog says Aether may restart. If
+   you cancel, nothing is written and nothing is run. If you agree and
+   Archon has no config file yet (`$ARCHON_CONFIG_DIR/config.toml`, else on
+   Linux `$XDG_CONFIG_HOME/archon/config.toml` or
+   `~/.config/archon/config.toml`, on macOS
+   `~/Library/Application Support/archon/config.toml`), the app writes one
+   with `[aether] mode = "shared"`, so Archon uses this computer's Aether.
+   It never changes a config file that exists. Then it runs
+   `archon setup --json`, which registers Archon's tools with Aether. If
+   Aether started on its own while you answered and has not loaded the
+   tools, setup stops there; trying again asks with the restart named.
+3. **Start.** Clicking "Set up" turns managed start on. Aether reads its
+   tools only when it starts. If Aether was running without Archon's tools
+   and you agreed to the restart in step 2, the app runs `aether stop`,
+   waits until Aether has stopped, and starts it again; working agents
+   pause and pick up where they left off. Without that agreement nothing is
+   stopped. Then it starts Aether and Archon, leaving alone any that
+   already run.
 
 ## Updates
 
@@ -187,3 +216,98 @@ The workflow's token is read-only except in the publish job, which may write
 release assets. The signing secrets reach only the macOS build step, and only
 on a push to `main`, `next` or a release tag. A pull request, whoever opened
 it, and a manual run, which can name any branch, build unsigned.
+
+## Chatting with an agent
+
+**Start an agent** on the Activity screen starts a **Chat** by default: a
+task-less assistant, started the way the TUI starts one, that gets your first
+message and then waits for the next one after every reply. It stays open until
+you cancel it. A first message that is empty or too long to keep (over 200,000
+characters) is refused before any chat is created. The chat opens once its first
+message is delivered, sent as typed: a `/` at its start is never read as a
+command. If that message is refused, or its reply never comes, the sheet stays
+open with the chat's settings shown fixed, the message as typed, the reason and,
+for a lost reply, a warning that it may have arrived. **Send it again** resends
+the same text to the same chat, so a retry never starts a second one. **Open the
+chat** goes there, and the chat shows the same notice with **Send it as typed**
+until the message is delivered or dismissed. **New chat with different
+settings** is the only way to create another, and the form keeps what you typed.
+If the reply to the create itself never comes, the chat may exist, so the sheet
+says so and points to the recovery review instead of creating it again. A **Task
+agent** instead works on an objective and ends once it is done; an ended agent
+takes no more messages, and its composer says why and offers to wake it (after a
+failure), start a new chat or open its controls.
+
+The composer sits under the conversation. Enter sends, Shift+Enter adds a
+line, and **Stop** interrupts the running turn without losing the agent's
+context. What you type is kept per daemon, agent and field (the composer, the
+Steer form and each Inbox question's answer) while the app is open, and saved
+for a reload where the session store allows. A draft is cleared once the daemon
+confirms delivery, and only if it still reads exactly what was sent, so text
+typed during a send stays. Where the session store is full or disabled, one note
+says drafts will not survive a reload, and a started chat's undelivered first
+message stays in the sheet instead of following you to the chat.
+
+Typing `/` opens the command menu. Arrow keys move, Tab completes a name and
+then offers its choices, Enter runs, Escape closes; the pointer works too.
+
+| Command | Opens or does |
+| --- | --- |
+| `/settings [page]` | the settings, or one page: connections, devices, remote, providers, notifications |
+| `/usage` | providers, sign-in and limits (Settings, Providers) |
+| `/notifications` | the Inbox: questions, approvals and failures |
+| `/memory` | this daemon's memories |
+| `/report`, `/artifacts`, `/schedules`, `/approvals` | the agent's controls (Records, Schedules, Approvals) |
+| `/doctor` | Settings, Connections |
+| `/activity` | every daemon event as it happens |
+| `/help` | the command palette (Ctrl+K): every screen and its keys |
+| `/mode <name>` | a transcript view mode; `/<name>` toggles that mode with the standard one |
+
+To Archon's orchestrator the menu also offers Archon's own commands
+(`/status`, `/queue`, `/answer`, `/approve`, `/merge` and the rest), which go
+to it as typed. Any other `/line` is sent to the agent unchanged, as the TUI
+sends it, except while the view mode list is missing (below).
+
+### View modes
+
+A view mode changes what the conversation draws, never what the agent does. The
+picker above the transcript offers `standard`, the built-in `focus` and the
+modes in the daemon's `<config dir>/modes/*.toml` whose scope fits the agent,
+read over `list_view_modes` (see [the TUI's view modes](tui.md#view-modes)); a
+mode scoped to another agent is not offered. Arrow keys move the choice, and
+`/mode <name>` or `/<name>` (again for standard) choose one from the composer
+and run in the app. While the daemon's list is loading or unavailable, `/mode`,
+`/focus` and Archon's `/calm` say so rather than reach the agent. Any other
+`/<name>` no command knows may name a user mode, so it is held while the list
+is loading, its last read failed (the last list stays in use) or a mode file
+could not be read, which the bar names; once the list is whole and names no
+such mode, it is sent byte for byte. The choice is remembered per daemon and
+agent, read once as the chat opens. Where storage refuses to save it, the choice
+holds for the open chat and the bar says it will not be remembered after a
+reload; where the saved choice cannot be read, the chat opens in its default view
+and the bar says so. Without one, Archon's orchestrator opens in its Calm mode
+whenever a `calm.toml` that fits it exists, whatever other modes are scoped to
+it; any other agent opens in the first user mode scoped to it, else in standard.
+
+The rules are the TUI's, pinned row for row by one shared fixture
+(`crates/aether-tui/tests/fixtures/view_mode_parity.json`) that both test
+suites read. A named mode hides the categories it does not list, draws a
+failed tool call or edit as one line when it omits `tool`, and with `compact` density
+draws delegations, messages, completions and status as one-line cards; drawn
+whole, a card keeps the call beside it, input and result.
+What the operator typed, questions, approvals, errors, failed children and
+calls that were denied or cancelled stay whole in every mode. **Details** (Ctrl+T)
+reveals everything the mode hides without leaving it. Switching keeps the draft
+and the row at the top of the view.
+
+A user turn is drawn as the daemon wrote it. An inbox turn, which may hold
+several deliveries and quote headers in their bodies, is never split or parsed:
+it is drawn verbatim as the operator's text, whole in every mode. A delegated
+agent's first turn is its task only when it is the `Your task:` turn the daemon
+writes for a new transcript; any other first turn is drawn as the operator's.
+
+The agent's own delegations, messages to other agents, waits and questions, and
+a delegated agent's task, are cards that open the other agent's chat and, for
+delegations, the fleet graph. A line beside the picker says what the agent is
+working on or waiting for, and its open questions and approvals are pinned above
+the transcript until they are answered.

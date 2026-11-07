@@ -1,11 +1,11 @@
 // `#/agents/:conn/:agent`: one agent's identity, state, model, cost and budget, above its
-// conversation. Everything shown is derived from core's store; this screen keeps no daemon data.
+// chat. Everything shown is derived from core's store; this screen keeps no daemon data.
 
 import { routeHref, selectAgent, selectAttention, selectConnection, useSelector } from "@aether-ui/core";
 import type { aether, ConnId, RouteProps } from "@aether-ui/protocol";
 import { Badge, EmptyState, EntityActionMenu, Skeleton, StatusPill } from "@aether-ui/ui";
 import { useMemo } from "react";
-import { Conversation } from "../conversation/Conversation.tsx";
+import { Chat } from "../conversation/Chat.tsx";
 import { agentStatus } from "../fleet/rows.ts";
 import { roleLabel } from "../fleet/roles.ts";
 import { invariant } from "../fleet/invariant.ts";
@@ -73,7 +73,7 @@ export function AgentScreen({ conn, id }: { readonly conn: ConnId; readonly id: 
     <section className="ui-page agent" aria-label={`Agent ${agent.name}`}>
       <AgentHeader conn={conn} agent={agent} />
       <AgentFacts agent={agent} />
-      <Conversation key={`${conn}/${id}`} conn={conn} agent={id} />
+      <Chat key={`${conn}/${id}`} conn={conn} agent={agent} />
     </section>
   );
 }

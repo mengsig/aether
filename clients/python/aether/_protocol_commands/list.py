@@ -101,6 +101,11 @@ def list_tasks(*, query: TaskQuery) -> dict[str, Any]:
     frame["query"] = query
     return frame
 
+def list_view_modes() -> dict[str, Any]:
+    """Built-in and user transcript modes from the daemon's configuration."""
+    frame: dict[str, Any] = {"cmd": "list_view_modes"}
+    return frame
+
 def list_workspaces(*, limit: int | None = None) -> dict[str, Any]:
     """Workspaces holding root agents, most recently active first."""
     frame: dict[str, Any] = {"cmd": "list_workspaces"}
