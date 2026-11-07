@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import type { Stack } from "../../../harness/stack.ts";
+import { enqueueItem } from "../../../harness/agents.ts";
 import { connection } from "../../../harness/pair.ts";
 import { expect, test, type Page } from "../../../harness/fixtures.ts";
 import { fixtureRepository } from "../gh-stub.ts";
@@ -138,4 +139,39 @@ test("an import failure stays visible inside the confirmation on retry", async (
   }
   await dialog.getByRole("button", { name: "Not now" }).click();
   await expect(dialog).toHaveCount(0);
+});
+
+test("an unknown initiative settles on an error and can be retried without reconnecting", async () => {
+  const page = window();
+  await route(page, "#/archon/initiatives/in_00000000000000000000000000");
+  const error = page.getByRole("alert");
+  await expect(error).toBeVisible();
+  await shoot("initiative-missing-light");
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(error).toBeVisible();
+  await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+  await shoot("initiative-missing-dark");
+  await expect(connection(page, "archon")).toHaveAttribute("data-state", "ready");
+});
+
+test("a queued item exposes steering and saves its priority", async () => {
+  const id = await enqueueItem(stack(), "Desktop steering journey");
+  const page = window();
+  await route(page, `#/archon/items/${id}`);
+  const actions = page.getByRole("group", { name: "Item actions" });
+  await expect(actions.getByRole("button", { name: "Steer item" })).toBeEnabled();
+  await actions.getByLabel("Priority").selectOption("high");
+  await actions.getByRole("button", { name: "Update priority" }).click();
+  await expect.poll(async () => {
+    const detail = await stack().archon.request({ cmd: "get_item", item: id });
+    return (detail.data.item as { priority?: string }).priority;
+  }).toBe("high");
+  await actions.getByRole("button", { name: "Steer item" }).click();
+  const dialog = page.getByRole("dialog", { name: "Steer item" });
+  await expect(dialog.getByLabel("Model")).toBeVisible();
+  await expect(dialog.getByLabel("Effort")).toBeVisible();
+  await shoot("steer-item-dark");
+  await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+  await shoot("steer-item-light");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
 });

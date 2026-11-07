@@ -46,7 +46,7 @@ function queuedPlan(item: archon.QueueItem, draft: Draft): archon.ModelPlanDraft
   invariant(selected !== undefined && selected.length > 0, "a queued plan edit names a populated stage");
   return Object.fromEntries(Object.entries(item.model_plan).map(([stage, choices]) => [stage, choices.map((choice) => {
     const model = stage === draft.stage && draft.model ? draft.model : null;
-    const source = !model && choice.tier ? { tier: choice.tier.requested, provider: choice.tier.provider } : { model: model ?? choice.model };
+    const source = !model && choice.tier ? { tier: choice.tier.requested, provider: choice.tier.provider ?? null } : { model: model ?? choice.model };
     return { ...source, effort: stage === draft.stage && draft.effort ? draft.effort as archon.Effort : choice.effort };
   })]));
 }

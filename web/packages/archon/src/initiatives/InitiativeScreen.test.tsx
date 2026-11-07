@@ -81,6 +81,7 @@ describe("an initiative page", () => {
     const root = await h.mount(<InitiativeScreen params={{ id: "in_gone" }} layout={gridLayout} />);
     await h.until(() => root.textContent?.includes("No such initiative") === true, "the not-found state");
     expect(root.textContent).toContain("Archon has no initiative in_gone");
+    expect(root.querySelector('[role="alert"] button')?.textContent).toBe("Try again");
   });
 
   it("shows a failed read and retries without losing the connection", async () => {

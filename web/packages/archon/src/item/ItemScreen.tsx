@@ -1,7 +1,7 @@
 // `#/archon/items/:item`: one item's execution, pull request and issue states side by side, what holds it,
 // the operator's actions, its runs, stages, gates, questions, links, artifacts and reports.
 
-import { routeHref, selectItem, selectItemLinks, selectItems, useSelector, type ArchonItem, type Stamped } from "@aether-ui/core";
+import { routeHref, selectConnections, selectItem, selectItemLinks, selectItems, useSelector, type ArchonItem, type Stamped } from "@aether-ui/core";
 import type { archon, ConnectionInfo, RouteProps } from "@aether-ui/protocol";
 import { EmptyState, EntityActionMenu, ErrorState, Skeleton, StatusPill } from "@aether-ui/ui";
 import { useMemo } from "react";
@@ -55,6 +55,9 @@ function ItemPage({ access, detail, view, stored, reload }: PageProps) {
   const item = detail.item;
   const summary = (stored?.summary ?? null) as archon.ItemSummary | null;
   const now = useNow();
+  const connections = useSelector(selectConnections);
+  const aether = Object.values(connections).filter((connection) => connection.daemon === "aether");
+  const agentConn = aether.length === 1 ? aether[0]?.id ?? null : null;
   // The pause and the questions move with any activity; the rest follows each reread of this detail.
   const settled = useSettled(useActivity(access.conn), 1_000);
   const repos = useRead<archon.Repo[]>(access, { cmd: "repo_list" }, ["repos"]);
@@ -84,7 +87,7 @@ function ItemPage({ access, detail, view, stored, reload }: PageProps) {
         <Section title="Details"><Details detail={detail} repoName={repoName} pipeline={pipeline} prUrl={summary?.pr_url ?? null} /></Section>
         <Section title="Brief"><p className="item-brief">{item.brief}</p></Section>
         <Section title="Runs"><Runs item={item.id} runs={detail.runs} now={now} /></Section>
-        <Section title="Stages"><Stages detail={detail} now={now} /></Section>
+        <Section title="Stages"><Stages detail={detail} now={now} conn={agentConn} /></Section>
         {detail.gates?.length ? <Section title="Gates"><Gates gates={detail.gates} /></Section> : null}
         <Section title="Links">
           {access.has("github_links") ? <Links links={linkList} objects={objects} />

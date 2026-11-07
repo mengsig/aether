@@ -143,7 +143,7 @@ function Initiative({ info, id, layout }: { readonly info: ConnectionInfo; reado
   const { failure, reload } = useStoreRead(read, signal);
   const stored = useSelector(useMemo(() => selectInitiative(access.conn, id), [access.conn, id]));
   if (failure?.code === "not_found") {
-    return <EmptyState title="No such initiative" action={<a className="ui-link" href="#/archon/graph">Back to the task graph</a>}>Archon has no initiative {id}. It may have been removed.</EmptyState>;
+    return <ErrorState title="No such initiative" message={`Archon has no initiative ${id}. It may have been removed.`} onRetry={reload} />;
   }
   if (stored === undefined) {
     if (failure !== null) return <ErrorState title="The initiative could not be read" message={failure.message} onRetry={reload} />;

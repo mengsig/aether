@@ -58,3 +58,11 @@ test.each([{ protocol: 23 as const }, { protocol: 24 as const, role: "observer" 
   expect((byText(container, "button", "Steer item") as HTMLButtonElement).disabled).toBe(true);
   expect(container.textContent).toMatch(/require protocol 24|only observes/);
 });
+
+test("disables steering with a visible reason when the daemon refuses the policy read", async () => {
+  h = await archonHarness({ protocol: 24, refuseModelPolicy: true });
+  const container = await h.mount(<ItemRoute params={{ item: "qi_rate_limit" }} />);
+  await h.until(() => container.textContent?.includes("Steering is unavailable") === true, "the refusal");
+  expect((byText(container, "button", "Steer item") as HTMLButtonElement).disabled).toBe(true);
+  expect(container.textContent).toContain("model policy is unavailable");
+});
