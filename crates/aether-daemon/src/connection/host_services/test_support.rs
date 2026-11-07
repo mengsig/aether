@@ -32,6 +32,7 @@ pub(super) async fn daemon() -> (Daemon, tempfile::TempDir) {
     .await
     .expect("runtime");
     let daemon = Daemon {
+        noesis: crate::noesis::NoesisService::detached(&runtime, &models),
         runtime,
         models,
         instance_id: "inst".into(),
@@ -39,6 +40,8 @@ pub(super) async fn daemon() -> (Daemon, tempfile::TempDir) {
         push: None,
         remote: Default::default(),
         status_reads: Default::default(),
+        tree_reads: Default::default(),
+        watcher_reads: Default::default(),
     };
     (daemon, config_dir)
 }

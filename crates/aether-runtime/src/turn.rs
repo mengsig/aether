@@ -37,7 +37,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::approval::{self, Gate};
 use crate::artifacts::StoreArtifactSink;
-use crate::bus::DeltaKind;
+use crate::bus::{DeltaKind, DeltaStream};
 use crate::commands::CreateAgentSpec;
 use crate::resources::{ResourceGuard, WaitOutcome};
 use crate::{CommitHold, Result, Runtime, RuntimeError};
@@ -60,7 +60,7 @@ mod failure;
 mod server_compaction;
 use failure::*;
 mod context;
-pub(crate) use context::{agent_temp_dir, retrieve_memories, tool_context};
+pub(crate) use context::{agent_temp_dir, holdout_unit, retrieve_memories, tool_context};
 mod tools;
 pub(crate) use tools::ToolEffects;
 use tools::*;
@@ -239,6 +239,8 @@ pub(crate) struct TurnCtx {
     /// The handoff this model owed when the turn started, before later
     /// selections could replace the ledger's latest request.
     pub(crate) start_handoff: Option<compaction::PendingCompaction>,
+    /// The Noesis lane dispatch admitted this turn in; `None` outside Noesis.
+    pub(crate) noesis: Option<crate::noesis_guard::NoesisTurn>,
 }
 
 impl TurnCtx {
@@ -252,6 +254,22 @@ impl TurnCtx {
             task_id: self.task.as_ref().map(|task| task.id),
             spawns: spawns.clone(),
         }
+    }
+
+    /// Which deltas this turn's streams publish.
+    pub(crate) fn stream_seal(&self) -> crate::noesis_seal::StreamSeal {
+        crate::noesis_seal::StreamSeal::of(self.noesis.is_some())
+    }
+
+    /// A Noesis turn's absolute usage as a durable record, written with every
+    /// usage it adds (API invoke, failed invocation, compaction, engine), so
+    /// the day's spend can be rebuilt from the log alone.
+    pub(crate) fn noesis_usage_record(&self) -> Option<aether_core::event::EventDraft> {
+        self.noesis.as_ref()?;
+        Some(self.draft(EventKind::AgentUsageUpdated {
+            total: self.agent.stats.usage,
+            turn_usage: self.turn_usage,
+        }))
     }
 
     pub(crate) fn add_usage(&mut self, usage: aether_core::model::Usage) {
@@ -386,6 +404,13 @@ fn begin_turn(
     );
     let mut task = turn_task(runtime, &agent)?;
     let start_handoff = compaction::handoff_at_turn_start(runtime, &agent)?;
+    // Dispatch read the subsystem when it admitted the turn; the slot carries the verdict.
+    let noesis = runtime
+        .sched
+        .lock()
+        .running
+        .get(&agent_id)
+        .and_then(|running| running.noesis.clone());
     let mut ctx = TurnCtx {
         agent: agent.clone(),
         task: task.clone(),
@@ -397,6 +422,7 @@ fn begin_turn(
         user_reply_pending: reply_obligation::load(runtime, agent_id)?,
         reply_given_unrecorded: false,
         start_handoff,
+        noesis,
     };
     let mut commit = start_commit(&ctx, &lease, task.as_mut(), at)?;
     commit.push_mutation(Mutation::UpsertAgent(agent.clone()));

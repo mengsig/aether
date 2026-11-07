@@ -379,3 +379,36 @@ fn disk_hold_survives_find_and_the_fullscreen_pager() {
         );
     }
 }
+
+#[test]
+fn unavailable_disk_status_survives_find_and_the_fullscreen_pager() {
+    use aether_tui::ui::views::pager::{PagerSource, PagerView};
+
+    for width in [80, 120] {
+        let mut app = quiet(populated_app());
+        app.board.open = false;
+        app.status.as_mut().expect("status").unavailable.push(
+            aether_protocol::UnavailableSection {
+                section: aether_protocol::status_sections::LOW_DISK.into(),
+                reason: "timed out".into(),
+            },
+        );
+        app.reduce(ctrl('f'));
+        assert!(app.bottom.find.is_some());
+        assert!(
+            screen(&app, width, 24)
+                .last()
+                .unwrap()
+                .contains("Disk unavailable: timed out")
+        );
+        app.bottom
+            .view_stack
+            .push(Box::new(PagerView::new(PagerSource::Report)));
+        assert!(
+            screen(&app, width, 24)
+                .last()
+                .unwrap()
+                .contains("Disk unavailable: timed out")
+        );
+    }
+}

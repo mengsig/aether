@@ -114,8 +114,8 @@ pub(crate) async fn execute(
     // assignment. Rank on the task objective: per-message ranking would
     // reorder and resend the layer almost every turn. Memory relevant to a later message
     // but not to the objective is not surfaced mid-session.
-    let memories = crate::turn::retrieve_memories(runtime, ctx, &[])?;
-    let memory_records: Vec<_> = memories.into_iter().map(|m| m.record).collect();
+    let memories = crate::turn::retrieve_memories(runtime, ctx, &[], &resolved.model.capabilities)?;
+    let memory_records: Vec<_> = memories.injected.iter().map(|m| m.record.clone()).collect();
     let notes = crate::notes::digest(runtime, ctx.agent.id)?;
     let tools: Vec<ToolSpec> = runtime.engine_tool_specs(&ctx.agent);
     let adapter = engine.adapter();
@@ -153,6 +153,7 @@ pub(crate) async fn execute(
     )?);
     let assembled = runtime.context.assemble(context_inputs);
     let mut snapshot = assembled.snapshot;
+    snapshot.memory_retrieval = memories.trace.clone();
     // Explicit (or model-default) effort is independent of registry capability
     // flags. None records that the native harness chooses, not an assumed value.
     snapshot.params.effort = agent_for_link.config.effort;
@@ -234,6 +235,9 @@ pub(crate) async fn execute(
             let touched = runtime.memory.touch(&hold, &snapshot.memory_ids)?;
             commit.mutations.extend(touched.mutations);
         }
+        commit
+            .mutations
+            .extend(runtime.memory_holdout_log(&memories, crate::turn::holdout_unit(ctx)));
         runtime.apply_held(hold, commit)?;
     }
 
@@ -277,6 +281,13 @@ pub(crate) async fn execute(
         build_env: Vec::new(),
         mcp: None,
     };
+
+    // Everything above awaited (availability, handoff, compaction): an
+    // admission the gate or a newer generation has outdated starts no engine.
+    if let Some(reason) = crate::noesis_guard::engine_start_refusal(runtime, ctx) {
+        tracing::info!(agent = %ctx.agent.id, %reason, "the Noesis engine turn is not started");
+        return Ok(EngineLink::Done(Next::Interrupted));
+    }
 
     let mut effects = ToolEffects::default();
     // The last context size the engine reported, from the turn before this

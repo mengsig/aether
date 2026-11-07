@@ -228,6 +228,7 @@ fn record_native_usage(
             error,
         },
     )
+    .map(drop)
 }
 
 /// `compaction.native` with the engine's counts, or `compaction.failed` in

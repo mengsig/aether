@@ -63,6 +63,39 @@ fn key_slot(command: &mut Command) -> Option<&mut Option<String>> {
         }
         | Command::CreateMemory {
             idempotency_key, ..
+        }
+        | Command::NoesisConfigure {
+            idempotency_key, ..
+        }
+        | Command::NoesisCreateSession {
+            idempotency_key, ..
+        }
+        | Command::NoesisSend {
+            idempotency_key, ..
+        }
+        | Command::NoesisAnswer {
+            idempotency_key, ..
+        }
+        | Command::NoesisDeleteSession {
+            idempotency_key, ..
+        }
+        | Command::NoesisDeleteProposition {
+            idempotency_key, ..
+        }
+        | Command::NoesisDeleteSource {
+            idempotency_key, ..
+        }
+        | Command::NoesisExtract {
+            idempotency_key, ..
+        }
+        | Command::NoesisImportSource {
+            idempotency_key, ..
+        }
+        | Command::NoesisCancelJob {
+            idempotency_key, ..
+        }
+        | Command::NoesisCorrectLearner {
+            idempotency_key, ..
         } => idempotency_key,
         _ => return None,
     };

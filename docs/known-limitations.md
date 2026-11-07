@@ -210,8 +210,7 @@ looks like a boundary and is not one.
   clipboard image and the terminal's own paste still pastes text.
 - Ctrl+V attaches a file copied in a file manager only when it is one image
   file; several files, or a copy on macOS Finder, paste as text.
-- The phone web app cannot attach images yet. It speaks protocol 18, so it
-  shows an image sent from elsewhere as its `[image: name, size]` line.
+- The web app served by the remote listener cannot attach images yet.
 - A host older than protocol 19 (Aether 1.0.2 or before) takes no images: the
   client refuses the message there and nothing is sent.
 
@@ -272,6 +271,8 @@ looks like a boundary and is not one.
   Unknown cost is not zero cost or a reliable dollar-budget guarantee.
 - Retention is not a full disk quota. Native sessions, backups, and workspaces
   have separate lifecycles.
+- A Noesis step on a subscription engine starts a fresh CLI session each
+  turn, and its text arrives in one piece when the step ends, not streamed.
 
 ## Platforms
 

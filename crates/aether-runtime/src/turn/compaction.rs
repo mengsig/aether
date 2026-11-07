@@ -216,6 +216,9 @@ pub(super) async fn compaction_client(
         engine,
         context: ctx.launch_context(&runtime.engine_spawns),
         pricing: crate::turn_engine::TurnPricing::of(runtime, &resolved),
+        purpose: "Checkpoint",
+        timeout: crate::compaction_client::CHECKPOINT_TIMEOUT,
+        session_pricing: None,
         turn: aether_engine::EngineTurn {
             redactor: runtime.tool_runtime.redactor().clone(),
             prompt: String::new(),
@@ -337,6 +340,13 @@ pub(crate) async fn compact(
     child_tasks: &[Task],
     cancel: &CancellationToken,
 ) -> Result<Option<aether_core::checkpoint::Checkpoint>> {
+    // The agent's model and its compactor are every model a compaction calls.
+    if let Some(cause) = crate::noesis_guard::refused_model(ctx, &ctx.agent.model) {
+        return Err(RuntimeError::Invalid(cause));
+    }
+    if stopped_before_compaction_attempt(runtime, ctx) {
+        return Ok(None);
+    }
     let PendingCompaction { trigger, request } = pending;
     // Asked for by someone: an engine that folds its own session does it in place.
     if matches!(trigger, CompactionTrigger::Explicit { .. })
@@ -347,6 +357,9 @@ pub(crate) async fn compact(
     if super::server_compaction::try_server_compaction(runtime, ctx, request, &trigger, cancel)
         .await?
     {
+        return Ok(None);
+    }
+    if stopped_before_compaction_attempt(runtime, ctx) {
         return Ok(None);
     }
     const KEEP_TAIL: usize = 6;
@@ -523,7 +536,7 @@ pub(crate) async fn compact(
             inputs,
             cancel.child_token(),
             |attempt| match record_compaction_usage(runtime, ctx, attempt) {
-                Ok(()) => std::ops::ControlFlow::Continue(()),
+                Ok(flow) => flow,
                 Err(error) => {
                     accounting_error = Some(error);
                     std::ops::ControlFlow::Break(())
@@ -634,11 +647,12 @@ fn history_tokens(
 
 /// Failed drafts and provider errors still spend tokens. Commit each attempt
 /// before permitting another so the scheduler and live totals see that spend.
+/// Returns `Break` when the Noesis hook says no further attempt may be made.
 pub(super) fn record_compaction_usage(
     runtime: &Runtime,
     ctx: &mut TurnCtx,
     attempt: &aether_context::CompactionAttempt,
-) -> Result<()> {
+) -> Result<std::ops::ControlFlow<()>> {
     let resolved = runtime.models.resolve(&attempt.model)?;
     let mut usage = attempt.usage.unwrap_or_default();
     if attempt.usage.is_none() {
@@ -685,5 +699,20 @@ pub(super) fn record_compaction_usage(
         )?;
     }
     runtime.apply_held(hold, commit)?;
-    Ok(())
+    Ok(if stopped_before_compaction_attempt(runtime, ctx) {
+        std::ops::ControlFlow::Break(())
+    } else {
+        std::ops::ControlFlow::Continue(())
+    })
+}
+
+/// The Noesis hook, asked before each compaction attempt (the first, a
+/// correction, a fallback, a server-compaction retry) and after each one's
+/// usage is charged. Outside Noesis it never stops anything.
+pub(super) fn stopped_before_compaction_attempt(runtime: &Runtime, ctx: &TurnCtx) -> bool {
+    let Some(reason) = crate::noesis_guard::boundary_stop(runtime, ctx) else {
+        return false;
+    };
+    tracing::info!(agent = %ctx.agent.id, %reason, "a Noesis compaction stops before its next model request");
+    true
 }

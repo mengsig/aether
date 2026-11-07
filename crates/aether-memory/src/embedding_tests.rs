@@ -49,7 +49,7 @@ fn seeded(index: Option<Arc<dyn MemoryIndex>>) -> MemoryService {
     service
 }
 
-fn top(service: &MemoryService) -> String {
+fn top(service: &MemoryService) -> Option<String> {
     service
         .retrieve(&RetrievalRequest {
             query: Some(QUESTION.into()),
@@ -58,27 +58,35 @@ fn top(service: &MemoryService) -> String {
         })
         .expect("retrieve")
         .first()
-        .expect("something came back")
-        .record
-        .text
-        .clone()
+        .map(|found| found.record.text.clone())
+}
+
+/// No relevance cutoff, so what decides the top is the ranking alone.
+fn uncut() -> RetrievalPolicy {
+    RetrievalPolicy {
+        min_score: 0.0,
+        ..Default::default()
+    }
 }
 
 #[test]
 fn the_embedding_pass_finds_what_word_matching_cannot() {
-    // Without an index, nothing distinguishes the four: no whole word of
-    // the question appears in any of them, so importance and recency
-    // decide, and the right fact is not first.
+    // Without an index no whole word of the question appears in any of
+    // the four, so importance and recency decide and the answer is not first.
     assert_ne!(
-        top(&seeded(None)),
-        CORPUS[0],
+        top(&seeded(None).with_retrieval(uncut())).as_deref(),
+        Some(CORPUS[0]),
         "if word matching already found it, this test proves nothing"
     );
+    let indexed = || seeded(Some(Arc::new(LocalEmbeddingIndex)));
     assert_eq!(
-        top(&seeded(Some(Arc::new(LocalEmbeddingIndex)))),
-        CORPUS[0],
+        top(&indexed().with_retrieval(uncut())).as_deref(),
+        Some(CORPUS[0]),
         "the semantic pass connects 'rebuild the index' to 'reindexing'"
     );
+    // A trigram similarity of about 0.26 is one unrelated sentences reach
+    // too, so by default it is below the relevance cutoff.
+    assert_eq!(top(&indexed()), None);
 }
 
 #[test]

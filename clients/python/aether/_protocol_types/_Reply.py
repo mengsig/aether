@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypedDict
 from ._ReplyAgent import ReplyAgent
 from ._ReplyAgents import ReplyAgents
+from ._ReplyAgentsPage import ReplyAgentsPage
 from ._ReplyApprovalRule import ReplyApprovalRule
 from ._ReplyApprovalRules import ReplyApprovalRules
 from ._ReplyApprovals import ReplyApprovals
@@ -14,6 +15,7 @@ from ._ReplyArtifacts import ReplyArtifacts
 from ._ReplyAttention import ReplyAttention
 from ._ReplyAuth import ReplyAuth
 from ._ReplyCheckpoint import ReplyCheckpoint
+from ._ReplyConceptState import ReplyConceptState
 from ._ReplyDevice import ReplyDevice
 from ._ReplyDevices import ReplyDevices
 from ._ReplyEngineTool import ReplyEngineTool
@@ -29,12 +31,26 @@ from ._ReplyMcpServers import ReplyMcpServers
 from ._ReplyMemories import ReplyMemories
 from ._ReplyMemoriesInContext import ReplyMemoriesInContext
 from ._ReplyMemory import ReplyMemory
+from ._ReplyMemoryConsolidation import ReplyMemoryConsolidation
+from ._ReplyMemoryExport import ReplyMemoryExport
 from ._ReplyMemoryFeedback import ReplyMemoryFeedback
 from ._ReplyMemoryFeedbackList import ReplyMemoryFeedbackList
+from ._ReplyMemoryImport import ReplyMemoryImport
+from ._ReplyMemoryMigrationStatus import ReplyMemoryMigrationStatus
+from ._ReplyMemoryRetrievalExplain import ReplyMemoryRetrievalExplain
 from ._ReplyMemorySeeded import ReplyMemorySeeded
 from ._ReplyMessageSent import ReplyMessageSent
 from ._ReplyMessagesSent import ReplyMessagesSent
 from ._ReplyModels import ReplyModels
+from ._ReplyNoesisEvidence import ReplyNoesisEvidence
+from ._ReplyNoesisGraph import ReplyNoesisGraph
+from ._ReplyNoesisImport import ReplyNoesisImport
+from ._ReplyNoesisJob import ReplyNoesisJob
+from ._ReplyNoesisJobs import ReplyNoesisJobs
+from ._ReplyNoesisLearner import ReplyNoesisLearner
+from ._ReplyNoesisSession import ReplyNoesisSession
+from ._ReplyNoesisSessions import ReplyNoesisSessions
+from ._ReplyNoesisStatus import ReplyNoesisStatus
 from ._ReplyNoteAppended import ReplyNoteAppended
 from ._ReplyNotification import ReplyNotification
 from ._ReplyNotificationAnswered import ReplyNotificationAnswered
@@ -66,7 +82,9 @@ from ._ReplySubscribed import ReplySubscribed
 from ._ReplyTask import ReplyTask
 from ._ReplyTasks import ReplyTasks
 from ._ReplyTranscript import ReplyTranscript
+from ._ReplyTranscriptPage import ReplyTranscriptPage
 from ._ReplyTree import ReplyTree
+from ._ReplyUsageBreakdown import ReplyUsageBreakdown
 from ._ReplyWelcome import ReplyWelcome
 from ._ReplyWorkspaceDiff import ReplyWorkspaceDiff
 from ._ReplyWorkspaceDiscarded import ReplyWorkspaceDiscarded
@@ -89,6 +107,7 @@ Reply = (
     ReplyPaused |
     ReplyAgent |
     ReplyAgents |
+    ReplyAgentsPage |
     ReplyTree |
     ReplyTask |
     ReplyTasks |
@@ -104,6 +123,8 @@ Reply = (
     ReplySubscribed |
     ReplyEvents |
     ReplyTranscript |
+    ReplyTranscriptPage |
+    ReplyUsageBreakdown |
     ReplyInbox |
     ReplySnapshot |
     ReplyInvocation |
@@ -119,6 +140,11 @@ Reply = (
     ReplyMemory |
     ReplyMemoryFeedback |
     ReplyMemoryFeedbackList |
+    ReplyMemoryRetrievalExplain |
+    ReplyMemoryConsolidation |
+    ReplyMemoryExport |
+    ReplyMemoryImport |
+    ReplyMemoryMigrationStatus |
     ReplyMemorySeeded |
     ReplyRuns |
     ReplyRunReport |
@@ -145,5 +171,15 @@ Reply = (
     ReplyDevice |
     ReplyDevices |
     ReplyPushConfig |
-    ReplySubmissionResolved
+    ReplySubmissionResolved |
+    ReplyNoesisStatus |
+    ReplyNoesisSession |
+    ReplyNoesisSessions |
+    ReplyNoesisGraph |
+    ReplyNoesisJob |
+    ReplyNoesisImport |
+    ReplyNoesisJobs |
+    ReplyNoesisLearner |
+    ReplyNoesisEvidence |
+    ReplyConceptState
 )

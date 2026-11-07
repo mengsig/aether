@@ -29,7 +29,7 @@ chrono = { workspace = true }
 futures = { workspace = true }
 hex = { workspace = true }
 http-body-util = { workspace = true }
-hyper = { workspace = true }
+hyper = { workspace = true, features = ["client"] }
 hyper-util = { workspace = true }
 parking_lot = { workspace = true }
 reqwest = { workspace = true }

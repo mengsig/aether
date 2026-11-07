@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::{Result, StoreError};
 
-pub const SCHEMA_VERSION: u32 = 28;
+pub const SCHEMA_VERSION: u32 = 33;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -495,16 +495,394 @@ const V28: &str = r#"
 CREATE INDEX IF NOT EXISTS approvals_agent ON approvals(agent_id);
 "#;
 
+// The subsystem an agent belongs to (`noesis`), written once by the insert
+// that creates the row and refused on any later change; the column itself is
+// added by `add_missing_column`, as a rewound stamp replays this block. Plus
+// the indexes the protocol 26 read models scan: agent pages and spend per run.
+const V29: &str = r#"
+CREATE TRIGGER IF NOT EXISTS agents_subsystem_fixed
+BEFORE UPDATE OF subsystem ON agents
+WHEN old.subsystem IS NOT new.subsystem
+BEGIN
+    SELECT RAISE(ABORT, 'agents.subsystem is set once, at creation');
+END;
+CREATE INDEX IF NOT EXISTS agents_run_id ON agents(run, id);
+CREATE INDEX IF NOT EXISTS events_run_type ON events(run, type, seq);
+"#;
+
+// Memory admission: tier, candidate or active, supporting tasks, verification
+// and refs, one row per memory. Every memory stored before it is backfilled as
+// active by `backfill_memory_admission`; the record rows are not touched.
+const V30: &str = r#"
+CREATE TABLE IF NOT EXISTS memory_admission (
+    memory_id TEXT PRIMARY KEY,
+    state     TEXT NOT NULL CHECK (state IN ('candidate', 'active')),
+    tier      TEXT NOT NULL,
+    body      TEXT NOT NULL
+);
+"#;
+
+// Retrieval: a stale mark per memory whose source may have moved on, and a
+// log of every injection a turn withheld as the holdout arm, once per memory
+// and task (or agent). Additive: no existing row is read or rewritten.
+const V31: &str = r#"
+CREATE TABLE IF NOT EXISTS memory_stale (
+    memory_id TEXT PRIMARY KEY,
+    reason    TEXT NOT NULL,
+    since     TEXT NOT NULL,
+    revision  TEXT
+);
+CREATE TABLE IF NOT EXISTS memory_holdouts (
+    seq       INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id TEXT NOT NULL,
+    agent_id  TEXT NOT NULL,
+    task_id   TEXT,
+    unit      TEXT NOT NULL,
+    at        TEXT NOT NULL,
+    rate      REAL NOT NULL CHECK (rate >= 0 AND rate <= 1),
+    score     REAL NOT NULL,
+    UNIQUE (unit, memory_id)
+);
+CREATE INDEX IF NOT EXISTS memory_holdouts_memory ON memory_holdouts(memory_id, seq);
+"#;
+
+// Memory 2.0 on the wire (docs/memory/MEMORY-V2.md) needs no table: export
+// and import compare ids and bodies, and the retrieval trace lives in the
+// snapshot body. The slot ships empty so the numbering stays fixed; the
+// stamp still moves, so opening a V31 store takes its pre-migration backup.
+const V32: &str = "";
+
+// Each agent's usage beside its row, and per scope (the fleet, `''`, each
+// run, and for each agent's subtree `tree:<agent>` over every run and
+// `tree:<agent>:<run>` within each) one row of totals, kept by triggers on
+// every write: `status`, a run summary and a tree's roll-up read rows by key
+// instead of agents' bodies. `agent_tree` holds each agent's ancestors by
+// parent link, itself included, up to the first parent not stored.
+// `agent_usage` holds an agent only when `aether_counted_usage`
+// (sqlite/usage_totals.rs) decodes its body, as a whole-agent read does; the
+// fleet's totals leave imported agents out. Plus `agents.archived` (added by
+// `add_missing_column`) and the indexes `get_tree` pages by, `(status, id)`
+// in place of `(status)`. Idempotent: a replay over a rewound stamp rebuilds it.
+const V33: &str = r#"
+CREATE TABLE IF NOT EXISTS agent_usage (
+    agent_id              TEXT PRIMARY KEY,
+    run                   TEXT NOT NULL,
+    imported              INTEGER NOT NULL,
+    created_at            TEXT NOT NULL,
+    input_tokens          INTEGER NOT NULL,
+    output_tokens         INTEGER NOT NULL,
+    cache_read_tokens     INTEGER NOT NULL,
+    cache_write_tokens    INTEGER NOT NULL,
+    cache_write_1h_tokens INTEGER NOT NULL,
+    reasoning_tokens      INTEGER,
+    cost_usd              REAL NOT NULL,
+    estimated_cost_usd    REAL,
+    cost_gap              TEXT,
+    cost_basis            TEXT NOT NULL,
+    figure                INTEGER NOT NULL
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS agent_usage_run ON agent_usage(run, created_at);
+CREATE TABLE IF NOT EXISTS usage_totals (
+    scope                   TEXT PRIMARY KEY,
+    members                 INTEGER NOT NULL,
+    input_tokens            INTEGER NOT NULL,
+    output_tokens           INTEGER NOT NULL,
+    cache_read_tokens       INTEGER NOT NULL,
+    cache_write_tokens      INTEGER NOT NULL,
+    cache_write_1h_tokens   INTEGER NOT NULL,
+    reasoning_members       INTEGER NOT NULL,
+    reasoning_tokens        INTEGER NOT NULL,
+    cost_usd                REAL NOT NULL,
+    estimated_members       INTEGER NOT NULL,
+    estimated_cost_usd      REAL NOT NULL,
+    gap_unreported          INTEGER NOT NULL,
+    gap_unpriced            INTEGER NOT NULL,
+    gap_interrupted         INTEGER NOT NULL,
+    gap_mixed               INTEGER NOT NULL,
+    gap_unknown             INTEGER NOT NULL,
+    basis_unknown           INTEGER NOT NULL,
+    basis_list_price        INTEGER NOT NULL,
+    basis_provider_reported INTEGER NOT NULL,
+    basis_mixed             INTEGER NOT NULL
+) WITHOUT ROWID;
+CREATE TRIGGER IF NOT EXISTS usage_totals_added AFTER INSERT ON agent_usage BEGIN
+    INSERT INTO usage_totals(scope, members, input_tokens, output_tokens, cache_read_tokens,
+        cache_write_tokens, cache_write_1h_tokens, reasoning_members, reasoning_tokens,
+        cost_usd, estimated_members, estimated_cost_usd, gap_unreported, gap_unpriced,
+        gap_interrupted, gap_mixed, gap_unknown, basis_unknown, basis_list_price,
+        basis_provider_reported, basis_mixed)
+    SELECT scope, 1, new.input_tokens, new.output_tokens, new.cache_read_tokens,
+        new.cache_write_tokens, new.cache_write_1h_tokens, new.reasoning_tokens IS NOT NULL,
+        COALESCE(new.reasoning_tokens, 0), new.cost_usd, new.estimated_cost_usd IS NOT NULL,
+        COALESCE(new.estimated_cost_usd, 0.0), new.cost_gap IS 'unreported',
+        new.cost_gap IS 'unpriced', new.cost_gap IS 'interrupted', new.cost_gap IS 'mixed',
+        new.cost_gap IS 'unknown', new.figure AND new.cost_basis = 'unknown',
+        new.figure AND new.cost_basis = 'list_price',
+        new.figure AND new.cost_basis = 'provider_reported',
+        new.figure AND new.cost_basis = 'mixed'
+    FROM (SELECT new.run AS scope UNION ALL SELECT '' WHERE NOT new.imported
+        UNION ALL SELECT 'tree:' || t.ancestor || ':' || new.run
+        FROM agent_tree t WHERE t.descendant = new.agent_id
+        UNION ALL SELECT 'tree:' || t.ancestor
+        FROM agent_tree t WHERE t.descendant = new.agent_id) WHERE true
+    ON CONFLICT(scope) DO UPDATE SET
+        members = members + 1,
+        input_tokens = input_tokens + excluded.input_tokens,
+        output_tokens = output_tokens + excluded.output_tokens,
+        cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
+        cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens,
+        cache_write_1h_tokens = cache_write_1h_tokens + excluded.cache_write_1h_tokens,
+        reasoning_members = reasoning_members + excluded.reasoning_members,
+        reasoning_tokens = reasoning_tokens + excluded.reasoning_tokens,
+        cost_usd = cost_usd + excluded.cost_usd,
+        estimated_members = estimated_members + excluded.estimated_members,
+        estimated_cost_usd = estimated_cost_usd + excluded.estimated_cost_usd,
+        gap_unreported = gap_unreported + excluded.gap_unreported,
+        gap_unpriced = gap_unpriced + excluded.gap_unpriced,
+        gap_interrupted = gap_interrupted + excluded.gap_interrupted,
+        gap_mixed = gap_mixed + excluded.gap_mixed,
+        gap_unknown = gap_unknown + excluded.gap_unknown,
+        basis_unknown = basis_unknown + excluded.basis_unknown,
+        basis_list_price = basis_list_price + excluded.basis_list_price,
+        basis_provider_reported = basis_provider_reported + excluded.basis_provider_reported,
+        basis_mixed = basis_mixed + excluded.basis_mixed;
+END;
+CREATE TRIGGER IF NOT EXISTS usage_totals_removed AFTER DELETE ON agent_usage BEGIN
+    UPDATE usage_totals SET
+        members = members - 1,
+        input_tokens = input_tokens - old.input_tokens,
+        output_tokens = output_tokens - old.output_tokens,
+        cache_read_tokens = cache_read_tokens - old.cache_read_tokens,
+        cache_write_tokens = cache_write_tokens - old.cache_write_tokens,
+        cache_write_1h_tokens = cache_write_1h_tokens - old.cache_write_1h_tokens,
+        reasoning_members = reasoning_members - (old.reasoning_tokens IS NOT NULL),
+        reasoning_tokens = reasoning_tokens - COALESCE(old.reasoning_tokens, 0),
+        cost_usd = cost_usd - old.cost_usd,
+        estimated_members = estimated_members - (old.estimated_cost_usd IS NOT NULL),
+        estimated_cost_usd = estimated_cost_usd - COALESCE(old.estimated_cost_usd, 0.0),
+        gap_unreported = gap_unreported - (old.cost_gap IS 'unreported'),
+        gap_unpriced = gap_unpriced - (old.cost_gap IS 'unpriced'),
+        gap_interrupted = gap_interrupted - (old.cost_gap IS 'interrupted'),
+        gap_mixed = gap_mixed - (old.cost_gap IS 'mixed'),
+        gap_unknown = gap_unknown - (old.cost_gap IS 'unknown'),
+        basis_unknown = basis_unknown - (old.figure AND old.cost_basis = 'unknown'),
+        basis_list_price = basis_list_price - (old.figure AND old.cost_basis = 'list_price'),
+        basis_provider_reported = basis_provider_reported
+            - (old.figure AND old.cost_basis = 'provider_reported'),
+        basis_mixed = basis_mixed - (old.figure AND old.cost_basis = 'mixed')
+    WHERE scope IN (SELECT old.run UNION ALL SELECT '' WHERE NOT old.imported
+        UNION ALL SELECT 'tree:' || t.ancestor || ':' || old.run
+        FROM agent_tree t WHERE t.descendant = old.agent_id
+        UNION ALL SELECT 'tree:' || t.ancestor
+        FROM agent_tree t WHERE t.descendant = old.agent_id);
+    -- An emptied scope goes, so no rounding left in its sums outlives its members.
+    DELETE FROM usage_totals WHERE members = 0 AND scope IN (SELECT old.run UNION ALL SELECT ''
+        UNION ALL SELECT 'tree:' || t.ancestor || ':' || old.run
+        FROM agent_tree t WHERE t.descendant = old.agent_id
+        UNION ALL SELECT 'tree:' || t.ancestor
+        FROM agent_tree t WHERE t.descendant = old.agent_id);
+END;
+CREATE TRIGGER IF NOT EXISTS agent_usage_inserted AFTER INSERT ON agents BEGIN
+    INSERT INTO agent_usage
+    SELECT new.id, new.run, new.status = 'imported', new.created_at,
+        json_extract(u, '$.input_tokens'), json_extract(u, '$.output_tokens'),
+        json_extract(u, '$.cache_read_tokens'), json_extract(u, '$.cache_write_tokens'),
+        json_extract(u, '$.cache_write_1h_tokens'), json_extract(u, '$.reasoning_tokens'),
+        json_extract(u, '$.cost_usd'), json_extract(u, '$.estimated_cost_usd'),
+        json_extract(u, '$.cost_gap'), json_extract(u, '$.cost_basis'),
+        json_extract(u, '$.figure')
+    FROM (SELECT aether_counted_usage(new.id, new.body) AS u) WHERE u IS NOT NULL;
+END;
+CREATE TRIGGER IF NOT EXISTS agent_usage_updated
+AFTER UPDATE OF id, status, run, created_at, body ON agents BEGIN
+    DELETE FROM agent_usage WHERE agent_id = old.id;
+    INSERT INTO agent_usage
+    SELECT new.id, new.run, new.status = 'imported', new.created_at,
+        json_extract(u, '$.input_tokens'), json_extract(u, '$.output_tokens'),
+        json_extract(u, '$.cache_read_tokens'), json_extract(u, '$.cache_write_tokens'),
+        json_extract(u, '$.cache_write_1h_tokens'), json_extract(u, '$.reasoning_tokens'),
+        json_extract(u, '$.cost_usd'), json_extract(u, '$.estimated_cost_usd'),
+        json_extract(u, '$.cost_gap'), json_extract(u, '$.cost_basis'),
+        json_extract(u, '$.figure')
+    FROM (SELECT aether_counted_usage(new.id, new.body) AS u) WHERE u IS NOT NULL;
+END;
+CREATE TRIGGER IF NOT EXISTS agent_usage_deleted AFTER DELETE ON agents BEGIN
+    DELETE FROM agent_usage WHERE agent_id = old.id;
+END;
+CREATE TABLE IF NOT EXISTS agent_tree (
+    ancestor   TEXT NOT NULL,
+    descendant TEXT NOT NULL,
+    PRIMARY KEY (ancestor, descendant)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS agent_tree_descendant ON agent_tree(descendant);
+-- NOT EXISTS, not OR IGNORE: an agent upsert's ABORT overrides a trigger's
+-- conflict clause, and a parent cycle repeats a pair.
+CREATE TRIGGER IF NOT EXISTS agent_tree_inserted AFTER INSERT ON agents BEGIN
+    INSERT INTO agent_tree(ancestor, descendant)
+    SELECT up.ancestor, down.descendant
+    FROM (SELECT new.id AS ancestor
+          UNION SELECT t.ancestor FROM agent_tree t WHERE t.descendant = new.parent) AS up,
+         (SELECT new.id AS descendant
+          UNION SELECT t.descendant FROM agents c JOIN agent_tree t ON t.ancestor = c.id
+          WHERE c.parent = new.id) AS down
+    WHERE NOT EXISTS (SELECT 1 FROM agent_tree e
+                      WHERE e.ancestor = up.ancestor AND e.descendant = down.descendant);
+END;
+CREATE TRIGGER IF NOT EXISTS agent_tree_moved AFTER UPDATE OF parent ON agents
+WHEN old.parent IS NOT new.parent BEGIN
+    DELETE FROM agent_tree
+    WHERE descendant IN (SELECT descendant FROM agent_tree WHERE ancestor = new.id)
+      AND ancestor NOT IN (SELECT descendant FROM agent_tree WHERE ancestor = new.id);
+    INSERT INTO agent_tree(ancestor, descendant)
+    SELECT up.ancestor, down.descendant
+    FROM (SELECT t.ancestor FROM agent_tree t WHERE t.descendant = new.parent) AS up,
+         (SELECT t.descendant FROM agent_tree t WHERE t.ancestor = new.id) AS down
+    WHERE NOT EXISTS (SELECT 1 FROM agent_tree e
+                      WHERE e.ancestor = up.ancestor AND e.descendant = down.descendant);
+END;
+CREATE TRIGGER IF NOT EXISTS agent_tree_deleted AFTER DELETE ON agents BEGIN
+    DELETE FROM agent_tree
+    WHERE ancestor IN (SELECT ancestor FROM agent_tree WHERE descendant = old.id)
+      AND descendant IN (SELECT descendant FROM agent_tree WHERE ancestor = old.id);
+END;
+CREATE TRIGGER IF NOT EXISTS agent_tree_added AFTER INSERT ON agent_tree BEGIN
+    INSERT INTO usage_totals(scope, members, input_tokens, output_tokens, cache_read_tokens,
+        cache_write_tokens, cache_write_1h_tokens, reasoning_members, reasoning_tokens,
+        cost_usd, estimated_members, estimated_cost_usd, gap_unreported, gap_unpriced,
+        gap_interrupted, gap_mixed, gap_unknown, basis_unknown, basis_list_price,
+        basis_provider_reported, basis_mixed)
+    SELECT 'tree:' || new.ancestor || CASE WHEN s.by_run THEN ':' || u.run ELSE '' END,
+        1, u.input_tokens, u.output_tokens,
+        u.cache_read_tokens, u.cache_write_tokens, u.cache_write_1h_tokens,
+        u.reasoning_tokens IS NOT NULL, COALESCE(u.reasoning_tokens, 0), u.cost_usd,
+        u.estimated_cost_usd IS NOT NULL, COALESCE(u.estimated_cost_usd, 0.0),
+        u.cost_gap IS 'unreported', u.cost_gap IS 'unpriced', u.cost_gap IS 'interrupted',
+        u.cost_gap IS 'mixed', u.cost_gap IS 'unknown', u.figure AND u.cost_basis = 'unknown',
+        u.figure AND u.cost_basis = 'list_price',
+        u.figure AND u.cost_basis = 'provider_reported',
+        u.figure AND u.cost_basis = 'mixed'
+    FROM agent_usage u CROSS JOIN (SELECT 1 AS by_run UNION ALL SELECT 0) s
+    WHERE u.agent_id = new.descendant
+    ON CONFLICT(scope) DO UPDATE SET
+        members = members + 1,
+        input_tokens = input_tokens + excluded.input_tokens,
+        output_tokens = output_tokens + excluded.output_tokens,
+        cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
+        cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens,
+        cache_write_1h_tokens = cache_write_1h_tokens + excluded.cache_write_1h_tokens,
+        reasoning_members = reasoning_members + excluded.reasoning_members,
+        reasoning_tokens = reasoning_tokens + excluded.reasoning_tokens,
+        cost_usd = cost_usd + excluded.cost_usd,
+        estimated_members = estimated_members + excluded.estimated_members,
+        estimated_cost_usd = estimated_cost_usd + excluded.estimated_cost_usd,
+        gap_unreported = gap_unreported + excluded.gap_unreported,
+        gap_unpriced = gap_unpriced + excluded.gap_unpriced,
+        gap_interrupted = gap_interrupted + excluded.gap_interrupted,
+        gap_mixed = gap_mixed + excluded.gap_mixed,
+        gap_unknown = gap_unknown + excluded.gap_unknown,
+        basis_unknown = basis_unknown + excluded.basis_unknown,
+        basis_list_price = basis_list_price + excluded.basis_list_price,
+        basis_provider_reported = basis_provider_reported + excluded.basis_provider_reported,
+        basis_mixed = basis_mixed + excluded.basis_mixed;
+END;
+CREATE TRIGGER IF NOT EXISTS agent_tree_removed AFTER DELETE ON agent_tree BEGIN
+    UPDATE usage_totals SET
+        members = usage_totals.members - 1,
+        input_tokens = usage_totals.input_tokens - u.input_tokens,
+        output_tokens = usage_totals.output_tokens - u.output_tokens,
+        cache_read_tokens = usage_totals.cache_read_tokens - u.cache_read_tokens,
+        cache_write_tokens = usage_totals.cache_write_tokens - u.cache_write_tokens,
+        cache_write_1h_tokens = usage_totals.cache_write_1h_tokens - u.cache_write_1h_tokens,
+        reasoning_members = usage_totals.reasoning_members - (u.reasoning_tokens IS NOT NULL),
+        reasoning_tokens = usage_totals.reasoning_tokens - COALESCE(u.reasoning_tokens, 0),
+        cost_usd = usage_totals.cost_usd - u.cost_usd,
+        estimated_members = usage_totals.estimated_members - (u.estimated_cost_usd IS NOT NULL),
+        estimated_cost_usd = usage_totals.estimated_cost_usd - COALESCE(u.estimated_cost_usd, 0.0),
+        gap_unreported = usage_totals.gap_unreported - (u.cost_gap IS 'unreported'),
+        gap_unpriced = usage_totals.gap_unpriced - (u.cost_gap IS 'unpriced'),
+        gap_interrupted = usage_totals.gap_interrupted - (u.cost_gap IS 'interrupted'),
+        gap_mixed = usage_totals.gap_mixed - (u.cost_gap IS 'mixed'),
+        gap_unknown = usage_totals.gap_unknown - (u.cost_gap IS 'unknown'),
+        basis_unknown = usage_totals.basis_unknown - (u.figure AND u.cost_basis = 'unknown'),
+        basis_list_price = usage_totals.basis_list_price - (u.figure AND u.cost_basis = 'list_price'),
+        basis_provider_reported = usage_totals.basis_provider_reported
+            - (u.figure AND u.cost_basis = 'provider_reported'),
+        basis_mixed = usage_totals.basis_mixed - (u.figure AND u.cost_basis = 'mixed')
+    FROM agent_usage u
+    WHERE u.agent_id = old.descendant
+      AND usage_totals.scope IN ('tree:' || old.ancestor || ':' || u.run, 'tree:' || old.ancestor);
+    DELETE FROM usage_totals WHERE members = 0 AND scope IN (
+        SELECT 'tree:' || old.ancestor || ':' || u.run FROM agent_usage u
+        WHERE u.agent_id = old.descendant
+        UNION ALL SELECT 'tree:' || old.ancestor);
+END;
+DELETE FROM agent_usage;
+DELETE FROM usage_totals;
+DELETE FROM agent_tree;
+WITH RECURSIVE up(ancestor, descendant) AS (
+    SELECT id, id FROM agents
+    UNION
+    SELECT p.id, up.descendant FROM up
+    JOIN agents c ON c.id = up.ancestor JOIN agents p ON p.id = c.parent
+)
+INSERT OR IGNORE INTO agent_tree(ancestor, descendant) SELECT ancestor, descendant FROM up;
+INSERT INTO agent_usage
+SELECT id, run, status = 'imported', created_at,
+    json_extract(u, '$.input_tokens'), json_extract(u, '$.output_tokens'),
+    json_extract(u, '$.cache_read_tokens'), json_extract(u, '$.cache_write_tokens'),
+    json_extract(u, '$.cache_write_1h_tokens'), json_extract(u, '$.reasoning_tokens'),
+    json_extract(u, '$.cost_usd'), json_extract(u, '$.estimated_cost_usd'),
+    json_extract(u, '$.cost_gap'), json_extract(u, '$.cost_basis'),
+    json_extract(u, '$.figure')
+FROM (SELECT id, run, status, created_at, aether_counted_usage(id, body) AS u FROM agents)
+WHERE u IS NOT NULL;
+UPDATE agents SET archived = 1
+WHERE archived = 0 AND json_valid(body) AND json_extract(body, '$.archived') = 1;
+CREATE INDEX IF NOT EXISTS agents_archived_id ON agents(archived, id);
+CREATE INDEX IF NOT EXISTS agents_run_archived_id ON agents(run, archived, id);
+DROP INDEX IF EXISTS agents_status;
+CREATE INDEX IF NOT EXISTS agents_status_id ON agents(status, id);
+"#;
+
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27, V28,
+    V22, V23, V24, V25, V26, V27, V28, V29, V30, V31, V32, V33,
 ];
 
 /// Rewrites that SQL cannot express, run in the same transaction as the
 /// schema block for the version they belong to.
+/// Schema changes a block cannot state idempotently, run before the block.
+fn schema_migration(tx: &Connection, to: u32) -> Result<()> {
+    match to {
+        29 => add_missing_column(tx, "agents", "subsystem", "TEXT"),
+        33 => add_missing_column(tx, "agents", "archived", "INTEGER NOT NULL DEFAULT 0"),
+        _ => Ok(()),
+    }
+}
+
+/// `ALTER TABLE … ADD COLUMN`, skipped when a replayed upgrade already added it.
+fn add_missing_column(tx: &Connection, table: &str, column: &str, kind: &str) -> Result<()> {
+    let identifier =
+        |name: &str| !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase() || b == b'_');
+    assert!(
+        identifier(table) && identifier(column),
+        "names are fixed in this file"
+    );
+    let present: bool = tx.query_row(
+        &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1)"),
+        [column],
+        |row| row.get(0),
+    )?;
+    if !present {
+        tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
+    }
+    Ok(())
+}
+
 fn data_migration(tx: &Connection, to: u32) -> Result<()> {
     match to {
         8 => normalize_repository_scopes(tx),
+        30 => backfill_memory_admission(tx),
         _ => Ok(()),
     }
 }
@@ -581,6 +959,44 @@ fn normalize_repository_scopes(tx: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Give every memory without an admission row the one it always had: active,
+/// its tier, verification and refs read from the record. A replay keeps the
+/// rows already there. An unreadable body is skipped, as in V8: nothing can
+/// load that record, and a record with no row is read as active anyway.
+fn backfill_memory_admission(tx: &Connection) -> Result<()> {
+    use aether_core::memory::MemoryRecord;
+    use aether_core::memory_admission::{MemoryAdmission, MemoryState};
+    let mut pending: Vec<(String, String)> = Vec::new();
+    {
+        let mut stmt = tx.prepare(
+            "SELECT m.id, m.body FROM memories m
+             WHERE NOT EXISTS (SELECT 1 FROM memory_admission a WHERE a.memory_id = m.id)",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        for row in rows {
+            pending.push(row?);
+        }
+    }
+    for (id, body) in pending {
+        let record = serde_json::from_str::<MemoryRecord>(&body).ok();
+        let Some(record) = record.filter(|r| r.id.to_string() == id) else {
+            tracing::warn!(memory = %id, "memory body is unreadable; admission left implicit");
+            continue;
+        };
+        let admission = MemoryAdmission::derived(&record, MemoryState::Active);
+        tx.execute(
+            "INSERT INTO memory_admission(memory_id, state, tier, body) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                id,
+                admission.state.as_str(),
+                admission.tier.as_str(),
+                serde_json::to_string(&admission)?,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 pub(crate) fn current_version(conn: &Connection) -> Result<Option<u32>> {
     let has_meta: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta')",
@@ -618,6 +1034,8 @@ fn refuse_newer_store(found: Option<u32>, supported: u32) -> Result<()> {
 
 /// Create or upgrade the schema. Refuses a store written by a newer version.
 pub fn migrate(conn: &Connection) -> Result<()> {
+    // The V33 triggers call it on every agent write, so it is there before them.
+    crate::sqlite::usage_totals::register(conn)?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
     )?;
@@ -636,6 +1054,7 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         .enumerate()
         .skip(found.unwrap_or(0) as usize)
     {
+        schema_migration(&tx, i as u32 + 1)?;
         tx.execute_batch(statements)?;
         data_migration(&tx, i as u32 + 1)?;
     }
@@ -650,3 +1069,7 @@ pub fn migrate(conn: &Connection) -> Result<()> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod v32_tests;
+#[cfg(test)]
+mod v33_tests;

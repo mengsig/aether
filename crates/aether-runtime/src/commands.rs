@@ -26,6 +26,7 @@ mod validation;
 
 pub(crate) use recovery::COMPACTION_WAKE;
 pub(crate) use repository::{checkout_repository_id, repository_id};
+pub use status::STATUS_DEADLINE;
 
 /// How many transcript messages a restarted agent inherits: enough to see
 /// what it was in the middle of, while the checkpoint carries everything
@@ -50,6 +51,9 @@ pub struct CreateAgentSpec {
     pub approval: Option<ApprovalPolicy>,
     pub run: Option<RunId>,
     pub start: bool,
+    /// The subsystem the agent belongs to (`noesis`), fixed at creation and
+    /// never changed. Set by the subsystem's own code, never by a client.
+    pub subsystem: Option<String>,
 }
 
 pub use aether_core::inbox::MessageDelivery;
@@ -143,6 +147,8 @@ pub struct RuntimeStatus {
     pub low_disk: Option<aether_core::disk::LowDisk>,
     /// What the store committed since it opened, heaviest kinds first.
     pub writes: aether_core::write_stats::WriteStats,
+    /// Sections not read in time, sorted; their fields hold defaults, not figures.
+    pub unavailable: Vec<aether_protocol::UnavailableSection>,
 }
 
 /// What `create_agent_with_preflight` must verify itself, under the hold the

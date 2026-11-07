@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": ["scripts", "dev", "packages/*/test", "eslint.config.js", "apps/web/*.config.ts", "e2e"],
+  "exclude": ["scripts/fixtures", "e2e/.out"]
+}

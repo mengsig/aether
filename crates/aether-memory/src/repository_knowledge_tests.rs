@@ -499,7 +499,9 @@ fn a_pinned_note_is_never_swept() {
         .expect("seeded");
     service.pin(pinned.id, true, Actor::user()).expect("pin");
 
-    std::fs::remove_file(dir.path().join(repo::KNOWLEDGE_DIR).join("layout.md")).expect("remove");
+    let layout = dir.path().join(repo::KNOWLEDGE_DIR).join("layout.md");
+    let stated = std::fs::read(&layout).expect("read");
+    std::fs::remove_file(&layout).expect("remove");
     git(dir.path(), &["add", "-A"]);
     git(dir.path(), &["commit", "-q", "-m", "drop it"]);
     let report = service
@@ -513,6 +515,124 @@ fn a_pinned_note_is_never_swept() {
             .expect("exists")
             .is_current()
     );
+    // Kept, but demoted at retrieval until the file states it again.
+    let marks = store.memory_stale_marks(&[pinned.id]).expect("marks");
+    assert!(marks[&pinned.id].reason.contains("layout.md"), "{marks:?}");
+
+    std::fs::write(&layout, stated).expect("restore");
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "bring it back"]);
+    service
+        .seed_repository(dir.path(), "fixture", Actor::System)
+        .expect("seed");
+    assert!(
+        store
+            .memory_stale_marks(&[pinned.id])
+            .expect("marks")
+            .is_empty()
+    );
+}
+
+/// The scope is shared by every checkout, so a pinned note's stale mark is
+/// keyed to the commit that set it: an older or divergent checkout that still
+/// states the note leaves it, and only a descendant restoring it clears it.
+#[test]
+fn only_a_checkout_that_has_seen_the_deletion_clears_a_stale_mark() {
+    let origin = fixture_repo();
+    let clone = tempfile::tempdir().expect("tempdir");
+    let old = clone.path().join("old");
+    git(origin.path(), &["clone", "-q", ".", &old.to_string_lossy()]);
+    git(&old, &["config", "user.email", "fixture@example.com"]);
+    git(&old, &["config", "user.name", "fixture"]);
+    let store: Arc<dyn Store> = Arc::new(SqliteStore::open_in_memory().expect("store"));
+    let service = MemoryService::new(store.clone(), WriteGate::new());
+    let seed = |root: &Path| {
+        service
+            .seed_repository(root, "fixture", Actor::System)
+            .expect("seed")
+    };
+    seed(origin.path());
+    let pinned = store
+        .memories(&MemoryQuery {
+            limit: 50,
+            ..Default::default()
+        })
+        .expect("query")
+        .into_iter()
+        .find(|m| m.text.contains("Crates live under"))
+        .expect("seeded");
+    service.pin(pinned.id, true, Actor::user()).expect("pin");
+    let revision = || {
+        store.memory_stale_marks(&[pinned.id]).expect("marks")[&pinned.id]
+            .revision
+            .clone()
+    };
+
+    let layout = origin.path().join(repo::KNOWLEDGE_DIR).join("layout.md");
+    let stated = std::fs::read(&layout).expect("read");
+    std::fs::remove_file(&layout).expect("remove");
+    git(origin.path(), &["add", "-A"]);
+    git(origin.path(), &["commit", "-q", "-m", "drop it"]);
+    let deleted_at = repo::head_commit(origin.path()).expect("head");
+    seed(origin.path());
+    assert_eq!(revision(), Some(deleted_at.clone()));
+
+    seed(&old);
+    assert_eq!(revision(), Some(deleted_at.clone()), "an older checkout");
+    std::fs::write(old.join("unrelated.txt"), "x").expect("write");
+    git(&old, &["add", "-A"]);
+    git(&old, &["commit", "-q", "-m", "diverge"]);
+    seed(&old);
+    assert_eq!(revision(), Some(deleted_at.clone()), "a divergent checkout");
+    std::fs::remove_file(old.join(repo::KNOWLEDGE_DIR).join("layout.md")).expect("rm");
+    git(&old, &["add", "-A"]);
+    git(&old, &["commit", "-q", "-m", "drop it too"]);
+    seed(&old);
+    assert_eq!(revision(), Some(deleted_at), "the first deletion stays");
+
+    std::fs::write(&layout, stated).expect("restore");
+    git(origin.path(), &["add", "-A"]);
+    git(origin.path(), &["commit", "-q", "-m", "bring it back"]);
+    seed(origin.path());
+    assert!(
+        store
+            .memory_stale_marks(&[pinned.id])
+            .expect("marks")
+            .is_empty(),
+        "a descendant of the deletion that states it again clears it"
+    );
+}
+
+/// A mark a person set has no revision, so no sweep clears it.
+#[test]
+fn a_sweep_never_clears_a_stale_mark_set_by_hand() {
+    let dir = fixture_repo();
+    let store: Arc<dyn Store> = Arc::new(SqliteStore::open_in_memory().expect("store"));
+    let service = MemoryService::new(store.clone(), WriteGate::new());
+    service
+        .seed_repository(dir.path(), "fixture", Actor::System)
+        .expect("seed");
+    let pinned = store
+        .memories(&MemoryQuery {
+            limit: 50,
+            ..Default::default()
+        })
+        .expect("query")
+        .into_iter()
+        .find(|m| m.text.contains("Crates live under"))
+        .expect("seeded");
+    service.pin(pinned.id, true, Actor::user()).expect("pin");
+    assert!(
+        service
+            .set_stale(pinned.id, Some("superseded by the new layout".into()))
+            .expect("mark")
+    );
+    service
+        .seed_repository(dir.path(), "fixture", Actor::System)
+        .expect("seed");
+    let marks = store.memory_stale_marks(&[pinned.id]).expect("marks");
+    assert_eq!(marks[&pinned.id].revision, None);
+    assert_eq!(marks[&pinned.id].reason, "superseded by the new layout");
 }
 
 #[test]

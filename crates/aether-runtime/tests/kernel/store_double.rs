@@ -72,6 +72,8 @@ pub enum Hook {
     /// A repository id resolved through the aliases, fired after the
     /// resolution returns: an alias landing here makes that answer stale.
     RepositoryResolved,
+    /// The fleet's usage total, which only `status` reads.
+    FleetUsage,
 }
 
 /// A write a concurrent actor makes, run against the underlying store.
@@ -205,10 +207,14 @@ impl Store for CommitsMidPass {
         self.inner.is_descendant(root, id)
     }
     fn fleet_usage(&self) -> Result<aether_core::model::Usage> {
+        self.fire(Hook::FleetUsage)?;
         self.inner.fleet_usage()
     }
     fn subtree_ids(&self, root: AgentId) -> Result<std::collections::BTreeSet<AgentId>> {
         self.inner.subtree_ids(root)
+    }
+    fn expired_child_span(&self, parent: AgentId) -> Result<Option<(u64, u64)>> {
+        self.inner.expired_child_span(parent)
     }
     fn subtree_agents(&self, root: AgentId) -> Result<Vec<Agent>> {
         let agents = self.inner.subtree_agents(root)?;
@@ -275,6 +281,17 @@ impl Store for CommitsMidPass {
             self.fire(Hook::FleetRead)?;
         }
         Ok(agents)
+    }
+    fn agents_page(
+        &self,
+        filter: &AgentFilter,
+        after: Option<AgentId>,
+        limit: usize,
+    ) -> Result<aether_store::AgentPage> {
+        self.inner.agents_page(filter, after, limit)
+    }
+    fn agent_subsystem(&self, id: AgentId) -> Result<Option<String>> {
+        self.inner.agent_subsystem(id)
     }
 
     fn inbox_last_seq(&self, agent: AgentId) -> Result<u64> {
@@ -515,6 +532,21 @@ impl Store for CommitsMidPass {
 
     fn memory(&self, id: MemoryId) -> Result<Option<MemoryRecord>> {
         self.inner.memory(id)
+    }
+    fn memory_admission(
+        &self,
+        id: MemoryId,
+    ) -> Result<Option<aether_core::memory_admission::MemoryAdmission>> {
+        self.inner.memory_admission(id)
+    }
+    fn memory_stale_marks(
+        &self,
+        memories: &[MemoryId],
+    ) -> Result<std::collections::BTreeMap<MemoryId, aether_store::MemoryStaleMark>> {
+        self.inner.memory_stale_marks(memories)
+    }
+    fn memory_holdouts(&self, memory: MemoryId) -> Result<Vec<aether_store::MemoryHoldout>> {
+        self.inner.memory_holdouts(memory)
     }
     fn memories(&self, query: &MemoryQuery) -> Result<Vec<MemoryRecord>> {
         self.fire(Hook::MemoryRetrievalRead)?;

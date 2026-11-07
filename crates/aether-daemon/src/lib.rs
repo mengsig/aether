@@ -12,12 +12,15 @@ mod env_tests;
 mod instance_lock;
 pub mod listen;
 mod mcp;
+mod noesis;
 mod projections;
 pub mod push;
 pub mod remote;
 mod secrets;
 mod startup;
 mod status_reads;
+mod tree_reads;
+mod usage_breakdown;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -78,6 +81,19 @@ fn memory_index_of(
         aether_model::config::MemoryIndexChoice::Local => {
             Some(std::sync::Arc::new(aether_memory::LocalEmbeddingIndex))
         }
+    }
+}
+
+/// `[memory.retrieval]` as the memory service reads it. The section was
+/// validated when the config loaded; the runtime checks the policy again.
+fn retrieval_policy_of(
+    section: &aether_model::config::MemoryRetrievalSection,
+) -> aether_memory::RetrievalPolicy {
+    aether_memory::RetrievalPolicy {
+        max_items: section.max_items,
+        min_score: section.min_score,
+        holdout_rate: section.holdout_rate,
+        holdout_seed: section.holdout_seed,
     }
 }
 
@@ -170,6 +186,12 @@ pub struct Daemon {
     pub remote: remote::RemoteSlot,
     /// The reads behind `status`, shared by every request.
     pub(crate) status_reads: status_reads::StatusReads<status_reads::Figures>,
+    /// The reads behind `get_tree`, shared per request shape.
+    pub(crate) tree_reads: tree_reads::TreeReads,
+    /// The reads behind `get_github_watcher`: one at a time, however many ask.
+    pub(crate) watcher_reads: status_reads::StatusReads<aether_core::github::GithubWatcherStatus>,
+    /// Noesis, dormant unless `[noesis] enabled`; the runtime's guard follows it.
+    pub(crate) noesis: Arc<noesis::NoesisService>,
 }
 
 /// Run until `shutdown` fires or a client asks to stop.
@@ -368,6 +390,20 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         unstopped_calls.extend(interrupted.iter().copied());
     }
     clock.finished("containers");
+    // Before recovery, so a Noesis agent resumed at boot meets the guard.
+    let noesis = Arc::new(noesis::NoesisService::new(
+        &config_dir,
+        store_path.parent().unwrap_or(std::path::Path::new(".")),
+        models.clone(),
+        aether_runtime::noesis_guard::NoesisGate::new(),
+    ));
+    let store_dyn: Arc<dyn aether_store::Store> = store.clone();
+    match noesis.start_at_boot(&store_dyn).await {
+        Ok(true) => tracing::info!("Noesis started"),
+        Ok(false) => {}
+        Err(error) => tracing::error!(%error, "Noesis did not start; it stays disabled"),
+    }
+    clock.finished("noesis");
     let runtime = Runtime::start(
         RuntimeConfig {
             holder: format!("aetherd-{}-{}", instance_id, std::process::id()),
@@ -400,6 +436,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
                 logs: aether_protocol::paths::log_dir(),
             }),
             memory_index: memory_index_of(models.config().memory.index),
+            memory_retrieval: retrieval_policy_of(&models.config().memory.retrieval),
             // Resolved with the engines, after the socket answers.
             default_model: None,
             workspace_root: config.workspace_root.clone(),
@@ -430,6 +467,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             redactor,
             // The daemon runs on a multi-threaded runtime and no `LocalSet`.
             store_writes_off_worker: true,
+            noesis: noesis.gate().clone(),
             ..Default::default()
         },
         store.clone(),
@@ -475,7 +513,11 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             push: Some(push),
             remote: remote::RemoteSlot::default(),
             status_reads: Default::default(),
+            tree_reads: Default::default(),
+            watcher_reads: Default::default(),
+            noesis: noesis.clone(),
         });
+        noesis.resume_teaching(&runtime);
         // Supervised with the connections: it opens the listener the stored
         // settings ask for, and closes it when the daemon stops.
         let remote_control = remote::attach(&daemon, remote_config, shutdown.clone()).await?;
@@ -526,6 +568,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     tracing::info!("aetherd shutting down");
     shutdown.cancel();
     shutdown_connections(&runtime, &mut connections).await;
+    noesis.shutdown().await;
     let store_sync = match store.sync() {
         Ok(true) => Ok(()),
         // A reader on an older snapshot keeps frames in the WAL; the next open still reads them.
@@ -1141,6 +1184,35 @@ mod tests {
         for name in aether_tools::registry::DAEMON_ENV {
             assert!(hidden.contains(&name.to_owned()), "{name} reaches a child");
         }
+    }
+
+    #[test]
+    fn the_retrieval_config_reaches_the_memory_policy_field_for_field() {
+        let section = aether_model::config::MemoryRetrievalSection::default();
+        let policy = retrieval_policy_of(&section);
+        assert!(policy.validate().is_ok());
+        assert_eq!(policy.holdout_rate, 0.05, "the daemon holds out by default");
+        let library = aether_memory::RetrievalPolicy::default();
+        assert_eq!(
+            (policy.max_items, policy.min_score),
+            (library.max_items, library.min_score)
+        );
+        let set = aether_model::config::MemoryRetrievalSection {
+            max_items: 3,
+            min_score: 0.3,
+            holdout_rate: 0.5,
+            holdout_seed: 11,
+        };
+        let policy = retrieval_policy_of(&set);
+        assert_eq!(
+            (
+                policy.max_items,
+                policy.min_score,
+                policy.holdout_rate,
+                policy.holdout_seed
+            ),
+            (3, 0.3, 0.5, 11)
+        );
     }
 
     /// `daemon_secret_env` used to read only

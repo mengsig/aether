@@ -16,10 +16,12 @@ impl SqliteStore {
             }
             Mutation::UpsertAgent(agent) => {
                 tx.execute(
-                    "INSERT INTO agents(id, parent, role, status, run, created_at, updated_at, body)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                    "INSERT INTO agents(id, parent, role, status, run, created_at, updated_at, body, archived)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                      ON CONFLICT(id) DO UPDATE SET parent = excluded.parent, role = excluded.role,
-                       status = excluded.status, updated_at = excluded.updated_at, body = excluded.body",
+                       status = excluded.status, run = excluded.run,
+                       created_at = excluded.created_at, updated_at = excluded.updated_at,
+                       body = excluded.body, archived = excluded.archived",
                     params![
                         agent.id.to_string(),
                         agent.parent.map(|p| p.to_string()),
@@ -29,8 +31,12 @@ impl SqliteStore {
                         agent.created_at.to_rfc3339(),
                         agent.updated_at.to_rfc3339(),
                         tally.json("agents", &agent)?,
+                        agent.archived,
                     ],
                 )?;
+            }
+            Mutation::CreateAgent { agent, subsystem } => {
+                Self::insert_agent(tx, &agent, subsystem.as_deref(), tally)?;
             }
             Mutation::UpsertTask(task) => {
                 tx.execute(
@@ -220,6 +226,18 @@ impl SqliteStore {
                 tally.row("memory_feedback", reason.len());
             }
             Mutation::PutMemory(mem) => put_memory(tx, &mem, tally)?,
+            Mutation::PutMemoryAdmission(admission) => {
+                super::memories::put_memory_admission(tx, &admission, tally)?
+            }
+            Mutation::MarkMemoryStale(mark) => {
+                super::memory_retrieval::mark_memory_stale(tx, &mark, tally)?
+            }
+            Mutation::ClearMemoryStale(memory) => {
+                super::memory_retrieval::clear_memory_stale(tx, memory)?
+            }
+            Mutation::LogMemoryHoldout(holdout) => {
+                super::memory_retrieval::log_memory_holdout(tx, &holdout, tally)?
+            }
             Mutation::PutArtifact(art) => {
                 tx.execute(
                     "INSERT OR REPLACE INTO artifacts(id, agent_id, task_id, created_at, digest, evicted, body)
@@ -277,6 +295,12 @@ fn put_memory(
     mem: &aether_core::memory::MemoryRecord,
     tally: &mut WriteTally,
 ) -> Result<()> {
+    if mem.standing.is_some() {
+        return Err(StoreError::Corrupt(format!(
+            "memory {} carries `standing`, which is read beside the record and never stored",
+            mem.id
+        )));
+    }
     if (mem.accepted_at.is_some() && mem.proposed_at.is_none())
         || (mem.is_proposed() && mem.superseded_by.is_some())
     {

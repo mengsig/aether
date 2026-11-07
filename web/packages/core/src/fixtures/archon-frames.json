@@ -1,0 +1,202 @@
+{
+ "welcome_24": {
+  "reply": "welcome",
+  "data": {
+   "protocol_version": 24,
+   "daemon_version": "1.5.0",
+   "pid": 7,
+   "min_protocol_version": 23,
+   "features": [
+    "changes",
+    "task_graph",
+    "device_roles"
+   ],
+   "device": {
+    "id": "dev_1",
+    "name": "phone",
+    "role": "operator"
+   }
+  }
+ },
+ "welcome_23": {
+  "reply": "welcome",
+  "data": {
+   "protocol_version": 23,
+   "daemon_version": "1.4.2",
+   "pid": 7
+  }
+ },
+ "incompatible": {
+  "frame": "reply",
+  "id": 0,
+  "result": {
+   "Err": {
+    "code": "incompatible",
+    "message": "archond speaks protocol 23; reload the app"
+   }
+  }
+ },
+ "feed_history": {
+  "reply": "feed",
+  "data": [
+   {
+    "id": "fd_1",
+    "seq": 10,
+    "at": "2026-11-04T03:00:00Z",
+    "entry": {
+     "entry": "stage"
+    }
+   }
+  ]
+ },
+ "subscribed_feed": {
+  "reply": "subscribed",
+  "data": {
+   "id": 5,
+   "last_seq": 10
+  }
+ },
+ "subscribed_changes": {
+  "reply": "subscribed",
+  "data": {
+   "id": 6,
+   "last_seq": 120
+  }
+ },
+ "summaries_23": {
+  "reply": "item_summaries",
+  "data": [
+   {
+    "id": "qi_1",
+    "title": "item qi_1",
+    "state": {
+     "state": "queued"
+    },
+    "pipeline": "adaptive",
+    "priority": "normal",
+    "stage": null,
+    "spent_usd": 0.5,
+    "pr_url": null
+   },
+   {
+    "id": "qi_2",
+    "title": "item qi_2",
+    "state": {
+     "state": "running"
+    },
+    "pipeline": "adaptive",
+    "priority": "normal",
+    "stage": null,
+    "spent_usd": 0.5,
+    "pr_url": null
+   }
+  ]
+ },
+ "summaries_24": {
+  "reply": "item_summaries",
+  "data": {
+   "summaries": [
+    {
+     "id": "qi_1",
+     "title": "item qi_1",
+     "state": {
+      "state": "queued"
+     },
+     "pipeline": "adaptive",
+     "priority": "normal",
+     "stage": null,
+     "spent_usd": 0.5,
+     "pr_url": null
+    },
+    {
+     "id": "qi_2",
+     "title": "item qi_2",
+     "state": {
+      "state": "running"
+     },
+     "pipeline": "adaptive",
+     "priority": "normal",
+     "stage": null,
+     "spent_usd": 0.5,
+     "pr_url": null
+    }
+   ],
+   "as_of": 110
+  }
+ },
+ "task_graph": {
+  "reply": "task_graph",
+  "data": {
+   "nodes": [
+    {
+     "id": "qi_1",
+     "state": "queued",
+     "title": "item qi_1"
+    },
+    {
+     "id": "qi_2",
+     "state": "running",
+     "title": "item qi_2"
+    }
+   ],
+   "edges": [],
+   "initiatives": [],
+   "as_of": 100,
+   "truncated": false
+  }
+ },
+ "feed_item": {
+  "frame": "feed",
+  "sub": 5,
+  "item": {
+   "id": "fd_2",
+   "seq": 11,
+   "at": "2026-11-04T03:01:00Z",
+   "entry": {
+    "entry": "stage"
+   }
+  }
+ },
+ "changes": [
+  {
+   "frame": "change",
+   "sub": 6,
+   "change": {
+    "seq": 105,
+    "at": "2026-11-04T03:00:00Z",
+    "subject": "item",
+    "item": "qi_1",
+    "state": "dispatching"
+   }
+  },
+  {
+   "frame": "change",
+   "sub": 6,
+   "change": {
+    "seq": 115,
+    "at": "2026-11-04T03:00:01Z",
+    "subject": "item",
+    "item": "qi_2",
+    "state": "succeeded"
+   }
+  },
+  {
+   "frame": "change",
+   "sub": 6,
+   "change": {
+    "seq": 116,
+    "at": "2026-11-04T03:00:02Z",
+    "subject": "dependency",
+    "item": "qi_2",
+    "depends_on": "qi_1",
+    "added": true
+   }
+  }
+ ],
+ "history_expired": {
+  "code": "history_expired",
+  "message": "change cursor expired",
+  "first_seq": 500,
+  "last_seq": 900
+ }
+}

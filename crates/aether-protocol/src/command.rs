@@ -17,6 +17,14 @@ use super::{
 
 use aether_core::attachment::{AttachmentId, ImageAttachment};
 
+use crate::noesis::{
+    AnswerInput, ConceptId, ConceptStateKind, DeleteSessionGraph, DeleteSourceGraph,
+    EvidenceBundle, JobId, JobState, NoesisSettingsPatch, PropositionId, QuestionId, SessionId,
+    SessionMode, SourceId,
+};
+
+mod noesis;
+
 /// Everything a client can ask the daemon to do.
 // Wire types are built once and serialized; variant size differences are irrelevant.
 #[allow(clippy::large_enum_variant)]
@@ -50,12 +58,40 @@ pub enum Command {
     ListAgents {
         query: AgentQuery,
     },
-    /// The live graph: every agent in the run (or all runs) with relations.
+    /// One page of agents in `AgentId` order, from just after `after`.
+    /// `limit` is 1 to 500, 200 when absent. Needs `features::AGENTS_PAGING`.
+    ListAgentsPage {
+        #[serde(default)]
+        query: AgentQuery,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<AgentId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// The live graph: the agents in the run (or all runs) with relations.
+    /// One page: the newest live agents, then the newest agents of any state,
+    /// at most `limit` of each (1 to 500, 500 when absent); `AgentTree.next_after`
+    /// says older ones were left out.
     GetTree {
         run: Option<RunId>,
         /// Include agents cleared from the view.
         #[serde(default)]
         include_archived: bool,
+        /// Only agents whose role starts with this text. Needs
+        /// `features::AGENTS_PAGING`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role_prefix: Option<String>,
+        /// Only this agent and its descendants. Needs `features::AGENTS_PAGING`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        root: Option<AgentId>,
+        /// The page of agents older than this one, from an earlier page's
+        /// `next_after`; only the first page pins live agents. Needs `features::TREE_PAGES`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<AgentId>,
+        /// At most this many agents walked, and live ones pinned on the first
+        /// page. Needs `features::TREE_PAGES`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
     },
     UpdateAgent {
         id: AgentId,
@@ -336,6 +372,32 @@ pub enum Command {
         agent: AgentId,
         after: u64,
     },
+    /// A bounded page of an agent's transcript: entries after `after`, the
+    /// newest before `before`, or the newest of all when neither is given.
+    /// `limit` is 1 to 1000, 200 when absent. Needs `features::TRANSCRIPT_PAGING`.
+    GetTranscriptPage {
+        agent: AgentId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// Spend summed from `invocation.completed` events, grouped by `by`, in
+    /// `since..until` (completion time, `until` exclusive). `limit` is 1 to
+    /// 1000 rows, 1000 when absent. Needs `features::USAGE_BREAKDOWN`.
+    UsageBreakdown {
+        #[serde(default)]
+        scope: crate::read_models::UsageScope,
+        by: crate::read_models::UsageGroup,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        since: Option<aether_core::time::Timestamp>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        until: Option<aether_core::time::Timestamp>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
     GetInbox {
         agent: AgentId,
         after: u64,
@@ -411,6 +473,35 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<usize>,
     },
+    /// What retrieval did for each model call of a task, or for one
+    /// invocation; name exactly one. Needs `memory_v2`.
+    MemoryRetrievalExplain {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task: Option<TaskId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        invocation: Option<InvocationId>,
+    },
+    /// Merge near-duplicate memories, or with `dry_run` only plan it.
+    /// An absent scope means every scope. Needs `memory_v2`.
+    ConsolidateMemories {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<aether_core::memory::MemoryScope>,
+        dry_run: bool,
+    },
+    /// Every memory of a scope, or of the store, as a JSON Lines artifact.
+    /// Needs `memory_v2`.
+    MemoryExport {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<aether_core::memory::MemoryScope>,
+    },
+    /// Insert what an export holds and the store lacks; never overwrites.
+    /// Needs `memory_v2`.
+    MemoryImport {
+        artifact: String,
+        dry_run: bool,
+    },
+    /// The store's Memory 2.0 migrations, counts and backups. Needs `memory_v2`.
+    MemoryMigrationStatus,
     /// Curate a memory out. The record stays; it is never retrieved again.
     ForgetMemory {
         id: MemoryId,
@@ -617,6 +708,151 @@ pub enum Command {
     UnsubscribePush,
     /// Send the calling device one `test` notification.
     TestPush,
+
+    /// Noesis state: whether it is enabled, its settings as stored and as
+    /// effective, running jobs and today's spend. Needs `features::NOESIS`.
+    NoesisStatus,
+    /// Write a subset of the `[noesis]` settings and answer with the new
+    /// status. Works while Noesis is disabled. Host only when the patch sets
+    /// `enabled`, a budget, billing or prompt overrides.
+    NoesisConfigure {
+        patch: NoesisSettingsPatch,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    /// Start a teaching or practice session. Answered with `noesis_session`.
+    NoesisCreateSession {
+        /// 1 to 2000 characters.
+        goal: String,
+        mode: SessionMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context: Option<EvidenceBundle>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        practice_targets: Option<Vec<PropositionId>>,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    /// Say something to the session's teacher. 1 to 20000 characters.
+    NoesisSend {
+        session: SessionId,
+        text: String,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    /// Answer the session's open question.
+    NoesisAnswer {
+        session: SessionId,
+        question: QuestionId,
+        answer: AnswerInput,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    NoesisGetSession {
+        session: SessionId,
+    },
+    /// One page of sessions, from just after `after`. `limit` is 1 to 200.
+    NoesisListSessions {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<SessionId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    NoesisDeleteSession {
+        session: SessionId,
+        graph: DeleteSessionGraph,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    /// Propositions, chains and clusters, filtered by text, session or
+    /// source. `limit` is 1 to 5000.
+    NoesisGraph {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session: Option<SessionId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<SourceId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// Delete a proposition; its chains go with it.
+    NoesisDeleteProposition {
+        proposition: PropositionId,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    /// Refused as a conflict while a job on the source runs.
+    NoesisDeleteSource {
+        source: SourceId,
+        graph: DeleteSourceGraph,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    /// Extract the graph of exactly one of `session` and `source`.
+    NoesisExtract {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session: Option<SessionId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<SourceId>,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    /// Import an artifact as a source and extract it.
+    NoesisImportSource {
+        /// 1 to 200 characters.
+        name: String,
+        artifact: ArtifactId,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    NoesisJobs {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        state: Option<JobState>,
+    },
+    NoesisCancelJob {
+        job: JobId,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    /// Learner state of the named concepts, or of those matching `query`.
+    /// `limit` is 1 to 1000.
+    NoesisLearner {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        concepts: Option<Vec<ConceptId>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// A concept's evidence, newest first, from before the evidence id
+    /// `before`. `limit` is 1 to 500.
+    NoesisLearnerEvidence {
+        concept: ConceptId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// Record the operator's correction of a concept's state.
+    NoesisCorrectLearner {
+        concept: ConceptId,
+        state: ConceptStateKind,
+        /// 1 to 500 characters.
+        reason: String,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
 
     /// Ask what became of a keyed command whose acknowledgement was lost.
     /// Read-only, within the caller's own keys; needs `command`'s standing.
@@ -924,7 +1160,7 @@ impl Command {
                     "scope": rule.scope, "note": rule.note,
                 }),
             ),
-            _ => return None,
+            _ => return self.noesis_keyed_request(),
         };
         Some(Ok(KeyedRequest { key, fields }))
     }

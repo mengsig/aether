@@ -9,6 +9,8 @@ pub(crate) mod voice;
 mod memory;
 mod memory_feedback;
 pub use memory_feedback::{MemoryFeedbackCmd, memory_feedback};
+mod memory_v2;
+pub use memory_v2::{MemoryV2Cmd, memory_v2};
 mod memory_proposals;
 pub use memory::{
     AliasTarget, MemoryFilter, memory_alias, memory_aliases, memory_context, memory_forget,

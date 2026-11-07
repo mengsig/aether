@@ -76,6 +76,7 @@ pub(super) fn family_frames() -> Vec<ServerFrame> {
             },
         ),
         ServerFrame::Delta {
+            invocation_seq: None,
             sub: 1,
             agent: id(CHILD),
             invocation: InvocationId::new(),

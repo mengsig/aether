@@ -9,6 +9,13 @@ use aether_core::model::ContentBlock;
 use aether_core::replay::{ReplayFrame, TurnOutcome};
 use serde_json::Value;
 
+mod memory_v2;
+mod noesis;
+mod v26;
+pub use memory_v2::withhold_memory_standing;
+pub use noesis::withhold_noesis_events;
+pub use v26::withhold_delta_order;
+
 /// Oldest protocol version this build still serves. Existing frame rewrites
 /// remain small; v20 accounting deltas are withheld from older subscriptions.
 pub const MIN_PROTOCOL_VERSION: u32 = 17;
@@ -58,8 +65,9 @@ pub fn encode_for(version: u32, frame: &ServerFrame) -> Result<String, serde_jso
     if let Some(folded) = older_error_reply(version, frame) {
         return crate::encode(&folded);
     }
-    let rewritten =
-        older_replay_reply(version, frame).or_else(|| older_agents_reply(version, frame));
+    let rewritten = older_replay_reply(version, frame)
+        .or_else(|| older_agents_reply(version, frame))
+        .or_else(|| v26::older_frame(version, frame));
     let line = crate::encode(rewritten.as_ref().unwrap_or(frame))?;
     let hide_images = version < 19 && line.contains(IMAGE_REF_TAG);
     let hide_devices = version < 18 && line.contains(DEVICE_ORIGIN);
@@ -507,6 +515,7 @@ mod tests {
             ("configure_github_watcher", &["config", "expected_revision"]),
             ("configure_remote", &["expected_revision", "settings"]),
             ("confirm_pairing", &["accept", "id"]),
+            ("consolidate_memories", &["dry_run"]),
             ("create_agent", &["role"]),
             ("create_memory", &["spec"]),
             ("create_schedule", &["spec"]),
@@ -533,6 +542,7 @@ mod tests {
             ("get_snapshot", &["id"]),
             ("get_task", &["id"]),
             ("get_transcript", &["after", "agent"]),
+            ("get_transcript_page", &["agent"]),
             ("get_tree", &[]),
             (
                 "hello",
@@ -542,6 +552,7 @@ mod tests {
             ("interrupt", &["agent"]),
             ("latest_checkpoint", &["agent"]),
             ("list_agents", &["query"]),
+            ("list_agents_page", &[]),
             ("list_approval_rules", &[]),
             ("list_approvals", &[]),
             ("list_artifacts", &["query"]),
@@ -558,7 +569,29 @@ mod tests {
             ("mcp_servers", &[]),
             ("memories", &["query"]),
             ("memories_in_context", &[]),
+            ("memory_export", &[]),
             ("memory_feedback", &["memory"]),
+            ("memory_import", &["artifact", "dry_run"]),
+            ("memory_migration_status", &[]),
+            ("memory_retrieval_explain", &[]),
+            ("noesis_answer", &["answer", "question", "session"]),
+            ("noesis_cancel_job", &["job"]),
+            ("noesis_configure", &["patch"]),
+            ("noesis_correct_learner", &["concept", "reason", "state"]),
+            ("noesis_create_session", &["goal", "mode"]),
+            ("noesis_delete_proposition", &["proposition"]),
+            ("noesis_delete_session", &["graph", "session"]),
+            ("noesis_delete_source", &["graph", "source"]),
+            ("noesis_extract", &[]),
+            ("noesis_get_session", &["session"]),
+            ("noesis_graph", &[]),
+            ("noesis_import_source", &["artifact", "name"]),
+            ("noesis_jobs", &[]),
+            ("noesis_learner", &[]),
+            ("noesis_learner_evidence", &["concept"]),
+            ("noesis_list_sessions", &[]),
+            ("noesis_send", &["session", "text"]),
+            ("noesis_status", &[]),
             ("pause", &["agent"]),
             ("pin_memory", &["id", "pinned"]),
             ("ping", &[]),
@@ -605,6 +638,7 @@ mod tests {
             ("update_agent", &["id", "patch"]),
             ("update_device", &["id"]),
             ("update_schedule", &["action", "id"]),
+            ("usage_breakdown", &["by"]),
             ("validate_workspace", &["path"]),
             ("wake", &["agent"]),
             ("workspace_diff", &["agent"]),
@@ -684,7 +718,7 @@ mod tests {
 
     #[test]
     fn the_window_retains_existing_versions() {
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 25));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 26));
         for version in MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION {
             let mut hello = Hello::new("t", "0");
             hello.protocol_version = version;
@@ -927,7 +961,7 @@ mod tests {
                 .unwrap()
                 .contains(&Value::String("status_since".into()))
         );
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 25));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 26));
     }
 
     #[test]

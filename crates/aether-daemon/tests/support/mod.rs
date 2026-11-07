@@ -58,6 +58,26 @@ impl TestDaemon {
         Self::launch(None, configured, override_limit).await
     }
 
+    /// A daemon whose config directory holds exactly `files` (name, content).
+    pub async fn start_with_files(files: &[(&str, &str)]) -> TestDaemon {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config = dir.path().join("config");
+        std::fs::create_dir_all(&config).expect("config dir");
+        for (name, content) in files {
+            assert!(
+                !name.contains('/'),
+                "a config file name, not a path: {name}"
+            );
+            std::fs::write(config.join(name), content).expect("config file");
+        }
+        Self::launch_in(dir, None, None, None).await
+    }
+
+    /// The directory `config.toml` and `providers.toml` live in.
+    pub fn config_dir(&self) -> PathBuf {
+        self.socket.with_file_name("config")
+    }
+
     /// A daemon whose `config.toml` is exactly `toml`.
     pub async fn start_with_config(toml: &str) -> TestDaemon {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -79,18 +99,21 @@ impl TestDaemon {
         let dir = self.stop_cleanly().await;
         between(&dir.path().join("aether.db"));
         let started = std::time::Instant::now();
-        let daemon = Self::spawn_in(dir, None, None, None);
+        let mut daemon = Self::spawn_in(dir, None, None, None);
         daemon.await_answering(Duration::from_secs(600)).await;
         (daemon, started.elapsed())
     }
 
     async fn stop_cleanly(self) -> tempfile::TempDir {
+        let (store, socket) = (self.store_path(), self.socket.clone());
         self.shutdown.cancel();
         let stopped = tokio::time::timeout(Duration::from_secs(10), self.serving).await;
         stopped
             .expect("the daemon stops in time")
             .expect("the daemon task joins")
             .expect("the daemon stops cleanly");
+        await_lock_free(&store.with_extension("db.lock")).await;
+        await_lock_free(&socket.with_extension("sock.lock")).await;
         self._dir
     }
 
@@ -111,7 +134,7 @@ impl TestDaemon {
         toml: Option<String>,
         override_limit: Option<usize>,
     ) -> TestDaemon {
-        let daemon = Self::spawn_in(dir, tcp, toml, override_limit);
+        let mut daemon = Self::spawn_in(dir, tcp, toml, override_limit);
         daemon.await_answering(STARTUP_WAIT).await;
         daemon
     }
@@ -162,9 +185,16 @@ impl TestDaemon {
     }
 
     /// Wait for a daemon that answers, not merely for a socket path.
-    async fn await_answering(&self, within: Duration) {
+    async fn await_answering(&mut self, within: Duration) {
         let deadline = std::time::Instant::now() + within;
         while std::time::Instant::now() < deadline {
+            if self.serving.is_finished() {
+                let ended = (&mut self.serving).await;
+                panic!(
+                    "the daemon on {} ended before answering: {ended:?}",
+                    self.socket.display()
+                );
+            }
             if let Ok(mut conn) = RawConn::connect(&self.socket).await
                 && conn.hello(aether_protocol::PROTOCOL_VERSION).await.is_ok()
             {
@@ -181,6 +211,28 @@ impl TestDaemon {
     }
 }
 
+/// Wait until no one holds the daemon lock at `path`. In one test process a
+/// child forked by another test's daemon can hold it until that child execs.
+async fn await_lock_free(path: &std::path::Path) {
+    let file = std::fs::File::open(path).expect("a stopped daemon leaves its lock file");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match file.try_lock() {
+            Ok(()) => return file.unlock().expect("unlock the probe"),
+            Err(std::fs::TryLockError::WouldBlock) => {}
+            Err(std::fs::TryLockError::Error(error)) => {
+                panic!("probing {}: {error}", path.display())
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{} is still held after the daemon stopped",
+            path.display()
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 /// One connection, spoken by hand: the point is to send frames no compiled
 /// client would build any more.
 pub struct RawConn {
@@ -188,6 +240,8 @@ pub struct RawConn {
     write: Box<dyn AsyncWrite + Send + Unpin>,
     next_id: u64,
     pub local_addr: Option<SocketAddr>,
+    /// Every event and delta frame read while awaiting a reply, oldest first.
+    pub pushed: Vec<Value>,
 }
 
 impl RawConn {
@@ -214,6 +268,7 @@ impl RawConn {
             write,
             next_id: 1,
             local_addr: None,
+            pushed: Vec::new(),
         }
     }
 
@@ -242,6 +297,7 @@ impl RawConn {
                 assert_eq!(answer["id"], id, "reply out of order: {answer}");
                 return answer;
             }
+            self.pushed.push(answer);
         }
     }
 

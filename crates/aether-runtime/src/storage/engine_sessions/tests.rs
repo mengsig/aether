@@ -426,6 +426,7 @@ async fn winding_down_turn_and_cross_agent_reference_protect_final_logs() {
             provider: "mock".into(),
             engine: true,
             on_provider: false,
+            noesis: None,
         },
     );
     assert_eq!(

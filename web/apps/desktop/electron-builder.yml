@@ -1,0 +1,79 @@
+# Packages the desktop app (docs/desktop.md). Build through `npm run package`, never by calling
+# electron-builder directly: build/package.ts sets the version, the signing record and the
+# AETHER_DESKTOP_SIGNING suffix every artifact name below needs.
+appId: io.github.mengsig.aether
+productName: Aether
+copyright: Copyright © Aether contributors
+
+# The deb's metadata; build/package.ts adds the version and the signing record.
+extraMetadata:
+  homepage: https://github.com/mengsig/aether
+  author:
+    name: Aether contributors
+    url: https://github.com/mengsig/aether
+
+directories:
+  # Outside the desktop package, so its "no UI of its own" test never sees a build.
+  output: ../../../target/desktop
+  buildResources: build
+
+# The app is main's TypeScript and the sandboxed preload; Electron runs them as they are.
+files:
+  - package.json
+  - src/**
+asar: true
+npmRebuild: false
+
+# The same committed web/dist the listener embeds, byte for byte, and the daemon schemas the
+# bridge validates against. src/main/paths.ts finds them here when packaged.
+extraResources:
+  - from: ../../dist
+    to: web/dist
+    filter: ["**/*", "!**/.*"]
+  - from: ../../../clients/protocol.schema.json
+    to: schemas/protocol.schema.json
+  - from: ../../schemas/archon.protocol.schema.json
+    to: schemas/archon.protocol.schema.json
+
+artifactName: ${productName}-${version}-${os}-${arch}-${env.AETHER_DESKTOP_SIGNING}.${ext}
+
+protocols:
+  - name: Aether link
+    schemes: [aether-app]
+
+# A packaged app runs as Electron and nothing else: no Node mode, no NODE_OPTIONS, no inspector.
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  onlyLoadAppFromAsar: true
+
+# Updates come only from this repository's releases (src/update/updates.ts pins the same feed).
+publish:
+  provider: github
+  owner: mengsig
+  repo: aether
+  releaseType: release
+
+linux:
+  target: [AppImage, deb]
+  # Not "aether": that is the daemon's own command.
+  executableName: aether-desktop
+  category: Development
+  icon: ../../dist/icons/icon-512.png
+  synopsis: The Aether desktop app
+  description: The Aether and Archon app for local daemons, in a window of its own.
+  maintainer: Aether contributors <https://github.com/mengsig/aether>
+
+deb:
+  packageName: aether-desktop
+
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  category: public.app-category.developer-tools
+  icon: ../../dist/icons/icon-512.png
+  hardenedRuntime: true

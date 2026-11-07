@@ -2,7 +2,7 @@ use super::*;
 
 fn keyed_commands(key: &str) -> Vec<Command> {
     let agent = AgentId::new();
-    vec![
+    let mut commands = vec![
         Command::CreateAgent(CreateAgent {
             role: "worker".into(),
             idempotency_key: Some(key.into()),
@@ -45,6 +45,77 @@ fn keyed_commands(key: &str) -> Vec<Command> {
                 max_deliveries: None,
             },
             idempotency_key: Some(key.into()),
+        },
+    ];
+    commands.extend(noesis_keyed_commands(key));
+    commands
+}
+
+fn noesis_keyed_commands(key: &str) -> Vec<Command> {
+    use crate::noesis::*;
+    let key = || Some(key.to_owned());
+    vec![
+        Command::NoesisConfigure {
+            patch: NoesisSettingsPatch::default(),
+            idempotency_key: key(),
+        },
+        Command::NoesisCreateSession {
+            goal: "g".into(),
+            mode: SessionMode::Teach,
+            context: None,
+            practice_targets: None,
+            idempotency_key: key(),
+        },
+        Command::NoesisSend {
+            session: "ns_1".into(),
+            text: "hi".into(),
+            idempotency_key: key(),
+        },
+        Command::NoesisAnswer {
+            session: "ns_1".into(),
+            question: "q_1".into(),
+            answer: AnswerInput {
+                choices: None,
+                text: None,
+                dont_know: true,
+                confidence: None,
+                thinking: None,
+            },
+            idempotency_key: key(),
+        },
+        Command::NoesisDeleteSession {
+            session: "ns_1".into(),
+            graph: DeleteSessionGraph::Preserve,
+            idempotency_key: key(),
+        },
+        Command::NoesisDeleteProposition {
+            proposition: "p_1".into(),
+            idempotency_key: key(),
+        },
+        Command::NoesisDeleteSource {
+            source: "s_1".into(),
+            graph: DeleteSourceGraph::Preserve,
+            idempotency_key: key(),
+        },
+        Command::NoesisExtract {
+            session: Some("ns_1".into()),
+            source: None,
+            idempotency_key: key(),
+        },
+        Command::NoesisImportSource {
+            name: "notes".into(),
+            artifact: aether_core::id::ArtifactId::new(),
+            idempotency_key: key(),
+        },
+        Command::NoesisCancelJob {
+            job: "j_1".into(),
+            idempotency_key: key(),
+        },
+        Command::NoesisCorrectLearner {
+            concept: "k_1".into(),
+            state: ConceptStateKind::Fragile,
+            reason: "r".into(),
+            idempotency_key: key(),
         },
     ]
 }

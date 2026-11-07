@@ -6,10 +6,19 @@
 //! recency) and lexical second, and never puts more than a handful of facts
 //! in front of a model.
 
+pub mod consolidation;
 pub mod index;
 pub mod repo;
 
+pub use consolidation::{
+    AbstractionBudget, AbstractionOptions, AbstractionOutcome, Abstractor, ClusterOutcome,
+    ConsolidationOptions, ConsolidationReport,
+};
+pub use holdout::{Holdout, HoldoutUnit};
 pub use index::{LocalEmbeddingIndex, MemoryIndex};
+pub use retrieval::{Considered, Ranking, RetrievalPolicy};
+pub use tiers::{AdmissionMode, PROMOTION_SUPPORT};
+pub use trace::retrieval_trace;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -48,6 +57,7 @@ pub struct AdmissionPolicy {
     pub duplicate_threshold: f32,
     /// Phrases that mark a fact as transient rather than durable.
     pub transient_markers: Vec<&'static str>,
+    pub mode: AdmissionMode,
 }
 
 impl Default for AdmissionPolicy {
@@ -68,6 +78,7 @@ impl Default for AdmissionPolicy {
                 "todo:",
                 "in progress",
             ],
+            mode: AdmissionMode::default(),
         }
     }
 }
@@ -86,12 +97,20 @@ pub enum Admission {
     Rejected {
         reason: String,
     },
+    /// Not stored again: the same memory already stands, and this task now
+    /// supports it. `promoted` when that support made a candidate active.
+    Reinforced {
+        record: MemoryRecord,
+        promoted: bool,
+    },
 }
 
 impl Admission {
     pub fn record(&self) -> Option<&MemoryRecord> {
         match self {
-            Self::Accepted { record } | Self::Superseded { record, .. } => Some(record),
+            Self::Accepted { record }
+            | Self::Superseded { record, .. }
+            | Self::Reinforced { record, .. } => Some(record),
             Self::Rejected { .. } => None,
         }
     }
@@ -135,6 +154,7 @@ pub struct MemoryService {
     /// read and the commit have to be one step.
     gate: WriteGate,
     policy: AdmissionPolicy,
+    retrieval: RetrievalPolicy,
     index: Option<Arc<dyn MemoryIndex>>,
     publisher: Option<Publisher>,
 }
@@ -143,6 +163,7 @@ impl std::fmt::Debug for MemoryService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MemoryService")
             .field("policy", &self.policy)
+            .field("retrieval", &self.retrieval)
             .field("index", &self.index.as_ref().map(|i| i.name()))
             .field("publishes", &self.publisher.is_some())
             .finish()
@@ -155,6 +176,7 @@ impl MemoryService {
             store,
             gate,
             policy: AdmissionPolicy::default(),
+            retrieval: RetrievalPolicy::default(),
             index: None,
             publisher: None,
         }
@@ -183,6 +205,21 @@ impl MemoryService {
     pub fn with_policy(mut self, policy: AdmissionPolicy) -> Self {
         self.policy = policy;
         self
+    }
+
+    /// Retrieve under `policy`. It must already be valid
+    /// ([`RetrievalPolicy::validate`]): config is checked where it is read.
+    pub fn with_retrieval(mut self, policy: RetrievalPolicy) -> Self {
+        assert!(
+            policy.validate().is_ok(),
+            "invalid retrieval policy {policy:?}"
+        );
+        self.retrieval = policy;
+        self
+    }
+
+    pub fn retrieval_policy(&self) -> &RetrievalPolicy {
+        &self.retrieval
     }
 
     /// Add a semantic pass to retrieval. Without one, retrieval is structural
@@ -370,6 +407,7 @@ impl MemoryService {
             scope: Some(scope.clone()),
             exact_scope: true,
             text: Some(text.into()),
+            include_candidates: true,
             limit: 10,
             ..Default::default()
         })?;
@@ -524,9 +562,12 @@ fn jaccard(a: &BTreeSet<String>, b: &BTreeSet<String>) -> f32 {
 }
 
 mod admission;
+mod holdout;
 mod proposals;
 mod retrieval;
 mod seeding;
+mod tiers;
+mod trace;
 
 #[cfg(test)]
 mod tests;
@@ -542,6 +583,9 @@ mod embedding_tests;
 
 #[cfg(test)]
 mod feedback_ranking_tests;
+
+#[cfg(test)]
+mod retrieval_tests;
 
 #[cfg(test)]
 mod admission_tests;

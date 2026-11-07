@@ -1,0 +1,135 @@
+// Checks on the app window, run inside Electron: its preferences, the same-bundle app://, its
+// navigation and CSP, and the bridge as the shared frontend's page reaches it.
+
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { net, session, type IpcMainInvokeEvent } from "electron";
+import { APP_CSP } from "../../../src/security/csp.ts";
+import { senderOf } from "../../../src/main/host.ts";
+import { WEB_DIST } from "../../../src/main/paths.ts";
+import { bundleFiles } from "../bundle-files.ts";
+import { effectivePreferences, type Context } from "./context.ts";
+
+const MEMORY = "mem_01JAAAAAAAAAAAAAAAAAAAAAAA";
+
+export async function appWindowChecks(ctx: Context): Promise<void> {
+  const contents = ctx.desktop.appWindow.webContents;
+  await ctx.check("app window preferences", async () => {
+    const prefs = effectivePreferences(contents);
+    assert.equal(prefs.contextIsolation, true);
+    assert.equal(prefs.sandbox, true);
+    assert.equal(prefs.nodeIntegration, false);
+    assert.equal(prefs.webviewTag, false);
+    assert.equal(prefs.webSecurity, true);
+    assert.equal(prefs.nodeIntegrationInSubFrames, false);
+    assert.equal(contents.session, session.defaultSession);
+  });
+  await ctx.check("window.desktop is the only bridge", async () => {
+    const seen = await ctx.js(contents, `({ type: typeof window.desktop, frozen: Object.isFrozen(window.desktop),
+      keys: Object.keys(window.desktop).sort(), require: typeof require, process: typeof process })`);
+    assert.deepEqual(seen, {
+      type: "object", frozen: true, require: "undefined", process: "undefined",
+      keys: ["close", "connect", "diagnostics", "discover", "getPreference", "notify", "onDeepLink", "openExternal",
+        "openRemote", "pickDirectory", "privileged", "request", "setPreference", "startDaemon", "subscribe", "version"],
+    });
+  });
+  await ctx.check("app:// serves web/dist byte for byte", async () => {
+    const files = bundleFiles();
+    assert.ok(files.includes("index.html") && files.length > 3, "the bundle has its entry");
+    for (const file of files) {
+      const response = await net.fetch(`app://aether/${file}`);
+      assert.equal(response.status, 200, file);
+      assert.equal(response.headers.get("content-security-policy"), APP_CSP, file);
+      assert.ok(Buffer.from(await response.arrayBuffer()).equals(readFileSync(path.join(WEB_DIST, file))), file);
+    }
+    const root = Buffer.from(await (await net.fetch("app://aether/")).arrayBuffer());
+    assert.ok(root.equals(readFileSync(path.join(WEB_DIST, "index.html"))), "app://aether/ is index.html");
+  });
+  await ctx.check("app:// refuses paths outside the bundle", async () => {
+    for (const url of ["app://aether/../package.json", "app://aether/%2e%2e/package.json", "app://aether/.hidden",
+      "app://aether/assets/%2F..%2F..%2Fpackage.json", "app://other/index.html", "app://aether/missing.js"]) {
+      assert.equal((await net.fetch(url)).status, 404, url);
+    }
+  });
+}
+
+export async function appIsolationChecks(ctx: Context): Promise<void> {
+  const contents = ctx.desktop.appWindow.webContents;
+  await ctx.check("app window navigation is pinned", async () => {
+    await ctx.js(contents, `location.href = ${JSON.stringify(`${ctx.server.origin}/`)}; true`);
+    await ctx.settle();
+    assert.equal(contents.getURL(), "app://aether/index.html");
+  });
+  await ctx.check("app window opens no windows", async () => {
+    assert.equal(await ctx.js(contents, `window.open(${JSON.stringify(`${ctx.server.origin}/`)}) === null`), true);
+  });
+  await ctx.check("app CSP blocks the remote origin", async () => {
+    const outcome = await ctx.js(contents, `fetch(${JSON.stringify(`${ctx.server.origin}/api/me`)}, { method: "POST" })
+      .then(() => "reached", () => "blocked")`);
+    assert.equal(outcome, "blocked");
+    assert.match(APP_CSP, /connect-src 'self';/);
+    assert.ok(!APP_CSP.includes("https:") && !APP_CSP.includes(ctx.server.origin));
+  });
+  await ctx.check("subframes get no bridge", async () => {
+    const inFrame = await ctx.js(contents, `(() => {
+      const frame = document.createElement("iframe");
+      document.body.append(frame);
+      return typeof frame.contentWindow.desktop;
+    })()`);
+    assert.equal(inFrame, "undefined");
+    const subframe = contents.mainFrame.frames[0];
+    assert.ok(subframe !== undefined, "the page has its subframe");
+    const event = { sender: contents, senderFrame: subframe } as unknown as IpcMainInvokeEvent;
+    const sender = senderOf(event, ctx.desktop.appWindowIds);
+    assert.equal(sender.isAppWindow, true);
+    await assert.rejects(ctx.desktop.bridge.handle(sender, contents.id, "discover", []), /subframe/);
+  });
+  await ctx.check("app window has no seen request at the remote origin", async () => {
+    assert.deepEqual(ctx.server.seen, []);
+  });
+}
+
+export async function bridgeChecks(ctx: Context): Promise<void> {
+  const contents = ctx.desktop.appWindow.webContents;
+  const call = (body: string) => ctx.js(contents, `(async () => { ${body} })().then((value) => ({ ok: value }),
+    (error) => ({ error: String(error.message ?? error) }))`) as Promise<{ ok?: unknown; error?: string }>;
+  await ctx.check("bridge passes a status request", async () => {
+    const result = await call(`const conn = await desktop.connect("aether:local");
+      window.testConn = conn;
+      return desktop.request(conn, { cmd: "status", req: 9001 });`);
+    assert.deepEqual(result.ok, { frame: "reply", id: 9001, result: { Ok: { reply: "status", data: { ok: true } } } });
+    const daemons = await call("return desktop.discover();");
+    assert.ok(Array.isArray(daemons.ok) && !JSON.stringify(daemons.ok).includes(".sock"), "no socket path reaches the page");
+  });
+  await ctx.check("bridge refuses shutdown, host-only and remote-admin commands", async () => {
+    for (const body of [
+      `return desktop.request(testConn, { cmd: "shutdown", req: 9002 });`,
+      `return desktop.subscribe(testConn, { cmd: "shutdown", req: 9003 }, () => {});`,
+      `return desktop.privileged({ kind: "shutdown", conn: testConn });`,
+      `return desktop.request(testConn, { cmd: "accept_memory", id: "${MEMORY}", req: 9004 });`,
+      `return desktop.request(testConn, { cmd: "get_remote", req: 9005 });`,
+      `return desktop.request(testConn, { cmd: "no_such_command", req: 9006 });`,
+      `return desktop.request(testConn, { cmd: "send_message", id: "x", text: "a".repeat(1024 * 1024), req: 9007 });`,
+    ]) {
+      const result = await call(body);
+      assert.ok(result.error !== undefined, `refused: ${body.slice(0, 80)}`);
+    }
+    assert.ok(!ctx.daemon.lines.some((line) => /"req":900[2-7]\b/.test(line)), "nothing refused reached the daemon");
+  });
+  await ctx.check("privileged action sends the confirmed frame", async () => {
+    ctx.answers.push(true);
+    const result = await call(`return desktop.privileged({ kind: "memory.accept", conn: testConn, memory: "${MEMORY}" });`);
+    assert.deepEqual(result.ok, { ok: true });
+    const shown = ctx.confirmations.at(-1);
+    assert.ok(shown?.detail.includes(`"${MEMORY}"`));
+    assert.ok(ctx.daemon.lines.includes(JSON.stringify({ cmd: "accept_memory", id: MEMORY, req: 2 })));
+  });
+  await ctx.check("privileged action refused when cancelled", async () => {
+    ctx.answers.push(false);
+    const before = ctx.daemon.lines.filter((line) => line.includes("reject_memory")).length;
+    const result = await call(`return desktop.privileged({ kind: "memory.reject", conn: testConn, memory: "${MEMORY}" });`);
+    assert.match(result.error ?? "", /Cancelled/);
+    assert.equal(ctx.daemon.lines.filter((line) => line.includes("reject_memory")).length, before);
+  });
+}

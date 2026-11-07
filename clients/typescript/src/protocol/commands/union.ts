@@ -16,6 +16,7 @@ import type {
   ConfigureGithubWatcherCommand,
   ConfigureRemoteCommand,
   ConfirmPairingCommand,
+  ConsolidateMemoriesCommand,
   CreateAgentCommand,
   CreateMemoryCommand,
   CreateScheduleCommand,
@@ -42,12 +43,14 @@ import type {
   GetSnapshotCommand,
   GetTaskCommand,
   GetTranscriptCommand,
+  GetTranscriptPageCommand,
   GetTreeCommand,
   HelloCommand,
   ImportRunCommand,
   InterruptCommand,
   LatestCheckpointCommand,
   ListAgentsCommand,
+  ListAgentsPageCommand,
   ListApprovalRulesCommand,
   ListApprovalsCommand,
   ListArtifactsCommand,
@@ -64,7 +67,29 @@ import type {
   McpServersCommand,
   MemoriesCommand,
   MemoriesInContextCommand,
+  MemoryExportCommand,
   MemoryFeedbackCommand,
+  MemoryImportCommand,
+  MemoryMigrationStatusCommand,
+  MemoryRetrievalExplainCommand,
+  NoesisAnswerCommand,
+  NoesisCancelJobCommand,
+  NoesisConfigureCommand,
+  NoesisCorrectLearnerCommand,
+  NoesisCreateSessionCommand,
+  NoesisDeletePropositionCommand,
+  NoesisDeleteSessionCommand,
+  NoesisDeleteSourceCommand,
+  NoesisExtractCommand,
+  NoesisGetSessionCommand,
+  NoesisGraphCommand,
+  NoesisImportSourceCommand,
+  NoesisJobsCommand,
+  NoesisLearnerCommand,
+  NoesisLearnerEvidenceCommand,
+  NoesisListSessionsCommand,
+  NoesisSendCommand,
+  NoesisStatusCommand,
   PauseCommand,
   PinMemoryCommand,
   PingCommand,
@@ -105,6 +130,7 @@ import type {
   UpdateAgentCommand,
   UpdateDeviceCommand,
   UpdateScheduleCommand,
+  UsageBreakdownCommand,
   ValidateWorkspaceCommand,
   WakeCommand,
   WorkspaceDiffCommand,
@@ -127,6 +153,7 @@ export type Command =
   | ConfigureGithubWatcherCommand
   | ConfigureRemoteCommand
   | ConfirmPairingCommand
+  | ConsolidateMemoriesCommand
   | CreateAgentCommand
   | CreateMemoryCommand
   | CreateScheduleCommand
@@ -153,12 +180,14 @@ export type Command =
   | GetSnapshotCommand
   | GetTaskCommand
   | GetTranscriptCommand
+  | GetTranscriptPageCommand
   | GetTreeCommand
   | HelloCommand
   | ImportRunCommand
   | InterruptCommand
   | LatestCheckpointCommand
   | ListAgentsCommand
+  | ListAgentsPageCommand
   | ListApprovalRulesCommand
   | ListApprovalsCommand
   | ListArtifactsCommand
@@ -175,7 +204,29 @@ export type Command =
   | McpServersCommand
   | MemoriesCommand
   | MemoriesInContextCommand
+  | MemoryExportCommand
   | MemoryFeedbackCommand
+  | MemoryImportCommand
+  | MemoryMigrationStatusCommand
+  | MemoryRetrievalExplainCommand
+  | NoesisAnswerCommand
+  | NoesisCancelJobCommand
+  | NoesisConfigureCommand
+  | NoesisCorrectLearnerCommand
+  | NoesisCreateSessionCommand
+  | NoesisDeletePropositionCommand
+  | NoesisDeleteSessionCommand
+  | NoesisDeleteSourceCommand
+  | NoesisExtractCommand
+  | NoesisGetSessionCommand
+  | NoesisGraphCommand
+  | NoesisImportSourceCommand
+  | NoesisJobsCommand
+  | NoesisLearnerCommand
+  | NoesisLearnerEvidenceCommand
+  | NoesisListSessionsCommand
+  | NoesisSendCommand
+  | NoesisStatusCommand
   | PauseCommand
   | PinMemoryCommand
   | PingCommand
@@ -216,6 +267,7 @@ export type Command =
   | UpdateAgentCommand
   | UpdateDeviceCommand
   | UpdateScheduleCommand
+  | UsageBreakdownCommand
   | ValidateWorkspaceCommand
   | WakeCommand
   | WorkspaceDiffCommand

@@ -18,6 +18,34 @@ pub(super) enum Served {
     NativeWait(super::native_wait::NativeWait),
 }
 
+/// A bridge call this slow is logged with where its time went.
+const SLOW_BRIDGE_CALL: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Logs a slow bridge call, split into its wait for the turn, which serves
+/// its bridge calls one at a time, and its own run.
+pub(super) fn log_slow_call(
+    agent: aether_core::id::AgentId,
+    tool: &str,
+    arrived: std::time::Instant,
+    serving: std::time::Instant,
+) {
+    assert!(arrived <= serving, "a call is served after it arrived");
+    let queued = serving.duration_since(arrived);
+    let served = serving.elapsed();
+    if queued + served < SLOW_BRIDGE_CALL {
+        return;
+    }
+    tracing::info!(
+        %agent,
+        tool,
+        queued_ms = queued.as_millis() as u64,
+        served_ms = served.as_millis() as u64,
+        waits_on_a_person = tool == "permission",
+        "slow bridge call: queued_ms waited for the turn's earlier bridge calls, served_ms \
+         ran this one, a permission prompt's wait for a person included"
+    );
+}
+
 /// Run one harness call for the engine.
 ///
 /// `parked` means a harness action already decided how the turn ends. The
@@ -623,6 +651,8 @@ pub(super) fn permission_resources(
 }
 
 fn describe_permission(tool: &str, input: &Value) -> String {
+    // An approval is published and stored: a sealed answer must not ride in it.
+    let input = &*crate::noesis_seal::sealed_view(tool, input);
     let mut text = match input.get("command").and_then(Value::as_str) {
         Some(command) => format!("{tool}: {}", truncate(command, 200)),
         None => format!("{tool} {}", truncate(&input.to_string(), 300)),
@@ -642,5 +672,25 @@ fn truncate(text: &str, max: usize) -> String {
         text.to_owned()
     } else {
         format!("{}…", text.chars().take(max).collect::<String>())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    #[test]
+    fn a_native_approval_never_describes_a_sealed_answer() {
+        let input = json!({"question": "2+2?", "answer_key": "B", "explanation": "four is B"});
+        for tool in ["noesis_ask", "mcp__aether__noesis_ask"] {
+            let text = super::describe_permission(tool, &input);
+            assert!(
+                !text.contains("four is B") && !text.contains("\"B\""),
+                "{text}"
+            );
+            assert!(text.contains("2+2?"), "the question stays readable: {text}");
+        }
+        let plain = super::describe_permission("plain_probe", &json!({"answer_key": "visible"}));
+        assert!(plain.contains("visible"), "{plain}");
     }
 }

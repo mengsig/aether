@@ -166,7 +166,7 @@ async fn an_agent_still_naming_the_old_id_reads_and_writes_the_canonical_scope()
 /// and a child of an agent created before it inherits and narrows as usual.
 #[tokio::test]
 async fn new_agents_and_children_of_old_ones_land_in_the_canonical_scope() {
-    let h = harness(vec![ScriptedClient::text("Done.")]).await;
+    let h = harness_uncut(vec![ScriptedClient::text("Done.")]).await;
     let (old, _) = h
         .runtime
         .create_agent(archon_agent("supervisor", None), Actor::user())

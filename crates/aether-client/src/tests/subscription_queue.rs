@@ -149,6 +149,7 @@ async fn overflow_before_subscribe_claims_its_receiver_remains_observable() {
     for _ in 0..=MAX_QUEUED_SUBSCRIPTION_FRAMES {
         peer.outgoing
             .send(ServerFrame::Delta {
+                invocation_seq: None,
                 sub: 7,
                 agent: AgentId::new(),
                 invocation: InvocationId::new(),

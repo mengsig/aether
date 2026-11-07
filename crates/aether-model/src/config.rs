@@ -110,6 +110,10 @@ pub struct AetherConfig {
     pub remote: RemoteSection,
     pub serve: ServeSection,
     pub update: UpdateSection,
+    /// `[noesis]`, kept as written: the `aether-noesis` crate parses and
+    /// validates it when the service starts or is configured.
+    #[serde(skip_serializing_if = "toml::Table::is_empty")]
+    pub noesis: toml::Table,
 }
 
 /// Default scope for new roots; explicit scopes and existing agents are unchanged.
@@ -239,13 +243,59 @@ impl ServeSection {
 
 /// How durable memory is retrieved. Structural and lexical retrieval always
 /// run; `index` adds an optional semantic pass on top.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MemorySection {
     /// `none` (the default) or `local`: a deterministic on-machine embedder
     /// with no network and no key. A provider-backed index plugs in behind
     /// the same `MemoryIndex` trait.
     pub index: MemoryIndexChoice,
+    pub retrieval: MemoryRetrievalSection,
+}
+
+/// `[memory.retrieval]`: how many memories a turn is shown, the least
+/// relevance one needs, and the share withheld (and logged) as a holdout.
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MemoryRetrievalSection {
+    pub max_items: usize,
+    pub min_score: f32,
+    pub holdout_rate: f32,
+    /// Seeds the holdout draw; the same seed reproduces every draw.
+    pub holdout_seed: u64,
+}
+
+impl Default for MemoryRetrievalSection {
+    fn default() -> Self {
+        Self {
+            max_items: 6,
+            min_score: 0.05,
+            holdout_rate: 0.05,
+            holdout_seed: 0,
+        }
+    }
+}
+
+impl MemoryRetrievalSection {
+    pub fn validate(&self) -> Result<(), String> {
+        if !(1..=50).contains(&self.max_items) {
+            return Err(format!(
+                "memory.retrieval.max_items must be 1 to 50, not {}",
+                self.max_items
+            ));
+        }
+        for (key, value) in [
+            ("min_score", self.min_score),
+            ("holdout_rate", self.holdout_rate),
+        ] {
+            if !(0.0..=1.0).contains(&value) {
+                return Err(format!(
+                    "memory.retrieval.{key} must be 0 to 1, not {value}"
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq, Serialize)]
@@ -709,6 +759,7 @@ fn validate_config(config: &AetherConfig) -> Result<(), String> {
     config.storage.validate()?;
     config.build_cache.validate()?;
     config.github_watcher.review_sweep_prs()?;
+    config.memory.retrieval.validate()?;
     for server in &config.mcp.servers {
         server.validate()?;
     }

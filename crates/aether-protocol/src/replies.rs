@@ -11,6 +11,11 @@ use super::{
     Welcome, WriteStats,
 };
 
+/// [`ErrorReply::reason`] of a Noesis command refused while Noesis is disabled.
+pub const NOESIS_DISABLED: &str = "noesis_disabled";
+/// [`ErrorReply::reason`] of a command that conflicts with work in progress.
+pub const CONFLICT: &str = "conflict";
+
 /// The only entry of [`DaemonStatus::engines`] while the daemon is still
 /// detecting its engines after start; the real labels replace it.
 pub const ENGINES_STARTING: &str = "starting";
@@ -104,6 +109,62 @@ pub struct DaemonStatus {
     /// on older daemons, which never answer stale.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stale: Option<StatusStale>,
+    /// Sections the daemon could not read before its status deadline. Their
+    /// fields carry no figure, so a client shows each as unavailable, never
+    /// as the zero it holds. Empty on a complete answer, and on older daemons.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unavailable: Vec<UnavailableSection>,
+}
+
+/// A [`DaemonStatus`] section left out of a reply, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct UnavailableSection {
+    /// The section as the daemon's log names it: one of [`status_sections`].
+    pub section: String,
+    /// Why it is missing: [`status_sections::TIMED_OUT`], the read ran past
+    /// the deadline. A read that fails fails the whole `status` instead.
+    pub reason: String,
+}
+
+/// The [`DaemonStatus`] sections a reply may mark unavailable, and the
+/// fields each one fills.
+pub mod status_sections {
+    /// `problems`.
+    pub const PROBLEMS: &str = "problems";
+    /// `providers`.
+    pub const PROVIDERS: &str = "providers";
+    /// Every `agents_*` count.
+    pub const LIVE_AGENTS: &str = "live_agents";
+    /// `usage_total`.
+    pub const USAGE_TOTAL: &str = "usage_total";
+    /// `runs`.
+    pub const RUNS: &str = "runs";
+    /// `tasks_active`.
+    pub const TASKS_ACTIVE: &str = "tasks_active";
+    /// `pending_approvals`.
+    pub const PENDING_APPROVALS: &str = "pending_approvals";
+    /// `low_disk`.
+    pub const LOW_DISK: &str = "low_disk";
+    /// `engines` and `engine_turns_running`.
+    pub const ENGINES: &str = "engines";
+    /// `resource_leases`.
+    pub const RESOURCE_LEASES: &str = "resource_leases";
+    /// `mcp`.
+    pub const MCP: &str = "mcp";
+    /// `writes`.
+    pub const WRITES: &str = "writes";
+    /// The reason of a section whose read did not finish before the deadline.
+    pub const TIMED_OUT: &str = "timed out";
+}
+
+impl DaemonStatus {
+    /// Why `section` is missing from this reply, or `None` when it was read.
+    pub fn unavailable(&self, section: &str) -> Option<&str> {
+        self.unavailable
+            .iter()
+            .find(|missing| missing.section == section)
+            .map(|missing| missing.reason.as_str())
+    }
 }
 
 /// Why a [`DaemonStatus`] is not fresh, and how old it is.
@@ -137,10 +198,12 @@ pub struct TreeNode {
     pub waiting_on: Vec<TaskId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease: Option<Lease>,
-    /// Usage rolled up over this agent and its descendants.
+    /// Usage of this agent, its `hidden_usage` and its children's subtrees: a
+    /// descendant whose parent is not shown is a root, counted there instead.
     pub subtree_usage: Usage,
-    /// Usage of child subtrees omitted from this tree (for example archived children).
-    /// Kept separately so live clients can replace visible usage without losing it.
+    /// Usage of the descendants omitted from this tree (for example archived
+    /// children), up to the next shown ones. Kept separately so live clients
+    /// can replace visible usage without losing it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hidden_usage: Option<Usage>,
 }
@@ -149,6 +212,14 @@ pub struct TreeNode {
 pub struct AgentTree {
     pub roots: Vec<AgentId>,
     pub nodes: BTreeMap<AgentId, TreeNode>,
+    /// Set when no fresh read finished in the daemon's patience: this is the
+    /// last tree read for the same request, or empty if none finished yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale: Option<StatusStale>,
+    /// Older agents in scope were left out of this page: ask again with this
+    /// as `after` for them, even when the page is short. Absent when the tree is whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_after: Option<AgentId>,
 }
 
 /// One row of `aether runs list`, projected from a run's agents and tasks.
@@ -315,6 +386,15 @@ pub enum Reply {
     },
     Agent(Agent),
     Agents(Vec<Agent>),
+    /// Reply to `list_agents_page`. `next_after` is the cursor for the next
+    /// page, absent on the last one. Ids are only ordered, not committed in
+    /// order, so a walk covers the agents present when it began; a client
+    /// subscribes first and applies the buffered events for creations during it.
+    AgentsPage {
+        agents: Vec<Agent>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next_after: Option<AgentId>,
+    },
     Tree(AgentTree),
     Task(Task),
     Tasks(Vec<Task>),
@@ -348,6 +428,16 @@ pub enum Reply {
     },
     Events(Vec<Event>),
     Transcript(Vec<TranscriptEntry>),
+    /// Reply to `get_transcript_page`: entries in ascending `seq`, whether
+    /// older or newer ones exist outside it, and the seq of the agent's newest
+    /// entry (0 for none).
+    TranscriptPage {
+        entries: Vec<TranscriptEntry>,
+        has_before: bool,
+        has_after: bool,
+        last_seq: u64,
+    },
+    UsageBreakdown(crate::read_models::UsageBreakdown),
     Inbox(Vec<InboxItem>),
     Snapshot(InvocationSnapshot),
     Invocation(Invocation),
@@ -367,6 +457,11 @@ pub enum Reply {
     Memory(MemoryRecord),
     MemoryFeedback(aether_core::memory_feedback::MemoryFeedback),
     MemoryFeedbackList(aether_core::memory_feedback::MemoryFeedbackList),
+    MemoryRetrievalExplain(aether_core::memory_v2_reports::RetrievalExplain),
+    MemoryConsolidation(aether_core::memory_v2_reports::MemoryConsolidation),
+    MemoryExport(aether_core::memory_v2_reports::MemoryExport),
+    MemoryImport(aether_core::memory_v2_reports::MemoryImport),
+    MemoryMigrationStatus(aether_core::memory_v2_reports::MemoryMigrationStatus),
     MemorySeeded {
         repository: String,
         report: aether_core::memory::SeedReport,
@@ -402,6 +497,41 @@ pub enum Reply {
     Devices(Vec<Device>),
     PushConfig(PushConfig),
     SubmissionResolved(SubmissionResolution),
+    NoesisStatus(crate::noesis::NoesisStatus),
+    NoesisSession(crate::noesis::NoesisSession),
+    /// `next_after` is the cursor for the next page, absent on the last one.
+    NoesisSessions {
+        sessions: Vec<crate::noesis::NoesisSession>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next_after: Option<String>,
+    },
+    /// `truncated` is set when `limit` cut the graph short.
+    NoesisGraph {
+        nodes: Vec<crate::noesis::Proposition>,
+        chains: Vec<crate::noesis::Chain>,
+        clusters: Vec<crate::noesis::Cluster>,
+        truncated: bool,
+    },
+    NoesisJob {
+        job: crate::noesis::Job,
+    },
+    NoesisImport {
+        source: crate::noesis::SourceId,
+        job: crate::noesis::Job,
+    },
+    NoesisJobs {
+        jobs: Vec<crate::noesis::Job>,
+    },
+    NoesisLearner {
+        concepts: Vec<crate::noesis::ConceptState>,
+    },
+    /// `next_before` is the cursor for the next page, absent on the last one.
+    NoesisEvidence {
+        evidence: Vec<crate::noesis::Evidence>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next_before: Option<u64>,
+    },
+    ConceptState(crate::noesis::ConceptState),
 }
 
 /// What became of a keyed command, as far as the daemon can prove. Each
@@ -466,6 +596,10 @@ pub struct ErrorReply {
     /// Last expired sequence number; set only with `HistoryExpired`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seq: Option<u64>,
+    /// Why the command was refused, for a client that tells causes of one
+    /// code apart, e.g. [`NOESIS_DISABLED`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 impl ErrorReply {
@@ -475,6 +609,26 @@ impl ErrorReply {
             message: message.into(),
             first_seq: None,
             last_seq: None,
+            reason: None,
+        }
+    }
+
+    /// A Noesis command arrived while Noesis is disabled.
+    pub fn noesis_disabled() -> Self {
+        Self {
+            reason: Some(NOESIS_DISABLED.into()),
+            ..Self::new(
+                ErrorCode::Unavailable,
+                "Noesis is disabled; enable it with noesis_configure",
+            )
+        }
+    }
+
+    /// The command conflicts with work in progress.
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        Self {
+            reason: Some(CONFLICT.into()),
+            ..Self::new(ErrorCode::InvalidTransition, msg)
         }
     }
 

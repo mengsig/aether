@@ -1,0 +1,245 @@
+{
+  "id": "build-ci",
+  "description": "A Rust service's local checks, CI host and toolchain floor, with a CI move and an MSRV bump.",
+  "repository": "github.com/example-org/widget-service",
+  "memories": [
+    {
+      "key": "make-ci",
+      "class": "durable",
+      "scope": "repository",
+      "kind": "constraint",
+      "importance": 0.8,
+      "confidence": 0.9,
+      "age_days": 40,
+      "tags": [
+        "ci"
+      ],
+      "text": "Run `make ci` before pushing: it runs cargo fmt --check, clippy with -D warnings and the whole test suite."
+    },
+    {
+      "key": "make-ci-dup1",
+      "class": "near_duplicate",
+      "duplicate_of": "make-ci",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.7,
+      "confidence": 0.8,
+      "age_days": 25,
+      "text": "Before a push, `make ci` has to pass; it covers formatting, clippy (warnings are errors) and every test."
+    },
+    {
+      "key": "make-ci-dup2",
+      "class": "near_duplicate",
+      "duplicate_of": "make-ci",
+      "scope": "repository",
+      "kind": "lesson",
+      "importance": 0.6,
+      "confidence": 0.8,
+      "age_days": 6,
+      "text": "make ci is the pre-push gate for widget-service (fmt + clippy -D warnings + tests); CI fails on anything it would catch."
+    },
+    {
+      "key": "docker-tests",
+      "class": "durable",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.7,
+      "confidence": 0.9,
+      "age_days": 30,
+      "tags": [
+        "tests"
+      ],
+      "text": "Integration tests need a running Docker daemon; set WIDGET_SKIP_DOCKER=1 to skip them on a machine without one."
+    },
+    {
+      "key": "flaky-retry",
+      "class": "durable",
+      "scope": "repository",
+      "kind": "lesson",
+      "importance": 0.7,
+      "confidence": 0.8,
+      "age_days": 15,
+      "tags": [
+        "tests",
+        "ci"
+      ],
+      "text": "CI runs tests under nextest with --retries 1; a test that passes only on its retry is reported as FLAKY and must get an issue, not an #[ignore]."
+    },
+    {
+      "key": "travis",
+      "class": "stale",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.7,
+      "confidence": 0.9,
+      "age_days": 420,
+      "tags": [
+        "ci"
+      ],
+      "text": "CI runs on Travis; the pipeline is defined in .travis.yml at the repository root."
+    },
+    {
+      "key": "gha",
+      "class": "durable",
+      "contradicts": "travis",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.7,
+      "confidence": 0.9,
+      "age_days": 60,
+      "tags": [
+        "ci"
+      ],
+      "text": "CI runs on GitHub Actions; the workflow is .github/workflows/ci.yml and its jobs mirror the make ci stages."
+    },
+    {
+      "key": "msrv-170",
+      "class": "durable",
+      "scope": "repository",
+      "kind": "constraint",
+      "importance": 0.6,
+      "confidence": 0.9,
+      "age_days": 300,
+      "tags": [
+        "toolchain"
+      ],
+      "text": "The minimum supported Rust version is 1.70; do not use language features newer than that."
+    },
+    {
+      "key": "msrv-185",
+      "class": "durable",
+      "supersedes": "msrv-170",
+      "scope": "repository",
+      "kind": "constraint",
+      "importance": 0.6,
+      "confidence": 0.9,
+      "age_days": 20,
+      "tags": [
+        "toolchain"
+      ],
+      "text": "The minimum supported Rust version is 1.85, declared as rust-version in Cargo.toml; CI checks it in the msrv job."
+    },
+    {
+      "key": "lease-flake",
+      "class": "one_off",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.5,
+      "confidence": 0.7,
+      "age_days": 3,
+      "tags": [
+        "tests"
+      ],
+      "text": "store::tests::lease_expiry failed once on 2026-09-14 because the laptop suspended in the middle of the test run."
+    },
+    {
+      "key": "build-time",
+      "class": "one_off",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.4,
+      "confidence": 0.9,
+      "age_days": 2,
+      "text": "The CI build of commit 3f9c2a1 took 7m12s on the hosted runner."
+    },
+    {
+      "key": "pushed-branch",
+      "class": "one_off",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.5,
+      "confidence": 0.9,
+      "age_days": 1,
+      "text": "Pushed branch fix/lease-timeout with the make ci run green and opened PR 412."
+    },
+    {
+      "key": "nightly-red",
+      "class": "transient",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.5,
+      "confidence": 0.6,
+      "age_days": 1,
+      "text": "The nightly job is currently red because the upstream crates mirror is down."
+    },
+    {
+      "key": "docs-gen",
+      "class": "durable",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.5,
+      "confidence": 0.9,
+      "age_days": 90,
+      "tags": [
+        "docs"
+      ],
+      "text": "API documentation is generated with `make docs` into target/doc; it is not committed."
+    }
+  ],
+  "queries": [
+    {
+      "id": "pre-push",
+      "role": "worker",
+      "query": "Prepare the change for review: make sure the checks CI runs pass locally before pushing the branch.",
+      "relevant": [
+        "make-ci"
+      ],
+      "harmful": []
+    },
+    {
+      "id": "docker-socket",
+      "role": "worker",
+      "query": "The integration tests fail locally with a Docker socket connection error; get the test suite running.",
+      "relevant": [
+        "docker-tests"
+      ],
+      "harmful": [],
+      "task": {
+        "question": "Which environment variable makes widget-service skip its Docker integration tests? Answer with the variable name only.",
+        "answer": "WIDGET_SKIP_DOCKER"
+      }
+    },
+    {
+      "id": "add-lint-job",
+      "role": "worker",
+      "query": "Add a cargo deny step to the CI pipeline configuration.",
+      "relevant": [
+        "gha"
+      ],
+      "harmful": [
+        "travis"
+      ]
+    },
+    {
+      "id": "bump-msrv",
+      "role": "worker",
+      "query": "Can the code use let-else chains, or is the minimum supported Rust version too old?",
+      "relevant": [
+        "msrv-185"
+      ],
+      "harmful": [
+        "msrv-170"
+      ],
+      "task": {
+        "question": "What is widget-service's minimum supported Rust version? Answer with the version number only.",
+        "answer": "1\\.85"
+      }
+    },
+    {
+      "id": "flaky-test",
+      "role": "worker",
+      "query": "A test passed only on its retry in CI; decide what to do about it.",
+      "relevant": [
+        "flaky-retry"
+      ],
+      "harmful": []
+    },
+    {
+      "id": "readme-translate",
+      "role": "worker",
+      "query": "Translate the README's introduction into French.",
+      "relevant": [],
+      "harmful": []
+    }
+  ]
+}

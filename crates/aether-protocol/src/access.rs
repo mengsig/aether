@@ -87,6 +87,7 @@ impl Command {
             }
             Self::AddApprovalRule(rule) => rule_access(Some(&rule.scope)),
             Self::ResolveSubmission { command, .. } => resolution_access(command),
+            Self::NoesisConfigure { patch, .. } => crate::noesis::configure_access(patch),
 
             Self::Hello(_) | Self::Status | Self::PreviewRetention | Self::StorageStatus | Self::Ping
             | Self::GetAgent { .. } | Self::ListAgents { .. } | Self::GetTree { .. }
@@ -102,7 +103,11 @@ impl Command {
             | Self::ListModels | Self::AuthStatus | Self::Providers | Self::GetAttention
             | Self::ListWorkspaces { .. } | Self::GetPushConfig
             | Self::ListRepositoryAliases | Self::ListNotifications { .. }
-            | Self::GetNotification { .. } => Access::Observe,
+            | Self::GetNotification { .. } | Self::ListAgentsPage { .. }
+            | Self::GetTranscriptPage { .. } | Self::UsageBreakdown { .. } | Self::NoesisStatus
+            | Self::NoesisGetSession { .. } | Self::NoesisListSessions { .. }
+            | Self::NoesisGraph { .. } | Self::NoesisJobs { .. } | Self::NoesisLearner { .. }
+            | Self::NoesisLearnerEvidence { .. } | Self::MemoryMigrationStatus => Access::Observe,
 
             Self::CreateAgent(_) | Self::ReplyToQuestion { .. } | Self::SendMessage { .. }
             | Self::AppendNote { .. } | Self::Cancel { .. } | Self::Interrupt { .. }
@@ -118,14 +123,21 @@ impl Command {
             | Self::WorkspaceDiff { .. } | Self::WorkspaceIntegrate { .. }
             | Self::WorkspaceDiscard { .. } | Self::RefreshProviderUsage { .. }
             | Self::PostNotification { .. } | Self::MarkNotificationRead { .. }
-            | Self::ResolveNotification { .. } | Self::AnswerNotification { .. } => Access::Operate,
+            | Self::ResolveNotification { .. } | Self::AnswerNotification { .. }
+            | Self::NoesisCreateSession { .. } | Self::NoesisSend { .. }
+            | Self::NoesisAnswer { .. } | Self::NoesisDeleteSession { .. }
+            | Self::NoesisDeleteProposition { .. } | Self::NoesisDeleteSource { .. }
+            | Self::NoesisExtract { .. } | Self::NoesisImportSource { .. }
+            | Self::NoesisCancelJob { .. } | Self::NoesisCorrectLearner { .. } => Access::Operate,
 
             Self::StorageGc { .. } | Self::Shutdown | Self::EngineTool { .. } | Self::EngineTools { .. }
             | Self::ExportRun { .. } | Self::ImportRun { .. }
             | Self::AliasRepository { .. } | Self::AcceptMemory { .. }
             | Self::RejectMemory { .. } | Self::MemoriesInContext { .. }
             | Self::RecordMemoryFeedback { .. } | Self::RetractMemoryFeedback { .. }
-            | Self::MemoryFeedback { .. } => Access::HostOnly,
+            | Self::MemoryFeedback { .. } | Self::MemoryRetrievalExplain { .. }
+            | Self::ConsolidateMemories { .. } | Self::MemoryExport { .. }
+            | Self::MemoryImport { .. } => Access::HostOnly,
 
             Self::GetRemote | Self::ConfigureRemote { .. } | Self::StartPairing { .. }
             | Self::GetPairing { .. } | Self::ConfirmPairing { .. }

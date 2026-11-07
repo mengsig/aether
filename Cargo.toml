@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "1.2.11"
+version = "1.3.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/mengsig/aether"
@@ -26,6 +26,7 @@ aether-client = { path = "crates/aether-client" }
 aether-engine = { path = "crates/aether-engine" }
 aether-daemon = { path = "crates/aether-daemon" }
 aether-remote = { path = "crates/aether-remote" }
+aether-noesis = { path = "crates/aether-noesis" }
 aether-tui = { path = "crates/aether-tui" }
 
 anyhow = "1.0.104"
@@ -55,7 +56,7 @@ qrcode = { version = "0.14.1", default-features = false }
 rand = "0.10.2"
 ratatui = "0.30.2"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "rustls", "charset", "http2"] }
-rusqlite = { version = "0.41.1", features = ["bundled", "backup", "hooks"] }
+rusqlite = { version = "0.41.1", features = ["bundled", "backup", "functions", "hooks"] }
 same-file = "1.0.6"
 schemars = { version = "1.2.2", features = ["chrono04"] }
 serde = { version = "1.0.229", features = ["derive"] }

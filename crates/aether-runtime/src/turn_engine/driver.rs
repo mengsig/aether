@@ -284,10 +284,10 @@ pub(super) async fn drive(
     steer(runtime, ctx, &mut steering, &mut input).await?;
     // A question the engine is blocked on; the next message answers it.
     let mut question: Option<String> = None;
-    let mut state = StreamState::new(pricing, resolved.clone());
+    let mut state = StreamState::sealed(pricing, resolved.clone(), ctx.stream_seal());
     runtime.bus.publish_delta(
         ctx.agent.id,
-        state.message_invocation,
+        &mut state.deltas,
         DeltaKind::TurnStarted { turn: ctx.turn },
     );
     // Tools the engine moved to the background: the turn is not over until
@@ -328,9 +328,18 @@ pub(super) async fn drive(
     // Set by an engine event or bridge request; applied once it is handled,
     // so an approval the operator took hours over is not engine silence.
     let mut touch_pending = false;
+    // Outstanding native calls get their own clock, restarted only by model
+    // activity: the engine's own timeout should have ended a call long before.
+    let mut tool_clock = super::stall::Watchdog::new(runtime.config.tool_call_bound);
+    let mut tool_touch_pending = false;
+    // Set once the bound stopped the turn: the reason it ends with, whatever the reap reports.
+    let mut overdue_reason: Option<String> = None;
     let mut outcome = loop {
         if std::mem::take(&mut touch_pending) {
             watchdog.touch();
+        }
+        if std::mem::take(&mut tool_touch_pending) {
+            tool_clock.touch();
         }
         let woken = match native_wait.as_ref() {
             Some(wait) => wait.ready(runtime, ctx, steering.sent_up_to)?,
@@ -370,7 +379,36 @@ pub(super) async fn drive(
             || native_wait.is_some()
             || deferred.is_some();
         let stall_deadline = watchdog.deadline(waiting);
+        // A held wait reports in through the harness; only a plain call is bounded.
+        let held = native_wait.is_some()
+            || question.is_some()
+            || park.is_some()
+            || reap_grace.is_some()
+            || deferred.is_some()
+            || settled.is_some();
+        // A call the engine reports as a live process (a Codex command) is a background job.
+        let bounded = state.calls.keys().any(|id| !background.contains(id));
+        let overdue_at = tool_clock.deadline(!bounded || held);
+        // Checked before anything is steered: a message never queues behind a call already past it.
+        if overdue_at.is_some_and(|at| at <= tokio::time::Instant::now()) {
+            let stopped = stop_overdue(
+                runtime,
+                ctx,
+                engine.kind(),
+                &bounded_calls(&state, &background),
+                &tool_clock,
+                &engine_cancel,
+                &mut input,
+            )?;
+            overdue_reason = stopped.error.clone();
+            settled = Some(stopped);
+            // Reaped like a park: the next turn must not resume a session still being killed.
+            reap_grace = Some(ReapGrace::start());
+            continue;
+        }
         tokio::select! {
+            // The check above stops the turn on the next pass.
+            () = tokio::time::sleep_until(overdue_at.unwrap_or_else(tokio::time::Instant::now)), if overdue_at.is_some() => {}
             () = tokio::time::sleep_until(stall_deadline.unwrap_or_else(tokio::time::Instant::now)), if stall_deadline.is_some() => {
                 let silent = watchdog.silent_for();
                 tracing::warn!(agent = %ctx.agent.id, silent_secs = silent.as_secs(), "engine turn stalled; interrupting it");
@@ -416,6 +454,7 @@ pub(super) async fn drive(
                     subtree.note_own_commits(runtime.store.commits().saturating_sub(commits_before));
                 }
                 let active = ev.as_ref().is_some_and(|event| event_has_activity(event, ctx));
+                tool_touch_pending |= active;
                 if let Some(EngineEvent::Done(outcome)) = &ev {
                     // A requested park stop only loses usage if a request began after it.
                     let stopped = engine_cancel.is_cancelled() || (request_after_stop && park.as_ref().is_some_and(|park| park.stop_requested));
@@ -727,6 +766,7 @@ pub(super) async fn drive(
                 }
             }, if deferred.is_none() => {
                 touch_pending = true;
+                tool_touch_pending = true;
                 if let Some((req, settled)) = next {
                     receipt_seen = false;
                     activity_seen = true;
@@ -787,7 +827,7 @@ pub(super) async fn drive(
                         {
                             reap_grace = Some(ReapGrace::start());
                         }
-                    } else if stopping(&park) {
+                    } else if stopping(&park) || overdue_reason.is_some() {
                         // The process is being killed. Nothing served now can
                         // reach it, and a mutation would commit for a turn
                         // whose engine is already gone.
@@ -799,9 +839,11 @@ pub(super) async fn drive(
                         let reply = (engine.kind() == super::EngineKind::CLAUDE_CODE && stop.is_some())
                             .then(|| (req.name.clone(), req.input.clone()));
                         let (tool, tool_input) = (req.name.clone(), req.input.clone());
+                        let (arrived, serving) = (req.arrived, std::time::Instant::now());
                         let served =
                             handle_request(runtime, ctx, tool_ctx, req, effects, cancel, park.is_some(), !background.is_empty(), engine_left(&mut run.events, &mut kept))
                                 .await?;
+                        super::bridge::log_slow_call(ctx.agent.id, &tool, arrived, serving);
                         if let Served::Ran(Some(result)) = &served {
                             state.remember_bridge_reply(tool, tool_input, result.clone());
                         }
@@ -883,6 +925,9 @@ pub(super) async fn drive(
             settle_deadline = Some(tokio::time::Instant::now() + grace);
         }
     };
+    if let Some(reason) = overdue_reason {
+        super::overdue::keep_reason(&mut outcome, reason);
+    }
     let class = crate::exhaustion::engine_error_class(outcome.error.as_deref().unwrap_or(""));
     let mut cleaned_up = false;
     if outcome.is_error
@@ -1008,16 +1053,14 @@ pub(super) async fn drive(
         runtime.apply(commit)?;
     }
     let uncommitted = Uncommitted {
-        invocation: Some(state.message_invocation),
+        invocation: Some(state.deltas.invocation()),
         content: state.take_partial(),
     };
     // Under the id of a message left uncommitted, if any: its streamed text
     // stays live until the interrupt or failure that ends the turn keeps it.
-    runtime.bus.publish_delta(
-        ctx.agent.id,
-        state.message_invocation,
-        DeltaKind::TurnFinished,
-    );
+    runtime
+        .bus
+        .publish_delta(ctx.agent.id, &mut state.deltas, DeltaKind::TurnFinished);
     let answer_jobs = match (answered_over_jobs, background.is_empty()) {
         (false, _) => crate::turn::AnswerJobs::Idle,
         (true, true) => crate::turn::AnswerJobs::Finished,
@@ -1046,6 +1089,40 @@ pub(super) async fn drive(
         uncommitted,
         stalled,
     })
+}
+
+/// The outstanding calls the tool-call bound applies to: all but those the
+/// engine reports as live background processes.
+fn bounded_calls<'a>(
+    state: &'a StreamState,
+    background: &BTreeSet<String>,
+) -> Vec<&'a super::events::PendingCall> {
+    state
+        .calls
+        .iter()
+        .filter(|(id, _)| !background.contains(*id))
+        .map(|(_, call)| call)
+        .collect()
+}
+
+/// Stop the engine over a native call past the bound. The turn ends
+/// interrupted once its stream closes, its open calls closed with the reason.
+fn stop_overdue(
+    runtime: &Runtime,
+    ctx: &TurnCtx,
+    engine: super::EngineKind,
+    bounded: &[&super::events::PendingCall],
+    clock: &super::stall::Watchdog,
+    engine_cancel: &CancellationToken,
+    input: &mut Option<mpsc::Sender<aether_engine::EngineInput>>,
+) -> Result<EngineOutcome> {
+    let silent = clock.silent_for();
+    tracing::warn!(agent = %ctx.agent.id, silent_secs = silent.as_secs(), calls = bounded.len(), "native tool call past its bound; interrupting the turn");
+    let outcome = super::overdue::stop(runtime, ctx, engine, bounded, silent)?;
+    debug_assert!(outcome.interrupted && outcome.error.is_some());
+    engine_cancel.cancel();
+    drop(input.take());
+    Ok(outcome)
 }
 
 /// The engine's next event, after any an approval wait kept back.

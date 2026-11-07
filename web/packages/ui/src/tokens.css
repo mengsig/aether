@@ -1,0 +1,168 @@
+/* Design tokens (CONTRACTS.md §4). The only file in the UI kit that may hold
+   raw colours and durations; components read these custom properties. A
+   `data-theme` on any element re-themes its subtree. */
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* Bone paper and spruce ink, from the Aether mark: a cool neutral ground, white
+     surfaces, and one green that does the pointing. */
+  --color-bg: #f3f2ee;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #f7f6f2;
+  --color-surface-3: #ebe9e4;
+  --color-border: #e3e1db;
+  --color-border-strong: #827f77;
+  --color-text: #171c1a;
+  --color-text-muted: #4b5450;
+  --color-text-faint: #5e6760;
+  --color-accent: #0b6b52;
+  --color-accent-contrast: #ffffff;
+  --color-focus: #2457c9;
+  --color-danger: #b02434;
+  --color-warning: #855700;
+  --color-success: #1d7442;
+  --color-info: #1b5f94;
+
+  --status-queued: #5f6873;
+  --status-dispatching: #4d4fc4;
+  --status-running: #0b6b52;
+  --status-waiting: #8a5c00;
+  --status-operator: #a2337f;
+  --status-blocked: #b23d0b;
+  --status-succeeded: #2c7331;
+  --status-failed: #b02434;
+  --status-cancelled: #67635a;
+  --pr-open: #1d7442;
+  --pr-draft: #5f6873;
+  --pr-merged: #6b44b8;
+  --pr-closed: #b02434;
+  --issue-open: #1d7442;
+  --issue-closed: #6b44b8;
+  --mastery-unseen: #66635a;
+  --mastery-exposed: #2f69ad;
+  --mastery-demonstrated: #18704b;
+  --mastery-fragile: #8a5900;
+  --mastery-misconception: #b02434;
+
+  --elevation-1: 0 1px 2px #171c1a14;
+  --elevation-2: 0 1px 2px #171c1a0f, 0 8px 24px #171c1a1a;
+  --elevation-3: 0 2px 6px #171c1a14, 0 24px 56px #171c1a2e;
+
+}
+
+:root {
+  /* One family for everything; display text is the same face set larger and tighter. */
+  --font-ui: -apple-system, system-ui, "SF Pro Text", "Segoe UI Variable", "Segoe UI", Roboto, "Helvetica Neue", "Inter", "Noto Sans", sans-serif;
+  --font-prose: var(--font-ui);
+  --font-display: var(--font-ui);
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-md: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 2rem;
+  --leading-tight: 1.2;
+  --leading-normal: 1.5;
+  --leading-prose: 1.65;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-bold: 600;
+
+  --space-0: 0px;
+  --space-px: 1px;
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-9: 36px;
+  --space-10: 40px;
+  --space-11: 44px;
+  --space-12: 48px;
+
+  --blur-sm: 4px;
+  --blur-lg: 12px;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* A background-coloured gap, then the ring, so it shows on any fill. */
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-focus);
+
+  --motion-instant: 60ms;
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 280ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.3, 0, 0, 1.15);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+}
+
+:root[data-theme="dark"],
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Night spruce: a near-neutral dark with the mint of the mark's dot as the accent. */
+  --color-bg: #0e1211;
+  --color-surface-1: #161b19;
+  --color-surface-2: #1b211f;
+  --color-surface-3: #232a27;
+  --color-border: #262d2a;
+  --color-border-strong: #6e7b75;
+  --color-text: #eceeec;
+  --color-text-muted: #a9b2ad;
+  --color-text-faint: #8d9691;
+  --color-accent: #5fd0ae;
+  --color-accent-contrast: #06201a;
+  --color-focus: #9cb8ff;
+  --color-danger: #ff8d9a;
+  --color-warning: #f2c56a;
+  --color-success: #7fdc9c;
+  --color-info: #80c4f7;
+
+  --status-queued: #9aa4ae;
+  --status-dispatching: #a7a8ff;
+  --status-running: #5fd0ae;
+  --status-waiting: #f2c56a;
+  --status-operator: #f39ad5;
+  --status-blocked: #ffa071;
+  --status-succeeded: #8ddb8f;
+  --status-failed: #ff8d9a;
+  --status-cancelled: #9b968a;
+  --pr-open: #7fdc9c;
+  --pr-draft: #9aa4ae;
+  --pr-merged: #c5a9ff;
+  --pr-closed: #ff8d9a;
+  --issue-open: #7fdc9c;
+  --issue-closed: #c5a9ff;
+  --mastery-unseen: #899892;
+  --mastery-exposed: #84b6f0;
+  --mastery-demonstrated: #5fd0ae;
+  --mastery-fragile: #f2c56a;
+  --mastery-misconception: #ff8d9a;
+
+  --elevation-1: 0 1px 2px #00000059;
+  --elevation-2: 0 1px 2px #00000040, 0 8px 24px #00000073;
+  --elevation-3: 0 2px 6px #00000052, 0 24px 56px #0000008c;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root,
+  :root[data-theme] {
+    --motion-instant: 0ms;
+    --motion-fast: 0ms;
+    --motion-base: 0ms;
+    --motion-slow: 0ms;
+  }
+}

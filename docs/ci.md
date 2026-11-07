@@ -337,13 +337,20 @@ uploads nothing, so nothing can be published:
   `aether update --check` against the same server must exit 0 and print that
   this version is up to date.
 
-The phone web app is part of that binary: `crates/aether-remote/build.rs`
-embeds the tracked runtime files under `crates/aether-remote/web/` with
-`include_bytes!`, so a release build needs no Node or bundler and no web files
-beside the binary. The `binary` stage of `scripts/ci.sh` runs the app's type
-checks and unit tests, and its phone-viewport browser tests (including a run
-against the built daemon) wherever Chromium is installed under
-`web/node_modules/.browsers`, as the hosted workflow does.
+The web app is part of that binary: `crates/aether-remote/build.rs` embeds
+the committed bundle `web/dist/` with `include_bytes!`, so a release build
+needs no Node or bundler and no web files beside the binary. The `binary`
+stage of `scripts/ci.sh` runs `node dev/live/run.ts` from `web/` against the
+release binary: every file of `web/dist/` must be served as committed under
+the remote CSP, the retired phone app's paths must be `404`, and pairing
+claims must keep their refusals and rate limit. Wherever Chromium is
+installed for Playwright, as in the hosted workflow, a browser also opens the
+printed pairing URL at both loopback origins and pairs. `make web` runs the
+workspace's own checks (`npm run check`), whose last step rebuilds `web/dist/`.
+The web workflow then runs `scripts/check_web_dist.sh` and fails when the
+committed bundle differs from that build: a changed, new or missing file.
+`make web-dist-check` runs both locally; commit the rebuilt `web/dist/` when it
+fails.
 
 - **A pushed tag `vMAJOR.MINOR.PATCH`** must equal the workspace version in
   `Cargo.toml`, and `CHANGELOG.md` must have a `## MAJOR.MINOR.PATCH` section

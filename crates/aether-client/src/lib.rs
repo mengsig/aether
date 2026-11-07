@@ -27,6 +27,7 @@ use tokio::net::UnixStream;
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 mod agents;
+mod daemon_log;
 mod delivery;
 mod host_pressure;
 mod outbox;
@@ -35,6 +36,7 @@ pub use delivery::key_command;
 pub use outbox::{Unreadable, Unresolved};
 pub use resolution::{Settlement, Undecided};
 mod memory_feedback;
+mod memory_v2;
 mod negotiation;
 mod notifications;
 mod operations;
@@ -73,10 +75,13 @@ pub enum ClientError {
     Malformed(String),
     #[error("invalid client usage: {0}")]
     InvalidUsage(String),
-    #[error("{}", timed_out_message(command, *timeout, host.as_deref()))]
+    #[error("{}", timed_out_message(command, *timeout, queries.as_deref(), host.as_deref()))]
     TimedOut {
         command: String,
         timeout: Duration,
+        /// What the daemon's log shows of its own recent slow queries, when
+        /// the client shares the daemon's host and it shows any.
+        queries: Option<String>,
         /// What this host showed at the timeout that would slow the daemon,
         /// when the client shares the daemon's host and something did.
         host: Option<String>,
@@ -87,16 +92,26 @@ pub enum ClientError {
     DaemonStartup(String),
 }
 
-fn timed_out_message(command: &str, timeout: Duration, host: Option<&str>) -> String {
+fn timed_out_message(
+    command: &str,
+    timeout: Duration,
+    queries: Option<&str>,
+    host: Option<&str>,
+) -> String {
     let unanswered = format!(
         "the daemon did not answer `{command}` within {}s, though it is still connected",
         timeout.as_secs()
     );
     let log = "its log (`logs/aetherd.log` in its data directory) names each request slower \
                than 2s and what it waited on";
-    match host {
-        Some(host) => format!("{unanswered}; {host}, the likely cause; {log}"),
-        None => format!("{unanswered}; {log}"),
+    match (queries, host) {
+        (Some(queries), Some(host)) => {
+            format!("{unanswered}; {queries} and {host}, the likely causes; {log}")
+        }
+        (Some(cause), None) | (None, Some(cause)) => {
+            format!("{unanswered}; {cause}, the likely cause; {log}")
+        }
+        (None, None) => format!("{unanswered}; {log}"),
     }
 }
 
@@ -192,8 +207,8 @@ pub struct Client {
     /// grant.
     request_timeout: Option<Duration>,
     carrier: Option<Arc<ssh::Carrier>>,
-    /// Over a Unix socket the daemon shares this host, so the host's load
-    /// is worth naming when it does not answer.
+    /// Over a Unix socket the daemon shares this host, so its log and the
+    /// host's load are worth naming when it does not answer.
     same_host: bool,
     outbox: Option<Arc<outbox::Outbox>>,
     recovered: Vec<(Command, std::result::Result<Reply, ErrorReply>)>,
@@ -374,6 +389,9 @@ impl Client {
         hello
             .features
             .push(aether_protocol::features::HISTORY_EXPIRED.into());
+        hello
+            .features
+            .push(aether_protocol::features::MEMORY_V2.into());
         let hello = match token {
             Some(token) => hello.with_token(token),
             None => hello,
@@ -498,6 +516,7 @@ impl Client {
                     return Err(ClientError::TimedOut {
                         command: name,
                         timeout,
+                        queries: self.same_host.then(daemon_log::observe).flatten(),
                         host: self.same_host.then(host_pressure::observe).flatten(),
                     });
                 }
@@ -661,6 +680,7 @@ async fn reader_loop(
                 .await;
             }
             ServerFrame::Delta {
+                invocation_seq: _,
                 sub,
                 agent,
                 invocation,

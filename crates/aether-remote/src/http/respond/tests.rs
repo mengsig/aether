@@ -24,6 +24,7 @@ struct Site {
 async fn site() -> Site {
     let (server, _devices, shutdown) = testing::server(Tuning::default());
     let settings = RemoteSettings {
+        mounts: None,
         enabled: true,
         pairing: true,
         public_origins: vec![PUBLIC.into()],
@@ -410,9 +411,12 @@ async fn the_shell_is_served_with_a_validator_and_revalidated() {
         .await;
     assert_eq!(stale.head.status, StatusCode::OK);
 
-    let manifest = site.send(site.get(assets::MANIFEST), "").await;
-    assert_eq!(manifest.header(CONTENT_TYPE), "application/json");
-    assert_eq!(manifest.header(CACHE_CONTROL), assets::CACHE_CONTROL);
+    let worker = site.send(site.get("/sw.js"), "").await;
+    assert_eq!(worker.head.status, StatusCode::OK);
+    assert_eq!(worker.header(CACHE_CONTROL), assets::CACHE_CONTROL);
+    // The legacy app's generated precache table went with it.
+    let legacy = site.send(site.get("/asset-manifest.json"), "").await;
+    assert_eq!(legacy.refused(), HttpErrorCode::NotFound);
 }
 
 #[tokio::test]
@@ -441,7 +445,10 @@ async fn an_upgrade_is_answered_with_101_until_the_connection_cap() {
         );
         assert_eq!(switched.header(SEC_WEBSOCKET_PROTOCOL), ws::SUBPROTOCOL);
         assert_eq!(switched.header(UPGRADE), "websocket");
-        let pending = slot.take().expect("the upgrade is left for the connection");
+        let taken = slot.take().expect("the upgrade is left for the connection");
+        let Upgrade::Carrier(pending) = taken else {
+            panic!("a device upgrade is the carrier's");
+        };
         assert_eq!(pending.origin, site.origin);
         held.push(pending);
     }

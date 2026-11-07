@@ -308,6 +308,7 @@ pub(super) async fn run_tool_calls(
         };
         let descriptor = tool.descriptor();
         aether_tools::ToolRuntime::prepare(&mut call, tool.as_ref(), tool_ctx);
+        crate::noesis_seal::seal_call_key(&mut call);
         let class = gated_class(descriptor.side_effect, &call.input);
         commit.push_event(ctx.draft(EventKind::ToolRequested {
             call: call.clone(),
@@ -362,6 +363,21 @@ pub(super) async fn run_tool_calls(
                             }));
                         }
                     }
+                }
+                Gate::Ungated | Gate::AskPerson
+                    if crate::noesis_seal::sealed_fields(&name).is_some() =>
+                {
+                    // Settled later from the sealed transcript, it would run on
+                    // "<sealed>"; fail it now rather than run the wrong input.
+                    commit.push_event(ctx.draft(EventKind::ToolFailed {
+                        call: call.id,
+                        error: format!(
+                            "{name} cannot wait for an approval: its input is sealed; \
+                             allow it in the agent's approval policy"
+                        ),
+                        retryable: false,
+                        duration_ms: None,
+                    }));
                 }
                 Gate::Ungated | Gate::AskPerson => {
                     commit.push_event(ctx.draft(EventKind::ApprovalRequested {

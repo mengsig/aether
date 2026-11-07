@@ -148,6 +148,7 @@ async fn explicit_requests_do_not_replace_a_pending_model_handoff() {
         user_reply_pending: false,
         reply_given_unrecorded: false,
         start_handoff: None,
+        noesis: None,
     };
     let outcome = apply_action(
         &runtime,
@@ -205,7 +206,11 @@ async fn compaction_without_usage_reports_a_live_gap() {
         usage: None,
         error: None,
     };
-    record_compaction_usage(&h.runtime, &mut h.ctx, &attempt).unwrap();
+    assert!(
+        record_compaction_usage(&h.runtime, &mut h.ctx, &attempt)
+            .unwrap()
+            .is_continue()
+    );
     assert!(!h.ctx.turn_usage.cost_complete);
     assert_eq!(
         h.ctx.turn_usage.cost_gap,

@@ -1,0 +1,7 @@
+@layer app {
+  .app-pair { display: grid; gap: var(--space-5); max-inline-size: 26rem; margin: var(--space-10) auto; animation: ui-rise var(--motion-base) var(--ease-standard); }
+  .app-pair-lede { color: var(--color-text-muted); }
+  .app-pair-phrase { font: var(--weight-bold) var(--text-3xl) / var(--leading-tight) var(--font-display); letter-spacing: -0.025em; }
+  .app-pair-fingerprint { color: var(--color-text-muted); font-size: var(--text-sm); }
+  .app-boot { display: grid; place-items: center; min-block-size: 100dvh; color: var(--color-text-muted); }
+}

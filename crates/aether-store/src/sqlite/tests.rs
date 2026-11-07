@@ -113,6 +113,7 @@ fn artifact_named(name: &str) -> Artifact {
     }
 }
 
+mod agent_pages;
 mod transactions;
 
 mod plans;
@@ -123,6 +124,8 @@ mod subtree;
 mod memories;
 
 mod memory_feedback;
+
+mod memory_retrieval;
 
 mod submissions;
 
@@ -226,6 +229,50 @@ fn fleet_usage_reads_an_agent_without_stats_as_default_usage() {
         .unwrap();
     assert!(store.agent(bare.id).unwrap().is_some(), "still decodes");
     assert_eq!(store.fleet_usage().unwrap().input_tokens, 7);
+}
+
+#[test]
+fn fleet_usage_follows_every_commit_as_the_whole_agent_sum_does() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let mut agents: Vec<Agent> = (1..=4u64)
+        .map(|n| {
+            let mut agent = agent();
+            agent.stats.usage.input_tokens = n;
+            agent.stats.usage.cost_usd = n as f64 / 4.0;
+            agent
+        })
+        .collect();
+    let mut first = Commit::new();
+    for agent in &agents {
+        first = first.mutate(Mutation::UpsertAgent(agent.clone()));
+    }
+    store.commit(first).unwrap();
+    agents[0].stats.usage.output_tokens = 9;
+    agents[1].archived = true;
+    agents[2].status = AgentStatus::Imported {
+        was: aether_core::agent::AgentStatusKind::Completed,
+    };
+    let mut second = Commit::new();
+    for agent in &agents[..3] {
+        second = second.mutate(Mutation::UpsertAgent(agent.clone()));
+    }
+    store.commit(second).unwrap();
+
+    let decoded = store.agents(&AgentFilter::default()).unwrap();
+    assert_eq!(
+        decoded.len(),
+        4,
+        "archiving hides nothing from a store walk"
+    );
+    let mut summed = aether_core::model::Usage::default();
+    for agent in decoded
+        .iter()
+        .filter(|a| !matches!(a.status, AgentStatus::Imported { .. }))
+    {
+        summed += agent.stats.usage;
+    }
+    assert_eq!(summed.output_tokens, 9, "the update is in the sum");
+    assert_eq!(store.fleet_usage().unwrap(), summed);
 }
 
 mod engine_sessions;

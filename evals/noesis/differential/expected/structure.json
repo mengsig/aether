@@ -1,0 +1,21 @@
+{
+  "phases": ["probe", "plan", "teach"],
+  "questions": [{"valid": false}, {"valid": true}],
+  "plan_validations": [
+    {"valid": false, "problems": ["self_prerequisite"]},
+    {"valid": true, "problems": []}
+  ],
+  "graph": {
+    "statements": [
+      "a derivative is a limit of slopes",
+      "the derivative of x^2 is 2x",
+      "the slope of x^2 at 1 is 2"
+    ],
+    "premise_sets": [
+      {
+        "conclusion": "the slope of x^2 at 1 is 2",
+        "premises": ["a derivative is a limit of slopes", "the derivative of x^2 is 2x"]
+      }
+    ]
+  }
+}

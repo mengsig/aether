@@ -106,6 +106,7 @@ Unknown keys are refused, as in every other section.
 | `pairing` | bool | `false` | `start_pairing` may open a pairing. |
 | `public_origins` | string[] | `[]` | Exact origins browsers use, e.g. `https://box.tail1234.ts.net`. The Host and Origin allowlist. Each is `https://host[:port]` with no path, query or trailing slash; at most 16. |
 | `push` | bool | `false` | The daemon sends Web Push notifications. |
+| `mounts` | object[] | absent | Local services the listener forwards to, each `{prefix, kind, target}`: `prefix` matches `/[a-z][a-z0-9-]{0,31}`, `kind` is `archon`, `target` is `http://127.0.0.1:<port>` or `http://[::1]:<port>`. At most 4, prefixes distinct. An absent field keeps the saved mounts and an empty list removes them. Needs the `remote_mounts` feature; see [Mounts](#mounts). |
 
 Enabling with no public origin is allowed and reachable only on loopback
 (`http://127.0.0.1:8377`, `http://localhost:8377`), which browsers treat as a
@@ -233,6 +234,7 @@ No authentication. Response `200` (`Health`):
 | `protocol_version` | integer | Newest protocol the daemon speaks. |
 | `min_protocol_version` | integer | Oldest it serves. |
 | `pairing_open` | bool | A pairing is waiting to be claimed. |
+| `mounts` | object[] | Each mount as `{prefix, kind}`; never its target. Always present, `[]` when there are none. |
 
 ### `POST /api/pair/claim`
 
@@ -310,44 +312,88 @@ Poll once a second while `claimed`. An unknown `pairing` is `404 not_found`,
 as is the id of a pairing nobody has claimed: the id is learned only from a
 successful claim.
 
+### Mounts
+
+A request whose path is a mount's prefix or lies below it (`/archon`,
+`/archon/…`, never `/archonx`) is forwarded to the mount's loopback target
+with the prefix stripped (`/archon` becomes `/`) and the query unchanged,
+after the Host check and before every route but the listener's own
+endpoints (`/ws` and everything under `/api`), which no mount takes over. A
+prefix the listener serves itself (`/api`, `/ws`, the pairing page `/pair`,
+or a directory of the embedded web app such as `/assets`) is refused when
+mounts are saved. A path
+below a prefix with an empty, `.` or `..` segment, a `%` or a `\` is `400` and
+is not forwarded.
+
+- **Unchanged.** The method, body and every end-to-end header go as they
+  came, `Origin` and `Cookie` included; `Host` becomes the target. Hop-by-hop
+  headers (`Connection` and the headers it names, `Keep-Alive`, `TE`,
+  `Trailer`, `Transfer-Encoding`, `Upgrade`, `Proxy-*`) stay behind. Nothing is
+  added: no cookie, no header, no device standing. A paired Aether device has
+  no standing on the target; the target authenticates its own users.
+- **Answers.** The target's status, end-to-end headers and body come back as
+  they are, `Set-Cookie` included; the [response headers](#response-headers)
+  are added only where the target set none. Every mounted answer carries
+  `Connection: close`. A target that does not accept a connection within 2 s
+  is `502`; one that does not answer within 30 s is `504`; an answer over
+  8 MiB is `502`.
+- **Limits.** The request head and body limits are the listener's own.
+  A mounted WebSocket takes one of `max_connections` places of its own, so
+  mounts cannot starve device connections; frames are relayed one by one,
+  each up to the carrier's message limit (larger is `1009`), and
+  `Sec-WebSocket-Extensions` is not offered, so frames pass as they are. Close
+  codes pass through; a mount removed or changed closes its WebSockets with
+  `1001`. Ping and Pong belong to each hop and are not relayed: the listener
+  answers each side's pings itself, pings the client every 30 s, and lets a
+  client silent for 90 s go, closing the target's side with `1001`.
+- **The Funnel lease.** Mounted traffic flows only under a lease: a
+  successful read of `tailscale serve status --json` showing no Funnel
+  anywhere on the machine, at most 5 s old. While a mounted connection is
+  open the status is read every 2 s; otherwise an admission waits for a read
+  begun after it arrived. A `tailscale` command that cannot be found (on
+  `PATH` or in the usual install locations) is a failed read, never a
+  private one. When a read shows a Funnel, fails, hangs, or the lease ages
+  out, every open mounted WebSocket closes with `1008` and requests are `503`
+  until a read shows no Funnel again. The target's socket refuses every byte
+  once the lease is over, even before its timer has fired: nothing more, not
+  even a close frame, reaches the target. A refusal is reused for 1 s, so a stream of refused requests does
+  not become a stream of reads.
+- **Host only.** Mounts are set with `aether remote mount` or
+  `configure_remote` from the local socket. Adding one is refused
+  (`invalid_transition`) unless a fresh status read shows no Funnel;
+  removing or keeping one never is. `aether remote setup --funnel`, or setup
+  keeping a Funnel already open on any port, is refused while any mount is
+  present.
+
 ### Assets
 
-`GET` or `HEAD` of any other path serves the embedded web app:
+`GET` or `HEAD` of any other path serves the embedded web app, the committed
+bundle `web/dist/` (built from `web/` with `npm run build`):
 
 - an exact file match is served with its `Content-Type`;
-- a path whose last segment has no `.` (an app route such as `/pair`) is
-  served `/index.html`;
-- anything else is `404 not_found`.
+- a path of one segment with no `.` (`/`, or `/pair`, which the pairing URL
+  opens) is served `/index.html`. The app routes in the fragment
+  (`#/pair/aether`), and the shell links its files as `./…`, so a deeper path
+  would break it;
+- anything else is `404 not_found`, including every path of the retired
+  phone app (`/app.js`, `/ui/…`, `/asset-manifest.json`).
 
 Every asset carries a strong `ETag` (the quoted SHA-256 of the file), and
-`If-None-Match` is answered with `304`. Caching is keyed by that hash:
+`If-None-Match` is answered with `304`. Every asset is `Cache-Control:
+no-cache`, so a browser revalidates with the `ETag` and a new release shows on
+the next load. The service worker, `/sw.js` at the root so its scope is the
+whole app, keeps the offline copy: its build writes the precache list into it.
+It never answers `/api`, `/ws` or the `/archon` mount, and on activation it
+also clears the retired phone app's `aether-shell-*` caches. Responses that
+are not assets carry `Cache-Control: no-store`.
 
-- `GET /path?v=<hash>`, where `<hash>` is the file's SHA-256 in lowercase
-  hex, is served with `Cache-Control: public, max-age=31536000, immutable`:
-  a URL that names its content never changes.
-- Any other URL, including one whose `v` is stale, is served with
-  `Cache-Control: no-cache`, so the browser revalidates with the `ETag`.
-- `/index.html` (and so every app route), `/sw.js`, `/service-worker.js` and
-  `/asset-manifest.json` are always `no-cache`, whatever the query. A stale
-  service worker would pin the app to an old release.
-
-`GET /asset-manifest.json` is generated by the daemon: one JSON object
-mapping every embedded path to its hash, `{"/index.html": "9f2c…", …}`. A
-service worker reads it to precache `path?v=hash` without a build step.
-Responses that are not assets carry `Cache-Control: no-store`.
-
-The app's source is `crates/aether-remote/web/`. Its runtime files are
-compiled into the binary as written: plain static files and ES modules, no
-bundler, no Node. `web/index.html` must exist, and is all that must.
-
-What is embedded: at the top of `web/`, `index.html`,
-`manifest.webmanifest` and every `*.js` and `*.css`; and everything under
-`assets/`, `ui/`, `core/` and `features/`. Never embedded, at any depth:
-the directories `dev/`, `tests/`, `scripts/`, `node_modules/`,
-`test-results/` and `playwright-report/`; `*.test.js`; `*.md`; hidden files
-and directories; and package and tool files (`package.json`, lockfiles,
-`tsconfig.json`, `jsconfig.json`, `*.config.*`). The build reruns when a
-file under `web/` is added, removed or changed.
+`crates/aether-remote/build.rs` compiles every file under `web/dist/` but
+hidden ones into the binary with `include_bytes!`: no Node and no bundler at
+build time. The build stops when `index.html`, `sw.js` or
+`manifest.webmanifest` is missing, or when a path is not URL-safe ASCII, and
+reruns when a file under `web/dist/` changes. The listener's own prefixes,
+which no mount may take, are `/api`, `/ws`, `/pair` and every top-level
+directory of the bundle (`/assets`, `/icons`).
 
 ### Response headers
 
@@ -720,6 +766,9 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `get_agent` | observe | |
 | `list_agents` | observe | |
 | `get_tree` | observe | |
+| `list_agents_page` | observe | |
+| `get_transcript_page` | observe | |
+| `usage_breakdown` | observe | |
 | `update_agent` | operate | `host_only` when `patch.backend` or `patch.tools` is supplied; `subtree` needs nothing more. |
 | `reply_to_question` | operate | |
 | `send_message` | operate | The same with `attachments` (images). |
@@ -779,6 +828,11 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `record_memory_feedback` | host_only | Records evidence on a memory the named task saw. |
 | `retract_memory_feedback` | host_only | Withdraws feedback while preserving the original record. |
 | `memory_feedback` | host_only | Reads recent feedback, including retractions. |
+| `memory_retrieval_explain` | host_only | What retrieval did for each model call of a task or invocation. |
+| `consolidate_memories` | host_only | Merges near-duplicate memories, or plans it with `dry_run`. |
+| `memory_export` | host_only | Every memory of a scope as a JSON Lines artifact. |
+| `memory_import` | host_only | Inserts what an export holds and the store lacks; never overwrites. |
+| `memory_migration_status` | observe | Memory 2.0 migrations, counts and backup file names. |
 | `list_runs` | observe | |
 | `get_run_report` | observe | |
 | `replay` | observe | |
@@ -809,6 +863,33 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `subscribe_push` | device_self | |
 | `unsubscribe_push` | device_self | |
 | `test_push` | device_self | |
+| `storage_status` | observe | |
+| `storage_gc` | host_only | Deletes stored history on the host. |
+| `post_notification` | operate | |
+| `list_notifications` | observe | |
+| `get_notification` | observe | |
+| `mark_notification_read` | operate | |
+| `resolve_notification` | operate | |
+| `answer_notification` | operate | |
+| `refresh_provider_usage` | operate | |
+| `noesis_status` | observe | Answers while Noesis is off. |
+| `noesis_configure` | operate | `host_only` when the patch sets `enabled`, a budget, `billing.allow_api` or `prompts.overrides`. |
+| `noesis_create_session` | operate | |
+| `noesis_send` | operate | |
+| `noesis_answer` | operate | |
+| `noesis_get_session` | observe | Never carries a sealed answer key or solution. |
+| `noesis_list_sessions` | observe | Never carries a sealed answer key or solution. |
+| `noesis_delete_session` | operate | |
+| `noesis_graph` | observe | |
+| `noesis_delete_proposition` | operate | |
+| `noesis_delete_source` | operate | |
+| `noesis_extract` | operate | |
+| `noesis_import_source` | operate | Reads a published artifact, masked as `read_artifact` masks it. |
+| `noesis_jobs` | observe | |
+| `noesis_cancel_job` | operate | |
+| `noesis_learner` | observe | |
+| `noesis_learner_evidence` | observe | |
+| `noesis_correct_learner` | operate | |
 | `resolve_submission` | operate | Read-only. Takes the class of the `command` it names when that is stricter, and every condition in that command's row: asking is permitted exactly when sending it would be. |
 
 What no device can do, whatever its role: stop the daemon; enable, disable
@@ -1946,6 +2027,9 @@ aether remote pair [--role operator|observer]
 aether remote devices [--all] [--json]
 aether remote revoke DEVICE [--reason TEXT] [--json]
 aether remote rename DEVICE NAME [--json]
+aether remote mount add PREFIX --target URL [--kind archon] [--json]
+aether remote mount remove PREFIX [--json]
+aether remote mount list [--json]
 
 aether remote add NAME --ssh TARGET [--executable PATH] [--remote-socket PATH] [--json]
 aether remote list [--json]

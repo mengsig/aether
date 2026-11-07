@@ -13,6 +13,8 @@ pub(super) fn owns(command: &Command) -> bool {
         command,
         Command::GetEvents { .. }
             | Command::GetTranscript { .. }
+            | Command::GetTranscriptPage { .. }
+            | Command::UsageBreakdown { .. }
             | Command::GetInbox { .. }
             | Command::GetSnapshot { .. }
             | Command::GetInvocation { .. }
@@ -49,13 +51,44 @@ fn read(store: &dyn aether_store::Store, command: Command) -> Result<Reply, Erro
                 .map(Into::into)
                 .collect(),
         )),
+        Command::GetTranscriptPage {
+            agent,
+            after,
+            before,
+            limit,
+        } => get_transcript_page(store, agent, after, before, limit),
+        Command::UsageBreakdown {
+            scope,
+            by,
+            since,
+            until,
+            limit,
+        } => {
+            let limit = aether_protocol::read_models::usage_request(&scope, since, until, limit)
+                .map_err(ErrorReply::invalid)?;
+            let request = crate::usage_breakdown::UsageRequest {
+                scope,
+                by,
+                since,
+                until,
+                limit: limit as usize,
+            };
+            let breakdown =
+                crate::usage_breakdown::usage_breakdown(store, &request).map_err(store_err)?;
+            Ok(Reply::UsageBreakdown(breakdown))
+        }
         Command::GetInbox { agent, after } => {
             Ok(Reply::Inbox(store.inbox(agent, after).map_err(store_err)?))
         }
+        // The retrieval trace is host-only (`memory_retrieval_explain`);
+        // a snapshot is readable by observers.
         Command::GetSnapshot { id } => store
             .snapshot(id)
             .map_err(store_err)?
-            .map(Reply::Snapshot)
+            .map(|mut snapshot| {
+                snapshot.memory_retrieval = None;
+                Reply::Snapshot(snapshot)
+            })
             .ok_or_else(|| ErrorReply::not_found(id)),
         Command::GetInvocation { id } => store
             .invocation(id)
@@ -110,6 +143,25 @@ async fn read_artifact(
         artifact,
         base64: base64::engine::general_purpose::STANDARD.encode(slice),
         truncated,
+    })
+}
+
+fn get_transcript_page(
+    store: &dyn aether_store::Store,
+    agent: aether_core::id::AgentId,
+    after: Option<u64>,
+    before: Option<u64>,
+    limit: Option<u32>,
+) -> Result<Reply, ErrorReply> {
+    let limit = aether_protocol::read_models::transcript_request(after, before, limit)
+        .map_err(ErrorReply::invalid)?;
+    let page = crate::projections::transcript_page(store, agent, after, before, limit as usize)
+        .map_err(store_err)?;
+    Ok(Reply::TranscriptPage {
+        entries: page.entries,
+        has_before: page.has_before,
+        has_after: page.has_after,
+        last_seq: page.last_seq,
     })
 }
 

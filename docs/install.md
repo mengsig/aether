@@ -124,6 +124,9 @@ installs without asking. With `--json` the notes and the question go to
 stderr. A release published before the notes asset existed has none to show:
 the command names the release page instead and does not ask.
 
+[Upgrading](upgrading.md) explains the notes of a release that changes more
+than a patch, such as 1.3.0, and what to do in order.
+
 `--version` with an older release is a downgrade, and the command says so. An
 older build may refuse a store that a newer one has already migrated; the
 snapshot taken before that migration is described in

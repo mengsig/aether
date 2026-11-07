@@ -29,6 +29,18 @@ fn commands() -> Vec<Command> {
         json!({"cmd":"record_memory_feedback", "memory":aether_core::id::MemoryId::new(),
             "task":aether_core::id::TaskId::new(), "verdict":"helped", "evidence":"review", "reason":"Verified"}),
         json!({"cmd":"add_approval_rule", "decision":"approved", "match":{}, "scope":{"scope":"everywhere"}}),
+        json!({"cmd":"noesis_configure", "patch":{"concurrency":{"background":0}}}),
+        json!({"cmd":"noesis_create_session", "goal":"learn rust", "mode":"teach"}),
+        json!({"cmd":"noesis_send", "session":"ns_1", "text":"hi"}),
+        json!({"cmd":"noesis_answer", "session":"ns_1", "question":"q_1",
+            "answer":{"choices":["a"], "text":"t", "dont_know":false, "confidence":70}}),
+        json!({"cmd":"noesis_delete_session", "session":"ns_1", "graph":"delete_nodes"}),
+        json!({"cmd":"noesis_delete_proposition", "proposition":"p_1"}),
+        json!({"cmd":"noesis_delete_source", "source":"s_1", "graph":"delete_unsupported"}),
+        json!({"cmd":"noesis_extract", "session":"ns_1"}),
+        json!({"cmd":"noesis_import_source", "name":"notes", "artifact":aether_core::id::ArtifactId::new()}),
+        json!({"cmd":"noesis_cancel_job", "job":"j_1"}),
+        json!({"cmd":"noesis_correct_learner", "concept":"k_1", "state":"fragile", "reason":"I forgot it"}),
     ];
     wires
         .into_iter()

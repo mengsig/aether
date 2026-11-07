@@ -1,0 +1,11 @@
+{
+  "name": "@aether-ui/github",
+  "version": "1.3.0",
+  "private": true,
+  "type": "module",
+  "description": "GitHub screens and entity actions for linked issues and pull requests.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "sideEffects": ["./src/index.ts", "./src/*/routes.ts"]
+}

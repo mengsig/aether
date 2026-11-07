@@ -1,0 +1,9 @@
+@layer app {
+  .topology { display: grid; gap: var(--space-4); animation: ui-rise var(--motion-base) var(--ease-standard); }
+  .topology-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+  .topology-count { margin-inline-end: auto; color: var(--color-text-muted); font-size: var(--text-sm); }
+  .topology-canvas {
+    position: relative; block-size: max(20rem, calc(100dvh - 14rem)); overflow: hidden;
+    border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1);
+  }
+}

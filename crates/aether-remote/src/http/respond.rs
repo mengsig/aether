@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use aether_protocol::remote::{
-    Health, HttpErrorCode, PairClaimRequest, PairClaimResponse, PairStatusResponse,
+    Health, HttpErrorCode, MountKind, PairClaimRequest, PairClaimResponse, PairStatusResponse,
 };
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full, LengthLimitError, Limited};
@@ -21,6 +21,7 @@ use serde::de::DeserializeOwned;
 
 use super::{MAX_BODY_BYTES, Refusal, Route, SECURITY_HEADERS, allowed_methods, error_body, route};
 use crate::lobby::Seat;
+use crate::mount::{self, BadPath, Failure, Forwarded, Mounted};
 use crate::{Live, RemoteServer, assets, pairing, ws};
 
 pub(crate) type Body = Full<Bytes>;
@@ -39,19 +40,33 @@ pub(crate) struct Pending {
     pub seat: Seat,
 }
 
+/// What carries a connection whose last response was `101`.
+pub(crate) enum Upgrade {
+    /// The daemon protocol, for a device.
+    Carrier(Pending),
+    /// A WebSocket tunnelled to a mounted daemon.
+    Tunnel(mount::Tunnel),
+}
+
 /// Where a request handler leaves an accepted upgrade for its connection.
 #[derive(Default)]
-pub(crate) struct UpgradeSlot(parking_lot::Mutex<Option<Pending>>);
+pub(crate) struct UpgradeSlot(parking_lot::Mutex<Option<Upgrade>>);
 
 impl UpgradeSlot {
-    fn put(&self, pending: Pending) {
-        let displaced = self.0.lock().replace(pending);
+    fn put(&self, upgrade: Upgrade) {
+        let displaced = self.0.lock().replace(upgrade);
         debug_assert!(displaced.is_none(), "a connection upgrades at most once");
     }
 
-    pub(crate) fn take(&self) -> Option<Pending> {
+    pub(crate) fn take(&self) -> Option<Upgrade> {
         self.0.lock().take()
     }
+}
+
+/// An answer, and whose it is: a mounted daemon's keeps the headers it chose.
+enum Answered {
+    Own(Response<Body>),
+    Mounted(Response<Body>),
 }
 
 /// Answer one request. Never fails: every refusal is a response too.
@@ -65,19 +80,19 @@ where
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     let live = server.live();
-    let response = match answer(server, &live, request, upgrade).await {
-        Ok(response) => response,
-        Err(refusal) => refuse(&refusal),
-    };
-    harden(response)
+    match answer(server, &live, request, upgrade).await {
+        Ok(Answered::Own(response)) => harden(response),
+        Ok(Answered::Mounted(response)) => harden_missing(response),
+        Err(refusal) => harden(refuse(&refusal)),
+    }
 }
 
 async fn answer<B>(
     server: &RemoteServer,
     live: &Live,
-    mut request: Request<B>,
+    request: Request<B>,
     upgrade: &UpgradeSlot,
-) -> Result<Response<Body>, Refusal>
+) -> Result<Answered, Refusal>
 where
     B: HttpBody,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -89,13 +104,68 @@ where
             "the daemon is shutting down",
         ));
     }
+    let mounts = live.settings.mounts.as_deref().unwrap_or_default();
+    let uri = request.uri();
+    let found = match mount::is_endpoint(uri.path()) {
+        true => None,
+        false => mount::find(mounts, uri.path(), uri.query()),
+    };
+    if let Some(found) = found {
+        let remounted = live.remounted.clone();
+        return mounted(server, found, remounted, request, upgrade).await;
+    }
+    endpoint(server, live, request, upgrade)
+        .await
+        .map(Answered::Own)
+}
+
+/// A request under a mount: forwarded to its daemon, whose answer is passed on.
+async fn mounted<B>(
+    server: &RemoteServer,
+    found: Result<Mounted, BadPath>,
+    remounted: tokio_util::sync::CancellationToken,
+    request: Request<B>,
+    upgrade: &UpgradeSlot,
+) -> Result<Answered, Refusal>
+where
+    B: HttpBody,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let mounted = found
+        .map_err(|BadPath| bad_request("the request path is not one this listener forwards"))?;
+    match mount::forward(server, mounted, remounted, request).await {
+        Ok(Forwarded::Answer(response)) => Ok(Answered::Mounted(response)),
+        Ok(Forwarded::Upgraded(response, tunnel)) => {
+            debug_assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+            upgrade.put(Upgrade::Tunnel(tunnel));
+            Ok(Answered::Mounted(response))
+        }
+        Err(Failure::Refused(refusal)) => Err(refusal),
+        Err(Failure::Gateway(status, message)) => {
+            let body = error_body(HttpErrorCode::Unavailable, message);
+            Ok(Answered::Own(json(status, &body)))
+        }
+    }
+}
+
+/// A request for one of the listener's own endpoints or files.
+async fn endpoint<B>(
+    server: &RemoteServer,
+    live: &Live,
+    mut request: Request<B>,
+    upgrade: &UpgradeSlot,
+) -> Result<Response<Body>, Refusal>
+where
+    B: HttpBody,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
     let route = find_route(request.method(), request.uri().path())?;
     let origin = match route.needs_origin() {
         true => check_origin(live, request.headers())?,
         false => String::new(),
     };
     match route {
-        Route::Health => Ok(json(StatusCode::OK, &health(server))),
+        Route::Health => Ok(json(StatusCode::OK, &health(server, live))),
         Route::PairClaim => {
             let claim: ClaimBody = read_json(request, server.tuning().body_timeout).await?;
             claim_pairing(server, claim)
@@ -167,12 +237,37 @@ fn single<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Option<&'a str> {
     }
 }
 
-fn health(server: &RemoteServer) -> Health {
-    Health {
-        status: "ok".into(),
-        protocol_version: aether_protocol::PROTOCOL_VERSION,
-        min_protocol_version: aether_protocol::compat::MIN_PROTOCOL_VERSION,
-        pairing_open: server.pairing().lock().is_open(aether_core::time::now()),
+/// `GET /api/health`, with the mounts CONTRACTS.md §1.1 adds to it: prefix and kind only,
+/// never where they lead.
+#[derive(Serialize)]
+struct HealthWithMounts<'a> {
+    #[serde(flatten)]
+    health: Health,
+    mounts: Vec<HealthMount<'a>>,
+}
+
+#[derive(Serialize)]
+struct HealthMount<'a> {
+    prefix: &'a str,
+    kind: MountKind,
+}
+
+fn health<'a>(server: &RemoteServer, live: &'a Live) -> HealthWithMounts<'a> {
+    let mounts = live.settings.mounts.as_deref().unwrap_or_default();
+    HealthWithMounts {
+        health: Health {
+            status: "ok".into(),
+            protocol_version: aether_protocol::PROTOCOL_VERSION,
+            min_protocol_version: aether_protocol::compat::MIN_PROTOCOL_VERSION,
+            pairing_open: server.pairing().lock().is_open(aether_core::time::now()),
+        },
+        mounts: mounts
+            .iter()
+            .map(|mount| HealthMount {
+                prefix: &mount.prefix,
+                kind: mount.kind,
+            })
+            .collect(),
     }
 }
 
@@ -285,11 +380,11 @@ fn switch_protocols<B>(
     })?;
     let accept = HeaderValue::from_str(&accept)
         .map_err(|_| Refusal::new(HttpErrorCode::Internal, "could not answer the upgrade"))?;
-    upgrade.put(Pending {
+    upgrade.put(Upgrade::Carrier(Pending {
         on_upgrade: hyper::upgrade::on(request),
         origin,
         seat,
-    });
+    }));
     let mut response = Response::new(Body::default());
     *response.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
     let headers = response.headers_mut();
@@ -309,7 +404,6 @@ fn asset<B>(path: &str, request: &Request<B>) -> Result<Response<Body>, Refusal>
         .ok_or_else(|| Refusal::new(HttpErrorCode::NotFound, "no such file"))?;
     let etag = HeaderValue::from_str(&assets::etag(&asset))
         .map_err(|_| Refusal::new(HttpErrorCode::Internal, "could not name the file's version"))?;
-    let caching = assets::cache_control(&asset, request.uri().query());
     let fresh = request
         .headers()
         .get_all(IF_NONE_MATCH)
@@ -319,7 +413,10 @@ fn asset<B>(path: &str, request: &Request<B>) -> Result<Response<Body>, Refusal>
     let mut response = Response::new(Body::default());
     let headers = response.headers_mut();
     headers.insert(ETAG, etag);
-    headers.insert(CACHE_CONTROL, HeaderValue::from_static(caching));
+    headers.insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static(assets::CACHE_CONTROL),
+    );
     if fresh {
         *response.status_mut() = StatusCode::NOT_MODIFIED;
         return Ok(response);
@@ -365,6 +462,25 @@ fn refuse(refusal: &Refusal) -> Response<Body> {
             Err(error) => tracing::error!(%error, "could not name the allowed methods"),
         }
     }
+    response
+}
+
+/// A mounted daemon's answer keeps the security headers it sent; the listener's own fill in
+/// those it left out, since its pages share this origin.
+fn harden_missing(mut response: Response<Body>) -> Response<Body> {
+    let headers = response.headers_mut();
+    let csp = HeaderValue::from_static(super::CONTENT_SECURITY_POLICY);
+    headers.entry(CONTENT_SECURITY_POLICY).or_insert(csp);
+    for (name, value) in SECURITY_HEADERS {
+        let value = HeaderValue::from_static(value);
+        headers
+            .entry(HeaderName::from_static(name))
+            .or_insert(value);
+    }
+    headers
+        .entry(CACHE_CONTROL)
+        .or_insert(HeaderValue::from_static(NO_STORE));
+    debug_assert!(headers.contains_key(CONTENT_SECURITY_POLICY));
     response
 }
 

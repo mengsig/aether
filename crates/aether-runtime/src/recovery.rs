@@ -416,6 +416,9 @@ fn resume_recovered(
     if agent.status != next {
         agent.transition(next, now())?;
     }
+    if agent.status == AgentStatus::Ready {
+        park_noesis_on_recovery(runtime, commit, agent)?;
+    }
     if let AgentStatus::Blocked { reason } = &agent.status {
         commit.push_event(recovery_event(
             agent,
@@ -452,6 +455,34 @@ fn resume_recovered(
             Actor::System,
         )?;
     }
+    Ok(())
+}
+
+/// A Noesis agent recovery would requeue while the gate is not Enabled is
+/// paused instead, so it takes no turn until Noesis is back and it is resumed.
+fn park_noesis_on_recovery(
+    runtime: &Runtime,
+    commit: &mut Commit,
+    agent: &mut aether_core::agent::Agent,
+) -> Result<()> {
+    debug_assert_eq!(
+        agent.status,
+        AgentStatus::Ready,
+        "only a requeued agent is parked"
+    );
+    if agent.paused {
+        return Ok(());
+    }
+    let Some(admission) = runtime.noesis_admission(agent)? else {
+        return Ok(());
+    };
+    if admission.budget.is_some() {
+        return Ok(());
+    }
+    agent.paused = true;
+    agent.updated_at = now();
+    commit.push_event(recovery_event(agent, EventKind::AgentPaused { via: None }));
+    tracing::info!(agent = %agent.id, "parked a Noesis agent at recovery: Noesis is not enabled");
     Ok(())
 }
 

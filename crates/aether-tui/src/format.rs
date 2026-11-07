@@ -51,6 +51,17 @@ pub fn low_disk(disk: &aether_core::disk::LowDisk) -> String {
     )
 }
 
+pub fn disk_status(status: &aether_protocol::DaemonStatus) -> Option<String> {
+    if let Some(reason) = status.unavailable(aether_protocol::status_sections::LOW_DISK) {
+        return Some(format!("Disk unavailable: {reason}"));
+    }
+    let mut text = low_disk(status.low_disk.as_ref()?);
+    if let Some(stale) = &status.stale {
+        text.push_str(&format!(" ({})", stale_status(stale)));
+    }
+    Some(text)
+}
+
 /// How old a stale daemon status is: the daemon could not read its store in
 /// time and answered with an earlier read, or with none.
 pub fn stale_status(stale: &aether_protocol::StatusStale) -> String {

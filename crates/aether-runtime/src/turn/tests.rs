@@ -42,6 +42,7 @@ impl ComposeHarness {
             user_reply_pending: false,
             reply_given_unrecorded: false,
             start_handoff: None,
+            noesis: None,
         };
         (Self { runtime, ctx }, dir)
     }

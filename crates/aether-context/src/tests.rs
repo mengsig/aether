@@ -419,6 +419,11 @@ fn memory_layer_respects_its_budget() {
     assert!(layer.items < 50);
     assert!(layer.tokens <= ContextBudget::for_profile(&c, None).memory_max);
     assert_eq!(out.snapshot.memory_ids.len() as u32, layer.items);
+    let fit = ContextManager::new().memories_that_fit(&mems, &c, a.config.max_output_tokens);
+    assert_eq!(
+        fit, out.snapshot.memory_ids,
+        "the fit is what assembly renders"
+    );
 }
 
 #[test]

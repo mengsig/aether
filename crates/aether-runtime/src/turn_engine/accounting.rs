@@ -159,8 +159,8 @@ pub(super) fn has_budgeted_lineage(runtime: &Runtime, agent: AgentId) -> Result<
 /// [`aether_model::Registry::api_equivalent_price`] guarantees.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct TurnPricing {
-    pub(super) billed: Option<ModelCost>,
-    pub(super) estimate: Option<ModelCost>,
+    pub(crate) billed: Option<ModelCost>,
+    pub(crate) estimate: Option<ModelCost>,
 }
 
 impl TurnPricing {
@@ -184,7 +184,7 @@ impl TurnPricing {
     /// nobody could price - `codex/default`, `claude-code/default`, where the
     /// CLI picks. `None` keeps the pricing the turn started with: an
     /// unknown session model is left unpriced rather than given a price.
-    pub(super) fn of_session(
+    pub(crate) fn of_session(
         runtime: &Arc<Runtime>,
         configured: &ResolvedModel,
         reported: &str,
@@ -374,6 +374,12 @@ pub(super) fn budget_crossed(
     ctx: &TurnCtx,
     subtree: &mut SubtreeUsage,
 ) -> Result<Option<Crossed>> {
+    // Every site here is a model boundary of the engine: usage moved, or a
+    // bridge call is about to act. The Noesis budgets and gate apply there.
+    // Bound: a native engine may finish the ONE model request already in
+    // flight when the budget runs out or a disable starts; the next usage
+    // report or bridge request reaches this hook and interrupts it.
+    crate::noesis_guard::interrupt_at_boundary(runtime, ctx);
     if ctx.agent.config.token_budget.is_none() && ctx.agent.config.cost_budget.is_none() {
         return Ok(None);
     }

@@ -199,6 +199,8 @@ mod held_waits;
 mod lease_reads;
 #[path = "kernel/leases.rs"]
 mod leases;
+#[path = "kernel/memory_consolidation.rs"]
+mod memory_consolidation;
 #[path = "kernel/memory_context.rs"]
 mod memory_context;
 #[path = "kernel/memory_feedback.rs"]
@@ -209,6 +211,8 @@ mod memory_proposals;
 mod memory_scope;
 #[path = "kernel/memory_support.rs"]
 mod memory_support;
+#[path = "kernel/memory_v2.rs"]
+mod memory_v2;
 #[path = "kernel/message_fanout.rs"]
 mod message_fanout;
 #[path = "kernel/message_limits.rs"]
@@ -217,6 +221,10 @@ mod message_limits;
 mod model_effort;
 #[path = "kernel/model_profiles.rs"]
 mod model_profiles;
+#[path = "kernel/noesis.rs"]
+mod noesis;
+#[path = "kernel/noesis_seal.rs"]
+mod noesis_seal;
 #[path = "kernel/notes.rs"]
 mod notes;
 #[path = "kernel/notifications.rs"]
@@ -275,6 +283,8 @@ mod shell_leases;
 mod shutdown_recovery;
 #[path = "kernel/snapshot_reconstruction.rs"]
 mod snapshot_reconstruction;
+#[path = "kernel/status_deadline.rs"]
+mod status_deadline;
 #[path = "kernel/store_double.rs"]
 mod store_double;
 #[path = "kernel/store_lock.rs"]
@@ -322,7 +332,7 @@ use exhaustion_support::{
 };
 use fixture::{
     Harness, declared_engines, harness, harness_configured, harness_full,
-    harness_full_with_engines, harness_with, harness_with_tools, spawns_real_bash,
+    harness_full_with_engines, harness_uncut, harness_with, harness_with_tools, spawns_real_bash,
 };
 use memory_support::{git_in, wait_for_seeding};
 use recovery_support::{

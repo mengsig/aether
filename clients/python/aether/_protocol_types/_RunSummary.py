@@ -13,6 +13,7 @@ class RunSummary(TypedDict, total=False):
     agents: int
     agents_live: int
     forecast_usd_next_hour: float
+    rate_approximate: bool  # optional
     rate_usd_per_hour: float
     run: _protocol.RunId
     started_at: str

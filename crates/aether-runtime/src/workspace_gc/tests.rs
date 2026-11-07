@@ -334,6 +334,7 @@ async fn completed_projection_with_running_turn_is_preserved() {
             provider: "mock".into(),
             engine: true,
             on_provider: false,
+            noesis: None,
         },
     );
     f.assert_kept("live or resumable");
@@ -599,6 +600,7 @@ async fn corrupt_owner_discovered_after_startup_prevents_workspace_collection() 
         let mut owner = f.owner(AgentStatus::Running);
         f.store(owner.clone());
         let connection = rusqlite::Connection::open(path).unwrap();
+        aether_store::register_sql_functions(&connection).unwrap();
         assert_eq!(
             connection
                 .execute(

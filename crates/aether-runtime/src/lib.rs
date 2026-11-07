@@ -21,6 +21,10 @@ mod inspection;
 pub mod memory_context;
 pub mod memory_curation;
 mod memory_feedback;
+pub mod memory_v2;
+mod noesis_engine;
+pub mod noesis_guard;
+pub mod noesis_seal;
 pub mod notes;
 pub mod notifications;
 mod orphans;
@@ -62,10 +66,12 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 pub use approval::{Gate, Remember};
-pub use bus::{BusMessage, DeltaKind, EventBus};
+pub use bus::{BusMessage, DeltaKind, DeltaStream, EventBus};
 pub use commands::{
-    AgentUpdate, CreateAgentSpec, CreateTaskSpec, MessageDelivery, RuntimeStatus, pending_question,
+    AgentUpdate, CreateAgentSpec, CreateTaskSpec, MessageDelivery, RuntimeStatus, STATUS_DEADLINE,
+    pending_question,
 };
+pub use noesis_engine::NoesisStepStream;
 pub use retention::HistorySweep;
 
 #[derive(Debug, thiserror::Error)]
@@ -95,6 +101,9 @@ pub enum RuntimeError {
     /// A startup probe this needs has not finished; retrying soon succeeds.
     #[error("daemon starting: {0}")]
     Starting(String),
+    /// A Noesis agent asked for work while Noesis is disabled or draining.
+    #[error("agent {0} belongs to Noesis, which is disabled")]
+    NoesisDisabled(AgentId),
     #[error("internal: {0}")]
     Internal(String),
 }
@@ -169,6 +178,8 @@ pub(crate) struct RunningTurn {
     /// Set while the turn is parked waiting for a resource key. It is making
     /// no provider call, so it holds no concurrency slot of any kind.
     pub on_provider: bool,
+    /// The Noesis lane of a Noesis agent's turn; `None` for every other agent.
+    pub noesis: Option<noesis_guard::NoesisTurn>,
 }
 
 /// A provider the scheduler is avoiding, and why.
@@ -340,6 +351,8 @@ pub struct Runtime {
     pub(crate) seeded_repositories: parking_lot::Mutex<std::collections::HashSet<AgentId>>,
     /// Free space on the store's filesystem, as the disk guard last saw it.
     pub(crate) disk: parking_lot::Mutex<disk::DiskState>,
+    /// `status` readers still running, perhaps for a `status` that gave up on them.
+    pub(crate) status_in_flight: parking_lot::Mutex<std::collections::BTreeSet<&'static str>>,
     problems: problems::Problems,
     recovery_failed: std::sync::atomic::AtomicBool,
     workspace_gc_cursor: parking_lot::Mutex<workspace_gc::WorkspaceGcCursor>,
@@ -432,7 +445,9 @@ impl Runtime {
         // Curation commits on its own, so it publishes as `apply` does.
         let memory = {
             let bus = bus.clone();
+            config.memory_retrieval.validate()?;
             MemoryService::new(store.clone(), commit_lock.clone())
+                .with_retrieval(config.memory_retrieval.clone())
                 .with_publisher(Arc::new(move |event| bus.publish_event(event.clone())))
         };
         let runtime = Arc::new_cyclic(|me| Self {
@@ -471,6 +486,7 @@ impl Runtime {
             storage_last_run: parking_lot::Mutex::new(None),
             seeded_repositories: parking_lot::Mutex::new(std::collections::HashSet::new()),
             disk: parking_lot::Mutex::new(disk::DiskState::default()),
+            status_in_flight: Default::default(),
         });
         runtime.apply(Commit::new().event(EventDraft::new(
             Actor::System,
@@ -563,13 +579,14 @@ impl Runtime {
     /// and take no turns.
     pub fn apply_imported(
         &self,
-        events: Vec<aether_store::ImportedEvent>,
-        mutations: Vec<aether_store::Mutation>,
+        mut events: Vec<aether_store::ImportedEvent>,
+        mut mutations: Vec<aether_store::Mutation>,
     ) -> Result<Vec<Event>> {
         if events.is_empty() && mutations.is_empty() {
             return Ok(Vec::new());
         }
         let hold = self.hold();
+        noesis_seal::seal_import(self.store.as_ref(), &mut events, &mut mutations)?;
         let events = self.store.import(events, mutations)?;
         // Published under the hold, as `apply_held` does.
         for event in &events {
@@ -643,9 +660,11 @@ impl Runtime {
     fn apply_held_by(
         &self,
         hold: CommitHold<'_>,
-        commit: Commit,
+        mut commit: Commit,
         write: impl FnOnce(&dyn Store, Commit) -> Result<Vec<Event>>,
     ) -> Result<Vec<Event>> {
+        // Before anything is written or published: no read path sees a sealed value.
+        noesis_seal::seal_commit(self.store.as_ref(), &mut commit)?;
         if commit.is_empty() {
             return Ok(Vec::new());
         }

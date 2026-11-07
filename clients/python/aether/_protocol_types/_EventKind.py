@@ -60,6 +60,17 @@ from ._EventKindMemoryRejected import EventKindMemoryRejected
 from ._EventKindMemoryRestored import EventKindMemoryRestored
 from ._EventKindMemorySuperseded import EventKindMemorySuperseded
 from ._EventKindMessageSent import EventKindMessageSent
+from ._EventKindNoesisAnswerRecorded import EventKindNoesisAnswerRecorded
+from ._EventKindNoesisGraphMerged import EventKindNoesisGraphMerged
+from ._EventKindNoesisJobUpdated import EventKindNoesisJobUpdated
+from ._EventKindNoesisLearnerUpdated import EventKindNoesisLearnerUpdated
+from ._EventKindNoesisPhaseChanged import EventKindNoesisPhaseChanged
+from ._EventKindNoesisPlanUpdated import EventKindNoesisPlanUpdated
+from ._EventKindNoesisPracticeConcluded import EventKindNoesisPracticeConcluded
+from ._EventKindNoesisProblemPosed import EventKindNoesisProblemPosed
+from ._EventKindNoesisQuestionPosed import EventKindNoesisQuestionPosed
+from ._EventKindNoesisSessionCreated import EventKindNoesisSessionCreated
+from ._EventKindNoesisSettingsChanged import EventKindNoesisSettingsChanged
 from ._EventKindProviderBackoff import EventKindProviderBackoff
 from ._EventKindProviderFallback import EventKindProviderFallback
 from ._EventKindProviderQuota import EventKindProviderQuota
@@ -171,5 +182,16 @@ EventKind = (
     EventKindRunHardStop |
     EventKindDaemonStarted |
     EventKindDaemonStopped |
+    EventKindNoesisSessionCreated |
+    EventKindNoesisPhaseChanged |
+    EventKindNoesisQuestionPosed |
+    EventKindNoesisAnswerRecorded |
+    EventKindNoesisPlanUpdated |
+    EventKindNoesisProblemPosed |
+    EventKindNoesisPracticeConcluded |
+    EventKindNoesisJobUpdated |
+    EventKindNoesisGraphMerged |
+    EventKindNoesisLearnerUpdated |
+    EventKindNoesisSettingsChanged |
     EventKindCustom
 )

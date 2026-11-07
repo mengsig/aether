@@ -69,6 +69,7 @@ fn status(pid: u32) -> DaemonStatus {
         writes: None,
         bridge: None,
         stale: None,
+        unavailable: Vec::new(),
     }
 }
 
@@ -718,6 +719,7 @@ async fn subscription_frames_reach_their_subscription() {
                 let _ = out.send(ServerFrame::Event { sub: 8, event }).await;
                 let _ = out
                     .send(ServerFrame::Delta {
+                        invocation_seq: None,
                         sub: 7,
                         agent: AgentId::new(),
                         invocation: InvocationId::new(),

@@ -64,6 +64,7 @@ fn run_turn(runtime: &Runtime, agent: &Agent) -> CancellationToken {
             engine: false,
             provider: "p".into(),
             on_provider: true,
+            noesis: None,
         },
     );
     interrupt

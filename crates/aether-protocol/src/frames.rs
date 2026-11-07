@@ -28,6 +28,10 @@ pub enum Delta {
     ToolInput {
         name: String,
         partial_json: String,
+        /// The tool call's id, as its committed message will carry it. Sent
+        /// only to a client listing `features::DELTA_ORDER`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_use_id: Option<String>,
     },
     /// Absolute in-memory figures. Replace prior totals; never add these to durable usage.
     Accounting {
@@ -62,6 +66,12 @@ pub enum ServerFrame {
         agent: AgentId,
         invocation: InvocationId,
         delta: Delta,
+        /// 1 for an invocation's first delta, one more for each after it,
+        /// assigned once when produced: the same on every subscription, so
+        /// a jump is a lost delta. Sent only to a client listing
+        /// `features::DELTA_ORDER`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        invocation_seq: Option<u64>,
     },
     /// The remote carrier speaking first: what a device signs to
     /// authenticate its hello. Never sent on the socket or the token listener.

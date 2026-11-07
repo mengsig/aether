@@ -11,6 +11,7 @@ class RemoteSettings(TypedDict, total=False):
     The runtime-changeable remote settings, saved whole under a revision.
     """
     enabled: bool  # optional
+    mounts: list[_protocol.RemoteMount] | None  # optional
     pairing: bool  # optional
     public_origins: list[str]  # optional
     push: bool  # optional

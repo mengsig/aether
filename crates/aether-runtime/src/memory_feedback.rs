@@ -7,14 +7,53 @@ use aether_core::memory_feedback::{
     MAX_FEEDBACK_REASON_CHARS, MEMORY_FEEDBACK_LIMIT, MemoryFeedback, MemoryFeedbackList,
     MemoryFeedbackSpec,
 };
+use aether_core::model::CapabilityProfile;
 use aether_core::snapshot::SnapshotMemories;
 use aether_core::task::Task;
 use aether_core::time::now;
+use aether_memory::{Holdout, HoldoutUnit};
 use aether_store::{Commit, EventFilter, Mutation};
 
 use crate::{Result, Runtime, RuntimeError};
 
 impl Runtime {
+    /// Retrieve for a turn, keep what this model's memory budget would
+    /// render, and draw the holdout from that. Nothing is written here: the
+    /// log goes into the turn's own commit ([`Self::memory_holdout_log`]).
+    pub(crate) fn turn_memories(
+        &self,
+        request: &aether_memory::RetrievalRequest,
+        unit: HoldoutUnit,
+        capabilities: &CapabilityProfile,
+        max_output_tokens: Option<u32>,
+    ) -> Result<Holdout> {
+        debug_assert_eq!(request.agent, Some(unit.agent));
+        let ranking = self.memory.retrieve_traced(request)?;
+        let mut retrieved = ranking.retrieved.clone();
+        let records: Vec<_> = retrieved.iter().map(|item| item.record.clone()).collect();
+        let fits = self
+            .context
+            .memories_that_fit(&records, capabilities, max_output_tokens);
+        // Trimmed, not refilled: a held-out slot stays empty, so the injected
+        // arm never sees a memory the full layer would not have carried.
+        retrieved.retain(|item| fits.contains(&item.record.id));
+        let eligible = retrieved.len();
+        debug_assert_eq!(eligible, fits.len());
+        let mut split = self.memory.hold_out(retrieved, unit);
+        debug_assert_eq!(split.injected.len() + split.held_out.len(), eligible);
+        let policy = self.memory.retrieval_policy();
+        split.trace = Some(aether_memory::retrieval_trace(
+            &ranking, &fits, &split, policy,
+        ));
+        Ok(split)
+    }
+
+    /// What the turn withheld, as log rows for the commit that records the
+    /// turn: the withheld injection is logged exactly when the turn lands.
+    pub(crate) fn memory_holdout_log(&self, split: &Holdout, unit: HoldoutUnit) -> Vec<Mutation> {
+        self.memory.holdout_log(&split.held_out, unit, now())
+    }
+
     pub fn record_memory_feedback(
         &self,
         spec: MemoryFeedbackSpec,
