@@ -1,12 +1,12 @@
 // @vitest-environment happy-dom
-// Drafts shared by screens on one key (the composer and Steer): a late confirmation clears only the
-// text it sent, never another screen's newer draft, and an unreadable store is always said.
+// Drafts live in memory per agent and target and are saved to sessionStorage, best effort: a
+// confirmation clears only the exact text it sent, and a failing store never costs typed text.
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { invariant } from "../fleet/invariant.ts";
-import { draftKey, readDraft, useDraft, type Draft } from "./drafts.ts";
+import { draftKey, forgetDrafts, useDraft, type Draft } from "./drafts.ts";
 
 const KEY = draftKey("conn-1", "agt_01JDRAFT0000000000000001", "message");
 const mounted: Root[] = [];
@@ -14,56 +14,72 @@ afterEach(() => {
   for (const root of mounted.splice(0)) act(() => root.unmount());
   vi.restoreAllMocks();
   sessionStorage.clear();
+  forgetDrafts();
 });
 
-/** One screen's draft on KEY; `now()` is what it holds after the last render. */
-function screen(): { readonly now: () => Draft } {
+/** One screen's draft on `key`; `now()` is what it holds after the last render. */
+function screen(key = KEY): { readonly now: () => Draft; readonly leave: () => void } {
   let seen: Draft | null = null;
   function Probe() {
-    seen = useDraft(KEY);
+    seen = useDraft(key);
     return null;
   }
   const root = createRoot(document.createElement("div"));
   mounted.push(root);
   act(() => root.render(<Probe />));
-  return { now: () => { invariant(seen !== null, "the probe rendered"); return seen; } };
+  return {
+    now: () => { invariant(seen !== null, "the probe rendered"); return seen; },
+    leave: () => act(() => root.unmount()),
+  };
 }
 
 const denied = () => { throw new DOMException("denied", "SecurityError"); };
 
-describe("a draft shared by two screens", () => {
-  test("a confirmation after a failed write leaves another screen's newer draft", () => {
+describe("a draft", () => {
+  test("outlives its screen, and every screen on its key shows the same text", () => {
     const composer = screen();
-    const write = vi.spyOn(sessionStorage, "setItem").mockImplementationOnce(denied);
-    act(() => composer.now().set("hello there"));
-    expect(composer.now().problem, "the failed write is said").toContain("This draft is not kept if you leave");
-    write.mockRestore();
-    const steer = screen();
-    act(() => steer.now().set("hi"));
-    act(() => composer.now().delivered("hello there"));
-    expect(readDraft(KEY), "Steer's newer draft is kept").toBe("hi");
+    act(() => composer.now().set("half a thought"));
+    const other = screen();
+    expect(other.now().text).toBe("half a thought");
+    composer.leave();
+    expect(screen().now().text).toBe("half a thought");
+    expect(screen(draftKey("conn-1", "agt_01JDRAFT0000000000000001", "steer")).now().text, "Steer keeps its own").toBe("");
   });
 
-  test("a confirmation after a failed write clears this screen's own stale copy", () => {
+  test("is cleared by a confirmation only while it is still exactly the text sent", () => {
     const composer = screen();
-    act(() => composer.now().set("hel"));
-    vi.spyOn(sessionStorage, "setItem").mockImplementationOnce(denied);
     act(() => composer.now().set("hello"));
-    expect(readDraft(KEY), "the store still holds the older text").toBe("hel");
+    act(() => composer.now().set("hello, and more"));
     act(() => composer.now().delivered("hello"));
+    expect(composer.now().text, "text typed since the send is kept").toBe("hello, and more");
+    act(() => composer.now().delivered("hello, and more"));
     expect(composer.now().text).toBe("");
-    expect(readDraft(KEY), "the stale copy is not offered again").toBe("");
+    expect(sessionStorage.length, "nothing is left to restore").toBe(0);
   });
 
-  test("a store that cannot be read is said after any write, failed or not", () => {
-    vi.spyOn(sessionStorage, "getItem").mockImplementation(denied);
+  test("is restored from storage after a reload, and a stored value that is not a draft is ignored", () => {
+    const before = screen();
+    act(() => before.now().set("before the reload"));
+    before.leave();
+    forgetDrafts();
+    expect(screen().now().text).toBe("before the reload");
+    const garbled = draftKey("conn-1", "agt_01JDRAFT0000000000000002", "message");
+    sessionStorage.setItem(garbled, "{not json");
+    expect(screen(garbled).now().text).toBe("");
+  });
+});
+
+describe("a failing store", () => {
+  test.each([{ method: "setItem", store: "full" }, { method: "getItem", store: "unreadable" }] as const)("($store) keeps typed text and says once that reloads lose it", ({ method }) => {
+    vi.spyOn(sessionStorage, method).mockImplementation(denied);
     const composer = screen();
-    expect(composer.now().problem).toBe("This draft is not kept if you leave (the store cannot be read)");
-    const write = vi.spyOn(sessionStorage, "setItem").mockImplementationOnce(denied);
-    act(() => composer.now().set("a"));
-    expect(composer.now().problem).toBe("This draft is not kept if you leave (denied)");
-    write.mockRestore();
-    act(() => composer.now().set("ab"));
-    expect(composer.now().problem, "reading still fails, so the draft is still not kept").toBe("This draft is not kept if you leave (the store cannot be read)");
+    act(() => composer.now().set("still here"));
+    expect(composer.now().problem).toBe("Drafts are kept while the app is open, but not across a reload (denied).");
+    composer.leave();
+    const back = screen();
+    expect(back.now().text, "memory keeps the draft across navigation").toBe("still here");
+    act(() => back.now().set("still here, longer"));
+    act(() => back.now().delivered("still here"));
+    expect(back.now().text, "a late confirmation never takes newer text").toBe("still here, longer");
   });
 });

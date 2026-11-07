@@ -90,7 +90,7 @@ export function viewRow(row: ConversationRow, options: ViewOptions): ViewRow | n
 }
 
 /** The turn aether-context writes when a new transcript starts from its task (`ensure_ends_with_user`). */
-const TASK_TURN = "Your task:\n";
+export const TASK_TURN = "Your task:\n";
 
 /**
  * A delegated agent's task row: its first user turn, when that turn is the task as aether-context

@@ -8,10 +8,12 @@ import { invariant } from "../fleet/invariant.ts";
 import ActivityScreen from "./ActivityScreen.tsx";
 import { UndeliveredFirst } from "./UndeliveredFirst.tsx";
 import { FIRST_MESSAGE_LIMIT } from "./firstMessage.ts";
+import { forgetDrafts } from "../composer/drafts.ts";
 let h: Harness;
 afterEach(() => {
   h?.unmount();
   sessionStorage.clear();
+  forgetDrafts();
 });
 const agent = fauxAgent();
 const event = (seq: number): aether.Event => ({ id: `evt_${seq}`, seq, at: "2026-11-04", actor: { actor: "system" }, agent_id: agent.id, kind: { type: "agent.ready" } });

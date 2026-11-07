@@ -10,9 +10,10 @@ import { previewText } from "./records.tsx";
 import { AGENT_ID, controlsScript, demoAgents } from "./fixture/demo.ts";
 import { buttonNamed, click, connected, type, type Harness } from "./fixture/harness.test-util.tsx";
 import type { ScriptOptions } from "./fixture/daemon.ts";
+import { forgetDrafts } from "../composer/drafts.ts";
 
 let current: Harness | null = null;
-afterEach(() => { current?.unmount(); current = null; sessionStorage.clear(); });
+afterEach(() => { current?.unmount(); current = null; sessionStorage.clear(); forgetDrafts(); });
 
 async function open(options: ScriptOptions = {}, tab?: string) {
   const h = current = await connected({ agents: demoAgents(), ...options, script: { ...controlsScript(), ...options.script } });
@@ -124,7 +125,7 @@ describe("ControlsScreen", () => {
     try {
       const { h, root } = await open({}, "Steer");
       await type(h, root, "Message", "Hold the release");
-      expect(root.textContent).toContain("This draft is not kept if you leave (full)");
+      expect(root.textContent).toContain("Drafts are kept while the app is open, but not across a reload (full).");
     } finally {
       setItem.mockRestore();
     }

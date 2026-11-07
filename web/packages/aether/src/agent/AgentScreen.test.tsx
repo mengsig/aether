@@ -14,7 +14,7 @@ afterEach(() => {
 async function screen(agent = fauxAgent(), id = FAUX_AGENT) {
   const h = await connected({ instance: "faux-1", agents: [fauxAgent(FAUX_PARENT), agent] });
   current = h;
-  h.daemon.seed(FAUX_AGENT, [{ message: text("user", "Build it.") }, { message: text("assistant", "On it."), invocation: "inv_1" }]);
+  h.daemon.seed(FAUX_AGENT, [{ message: text("user", "Your task:\nBuild it.") }, { message: text("assistant", "On it."), invocation: "inv_1" }]);
   const container = await h.mount(<AgentRoute params={{ conn: h.conn, agent: id }} />);
   await h.settle();
   return { h, container };

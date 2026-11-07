@@ -212,14 +212,13 @@ failure), start a new chat or open its controls.
 
 The composer sits under the conversation. Enter sends, Shift+Enter adds a
 line, and **Stop** interrupts the running turn without losing the agent's
-context. What you type is kept per daemon and agent for the rest of the
-session (the Steer form and the Inbox's question answers keep theirs too) and
-is cleared only once the daemon confirms delivery, and only if it still reads
-what was sent: text typed since, or a newer draft the Steer form kept for the
-same agent, stays. Where the session store is
-full or disabled, the composer, the Steer form and the answer say the draft is
-not kept if you leave, and a started chat's undelivered first message stays in
-the sheet instead.
+context. What you type is kept per daemon, agent and field (the composer, the
+Steer form and each Inbox question's answer) while the app is open, and saved
+for a reload where the session store allows. A draft is cleared once the daemon
+confirms delivery, and only if it still reads exactly what was sent, so text
+typed during a send stays. Where the session store is full or disabled, one note
+says drafts will not survive a reload, and a started chat's undelivered first
+message stays in the sheet instead of following you to the chat.
 
 Typing `/` opens the command menu. Arrow keys move, Tab completes a name and
 then offers its choices, Enter runs, Escape closes; the pointer works too.

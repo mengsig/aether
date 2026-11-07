@@ -111,10 +111,10 @@ describe("the desktop transcript's row kinds", () => {
 
   test("an image attached to a delegated task draws as itself, not as a second task card", () => {
     const entry: aether.TranscriptEntry = { seq: 1, at: ENTRY_AT, invocation: null, message: { role: "user", content: [
-      { type: "text", text: "Match this mock." }, { type: "image", media_type: "image/png", data: "iVBORw0KGgo=" }] } };
+      { type: "text", text: "Your task:\nMatch this mock." }, { type: "image", media_type: "image/png", data: "iVBORw0KGgo=" }] } };
     const [row] = entryRows([entry], pairTools([entry]), new Map());
     if (row === undefined) throw new Error("one entry is one row");
-    const [view] = viewRows([row], { rules: null, taskRow: row.key }, new WeakMap());
+    const [view] = viewRows([row], { rules: null, taskRow: taskRowKey([row], true) }, new WeakMap());
     expect(view?.parts.map((p) => [p.part.kind, p.kind, isCard(p)])).toEqual([["text", "user_task", true], ["attachment", "user_task", false]]);
   });
 

@@ -9,9 +9,10 @@ import { stamp, type Answer, type ScriptOptions } from "../controls/fixture/daem
 import { buttonNamed, click, connected, type, type Harness } from "../controls/fixture/harness.test-util.tsx";
 import { describeCommand } from "./describe.ts";
 import { InboxScreen } from "./InboxScreen.tsx";
+import { forgetDrafts } from "../composer/drafts.ts";
 
 let current: Harness | null = null;
-afterEach(() => { current?.unmount(); current = null; sessionStorage.clear(); });
+afterEach(() => { current?.unmount(); current = null; sessionStorage.clear(); forgetDrafts(); });
 
 const ATTENTION = {
   questions: [{ agent: CHILD_ID, agent_name: "changelog-writer", question: "Should the 1.3 notes mention the fleet redesign?", question_seq: 7, asked_at: stamp(20) }],
@@ -63,7 +64,7 @@ describe("InboxScreen", () => {
     try {
       const { h, root } = await open();
       await type(h, root, "Answer changelog-writer", "Yes, one line.");
-      expect(root.textContent).toContain("This draft is not kept if you leave (full)");
+      expect(root.textContent).toContain("Drafts are kept while the app is open, but not across a reload (full).");
     } finally {
       setItem.mockRestore();
     }

@@ -6,7 +6,7 @@ import type { aether, ConnId } from "@aether-ui/protocol";
 import { invariant } from "../fleet/invariant.ts";
 import type { RowKind } from "./modes.ts";
 import type { Part } from "./rows.ts";
-import { canonicalTool, type ViewPart } from "./view.ts";
+import { canonicalTool, TASK_TURN, type ViewPart } from "./view.ts";
 
 export interface Directory {
   readonly conn: ConnId;
@@ -69,7 +69,8 @@ function cardOf(view: ViewPart, directory: Directory, parent: string | null): Ca
   const part = view.part;
   if (part.kind === "tool") return toolCard(view.kind, part, name);
   invariant(part.kind === "text" && view.kind === "user_task", `a ${part.kind} part draws no card`);
-  return { icon: "↘", title: parent === null ? "Task" : `Task from ${name(parent)}`, text: part.text, agent: parent, tone: "accent" };
+  invariant(part.text.startsWith(TASK_TURN), "a task card is the turn that states the task");
+  return { icon: "↘", title: parent === null ? "Task" : `Task from ${name(parent)}`, text: part.text.slice(TASK_TURN.length), agent: parent, tone: "accent" };
 }
 
 export function CoordinationCard({ view, directory, parent }: { readonly view: ViewPart; readonly directory: Directory; readonly parent: string | null }) {

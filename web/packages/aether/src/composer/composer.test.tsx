@@ -12,12 +12,14 @@ import { fauxAgent } from "../conversation/fixture/transcript.ts";
 import { invariant } from "../fleet/invariant.ts";
 import { Composer } from "./Composer.tsx";
 import { clientCommands, hostCommands, mergeCommands, modeCommands, type SlashCommand } from "./slash.ts";
+import { forgetDrafts } from "./drafts.ts";
 
 let current: Harness | null = null;
 afterEach(() => {
   current?.unmount();
   current = null;
   sessionStorage.clear();
+  forgetDrafts();
   window.location.hash = "";
 });
 
@@ -139,13 +141,12 @@ describe("Composer drafts", () => {
     expect(back.input.value).toBe("half a thought");
   });
 
-  test("a stored value that is not a draft is dropped, not shown", async () => {
+  test("a stored value that is not a draft is not shown", async () => {
     const h = current = await connected({ agents: [running] });
     const key = `aether.draft.v1:${JSON.stringify([h.conn, running.id, "message"])}`;
     sessionStorage.setItem(key, "{not json");
     const root = await h.mount(<Composer conn={h.conn} agent={running} commands={[]} unknownHeld={null} />);
     expect(textarea(root).value).toBe("");
-    expect(sessionStorage.getItem(key)).toBeNull();
   });
 });
 
@@ -305,7 +306,7 @@ describe("the slash menu", () => {
       try {
         const { h, root, input } = await open(running, { script: { send_message: () => reply } });
         await write(h, input, "first");
-        expect(root.textContent, "the draft says it is not kept").toContain("This draft is not kept if you leave");
+        expect(root.textContent, "the draft says it is not kept across a reload").toContain("not across a reload");
         await press(h, input, "Enter");
         await write(h, input, "second, typed while the first was in flight");
         reply = { tag: "message_sent", data: { seq: 1 } };

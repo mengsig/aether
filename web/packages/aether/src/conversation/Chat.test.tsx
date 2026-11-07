@@ -13,6 +13,7 @@ import { Chat } from "./Chat.tsx";
 import { fauxAgent } from "./fixture/transcript.ts";
 import { modeKey } from "./useViewMode.ts";
 import { firstMessageKey } from "../activity/firstMessage.ts";
+import { forgetDrafts } from "../composer/drafts.ts";
 
 const CALM: aether.ViewMode = {
   name: "calm", builtin: false, label: "Calm", description: "Archon coordination", density: "compact",
@@ -38,6 +39,7 @@ afterEach(() => {
   current = null;
   localStorage.clear();
   sessionStorage.clear();
+  forgetDrafts();
 });
 
 async function open(agent: aether.Agent = orchestrator, options: ScriptOptions = {}) {
@@ -203,7 +205,7 @@ describe("Chat after its start", () => {
       const { root } = await open(agent);
       expect(root.querySelector('[aria-label="First message not delivered"]')).toBeNull();
       expect(root.querySelector("textarea"), "the composer is there").not.toBeNull();
-      expect(root.textContent, "its draft is said to live only here").toContain("This draft is not kept if you leave");
+      expect(root.textContent, "its draft is said to live only until a reload").toContain("not across a reload");
     } finally {
       getItem.mockRestore();
     }

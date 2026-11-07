@@ -19,7 +19,7 @@ import { SchedulesPanel } from "./schedules.tsx";
 function SteerPanel({ conn, agent }: { readonly conn: ConnId; readonly agent: aether.Agent }) {
   invariant(agent.id !== "", "the Steer form names its agent");
   const run = useRun(conn);
-  const draft = useDraft(draftKey(conn, agent.id, "message"));
+  const draft = useDraft(draftKey(conn, agent.id, "steer"));
   const [subtree, setSubtree] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const send = async () => {
