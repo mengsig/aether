@@ -178,7 +178,7 @@ test("a rejected memory can be discarded or corrected and retried", async () => 
   const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
   await click(h, root, "Create memory");
   await type(h, document.body, "Memory text", "x");
-  await click(h, document.body, "Close Create memory");
+  await import("react").then(({ act }) => act(async () => (document.querySelector('[aria-label="Close Create memory"]') as HTMLButtonElement).click()));
   await click(h, root, "Create memory");
   expect((document.querySelector('dialog input') as HTMLInputElement).value).toBe("x");
   await click(h, document.body, "Save memory");
