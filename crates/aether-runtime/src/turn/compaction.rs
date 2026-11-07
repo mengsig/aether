@@ -341,8 +341,8 @@ pub(crate) async fn compact(
     cancel: &CancellationToken,
 ) -> Result<Option<aether_core::checkpoint::Checkpoint>> {
     // The agent's model and its compactor are every model a compaction calls.
-    if ctx.noesis.is_some()
-        && let Some(cause) = crate::noesis_guard::refused_model(ctx, &ctx.agent.model)
+    if let Some(turn) = ctx.noesis.as_ref()
+        && let Some(cause) = crate::noesis_guard::refused_model(turn, &ctx.agent.model)
     {
         return Err(RuntimeError::Invalid(cause));
     }
@@ -712,10 +712,10 @@ pub(super) fn record_compaction_usage(
 /// correction, a fallback, a server-compaction retry) and after each one's
 /// usage is charged. Outside Noesis it never stops anything.
 pub(super) fn stopped_before_compaction_attempt(runtime: &Runtime, ctx: &TurnCtx) -> bool {
-    if ctx.noesis.is_none() {
+    let Some(turn) = ctx.noesis.as_ref() else {
         return false;
-    }
-    let Some(reason) = crate::noesis_guard::boundary_stop(runtime, ctx) else {
+    };
+    let Some(reason) = crate::noesis_guard::boundary_stop(runtime, ctx, turn) else {
         return false;
     };
     tracing::info!(agent = %ctx.agent.id, %reason, "a Noesis compaction stops before its next model request");

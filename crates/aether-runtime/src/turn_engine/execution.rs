@@ -284,8 +284,8 @@ pub(crate) async fn execute(
 
     // Everything above awaited (availability, handoff, compaction): an
     // admission the gate or a newer generation has outdated starts no engine.
-    if ctx.noesis.is_some()
-        && let Some(reason) = crate::noesis_guard::engine_start_refusal(runtime, ctx)
+    if let Some(turn) = ctx.noesis.as_ref()
+        && let Some(reason) = crate::noesis_guard::engine_start_refusal(runtime, ctx, turn)
     {
         tracing::info!(agent = %ctx.agent.id, %reason, "the Noesis engine turn is not started");
         return Ok(EngineLink::Done(Next::Interrupted));
