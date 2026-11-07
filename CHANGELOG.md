@@ -27,7 +27,7 @@ release is also the text of its GitHub release.
 Released with Archon 1.5.0. One web app now serves every screen, from
 Aether's remote listener and in a new desktop app, and replaces the phone
 app. Archon can be mounted on the same listener at `/archon`. Memory 2.0
-gives memories a standing, a relevance cutoff and export and import.
+gives memories a standing, an opt-in relevance cutoff and export and import.
 Noesis, a learning service, ships turned off. Protocol 26 (the daemon
 serves 17 to 26) and store schema 33. Read the
 [upgrade notes](https://github.com/mengsig/aether/blob/main/docs/upgrading.md)
@@ -54,10 +54,11 @@ before updating.
   same address. A browser that paired with 1.2.11 keeps its pairing; open
   the address again. The old app's paths (`/app.js`, `/ui/…`,
   `/asset-manifest.json`) answer 404.
-- **Memory retrieval injects less.** A memory needs a relevance of at least
-  `[memory.retrieval] min_score` (0.05) to reach a turn, pinned ones
-  excepted, and `holdout_rate` (0.05) withholds a seeded sample and logs
-  it. Set either to 0 to turn it off.
+- **Memory retrieval can inject less.** `[memory.retrieval] min_score`
+  (0, off, by default) is the relevance a memory needs to reach a turn,
+  pinned ones excepted. Off, retrieval injects what 1.2.11 did; 0.05 trades
+  recall for fewer injected tokens. `holdout_rate` (0.05) withholds a
+  seeded sample and logs it. Set `holdout_rate` to 0 to turn the holdout off.
 - **Update the daemon before the clients.** The 1.3.0 Python and
   TypeScript clients ask for protocol 26, which a 1.2.11 daemon refuses as
   `incompatible`; give the Python client `protocol_version=25` to reach one.
@@ -182,6 +183,20 @@ before updating.
   outstanding with no sign of life from the engine, Aether stops the turn,
   records `agent.tool_call_overdue` and wakes the agent to read its inbox;
   Claude Code's shell cap is pinned at 10 minutes.
+- **Memory recall is back to 1.2.11's.** The relevance cutoff is off by
+  default (`min_score = 0`): at 0.05 it dropped relevant memories phrased
+  in other words than the task (recall@6 0.89 → 0.78 on the memory
+  benchmark).
+- **A store with damaged memory tables refuses to open.** The daemon checks
+  those tables when it opens the store and names the damaged one, instead
+  of starting and failing every turn's memory retrieval. A check that
+  meets a held lock or an I/O error reports that error, not damage.
+- **A result written out as text keeps its structured part.** An agent that
+  ends its task by writing `complete_task`'s input as its answer (a bare or
+  fenced JSON object, `complete_task {...}` or `{"complete_task": {...}}`)
+  now hands its parent that object as `structured`, not only as summary
+  text. Codex models do this often; Archon read such a review as missing
+  its verdict and repaired the stage.
 - **Noesis on subscription engines.** Teaching and extraction run on
   `claude-code` and `codex` with `billing.allow_api = false`, with the same
   tools, sealing and budgets; a step on a `default` engine model is priced

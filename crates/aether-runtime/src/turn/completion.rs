@@ -244,7 +244,10 @@ fn complete_from_prose(
         return Ok(Next::Waiting(WaitCondition::Inbox));
     }
     let mut commit = Commit::new();
-    let result = TaskResult::summary(summary);
+    let result = super::prose_result::prose_result(summary);
+    if result.structured.is_some() {
+        tracing::info!(task = %task.id, "the prose answer is a JSON object; kept as the structured result");
+    }
     mark_completed(&mut task, result.clone(), now())?;
     commit.push_event(ctx.draft(EventKind::TaskCompleted {
         result: result.clone(),

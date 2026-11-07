@@ -43,6 +43,7 @@ use crate::resources::{ResourceGuard, WaitOutcome};
 use crate::{CommitHold, Result, Runtime, RuntimeError};
 
 mod completion;
+mod prose_result;
 use completion::mark_completed;
 pub(crate) use completion::{AnswerJobs, CompletionSource, prose_only_next};
 
