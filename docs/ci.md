@@ -61,7 +61,21 @@ and the stages of every Archon run. It first takes one of `CI_HOST_SLOTS`
 (default 1) host-wide slots, a `flock` on
 `${XDG_RUNTIME_DIR:-/tmp}/heavy-ci/slot-<i>.lock` for `i` in `0..N-1`, the
 contract Archon's `make ci` keeps (`scripts/ci_slot.sh`). When all are taken
-it says once that it waits, and waits until one frees. The slot is released
+it joins a FIFO queue and says its position and the holder once while it waits.
+Dead waiters are removed. `sh scripts/ci_slot.sh --status` reports slots,
+queued commands, memory, swap and IO pressure. An idle-holder flag means the
+current process tree has used under five seconds of CPU over its lifetime and
+has existed for at least five minutes; it is a hint, not proof of a stall.
+Only clients using this queue participate in FIFO ordering.
+
+A holder exports `AETHER_CI_SLOT_HELD` as `pid:start-ticks:lock-path` (Linux
+`/proc/<pid>/stat` field 22). Nested slot clients may bypass acquisition only
+after validating the holder, its lock descriptor and their ancestry. Archon
+clients sharing this contract should preserve and validate this marker.
+When unset, `CARGO_BUILD_JOBS` is set from available memory, capped at the
+number of CPUs; set it explicitly to override the choice. Disabled and nested
+slot calls leave this setting to their caller. A head waiter with fewer configured
+slots can delay later waiters even when a higher numbered slot is free. The slot is released
 when `make ci` ends, whether it passes, fails or is interrupted with Ctrl-C.
 `CI_HOST_SLOTS=0 make ci` skips the slots, and `make ci-checks` and
 `scripts/ci.sh` run the same checks without one. Without `flock` (util-linux)
