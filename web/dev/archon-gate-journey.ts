@@ -28,7 +28,7 @@ try {
       const details = gate.locator("details");
       await details.waitFor();
       assert.equal(await details.evaluate((element) => (element as HTMLDetailsElement).open), false);
-      await gate.scrollIntoViewIfNeeded();
+      await gate.evaluate((element) => element.scrollIntoView({ block: "start" }));
       await page.screenshot({ path: path.join(out, `gate-collapsed-${theme}.png`) });
       await details.locator("summary").click();
       assert.equal(await details.evaluate((element) => (element as HTMLDetailsElement).open), true);

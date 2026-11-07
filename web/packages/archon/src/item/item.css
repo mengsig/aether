@@ -37,6 +37,9 @@
   .item-gate-content { flex: 1 1 12rem; min-inline-size: 0; overflow-wrap: anywhere; }
   .item-gate-content p { margin: var(--space-1) 0 0; white-space: pre-wrap; }
   .item-gate-content summary { cursor: pointer; }
+  .item-gate-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+  .item-gate-hide, .item-gate-content details[open] .item-gate-show { display: none; }
+  .item-gate-content details[open] .item-gate-hide { display: inline; }
   .item-callout-text, .item-fact, .item .queue-question-text { overflow-wrap: anywhere; }
   .item-fact .item-muted { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
   .item-timeline { display: grid; gap: var(--space-3); }
