@@ -214,7 +214,9 @@ The composer sits under the conversation. Enter sends, Shift+Enter adds a
 line, and **Stop** interrupts the running turn without losing the agent's
 context. What you type is kept per daemon and agent for the rest of the
 session (the Steer form and the Inbox's question answers keep theirs too) and
-is cleared only once the daemon confirms delivery. Where the session store is
+is cleared only once the daemon confirms delivery, and only if it still reads
+what was sent: text typed since, or a newer draft the Steer form kept for the
+same agent, stays. Where the session store is
 full or disabled, the composer, the Steer form and the answer say the draft is
 not kept if you leave, and a started chat's undelivered first message stays in
 the sheet instead.

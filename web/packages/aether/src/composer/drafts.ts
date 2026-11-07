@@ -70,36 +70,46 @@ export interface Draft {
   readonly delivered: (sent: string) => void;
 }
 
-interface Held { readonly key: string; readonly text: string; readonly problem: string | null }
+/**
+ * The draft as this screen holds it. `stored` is what it last read or wrote in the store, so a late
+ * confirmation can tell its own stale copy from another screen's newer draft; null when unreadable.
+ */
+interface Held { readonly key: string; readonly text: string; readonly stored: string | null; readonly writeProblem: string | null }
 
 const UNREADABLE = "This draft is not kept if you leave (the store cannot be read)";
 
 function heldFor(key: string): Held {
   const text = readDraft(key);
-  return text === null ? { key, text: "", problem: UNREADABLE } : { key, text, problem: null };
+  return { key, text: text ?? "", stored: text, writeProblem: null };
 }
+
+// A store that cannot be read gives nothing back on return, whatever a write did.
+const problemOf = (held: Held): string | null => held.writeProblem ?? (held.stored === null ? UNREADABLE : null);
 
 /** A draft that survives unmounting; it follows `key` when the screen switches agent or question. */
 export function useDraft(key: string): Draft {
   const [draft, setDraft] = useState(() => heldFor(key));
   const current = draft.key === key ? draft : heldFor(key);
   if (current !== draft) setDraft(current);
-  // What this screen last typed, read when a send it started is confirmed, however late.
+  // What this screen last held, read when a send it started is confirmed, however late.
   const typed = useRef<Held | null>(null);
-  // A store that cannot be read gives nothing back on return, whatever it accepts.
-  const unreadable = current.problem === UNREADABLE;
+  const latest = useCallback(() => (typed.current?.key === key ? typed.current : current), [key, current]);
   const set = useCallback((text: string) => {
-    const next = { key, text, problem: writeDraft(key, text) ?? (unreadable ? UNREADABLE : null) };
+    const base = latest();
+    invariant(base.key === key, "a draft is written over the one this screen holds for its key");
+    const writeProblem = writeDraft(key, text);
+    const next = { key, text, stored: writeProblem === null && base.stored !== null ? text : base.stored, writeProblem };
     typed.current = next;
     setDraft(next);
-  }, [key, unreadable]);
+  }, [key, latest]);
   const delivered = useCallback((sent: string) => {
-    const mine = typed.current?.key === key ? typed.current : current;
+    const mine = latest();
+    invariant(mine.key === key, "a confirmation is checked against this key's draft");
     if (mine.text !== sent) return;
-    // Another screen may have changed the stored draft since; a store this screen could not write is stale.
-    const kept = mine.problem === null ? readDraft(key) : null;
-    if (kept !== null && kept !== sent) return;
+    // The store holding neither what was sent nor what this screen left there was changed by another screen.
+    const kept = mine.stored === null ? null : readDraft(key);
+    if (kept !== null && kept !== sent && kept !== mine.stored) return;
     set("");
-  }, [key, current, set]);
-  return { text: current.text, problem: current.problem, set, delivered };
+  }, [key, latest, set]);
+  return { text: current.text, problem: problemOf(current), set, delivered };
 }
