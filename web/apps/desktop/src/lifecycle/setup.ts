@@ -1,5 +1,6 @@
 // Setting up this computer, one step at a time as the app's setup page drives it: find the tools,
-// connect Archon's tools to Aether, then start both, restarting Aether only after the user agrees.
+// connect Archon's tools to Aether once the user agrees natively, then start both. A restart of a
+// running Aether happens only when that same confirmation named it.
 
 import path from "node:path";
 import type { SetupResult, SetupStep } from "@aether-ui/protocol";
@@ -47,6 +48,7 @@ function missingMessage(missing: readonly ToolName[]): string {
 
 export class Setup {
   private readonly deps: SetupDeps;
+  /** Set only by a connect whose native confirmation named the restart. */
   private reloadOwed = false;
   private running = false;
 
@@ -64,18 +66,22 @@ export class Setup {
     try {
       switch (step) {
         case "tools": return { step, tools: await findTools(this.deps.run) };
-        case "connect": return await this.connect();
-        case "start": return await this.start(owner);
+        case "connect": return await this.connect(owner);
+        case "start": return await this.start();
       }
     } finally {
       this.running = false;
     }
   }
 
-  private async connect(): Promise<SetupResult> {
+  /** Asks natively before writing either config; a refusal leaves both untouched. */
+  private async connect(owner: number): Promise<SetupResult> {
     this.reloadOwed = false;
     const missing = (await findTools(this.deps.run)).filter((tool) => !tool.found).map((tool) => tool.name);
     if (missing.length > 0) throw new BridgeRefusal(missingMessage(missing));
+    const running = await this.deps.isReachable("aether");
+    const template = TEMPLATES[running ? "setup.connect_restart" : "setup.connect"];
+    if (!(await this.deps.confirm(owner, confirmation(template, {})))) throw new BridgeRefusal("Cancelled");
     ensureArchonConfig(this.deps.archonConfig);
     const result = await this.deps.run("archon", ARCHON_SETUP_ARGS, SETUP_TIMEOUT_MS);
     if (!result.found) throw new BridgeRefusal(missingMessage(["archon"]));
@@ -85,13 +91,13 @@ export class Setup {
     }
     const answer = parseArchonSetup(result.stdout);
     // Aether reads its tool servers only when it starts, so a running one that lacks Archon's must restart.
-    this.reloadOwed = answer.mode === "shared" && answer.health === "fail" && await this.deps.isReachable("aether");
+    this.reloadOwed = running && answer.mode === "shared" && answer.health === "fail" && await this.deps.isReachable("aether");
     return { step: "connect", mode: answer.mode, registration: answer.registration, reload_owed: this.reloadOwed };
   }
 
-  private async start(owner: number): Promise<SetupResult> {
+  private async start(): Promise<SetupResult> {
     await this.deps.enableManagedStart();
-    const restarted = this.reloadOwed && await this.deps.isReachable("aether") ? await this.restartAether(owner) : false;
+    const restarted = this.reloadOwed && await this.deps.isReachable("aether") ? await this.restartAether() : false;
     this.reloadOwed = false;
     for (const kind of START_ORDER) await this.deps.start(kind);
     const daemons = (await this.deps.findDaemons()).map(publicDaemon);
@@ -99,9 +105,9 @@ export class Setup {
     return { step: "start", restarted, daemons };
   }
 
-  /** Stops Aether through its CLI once the user agrees, and waits until it no longer answers. */
-  private async restartAether(owner: number): Promise<true> {
-    if (!(await this.deps.confirm(owner, confirmation(TEMPLATES["setup.restart"], {})))) throw new BridgeRefusal("Cancelled");
+  /** Stops Aether through its CLI, as the confirmed connect agreed, and waits until it no longer answers. */
+  private async restartAether(): Promise<true> {
+    if (!this.reloadOwed) throw new Error("a restart runs only on the consent a confirmed connect recorded");
     const stopped = await this.deps.run("aether", AETHER_STOP_ARGS, STOP_TIMEOUT_MS);
     if (!stopped.found) throw new BridgeRefusal(missingMessage(["aether"]));
     if (stopped.code !== 0) {

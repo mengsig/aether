@@ -55,15 +55,18 @@ test("no desktop source sends shutdown, kills or signals a process", () => {
   assert.match(code(readFileSync(COMMAND_LIST, "utf8")), /if \(cmd === "shutdown"\) return "shutdown is never sent/);
 });
 
-test("setup's one stop command is aether stop, run only after a confirmed restart", () => {
+test("setup's one stop command is aether stop, run only after a connect confirmed with its restart", () => {
   assert.deepEqual(AETHER_STOP_ARGS, ["stop"]);
   const setup = code(readFileSync(SETUP, "utf8"));
   assert.equal(setup.match(/["'`]stop["'`]/g)?.length, 1, "setup names the stop command once");
   assert.equal(setup.match(/AETHER_STOP_ARGS/g)?.length, 2, "declared once and run once");
-  const confirmAt = setup.indexOf('confirmation(TEMPLATES["setup.restart"]');
+  const confirmAt = setup.indexOf("this.deps.confirm(owner, confirmation(template");
+  const consentAt = setup.indexOf("this.reloadOwed = running &&");
+  const guardAt = setup.indexOf("if (!this.reloadOwed) throw");
   const stopAt = setup.indexOf('run("aether", AETHER_STOP_ARGS');
-  assert.ok(confirmAt !== -1 && stopAt > confirmAt, "the stop runs after the restart is confirmed");
-  assert.match(setup.slice(confirmAt, stopAt), /throw new BridgeRefusal\("Cancelled"\)/, "a cancel stops nothing");
+  assert.ok(confirmAt !== -1 && consentAt > confirmAt, "the restart consent is recorded only after the confirmation");
+  assert.match(setup.slice(confirmAt, consentAt), /throw new BridgeRefusal\("Cancelled"\)/, "a cancel records nothing");
+  assert.ok(guardAt !== -1 && stopAt > guardAt, "the stop runs only on recorded consent");
 });
 
 test("managed start runs only each CLI's start command", () => {

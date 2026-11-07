@@ -149,8 +149,10 @@ export const TEMPLATES = {
     detail: `{changes}${ON}` },
   "engine.login": { title: "Sign in", message: "Open a terminal to sign in?", confirm: "Open terminal",
     detail: `A terminal runs {command} to sign in to {engine}. Your sign-in stays with that tool.${ON}` },
-  "setup.restart": { title: "Restart Aether", message: "Restart Aether to connect Archon's tools?", confirm: "Restart",
-    detail: "Aether reads its tools only when it starts. Working agents pause for a moment and pick up where they left off." },
+  "setup.connect": { title: "Connect Archon's tools", message: "Connect Archon's tools to Aether?", confirm: "Connect",
+    detail: "Archon's settings are saved so it shares this computer's Aether, and Aether's settings list Archon's tools. Agents can then use them." },
+  "setup.connect_restart": { title: "Connect Archon's tools", message: "Connect Archon's tools and restart Aether?", confirm: "Connect and restart",
+    detail: "Archon's settings are saved so it shares this computer's Aether, and Aether's settings list Archon's tools. Aether restarts if it needs to load them; working agents pause for a moment and pick up where they left off." },
 } as const satisfies Readonly<Record<string, Template>>;
 
 export type TemplateName = keyof typeof TEMPLATES;

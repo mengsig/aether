@@ -147,20 +147,23 @@ The app's setup runs in three steps, each one when you click it:
    terminal, so the app adds `~/.local/bin`, `~/.cargo/bin`,
    `/usr/local/bin` and, on macOS, `/opt/homebrew/bin` after your own `PATH`
    when they exist. Managed start uses the same `PATH`.
-2. **Connect Archon's tools.** If Archon has no config file yet
-   (`$ARCHON_CONFIG_DIR/config.toml`, else on Linux
-   `$XDG_CONFIG_HOME/archon/config.toml` or `~/.config/archon/config.toml`,
-   on macOS `~/Library/Application Support/archon/config.toml`), the app
-   writes one with `[aether] mode = "shared"`, so Archon uses this
-   computer's Aether. It never changes a config file that exists. Then it
-   runs `archon setup --json`, which registers Archon's tools with Aether.
+2. **Connect Archon's tools.** The app first asks in a native dialog. If
+   Aether is already running, the same dialog says Aether may restart. If
+   you cancel, nothing is written and nothing is run. If you agree and
+   Archon has no config file yet (`$ARCHON_CONFIG_DIR/config.toml`, else on
+   Linux `$XDG_CONFIG_HOME/archon/config.toml` or
+   `~/.config/archon/config.toml`, on macOS
+   `~/Library/Application Support/archon/config.toml`), the app writes one
+   with `[aether] mode = "shared"`, so Archon uses this computer's Aether.
+   It never changes a config file that exists. Then it runs
+   `archon setup --json`, which registers Archon's tools with Aether.
 3. **Start.** Clicking "Set up" turns managed start on. Aether reads its
-   tools only when it starts, so if Aether is running without Archon's
-   tools, the app asks first, in a native dialog, whether to restart it.
-   If you agree, it runs `aether stop`, waits until Aether has stopped, and
-   starts it again; working agents pause and pick up where they left off.
-   If you cancel, nothing is stopped. Then it starts Aether and Archon,
-   leaving alone any that already run.
+   tools only when it starts. If Aether was running without Archon's tools
+   and you agreed to the restart in step 2, the app runs `aether stop`,
+   waits until Aether has stopped, and starts it again; working agents
+   pause and pick up where they left off. Without that agreement nothing is
+   stopped. Then it starts Aether and Archon, leaving alone any that
+   already run.
 
 ## Updates
 

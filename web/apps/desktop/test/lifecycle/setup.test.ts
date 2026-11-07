@@ -109,23 +109,43 @@ test("connect refuses plainly when a tool is missing, and runs nothing else", as
   }
 });
 
-test("connect writes Archon's config, runs archon setup and reports its registration", async () => {
-  const h = harness({ answers: { "archon setup --json": sharedAnswer("ok", "already_present") } });
+test("a confirmed connect writes Archon's config, runs archon setup and reports its registration", async () => {
+  const h = harness({ answers: { "archon setup --json": sharedAnswer("ok", "already_present") }, confirm: true });
   try {
     assert.deepEqual(await h.setup.run(1, "connect"), { step: "connect", mode: "shared", registration: "already_present", reload_owed: false });
     assert.equal(readFileSync(h.config, "utf8"), ARCHON_CONFIG_TEXT);
-    assert.deepEqual(h.events, ["run aether version", "run archon --version", "run archon setup --json"]);
+    assert.deepEqual(h.events, ["run aether version", "run archon --version", "confirm", "run archon setup --json"]);
+    assert.equal(h.shown[0]?.message, "Connect Archon's tools to Aether?");
   } finally {
     h.cleanup();
   }
 });
 
+test("a cancelled connect writes no config and runs no archon setup; a retry asks again", async () => {
+  for (const up of [false, true]) {
+    const h = harness({ answers: { "archon setup --json": sharedAnswer("fail") }, up, confirm: false });
+    try {
+      await assert.rejects(h.setup.run(1, "connect"), (error: unknown) => error instanceof BridgeRefusal && error.message === "Cancelled");
+      assert.equal(existsSync(h.config), false, "Archon's config is untouched");
+      assert.ok(!h.events.includes("run archon setup --json"), "Aether's config is untouched");
+      assert.equal(h.shown[0]?.message, up ? "Connect Archon's tools and restart Aether?" : "Connect Archon's tools to Aether?");
+      h.events.length = 0;
+      await h.setup.run(1, "start");
+      assert.deepEqual(h.events, ["enable managed start", "start aether", "start archon"], "no restart without consent");
+      await assert.rejects(h.setup.run(1, "connect"), /Cancelled/);
+      assert.equal(h.shown.length, 2);
+    } finally {
+      h.cleanup();
+    }
+  }
+});
+
 test("a failed archon setup is a refusal with the first line Archon wrote", async () => {
-  const h = harness({ answers: { "archon setup --json": ran("", 1, "\nerror: aether is not installed\nmore detail\n") } });
+  const h = harness({ answers: { "archon setup --json": ran("", 1, "\nerror: aether is not installed\nmore detail\n") }, confirm: true });
   try {
     await assert.rejects(h.setup.run(1, "connect"), (error: unknown) => error instanceof BridgeRefusal
       && error.message === "Setup could not connect Archon's tools to Aether. Archon said: error: aether is not installed");
-    const garbled = harness({ answers: { "archon setup --json": ran("{\"mode\":") } });
+    const garbled = harness({ answers: { "archon setup --json": ran("{\"mode\":") }, confirm: true });
     await assert.rejects(garbled.setup.run(1, "connect"), /does not understand/);
     garbled.cleanup();
   } finally {
@@ -138,7 +158,7 @@ test("a reload is owed only in shared mode, with Aether running and Archon's too
     for (const up of [true, false]) {
       for (const level of ["ok", "warn", "fail"]) {
         const answer = mode === "shared" ? sharedAnswer(level) : dedicatedAnswer(level);
-        const h = harness({ answers: { "archon setup --json": answer }, up });
+        const h = harness({ answers: { "archon setup --json": answer }, up, confirm: true });
         try {
           const result = await h.setup.run(1, "connect");
           assert.equal(result.step === "connect" && result.reload_owed, mode === "shared" && up && level === "fail", `${mode} ${up} ${level}`);
@@ -152,7 +172,7 @@ test("a reload is owed only in shared mode, with Aether running and Archon's too
 });
 
 test("start turns on managed start and starts both without a restart when none is owed", async () => {
-  const h = harness({ answers: { "archon setup --json": sharedAnswer("ok") }, up: true });
+  const h = harness({ answers: { "archon setup --json": sharedAnswer("ok") }, up: true, confirm: true });
   try {
     await h.setup.run(1, "connect");
     h.events.length = 0;
@@ -168,34 +188,21 @@ test("start turns on managed start and starts both without a restart when none i
   }
 });
 
-test("a confirmed restart runs aether stop, waits until Aether is down, then starts both", async () => {
+test("a connect confirmed with its restart runs aether stop, waits until Aether is down, then starts both", async () => {
   const h = harness({ answers: { "archon setup --json": sharedAnswer("fail") }, up: true, confirm: true });
   try {
     await h.setup.run(1, "connect");
     h.events.length = 0;
     const result = await h.setup.run(7, "start");
     assert.equal(result.step === "start" && result.restarted, true);
-    assert.deepEqual(h.events, ["enable managed start", "confirm", "run aether stop", "start aether", "start archon"]);
+    assert.deepEqual(h.events, ["enable managed start", "run aether stop", "start aether", "start archon"]);
     assert.equal(h.state.up, false, "start ran only once Aether stopped answering");
-    assert.equal(h.shown[0]?.message, "Restart Aether to connect Archon's tools?");
+    assert.equal(h.shown.length, 1, "one confirmation covers connecting and restarting");
+    assert.equal(h.shown[0]?.message, "Connect Archon's tools and restart Aether?");
     assert.match(h.shown[0]?.detail ?? "", /pick up where they left off/);
     h.events.length = 0;
     assert.equal((await h.setup.run(7, "start")).step === "start", true);
     assert.deepEqual(h.events, ["enable managed start", "start aether", "start archon"], "the reload is paid once");
-  } finally {
-    h.cleanup();
-  }
-});
-
-test("a cancelled restart refuses and stops nothing; a retry asks again", async () => {
-  const h = harness({ answers: { "archon setup --json": sharedAnswer("fail") }, up: true, confirm: false });
-  try {
-    await h.setup.run(1, "connect");
-    h.events.length = 0;
-    await assert.rejects(h.setup.run(1, "start"), (error: unknown) => error instanceof BridgeRefusal && error.message === "Cancelled");
-    assert.deepEqual(h.events, ["enable managed start", "confirm"]);
-    await assert.rejects(h.setup.run(1, "start"), /Cancelled/);
-    assert.equal(h.shown.length, 2, "the owed reload is still owed");
   } finally {
     h.cleanup();
   }
