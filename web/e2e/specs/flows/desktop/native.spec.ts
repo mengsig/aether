@@ -167,7 +167,7 @@ test("UX-045: a real agent's questions alert the system; a click opens the quest
   const front = page.getByRole("region", { name: "Desktop alerts" }).getByRole("switch", { name: /^Also while Aether is in front/ });
   await front.click();
   await expect(front).toBeChecked();
-  await route(page, "#/inbox");
+  await route(page, "#/fleet");
   stack().engine.setScript(askingScript(MARKER, QUESTIONS));
   const agent = await createAgent(stack(), "Native asker", `Ask the operator two things (${MARKER}).`);
   const alerted = await until(async () => desktop().native.notes(), (notes) => notes.some((note) => note.body === QUESTIONS[0]), "the first question's alert", 60_000);
@@ -175,6 +175,7 @@ test("UX-045: a real agent's questions alert the system; a click opens the quest
   assert.ok(first !== undefined, "the first question alerted");
   expect(first.title, "the alert names who asks").toBe("Native asker asks");
   expect(first.actions, "the alert can be clicked").toContain("default");
+  expect(await page.evaluate(() => location.hash), "the alert comes while another screen is open").toBe("#/fleet");
   await desktop().native.click(first.id);
   await expect.poll(() => page.evaluate(() => location.hash), { message: "the click opens the inbox" }).toBe("#/inbox");
   const card = page.locator(`[data-question*="/${agent}:"]`).filter({ hasText: QUESTIONS[0] });

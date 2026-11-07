@@ -99,17 +99,27 @@ async function devtoolsPort(profile: string, app: Spawned): Promise<number> {
 async function appDocument(port: number, app: Spawned): Promise<void> {
   const deadline = Date.now() + READY_MS;
   for (;;) {
-    const reply = await fetch(`http://127.0.0.1:${port}/json/list`);
-    assert.ok(reply.ok, `DevTools lists the app's targets: HTTP ${reply.status}`);
-    const targets = await reply.json() as unknown;
-    assert.ok(Array.isArray(targets), "DevTools answers a target list");
-    const committed = (targets as Array<{ type?: unknown; url?: unknown; title?: unknown }>).some((target) =>
-      target.type === "page" && String(target.url).startsWith("app://") && /(^|· )Aether$/.test(String(target.title)));
-    if (committed) return;
     assert.ok(app.child.exitCode === null && app.child.signalCode === null, `${path.basename(app.log)}: it exited before its window loaded`);
     assert.ok(Date.now() < deadline, "timed out waiting for the app window's document");
+    if (await hasAppDocument(port, deadline)) return;
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
   }
+}
+
+/** Whether DevTools lists an app:// page with its own title; a stalled answer fails at `deadline`. */
+async function hasAppDocument(port: number, deadline: number): Promise<boolean> {
+  const signal = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
+  let targets: unknown;
+  try {
+    const reply = await fetch(`http://127.0.0.1:${port}/json/list`, { signal });
+    assert.ok(reply.ok, `DevTools lists the app's targets: HTTP ${reply.status}`);
+    targets = await reply.json();
+  } catch (error) {
+    throw new Error(`DevTools on port ${port} gave no target list`, { cause: error });
+  }
+  assert.ok(Array.isArray(targets), "DevTools answers a target list");
+  return (targets as Array<{ type?: unknown; url?: unknown; title?: unknown }>).some((target) =>
+    target.type === "page" && String(target.url).startsWith("app://") && /(^|· )Aether$/.test(String(target.title)));
 }
 
 async function appWindow(browser: Browser): Promise<Page> {
