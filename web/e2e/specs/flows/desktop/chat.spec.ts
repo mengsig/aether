@@ -154,11 +154,13 @@ test("the / menu lists app, view and Archon commands and runs one from the keybo
   await shoot(app.window, "slash-menu");
   await field.fill("/mo");
   await field.press("Tab");
-  await expect(field).toHaveValue(/^\/mode /);
-  await expect(menu.getByRole("option", { name: /Focus/ })).toBeVisible();
-  await menu.getByRole("option", { name: /Focus/ }).click();
+  await expect(field).toHaveValue("/mode ");
+  const focus = menu.getByRole("option", { name: /^focus\b/ });
+  await field.press("ArrowDown");
+  await expect(focus).toHaveAttribute("aria-selected", "true");
   await field.press("Enter");
-  await expect(modeRadio(app.window, "Focus")).toBeChecked();
+  await expect(modeRadio(app.window, "Focus"), "Enter runs the highlighted mode").toBeChecked();
+  await expect(field, "the command left the draft").toHaveValue("");
 });
 
 test("UX-046: the palette finds an agent by name and opens its chat", async () => {
@@ -166,7 +168,7 @@ test("UX-046: the palette finds an agent by name and opens its chat", async () =
   await app.window.keyboard.press("Control+k");
   const search = app.window.getByRole("combobox", { name: "Search screens, agents and work items" });
   await search.fill("Desktop ch");
-  const option = app.window.getByRole("option", { name: /Desktop chat/ });
+  const option = app.window.getByRole("listbox", { name: "Matching commands" }).getByRole("option", { name: /^Desktop chat\b/ });
   await expect(option).toBeVisible();
   await shoot(app.window, "palette-agent");
   await search.press("Enter");
