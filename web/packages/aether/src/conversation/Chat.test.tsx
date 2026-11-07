@@ -186,4 +186,13 @@ describe("Chat after its start", () => {
     expect(root.querySelector('[aria-label="First message not delivered"]')).toBeNull();
     expect(checked(root), "the view mode is untouched").toBe("Standard");
   });
+
+  test("a stored record that is not a whole first message is dropped, not shown", async () => {
+    const agent = fauxAgent(undefined, { status: { state: "waiting", condition: { on: "inbox" } } });
+    const key = firstMessageKey("aether:b3", agent.id);
+    sessionStorage.setItem(key, JSON.stringify({ text: " padded ", outcome: "refused", reason: "x" }));
+    const { root } = await open(agent);
+    expect(root.querySelector('[aria-label="First message not delivered"]')).toBeNull();
+    expect(sessionStorage.getItem(key)).toBeNull();
+  });
 });

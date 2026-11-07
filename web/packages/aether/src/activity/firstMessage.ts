@@ -30,7 +30,7 @@ export function firstMessageKey(conn: ConnId, agent: string): string {
 
 const isUndelivered = (value: unknown): value is Undelivered => {
   const v = value as Partial<Undelivered> | null;
-  return typeof v?.text === "string" && v.text !== "" && v.text.length <= FIRST_MESSAGE_LIMIT
+  return typeof v?.text === "string" && v.text !== "" && v.text === v.text.trim() && v.text.length <= FIRST_MESSAGE_LIMIT
     && (v.outcome === "refused" || v.outcome === "unconfirmed") && typeof v.reason === "string";
 };
 
