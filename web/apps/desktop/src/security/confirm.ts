@@ -149,6 +149,8 @@ export const TEMPLATES = {
     detail: `{changes}${ON}` },
   "engine.login": { title: "Sign in", message: "Open a terminal to sign in?", confirm: "Open terminal",
     detail: `A terminal runs {command} to sign in to {engine}. Your sign-in stays with that tool.${ON}` },
+  "setup.restart": { title: "Restart Aether", message: "Restart Aether to connect Archon's tools?", confirm: "Restart",
+    detail: "Aether reads its tools only when it starts. Working agents pause for a moment and pick up where they left off." },
 } as const satisfies Readonly<Record<string, Template>>;
 
 export type TemplateName = keyof typeof TEMPLATES;
