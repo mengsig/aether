@@ -56,7 +56,7 @@ test("no desktop source sends shutdown, kills or signals a process", () => {
 });
 
 test("setup's one stop command is aether stop, run only after a connect confirmed with its restart", () => {
-  assert.deepEqual(AETHER_STOP_ARGS, ["stop"]);
+  assert.deepEqual(AETHER_STOP_ARGS, ["stop", "--json"]);
   const setup = code(readFileSync(SETUP, "utf8"));
   assert.equal(setup.match(/["'`]stop["'`]/g)?.length, 1, "setup names the stop command once");
   assert.equal(setup.match(/AETHER_STOP_ARGS/g)?.length, 2, "declared once and run once");

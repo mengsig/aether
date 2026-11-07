@@ -33,7 +33,7 @@ interface Harness {
   readonly events: string[];
   readonly shown: Confirmation[];
   readonly config: string;
-  /** Whether Aether answers; `aether stop` turns it off after `stopsAfter` more probes. */
+  /** Whether Aether runs; `aether stop` reports it stopping for `stopsAfter` more asks, then gone. */
   readonly state: { up: boolean; stopsAfter: number };
   cleanup(): void;
 }
@@ -42,11 +42,23 @@ interface HarnessOptions {
   answers?: Record<string, CommandResult>;
   up?: boolean;
   confirm?: boolean;
-  /** Probes Aether still answers after `aether stop`. */
+  /** Further `aether stop` asks that still find Aether stopping, as one that holds its store does. */
   stopProbes?: number;
   stopDeadlineMs?: number;
   /** Aether starts on its own while the confirmation is open. */
   startsDuringConfirm?: boolean;
+}
+
+/** `aether stop --json` as Aether answers it: stopping until the old daemon lets go, then gone. */
+function stopAnswer(state: { up: boolean; stopsAfter: number }, probes: number): CommandResult {
+  if (state.up && state.stopsAfter < 0) state.stopsAfter = probes;
+  if (state.stopsAfter > 0) {
+    state.stopsAfter -= 1;
+    return ran(JSON.stringify({ stopping: true }));
+  }
+  state.up = false;
+  state.stopsAfter = -1;
+  return ran(JSON.stringify({ running: false, stopping: false }));
 }
 
 function harness(options: HarnessOptions): Harness {
@@ -54,22 +66,19 @@ function harness(options: HarnessOptions): Harness {
   const events: string[] = [];
   const shown: Confirmation[] = [];
   const state = { up: options.up ?? false, stopsAfter: -1 };
-  const answers: Record<string, CommandResult> = { ...VERSIONS, "aether stop": ran(""), ...options.answers };
+  const answers: Record<string, CommandResult> = { ...VERSIONS, ...options.answers };
   const config = path.join(dir, "config", "archon", "config.toml");
   const setup = new Setup({
     run: async (tool, args) => {
       const key = `${tool} ${args.join(" ")}`;
       events.push(`run ${key}`);
-      if (key === "aether stop") state.stopsAfter = options.stopProbes ?? 2;
-      const answer = answers[key];
+      const answer = answers[key] ?? (key === "aether stop --json" ? stopAnswer(state, options.stopProbes ?? 2) : undefined);
       if (answer === undefined) throw new Error(`unexpected command: ${key}`);
       return answer;
     },
     archonConfig: config,
     isReachable: async (kind) => {
       if (kind !== "aether") throw new Error("setup only ever probes Aether");
-      if (state.stopsAfter === 0) state.up = false;
-      if (state.stopsAfter > 0) state.stopsAfter -= 1;
       return state.up;
     },
     enableManagedStart: async () => { events.push("enable managed start"); },
@@ -166,7 +175,7 @@ test("an Aether that starts during an unrestarting connect is a refusal, and the
     assert.equal(h.shown[1]?.message, "Connect Archon's tools and restart Aether?");
     h.events.length = 0;
     assert.equal((await h.setup.run(1, "start")).step, "start");
-    assert.deepEqual(h.events, ["enable managed start", "run aether stop", "start aether", "start archon"]);
+    assert.deepEqual(h.events, ["enable managed start", "run aether stop --json", "run aether stop --json", "run aether stop --json", "start aether", "start archon"]);
   } finally {
     h.cleanup();
   }
@@ -214,8 +223,8 @@ test("a connect confirmed with its restart runs aether stop, waits until Aether 
     h.events.length = 0;
     const result = await h.setup.run(7, "start");
     assert.equal(result.step === "start" && result.restarted, true);
-    assert.deepEqual(h.events, ["enable managed start", "run aether stop", "start aether", "start archon"]);
-    assert.equal(h.state.up, false, "start ran only once Aether stopped answering");
+    assert.deepEqual(h.events, ["enable managed start", "run aether stop --json", "run aether stop --json", "run aether stop --json", "start aether", "start archon"]);
+    assert.equal(h.state.up, false, "start ran only once aether stop found no daemon left");
     assert.equal(h.shown.length, 1, "one confirmation covers connecting and restarting");
     assert.equal(h.shown[0]?.message, "Connect Archon's tools and restart Aether?");
     assert.match(h.shown[0]?.detail ?? "", /pick up where they left off/);
@@ -234,12 +243,17 @@ test("an Aether that will not stop, or a failed stop, is a plain refusal and sta
     const started = Date.now();
     await assert.rejects(h.setup.run(1, "start"), /taking a while to stop/);
     assert.ok(Date.now() - started < 2_000);
-    assert.ok(!h.events.some((event) => event.startsWith("start ")), "nothing started while Aether still answered");
-    const failing = harness({ answers: { "archon setup --json": sharedAnswer("fail"), "aether stop": ran("", 1, "no permission") }, up: true, confirm: true });
+    assert.ok(!h.events.some((event) => event.startsWith("start ")), "nothing started while Aether was still stopping");
+    const failing = harness({ answers: { "archon setup --json": sharedAnswer("fail"), "aether stop --json": ran("", 1, "no permission") }, up: true, confirm: true });
     await failing.setup.run(1, "connect");
     await assert.rejects(failing.setup.run(1, "start"), /Aether could not be restarted. Aether said: no permission/);
     assert.ok(!failing.events.some((event) => event.startsWith("start ")), "nothing started after a failed stop");
     failing.cleanup();
+    const odd = harness({ answers: { "archon setup --json": sharedAnswer("fail"), "aether stop --json": ran("aetherd stopping") }, up: true, confirm: true });
+    await odd.setup.run(1, "connect");
+    await assert.rejects(odd.setup.run(1, "start"), /Aether could not be restarted: its stop command answered unexpectedly/);
+    assert.ok(!odd.events.some((event) => event.startsWith("start ")), "nothing started on a stop reply it could not read");
+    odd.cleanup();
   } finally {
     h.cleanup();
   }

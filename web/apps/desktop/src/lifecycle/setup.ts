@@ -31,8 +31,9 @@ export interface SetupDeps {
 export const SETUP_STEPS: readonly SetupStep[] = ["tools", "connect", "start"];
 /** Archon's own registration, which the app never reimplements. */
 export const ARCHON_SETUP_ARGS: readonly string[] = ["setup", "--json"];
-/** Aether's documented way to stop its daemon; agents resume when it starts again. */
-export const AETHER_STOP_ARGS: readonly string[] = ["stop"];
+/** Aether's documented way to stop its daemon; agents resume when it starts again. Asked again, it
+ * says whether the old daemon still holds its store, which a new one must wait for. */
+export const AETHER_STOP_ARGS: readonly string[] = ["stop", "--json"];
 const START_ORDER: readonly DaemonKind[] = ["aether", "archon"];
 const NAMES: Readonly<Record<ToolName, string>> = { aether: "Aether", archon: "Archon" };
 
@@ -46,6 +47,19 @@ const POLL_MS = 200;
 function missingMessage(missing: readonly ToolName[]): string {
   if (missing.length === 0) throw new Error("a missing-tools message names a tool");
   return `Install ${missing.map((tool) => NAMES[tool]).join(" and ")} on this computer first, then try again.`;
+}
+
+/** Whether `aether stop --json` found a daemon still running or stopping; anything else it printed is a refusal. */
+function stillStopping(stdout: string): boolean {
+  let report: unknown;
+  try {
+    report = JSON.parse(stdout);
+  } catch (error) {
+    throw new BridgeRefusal(`Aether could not be restarted: its stop command answered unexpectedly (${String(error)}). Try again in a moment.`);
+  }
+  const stopping = report !== null && typeof report === "object" ? (report as { stopping?: unknown }).stopping : undefined;
+  if (typeof stopping !== "boolean") throw new BridgeRefusal("Aether could not be restarted: its stop command answered unexpectedly. Try again in a moment.");
+  return stopping;
 }
 
 export class Setup {
@@ -109,20 +123,23 @@ export class Setup {
     return { step: "start", restarted, daemons };
   }
 
-  /** Stops Aether through its CLI, as the confirmed connect agreed, and waits until it no longer answers. */
+  /**
+   * Stops Aether through its CLI, as the confirmed connect agreed, asking again until it reports no
+   * daemon at all: a stopping one closes its socket before it lets go of its store.
+   */
   private async restartAether(): Promise<true> {
     if (!this.reloadOwed) throw new Error("a restart runs only on the consent a confirmed connect recorded");
-    const stopped = await this.deps.run("aether", AETHER_STOP_ARGS, STOP_TIMEOUT_MS);
-    if (!stopped.found) throw new BridgeRefusal(missingMessage(["aether"]));
-    if (stopped.code !== 0) {
-      const detail = firstLine(stopped.stderr);
-      throw new BridgeRefusal(`Aether could not be restarted.${detail === "" ? "" : ` Aether said: ${detail}`} Try again in a moment.`);
-    }
     const end = Date.now() + (this.deps.stopDeadlineMs ?? STOP_DEADLINE_MS);
-    while (await this.deps.isReachable("aether")) {
+    for (;;) {
+      const stopped = await this.deps.run("aether", AETHER_STOP_ARGS, STOP_TIMEOUT_MS);
+      if (!stopped.found) throw new BridgeRefusal(missingMessage(["aether"]));
+      if (stopped.code !== 0) {
+        const detail = firstLine(stopped.stderr);
+        throw new BridgeRefusal(`Aether could not be restarted.${detail === "" ? "" : ` Aether said: ${detail}`} Try again in a moment.`);
+      }
+      if (!stillStopping(stopped.stdout)) return true;
       if (Date.now() >= end) throw new BridgeRefusal("Aether is taking a while to stop. Wait a moment, then try again.");
       await new Promise((resolve) => setTimeout(resolve, this.deps.pollMs ?? POLL_MS));
     }
-    return true;
   }
 }
