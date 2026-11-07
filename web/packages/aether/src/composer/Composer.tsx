@@ -9,7 +9,7 @@ import { useId, useState, type KeyboardEvent } from "react";
 import { DraftError, sendCommand } from "../controls/commands.ts";
 import { RunNote, useRun } from "../controls/kit.tsx";
 import { invariant } from "../fleet/invariant.ts";
-import { draftKey, useDraft, type Draft } from "./drafts.ts";
+import { DRAFT_LIMIT, draftKey, useDraft, type Draft } from "./drafts.ts";
 import { EndedNotice, endedReason } from "./ended.tsx";
 import { optionId, pick, completion, SlashMenu, useMenu, type MenuOption, type MenuState } from "./menu.tsx";
 import { parseLine, type SlashCommand } from "./slash.ts";
@@ -103,7 +103,7 @@ export function Composer({ conn, agent, commands }: ComposerProps) {
       {ended === null ? null : <EndedNotice conn={conn} agent={agent} />}
       <div className="cmp-box" data-busy={busy || undefined}>
         {menu.open ? <SlashMenu id={listbox} menu={menu} onPick={choose} /> : null}
-        <textarea className="cmp-input" rows={1} value={draft.text} placeholder={`Message ${agent.name}, or / for commands`}
+        <textarea className="cmp-input" rows={1} maxLength={DRAFT_LIMIT} value={draft.text} placeholder={`Message ${agent.name}, or / for commands`}
           aria-label={`Message ${agent.name}`} role="combobox" aria-autocomplete="list" aria-haspopup="listbox"
           aria-expanded={menu.open} aria-controls={menu.open ? listbox : undefined}
           aria-activedescendant={menu.open ? optionId(listbox, menu.active) : undefined}

@@ -1,9 +1,11 @@
 // One agent's chat: the view mode bar, what it is working on or waiting for, its open questions and
-// approvals pinned until answered, the transcript as the mode draws it, and the composer.
+// approvals pinned until answered, the transcript as the mode draws it, a first message the start
+// could not deliver, and the composer.
 
 import { selectAgents, selectAttention, selectStreams, useSelector } from "@aether-ui/core";
 import type { aether, ConnId } from "@aether-ui/protocol";
 import { useCallback, useMemo, type KeyboardEvent } from "react";
+import { UndeliveredFirst } from "../activity/UndeliveredFirst.tsx";
 import { Composer } from "../composer/Composer.tsx";
 import { clientCommands, hostCommands, mergeCommands, modeCommands } from "../composer/slash.ts";
 import { invariant } from "../fleet/invariant.ts";
@@ -79,6 +81,7 @@ export function Chat({ conn, agent }: { readonly conn: ConnId; readonly agent: a
       </div>
       <Pinned conn={conn} agent={agent} />
       <Conversation conn={conn} agent={agent.id} rules={view.rules} layout={layout} />
+      <UndeliveredFirst conn={conn} agent={agent.id} />
       <Composer conn={conn} agent={agent} commands={commands} />
     </section>
   );

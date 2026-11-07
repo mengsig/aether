@@ -12,6 +12,7 @@ import { invariant } from "../fleet/invariant.ts";
 import { Chat } from "./Chat.tsx";
 import { fauxAgent } from "./fixture/transcript.ts";
 import { modeKey } from "./useViewMode.ts";
+import { firstMessageKey } from "../activity/firstMessage.ts";
 
 const CALM: aether.ViewMode = {
   name: "calm", builtin: false, label: "Calm", description: "Archon coordination", density: "compact",
@@ -169,5 +170,20 @@ describe("Chat view modes", () => {
     expect(radios(root)).toEqual([]);
     expect(toolShown(root)).toBe(true);
     expect(root.textContent).toContain("View modes unavailable");
+  });
+});
+
+describe("Chat after its start", () => {
+  test("a first message the start could not deliver is shown in the chat and sent from it as typed", async () => {
+    const agent = fauxAgent(undefined, { status: { state: "waiting", condition: { on: "inbox" } } });
+    sessionStorage.setItem(firstMessageKey("aether:b3", agent.id), JSON.stringify({ text: "/calm please", outcome: "unconfirmed", reason: "No reply" }));
+    const { h, root } = await open(agent);
+    const notice = root.querySelector('[aria-label="First message not delivered"]');
+    expect(notice?.textContent).toContain("it may have arrived");
+    expect(notice?.querySelector('[aria-label="First message, as typed"]')?.textContent).toBe("/calm please");
+    await click(h, root, "Send it as typed");
+    expect(h.daemon.commands("send_message").map((c) => c.content), "sent to the agent, not run as /calm").toEqual(["/calm please"]);
+    expect(root.querySelector('[aria-label="First message not delivered"]')).toBeNull();
+    expect(checked(root), "the view mode is untouched").toBe("Standard");
   });
 });

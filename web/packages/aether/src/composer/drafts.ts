@@ -7,7 +7,7 @@ import { invariant } from "../fleet/invariant.ts";
 
 const PREFIX = "aether.draft.v1:";
 /** Far beyond any message a person types; a longer value in storage is not one of ours. */
-const MAX_LENGTH = 200_000;
+export const DRAFT_LIMIT = 200_000;
 
 /** Where a draft belongs: a composer or Steer form (`slot` "message"), or one question's answer. */
 export function draftKey(conn: ConnId, agent: string, slot: string): string {
@@ -21,14 +21,14 @@ export function readDraft(key: string): string {
   invariant(key.startsWith(PREFIX), "drafts are read by a key from draftKey");
   const raw = sessionStorage.getItem(key);
   if (raw === null) return "";
-  const text = (parsed(raw) as { text?: unknown } | null)?.text;
-  if (typeof text === "string" && text.length <= MAX_LENGTH) return text;
+  const text = (parsedStored(raw) as { text?: unknown } | null)?.text;
+  if (typeof text === "string" && text.length <= DRAFT_LIMIT) return text;
   sessionStorage.removeItem(key);
   return "";
 }
 
-/** Storage another version or a person edited may hold anything; what does not parse is not a draft. */
-function parsed(raw: string): unknown {
+/** Storage another version or a person edited may hold anything; what does not parse is not ours. */
+export function parsedStored(raw: string): unknown {
   try {
     const value: unknown = JSON.parse(raw);
     return typeof value === "object" ? value : null;
@@ -40,7 +40,7 @@ function parsed(raw: string): unknown {
 
 export function writeDraft(key: string, text: string): void {
   invariant(key.startsWith(PREFIX), "drafts are written by a key from draftKey");
-  invariant(text.length <= MAX_LENGTH, "a draft fits the store's bound");
+  invariant(text.length <= DRAFT_LIMIT, "a draft fits the store's bound");
   if (text === "") sessionStorage.removeItem(key);
   else sessionStorage.setItem(key, JSON.stringify({ text }));
 }

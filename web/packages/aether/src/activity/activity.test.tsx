@@ -1,12 +1,18 @@
 // @vitest-environment happy-dom
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { act } from "react";
 import type { aether } from "@aether-ui/protocol";
 import { connected, click, buttonNamed, type, type Harness } from "../controls/fixture/harness.test-util.tsx";
 import { fauxAgent } from "../conversation/fixture/transcript.ts";
+import { invariant } from "../fleet/invariant.ts";
 import ActivityScreen from "./ActivityScreen.tsx";
+import { UndeliveredFirst } from "./UndeliveredFirst.tsx";
+import { FIRST_MESSAGE_LIMIT } from "./firstMessage.ts";
 let h: Harness;
-afterEach(() => h?.unmount());
+afterEach(() => {
+  h?.unmount();
+  sessionStorage.clear();
+});
 const agent = fauxAgent();
 const event = (seq: number): aether.Event => ({ id: `evt_${seq}`, seq, at: "2026-11-04", actor: { actor: "system" }, agent_id: agent.id, kind: { type: "agent.ready" } });
 const script = {
@@ -96,55 +102,120 @@ test("a chat whose create fails sends no message", async () => {
   expect(h.daemon.commands("send_message")).toHaveLength(0);
 });
 
-test("a chat whose first message is refused stays in the sheet, says why, and retries against the same chat", async () => {
-  let refusals = 1;
-  const send_message = () => (refusals-- > 0 ? { code: "invalid_request", message: "Inbox is full" } : { tag: "message_sent", data: { seq: 1 } });
-  window.location.hash = "";
-  h = await connected({ agents: [agent], script: { ...script, send_message } });
+/** Starts a chat with `text` through the sheet, as a person does. */
+async function startChat(text: string): Promise<void> {
   const root = await h.mount(<ActivityScreen />);
   await click(h, root, "Start an agent");
-  await type(h, document.body, "First message", "/calm please");
+  await type(h, document.body, "First message", text);
   await pickRepo();
   await click(h, document.body, "Start chat"); await h.settle();
-  expect(document.body.textContent).toContain("Inbox is full");
-  expect(document.body.textContent).toContain("its first message was not confirmed");
+}
+
+const refusedOnce = () => {
+  let refusals = 1;
+  return () => (refusals-- > 0 ? { code: "invalid_request", message: "Inbox is full" } : { tag: "message_sent", data: { seq: 1 } });
+};
+const sheet = (): HTMLElement => {
+  const dialog = document.body.querySelector("dialog");
+  invariant(dialog instanceof HTMLElement, "the start sheet is open");
+  return dialog;
+};
+const sent = () => h.daemon.commands("send_message").map((c) => [c.to, c.content]);
+const chatHash = () => `#/agents/${encodeURIComponent(h.conn)}/${agent.id}`;
+
+test("a refused first message keeps the sheet, shows the chat's settings fixed, and resends the saved text to the same chat", async () => {
+  window.location.hash = "";
+  h = await connected({ agents: [agent], script: { ...script, send_message: refusedOnce() } });
+  await startChat("/calm please");
+  expect(document.body.textContent).toContain("The first message was not delivered: Inbox is full");
   expect(window.location.hash).not.toContain(agent.id);
-  const labels = [...document.body.querySelectorAll("label")].map((label) => label.textContent ?? "");
-  expect(labels.filter((text) => /^(Name|Workspace)/.test(text)), "the chat's settings are fixed once it exists").toEqual([]);
-  expect(document.body.querySelector('[aria-label="Effort"]')).toBeNull();
+  const settings = document.body.querySelector('[aria-label="Chat settings, fixed once the chat exists"]');
+  expect(settings?.textContent, "the settings it was created with are shown").toContain("/repo");
+  expect(settings?.textContent).toContain("Astra");
+  expect(sheet().querySelectorAll("input, textarea"), "nothing about a created chat is editable").toHaveLength(0);
   expect(document.body.textContent).not.toContain("Task agent");
-  await click(h, document.body, "Send first message"); await h.settle();
+  expect(document.body.querySelector('[aria-label="First message, as typed"]')?.textContent).toBe("/calm please");
+  await click(h, document.body, "Send it again"); await h.settle();
   expect(h.daemon.commands("create_agent"), "a retry never creates another chat").toHaveLength(1);
-  expect(h.daemon.commands("send_message").map((c) => [c.to, c.content]), "sent as typed, never read as a command").toEqual([[agent.id, "/calm please"], [agent.id, "/calm please"]]);
-  expect(window.location.hash).toBe(`#/agents/${encodeURIComponent(h.conn)}/${agent.id}`);
+  expect(sent(), "sent as typed, never read as a command").toEqual([[agent.id, "/calm please"], [agent.id, "/calm please"]]);
+  expect(window.location.hash).toBe(chatHash());
+  expect(sessionStorage.length, "a delivered first message leaves nothing for the chat").toBe(0);
 });
 
-test("a different chat after a refused first message is an explicit new create with fresh settings", async () => {
+test("a new chat with different settings is an explicit action that keeps the form and creates once more", async () => {
   window.location.hash = "";
   h = await connected({ agents: [agent], script: { ...script, send_message: () => ({ code: "invalid_request", message: "Inbox is full" }) } });
-  const root = await h.mount(<ActivityScreen />);
-  await click(h, root, "Start an agent");
-  await type(h, document.body, "First message", "Hello");
-  await pickRepo();
-  await click(h, document.body, "Start chat"); await h.settle();
-  await click(h, document.body, "Start a different chat");
+  await startChat("Hello");
+  expect(buttonNamed(document.body, "New chat with different settings")).not.toBeNull();
+  await click(h, document.body, "New chat with different settings");
   expect(document.body.querySelector('[aria-label="Effort"]'), "its settings are offered again").not.toBeNull();
+  expect((sheet().querySelector("input") as HTMLInputElement | null)?.value, "the form keeps what was typed").toBe("Hello");
   await click(h, document.body, "Start chat"); await h.settle();
   expect(h.daemon.commands("create_agent")).toHaveLength(2);
 });
 
-test("a chat whose first reply is lost says so and keeps the retry on the same chat", async () => {
+test("a first message whose reply is lost says it may have arrived and retries only on the same chat", async () => {
   h = await connected({ agents: [agent], script: { ...script, send_message: () => "hold" } });
-  const root = await h.mount(<ActivityScreen />);
-  await click(h, root, "Start an agent");
-  await type(h, document.body, "First message", "Hello");
-  await pickRepo();
-  await click(h, document.body, "Start chat"); await h.settle();
+  await startChat("Hello");
   h.daemon.drop();
   await h.settle();
-  expect(document.body.querySelector('[data-state="unconfirmed"]')?.textContent).toContain("It waits in the recovery review");
-  expect(document.body.textContent).toContain("its first message was not confirmed");
-  expect(buttonNamed(document.body, "Send first message"), "a retry goes to the same chat").not.toBeNull();
+  expect(document.body.querySelector('[data-state="unconfirmed"]')?.textContent).toContain("it may have arrived");
+  expect(document.body.querySelector('a[href="#/inbox"]'), "the way to the recovery review").not.toBeNull();
+  expect(buttonNamed(document.body, "Send it again"), "a retry goes to the same chat").not.toBeNull();
+  expect(h.daemon.commands("create_agent")).toHaveLength(1);
+});
+
+test("a create whose reply is lost never creates a second chat unless asked to", async () => {
+  h = await connected({ agents: [agent], script: { ...script, create_agent: () => "hold" } });
+  await startChat("Hello");
+  h.daemon.drop();
+  await h.settle();
+  expect(document.body.textContent).toContain("it is not known whether the chat was created");
+  expect(sheet().querySelector("input"), "the sheet cannot start the same chat again").toBeNull();
+  expect(h.daemon.commands("send_message")).toHaveLength(0);
+  await click(h, document.body, "New chat with different settings");
+  expect(buttonNamed(document.body, "Start chat")).not.toBeNull();
+  expect(h.daemon.commands("create_agent")).toHaveLength(1);
+});
+
+test("a first message too long to keep is refused before any chat is created", async () => {
+  h = await connected({ agents: [agent], script });
+  const root = await h.mount(<ActivityScreen />);
+  await click(h, root, "Start an agent");
+  await type(h, document.body, "First message", "x".repeat(FIRST_MESSAGE_LIMIT + 1));
+  await pickRepo();
+  expect(buttonNamed(document.body, "Start chat").disabled).toBe(true);
+  expect(document.body.textContent).toContain("The first message is too long");
+  expect(h.daemon.commands("create_agent")).toHaveLength(0);
+});
+
+test("the chat it opens carries a refused first message and sends it as typed from there", async () => {
+  window.location.hash = "";
+  h = await connected({ agents: [agent], script: { ...script, send_message: refusedOnce() } });
+  await startChat("/calm please");
+  const link = [...document.body.querySelectorAll("a")].find((a) => a.textContent === "Open the chat");
+  expect(link?.getAttribute("href")).toBe(chatHash());
+  await act(async () => link?.click()); await h.settle();
+  expect(document.body.querySelector('[aria-label="Started chat"]'), "opening the chat closes the sheet").toBeNull();
+  const chat = await h.mount(<UndeliveredFirst conn={h.conn} agent={agent.id} />);
+  expect(chat.textContent).toContain("The first message was not delivered: Inbox is full");
+  expect(chat.querySelector('[aria-label="First message, as typed"]')?.textContent).toBe("/calm please");
+  await click(h, chat, "Send it as typed"); await h.settle();
+  expect(sent()).toEqual([[agent.id, "/calm please"], [agent.id, "/calm please"]]);
+  expect(chat.textContent, "a delivered message is no longer shown as undelivered").toBe("");
+});
+
+test("a store that cannot keep the outcome is said in the sheet, which still never creates again", async () => {
+  h = await connected({ agents: [agent], script: { ...script, send_message: () => ({ code: "invalid_request", message: "Inbox is full" }) } });
+  const setItem = vi.spyOn(sessionStorage, "setItem").mockImplementation(() => { throw new DOMException("full", "QuotaExceededError"); });
+  try {
+    await startChat("Hello");
+  } finally {
+    setItem.mockRestore();
+  }
+  expect(document.body.textContent).toContain("The chat cannot be told about it");
+  expect(sheet().querySelector("input")).toBeNull();
+  expect(buttonNamed(document.body, "Send it again")).not.toBeNull();
   expect(h.daemon.commands("create_agent")).toHaveLength(1);
 });
 
