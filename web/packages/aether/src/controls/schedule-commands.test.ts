@@ -70,7 +70,7 @@ describe("scheduleCommand: spawning a new agent", () => {
       spec: {
         name: "Morning check", recurrence: { kind: "cron", expression: "0 9 * * *", timezone: "Europe/Oslo" }, missed: "skip", max_deliveries: 7,
         spawn: {
-          role: "worker", objective: "Triage the backlog", model: { provider: "anthropic", model: "claude-opus-5-5" },
+          role: "worker", name: "Morning check", objective: "Triage the backlog", model: { provider: "anthropic", model: "claude-opus-5-5" },
           scope: { workspace_root: "/srv/repo" }, approval: { require_for: ["external"] }, config: { effort: "x_high" },
         },
       },
