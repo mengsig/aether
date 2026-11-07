@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useApp, useReadPermission, useReread } from "@aether-ui/core";
+import { useApp, usePermission, useReread } from "@aether-ui/core";
 import type { aether, RouteProps } from "@aether-ui/protocol";
 import { Button, EmptyState, Field, Tabs } from "@aether-ui/ui";
 import { invariant } from "../fleet/invariant.ts";
@@ -28,7 +28,8 @@ export default function MemoryScreen({ params }: RouteProps) {
     kinds: kind === "all" ? [] : [kind], scope: scopeFilter(scope, repository, agent) } };
   const filterReady = scope === "all" || scope === "global" || (scope === "repository" ? repository.trim() !== "" : agent !== "");
   const entry = useReread(conn, "memory:list", filterReady ? command : null, ["memories"]);
-  const permission = useReadPermission(conn, proposed);
+  const repositoryChoices = useReread(conn, "memory:repositories", scope === "repository" ? { cmd: "memories", query: { limit: 100, include_forgotten: true, include_superseded: true } } : null, ["memories"]);
+  const permission = usePermission(conn, proposed);
   const proposals = useReread(conn, "memory:proposals", permission.refusal === null ? proposed : null, ["memories"]);
   const refresh = async () => {
     if (filterReady) await app.reread(conn, "memory:list", command, ["memories"]);
@@ -36,12 +37,13 @@ export default function MemoryScreen({ params }: RouteProps) {
     if (memoryV2) await app.reread(conn, "memory:migration", { cmd: "memory_migration_status" }, ["memory_migration_status"]);
   };
   const rows = records<aether.MemoryRecord>(filterReady ? entry?.value : null);
+  const repositories = [...new Set(records<aether.MemoryRecord>(repositoryChoices?.value).flatMap(memory => memory.scope.scope === "repository" || memory.scope.scope === "repository_role" ? [memory.scope.id] : []))].sort();
   const known = useMemo(() => new Map(rows.map(memory => [memory.id, memory.text])), [rows]);
   return <div className="ui-page b3-screen mem-screen"><header className="ui-page-head b3-screen-head"><h1 className="ui-visually-hidden b3-screen-title">Memory</h1>
     <p className="ui-page-lede b3-screen-sub">Review what stays with your agents.</p><Button onClick={() => setOpen(true)}>Create memory</Button></header>
     <StandingNotice conn={conn} />
     <Section title="Memories"><Field label="Search memories" value={text} onChange={e => setText(e.target.value)} />
-      <Tabs label="Scope" selected={scope} onSelect={setScope} tabs={[{ id: "all", label: "All scopes", panel: null }, { id: "global", label: "Global", panel: null }, { id: "repository", label: "Repository", panel: <Field label="Repository filter" value={repository} onChange={e => setRepository(e.target.value)} /> },
+      <Tabs label="Scope" selected={scope} onSelect={setScope} tabs={[{ id: "all", label: "All scopes", panel: null }, { id: "global", label: "Global", panel: null }, { id: "repository", label: "Repository", panel: <label className="b3-field"><span className="ui-field-label">Repository filter</span><select className="b3-select" value={repository} onChange={e => setRepository(e.target.value)}><option value="">Choose a repository</option>{repositories.map(id => <option key={id} value={id}>{id}</option>)}</select></label> },
         { id: "agent", label: "Agent", panel: <AgentPicker conn={conn} label="Agent filter" value={agent} onChange={setAgent} /> }]} />
       <Tabs label="Kind" selected={kind} onSelect={setKind} tabs={["all", ...kinds].map(id => ({ id, label: id, panel: null }))} />
       <label className="b3-check"><input type="checkbox" checked={forgotten} onChange={e => setForgotten(e.target.checked)} /><span>Include forgotten</span></label>

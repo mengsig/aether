@@ -65,12 +65,12 @@ test("remote proposals actions display host-only marks and refusal", async () =>
   expect(root.textContent).toContain("Only the daemon's own host can do this");
 });
 
-test("on the host the proposals listing is refused with its reason and never sent", async () => {
+test("on the host the proposals listing is available", async () => {
   const desktop = { version: 1, connect: async () => "bridge", close: async () => {}, privileged: vi.fn(), getPreference: async () => false } as unknown as DesktopBridge;
   h = await connected({ role: "local", desktop, script: { memories: () => ({ tag: "memories", data: [] }) } });
   const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
-  expect(h.daemon.commands("memories").some(c => (c.query as { proposed?: boolean }).proposed)).toBe(false);
-  expect(root.textContent).toContain("The desktop does not pass this host-only read to the daemon yet");
+  expect(h.daemon.commands("memories").some(c => (c.query as { proposed?: boolean }).proposed)).toBe(true);
+  expect(root.textContent).toContain("No proposals to review");
 });
 
 test("a proposal row accepts and, after confirming, rejects through desktop privileged", async () => {
@@ -132,12 +132,12 @@ test("a late answer to an earlier search never hides the newer search's failure"
 });
 
 test("scope and kind filters and forgotten toggle use exact query fields", async () => {
-  h = await connected({ script: { memories: () => ({ tag: "memories", data: [] }) } });
+  h = await connected({ script: { memories: () => ({ tag: "memories", data: [{ ...memory, scope: { scope: "repository", id: "/repo" } }] }) } });
   const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
   await click(h, root, "Global");
   expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "global" } } });
   await click(h, root, "Repository");
-  expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "global" } } });
+  expect(h.daemon.commands("memories").every(c => (c.query as { scope?: { id?: string } }).scope?.id !== "")).toBe(true);
   await type(h, root, "Repository filter", "/repo");
   await click(h, root, "decision");
   const checkbox = root.querySelector('input[type="checkbox"]') as HTMLInputElement;

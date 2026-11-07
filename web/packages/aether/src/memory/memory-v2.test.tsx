@@ -213,11 +213,11 @@ test("observers and paired devices see the refusal, not the host-only tools, but
   }
 });
 
-test("on the desktop the host-only tools say the bridge does not pass them yet", async () => {
+test("on the desktop the host can access the maintenance and explain tools", async () => {
   const desktop = { version: 1, connect: async () => "bridge", close: async () => {}, privileged: vi.fn(), getPreference: async () => false } as unknown as DesktopBridge;
   const root = await screen("local", V2_FEATURES, desktop);
-  expect(section(root, "Maintenance")?.textContent).toContain("The desktop does not pass this host-only command to the daemon yet");
-  expect(section(root, "Retrieval explain")?.querySelector("input")).toBeNull();
+  expect(section(root, "Maintenance")?.textContent).toContain("Plan consolidation");
+  expect(section(root, "Retrieval explain")?.querySelector("input")).not.toBeNull();
 });
 
 test("the store panel shows the schema, migrations, counts, backups and last import", async () => {
