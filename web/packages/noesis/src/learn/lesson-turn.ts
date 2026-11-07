@@ -14,23 +14,25 @@ interface Progress {
   readonly teacher: number;
   readonly question: string | null;
   readonly problem: string | null;
+  readonly stall: string | null;
 }
 
 interface Pending extends Progress {
   readonly stalled: boolean;
 }
 
-/** Where the session stood when the learner spoke: a newer teacher message, question or problem ends the wait. */
+/** Where the session stood when the learner spoke: a newer teacher message, question, problem or budget stall ends the wait. */
 function progressOf(session: aether.NoesisSession, items: readonly TimelineItem[]): Progress {
   return {
     teacher: items.filter((item) => item.kind === "message" && item.role === "teacher" && !item.live).length,
     question: session.open_question?.id ?? null,
     problem: session.active_problem?.id ?? null,
+    stall: session.stalled?.at ?? null,
   };
 }
 
 function answered(pending: Pending, now: Progress): boolean {
-  return now.teacher > pending.teacher || (now.question !== null && now.question !== pending.question) || (now.problem !== null && now.problem !== pending.problem);
+  return now.teacher > pending.teacher || (now.question !== null && now.question !== pending.question) || (now.problem !== null && now.problem !== pending.problem) || (now.stall !== null && now.stall !== pending.stall);
 }
 
 export interface LessonTurn {

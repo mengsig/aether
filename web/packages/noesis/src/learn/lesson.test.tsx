@@ -154,6 +154,22 @@ describe("budget", () => {
     expect(root.querySelector(".learn-callout[data-kind=budget]")).toBeNull();
   });
 
+  test("an answer the daemon recorded before the budget stopped the next turn ends the wait", async () => {
+    const h = await start();
+    const root = await open(h);
+    h.daemon.pose(LESSON.id, VOTE_QUESTION);
+    await h.settle(SETTLE_MS);
+    const card = $(root, ".learn-q[data-state=open]");
+    await click(h, $(byText(card, "label", "Refuses: one vote per term"), "input"));
+    h.daemon.answerEvents = false;
+    await click(h, byText(card, "button", "Answer"));
+    h.daemon.stall(LESSON.id, { reason: "budget_exhausted", message: "today's Noesis interactive budget is spent", at: "2026-01-01T00:00:09Z" });
+    await h.settle(SETTLE_MS);
+    expect(root.querySelector(".learn-working")).toBeNull();
+    expect($(root, ".learn-callout[data-kind=budget]")).toBeTruthy();
+    expect(($(root, "#learn-reply") as HTMLTextAreaElement).disabled).toBe(false);
+  });
+
   test("a day whose teaching budget is spent pauses the lesson and says how much", async () => {
     const status = statusOf(true);
     const h = await start({ status: { ...status, settings: { ...status.settings, budget: { ...status.settings.budget, interactive_usd_daily: 1 } } } });

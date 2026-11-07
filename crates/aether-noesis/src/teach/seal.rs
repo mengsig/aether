@@ -231,37 +231,46 @@ fn concludes(call: &ToolCall) -> bool {
     }
 }
 
-/// Whether a pose's own fields give its own sealed texts away, by the rule
-/// posing refuses them with. An unreadable pose is still kept until it is
-/// refused, so every field it shows but its options is held to its secrets.
+/// Whether a pose's own fields give its own sealed texts away. The typed
+/// rule posing refuses with reads what the pose means; the raw read holds
+/// every other field the reply keeps, an option's extra metadata included,
+/// to the pose's secrets. A pose that cannot be read gets the raw read alone.
 fn shows_own_secret(call: &ToolCall) -> bool {
     debug_assert!(is_pose(&call.name), "only a pose carries its own secrets");
     let Some(tool) = ToolName::parse(&call.name) else {
         return false;
     };
-    match tools::parse(tool, call.input.clone()) {
+    let typed = match tools::parse(tool, call.input.clone()) {
         Ok(ToolArgs::Ask(args)) => question::shown_fields_reveal(&args),
         Ok(ToolArgs::Problem(args)) => handlers::problem_shows_solution(&args),
         Ok(other) => unreachable!("a pose parsed as {other:?}"),
-        Err(_) => {
-            let own = Sealer::new(call_secrets(call));
-            let shown = tools::visible_texts(&call.name, &without_options(&call.input));
-            shown.iter().any(|text| own.holds(text))
-        }
+        Err(_) => false,
+    };
+    if typed {
+        return true;
     }
+    let own = Sealer::new(call_secrets(call));
+    let shown = tools::visible_texts(&call.name, &without_option_names(&call.input));
+    shown.iter().any(|text| own.holds(text))
 }
 
-/// A pose's input without its options, which name a choice's key by design;
-/// a malformed choice is then refused for its form, not retried as a leak.
-fn without_options(input: &Value) -> Value {
+/// A pose's input without each option's value and label, which name a
+/// choice's key by design; any other field of an option stays.
+fn without_option_names(input: &Value) -> Value {
     let mut object = match input {
         Value::String(text) => embedded_json(text).unwrap_or_else(|| input.clone()),
         other => other.clone(),
     };
-    if let Value::Object(map) = &mut object {
-        map.remove("options");
+    let options = object.get_mut("options").and_then(Value::as_array_mut);
+    for option in options.into_iter().flatten() {
+        match option {
+            Value::Object(map) => {
+                map.remove("value");
+                map.remove("label");
+            }
+            other => *other = Value::Null,
+        }
     }
-    debug_assert!(object.get("options").is_none());
     object
 }
 
@@ -631,6 +640,18 @@ mod tests {
             "a pose's own options name its key"
         );
         assert!(reply_leaks(&sealer(&["Lyon"]), &reply("", vec![choice])));
+    }
+
+    #[test]
+    fn a_choice_option_carrying_the_explanation_leaks() {
+        let options = json!([
+            {"value": "a", "label": "Paris", "explanation": "Paris is the capital."},
+            {"value": "b", "label": "Lyon"}
+        ]);
+        let choice = json!({"kind": "choice", "prompt": "Capital?", "options": options,
+            "answer_key": ["a"], "explanation": "Paris is the capital."});
+        let choice = call("call_option", "noesis.ask", choice);
+        assert!(reply_leaks(&Sealer::default(), &reply("", vec![choice])));
     }
 
     #[test]

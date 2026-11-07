@@ -124,6 +124,12 @@ export class FauxNoesis {
     this.event(this.session(session).agent, { type: "noesis.question_posed", session, question });
   }
 
+  /** Stops the session's turn on `stall`, as the daemon does before a model call: the session carries it and an event says so. */
+  stall(session: string, stall: aether.SessionStall): void {
+    this.update(session, { stalled: stall });
+    this.event(this.session(session).agent, { type: "noesis.session_stalled", session, stall });
+  }
+
   problem(session: string, posed: aether.Problem): void {
     const problem = { ...posed, posed_at: stamp(this.seq + 1) };
     this.history.problem(session, problem);
