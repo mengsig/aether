@@ -23,10 +23,10 @@ afterEach(() => {
 
 const running = fauxAgent();
 
-async function open(agent: aether.Agent = running, options: ScriptOptions = {}, extra: readonly SlashCommand[] = []) {
+async function open(agent: aether.Agent = running, options: ScriptOptions = {}, extra: readonly SlashCommand[] = [], unknownHeld: string | null = null) {
   const h = current = await connected({ agents: [agent], ...options, script: { ...controlsScript(), ...options.script } });
   const commands = mergeCommands(clientCommands(h.conn, agent), hostCommands(agent), extra);
-  const root = await h.mount(<Composer conn={h.conn} agent={agent} commands={commands} />);
+  const root = await h.mount(<Composer conn={h.conn} agent={agent} commands={commands} unknownHeld={unknownHeld} />);
   return { h, root, input: textarea(root) };
 }
 
@@ -143,7 +143,7 @@ describe("Composer drafts", () => {
     const h = current = await connected({ agents: [running] });
     const key = `aether.draft.v1:${JSON.stringify([h.conn, running.id, "message"])}`;
     sessionStorage.setItem(key, "{not json");
-    const root = await h.mount(<Composer conn={h.conn} agent={running} commands={[]} />);
+    const root = await h.mount(<Composer conn={h.conn} agent={running} commands={[]} unknownHeld={null} />);
     expect(textarea(root).value).toBe("");
     expect(sessionStorage.getItem(key)).toBeNull();
   });
@@ -269,7 +269,7 @@ describe("the slash menu", () => {
     "without the daemon's catalog /mode, /focus and /calm refuse here instead of reaching the agent (%s)", async (reason) => {
       const choose = vi.fn();
       const extra = modeCommands([], choose, choose, reason);
-      const { h, root, input } = await open(running, {}, extra);
+      const { h, root, input } = await open(running, {}, extra, reason);
       for (const line of ["/mode focus", "/focus", "/calm"]) {
         await write(h, input, line);
         await press(h, input, "Escape");
@@ -277,9 +277,26 @@ describe("the slash menu", () => {
         expect(root.querySelector('[role="alert"]')?.textContent).toBe(reason);
         expect(input.value, "the line stays to run again").toBe(line);
       }
+      for (const line of ["/brief", "/brief now"]) {
+        await write(h, input, line);
+        await press(h, input, "Enter");
+        expect(root.querySelector('[role="alert"]')?.textContent, "a user's own mode may be named so").toBe(`${reason}, so /brief is not sent: it may be a view mode`);
+        expect(input.value).toBe(line);
+      }
       expect(choose).not.toHaveBeenCalled();
       expect(sentMessages(h)).toEqual([]);
+      await write(h, input, "/home/me/notes.md is ready");
+      await press(h, input, "Enter");
+      expect(sentMessages(h), "a path is not a command").toEqual([{ to: running.id, content: "/home/me/notes.md is ready" }]);
     });
+
+  test("with the catalog read, an unknown /name goes to the agent as typed", async () => {
+    const { h, input } = await open(running, {}, modeCommands([{ name: "standard", label: "Standard", description: "" }], vi.fn(), vi.fn(), "unused"), null);
+    await write(h, input, "/brief");
+    await press(h, input, "Escape");
+    await press(h, input, "Enter");
+    expect(sentMessages(h)).toEqual([{ to: running.id, content: "/brief" }]);
+  });
 
   test("a menu pick waits like Send: never twice while a send is pending, never to an ended agent", async () => {
     const orchestrator = fauxAgent(undefined, { role: "archon-orchestrator" });

@@ -57,6 +57,18 @@ export function parseLine(line: string, commands: readonly SlashCommand[]): { re
   return command === undefined ? null : { command, args: (match[2] ?? "").trim() };
 }
 
+/**
+ * Why `line` stays here: without the view-mode catalog (`unavailable` says why, null when it is read),
+ * a `/name` no command knows may toggle a user's own view mode, so it never reaches the agent as text.
+ */
+export function heldUnknown(line: string, commands: readonly SlashCommand[], unavailable: string | null): string | null {
+  if (unavailable === null) return null;
+  invariant(unavailable !== "", "a missing catalog has a reason");
+  const name = /^\/(\S+)/.exec(line.trim())?.[1];
+  if (name === undefined || !COMMAND_NAME.test(name) || commands.some((c) => c.name === name)) return null;
+  return `${unavailable}, so /${name} is not sent: it may be a view mode`;
+}
+
 /** A command whose argument must be given is completed by Enter, not run bare. */
 export const needsArgument = (command: SlashCommand): boolean => command.args.startsWith("<");
 

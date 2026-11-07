@@ -56,16 +56,17 @@ function Pinned({ conn, agent }: { readonly conn: ConnId; readonly agent: aether
 function useChatCommands(conn: ConnId, agent: aether.Agent, view: ViewModeState) {
   const modes = useMemo(() => view.modes.map((m) => ({ name: m.name, label: modeLabel(m), description: m.description ?? "" })), [view.modes]);
   const unavailable = view.problem === null ? "View modes are still loading" : `View modes unavailable: ${view.problem}`;
-  return useMemo(
+  const commands = useMemo(
     () => mergeCommands(modeCommands(modes, view.choose, view.toggle, unavailable), hostCommands(agent), clientCommands(conn, agent)),
     [modes, view.choose, view.toggle, unavailable, agent, conn],
   );
+  return { commands, unknownHeld: modes.length === 0 ? unavailable : null };
 }
 
 export function Chat({ conn, agent }: { readonly conn: ConnId; readonly agent: aether.Agent }) {
   invariant(conn !== "" && agent.id !== "", "a chat belongs to a connection and an agent");
   const view = useViewMode(conn, agent);
-  const commands = useChatCommands(conn, agent, view);
+  const { commands, unknownHeld } = useChatCommands(conn, agent, view);
   const { details, setDetails } = view;
   const onKeyDown = useCallback((event: KeyboardEvent<HTMLElement>) => {
     if (!event.ctrlKey || event.altKey || event.metaKey || event.key.toLowerCase() !== "t") return;
@@ -82,7 +83,7 @@ export function Chat({ conn, agent }: { readonly conn: ConnId; readonly agent: a
       <Pinned conn={conn} agent={agent} />
       <Conversation conn={conn} agent={agent.id} rules={view.rules} layout={layout} />
       <UndeliveredFirst conn={conn} agent={agent.id} />
-      <Composer conn={conn} agent={agent} commands={commands} />
+      <Composer conn={conn} agent={agent} commands={commands} unknownHeld={unknownHeld} />
     </section>
   );
 }

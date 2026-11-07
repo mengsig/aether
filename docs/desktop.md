@@ -214,7 +214,9 @@ The composer sits under the conversation. Enter sends, Shift+Enter adds a
 line, and **Stop** interrupts the running turn without losing the agent's
 context. What you type is kept per daemon and agent for the rest of the
 session (the Steer form and the Inbox's question answers keep theirs too) and
-is cleared only once the daemon confirms delivery.
+is cleared only once the daemon confirms delivery. Where the session store is
+full or disabled, the composer says the draft is not kept if you leave, and a
+started chat's undelivered first message stays in the sheet instead.
 
 Typing `/` opens the command menu. Arrow keys move, Tab completes a name and
 then offers its choices, Enter runs, Escape closes; the pointer works too.
@@ -234,7 +236,7 @@ then offers its choices, Enter runs, Escape closes; the pointer works too.
 To Archon's orchestrator the menu also offers Archon's own commands
 (`/status`, `/queue`, `/answer`, `/approve`, `/merge` and the rest), which go
 to it as typed. Any other `/line` is sent to the agent unchanged, as the TUI
-sends it.
+sends it, except while the view mode list is missing (below).
 
 ### View modes
 
@@ -245,8 +247,9 @@ read over `list_view_modes` (see [the TUI's view modes](tui.md#view-modes)); a
 mode scoped to another agent is not offered. Arrow keys move the choice, and
 `/mode <name>` or `/<name>` (again for standard) choose one from the composer
 and run in the app. While the daemon's list is loading or unavailable, `/mode`,
-`/focus` and Archon's `/calm` say so rather than reach the agent; any other user
-mode's `/<name>` is known only once the list arrives. The choice is remembered
+`/focus` and Archon's `/calm` say so rather than reach the agent, and so does
+any other `/<name>` no command knows, since it may name a user mode; once the
+list has arrived and names no such mode, it is sent as typed. The choice is remembered
 per daemon and agent. Without one, Archon's orchestrator opens in its Calm mode
 whenever a `calm.toml` that fits it exists, whatever other modes are scoped to
 it; any other agent opens in the first user mode scoped to it, else in standard.
@@ -268,8 +271,11 @@ confirms, in ascending order; any other header line stays text of the delivery
 it sits in, and an operator's delivery must match its record word for word.
 Where the records are not read yet, are older than the turn, or leave a
 boundary in doubt, the turn is drawn verbatim as one card, quoted headers and
-all, whole in every mode. A delegated agent's first turn is its task only when
-the inbox did not deliver it.
+all, whole in every mode. The records are read from the lowest seq the loaded
+turns name, then only the newer ones as deliveries arrive, so a long chat never
+rereads its history; a failed read is reported and leaves its turns verbatim.
+A delegated agent's first turn is its task only when the inbox did not deliver
+it.
 
 Delegations, messages between agents and a child's completion or failure are
 cards that open the other agent's chat and, for delegations and outcomes, the

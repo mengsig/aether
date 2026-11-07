@@ -12,17 +12,19 @@ import { invariant } from "../fleet/invariant.ts";
 import { DRAFT_LIMIT, draftKey, useDraft, type Draft } from "./drafts.ts";
 import { EndedNotice, endedReason } from "./ended.tsx";
 import { optionId, pick, completion, SlashMenu, useMenu, type MenuOption, type MenuState } from "./menu.tsx";
-import { parseLine, type SlashCommand } from "./slash.ts";
+import { heldUnknown, parseLine, type SlashCommand } from "./slash.ts";
 import "./composer.css";
 
 export interface ComposerProps {
   readonly conn: ConnId;
   readonly agent: aether.Agent;
   readonly commands: readonly SlashCommand[];
+  /** Why a `/name` no command knows is held here (the view-mode catalog is missing), or null to send it. */
+  readonly unknownHeld: string | null;
 }
 
 /** Sends a line: a known command with `run` runs here, anything else goes to the agent as typed. */
-function useSubmit(conn: ConnId, agent: aether.Agent, commands: readonly SlashCommand[], draft: Draft) {
+function useSubmit(conn: ConnId, agent: aether.Agent, commands: readonly SlashCommand[], unknownHeld: string | null, draft: Draft) {
   const run = useRun(conn);
   const [problem, setProblem] = useState<string | null>(null);
   /** `typed` is the draft the line came from: a menu pick completes it, so the two can differ. */
@@ -36,6 +38,8 @@ function useSubmit(conn: ConnId, agent: aether.Agent, commands: readonly SlashCo
         draft.delivered(typed);
         return;
       }
+      const held = heldUnknown(line, commands, unknownHeld);
+      if (held !== null) throw new DraftError(held);
       const command = sendCommand(agent.id, line, false);
       setProblem(null);
       if (await run.send(command, "Sent")) draft.delivered(typed);
@@ -62,10 +66,10 @@ function menuKey(event: KeyboardEvent, menu: MenuState, choose: (option: MenuOpt
   }
 }
 
-export function Composer({ conn, agent, commands }: ComposerProps) {
+export function Composer({ conn, agent, commands, unknownHeld }: ComposerProps) {
   invariant(conn !== "" && agent.id !== "", "a composer belongs to a connection and an agent");
   const draft = useDraft(draftKey(conn, agent.id, "message"));
-  const { run, problem, submit, stop } = useSubmit(conn, agent, commands, draft);
+  const { run, problem, submit, stop } = useSubmit(conn, agent, commands, unknownHeld, draft);
   const menu = useMenu(draft.text, commands);
   const listbox = useId();
   const reasonId = useId();
