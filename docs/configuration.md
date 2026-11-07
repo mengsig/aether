@@ -884,7 +884,7 @@ question's key and explanation, the active problem's solution) and those the
 reply's own calls would pose. A question or problem the reply poses is held to
 the rule posing applies to its own fields: its prompt, statement or tags may
 not name its own key, explanation or solution, though a choice's options show
-its correct one. A reply that gives one away is discarded unseen, and its
+its correct one. That holds for a pose whose form posing then refuses, too. A reply that gives one away is discarded unseen, and its
 spend still counts. The step runs again once with a reminder; if that reply
 gives one away too, the learner sees "Let's try that differently." A reply
 may state the active problem's solution only beside a conclusion the

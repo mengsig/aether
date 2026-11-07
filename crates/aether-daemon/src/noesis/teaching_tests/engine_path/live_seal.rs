@@ -169,34 +169,37 @@ async fn a_reply_naming_a_live_solution_is_discarded() {
     harness.close().await;
 }
 
-/// A question whose own prompt names its key is discarded before its
-/// prompt reaches the transcript, and the clean retry poses.
+/// A question whose own prompt names its key, whether posing would accept
+/// its form or refuse it, is discarded before its prompt reaches the
+/// transcript, and the clean retry poses.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_pose_naming_its_own_key_is_discarded_before_it_is_kept() {
-    let home = Home::new();
-    let cli = Arc::new(FauxCli::default());
-    let spoiled = json!({"kind": "recall", "prompt": format!("Is the code {KEY}?"),
-        "answer_key": KEY});
-    cli.queue(
-        "prober",
-        json!({"text": "One question:", "tool_calls": [tool_call("noesis_ask", spoiled)]}),
-    );
-    cli.queue(
-        "prober",
-        json!({"text": "One question:", "tool_calls": [tool_call("noesis_ask", ask())]}),
-    );
-    let harness = engine_harness(&home, cli.clone()).await;
-    let created = harness.create(json!({})).await;
-    harness.settled().await;
+    for kind in ["recall", "essay"] {
+        let home = Home::new();
+        let cli = Arc::new(FauxCli::default());
+        let spoiled = json!({"kind": kind, "prompt": format!("Is the code {KEY}?"),
+            "answer_key": KEY});
+        cli.queue(
+            "prober",
+            json!({"text": "One question:", "tool_calls": [tool_call("noesis_ask", spoiled)]}),
+        );
+        cli.queue(
+            "prober",
+            json!({"text": "One question:", "tool_calls": [tool_call("noesis_ask", ask())]}),
+        );
+        let harness = engine_harness(&home, cli.clone()).await;
+        let created = harness.create(json!({})).await;
+        harness.settled().await;
 
-    let prober = agent_of(&created);
-    let session = harness.session(&created.id).await.expect("session");
-    let open = session.open_question.expect("the retried question opened");
-    assert_eq!(open.prompt, "Name the code");
-    assert_never_kept(&harness, prober, KEY);
-    assert_never_kept(&harness, prober, "Is the code");
-    assert_eq!(reminded(&cli), 1, "the retry was told why");
-    harness.close().await;
+        let prober = agent_of(&created);
+        let session = harness.session(&created.id).await.expect("session");
+        let open = session.open_question.expect("the retried question opened");
+        assert_eq!(open.prompt, "Name the code", "{kind}");
+        assert_never_kept(&harness, prober, KEY);
+        assert_never_kept(&harness, prober, "Is the code");
+        assert_eq!(reminded(&cli), 1, "{kind}: the retry was told why");
+        harness.close().await;
+    }
 }
 
 /// A conclusion the handler refuses leaves the problem active, so a reply

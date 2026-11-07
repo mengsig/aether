@@ -175,8 +175,9 @@ fn is_pose(tool: &str) -> bool {
 /// provider's, never model text: a key "1" would match `call_…_1`.
 ///
 /// A pose's own view necessarily shows its options, which name its key, so
-/// it is held to the rule posing applies to its own fields instead. A pose
-/// whose input is unreadable is refused, so its secrets never become live.
+/// it is held to the rule posing applies to its own fields instead, an
+/// unreadable one to its secrets everywhere but its options. An unreadable
+/// pose is refused, so its secrets never become live.
 /// A reply may show the active problem's solution only when it carries a
 /// conclusion its handler would accept. A failed attempt is neither shown
 /// nor kept.
@@ -231,8 +232,8 @@ fn concludes(call: &ToolCall) -> bool {
 }
 
 /// Whether a pose's own fields give its own sealed texts away, by the rule
-/// posing refuses them with. An unreadable pose is refused before it shows
-/// anything, so it is held to nothing here.
+/// posing refuses them with. An unreadable pose is still kept until it is
+/// refused, so every field it shows but its options is held to its secrets.
 fn shows_own_secret(call: &ToolCall) -> bool {
     debug_assert!(is_pose(&call.name), "only a pose carries its own secrets");
     let Some(tool) = ToolName::parse(&call.name) else {
@@ -242,8 +243,26 @@ fn shows_own_secret(call: &ToolCall) -> bool {
         Ok(ToolArgs::Ask(args)) => question::shown_fields_reveal(&args),
         Ok(ToolArgs::Problem(args)) => handlers::problem_shows_solution(&args),
         Ok(other) => unreachable!("a pose parsed as {other:?}"),
-        Err(_) => false,
+        Err(_) => {
+            let own = Sealer::new(call_secrets(call));
+            let shown = tools::visible_texts(&call.name, &without_options(&call.input));
+            shown.iter().any(|text| own.holds(text))
+        }
     }
+}
+
+/// A pose's input without its options, which name a choice's key by design;
+/// a malformed choice is then refused for its form, not retried as a leak.
+fn without_options(input: &Value) -> Value {
+    let mut object = match input {
+        Value::String(text) => embedded_json(text).unwrap_or_else(|| input.clone()),
+        other => other.clone(),
+    };
+    if let Value::Object(map) = &mut object {
+        map.remove("options");
+    }
+    debug_assert!(object.get("options").is_none());
+    object
 }
 
 /// The replies one model step took: the step kept, the raw reply it came
@@ -623,7 +642,19 @@ mod tests {
         let secrets = call_secrets(&call("toolu_3", "noesis.ask", unreadable.clone()));
         assert_eq!(secrets, vec!["Paris".to_string()], "its key is read healed");
         let unreadable = reply("", vec![call("toolu_3", "noesis.ask", unreadable)]);
-        assert!(!reply_leaks(&none, &unreadable), "refused before it shows anything");
+        assert!(reply_leaks(&none, &unreadable), "kept until refused, so read");
+        let options = json!([{"value": "a", "label": "Paris"}, {"value": "b", "label": "Lyon"}]);
+        let malformed = json!({"kind": "choice", "prompt": "Capital?", "options": options,
+            "answer_key": ["a"], "multi": "sometimes"});
+        let choice = call("toolu_5", "noesis.ask", malformed.clone());
+        assert!(tools::parse(ToolName::Ask, malformed).is_err(), "the form is refused");
+        assert!(
+            !reply_leaks(&none, &reply("", vec![choice])),
+            "a malformed choice's options still name its key"
+        );
+        let spoiled = json!({"kind": "essay", "prompt": "It is Paris", "answer_key": "Paris"});
+        let stringified = call("toolu_6", "noesis.ask", Value::String(spoiled.to_string()));
+        assert!(reply_leaks(&none, &reply("", vec![stringified])), "read as text too");
     }
 
     #[test]
