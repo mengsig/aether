@@ -95,7 +95,7 @@ function AnswerForm({ question, onAnswer }: { question: aether.Question; onAnswe
     const problem = await onAnswer(answer);
     setBusy(false);
     setFailure(problem);
-    if (problem === null) draft.clear();
+    if (problem === null) draft.clearIfUnchanged();
   };
   const submit = (event: FormEvent) => {
     event.preventDefault();

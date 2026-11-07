@@ -1,4 +1,4 @@
-import { useDraft } from "@aether-ui/core";
+import { connectionDraftKey, useDraft } from "@aether-ui/core";
 import { useScopeSuggestions } from "./Repository.tsx";
 // Merge near-duplicate memories (MEMORY-V2.md §2.2): a dry run plans the clusters, and only an
 // explicit confirm of that plan's scope writes anything.
@@ -16,7 +16,7 @@ type Plan = { readonly scope: aether.MemoryScope | null; readonly result: aether
 const FIELDS = ["dry_run", "scanned", "clusters"];
 
 export function ConsolidateTool({ conn, known, refresh }: { conn: ConnId; known: ReadonlyMap<string, string>; refresh: () => Promise<unknown> }) {
-  const draft = useDraft("memory/consolidate", { text: "" });
+  const draft = useDraft(connectionDraftKey("memory", conn, "consolidate"), { text: "" });
   const { text } = draft.value;
   const suggestions = useScopeSuggestions(conn);
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -40,7 +40,7 @@ export function ConsolidateTool({ conn, known, refresh }: { conn: ConnId; known:
     const result = replyData<aether.MemoryConsolidation>(reply, "memory_consolidation", FIELDS);
     invariant(!result.dry_run, "a confirmed run writes");
     setPlan(null);
-    draft.clear();
+    draft.clearIfUnchanged();
     setDone(result);
     await refresh();
   };

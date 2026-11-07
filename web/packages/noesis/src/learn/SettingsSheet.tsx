@@ -118,7 +118,7 @@ function BudgetFields({ draft, errors, host, set }: SectionProps & { errors: Par
 /** Why a saved model is not in the list: it is billed per request with that off, or not ready now. */
 export function hiddenModelNote(ref: string, choices: ModelChoices, allowApi: boolean): string | undefined {
   if (ref === "" || !choices.loaded) return undefined;
-  const listed = modelOptions(choices.models, choices.auth, { allowApiBilled: allowApi });
+  const listed = modelOptions(choices.models, choices.providers, { allowApiBilled: allowApi });
   if (listed.some((option) => option.id === ref && option.disabled !== true)) return undefined;
   invariant(ref.includes("/"), "a saved model is a provider/model ref");
   return `${ref} is not offered: it is billed per request or not ready. Choose another, or allow API-billed models.`;
@@ -150,7 +150,7 @@ function ModelFields({ draft, choices, active, disabled, set }: SectionProps & {
         <p className="learn-callout" role="status">No model is ready yet. <a className="ui-link" href="#/settings/providers">Sign in to a provider</a>, then come back.</p>
       )}
       {pickers.map((picker) => (
-        <ModelPicker key={picker.field} label={picker.label} data-testid={picker.testid} models={choices.models} auth={choices.auth} value={draft[picker.field]}
+        <ModelPicker key={picker.field} label={picker.label} data-testid={picker.testid} models={choices.models} providers={choices.providers} value={draft[picker.field]}
           defaultLabel={DEFAULT_MODEL_LABEL} allowApiBilled={draft.allowApi} disabled={disabled}
           hint={hiddenModelNote(draft[picker.field], choices, draft.allowApi) ?? picker.hint} onChange={(ref) => set({ [picker.field]: ref })} />
       ))}

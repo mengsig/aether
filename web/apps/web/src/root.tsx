@@ -2,8 +2,9 @@ import { navigate, selectConnections, selectReports, useApp, useCapabilities, us
 import type { EntityAction } from "@aether-ui/protocol";
 import { HomeScreen } from "@aether-ui/home";
 import { AppShell, type ToastMessage } from "@aether-ui/ui";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { NOTICE_MS, noticesOf } from "./notices.ts";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import { useNoticeLifetime } from "./notice-lifetime.ts";
+import { noticesOf } from "./notices.ts";
 import { screenTitles } from "./titles.ts";
 
 function subscribeHash(listener: () => void): () => void {
@@ -39,14 +40,4 @@ export function ShellRoot() {
       onNavigate={navigate} onActionError={onActionError} connections={connections} notices={notices} onDismissNotice={dismiss} onDismissAllNotices={dismissAll} titles={screenTitles}
       home={<HomeScreen />} />
   );
-}
-
-/** Each toast leaves on its own after NOTICE_MS; a repeat of the same failure renews it under a new id. */
-function useNoticeLifetime(notices: readonly ToastMessage[], dismiss: (id: ToastMessage["id"]) => void): void {
-  const ids = notices.map((notice) => notice.id).join(",");
-  useEffect(() => {
-    if (ids === "") return;
-    const timers = ids.split(",").map((id) => setTimeout(() => dismiss(Number(id)), NOTICE_MS));
-    return () => { for (const timer of timers) clearTimeout(timer); };
-  }, [ids, dismiss]);
 }

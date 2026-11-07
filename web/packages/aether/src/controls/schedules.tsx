@@ -111,7 +111,7 @@ function NewSchedule({ conn, agent, run, changed }: { readonly conn: ConnId; rea
     try {
       const command = scheduleCommand(agent, draft);
       setProblem(null);
-      if (await run.send(command, "Schedule created")) { form.clear(); changed(); }
+      if (await run.send(command, "Schedule created")) { form.clearIfUnchanged(); changed(); }
     } catch (error) {
       if (!(error instanceof DraftError)) throw error;
       setProblem(error.message);

@@ -128,6 +128,19 @@ function checkKey(key: string): void {
   invariant(/^[a-z0-9-]+\/[a-z0-9:_./-]+$/i.test(key), `draft key ${JSON.stringify(key)} is <screen>/<form>`);
 }
 
+/**
+ * The key of a form that belongs to one daemon connection: `<screen>/<connection>/<form>`, so two
+ * connections never share what was typed. The connection id keeps only what a draft key allows.
+ */
+export function connectionDraftKey(screen: string, conn: string, form: string): string {
+  invariant(/^[a-z0-9-]+$/i.test(screen), `draft screen ${JSON.stringify(screen)} is one word`);
+  invariant(conn.length > 0, `a draft for ${screen}/${form} belongs to a connection`);
+  invariant(/^[a-z0-9:_./-]+$/i.test(form), `draft form ${JSON.stringify(form)} is a plain name`);
+  const key = `${screen}/${conn.replace(/[^a-z0-9:_.-]/gi, "_")}/${form}`;
+  checkKey(key);
+  return key;
+}
+
 /** The app's one draft store; `useDraft` reads it, tests make their own. */
 export const drafts = new DraftStore();
 
@@ -146,8 +159,13 @@ export interface Draft<T extends DraftValue> {
   readonly value: T;
   /** Merges a patch, or replaces through a function of the current draft. */
   readonly update: (patch: DraftPatch<T>) => void;
-  /** Forgets the draft: after a submit, or when the person discards it. */
+  /** Forgets the draft when the person discards it. */
   readonly clear: () => void;
+  /**
+   * Forgets the draft after a submit, unless it changed since this render: a send that finishes
+   * after the person typed more, or came back and typed again, keeps the newer text.
+   */
+  readonly clearIfUnchanged: () => void;
   /** Whether anything differs from `initial`. */
   readonly dirty: boolean;
 }
@@ -169,5 +187,10 @@ export function useDraft<T extends DraftValue>(key: string, initial: T, store: D
     else store.set(key, next);
   }, [store, key, initial]);
   const clear = useCallback(() => store.clear(key), [store, key]);
-  return { value, update, clear, dirty: stored !== undefined };
+  const clearIfUnchanged = useCallback(() => {
+    // Every update stores a new object, so a draft that still is this render's is unchanged.
+    if (store.get(key) !== stored) return;
+    store.clear(key);
+  }, [store, key, stored]);
+  return { value, update, clear, clearIfUnchanged, dirty: stored !== undefined };
 }

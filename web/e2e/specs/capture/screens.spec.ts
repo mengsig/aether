@@ -180,23 +180,28 @@ test("observer: the read-only controls, queue and item", async ({ page, stack })
   await shoot(page, stack, "Item", "observer", `#/archon/items/${item.id}`, "#item-title");
 });
 
-test("noesis: the learning screens off, then on", async ({ page, stack }) => {
-  await pairBoth(page, stack, { aether: "operator", archon: "operator" }, "Design audit noesis");
-  await shoot(page, stack, "Learn", "off", "#/learn", '[data-testid="noesis-off"]');
-  await shoot(page, stack, "Learn", "settings-sheet", "#/learn", { ready: '[data-testid="noesis-off"]', prepare: async (p) => {
-    await p.getByRole("button", { name: "Open Noesis settings" }).click();
-    await expect(p.getByTestId("noesis-save")).toBeVisible();
-    await p.mouse.move(0, 0);
-  } });
-  await configureNoesis(stack, { enabled: true, engineering_context: true });
+// On a stack of its own: turning Noesis on makes noesis.db, and specs/noesis asserts the shared
+// stack never has one.
+test("noesis: the learning screens off, then on", async ({ page }) => {
+  test.setTimeout(180_000);
+  const own = await startPrivateStack();
   try {
+    const { stack } = own;
+    await pairBoth(page, stack, { aether: "operator", archon: "operator" }, "Design audit noesis");
+    await shoot(page, stack, "Learn", "off", "#/learn", '[data-testid="noesis-off"]');
+    await shoot(page, stack, "Learn", "settings-sheet", "#/learn", { ready: '[data-testid="noesis-off"]', prepare: async (p) => {
+      await p.getByRole("button", { name: "Open Noesis settings" }).click();
+      await expect(p.getByTestId("noesis-save")).toBeVisible();
+      await p.mouse.move(0, 0);
+    } });
+    await configureNoesis(stack, { enabled: true, engineering_context: true });
     await page.reload();
     await shoot(page, stack, "Learn sessions", "empty", "#/learn", '[data-testid="learn-goal"]');
     await shoot(page, stack, "Knowledge", "empty", "#/learn/graph");
     await shoot(page, stack, "My understanding", "empty", "#/learn/me");
     await shoot(page, stack, "Session", "error", `#/learn/sessions/ns_${"0".repeat(26)}`);
   } finally {
-    await configureNoesis(stack, { enabled: false, engineering_context: false });
+    await stopPrivateStack(own);
   }
 });
 

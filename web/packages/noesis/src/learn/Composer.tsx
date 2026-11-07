@@ -1,5 +1,5 @@
 // The session's composer, pinned under the chat: Enter sends, Shift+Enter starts a new line, and what
-// was typed is kept per session until a send succeeds.
+// was typed is kept per session until that text is sent; text typed meanwhile stays.
 
 import { useDraft } from "@aether-ui/core";
 import { Button, TextArea } from "@aether-ui/ui";
@@ -37,7 +37,7 @@ export function Composer({ sessionId, waiting, problem, disabled, onSend }: Comp
     setSending(true);
     const failure = await onSend(trimmed);
     setSending(false);
-    if (failure === null) draft.clear();
+    if (failure === null) draft.clearIfUnchanged();
   };
   const submit = (event: FormEvent) => {
     event.preventDefault();

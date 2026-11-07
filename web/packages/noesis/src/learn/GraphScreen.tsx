@@ -10,7 +10,7 @@ import { errorText, useLearn, useNoesisChange, useNoesisRead, useOperateRefusal 
 import { knowledgeGraph, knowledgeModel, masteryByProposition, spreadForLabels, structureKey } from "./graph-model.ts";
 import { LearnFrame, type OpenGate } from "./LearnFrame.tsx";
 import { MasteryBadge } from "./Mastery.tsx";
-import { invariant, MASTERY_ORDER, type Mastery } from "./model.ts";
+import { draftKey, invariant, MASTERY_ORDER, type Mastery } from "./model.ts";
 import { learnerConcepts } from "./UnderstandingScreen.tsx";
 
 export type LayoutFn = (model: GraphModel) => Promise<Layout>;
@@ -30,11 +30,10 @@ function sourceGraphOf(id: string): SourceGraph {
 
 type Pending = { readonly kind: "proposition"; readonly id: string } | { readonly kind: "source"; readonly id: string };
 
-const SEARCH_DRAFT = "learn/graph-search";
 const EMPTY_SEARCH: { readonly query: string } = { query: "" };
 
 export function GraphScreen({ conn, layout = forceLayout }: OpenGate & { layout?: LayoutFn }) {
-  const draft = useDraft(SEARCH_DRAFT, EMPTY_SEARCH);
+  const draft = useDraft(draftKey("graph-search", conn), EMPTY_SEARCH);
   const [search, setSearch] = useState("");
   const read = useNoesisRead(conn, search === "" ? { kind: "graph" } : { kind: "graph", query: search });
   useNoesisRead(conn, { kind: "learner" });

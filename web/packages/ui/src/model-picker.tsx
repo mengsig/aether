@@ -1,5 +1,5 @@
 // ModelPicker: one way to choose a model everywhere. Options come from the daemon's `list_models`
-// and `auth_status` replies (the feature screen reads them through core); the picker groups them
+// and `providers` replies (the feature screen reads them through core); the picker groups them
 // by provider, marks readiness and billing, and hands back the `provider/model` text the forms
 // already send. Nothing about the protocol changes.
 
@@ -16,28 +16,27 @@ export function modelRefText(ref: aether.ModelRef): string {
   return `${ref.provider}/${ref.model}`;
 }
 
-const SUBSCRIPTION_WORDS = /subscription|chatgpt|claude code|login|signed in|cli/i;
-const API_WORDS = /api[ _-]?key|environment|env|token/i;
-
-/** How a model is paid for, from `auth_status` when the provider reports it and its auth source otherwise. */
-export function billingOf(model: aether.ModelInfo, auth: readonly aether.AuthInfo[]): Billing {
-  const provider = auth.find((entry) => entry.provider === model.model.provider);
-  if (provider?.subscription === true) return "subscription";
-  const source = model.auth_source ?? provider?.source ?? "";
-  if (SUBSCRIPTION_WORDS.test(source)) return "subscription";
-  if (API_WORDS.test(source)) return "api";
-  return "unknown";
+/**
+ * How a model is paid for, as Noesis decides it: a provider the daemon lists as an engine (a CLI
+ * signed in to a subscription) spends that subscription; every other provider bills per request.
+ * Unknown until the `providers` reply names the provider.
+ */
+export function billingOf(model: aether.ModelInfo, providers: readonly aether.ProviderInfo[]): Billing {
+  const provider = providers.find((entry) => entry.provider === model.model.provider);
+  if (provider === undefined) return "unknown";
+  invariant(typeof provider.engine === "boolean", `provider ${provider.provider} says whether it is an engine`);
+  return provider.engine ? "subscription" : "api";
 }
 
 export interface ModelOptionsSettings {
-  /** API-billed models are listed; off, they are left out (Noesis spends only subscriptions by default). */
+  /** API-billed models are listed; off, only models known to spend a subscription are offered (Noesis's default). */
   readonly allowApiBilled?: boolean | undefined;
   /** Models whose provider is not signed in are listed, disabled, so the person sees what a login would add. */
   readonly showUnconfigured?: boolean | undefined;
 }
 
 /** Picker options for `models`, grouped by provider, ready ones first within a provider. */
-export function modelOptions(models: readonly aether.ModelInfo[], auth: readonly aether.AuthInfo[], settings: ModelOptionsSettings = {}): PickerOption[] {
+export function modelOptions(models: readonly aether.ModelInfo[], providers: readonly aether.ProviderInfo[], settings: ModelOptionsSettings = {}): PickerOption[] {
   invariant(models.every((model) => typeof model.configured === "boolean"), "model readiness is explicit");
   const allowApi = settings.allowApiBilled ?? true;
   const options: PickerOption[] = [];
@@ -46,9 +45,9 @@ export function modelOptions(models: readonly aether.ModelInfo[], auth: readonly
     const id = modelRefText(model.model);
     if (seen.has(id)) continue;
     seen.add(id);
-    const billing = billingOf(model, auth);
+    const billing = billingOf(model, providers);
     if (!model.configured && settings.showUnconfigured !== true) continue;
-    if (billing === "api" && !allowApi) continue;
+    if (!allowApi && billing !== "subscription") continue;
     options.push(modelOption(model, id, billing));
   }
   return options;
@@ -69,7 +68,8 @@ function modelOption(model: aether.ModelInfo, id: string, billing: Billing): Pic
 export interface ModelPickerProps extends ModelOptionsSettings {
   readonly label?: string | undefined;
   readonly models: readonly aether.ModelInfo[];
-  readonly auth?: readonly aether.AuthInfo[] | undefined;
+  /** The `providers` reply, which says how each provider is billed; without it no billing is shown. */
+  readonly providers?: readonly aether.ProviderInfo[] | undefined;
   /** The `provider/model` text, or "" for the default option when one is offered. */
   readonly value: string;
   readonly onChange: (ref: string) => void;
@@ -82,8 +82,8 @@ export interface ModelPickerProps extends ModelOptionsSettings {
   readonly "data-testid"?: string | undefined;
 }
 
-export function ModelPicker({ label = "Model", models, auth = [], value, onChange, defaultLabel = null, hint, error, disabled, className, ...settings }: ModelPickerProps) {
-  const options = modelOptions(models, auth, settings);
+export function ModelPicker({ label = "Model", models, providers = [], value, onChange, defaultLabel = null, hint, error, disabled, className, ...settings }: ModelPickerProps) {
+  const options = modelOptions(models, providers, settings);
   const all = defaultLabel === null ? options : [{ id: "", label: defaultLabel, badge: "Default", badgeTone: "accent" as const }, ...options];
   const ready = options.filter((option) => !option.disabled).length;
   const empty = ready === 0 ? "No model is ready: sign in to a provider under Settings → Providers." : undefined;

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { readInFlight, relativeTime, routeHref, useNow, selectAgents, useDraft, selectConnections, selectEvents, useApp, useReread, useSelector } from "@aether-ui/core";
+import { connectionDraftKey, readInFlight, relativeTime, routeHref, useNow, selectAgents, useDraft, selectConnections, selectEvents, useApp, useReread, useSelector } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
 import { Button, EmptyState, Picker, VirtualList } from "@aether-ui/ui";
 import { Section } from "../controls/kit.tsx";
@@ -23,7 +23,7 @@ const NEWEST = Number.MAX_SAFE_INTEGER;
 function ConnectionActivity({ conn, label }: { conn: string; label: string }) {
   const live = useSelector(selectEvents(conn));
   const [cursors, setCursors] = useState<number[]>([NEWEST]);
-  const filter = useDraft("activity/filters", { family: "", agent: "" });
+  const filter = useDraft(connectionDraftKey("activity", conn, "filters"), { family: "", agent: "" });
   const { family, agent } = filter.value;
   const agents = Object.values(useSelector(selectAgents(conn)));
   const [open, setOpen] = useState(false);

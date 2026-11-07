@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useApp, useDraft, useReadPermission, useReread } from "@aether-ui/core";
+import { connectionDraftKey, useApp, useDraft, useReadPermission, useReread } from "@aether-ui/core";
 import type { aether, RouteProps } from "@aether-ui/protocol";
 import { Button, EmptyState, Field, Segmented, Switch } from "@aether-ui/ui";
 import { invariant } from "../fleet/invariant.ts";
@@ -14,7 +14,7 @@ const proposed = { cmd: "memories", query: { proposed: true } };
 export default function MemoryScreen({ params }: RouteProps) {
   const conn = params.conn ?? "";
   const app = useApp();
-  const draft = useDraft("memory/search", { text: "", scope: "all", repository: "", agent: "", kind: "all", forgotten: false });
+  const draft = useDraft(connectionDraftKey("memory", conn, "search"), { text: "", scope: "all", repository: "", agent: "", kind: "all", forgotten: false });
   const { text, scope, repository, agent, kind, forgotten } = draft.value;
   const [open, setOpen] = useState(false);
   const search = text.trim();

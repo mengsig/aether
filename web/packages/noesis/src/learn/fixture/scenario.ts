@@ -34,10 +34,13 @@ export const MODELS: readonly aether.ModelInfo[] = [
   model("gemini", "gemini-3", "Gemini", { configured: false }),
 ];
 
-export const AUTH: readonly aether.AuthInfo[] = [
-  { provider: "codex", provider_name: "Codex", configured: true, subscription: true },
-  { provider: "anthropic", provider_name: "Anthropic API", configured: true, subscription: false, source: "ANTHROPIC_API_KEY (environment)" },
-];
+const provider = (id: string, name: string, engine: boolean): aether.ProviderInfo => ({
+  provider: id, name, engine, configured: true, enabled: true, models: 2, open_model_list: false, protocol: engine ? "engine" : "anthropic",
+  health: { provider: id } as aether.ProviderHealth, ...(engine ? {} : { auth_source: "stored credential" }),
+});
+
+/** The daemon's `providers` behind MODELS: two engines on subscriptions, one API provider with a stored key; gemini is not listed. */
+export const PROVIDERS: readonly aether.ProviderInfo[] = [provider("codex", "Codex", true), provider("claude-code", "Claude Code", true), provider("anthropic", "Anthropic API", false)];
 
 export function statusOf(enabled: boolean): aether.NoesisStatus {
   const settings = { ...SETTINGS, enabled };
@@ -172,7 +175,7 @@ export function scenario(enabled: boolean, extra: Partial<FauxNoesisOptions> = {
     graph: GRAPH,
     concepts: CONCEPTS,
     models: MODELS,
-    auth: AUTH,
+    providers: PROVIDERS,
     ...extra,
   };
 }

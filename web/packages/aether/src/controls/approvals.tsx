@@ -36,7 +36,7 @@ function PolicySection({ conn, agent, run }: { readonly conn: ConnId; readonly a
       <div className="b3-row">
         <Switch label="Also for the agents it delegated to" checked={subtree} onChange={subtree => form.update({ subtree })} />
         <Action conn={conn} command={command} label="Apply approval policy" busy={run.status.state === "busy"} blocked={effects === null && !subtree ? "Nothing changed yet" : null}
-          onRun={async () => { if (await run.send(command, "Approval policy applied")) form.clear(); }} />
+          onRun={async () => { if (await run.send(command, "Approval policy applied")) form.clearIfUnchanged(); }} />
       </div>
     </Section>
   );
@@ -127,7 +127,7 @@ function NewRule({ conn, agent, run, changed }: { readonly conn: ConnId; readonl
       const command = ruleCommand(agent.id, { ...draft, run: agent.run });
       setProblem(null);
       if (await run.send(command, "Rule added")) {
-        form.clear();
+        form.clearIfUnchanged();
         changed();
       }
     } catch (error) {

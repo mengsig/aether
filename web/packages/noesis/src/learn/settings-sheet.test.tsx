@@ -5,10 +5,11 @@
 
 import { drafts } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
+import type { FauxNoesisOptions } from "./fixture/faux-noesis.ts";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { SETTLE_MS } from "./data.ts";
 import { $, byText, click, CONN, connected, hashChanged, type, type Harness } from "./fixture/harness.test-util.tsx";
-import { AUTH, MODELS, scenario, SETTINGS, statusOf } from "./fixture/scenario.ts";
+import { MODELS, PROVIDERS, scenario, SETTINGS, statusOf } from "./fixture/scenario.ts";
 import { modelList } from "./models.ts";
 import { draftOf, patchOf, settingsDraftKey } from "./settings-draft.ts";
 
@@ -28,8 +29,8 @@ function withBilling(allowApi: boolean, enabled = true): aether.NoesisStatus {
   return { ...status, settings, effective: settings };
 }
 
-async function openSheet(status: aether.NoesisStatus, transport: "ipc" | "ws-aether" = "ipc"): Promise<{ h: Harness; sheet: HTMLElement }> {
-  const h = await connected(scenario(status.enabled, { transport, status }), vi);
+async function openSheet(status: aether.NoesisStatus, transport: "ipc" | "ws-aether" = "ipc", extra: Partial<FauxNoesisOptions> = {}): Promise<{ h: Harness; sheet: HTMLElement }> {
+  const h = await connected(scenario(status.enabled, { transport, status, ...extra }), vi);
   harness = h;
   location.hash = "#/learn?panel=settings";
   await h.mount(<SessionsRoute />);
@@ -63,8 +64,18 @@ describe("model pickers", () => {
     const { sheet } = await openSheet(withBilling(false));
     const strong = $(sheet, "[data-testid=noesis-model-strong]").closest(".ui-picker");
     expect(strong?.textContent).toContain("anthropic/claude-opus-5-5 is not offered");
-    expect(hiddenModelNote("", { models: MODELS, auth: AUTH, loaded: true, error: null }, false)).toBeUndefined();
-    expect(hiddenModelNote("codex/gpt-6-luna", { models: MODELS, auth: AUTH, loaded: true, error: null }, false)).toBeUndefined();
+    expect(hiddenModelNote("", { models: MODELS, providers: PROVIDERS, loaded: true, error: null }, false)).toBeUndefined();
+    expect(hiddenModelNote("codex/gpt-6-luna", { models: MODELS, providers: PROVIDERS, loaded: true, error: null }, false)).toBeUndefined();
+  });
+
+  test("billing follows the daemon's providers, not the sign-in words: an unlisted provider is hidden while API billing is off", async () => {
+    const engineOnly = PROVIDERS.filter((provider) => provider.provider !== "anthropic");
+    const { h, sheet } = await openSheet(withBilling(false), "ipc", { providers: engineOnly });
+    expect(h.daemon.names()).toContain("providers");
+    expect(h.daemon.names()).not.toContain("auth_status");
+    expect(await optionsOf(h, sheet, "noesis-model-strong")).toEqual([DEFAULT_MODEL_LABEL, "claude-sonnet-5-5", "gpt-6-luna"]);
+    await click(h, $(sheet, "[data-testid=noesis-allow-api]"));
+    expect(await optionsOf(h, sheet, "noesis-model-strong")).toEqual([DEFAULT_MODEL_LABEL, "claude-opus-5-5", "claude-haiku-5-5", "claude-sonnet-5-5", "gpt-6-luna"]);
   });
 
   test("Default sends exactly what an empty field sent: the model cleared to null", async () => {
@@ -137,7 +148,7 @@ describe("turning Noesis on", () => {
     expect(location.hash).toBe("#/learn?panel=settings");
     const sheet = $(document, "dialog[open]");
     expect($(sheet, "[data-testid=noesis-enable]").getAttribute("aria-checked")).toBe("true");
-    expect(h.daemon.names().slice(before).filter((cmd) => cmd !== "noesis_status").sort()).toEqual(["auth_status", "list_models"]);
+    expect(h.daemon.names().slice(before).filter((cmd) => cmd !== "noesis_status").sort()).toEqual(["list_models", "providers"]);
     await click(h, $(sheet, "[data-testid=noesis-save]"));
     expect(h.daemon.privileged).toEqual([{ kind: "noesis.configure", conn: "local:faux-main", patch: { "noesis.enabled": true } }]);
     expect(drafts.get(SETTINGS_DRAFT_KEY)).toBeUndefined();

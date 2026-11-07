@@ -48,7 +48,7 @@ function useComposer(conn: ConnId, agentId: string, onSent: ((text: string) => v
     const reply = await run.send(sendCommand(agentId, text, subtree && delegates), "Sent");
     if (reply === null) return;
     invariant(typeof reply === "object", "an accepted message has a reply");
-    draft.clear();
+    draft.clearIfUnchanged();
     onSent?.(text.trim());
   }, [busy, empty, blocked, run, agentId, text, subtree, delegates, draft, onSent]);
   return { agent, draft, run, blocked, busy, empty, delegates, send };

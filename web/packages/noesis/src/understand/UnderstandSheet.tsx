@@ -137,7 +137,7 @@ function BundlePreview({ conn, request, bundle }: { readonly conn: string; reado
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (trimmed === "" || trimmed.length > GOAL_MAX) return;
-    void start.send(trimmed).then((sent) => { if (sent) draft.clear(); });
+    void start.send(trimmed).then((sent) => { if (sent) draft.clearIfUnchanged(); });
   };
   return (
     <form className="understand" onSubmit={submit} aria-label="Start a session from this evidence">

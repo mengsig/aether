@@ -30,7 +30,7 @@ function Question({ conn, question }: { readonly conn: ConnId; readonly question
       <TextArea label={`Answer ${name}`} rows={2} value={answer} onChange={event => draft.update({ answer: event.target.value })} />
       <div className="b3-row">
         <Action conn={conn} command={command} label="Send answer" variant="primary" busy={run.status.state === "busy"} blocked={answer.trim() === "" ? "Write an answer first" : null}
-          onRun={async () => { if (await run.send(command, "Answer sent")) draft.clear(); }} />
+          onRun={async () => { if (await run.send(command, "Answer sent")) draft.clearIfUnchanged(); }} />
       </div>
       <RunNote status={run.status} />
     </li>

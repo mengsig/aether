@@ -1,6 +1,6 @@
 import type { aether } from "@aether-ui/protocol";
 import { Badge, Field, Sheet, Segmented } from "@aether-ui/ui";
-import { useDraft, usePermission } from "@aether-ui/core";
+import { connectionDraftKey, useDraft, usePermission } from "@aether-ui/core";
 import { Action, RunNote, useRun } from "../controls/kit.tsx";
 import { invariant } from "../fleet/invariant.ts";
 import { Repository } from "./Repository.tsx";
@@ -8,7 +8,7 @@ import { TextArea } from "@aether-ui/ui";
 import { AgentPicker } from "./shared.tsx";
 export const kinds = ["fact", "decision", "lesson", "constraint", "preference"];
 export function CreateMemory({ conn, open, close, refresh }: { conn: string; open: boolean; close: () => void; refresh: () => Promise<unknown> }) {
-  const draft = useDraft("memory/create", { text: "", kind: "fact", target: "global", repository: "", agent: "", tags: "" });
+  const draft = useDraft(connectionDraftKey("memory", conn, "create"), { text: "", kind: "fact", target: "global", repository: "", agent: "", tags: "" });
   const { text, kind, target, repository, agent, tags } = draft.value;
   const run = useRun(conn);
   const scope = createScope(target, repository.trim(), agent);
@@ -23,7 +23,7 @@ export function CreateMemory({ conn, open, close, refresh }: { conn: string; ope
     <Field label="Tags" hint="Comma separated" value={tags} onChange={e => draft.update({ tags: e.target.value })} disabled={disabled} />
     <div className="b3-row">{[...new Set(tags.split(",").map(t => t.trim()).filter(Boolean))].map(tag => <Badge key={tag}>{tag}</Badge>)}</div>
     <Action data-testid="memory-create-submit" variant="primary" conn={conn} command={command} label="Save memory" blocked={text.trim() === "" ? "Enter memory text" : scope === null ? SCOPE_BLOCK[target] ?? null : null} busy={run.status.state === "busy"}
-      onRun={async () => { if (await run.send(command)) { draft.clear(); await refresh(); close(); } }} />
+      onRun={async () => { if (await run.send(command)) { draft.clearIfUnchanged(); await refresh(); close(); } }} />
     <RunNote status={run.status} />
   </div></Sheet>;
 }

@@ -74,7 +74,7 @@ function BudgetSection({ conn, agent, run }: { readonly conn: ConnId; readonly a
         <Action conn={conn} command={{ cmd: "update_agent", id: agent.id, patch: {} }} label="Apply limits" blocked={validation} busy={run.status.state === "busy"}
           onRun={async () => {
             const reply = await apply(run, agent.id, () => budgetPatch(draft), setProblem, "Limits updated");
-            if (reply) form.clear();
+            if (reply) form.clearIfUnchanged();
           }} />
       </div>
       {problem ? <p className="b3-note" role="alert" data-state="failed">{problem}</p> : null}

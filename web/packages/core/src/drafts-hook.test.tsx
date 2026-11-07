@@ -7,6 +7,8 @@ import { DraftStore, useDraft } from "./drafts.ts";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const INITIAL = { text: "", count: 0 };
+/** A send that has not finished yet: the clear it will run belongs to the render that sent. */
+let pendingSend: (() => void) | null = null;
 
 function Form({ store }: { store: DraftStore }) {
   const draft = useDraft("test/form", INITIAL, store);
@@ -16,6 +18,7 @@ function Form({ store }: { store: DraftStore }) {
       <output>{draft.dirty ? "dirty" : "clean"}:{draft.value.count}</output>
       <button onClick={() => draft.update((current) => ({ ...current, count: current.count + 1 }))}>more</button>
       <button onClick={draft.clear}>clear</button>
+      <button onClick={() => { pendingSend = draft.clearIfUnchanged; }}>send</button>
     </div>
   );
 }
@@ -57,6 +60,27 @@ describe("useDraft", () => {
     expect(container.querySelector("output")?.textContent).toBe("clean:0");
     expect(store.keys()).toEqual([]);
     await unmount();
+  });
+
+  test("a send that finishes after more typing keeps the newer text; one that finishes unchanged clears", async () => {
+    const store = new DraftStore(null);
+    const first = await mount(store);
+    const input = first.container.querySelector("input") as HTMLInputElement;
+    await act(async () => setValue(input, "reply A"));
+    await act(async () => first.container.querySelectorAll("button")[2]?.click());
+    await first.unmount();
+    const second = await mount(store);
+    const again = second.container.querySelector("input") as HTMLInputElement;
+    expect(again.value).toBe("reply A");
+    await act(async () => setValue(again, "reply B"));
+    await act(async () => pendingSend?.());
+    expect(again.value).toBe("reply B");
+    expect(store.get("test/form")).toEqual({ text: "reply B", count: 0 });
+    await act(async () => second.container.querySelectorAll("button")[2]?.click());
+    await act(async () => pendingSend?.());
+    expect(again.value).toBe("");
+    expect(store.get("test/form")).toBeUndefined();
+    await second.unmount();
   });
 
   test("typing back to the initial text forgets the draft", async () => {

@@ -26,9 +26,9 @@ export interface FauxNoesisOptions {
   readonly transport?: "ipc" | "ws-aether";
   /** The message `noesis_create_session` refuses with, as when no model may be used. */
   readonly refuse?: string;
-  /** What `list_models` and `auth_status` answer; none by default. */
+  /** What `list_models` and `providers` answer; none by default. */
   readonly models?: readonly aether.ModelInfo[];
-  readonly auth?: readonly aether.AuthInfo[];
+  readonly providers?: readonly aether.ProviderInfo[];
 }
 
 const OK = (tag: string, data: unknown): Result => ({ reply: { Ok: { reply: tag, data } }, then: [] });
@@ -43,7 +43,7 @@ export class FauxNoesis {
   status: aether.NoesisStatus;
   refuse: string | undefined;
   models: readonly aether.ModelInfo[];
-  auth: readonly aether.AuthInfo[];
+  providers: readonly aether.ProviderInfo[];
   readonly sessions = new Map<string, aether.NoesisSession>();
   readonly held = new Map<string, HeldQuestion>();
   graph: { nodes: aether.Proposition[]; chains: aether.Chain[] };
@@ -59,7 +59,7 @@ export class FauxNoesis {
     this.status = options.status;
     this.refuse = options.refuse;
     this.models = options.models ?? [];
-    this.auth = options.auth ?? [];
+    this.providers = options.providers ?? [];
     this.graph = { nodes: [...(options.graph?.nodes ?? [])], chains: [...(options.graph?.chains ?? [])] };
     this.concepts = [...(options.concepts ?? [])];
     for (const session of options.sessions ?? []) this.addSession(session);
@@ -177,7 +177,7 @@ export class FauxNoesis {
       case "get_agent": return this.agents.has(String(command.id)) ? OK("agent", this.agents.get(String(command.id))) : ERR("not_found", "agent");
       case "get_transcript_page": return OK("transcript_page", this.page(command));
       case "list_models": return OK("models", this.models);
-      case "auth_status": return OK("auth", this.auth);
+      case "providers": return OK("providers", this.providers);
       default: return ERR("invalid_argument", `the faux daemon has no ${cmd}`);
     }
   }

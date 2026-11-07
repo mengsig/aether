@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { drafts } from "@aether-ui/core";
+import { connectionDraftKey, drafts } from "@aether-ui/core";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
 import { act } from "react";
 import type { aether, DesktopBridge } from "@aether-ui/protocol";
@@ -11,7 +11,7 @@ afterEach(() => h?.unmount());
 const agent = fauxAgent();
 const event = (seq: number): aether.Event => ({ id: `evt_${seq}`, seq, at: "2026-11-04", actor: { actor: "system" }, agent_id: agent.id, kind: { type: "agent.ready" } });
 const script = {
-  auth_status: () => ({ tag: "auth", data: [] }),
+  providers: () => ({ tag: "providers", data: [] }),
   list_models: () => ({ tag: "models", data: [{ name: "Astra", provider_name: "Codex", capabilities: {}, configured: true, is_default: true, model: { provider: "codex", model: "astra" } }] }),
   list_workspaces: () => ({ tag: "workspaces", data: [{ path: "/repo", exists: true }] }),
   validate_workspace: () => ({ tag: "workspace_validation", data: { valid: true, path: "/repo" } }),
@@ -140,6 +140,30 @@ async function debounce() {
   await h.settle(); await h.settle();
 }
 
+test("each connection keeps its own activity filter and start draft", async () => {
+  h = await connected({ agents: [agent], events: [event(20)] });
+  let root = await h.mount(<ActivityScreen />);
+  await act(async () => { h.daemon.emit(agent.id, { type: "invocation.completed" }); }); await h.settle();
+  await pick(h, root, "Kind family", "Invocation");
+  expect(root.querySelectorAll("article")).toHaveLength(1);
+  await click(h, root, "Start an agent");
+  await type(h, document.body, "Objective", "Only on the studio");
+  const studio = { filters: connectionDraftKey("activity", h.conn, "filters"), start: connectionDraftKey("activity", h.conn, "start-agent") };
+  expect(drafts.get(studio.filters)).toEqual({ family: "invocation", agent: "" });
+  expect(drafts.get(studio.start)).toMatchObject({ objective: "Only on the studio" });
+  h.unmount();
+  h = await connected({ agents: [agent], events: [event(20)], instance: "laptop" });
+  root = await h.mount(<ActivityScreen />);
+  expect(h.conn).not.toBe("aether:b3");
+  await act(async () => { h.daemon.emit(agent.id, { type: "agent.ready" }); }); await h.settle();
+  expect(root.querySelectorAll("article"), "an agent event shows: the first connection's Invocation filter does not reach here").toHaveLength(1);
+  expect(drafts.get(connectionDraftKey("activity", h.conn, "filters"))).toBeUndefined();
+  await click(h, root, "Start an agent");
+  expect(document.querySelector<HTMLTextAreaElement>('[data-testid="start-objective"]')?.value).toBe("");
+  expect(drafts.get(studio.filters), "the first connection's filter is untouched").toEqual({ family: "invocation", agent: "" });
+  drafts.clear(studio.filters); drafts.clear(studio.start);
+});
+
 test("start draft survives unmount, restores every choice, and clears only after success", async () => {
   h = await connected({ agents: [agent], script });
   let root = await h.mount(<ActivityScreen />);
@@ -234,5 +258,5 @@ test("a failed create keeps the objective and draft for retry", async () => {
   await pick(h, document.body, "Owner", agent.name);
   await click(h, document.body, "Create task");
   expect(document.body.textContent).toContain("Owner is unavailable");
-  expect(drafts.get("activity/start-agent")).toMatchObject({ objective: "Keep the work", owner: agent.id });
+  expect(drafts.get(connectionDraftKey("activity", h.conn, "start-agent"))).toMatchObject({ objective: "Keep the work", owner: agent.id });
 });

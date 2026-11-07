@@ -7,7 +7,7 @@ import { Badge, Button, EmptyState, ErrorState, Segmented, TextArea } from "@aet
 import { useMemo, useState, type FormEvent } from "react";
 import { useLearn, useNoesisChange, useNoesisRead, useOperateRefusal } from "./data.ts";
 import { LearnFrame, type OpenGate } from "./LearnFrame.tsx";
-import { classifyRefusal, dateTime, invariant, nextStep, PHASE_LABEL, planProgress, recentGoals, sortSessions, type Refusal } from "./model.ts";
+import { classifyRefusal, dateTime, draftKey, invariant, nextStep, PHASE_LABEL, planProgress, recentGoals, sortSessions, type Refusal } from "./model.ts";
 import { RefusalNote } from "./RefusalNote.tsx";
 import { UnderstandFromHash } from "../understand/UnderstandSheet.tsx";
 
@@ -18,7 +18,6 @@ export const MODES: readonly { readonly id: aether.SessionMode; readonly label: 
   { id: "practice", label: "Practise what I know", hint: "Problems at the edge of what you can do" },
 ];
 
-const NEW_SESSION_DRAFT = "learn/new-session";
 const EMPTY_GOAL: { readonly goal: string; readonly mode: aether.SessionMode } = { goal: "", mode: "teach" };
 
 export function SessionsScreen({ conn }: OpenGate) {
@@ -82,7 +81,7 @@ function startBlocker(goal: string, refusal: string | null): string | null {
 function NewSession({ conn, suggestions }: { conn: string; suggestions: readonly string[] }) {
   const change = useNoesisChange(conn);
   const refusal = useOperateRefusal(conn);
-  const draft = useDraft(NEW_SESSION_DRAFT, EMPTY_GOAL);
+  const draft = useDraft(draftKey("new-session", conn), EMPTY_GOAL);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<Refusal | null>(null);
   const goal = draft.value.goal;
@@ -99,7 +98,7 @@ function NewSession({ conn, suggestions }: { conn: string; suggestions: readonly
     if (!result.ok) return setFailure(classifyRefusal(result.error));
     const data = result.reply.data as { id?: unknown } | undefined;
     invariant(typeof data?.id === "string", "noesis_create_session answers with the new session");
-    draft.clear();
+    draft.clearIfUnchanged();
     navigate(routeHref("#/learn/sessions/:id", { id: data.id }));
   };
   return (

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { DRAFT_STORAGE_KEY, DraftStore, isPristine, MIRROR_LIMIT_BYTES, type DraftMirror } from "./drafts.ts";
+import { connectionDraftKey, DRAFT_STORAGE_KEY, DraftStore, isPristine, MIRROR_LIMIT_BYTES, type DraftMirror } from "./drafts.ts";
 
 function memoryMirror(): DraftMirror & { readonly map: Map<string, string> } {
   const map = new Map<string, string>();
@@ -88,6 +88,26 @@ describe("DraftStore", () => {
     const store = new DraftStore(null);
     expect(() => store.get("no-slash")).toThrow(/<screen>\/<form>/);
     expect(() => store.set("ok/form:agt_1", {})).not.toThrow();
+  });
+});
+
+describe("connectionDraftKey", () => {
+  test("keeps each connection's form apart and reduces the connection id to what a key allows", () => {
+    const studio = connectionDraftKey("activity", "aether:studio", "filters");
+    const laptop = connectionDraftKey("activity", "aether:@laptop.local:4300", "filters");
+    expect(studio).toBe("activity/aether:studio/filters");
+    expect(laptop).toBe("activity/aether:_laptop.local:4300/filters");
+    expect(studio).not.toBe(laptop);
+    const store = new DraftStore(null);
+    store.set(studio, { agent: "agt_1" });
+    expect(store.get(laptop)).toBeUndefined();
+    expect(connectionDraftKey("controls", "aether:b3", "update_agent/agt_1/confirmation")).toBe("controls/aether:b3/update_agent/agt_1/confirmation");
+  });
+
+  test("refuses a missing connection, a screen that is not one word, and a form with odd characters", () => {
+    expect(() => connectionDraftKey("activity", "", "filters")).toThrow(/belongs to a connection/);
+    expect(() => connectionDraftKey("activity/x", "aether:b3", "filters")).toThrow(/one word/);
+    expect(() => connectionDraftKey("activity", "aether:b3", "fil ters")).toThrow(/plain name/);
   });
 });
 

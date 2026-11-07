@@ -1,4 +1,4 @@
-import { useDraft } from "@aether-ui/core";
+import { connectionDraftKey, useDraft } from "@aether-ui/core";
 // Import an export artifact (MEMORY-V2.md §2.3): a dry run reports what would be inserted, what is
 // unchanged and what conflicts; only a confirm of that same file writes, and nothing is overwritten.
 
@@ -16,8 +16,8 @@ type Picked = { readonly name: string; readonly artifact: string };
 // A dry run's report with the exact file it ran on, so a confirm applies that file and no other.
 type Plan = { readonly picked: Picked; readonly result: aether.MemoryImport };
 
-function useImportFile() {
-  const draft = useDraft("memory/import", { picked: null as Picked | null });
+function useImportFile(conn: ConnId) {
+  const draft = useDraft(connectionDraftKey("memory", conn, "import"), { picked: null as Picked | null });
   const { picked } = draft.value;
   const setPicked = (picked: Picked | null) => draft.update({ picked });
   const [problem, setProblem] = useState<string | null>(null);
@@ -46,11 +46,11 @@ function useImportFile() {
     }
     setPicked({ name: file.name, artifact });
   };
-  return { picked, problem, selection, choose, clear: draft.clear };
+  return { picked, problem, selection, choose, clearIfUnchanged: draft.clearIfUnchanged };
 }
 
 export function ImportTool({ conn, refresh }: { conn: ConnId; refresh: () => Promise<unknown> }) {
-  const file = useImportFile();
+  const file = useImportFile(conn);
   const { picked, problem, selection } = file;
   const [plan, setPlan] = useState<Plan | null>(null);
   const [done, setDone] = useState<aether.MemoryImport | null>(null);
@@ -68,7 +68,7 @@ export function ImportTool({ conn, refresh }: { conn: ConnId; refresh: () => Pro
       if (chosen === selection.current) setPlan({ picked: target, result });
       return;
     }
-    file.clear();
+    file.clearIfUnchanged();
     setPlan(null); setDone(result);
     await refresh();
   };

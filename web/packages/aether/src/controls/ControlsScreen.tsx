@@ -24,7 +24,7 @@ function SteerPanel({ conn, agent }: { readonly conn: ConnId; readonly agent: ae
     try {
       const command = sendCommand(agent.id, text, subtree);
       setProblem(null);
-      if (await run.send(command, "Sent")) draft.clear();
+      if (await run.send(command, "Sent")) draft.clearIfUnchanged();
     } catch (error) {
       if (!(error instanceof DraftError)) throw error;
       setProblem(error.message);

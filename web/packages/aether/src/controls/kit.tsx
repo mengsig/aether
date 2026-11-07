@@ -2,7 +2,7 @@
 // (disabled with the reason shown, host-only marked), an explicit confirm step for destructive or
 // privileged actions, and the outcome of a run. Nothing here holds daemon data.
 
-import { drafts, useDraft, checkAllowed, codeOf, isKeyed, usePermission, useApp, useCommand, useSelector, type CommandInput, type LocalAction, type ReadEntry } from "@aether-ui/core";
+import { connectionDraftKey, drafts, useDraft, checkAllowed, codeOf, isKeyed, usePermission, useApp, useCommand, useSelector, type CommandInput, type LocalAction, type ReadEntry } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
 import { Badge, Button, Dialog, TextArea, EmptyState, ErrorState, Skeleton, type ButtonVariant } from "@aether-ui/ui";
 import { useCallback, useId, useState, type ReactNode } from "react";
@@ -225,8 +225,6 @@ function confirmationDraftKey(conn: string, command: Json): string {
   invariant(conn.length > 0, "a confirmation belongs to a connection");
   invariant(typeof command.cmd === "string", "a confirmation names its command");
   const target = command.id ?? command.agent ?? command.to ?? command.target ?? command.scope ?? "all";
-  const identity = encodeURIComponent(JSON.stringify(target)).replaceAll("%", "_").replace(/[!'()*]/g, "_");
-  // A connection id before its handshake is `aether:@host:port`; the key keeps only what a draft key allows.
-  const connection = conn.replace(/[^a-z0-9:_.-]/gi, "_");
-  return `controls/${connection}/${command.cmd}/${identity}/confirmation`;
+  const identity = encodeURIComponent(JSON.stringify(target)).replaceAll("%", "_").replace(/[!'()*~]/g, "_");
+  return connectionDraftKey("controls", conn, `${command.cmd}/${identity}/confirmation`);
 }

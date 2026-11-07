@@ -1,7 +1,7 @@
 // What retrieval did for each model call of a task, or for one invocation (MEMORY-V2.md §2.1).
 // The trace was recorded when the turn was built, so it says what happened then.
 
-import { useDraft, useReread, selectEvents, useSelector } from "@aether-ui/core";
+import { connectionDraftKey, useDraft, useReread, selectEvents, useSelector } from "@aether-ui/core";
 import type { aether, ConnId } from "@aether-ui/protocol";
 import { Button, Combo, Segmented } from "@aether-ui/ui";
 import { useState, type FormEvent } from "react";
@@ -16,7 +16,7 @@ const PREFIX = { task: "tsk_", invocation: "inv_" } as const;
 const LABEL = { task: "Task id", invocation: "Invocation id" } as const;
 
 export function ExplainSection({ conn, known }: { conn: ConnId; known: ReadonlyMap<string, string> }) {
-  const form = useDraft("memory/explain", { kind: "task" as Target["kind"], text: "" });
+  const form = useDraft(connectionDraftKey("memory", conn, "explain"), { kind: "task" as Target["kind"], text: "" });
   const { kind, text: draft } = form.value;
   const events = useSelector(selectEvents(conn));
   const ids = events.flatMap(e => kind === "task" ? (e.task_id ? [e.task_id] : []) : e.kind.type === "invocation.completed" ? [e.kind.invocation] : []);

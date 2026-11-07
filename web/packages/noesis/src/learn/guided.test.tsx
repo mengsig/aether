@@ -8,7 +8,7 @@ import { act } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { sendsOnKey } from "./Composer.tsx";
 import { SETTLE_MS } from "./data.ts";
-import { $, byText, click, connected, stubCanvas, type, type Harness } from "./fixture/harness.test-util.tsx";
+import { $, byText, click, CONN, connected, stubCanvas, type, type Harness } from "./fixture/harness.test-util.tsx";
 import { EARLIER, LESSON, PLAN, PRACTICE, RECALL_QUESTION, scenario } from "./fixture/scenario.ts";
 import { GraphScreen } from "./GraphScreen.tsx";
 import { LearnFrame } from "./LearnFrame.tsx";
@@ -49,7 +49,7 @@ describe("the new-session form", () => {
     expect(($(root, "[data-testid=learn-goal]") as HTMLTextAreaElement).value).toBe("How TCP slow start works");
     await click(h, $(root, "[data-testid=learn-start]"));
     expect(sent(h, "noesis_create_session")).toMatchObject([{ goal: "How TCP slow start works", mode: "teach" }]);
-    expect(drafts.get("learn/new-session")).toBeUndefined();
+    expect(drafts.get(draftKey("new-session", CONN))).toBeUndefined();
   });
 
   test("the mode cards send the mode the old buttons sent, and Start says why it is off", async () => {

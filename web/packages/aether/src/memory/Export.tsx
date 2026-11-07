@@ -1,4 +1,4 @@
-import { useDraft } from "@aether-ui/core";
+import { connectionDraftKey, useDraft } from "@aether-ui/core";
 import { useScopeSuggestions } from "./Repository.tsx";
 // Export every memory of a scope, or of the store, as the JSON Lines artifact (MEMORY-V2.md §2.4),
 // offered as a download with its record count and SHA-256 digest.
@@ -13,7 +13,7 @@ import { parseScope, SCOPE_HINT } from "./scope.ts";
 import { replyData } from "./v2.ts";
 
 export function ExportTool({ conn }: { conn: ConnId }) {
-  const draft = useDraft("memory/export", { text: "" });
+  const draft = useDraft(connectionDraftKey("memory", conn, "export"), { text: "" });
   const { text } = draft.value;
   const suggestions = useScopeSuggestions(conn);
   const [result, setResult] = useState<aether.MemoryExport | null>(null);
@@ -26,7 +26,7 @@ export function ExportTool({ conn }: { conn: ConnId }) {
     if (!reply) return;
     const data = replyData<aether.MemoryExport>(reply, "memory_export", ["artifact", "records", "digest"]);
     invariant(/^[0-9a-f]{64}$/.test(data.digest), "the digest is SHA-256 hex");
-    draft.clear();
+    draft.clearIfUnchanged();
     setResult(data);
   };
   return <div className="mem-tool" aria-label="Export">

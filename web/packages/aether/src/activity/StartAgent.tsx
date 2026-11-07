@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { navigate, routeHref, selectAgents, selectRead, useDraft, usePermission, useSelector } from "@aether-ui/core";
+import { connectionDraftKey, navigate, routeHref, selectAgents, selectRead, useDraft, usePermission, useSelector } from "@aether-ui/core";
 import { Field, Sheet, Segmented, Button, Picker, TextArea } from "@aether-ui/ui";
 import { Action, RunNote, StandingNotice, useRun } from "../controls/kit.tsx";
 import { invariant } from "../fleet/invariant.ts";
@@ -13,7 +13,7 @@ const options = (values: string[]) => values.map(id => ({ id, label: id.replaceA
 
 export function StartAgent({ conn, close }: { conn: string; close: () => void }) {
   const run = useRun(conn);
-  const draft = useDraft("activity/start-agent", INITIAL);
+  const draft = useDraft(connectionDraftKey("activity", conn, "start-agent"), INITIAL);
   const d = draft.value;
   const agents = Object.values(useSelector(selectAgents(conn))).filter(a => !["completed", "failed", "cancelled"].includes(a.status.state));
   const models = configuredModels(useSelector(selectRead(conn, "start:models"))?.value);
@@ -34,7 +34,7 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
     const agent = d.mode === "task" ? d.owner : (reply.data as { id?: string } | undefined)?.id;
     invariant(typeof agent === "string" && agent.length > 0, "successful start identifies the agent");
     invariant(d.mode === "task" || reply.reply === "agent", "create_agent returns an agent");
-    draft.clear(); close(); navigate(routeHref("#/agents/:conn/:agent", { conn, agent }));
+    draft.clearIfUnchanged(); close(); navigate(routeHref("#/agents/:conn/:agent", { conn, agent }));
   };
   return <Sheet open onClose={close} title="Start an agent"><div className="b3-stack"><StandingNotice conn={conn} />
     <div data-testid="start-mode"><Segmented label="Work type" value={d.mode} onChange={mode => draft.update({ mode })}
