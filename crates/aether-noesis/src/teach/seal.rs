@@ -11,8 +11,9 @@ use std::fmt;
 use serde_json::{Value, json};
 
 use super::engine::{EngineError, Step, ToolCall};
+use super::{handlers, question};
 use crate::budget::Spend;
-use crate::tools::{self, ToolName};
+use crate::tools::{self, ToolArgs, ToolName};
 
 /// What a refusal reads as once its reason would repeat a sealed text.
 pub const REFUSAL_WITHHELD: &str =
@@ -167,23 +168,20 @@ fn is_pose(tool: &str) -> bool {
 /// Whether `step`, a model reply, would give a sealed answer away if it were
 /// kept. This is the one seal check. It reads all the reply keeps: its text,
 /// run together and block by block, each call's name unless it is a Noesis
-/// tool's own (the crate's fixed text, which says nothing of a key), and
-/// every key and scalar of each input but a pose's sealed fields, a pose's
-/// input read healed as it is parsed. It checks them against `live` and
-/// every sealed text the reply's own calls carry. Call ids are the engine's
-/// own, never the model's text.
+/// tool's own (the crate's fixed text, which says nothing of a key), and every
+/// key and scalar of each input but a pose's sealed fields, a pose's input
+/// read healed as it is parsed. It checks them against `live` and every
+/// sealed text the reply's own calls carry. Call ids are the daemon's or the
+/// provider's, never model text: a key "1" would match `call_…_1`.
 ///
 /// A pose's own view necessarily shows its options, which name its key, so
-/// it is checked without its own secrets: posing refuses a view that gives
-/// its key away. A pose whose input is unreadable is refused, so its
-/// secrets never become live. A reply that concludes the active problem may
-/// show its solution. A failed attempt is neither shown nor kept.
+/// it is held to the rule posing applies to its own fields instead. A pose
+/// whose input is unreadable is refused, so its secrets never become live.
+/// A reply may show the active problem's solution only when it carries a
+/// conclusion its handler would accept. A failed attempt is neither shown
+/// nor kept.
 pub fn reply_leaks(live: &Sealer, step: &Step) -> bool {
-    let concludes = step
-        .calls
-        .iter()
-        .any(|call| call.name == ToolName::Conclude.as_str());
-    let live = if concludes {
+    let live = if step.calls.iter().any(concludes) {
         live.concluding()
     } else {
         live.clone()
@@ -206,7 +204,7 @@ pub fn reply_leaks(live: &Sealer, step: &Step) -> bool {
         let shown = tools::visible_texts(&call.name, &call.input);
         let leaks = if is_pose(&call.name) {
             let others = live.joined(own(Some(index)));
-            shown.iter().any(|text| others.holds(text))
+            shows_own_secret(call) || shown.iter().any(|text| others.holds(text))
         } else {
             shown.iter().any(|text| all.holds(text))
         };
@@ -217,6 +215,35 @@ pub fn reply_leaks(live: &Sealer, step: &Step) -> bool {
     }
     debug_assert!(all.secrets.len() >= live.secrets.len());
     false
+}
+
+/// Whether `call` concludes the active problem as the handler would accept
+/// it; a refused conclusion leaves the problem, and its solution, sealed.
+fn concludes(call: &ToolCall) -> bool {
+    if call.name != ToolName::Conclude.as_str() {
+        return false;
+    }
+    match tools::parse(ToolName::Conclude, call.input.clone()) {
+        Ok(ToolArgs::Conclude(args)) => handlers::conclusion_refusal(&args).is_none(),
+        Ok(other) => unreachable!("a conclude call parsed as {other:?}"),
+        Err(_) => false,
+    }
+}
+
+/// Whether a pose's own fields give its own sealed texts away, by the rule
+/// posing refuses them with. An unreadable pose is refused before it shows
+/// anything, so it is held to nothing here.
+fn shows_own_secret(call: &ToolCall) -> bool {
+    debug_assert!(is_pose(&call.name), "only a pose carries its own secrets");
+    let Some(tool) = ToolName::parse(&call.name) else {
+        return false;
+    };
+    match tools::parse(tool, call.input.clone()) {
+        Ok(ToolArgs::Ask(args)) => question::shown_fields_reveal(&args),
+        Ok(ToolArgs::Problem(args)) => handlers::problem_shows_solution(&args),
+        Ok(other) => unreachable!("a pose parsed as {other:?}"),
+        Err(_) => false,
+    }
 }
 
 /// The replies one model step took: the step kept, the raw reply it came
@@ -496,7 +523,12 @@ mod tests {
                 json!({"query": "cells"}),
             )],
         );
-        assert!(!reply_leaks(&live, &kept), "ids are the engine's own");
+        assert!(!reply_leaks(&live, &kept), "ids are not model text");
+        let numbered = call("call_01jabc_1", "noesis.graph_search", json!({"query": "cells"}));
+        assert!(
+            !reply_leaks(&sealer(&["1"]), &reply("", vec![numbered])),
+            "a numeric key never matches the engine's own call id"
+        );
         // A Noesis tool's name is the crate's text, the same whatever the key.
         assert!(!reply_leaks(
             &sealer(&["ask"]),
@@ -576,6 +608,40 @@ mod tests {
             "a pose's own options name its key"
         );
         assert!(reply_leaks(&sealer(&["Lyon"]), &reply("", vec![choice])));
+    }
+
+    #[test]
+    fn a_pose_naming_its_own_key_in_a_field_it_shows_leaks() {
+        let none = Sealer::default();
+        let own = reply("", vec![ask("The answer is Paris: what is it?", "Paris")]);
+        assert!(reply_leaks(&none, &own), "a recall key in its prompt");
+        let problem = json!({"statement": "Show that x = 4", "mode": "recall",
+            "targets": [], "solution": "x = 4"});
+        let posed = reply("", vec![call("toolu_2", "noesis.problem", problem)]);
+        assert!(reply_leaks(&none, &posed), "a solution in its statement");
+        let unreadable = json!({"kind": "essay", "prompt": "It is Paris", "answer_key": "Paris"});
+        let secrets = call_secrets(&call("toolu_3", "noesis.ask", unreadable.clone()));
+        assert_eq!(secrets, vec!["Paris".to_string()], "its key is read healed");
+        let unreadable = reply("", vec![call("toolu_3", "noesis.ask", unreadable)]);
+        assert!(!reply_leaks(&none, &unreadable), "refused before it shows anything");
+    }
+
+    #[test]
+    fn only_an_acceptable_conclusion_may_show_the_live_solution() {
+        let live = Sealer::live(["x = 4"], Some("x = 4"));
+        let concluding = |input: Value| {
+            reply("It was x = 4.", vec![call("toolu_4", "noesis.conclude", input)])
+        };
+        let solved = json!({"outcome": "solved", "rung": 0, "retest": false});
+        assert!(!reply_leaks(&live, &concluding(solved)));
+        let refused = json!({"outcome": "solved_with_hints", "retest": false});
+        assert!(reply_leaks(&live, &concluding(refused)), "refused: still sealed");
+        let malformed = json!({"outcome": "maybe"});
+        assert!(reply_leaks(&live, &concluding(malformed)), "unreadable: still sealed");
+        let held = Sealer::live(["x = 4", "Paris"], Some("x = 4"));
+        let solved = json!({"outcome": "solved", "rung": 0, "retest": false});
+        let both = reply("x = 4, and Paris", vec![call("t", "noesis.conclude", solved)]);
+        assert!(reply_leaks(&held, &both), "a conclusion reveals only the solution");
     }
 
     /// Replies made one by one from `script`, with the reminder each was told.

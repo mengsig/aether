@@ -878,14 +878,17 @@ adversarial model. Before anything of a reply is shown or kept, Aether checks
 it once, whole: its text, joined and block by block; every key and value of
 every call's input, a text holding a question read as the question it parses
 to; and the name of any call to a tool that does not exist. Aether's own tool
-names are fixed text and say nothing of an answer, so they are not checked. It
-checks them against the answers still unrevealed (an open question's key and
-explanation, the active problem's solution) and those the reply's own calls
-would pose. A reply that gives one away is discarded unseen, and its spend
-still counts. The step runs again once with a reminder; if that reply gives
-one away too, the learner sees "Let's try that differently." A reply that
-concludes a problem may state its solution. Call ids are the engine's own and
-are not checked. A question whose key or explanation, or a problem whose
+names are fixed text and say nothing of an answer, so they are not checked;
+nor are call ids, which Aether or the provider assigns, never the model. It checks them against the answers still unrevealed (an open
+question's key and explanation, the active problem's solution) and those the
+reply's own calls would pose. A question or problem the reply poses is held to
+the rule posing applies to its own fields: its prompt, statement or tags may
+not name its own key, explanation or solution, though a choice's options show
+its correct one. A reply that gives one away is discarded unseen, and its
+spend still counts. The step runs again once with a reminder; if that reply
+gives one away too, the learner sees "Let's try that differently." A reply
+may state the active problem's solution only beside a conclusion the
+practitioner's tool would accept. A question whose key or explanation, or a problem whose
 solution, appears in anything its turn already kept is refused, however often
 the model retries it.
 

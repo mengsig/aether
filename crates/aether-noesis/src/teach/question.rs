@@ -183,7 +183,7 @@ pub(super) fn model_key_values(args: &AskArgs) -> Vec<String> {
 
 /// Whether a field the learner sees repeats a sealed text: the explanation
 /// anywhere, a recall key in the prompt or a label, any key in a tag.
-fn shown_fields_reveal(args: &AskArgs) -> bool {
+pub(super) fn shown_fields_reveal(args: &AskArgs) -> bool {
     let explanation = Sealer::new(args.explanation.iter());
     let key: Vec<String> = match args.kind {
         QuestionKind::Choice => args

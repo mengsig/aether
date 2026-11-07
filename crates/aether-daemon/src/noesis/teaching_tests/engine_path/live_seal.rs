@@ -130,6 +130,80 @@ async fn a_reply_naming_a_live_solution_is_discarded() {
     harness.close().await;
 }
 
+/// A question whose own prompt names its key is discarded before its
+/// prompt reaches the transcript, and the clean retry poses.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pose_naming_its_own_key_is_discarded_before_it_is_kept() {
+    let home = Home::new();
+    let cli = Arc::new(FauxCli::default());
+    let spoiled = json!({"kind": "recall", "prompt": format!("Is the code {KEY}?"),
+        "answer_key": KEY});
+    cli.queue(
+        "prober",
+        json!({"text": "One question:", "tool_calls": [tool_call("noesis_ask", spoiled)]}),
+    );
+    cli.queue(
+        "prober",
+        json!({"text": "One question:", "tool_calls": [tool_call("noesis_ask", ask())]}),
+    );
+    let harness = engine_harness(&home, cli.clone()).await;
+    let created = harness.create(json!({})).await;
+    harness.settled().await;
+
+    let prober = agent_of(&created);
+    let session = harness.session(&created.id).await.expect("session");
+    let open = session.open_question.expect("the retried question opened");
+    assert_eq!(open.prompt, "Name the code");
+    assert_never_kept(&harness, prober, KEY);
+    assert_never_kept(&harness, prober, "Is the code");
+    assert_eq!(reminded(&cli), 1, "the retry was told why");
+    harness.close().await;
+}
+
+/// A conclusion the handler refuses leaves the problem active, so a reply
+/// that names the solution beside it is discarded; the retry concludes.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_conclusion_keeps_the_solution_sealed() {
+    let home = Home::new();
+    let cli = Arc::new(FauxCli::default());
+    let problem = json!({"statement": "What is 2 + 3?", "mode": "recall", "targets": [],
+        "solution": SOLUTION_SECRET});
+    cli.queue(
+        "practitioner",
+        json!({"text": "Try this one.", "tool_calls": [tool_call("noesis_problem", problem)]}),
+    );
+    let harness = engine_harness(&home, cli.clone()).await;
+    let created = harness.create(json!({"mode": "practice"})).await;
+    harness.settled().await;
+    let practitioner = agent_of(&created);
+    let unranked = json!({"outcome": "solved_with_hints", "retest": false});
+    let spoiled = format!("It was {SOLUTION_SECRET}.");
+    cli.queue(
+        "practitioner",
+        json!({"text": spoiled, "tool_calls": [tool_call("noesis_conclude", unranked)]}),
+    );
+    let solved = json!({"outcome": "solved", "rung": 0, "retest": false});
+    cli.queue(
+        "practitioner",
+        json!({"text": "Yes!", "tool_calls": [tool_call("noesis_conclude", solved)]}),
+    );
+
+    let sent = json!({"cmd": "noesis_send", "session": created.id, "text": "Is it 5?",
+        "idempotency_key": "refused-conclusion"});
+    harness.send_json(sent).await.expect("sent");
+    harness.settled().await;
+    assert_never_kept(&harness, practitioner, "It was");
+    let transcript = serde_json::to_string(&harness.transcript(practitioner)).expect("json");
+    assert!(transcript.contains("Yes!"), "{transcript}");
+    assert_eq!(reminded(&cli), 1, "the retry was told why");
+    let concluded = harness
+        .events()
+        .iter()
+        .any(|event| matches!(event.kind, EventKind::NoesisPracticeConcluded { .. }));
+    assert!(concluded, "the retry concluded the problem");
+    harness.close().await;
+}
+
 /// A malformed attempt is neither shown nor kept, so its text cannot spoil
 /// the question its retry poses.
 #[tokio::test(flavor = "multi_thread")]

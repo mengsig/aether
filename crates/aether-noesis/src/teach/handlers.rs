@@ -386,10 +386,10 @@ impl<E: Engine> Teaching<'_, E> {
         if db::active_problem(self.conn(), &row.id)?.is_some() {
             return refuse("a problem is already active; noesis.conclude it first");
         }
-        let solution = Sealer::new([&args.solution]);
-        if solution.holds(&args.statement) || args.targets.iter().any(|t| solution.holds(t)) {
+        if problem_shows_solution(&args) {
             return refuse("the statement or a target gives away the solution; rewrite it");
         }
+        let solution = Sealer::new([&args.solution]);
         if solution.holds(visible_text) {
             return refuse(
                 "what your turn has shown gives away the solution; pose a problem it does not solve",
@@ -428,8 +428,8 @@ impl<E: Engine> Teaching<'_, E> {
         let Some(active) = db::active_problem(self.conn(), &row.id)? else {
             return refuse("there is no active problem to conclude");
         };
-        if args.outcome == Outcome::SolvedWithHints && args.rung.is_none_or(|rung| rung == 0) {
-            return refuse("solved_with_hints needs the highest hint rung used, 1 to 5");
+        if let Some(refusal) = conclusion_refusal(args) {
+            return refuse(refusal);
         }
         let conclusion = Conclusion {
             outcome: args.outcome,
@@ -461,6 +461,21 @@ impl<E: Engine> Teaching<'_, E> {
             None,
         )))
     }
+}
+
+/// Why a conclusion is refused whatever the session holds, if it is.
+pub(super) fn conclusion_refusal(args: &ConcludeArgs) -> Option<&'static str> {
+    let hinted = args.outcome == Outcome::SolvedWithHints;
+    let unranked = args.rung.is_none_or(|rung| rung == 0);
+    debug_assert!(args.rung.is_none_or(|rung| rung <= 5), "parsing bounds the rung");
+    (hinted && unranked).then_some("solved_with_hints needs the highest hint rung used, 1 to 5")
+}
+
+/// Whether a problem's statement or a target names its own solution.
+pub(super) fn problem_shows_solution(args: &ProblemArgs) -> bool {
+    let solution = Sealer::new([&args.solution]);
+    debug_assert!(!args.solution.trim().is_empty(), "parsing requires a solution");
+    solution.holds(&args.statement) || args.targets.iter().any(|t| solution.holds(t))
 }
 
 /// Whether a node id or title of `plan` holds any of `secrets`; edges name
