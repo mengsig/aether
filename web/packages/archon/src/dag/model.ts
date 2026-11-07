@@ -235,5 +235,5 @@ export function initiativeProgress(data: DagData, held: readonly HeldEntry[], it
     if (heldIds.has(id)) row.held += 1;
   }
   invariant([...rows.values()].every((row) => row.done + row.failed <= row.total), "initiative counts fit their totals");
-  return [...rows.values()].sort((a, b) => a.title.localeCompare(b.title) || byString(a.id, b.id));
+  return [...rows.values()].filter((row) => row.total > 0).sort((a, b) => a.title.localeCompare(b.title) || byString(a.id, b.id));
 }

@@ -216,6 +216,16 @@ describe("ipc", () => {
     expect(desktop.close).not.toHaveBeenCalled();
   });
 
+  it("reconnects when the bridge reports the local connection has closed", async () => {
+    const { desktop } = bridge({ request: vi.fn(async () => { throw new Error("BridgeRefusal: c1 is closed"); }) });
+    const onClose = vi.fn();
+    const link = await ipcTransport(desktop, () => {}).open("archon-local", () => {}, onClose);
+    link.send({ cmd: "get_initiative", req: 1 });
+    await tick();
+    expect(onClose).toHaveBeenCalledWith(1011, expect.stringContaining("is closed"));
+    expect(desktop.close).toHaveBeenCalledWith("c1");
+  });
+
   it("refuses an unknown bridge version", () => {
     expect(() => ipcTransport({ version: 2 } as unknown as DesktopBridge, () => {})).toThrow(/version/);
   });
