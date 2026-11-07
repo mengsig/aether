@@ -5,7 +5,7 @@
 import { AppProvider, createApp, type App } from "@aether-ui/core";
 import type { DesktopBridge, SetupStep } from "@aether-ui/protocol";
 import { ThemeProvider } from "@aether-ui/ui";
-import { act } from "react";
+import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { click, connected, type Harness } from "../kit/fixture/harness.test-util.tsx";
@@ -101,6 +101,41 @@ describe("SetupScreen", () => {
     expect(root.querySelector('.su-step[data-state="failed"]')?.textContent).toContain("archon exited with status 2");
     await click(h, root, "Try again");
     expect(desktop.calls).toEqual(["tools", "tools", "connect", "connect"]);
+  });
+
+  test("a started setup goes on when its screen is left, reports its end once, and shows it on return", async () => {
+    let fail: (error: Error) => void = () => undefined;
+    const desktop = setupDesktop((step) => {
+      if (step === "tools") return { step, tools: [{ name: "aether", found: true, version: "1.3.0" }, { name: "archon", found: true }] };
+      return new Promise((_, reject) => { fail = reject; });
+    });
+    const h = current = await connected({ role: "local", desktop: desktop.bridge });
+    let show: (shown: boolean) => void = () => undefined;
+    function Away() {
+      const [shown, setShown] = useState(true);
+      useEffect(() => { show = setShown; }, []);
+      return shown ? <SetupScreen /> : <p>Somewhere else</p>;
+    }
+    const root = await h.mount(<Away />);
+    const visit = async (shown: boolean) => { act(() => show(shown)); await h.settle(); };
+    await click(h, root, "Set up this computer");
+    expect(root.querySelector('.su-step[data-state="running"]')?.textContent).toContain("Connect Archon's tools to Aether");
+
+    await visit(false);
+    expect(root.querySelector(".su-step")).toBeNull();
+    fail(new Error("Archon's tools could not be connected: archon exited with status 2"));
+    await h.settle();
+    const stopped = () => h.app.store.get().reports.filter((r) => r.message.startsWith("Setup stopped"));
+    expect(stopped()).toEqual([expect.objectContaining({ tone: "danger", message: "Setup stopped: Archon's tools could not be connected: archon exited with status 2" })]);
+
+    await visit(true);
+    expect(root.querySelector('.su-step[data-state="done"]')?.textContent).toContain("Aether 1.3.0 and Archon found");
+    expect(root.querySelector('.su-step[data-state="failed"]')?.textContent).toContain("archon exited with status 2");
+    await visit(false);
+    await visit(true);
+    expect(stopped()).toHaveLength(1);
+    await click(h, root, "Try again");
+    expect(desktop.calls).toEqual(["tools", "connect", "connect"]);
   });
 
   test("a browser is told setup happens in the desktop app", async () => {

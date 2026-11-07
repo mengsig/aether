@@ -1,5 +1,5 @@
 // `#/settings/*`: the settings pages as tabs. The daemon the pages act on is the first ready Aether
-// connection unless the person picks another; that pick is view state, the connections are core's.
+// connection unless the person picks another, or a running repair started on one; the pick is view state.
 
 import { navigate, selectConnections, useSelector } from "@aether-ui/core";
 import type { ConnectionInfo, ConnId, RouteProps } from "@aether-ui/protocol";
@@ -7,6 +7,7 @@ import { EmptyState, Tabs, type TabItem } from "@aether-ui/ui";
 import { useMemo, useState, type ReactNode } from "react";
 import { invariant } from "../kit/invariant.ts";
 import { SelectField } from "../kit/select.tsx";
+import { useRepairPin } from "../setup/runs.ts";
 import { ConnectionsPage } from "./ConnectionsPage.tsx";
 import { DevicesPage } from "./DevicesPage.tsx";
 import { NotificationsPage } from "./NotificationsPage.tsx";
@@ -55,8 +56,9 @@ export default function SettingsScreen({ params }: RouteProps) {
   const page = pageOf(params["*"]);
   const connections = useSelector(selectConnections);
   const [chosen, setChosen] = useState<ConnId | null>(null);
+  const pinned = useRepairPin();
   const candidates = useMemo(() => Object.values(connections).filter((c) => c.daemon === "aether"), [connections]);
-  const conn = pickConnection(candidates, chosen)?.id ?? null;
+  const conn = pickConnection(candidates, chosen ?? pinned)?.id ?? null;
   const tabs: TabItem[] = PAGES.map((id) => ({ id, label: LABELS[id], panel: pagePanel(id, conn) }));
   return (
     <div className="ui-page st-screen">

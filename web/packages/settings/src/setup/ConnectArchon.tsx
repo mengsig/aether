@@ -1,34 +1,21 @@
 // "Connect Archon tools": the repair half of setup, offered wherever Archon's tools are missing
 // from Aether. It runs the same connect, start and check steps as first-run setup.
 // The repair restarts Aether, which can change the connection or the screen a view hangs on, so the
-// run belongs to the app: every view that offers it shows the same run until it ends or fails.
+// run is the app's (runs.ts): every view that offers it shows the same run until it ends or fails.
 
-import { selectConnections, useApp, useReread, useSelector, type App } from "@aether-ui/core";
-import type { archon, DesktopSetup } from "@aether-ui/protocol";
+import { selectConnections, useApp, useReread, useSelector } from "@aether-ui/core";
+import type { archon, ConnId } from "@aether-ui/protocol";
 import { Button } from "@aether-ui/ui";
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { invariant } from "../kit/invariant.ts";
 import { archonHealth } from "./readiness.ts";
-import { desktopSetup, type StepId } from "./steps.ts";
+import { REPAIR_STEPS, useSetupRuns } from "./runs.ts";
 import { StepList } from "./StepList.tsx";
-import { SetupRunner, useSetupRunner, type SetupRun } from "./useSetup.ts";
+import { useSetupRunner, type SetupRun, type SetupRunner } from "./useSetup.ts";
 import "./setup.css";
 
-const REPAIR: readonly StepId[] = ["connect", "start", "check"];
 const STATUS = { key: "setup.archon-status", command: { cmd: "status" }, tags: ["status"] } as const;
-const CONNECTED = "Archon's tools are connected and ready";
 const ELSEWHERE = "Connect them from the desktop app on the computer running Aether.";
-
-/** Each app's one repair run; the success notice comes from the run, so no view has to outlive it. */
-const repairs = new WeakMap<App, SetupRunner>();
-
-function repairOf(app: App, setup: DesktopSetup): SetupRunner {
-  const known = repairs.get(app);
-  if (known !== undefined) return known;
-  const runner = new SetupRunner(app, setup, REPAIR, () => app.store.report(CONNECTED, undefined, undefined, "success"));
-  repairs.set(app, runner);
-  return runner;
-}
 
 export interface ConnectArchonProps {
   /** Whether the tools need connecting now; a repair that is running or failed shows either way. */
@@ -37,7 +24,9 @@ export interface ConnectArchonProps {
   readonly reason: string;
   /** The tools belong to another computer's Aether, so this app only says where to connect them. */
   readonly remote?: boolean;
-  /** Called once the tools are connected and checked, so the screen can read again. */
+  /** The connection the screen shows, which Settings keeps showing while the repair runs. */
+  readonly origin?: ConnId | undefined;
+  /** Called when a repair finishes while this view shows it, so the screen can read again. */
   readonly onDone?: (() => void) | undefined;
   /** Shows it as a banner above the screen rather than inline. */
   readonly banner?: boolean;
@@ -47,29 +36,22 @@ function framed(banner: boolean, content: ReactNode): ReactNode {
   return banner ? <aside className="su-banner" aria-label="Archon's tools">{content}</aside> : content;
 }
 
-export function ConnectArchon({ needed, reason, remote = false, onDone, banner = false }: ConnectArchonProps) {
-  invariant(!needed || reason.trim() !== "", "a needed repair says what it repairs");
-  const app = useApp();
-  const setup = useMemo(() => desktopSetup(app), [app]);
-  if (setup === null) return needed ? framed(banner, <p className="su-repair-text">{reason} {ELSEWHERE}</p>) : null;
-  const runner = repairOf(app, setup);
-  return <ConnectArchonRun runner={runner} needed={needed} reason={reason} remote={remote} onDone={onDone} banner={banner} />;
+export function ConnectArchon(props: ConnectArchonProps) {
+  invariant(!props.needed || props.reason.trim() !== "", "a needed repair says what it repairs");
+  const repair = useSetupRuns()?.repair;
+  if (repair === undefined) return props.needed ? framed(props.banner ?? false, <p className="su-repair-text">{props.reason} {ELSEWHERE}</p>) : null;
+  return <ConnectArchonRun runner={repair} {...props} />;
 }
 
-function ConnectArchonRun({ runner, needed, reason, remote = false, onDone, banner = false }: ConnectArchonProps & { readonly runner: SetupRunner }) {
+function ConnectArchonRun({ runner, needed, reason, remote = false, origin, onDone, banner = false }: ConnectArchonProps & { readonly runner: SetupRunner }) {
   const run = useSetupRunner(runner);
-  const doneSeen = useRef(false);
-  useEffect(() => {
-    if (!run.finished) doneSeen.current = false;
-    if (!run.finished || doneSeen.current) return;
-    doneSeen.current = true;
-    onDone?.();
-  }, [run.finished, onDone]);
-  const failed = REPAIR.some((step) => run.states[step].state === "failed");
+  invariant(run.steps === REPAIR_STEPS, "the repair view follows the repair run");
+  useEffect(() => (onDone === undefined ? undefined : runner.whenFinished(onDone)), [runner, onDone]);
+  const failed = REPAIR_STEPS.some((step) => run.states[step].state === "failed");
   if (run.busy || failed) return framed(banner, <RepairPanel headline={remote ? "" : reason} run={run} />);
   if (!needed) return null;
   if (remote) return framed(banner, <p className="su-repair-text">{reason} {ELSEWHERE}</p>);
-  return framed(banner, <RepairPanel headline={reason} run={run} onStart={() => void run.run(REPAIR[0])} />);
+  return framed(banner, <RepairPanel headline={reason} run={run} onStart={() => void run.run(REPAIR_STEPS[0], origin)} />);
 }
 
 /** The offer, or the run under way with each step's progress and any failure with its fix. */

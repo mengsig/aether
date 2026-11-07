@@ -78,12 +78,12 @@ function ProviderList({ conn, value, auths, run, refreshAuth }: { readonly conn:
 }
 
 /** Outside the read, so a repair that restarts Aether is not replaced along with the server list. */
-function ArchonRepair({ value, local, onConnected }: { readonly value: unknown; readonly local: boolean; readonly onConnected: () => void }) {
+function ArchonRepair({ conn, value, local, onConnected }: { readonly conn: ConnId; readonly value: unknown; readonly local: boolean; readonly onConnected: () => void }) {
   const servers = listOf<aether.McpServerHealth>(value);
   const archon = servers === null ? null : archonTools(servers);
   const needed = archon !== null && (archon.state === "missing" || archon.state === "failed");
   const reason = archon !== null && archon.state !== "ready" ? archon.detail : "";
-  return <ConnectArchon needed={needed} reason={reason} remote={!local} onDone={onConnected} />;
+  return <ConnectArchon needed={needed} reason={reason} remote={!local} origin={conn} onDone={onConnected} />;
 }
 
 function McpList({ value }: { readonly value: unknown }) {
@@ -130,7 +130,7 @@ export function ProvidersPage({ conn }: { readonly conn: ConnId }) {
         <RunNote status={run.status} />
       </Section>
       <Section title="Tool servers (MCP)" hint="Extra tools agents can use, such as Archon's.">
-        <ArchonRepair value={mcp?.value} local={local} onConnected={() => void again(MCP, MCP_REFRESH)} />
+        <ArchonRepair conn={conn} value={mcp?.value} local={local} onConnected={() => void again(MCP, MCP_REFRESH)} />
         <ReadView label="tool servers" entry={mcp} onRetry={() => void again(MCP)}>
           {(value) => <McpList value={value} />}
         </ReadView>

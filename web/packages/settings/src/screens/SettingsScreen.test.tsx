@@ -5,7 +5,9 @@
 import { matchRoute } from "@aether-ui/core";
 import type { ConnectionInfo } from "@aether-ui/protocol";
 import { afterEach, describe, expect, test } from "vitest";
-import { connected, type Harness } from "../kit/fixture/harness.test-util.tsx";
+import { ScriptedDaemon } from "../kit/fixture/daemon.ts";
+import { fakeDesktop } from "../kit/fixture/desktop.test-util.ts";
+import { click, connected, type Harness } from "../kit/fixture/harness.test-util.tsx";
 import routes from "./routes.ts";
 import SettingsScreen, { pageOf, pickConnection } from "./SettingsScreen.tsx";
 
@@ -49,5 +51,29 @@ describe("SettingsScreen", () => {
     root = await again.mount(<SettingsScreen params={{ "*": "devices" }} />);
     expect(root.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Devices");
     expect(root.textContent).toContain("Hall tablet");
+  });
+
+  test("UX-043: a running repair keeps Settings on its Aether while it restarts, and its failure shows there once", async () => {
+    let fail: (error: Error) => void = () => undefined;
+    const bridge = Object.assign(fakeDesktop().bridge, { setup: () => new Promise((_, reject) => { fail = reject; }) });
+    const missing = { mcp_servers: () => ({ tag: "mcp_servers", data: [] }), providers: () => ({ tag: "providers", data: [] }), auth_status: () => ({ tag: "auth", data: [] }) };
+    const laptop = new ScriptedDaemon({ instance: "laptop", role: "operator", script: missing });
+    const h = current = await connected({ role: "local", desktop: bridge, script: missing, others: [{ daemon: laptop, label: "laptop" }] });
+    expect(h.app.store.get().connections["aether:laptop"]?.state).toBe("ready");
+    const root = await h.mount(<SettingsScreen params={{ "*": "providers" }} />);
+    const shown = () => root.querySelector<HTMLSelectElement>(".st-picker select")?.value;
+    expect(shown()).toBe(h.conn);
+    await click(h, root, "Connect Archon tools");
+
+    h.daemon.drop();
+    await h.settle();
+    expect(h.app.store.get().connections[h.conn]?.state).not.toBe("ready");
+    expect(shown()).toBe(h.conn);
+    expect(root.querySelector('.su-step[data-state="running"]')?.textContent).toContain("Connect Archon's tools to Aether");
+
+    fail(new Error("Archon could not be reached. Is it installed?"));
+    await h.settle();
+    expect(root.querySelector('.su-step[data-state="failed"]')?.textContent).toContain("Archon could not be reached. Is it installed?");
+    expect(h.app.store.get().reports.filter((r) => r.message.startsWith("Connecting Archon's tools stopped"))).toHaveLength(1);
   });
 });

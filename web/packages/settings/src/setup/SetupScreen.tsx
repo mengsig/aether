@@ -1,20 +1,17 @@
 // "Set up on this computer": one button runs every step, each step shows its progress and, if it
 // stops, why and how to fix it; the run ends on a confirmation with the next thing to do.
 
-import { useApp } from "@aether-ui/core";
 import { Button, EmptyState } from "@aether-ui/ui";
-import type { DesktopSetup } from "@aether-ui/protocol";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { invariant } from "../kit/invariant.ts";
-import { desktopSetup } from "./steps.ts";
+import { useSetupRuns } from "./runs.ts";
 import { doneText, StepList } from "./StepList.tsx";
-import { useSetup, type SetupRun } from "./useSetup.ts";
+import { useSetupRunner, type SetupRun, type SetupRunner } from "./useSetup.ts";
 import "./setup.css";
 
 export default function SetupScreen() {
-  const app = useApp();
-  const setup = useMemo(() => desktopSetup(app), [app]);
-  if (setup === null) {
+  const runs = useSetupRuns();
+  if (runs === null) {
     return (
       <div className="ui-page su-page">
         <EmptyState title="Setup runs in the desktop app" action={<a className="ui-link" href="#/pair/aether">Pair with a computer instead</a>}>
@@ -23,11 +20,12 @@ export default function SetupScreen() {
       </div>
     );
   }
-  return <SetupFlow setup={setup} />;
+  return <SetupFlow runner={runs.setup} />;
 }
 
-function SetupFlow({ setup }: { readonly setup: DesktopSetup }) {
-  const run = useSetup(setup);
+/** Shows the app's setup run, which goes on if this screen is left and shows here again on return. */
+function SetupFlow({ runner }: { readonly runner: SetupRunner }) {
+  const run = useSetupRunner(runner);
   invariant(run.steps.includes("check"), "first-run setup ends by checking its work");
   if (run.finished) return <Ready run={run} />;
   const started = run.steps.some((step) => run.states[step].state !== "waiting");
@@ -66,6 +64,7 @@ function Ready({ run }: { readonly run: SetupRun }) {
         <footer className="su-actions">
           <a ref={next} className="ui-button su-primary" data-variant="primary" data-size="md" href="#/activity/start">Start your first task</a>
           <a className="ui-link" href="#/settings/providers">Review providers and tools</a>
+          <Button variant="quiet" size="sm" onClick={() => void run.run(run.steps[0])}>Run setup again</Button>
         </footer>
       </section>
     </div>
