@@ -16,15 +16,20 @@ export function draftKey(conn: ConnId, agent: string, target: string): string {
   return PREFIX + JSON.stringify([conn, agent, target]);
 }
 
-/** One sessionStorage call; a full or disabled store is an expected failure, returned as its words. */
-export function sessionStored<T>(call: (store: Storage) => T): { readonly value: T } | { readonly problem: string } {
+type Stored<T> = { readonly value: T } | { readonly problem: string };
+
+/** One Web Storage call; a full or disabled store is an expected failure, returned as its words. */
+function stored<T>(area: () => Storage, call: (store: Storage) => T): Stored<T> {
   try {
-    return { value: call(sessionStorage) };
+    return { value: call(area()) };
   } catch (error) {
     if (!(error instanceof DOMException)) throw error;
     return { problem: error.message || error.name };
   }
 }
+
+export const sessionStored = <T>(call: (store: Storage) => T): Stored<T> => stored(() => sessionStorage, call);
+export const localStored = <T>(call: (store: Storage) => T): Stored<T> => stored(() => localStorage, call);
 
 /** Storage another version or a person edited may hold anything; what does not parse is not ours. */
 export function parsedStored(raw: string): unknown {

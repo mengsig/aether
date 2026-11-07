@@ -175,6 +175,61 @@ describe("Chat view modes", () => {
   });
 });
 
+async function enter(h: Harness, root: ParentNode, line: string): Promise<void> {
+  const input = textarea(root);
+  await write(h, input, line);
+  await key(h, input, { key: "Escape" });
+  await key(h, input, { key: "Enter" });
+}
+
+const alertText = (root: ParentNode) => root.querySelector('[role="alert"]')?.textContent;
+
+describe("Chat with an incomplete catalog", () => {
+  test("a mode file the daemon could not read holds an unknown /name, which may be that mode", async () => {
+    const partial = (): Answer => ({ tag: "view_modes", data: { modes: [STANDARD, FOCUS, CALM], diagnostics: [{ source: "brief.toml", reason: "bad density" }] } });
+    const { h, root } = await open(orchestrator, { script: { list_view_modes: partial } });
+    expect(root.textContent).toContain("Some view modes could not be read: brief.toml: bad density");
+    await enter(h, root, "/brief");
+    expect(alertText(root)).toContain("so /brief is not sent: it may be a view mode");
+    expect(textarea(root).value).toBe("/brief");
+    await enter(h, root, "/mode standard");
+    expect(checked(root), "a mode the catalog has still runs").toBe("Standard");
+    expect(h.daemon.commands("send_message")).toEqual([]);
+  });
+
+  test("a failed refresh keeps the cached modes but holds unknown /names until a read succeeds", async () => {
+    let answer: Answer = catalog();
+    const { h, root } = await open(orchestrator, { script: { list_view_modes: () => answer } });
+    expect(radios(root)).toEqual(["Standard", "Focus", "Calm"]);
+    answer = { code: "unavailable", message: "mode directory unreadable" };
+    await act(async () => { await h.app.reread(h.conn, "view-modes", { cmd: "list_view_modes" }, ["view_modes"]); });
+    await h.settle();
+    expect(radios(root), "the last catalog stays usable").toEqual(["Standard", "Focus", "Calm"]);
+    expect(root.textContent).toContain("View modes unavailable");
+    await enter(h, root, "/brief");
+    expect(alertText(root)).toContain("so /brief is not sent");
+    expect(h.daemon.commands("send_message")).toEqual([]);
+  });
+});
+
+describe("Chat when storage refuses", () => {
+  test("a mode choice that cannot be saved is kept for the screen and said once", async () => {
+    const refuse = () => { throw new DOMException("The operation is insecure.", "SecurityError"); };
+    vi.spyOn(localStorage, "getItem").mockImplementation(refuse);
+    vi.spyOn(localStorage, "setItem").mockImplementation(refuse);
+    try {
+      const { h, root } = await open();
+      expect(checked(root), "an unreadable store opens the default").toBe("Calm");
+      await click(h, root, "Standard");
+      expect(checked(root), "the choice holds without storage").toBe("Standard");
+      expect(toolShown(root)).toBe(true);
+      expect(root.textContent).toContain("This view is not remembered after a reload (The operation is insecure.)");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+});
+
 describe("Chat after its start", () => {
   test("a first message the start could not deliver is shown in the chat and sent from it as typed", async () => {
     const agent = fauxAgent(undefined, { status: { state: "waiting", condition: { on: "inbox" } } });

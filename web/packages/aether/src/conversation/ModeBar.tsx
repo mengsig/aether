@@ -47,7 +47,8 @@ export function ModeBar({ view }: { readonly view: ViewModeState }) {
           Details <kbd className="conv-kbd">Ctrl T</kbd>
         </button>
       ) : null}
-      {view.problem === null ? null : <span className="conv-note" role="status">View modes unavailable: {view.problem}</span>}
+      {view.problem === null ? null : <span className="conv-note" role="status">{view.problem}</span>}
+      {view.unsaved === null ? null : <span className="conv-note" role="status">{view.unsaved}</span>}
     </div>
   );
 }
