@@ -22,8 +22,8 @@ interface Entry {
   readonly owner: number;
   readonly daemon: LocalDaemonRecord;
   readonly link: DaemonLink;
-  /** Taken from the daemon's welcome only, never from a frame the renderer sent. */
-  protocol?: number;
+  /** Taken from the daemon's welcome only, never from a frame the renderer sent; a refused hello clears it. */
+  protocol?: number | undefined;
 }
 
 export class ConnectionTable implements Connections {
