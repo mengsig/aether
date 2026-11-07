@@ -144,6 +144,33 @@ describe("recovery review", () => {
     expect(h.daemon.commands("resolve_submission")).toHaveLength(1);
   });
 
+  test("a refused resend keeps the original unconfirmed memory request for review", async () => {
+    let refuse = false;
+    const { h, root } = await open({ script: {
+      create_memory: () => refuse ? { code: "invalid_request", message: "Memory rejected" } : timedOut(),
+      resolve_submission: () => ({ tag: "submission_resolved", data: { outcome: "unknown", reason: "pruned" } }),
+    } });
+    const command = { cmd: "create_memory", spec: { text: "Remember the release date", kind: "fact", scope: { scope: "global" } } };
+    await act(async () => { await h.app.send(h.conn, command).catch(() => undefined); });
+    await h.settle();
+    expect(root.querySelector('[aria-label="Recovery review"]')?.textContent).toContain("Remember the release date");
+    await click(h, root, "Check what happened");
+    refuse = true;
+    await click(h, root, "Send again");
+    await click(h, openDialog(), "Send again");
+    expect(root.textContent).toContain("Memory rejected");
+    expect(h.app.store.get().aether[h.conn]?.outbox).toEqual([expect.objectContaining({ state: "unknown", command: expect.objectContaining(command) })]);
+    expect(root.querySelector('[aria-label="Recovery review"]')?.textContent).toContain("Remember the release date");
+  });
+
+  test("a refused first memory request does not enter recovery", async () => {
+    const { h, root } = await open({ script: { create_memory: () => ({ code: "invalid_request", message: "Memory rejected" }) } });
+    await expect(h.app.send(h.conn, { cmd: "create_memory", spec: { text: "Invalid memory" } })).rejects.toMatchObject({ code: "invalid_request" });
+    await h.settle();
+    expect(h.app.store.get().aether[h.conn]?.outbox).toEqual([]);
+    expect(root.querySelector('[aria-label="Recovery review"]')).toBeNull();
+  });
+
   test("an executed change is cleared without being sent again", async () => {
     const { h, root } = await open({ script: { cancel: timedOut, resolve_submission: () => ({ tag: "submission_resolved", data: { outcome: "executed", horizon: stamp(1), reply: { reply: "ok", data: null } } }) } });
     await loseCancel(h);
@@ -213,6 +240,8 @@ describe("describeCommand", () => {
     expect(describeCommand({ cmd: "cancel", agent: "agt_1", reason: "done" }, { agt_1: "captain" })).toEqual({ title: "Cancel · captain", detail: "done" });
     expect(describeCommand({ cmd: "archive", target: { agent: "agt_2" } }, {}).title).toBe("Archive · agt_2");
     expect(describeCommand({ cmd: "send_message", to: "agt_1", content: "x".repeat(200) }, {}).detail).toHaveLength(140);
+    expect(describeCommand({ cmd: "create_memory", spec: { text: "release date" } }, {})).toEqual({ title: "New memory", detail: "release date" });
+    expect(describeCommand({ cmd: "pin_memory", id: "mem_1", pinned: false }, {}).title).toBe("Unpin memory · mem_1");
     expect(() => describeCommand({}, {})).toThrow();
   });
 });

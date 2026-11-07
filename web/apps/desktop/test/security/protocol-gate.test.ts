@@ -2,7 +2,8 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Bridge, type BridgeHost } from "../../src/bridge/bridge.ts";
+import { Bridge, requestWithRefusal, type BridgeHost } from "../../src/bridge/bridge.ts";
+import { BridgeRefusal } from "../../src/security/validate.ts";
 import type { DaemonLink, Frame } from "../../src/bridge/daemon-link.ts";
 import { APP_SENDER, VALIDATOR } from "./support.ts";
 
@@ -11,6 +12,15 @@ const DAEMON = { id: "archon:local", kind: "archon", label: "archond", socket: "
 const HELLO = { cmd: "hello", req: 1, protocol_version: 24, client: "archon-web", client_version: "0.0.0" };
 const SAY = { cmd: "say", req: 2, text: "hello" };
 const ANSWER = { cmd: "answer", req: 3, question: "q_1", text: "yes" };
+
+test("a local refusal is a definite error reply and other failures remain visible", async () => {
+  const refuse = async () => { throw new BridgeRefusal("invalid memory scope"); };
+  assert.deepEqual(await requestWithRefusal(refuse, { req: 7 }), {
+    frame: "reply", id: 7, result: { Err: { code: "forbidden", message: "invalid memory scope" } },
+  });
+  await assert.rejects(requestWithRefusal(refuse, { req: 0 }), /invalid memory scope/);
+  await assert.rejects(requestWithRefusal(async () => { throw new Error("link lost"); }, { req: 7 }), /link lost/);
+});
 
 /** An archond that welcomes with `protocol` and answers anything else Ok. */
 function bridgeToArchond(protocol: number | "garbled", sent: Frame[]): Bridge {

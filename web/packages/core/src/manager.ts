@@ -93,6 +93,7 @@ export class ConnectionManager {
       return reply;
     } catch (error) {
       if (key && UNKNOWN_OUTCOME.has(codeOf(error) ?? "")) this.track(conn, aether, { ...submission, state: "unknown", error: errorText(error) });
+      else if (key && held?.state === "unknown") this.track(conn, aether, held);
       else if (key) this.untrack(conn, aether, key);
       throw error;
     }

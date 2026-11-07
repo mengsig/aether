@@ -39,6 +39,17 @@ const HELLO_REQ = 1;
 const ACTION_REQ = 2;
 const FIRST_READ_REQ = 3;
 
+/** A bridge refusal is known to precede delivery; return it as the request's error reply. */
+export async function requestWithRefusal(handle: () => Promise<unknown>, frame: unknown): Promise<unknown> {
+  try {
+    return await handle();
+  } catch (error) {
+    const req = frame !== null && typeof frame === "object" ? (frame as Frame).req : undefined;
+    if (!(error instanceof BridgeRefusal) || !Number.isSafeInteger(req) || (req as number) < 1) throw error;
+    return { frame: "reply", id: req, result: { Err: { code: "forbidden", message: error.message } } };
+  }
+}
+
 export class Bridge {
   readonly connections: ConnectionTable;
   private readonly validator: Validator;
