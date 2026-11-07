@@ -33,10 +33,13 @@ impl GateWatch {
         self.ticker.tick().await;
     }
 
-    /// The line to print for this status's disk gate, if it changed. A stale
-    /// status is an earlier read, or none at all, so it never changes it.
+    /// A stale or unavailable disk reading cannot change the gate.
     pub(super) fn update_from(&mut self, status: &DaemonStatus) -> Option<String> {
-        if status.stale.is_some() {
+        if status.stale.is_some()
+            || status
+                .unavailable(aether_protocol::status_sections::LOW_DISK)
+                .is_some()
+        {
             return None;
         }
         self.update(status.low_disk.as_ref())
@@ -140,6 +143,28 @@ mod tests {
             "stale": stale, "low_disk": low_disk,
         }))
         .expect("daemon status")
+    }
+
+    #[tokio::test]
+    async fn an_unavailable_disk_read_neither_releases_nor_sets_the_gate() {
+        let mut watch = GateWatch::new();
+        let mut unread = status(None, true);
+        unread
+            .unavailable
+            .push(aether_protocol::UnavailableSection {
+                section: aether_protocol::status_sections::LOW_DISK.into(),
+                reason: "timed out".into(),
+            });
+        assert_eq!(watch.update_from(&unread), None);
+        assert!(watch.update_from(&status(None, true)).is_some());
+        unread.low_disk = None;
+        assert_eq!(watch.update_from(&unread), None);
+        assert!(
+            watch
+                .update_from(&status(None, false))
+                .expect("fresh release")
+                .contains("resumes")
+        );
     }
 
     /// A stale status, read or not, neither names the gate nor releases it.

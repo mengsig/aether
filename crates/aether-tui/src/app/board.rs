@@ -278,6 +278,8 @@ pub struct BoardSummary {
     pub agents: usize,
     pub running: usize,
     pub total_cost: Option<Cost>,
+    /// The daemon sent the newest agents and left older ones out.
+    pub older_left_out: bool,
 }
 
 /// The board's projection of the tree: visible rows in creation order.
@@ -328,6 +330,7 @@ impl BoardModel {
                 agents,
                 running: walk.running,
                 total_cost: total.as_ref().and_then(cost_of),
+                older_left_out: inputs.tree.next_after.is_some(),
             },
             needs_you: inputs.needs_you.clone(),
             names: walk.names,

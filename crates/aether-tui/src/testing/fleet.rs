@@ -94,8 +94,10 @@ pub fn loaded_app(agents: usize, events: usize, messages: usize) -> App {
     app.reduce(AppEvent::Reply {
         then: Then::Tree,
         result: Ok(Reply::Tree(AgentTree {
+            stale: None,
             roots: vec![root_id],
             nodes,
+            next_after: None,
         })),
     });
     app.reduce(AppEvent::Reply {
@@ -152,6 +154,7 @@ pub fn loaded_app(agents: usize, events: usize, messages: usize) -> App {
                 started_at: now(),
                 rate_usd_per_hour: 1.75,
                 forecast_usd_next_hour: 1.75,
+                rate_approximate: false,
             }],
             approval_default: Default::default(),
             network_default: Default::default(),
@@ -166,6 +169,7 @@ pub fn loaded_app(agents: usize, events: usize, messages: usize) -> App {
             writes: None,
             bridge: None,
             stale: None,
+            unavailable: Vec::new(),
         })),
     });
 
@@ -265,8 +269,10 @@ pub fn loaded_app_with_capped_subtree(cap: usize) -> App {
     app.reduce(AppEvent::Reply {
         then: Then::Tree,
         result: Ok(Reply::Tree(AgentTree {
+            stale: None,
             roots: vec![root_id],
             nodes,
+            next_after: None,
         })),
     });
     app.reduce(AppEvent::Reply {
@@ -335,8 +341,10 @@ pub fn loaded_app_with_capped_subtree_under_finished_child(cap: usize) -> App {
     app.reduce(AppEvent::Reply {
         then: Then::Tree,
         result: Ok(Reply::Tree(AgentTree {
+            stale: None,
             roots: vec![root_id],
             nodes,
+            next_after: None,
         })),
     });
     app.reduce(AppEvent::Reply {

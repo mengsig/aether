@@ -141,11 +141,19 @@ def get_transcript_page(*, agent: AgentId, after: int | None = None, before: int
         frame["limit"] = limit
     return frame
 
-def get_tree(*, include_archived: bool | None = None, role_prefix: str | None = None, root: AgentId | None = None, run: RunId | None = None) -> dict[str, Any]:
-    """The live graph: every agent in the run (or all runs) with relations."""
+def get_tree(*, after: AgentId | None = None, include_archived: bool | None = None, limit: int | None = None, role_prefix: str | None = None, root: AgentId | None = None, run: RunId | None = None) -> dict[str, Any]:
+    """The live graph: the agents in the run (or all runs) with relations.
+    One page: the newest live agents, then the newest agents of any state,
+    at most `limit` of each (1 to 500, 500 when absent); `AgentTree.next_after`
+    says older ones were left out.
+    """
     frame: dict[str, Any] = {"cmd": "get_tree"}
+    if after is not None:
+        frame["after"] = after
     if include_archived is not None:
         frame["include_archived"] = include_archived
+    if limit is not None:
+        frame["limit"] = limit
     if role_prefix is not None:
         frame["role_prefix"] = role_prefix
     if root is not None:

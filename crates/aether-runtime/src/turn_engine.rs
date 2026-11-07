@@ -69,6 +69,8 @@ pub(crate) struct EngineRequest {
     pub name: String,
     pub input: Value,
     pub reply: oneshot::Sender<(String, bool)>,
+    /// When the bridge's call reached the runtime, before it queued for the turn.
+    pub arrived: std::time::Instant,
 }
 
 /// Registered while an engine turn runs so the daemon can route bridge calls.

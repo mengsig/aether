@@ -112,6 +112,62 @@ pub struct DaemonStatus {
     /// on older daemons, which never answer stale.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stale: Option<StatusStale>,
+    /// Sections the daemon could not read before its status deadline. Their
+    /// fields carry no figure, so a client shows each as unavailable, never
+    /// as the zero it holds. Empty on a complete answer, and on older daemons.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unavailable: Vec<UnavailableSection>,
+}
+
+/// A [`DaemonStatus`] section left out of a reply, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct UnavailableSection {
+    /// The section as the daemon's log names it: one of [`status_sections`].
+    pub section: String,
+    /// Why it is missing: [`status_sections::TIMED_OUT`], the read ran past
+    /// the deadline. A read that fails fails the whole `status` instead.
+    pub reason: String,
+}
+
+/// The [`DaemonStatus`] sections a reply may mark unavailable, and the
+/// fields each one fills.
+pub mod status_sections {
+    /// `problems`.
+    pub const PROBLEMS: &str = "problems";
+    /// `providers`.
+    pub const PROVIDERS: &str = "providers";
+    /// Every `agents_*` count.
+    pub const LIVE_AGENTS: &str = "live_agents";
+    /// `usage_total`.
+    pub const USAGE_TOTAL: &str = "usage_total";
+    /// `runs`.
+    pub const RUNS: &str = "runs";
+    /// `tasks_active`.
+    pub const TASKS_ACTIVE: &str = "tasks_active";
+    /// `pending_approvals`.
+    pub const PENDING_APPROVALS: &str = "pending_approvals";
+    /// `low_disk`.
+    pub const LOW_DISK: &str = "low_disk";
+    /// `engines` and `engine_turns_running`.
+    pub const ENGINES: &str = "engines";
+    /// `resource_leases`.
+    pub const RESOURCE_LEASES: &str = "resource_leases";
+    /// `mcp`.
+    pub const MCP: &str = "mcp";
+    /// `writes`.
+    pub const WRITES: &str = "writes";
+    /// The reason of a section whose read did not finish before the deadline.
+    pub const TIMED_OUT: &str = "timed out";
+}
+
+impl DaemonStatus {
+    /// Why `section` is missing from this reply, or `None` when it was read.
+    pub fn unavailable(&self, section: &str) -> Option<&str> {
+        self.unavailable
+            .iter()
+            .find(|missing| missing.section == section)
+            .map(|missing| missing.reason.as_str())
+    }
 }
 
 /// Why a [`DaemonStatus`] is not fresh, and how old it is.
@@ -145,10 +201,12 @@ pub struct TreeNode {
     pub waiting_on: Vec<TaskId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease: Option<Lease>,
-    /// Usage rolled up over this agent and its descendants.
+    /// Usage of this agent, its `hidden_usage` and its children's subtrees: a
+    /// descendant whose parent is not shown is a root, counted there instead.
     pub subtree_usage: Usage,
-    /// Usage of child subtrees omitted from this tree (for example archived children).
-    /// Kept separately so live clients can replace visible usage without losing it.
+    /// Usage of the descendants omitted from this tree (for example archived
+    /// children), up to the next shown ones. Kept separately so live clients
+    /// can replace visible usage without losing it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hidden_usage: Option<Usage>,
 }
@@ -157,6 +215,14 @@ pub struct TreeNode {
 pub struct AgentTree {
     pub roots: Vec<AgentId>,
     pub nodes: BTreeMap<AgentId, TreeNode>,
+    /// Set when no fresh read finished in the daemon's patience: this is the
+    /// last tree read for the same request, or empty if none finished yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale: Option<StatusStale>,
+    /// Older agents in scope were left out of this page: ask again with this
+    /// as `after` for them, even when the page is short. Absent when the tree is whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_after: Option<AgentId>,
 }
 
 /// One row of `aether runs list`, projected from a run's agents and tasks.

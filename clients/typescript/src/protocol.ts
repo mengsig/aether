@@ -440,6 +440,7 @@ export * from "./protocol/types/TracePolicy.ts";
 export * from "./protocol/types/TranscriptEntry.ts";
 export * from "./protocol/types/TreeNode.ts";
 export * from "./protocol/types/TurnOutcome.ts";
+export * from "./protocol/types/UnavailableSection.ts";
 export * from "./protocol/types/UnprovenAbsence.ts";
 export * from "./protocol/types/Usage.ts";
 export * from "./protocol/types/UsageBreakdown.ts";

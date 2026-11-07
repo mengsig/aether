@@ -66,6 +66,7 @@ fn seed(daemon: &TestDaemon, mut bad: Agent, mut good: Agent, kind: u8) {
     }
     store.commit(commit).unwrap();
     let conn = rusqlite::Connection::open(daemon.store_path()).unwrap();
+    aether_store::register_sql_functions(&conn).unwrap();
     match kind {
         0 => {
             assert_eq!(conn.execute("UPDATE events SET body=json_set(body,'$.kind.type','future.unknown') WHERE agent_id=?1 AND type='custom'", [bad.id.to_string()]).unwrap(), 1);

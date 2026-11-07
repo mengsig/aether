@@ -53,6 +53,10 @@ pub struct RunSummary {
     pub rate_usd_per_hour: f64,
     /// What it would have spent after another hour at that rate.
     pub forecast_usd_next_hour: f64,
+    /// The rate was read from only the newest receipts of a run that billed
+    /// more in the window than one read walks: it is a floor, not the rate.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rate_approximate: bool,
 }
 
 /// What a run has spent: its agents' own usage, terminal ones included, never
@@ -149,6 +153,70 @@ pub fn average_turn_usage<'a>(agents: impl IntoIterator<Item = &'a Agent>) -> Us
     }
 }
 
+/// What a run's agents have billed between them, how many there are and
+/// when the first started: what the store keeps per run as its agents bill.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RunTotals {
+    pub agents: u32,
+    pub usage: Usage,
+    pub started_at: Timestamp,
+}
+
+impl RunTotals {
+    /// The totals of `agents`, all of one run; `None` when there are none.
+    pub fn of<'a>(agents: impl IntoIterator<Item = &'a Agent>) -> Option<Self> {
+        let agents: Vec<&Agent> = agents.into_iter().collect();
+        let started_at = agents.iter().map(|a| a.created_at).min()?;
+        debug_assert!(agents.iter().all(|a| a.run == agents[0].run), "one run");
+        Some(Self {
+            agents: agents.len() as u32,
+            usage: run_usage(agents.iter().copied()),
+            started_at,
+        })
+    }
+}
+
+/// One member's billing inside the rate window: its billed dollars now, and
+/// what it had billed when the window opened.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WindowBilling {
+    pub now: f64,
+    pub at_window_start: f64,
+}
+
+/// One run's summary from its totals, its live agents and the billing of the
+/// members with a receipt in the window; `rate_approximate` when those were
+/// read from only the newest receipts.
+pub fn run_summary(
+    run: RunId,
+    totals: RunTotals,
+    agents_live: u32,
+    window: &[WindowBilling],
+    rate_approximate: bool,
+    now: Timestamp,
+) -> RunSummary {
+    assert!(agents_live <= totals.agents, "a live agent is a member");
+    assert!(
+        window.len() <= totals.agents as usize,
+        "billers are members"
+    );
+    // The floor, like everything else derived from a cost: a run with an
+    // unpriced agent forecasts what it is known to be spending, marked by
+    // `usage.cost_complete`, never a confident zero.
+    let rate = recent_rate(window, totals.started_at, now);
+    debug_assert!(rate >= 0.0, "a rate of spend is never negative");
+    RunSummary {
+        run,
+        agents: totals.agents,
+        agents_live,
+        usage: totals.usage,
+        started_at: totals.started_at,
+        rate_usd_per_hour: rate,
+        forecast_usd_next_hour: totals.usage.cost_usd + rate,
+        rate_approximate,
+    }
+}
+
 /// One summary per run that still has a live agent, oldest run first.
 ///
 /// `window_start` holds, for each agent with a receipt in the last
@@ -166,42 +234,36 @@ pub fn active_runs(
     by_run
         .into_iter()
         .filter(|(_, members)| members.iter().any(|a| a.is_live()))
-        .map(|(run, members)| {
-            let usage = run_usage(members.iter().copied());
-            let started_at = members.iter().map(|a| a.created_at).min().unwrap_or(now);
-            // The floor, like everything else derived from a cost: a run with
-            // an unpriced agent forecasts what it is known to be spending,
-            // marked by `usage.cost_complete`, never a confident zero.
-            let rate = recent_rate(&members, window_start, started_at, now);
-            debug_assert!(rate >= 0.0, "a rate of spend is never negative");
-            RunSummary {
-                run,
-                agents: members.len() as u32,
-                agents_live: members.iter().filter(|a| a.is_live()).count() as u32,
-                usage,
-                started_at,
-                rate_usd_per_hour: rate,
-                forecast_usd_next_hour: usage.cost_usd + rate,
-            }
+        .filter_map(|(run, members)| {
+            let totals = RunTotals::of(members.iter().copied())?;
+            let live = members.iter().filter(|a| a.is_live()).count() as u32;
+            let window: Vec<WindowBilling> = members
+                .iter()
+                .filter_map(|a| {
+                    let before = window_start.get(&a.id)?;
+                    Some(WindowBilling {
+                        now: a.stats.usage.cost_usd,
+                        at_window_start: *before,
+                    })
+                })
+                .collect();
+            Some(run_summary(run, totals, live, &window, false, now))
         })
         .collect()
 }
 
 /// Dollars per hour the run's agents billed inside the window, over the part
 /// of the window the run has existed for.
-fn recent_rate(
-    members: &[&Agent],
-    window_start: &BTreeMap<AgentId, f64>,
-    started_at: Timestamp,
-    now: Timestamp,
-) -> f64 {
-    let spent: f64 = members
+fn recent_rate(window: &[WindowBilling], started_at: Timestamp, now: Timestamp) -> f64 {
+    let spent: f64 = window
         .iter()
-        .filter_map(|a| {
-            let before = window_start.get(&a.id)?;
-            debug_assert!(*before >= 0.0, "a cumulative cost is never negative");
+        .map(|billing| {
+            debug_assert!(
+                billing.at_window_start >= 0.0,
+                "a cumulative cost is never negative"
+            );
             // Cumulative cost only grows; a reading above it is a stale row.
-            Some((a.stats.usage.cost_usd - before).max(0.0))
+            (billing.now - billing.at_window_start).max(0.0)
         })
         .sum();
     let window = chrono::Duration::minutes(RATE_WINDOW_MINUTES);

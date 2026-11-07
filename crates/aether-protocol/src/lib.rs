@@ -238,6 +238,9 @@ pub mod features {
     /// The daemon serves `list_agents_page` and the `root` and `role_prefix`
     /// filters of `get_tree`.
     pub const AGENTS_PAGING: &str = "agents_paging";
+    /// The daemon pages `get_tree`: `after` and `limit` on the command, and
+    /// `AgentTree.next_after` when older agents were left out.
+    pub const TREE_PAGES: &str = "tree_pages";
     /// The daemon serves `get_transcript_page`.
     pub const TRANSCRIPT_PAGING: &str = "transcript_paging";
     /// Listed by a client, delta frames carry `invocation_seq` and tool input
@@ -265,7 +268,8 @@ mod replies;
 pub use replies::{
     AgentTree, AuthInfo, DaemonStatus, ENGINES_STARTING, ErrorCode, ErrorReply, MessageDelivery,
     ModelInfo, NOESIS_BUDGET_EXHAUSTED, NOESIS_DISABLED, ProviderInfo, Reply, RunListing,
-    StatusStale, SubmissionResolution, TranscriptEntry, TreeNode,
+    StatusStale, SubmissionResolution, TranscriptEntry, TreeNode, UnavailableSection,
+    status_sections,
 };
 mod frames;
 pub use frames::{ClientFrame, Delta, ServerFrame, decode, encode};
