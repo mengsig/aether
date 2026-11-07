@@ -1,6 +1,7 @@
 // The React face of the graph: a focusable canvas drawn by GraphRenderer, pointer pan and zoom,
 // keyboard focus and the screen-reader list. Data arrives as props; the layout is never computed here.
 
+import { Button } from "@aether-ui/ui";
 import type { GraphModel, Layout } from "@aether-ui/protocol";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { announce, keyAction, readingOrder, type KeyAction } from "./focus.ts";
@@ -19,6 +20,8 @@ export interface GraphCanvasProps {
   /** The accessible name of the graph. */
   label: string;
   shape?: NodeShape;
+  /** Show zoom and fit controls. */
+  controls?: boolean;
   selected?: string;
   /** Drawn in the accent without a relayout, e.g. a critical path; keep its identity stable between renders. */
   emphasis?: Emphasis;
@@ -211,6 +214,11 @@ export function GraphCanvas(props: GraphCanvasProps): ReactNode {
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <canvas ref={canvasRef} tabIndex={0} role="application" aria-label={label} aria-roledescription="graph"
         style={{ width: "100%", height: "100%", display: "block", touchAction: "none" }} onKeyDown={onKeyDown} />
+      {props.controls ? <div role="group" aria-label="Graph zoom" style={{ position: "absolute", top: "var(--space-3)", right: "var(--space-3)", display: "flex", gap: "var(--space-2)" }}>
+        <Button onClick={() => surface.current?.zoomAt(1.25)}>Zoom in</Button>
+        <Button onClick={() => surface.current?.zoomAt(0.8)}>Zoom out</Button>
+        <Button onClick={() => surface.current?.fit()}>Fit</Button>
+      </div> : null}
       <GraphNodeList label={label} nodes={listed} groups={graph.groups} focused={focused}
         onFocusNode={setFocused} onActivate={onActivate} onToggleGroup={onToggleGroup} />
       <div aria-live="polite" style={VISUALLY_HIDDEN}>{announce(scene, focused)}</div>

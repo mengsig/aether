@@ -74,7 +74,7 @@ describe("the topology screen", () => {
     }));
     await h.frame();
     expect(calls).toHaveLength(2);
-    await act(async () => button(container, "Collapse all runs").click());
+    await act(async () => button(container, "Collapse run").click());
     expect(calls).toHaveLength(3);
     expect(calls[2]?.collapsed.size).toBe(calls[2]?.groups.length);
   });
@@ -84,6 +84,30 @@ describe("the topology screen", () => {
     const items = [...container.querySelectorAll("li")].map((node) => node.textContent ?? "");
     expect(items.some((text) => text.includes("qi-00000 · Archon run · adaptive"))).toBe(true);
     expect(items.some((text) => text.includes("plan-1 · Archon plan · adaptive"))).toBe(true);
+  });
+
+  test("prioritizes active runs and lets a user search and select a different run", async () => {
+    const h = harness();
+    const agents = fixtureAgents(30);
+    for (const agent of Object.values(agents)) {
+      agents[agent.id] = { ...agent, status: { state: "completed" }, updated_at: "2026-11-05T08:00:00Z" };
+    }
+    agents.agt_00003 = { ...must(agents.agt_00003, "agt_00003"), status: { state: "ready" }, updated_at: "2026-11-04T08:00:00Z" };
+    seedFleet(h.app.store, fixtureConnection(), agents);
+    const counting = countingLayout();
+    const container = await h.mount(<TopologyScreen layout={counting.layout} />);
+    await h.frame();
+    expect(counting.calls[0]?.groups[0]?.id).toContain("run_00001");
+    expect(container.querySelector('[aria-pressed="true"]')?.textContent).toContain("Active or pending");
+    const search = container.querySelector<HTMLInputElement>('input[type="search"]');
+    if (!search) throw new Error("missing run search");
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(search, "qi-00000"); search.dispatchEvent(new Event("input", { bubbles: true })); });
+    const options = container.querySelectorAll<HTMLButtonElement>(".topology-run");
+    expect(options).toHaveLength(1);
+    await act(async () => options[0]?.click());
+    expect(counting.calls.at(-1)?.groups[0]?.id).toContain("run_00000");
+    expect(container.querySelector('[aria-pressed="true"]')?.textContent).toContain("qi-00000");
+    expect(container.querySelector('[aria-label="Graph zoom"]')?.textContent).toContain("Zoom in");
   });
 
   test("shows a failed layout with a retry that asks again", async () => {
@@ -106,6 +130,6 @@ describe("the topology screen", () => {
   test("names the graph and lists its runs for screen readers", async () => {
     const { container } = await topology(40);
     expect(container.querySelector("canvas")?.getAttribute("aria-label")).toBe("Delegation topology");
-    expect([...container.querySelectorAll("li button")].filter((node) => node.textContent?.startsWith("Group Run ")).length).toBeGreaterThan(1);
+    expect([...container.querySelectorAll("li button")].filter((node) => node.textContent?.startsWith("Group Run ")).length).toBe(1);
   });
 });
