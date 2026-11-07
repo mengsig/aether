@@ -119,12 +119,16 @@ async function check(facts: SetupFacts, deps: StepDeps): Promise<SetupFacts> {
   return { archonTools: tools.tools, providers };
 }
 
-/** Archon checks Aether on its own clock, so its view may lag Aether's: ask until it agrees or time runs out. */
+/**
+ * Archon checks Aether on its own clock, so its view may lag Aether's: ask until it agrees or time runs
+ * out. Archon relinks to a restarted Aether on its own, so its "unreachable" is waited out too.
+ */
 async function archonView(app: App, clock: Clock): Promise<ToolsCheck> {
   for (;;) {
     const status = recordOf<archon.DaemonStatus>(await readLocal(app, "archon", { cmd: "status" }, clock), "Archon's status");
     const view = archonHealth(status.mcp);
-    if (view.state === "ready" || view.state === "failed" || Date.now() >= clock.deadline) return view;
+    const relinking = status.mcp?.health.state === "unreachable";
+    if (view.state === "ready" || (view.state === "failed" && !relinking) || Date.now() >= clock.deadline) return view;
     await clock.sleep(500);
   }
 }

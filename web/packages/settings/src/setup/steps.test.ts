@@ -81,6 +81,16 @@ describe("setup steps", () => {
     expect(sent.filter(([, c]) => c.cmd === "status")).toHaveLength(2);
   });
 
+  it("waits while Archon relinks to a restarted Aether, and says so if it never does", async () => {
+    const unreachable = { mcp: { failed_refreshes: 0, health: { state: "unreachable", error: "unavailable: not connected to aetherd" } } };
+    const { app, sent } = fakeApp({ status: [unreachable, unreachable, { mcp: { failed_refreshes: 0, health: { state: "ready", tools: 2 } } }] });
+    expect(await runStep("check", { mode: "shared" }, { app, setup: bridge({}), ...quick })).toMatchObject({ archonTools: 2 });
+    expect(sent.filter(([, c]) => c.cmd === "status")).toHaveLength(3);
+    const stuck = fakeApp({ status: [unreachable] }).app;
+    const error = (await runStep("check", { mode: "shared" }, { app: stuck, setup: bridge({}), ...quick }).catch((e: unknown) => e)) as SetupError;
+    expect(error.message).toBe("Archon could not reach Aether: unavailable: not connected to aetherd Connect them again to fix this.");
+  });
+
   it("sends the person back to connecting when Aether lacks Archon's tools", async () => {
     const { app } = fakeApp({ mcp: [] });
     const error = (await runStep("check", { mode: "shared" }, { app, setup: bridge({}), ...quick }).catch((e: unknown) => e)) as SetupError;
