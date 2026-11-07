@@ -1,7 +1,7 @@
 // Model, effort, limits and identity for one agent, each applied with `update_agent`. Drafts hold
 // only what the person typed; the current values shown come from core's store.
 
-import { useDraft } from "@aether-ui/core";
+import { useDraft, type Draft } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
 import { aether } from "@aether-ui/protocol";
 import { Field, Segmented, TextArea } from "@aether-ui/ui";
@@ -82,10 +82,17 @@ function BudgetSection({ conn, agent, run }: { readonly conn: ConnId; readonly a
   );
 }
 
+interface IdentityDraft extends Record<string, string> { readonly name: string; readonly instructions: string }
+
+/** Forgets one field once its save settled, unless the person typed newer text there meanwhile. */
+function settle(draft: Draft<IdentityDraft>, field: keyof IdentityDraft, sent: string): void {
+  draft.update((current) => (current[field] === sent ? { ...current, [field]: "" } : current));
+}
+
 function IdentitySection({ conn, agent, run }: { readonly conn: ConnId; readonly agent: Agent; readonly run: Run }) {
   invariant(agent.id.trim() !== "", "identity changes name their agent");
   invariant(conn.trim() !== "", "identity changes target a daemon connection");
-  const draft = useDraft(`controls/${agent.id}/identity`, { name: "", instructions: "" });
+  const draft = useDraft<IdentityDraft>(`controls/${agent.id}/identity`, { name: "", instructions: "" });
   const { name, instructions } = draft.value;
   const [problem, setProblem] = useState<string | null>(null);
   const current = agent.config.instructions ?? "";
@@ -103,19 +110,19 @@ function IdentitySection({ conn, agent, run }: { readonly conn: ConnId; readonly
       <div className="b3-form">
         <Field label="New name" placeholder={agent.name} value={name} onChange={(event) => draft.update({ name: event.target.value })} />
         <Action conn={conn} command={{ cmd: "update_agent", id: agent.id, patch: {} }} label="Rename" blocked={name.trim() ? null : "Type the new name first"} busy={run.status.state === "busy"}
-          onRun={async () => { if (await apply(run, agent.id, named, setProblem, "Renamed")) draft.update({ name: "" }); }} />
+          onRun={async () => { if (await apply(run, agent.id, named, setProblem, "Renamed")) settle(draft, "name", name); }} />
       </div>
       {current === "" ? <p className="b3-meta">No standing instructions yet.</p> : <p className="b3-prose b3-quote">{current}</p>}
       <TextArea label="New instructions" rows={4} value={instructions} onChange={event => draft.update({ instructions: event.target.value })} />
       <div className="b3-row">
         <Action conn={conn} command={{ cmd: "update_agent", id: agent.id, patch: {} }} label="Replace instructions" blocked={instructions.trim() ? null : "Write the new instructions first"} busy={run.status.state === "busy"}
           confirm={{ title: "Replace the instructions?", body: "The agent works from the new instructions from its next turn; the old ones are not kept here.", confirmLabel: "Replace" }}
-          onRun={async () => { if (await apply(run, agent.id, instructed, setProblem, "Instructions replaced")) draft.update({ instructions: "" }); }} />
+          onRun={async () => { if (await apply(run, agent.id, instructed, setProblem, "Instructions replaced")) settle(draft, "instructions", instructions); }} />
         {current === "" ? null : (
           <Action conn={conn} command={clear} label="Clear instructions" variant="danger" busy={run.status.state === "busy"}
             confirm={{ title: "Clear the instructions?", body: "The agent will have no standing instructions from its next turn.", confirmLabel: "Clear instructions" }}
             onRun={async () => {
-              if (await run.send(clear, "Instructions cleared")) { draft.update({ instructions: "" }); setProblem(null); }
+              if (await run.send(clear, "Instructions cleared")) { settle(draft, "instructions", instructions); setProblem(null); }
             }} />
         )}
       </div>

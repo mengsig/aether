@@ -1,7 +1,7 @@
 import type { StreamState } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
 import { describe, expect, test } from "vitest";
-import { entryRows, invocationMeta, liveRows, pairTools } from "./rows.ts";
+import { entryRows, invocationMeta, isDelivered, liveRows, pairTools } from "./rows.ts";
 
 const AGENT = "agt_1";
 const entry = (seq: number, message: aether.Message, invocation: string | null = null): aether.TranscriptEntry => ({ seq, at: "2026-11-04T09:00:00Z", invocation, message });
@@ -57,5 +57,30 @@ describe("live tails", () => {
     expect(rows.map((row) => row.key)).toEqual(["s:inv_a", "s:inv_b", "s:inv_g"]);
     expect(rows[0]?.parts.map((part) => part.kind)).toEqual(["reasoning", "text", "tool"]);
     expect(rows[2]).toMatchObject({ parts: [], live: { recovering: true, partial: true } });
+  });
+});
+
+describe("a queued message is delivered", () => {
+  const said = (seq: number, text: string) => entry(seq, { role: "user", content: [{ type: "text", text }] });
+  const rowsOf = (...entries: aether.TranscriptEntry[]) => entryRows(entries, pairTools(entries), new Map());
+  const queued = { text: "Ship it.", at: "2026-11-04T09:01:00Z", afterSeq: 2 };
+
+  test("when a later user row carries it under the operator's own header", () => {
+    expect(isDelivered(rowsOf(said(3, "[inbox 1] Message from user:device:\nShip it.")), queued)).toBe(true);
+    expect(isDelivered(rowsOf(said(3, "[inbox 1] Message from user: [authenticated operator instruction]\nShip it.")), queued)).toBe(true);
+  });
+
+  test("when the operator's item follows an agent's or a notice in one inbox batch", () => {
+    const afterAgent = "[inbox 1] Message from agt_worker:\nChecks passed.\n[inbox 2] Message from user:local_socket: [authenticated operator instruction]\nShip it.\n";
+    const afterNotice = "[inbox 1] Task tsk_1 completed\n[inbox 2] Message from user:device:\nShip it.";
+    expect(isDelivered(rowsOf(said(3, afterAgent)), queued)).toBe(true);
+    expect(isDelivered(rowsOf(said(3, afterNotice)), queued)).toBe(true);
+  });
+
+  test("not when only an agent, a notice or an older row says the words", () => {
+    expect(isDelivered(rowsOf(said(3, "[inbox 1] Message from agt_worker:\nShip it.")), queued)).toBe(false);
+    expect(isDelivered(rowsOf(said(3, "[inbox 1] Message from agt_worker:\nShip it.\n[inbox 2] Message from user:device:\nWait.")), queued)).toBe(false);
+    expect(isDelivered(rowsOf(said(3, "[inbox 1] Task tsk_1 completed: Ship it.")), queued)).toBe(false);
+    expect(isDelivered(rowsOf(said(2, "[inbox 1] Message from user:device:\nShip it.")), queued)).toBe(false);
   });
 });

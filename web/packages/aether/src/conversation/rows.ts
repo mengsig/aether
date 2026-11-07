@@ -117,10 +117,26 @@ function blockPart(block: aether.ContentBlock, pairing: Pairing): Part | null {
 }
 
 const INBOX_LINE = /^\[inbox \d+\] /;
+const INBOX_ITEM_START = /^(?=\[inbox \d+\] )/m;
 const MESSAGE_FROM = /^\[inbox \d+\] Message from (.+):(?: \[authenticated operator instruction\])?$/;
 const ASSISTANT: Speaker = { kind: "assistant", from: null };
 const OPERATOR: Speaker = { kind: "user", from: null };
 const NOTICE: Speaker = { kind: "notice", from: null };
+
+/** One inbox item as the daemon wrote it: who sent it (null for a notice) and the text under its header. */
+interface InboxItem { readonly from: string | null; readonly body: string }
+
+const isOperator = (from: string): boolean => from === "user" || from.startsWith("user:");
+
+/** Splits an inbox item at its header line; the text must start with one. */
+function inboxItem(text: string): InboxItem {
+  invariant(INBOX_LINE.test(text), "an inbox item starts with its header");
+  const newline = text.indexOf("\n");
+  const header = newline < 0 ? text : text.slice(0, newline);
+  const from = MESSAGE_FROM.exec(header)?.[1] ?? null;
+  invariant(from !== "", "an inbox header names its sender");
+  return { from, body: newline < 0 ? "" : text.slice(newline + 1) };
+}
 
 /**
  * The speaker of a user turn, read from the inbox header the daemon writes before a delivered message
@@ -131,13 +147,9 @@ export function speakerOf(role: aether.MessageRole, parts: readonly Part[]): { s
   const first = parts[0];
   if (first === undefined || parts.every((part) => part.kind === "orphan-result")) return { speaker: NOTICE, parts };
   if (first.kind !== "text" || !INBOX_LINE.test(first.text)) return { speaker: OPERATOR, parts };
-  const newline = first.text.indexOf("\n");
-  const header = newline < 0 ? first.text : first.text.slice(0, newline);
-  const from = MESSAGE_FROM.exec(header)?.[1];
-  const rest = newline < 0 ? "" : first.text.slice(newline + 1);
-  if (from === undefined) return { speaker: NOTICE, parts };
-  invariant(from !== "", "an inbox header names its sender");
-  const speaker: Speaker = { kind: from === "user" || from.startsWith("user:") ? "user" : "agent", from };
+  const { from, body: rest } = inboxItem(first.text);
+  if (from === null) return { speaker: NOTICE, parts };
+  const speaker: Speaker = { kind: isOperator(from) ? "user" : "agent", from };
   // Several inbox items in one turn keep their headers: each says what it is.
   if (/^\[inbox \d+\] /m.test(rest)) return { speaker, parts };
   const body = rest.trim();
@@ -200,10 +212,30 @@ export function queuedRows(queued: readonly QueuedMessage[]): ConversationRow[] 
   });
 }
 
-/** Whether a user row committed after the send carries the message: the daemon delivered it. */
+/**
+ * What the operator said in a user row: its text when the row is theirs alone, or the bodies of the
+ * operator's items when several inbox items share the turn, agents' and notices' texts left out.
+ */
+function operatorTexts(row: ConversationRow): string[] {
+  invariant(row.role === "user", "only user turns carry operator text");
+  const texts: string[] = [];
+  for (const part of row.parts) {
+    if (part.kind !== "text") continue;
+    for (const segment of part.text.split(INBOX_ITEM_START)) {
+      if (segment === "") continue;
+      if (!INBOX_LINE.test(segment)) { if (row.speaker.kind === "user") texts.push(segment); continue; }
+      const item = inboxItem(segment);
+      if (item.from !== null && isOperator(item.from)) texts.push(item.body);
+    }
+  }
+  return texts;
+}
+
+/** Whether the operator's message is in a user row committed after the send: the daemon delivered it. */
 export function isDelivered(rows: readonly ConversationRow[], message: QueuedMessage): boolean {
-  return rows.some((row) => row.seq !== null && row.seq > message.afterSeq && row.speaker.kind === "user"
-    && row.parts.some((part) => part.kind === "text" && part.text.includes(message.text)));
+  invariant(message.text !== "", "a queued message has text");
+  return rows.some((row) => row.role === "user" && row.seq !== null && row.seq > message.afterSeq
+    && operatorTexts(row).some((text) => text.includes(message.text)));
 }
 
 const modelOf = (ref: aether.ModelRef): string => `${ref.provider}/${ref.model}`;

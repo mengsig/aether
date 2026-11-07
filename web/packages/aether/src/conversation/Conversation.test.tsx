@@ -246,6 +246,17 @@ describe("a message sent from the composer", () => {
     expect(shown(container).messages).toEqual([...SEED, "Ship it."]);
   });
 
+  test("delivered in one inbox batch after another agent's message, it is no longer queued", async () => {
+    const { h, container } = await open();
+    await sendFromComposer(h, container, "Ship it.");
+    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(1);
+    const batch = "[inbox 1] Message from agt_worker:\nChecks passed.\n[inbox 2] Message from user:device: [authenticated operator instruction]\nShip it.\n";
+    h.daemon.commit(FAUX_AGENT, text("user", batch));
+    await h.settle();
+    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(0);
+    expect(shown(container).messages).toHaveLength(SEED.length + 1);
+  });
+
   test("delivered before the daemon acknowledges it, it is never shown as queued", async () => {
     const { h, container } = await open();
     h.daemon.hold.add("send_message");

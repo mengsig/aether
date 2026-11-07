@@ -4,6 +4,7 @@ import { beforeEach, afterEach, expect, test } from "vitest";
 import { ControlsScreen } from "./ControlsScreen.tsx";
 import { AGENT_ID, CHILD_ID, controlsScript, demoAgents } from "./fixture/demo.ts";
 import { connected, click, type, pick, type Harness } from "./fixture/harness.test-util.tsx";
+import { invariant } from "../fleet/invariant.ts";
 
 let h: Harness;
 afterEach(() => h?.unmount());
@@ -79,3 +80,49 @@ test("a refused message retains the draft for recovery", async () => {
 });
 
 beforeEach(() => { for (const key of drafts.keys()) drafts.clear(key); });
+
+/** The dialog's own confirm button, apart from the action button of the same name behind it. */
+async function confirm(label: string) {
+  const dialog = document.querySelector("dialog[open]");
+  invariant(dialog !== null, "the action asks first");
+  await click(h, dialog, label);
+}
+
+/** Starts a held identity save, types newer text while it runs, then lets it succeed. */
+async function saveWhileTyping(root: Element, field: string, typed: string, action: string, confirmLabel: string | null) {
+  h.daemon.script = { ...h.daemon.script, update_agent: () => "hold" };
+  await click(h, root, action);
+  if (confirmLabel !== null) await confirm(confirmLabel);
+  expect(h.daemon.commands("update_agent")).toHaveLength(1);
+  await type(h, root, field, typed);
+  h.daemon.script = { ...h.daemon.script, update_agent: () => ({ tag: "ok", data: null }) };
+  h.daemon.release();
+  await h.settle();
+}
+
+test("a name typed while a slow rename ran is kept, and the instructions draft beside it", async () => {
+  const root = await screen("Model & limits");
+  await type(h, root, "New name", "first name");
+  await type(h, root, "New instructions", "unsent instructions");
+  await saveWhileTyping(root, "New name", "newer unsent name", "Rename", null);
+  expect(h.daemon.commands("update_agent")[0]).toMatchObject({ patch: { name: "first name" } });
+  expect(drafts.get(`controls/${AGENT_ID}/identity`)).toEqual({ name: "newer unsent name", instructions: "unsent instructions" });
+  await click(h, root, "Rename");
+  expect(drafts.get(`controls/${AGENT_ID}/identity`)).toEqual({ name: "", instructions: "unsent instructions" });
+});
+
+test("instructions typed while a slow replace ran are kept", async () => {
+  const root = await screen("Model & limits");
+  await type(h, root, "New instructions", "first instructions");
+  await saveWhileTyping(root, "New instructions", "newer unsent instructions", "Replace instructions", "Replace");
+  expect(h.daemon.commands("update_agent")[0]).toMatchObject({ patch: { instructions: "first instructions" } });
+  expect(drafts.get(`controls/${AGENT_ID}/identity`)).toEqual({ name: "", instructions: "newer unsent instructions" });
+});
+
+test("instructions typed while a slow clear ran are kept", async () => {
+  const root = await screen("Model & limits");
+  await type(h, root, "New instructions", "typed before clearing");
+  await saveWhileTyping(root, "New instructions", "typed while clearing", "Clear instructions", "Clear instructions");
+  expect(h.daemon.commands("update_agent")[0]).toMatchObject({ patch: { instructions: "" } });
+  expect(drafts.get(`controls/${AGENT_ID}/identity`)).toEqual({ name: "", instructions: "typed while clearing" });
+});
