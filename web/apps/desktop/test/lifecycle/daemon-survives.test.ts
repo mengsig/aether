@@ -16,7 +16,7 @@ const STUB = fileURLToPath(new URL("./stub-daemon.ts", import.meta.url));
 const RESULT_PREFIX = "DESKTOP-LIFECYCLE-RESULTS ";
 const RUN_TIMEOUT_MS = 90_000;
 const EXPECTED = [
-  "managed start is off by default", "managed start runs the daemon once the setting is on",
+  "a link from before the window loaded navigates the page", "managed start is off by default", "managed start runs the daemon once the setting is on",
   "deep links reach the page and anything else is dropped",
 ];
 

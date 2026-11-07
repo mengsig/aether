@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { app, type WebContents } from "electron";
 import { registerAppScheme, startDesktop, type Desktop } from "../../../src/main/start.ts";
+import { DeepLinkRouter } from "../../../src/native/deep-links.ts";
 
 export const RESULT_PREFIX = "DESKTOP-LIFECYCLE-RESULTS ";
 const SCRIPT_TIMEOUT_MS = 40_000;
@@ -26,6 +27,16 @@ async function page(contents: WebContents, script: string): Promise<unknown> {
   }
 }
 
+/** The page's hash once it equals `want`, within a few seconds; the hash it has otherwise. */
+async function hashBecomes(contents: WebContents, want: string): Promise<string> {
+  let hash = "";
+  for (let attempt = 0; attempt < 50 && hash !== want; attempt += 1) {
+    hash = String(await page(contents, "location.hash"));
+    if (hash !== want) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return hash;
+}
+
 const settled = (call: string) => `${call}.then((value) => ({ value }), (error) => ({ error: String(error.message) }))`;
 
 async function checks(desktop: Desktop, dir: string): Promise<CheckResult[]> {
@@ -40,6 +51,9 @@ async function checks(desktop: Desktop, dir: string): Promise<CheckResult[]> {
       results.push({ name, ok: false, error: error instanceof Error ? (error.stack ?? error.message) : String(error) });
     }
   };
+  await check("a link from before the window loaded navigates the page", async () => {
+    assert.equal(await hashBecomes(contents, "#/fleet"), "#/fleet");
+  });
   const aether = async () => ((await page(contents, "desktop.discover()")) as Array<{ kind: string }>).find((d) => d.kind === "aether");
   await check("managed start is off by default", async () => {
     const answer = await page(contents, settled('desktop.startDaemon("aether")')) as { error?: string };
@@ -61,6 +75,7 @@ async function checks(desktop: Desktop, dir: string): Promise<CheckResult[]> {
     assert.equal(desktop.deepLinks.acceptLink("https://example.com/?route=/fleet"), false);
     await new Promise((resolve) => setTimeout(resolve, 300));
     assert.deepEqual(await page(contents, "window.links"), ["/archon/queue"]);
+    assert.equal(await hashBecomes(contents, "#/archon/queue"), "#/archon/queue", "the page navigated to the link's route");
   });
   return results;
 }
@@ -79,7 +94,10 @@ app.whenReady()
       PATH: `${path.join(dir, "bin")}:/usr/bin:/bin`, HOME: dir,
       AETHER_SOCKET: path.join(dir, "a.sock"), ARCHON_SOCKET: path.join(dir, "r.sock"),
     };
-    return checks(await startDesktop({ offscreen: true, env }), dir);
+    // A launch-time link: it waits in main until the window loads, then in the preload until the page listens.
+    const deepLinks = new DeepLinkRouter();
+    assert.equal(deepLinks.acceptLink("aether-app://open?route=%2Ffleet"), true);
+    return checks(await startDesktop({ offscreen: true, env, deepLinks }), dir);
   })
   .then((results) => {
     process.stdout.write(`${RESULT_PREFIX}${JSON.stringify(results)}\n`, () => {

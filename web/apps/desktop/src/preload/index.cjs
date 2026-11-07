@@ -1,7 +1,7 @@
 // The app window's preload: exposes one frozen object, window.desktop (CONTRACTS.md §2.4),
 // whose every method is one IPC call main validates. Sandboxed preloads load as CommonJS.
 "use strict";
-/* global require, console */
+/* global require, console, queueMicrotask */
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { contextBridge, ipcRenderer } = require("electron");
@@ -13,11 +13,21 @@ const { contextBridge, ipcRenderer } = require("electron");
 const listeners = new Map();
 /** @type {Set<(route: string) => void>} */
 const deepLinkListeners = new Set();
+/**
+ * A route main sent before the page subscribed (a launch-time link): the first subscriber gets it.
+ * @type {string | undefined}
+ */
+let undeliveredRoute;
 
 ipcRenderer.on("desktop:push", (_event, conn, frame) => {
   for (const callback of listeners.get(conn)?.keys() ?? []) callback(frame);
 });
 ipcRenderer.on("desktop:deep-link", (_event, route) => {
+  if (typeof route !== "string" || !route.startsWith("/")) throw new TypeError("main sends a deep link as an app route");
+  if (deepLinkListeners.size === 0) {
+    undeliveredRoute = route;
+    return;
+  }
   for (const callback of deepLinkListeners) callback(route);
 });
 
@@ -48,7 +58,6 @@ function plainRefusal(error) {
   plain.name = match[1] ?? "Error";
   return plain;
 }
-
 
 /**
  * @param {string} conn
@@ -102,6 +111,9 @@ const desktop = {
   onDeepLink(callback) {
     if (typeof callback !== "function") throw new TypeError("onDeepLink needs a callback");
     deepLinkListeners.add(callback);
+    const waiting = undeliveredRoute;
+    undeliveredRoute = undefined;
+    if (waiting !== undefined) queueMicrotask(() => callback(waiting));
     return () => { deepLinkListeners.delete(callback); };
   },
   diagnostics: () => call("diagnostics"),
