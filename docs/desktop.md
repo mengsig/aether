@@ -249,10 +249,13 @@ read over `list_view_modes` (see [the TUI's view modes](tui.md#view-modes)); a
 mode scoped to another agent is not offered. Arrow keys move the choice, and
 `/mode <name>` or `/<name>` (again for standard) choose one from the composer
 and run in the app. While the daemon's list is loading or unavailable, `/mode`,
-`/focus` and Archon's `/calm` say so rather than reach the agent, and so does
-any other `/<name>` no command knows, since it may name a user mode; once the
-list has arrived and names no such mode, it is sent as typed. The choice is remembered
-per daemon and agent. Without one, Archon's orchestrator opens in its Calm mode
+`/focus` and Archon's `/calm` say so rather than reach the agent. Any other
+`/<name>` no command knows may name a user mode, so it is held while the list
+is loading, its last read failed (the last list stays in use) or a mode file
+could not be read, which the bar names; once the list is whole and names no
+such mode, it is sent byte for byte. The choice is remembered per daemon and
+agent; where storage refuses it, it holds for the open chat and the bar says it
+will not survive a reload. Without one, Archon's orchestrator opens in its Calm mode
 whenever a `calm.toml` that fits it exists, whatever other modes are scoped to
 it; any other agent opens in the first user mode scoped to it, else in standard.
 
@@ -260,7 +263,8 @@ The rules are the TUI's, pinned row for row by one shared fixture
 (`crates/aether-tui/tests/fixtures/view_mode_parity.json`) that both test
 suites read. A named mode hides the categories it does not list, draws a
 failed tool call or edit as one line when it omits `tool`, and with `compact` density
-draws delegations, messages, completions and status as one-line cards.
+draws delegations, messages, completions and status as one-line cards; drawn
+whole, a card keeps the call beside it, input and result.
 What the operator typed, questions, approvals, errors, failed children and
 calls that were denied or cancelled stay whole in every mode. **Details** (Ctrl+T)
 reveals everything the mode hides without leaving it. Switching keeps the draft
