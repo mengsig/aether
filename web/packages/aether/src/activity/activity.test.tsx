@@ -7,6 +7,7 @@ import { connected, click, buttonNamed, type, type Harness } from "../controls/f
 import { fauxAgent } from "../conversation/fixture/transcript.ts";
 import { invariant } from "../fleet/invariant.ts";
 import ActivityScreen from "./ActivityScreen.tsx";
+import StartScreen from "./StartScreen.tsx";
 let h: Harness;
 afterEach(() => { h?.unmount(); location.hash = ""; });
 const agent = fauxAgent();
@@ -233,4 +234,15 @@ test("workspace rejection blocks creation and choosing another workspace validat
   expect(h.daemon.commands("get_git_summary")).toHaveLength(0);
   await choose("old-repo");
   expect(buttonNamed(document.body, "Start agent").disabled).toBe(false);
+});
+
+test("Start a task opens the Start sheet at once, and closing it leaves the start route", async () => {
+  h = await connected({ script: startScript });
+  location.hash = "#/activity/start";
+  const root = await h.mount(<StartScreen />);
+  expect(root.querySelector("dialog[open]") ?? document.querySelector("dialog[open]")).not.toBeNull();
+  await act(async () => buttonNamed(document.body, "✕").click());
+  await h.settle();
+  expect(document.querySelector("dialog[open]")).toBeNull();
+  expect(location.hash).toBe("#/activity");
 });

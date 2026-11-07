@@ -1,6 +1,7 @@
 import { navigate, selectConnections, selectReports, useApp, useCapabilities, useEntityActions, useRoute, useRoutes, useSelector } from "@aether-ui/core";
 import type { Report } from "@aether-ui/core";
 import type { EntityAction } from "@aether-ui/protocol";
+import { ArchonToolsNotice, Welcome } from "@aether-ui/settings";
 import { AppShell, type ToastMessage } from "@aether-ui/ui";
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { screenTitles } from "./titles.ts";
@@ -20,7 +21,12 @@ const UNEXPLAINED_REPORT = "Something failed without saying why";
 /** A report as a toast. Daemons may send a blank message, and a toast must have a title. */
 export function reportNotice(report: Report): ToastMessage {
   const title = report.message.trim() === "" ? UNEXPLAINED_REPORT : report.message;
-  return { id: report.id, title, tone: "danger", ...(report.code ? { body: report.code } : {}) };
+  return { id: report.id, title, tone: report.tone ?? "danger", ...(report.code ? { body: report.code } : {}) };
+}
+
+/** Archon's screens say so, with the fix, when Archon's tools are not connected to Aether. */
+export function bannerFor(hash: string) {
+  return hash.startsWith("#/archon/") || hash === "#/archon" ? <ArchonToolsNotice /> : null;
 }
 
 /** Feeds the shell everything it renders from core: routes, actions, capabilities, the route, connections and reports. */
@@ -48,6 +54,7 @@ export function ShellRoot() {
 
   return (
     <AppShell routes={routes} actions={actions} capabilities={capabilities} match={match} hash={hash}
-      onNavigate={navigate} onActionError={onActionError} connections={connections} notices={notices} onDismissNotice={dismiss} titles={screenTitles} />
+      onNavigate={navigate} onActionError={onActionError} connections={connections} notices={notices} onDismissNotice={dismiss} titles={screenTitles}
+      home={<Welcome />} banner={bannerFor(hash)} />
   );
 }
