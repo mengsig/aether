@@ -231,79 +231,33 @@ describe("a message sent from the composer", () => {
     await h.settle();
   }
 
-  test("shows as queued at the end until the daemon delivers it, then once as delivered", async () => {
+  test("shows once the daemon's transcript carries it, and the composer is cleared", async () => {
     const { h, container } = await open();
     await sendFromComposer(h, container, "Ship it.");
     expect(h.daemon.commands("send_message")).toHaveLength(1);
-    const queued = container.querySelectorAll(".conv-msg[data-queued]");
-    expect(queued).toHaveLength(1);
-    expect(queued[0]?.textContent).toContain("Ship it.");
-    expect(queued[0]?.textContent).toContain("Queued");
-    expect(shown(container).messages).toEqual([...SEED, "Ship it."]);
+    expect(shown(container).messages).toEqual(SEED);
+    expect(container.querySelector<HTMLTextAreaElement>("[data-testid=composer-input]")?.value).toBe("");
     h.daemon.commit(FAUX_AGENT, text("user", "[inbox 1] Message from user:device:\nShip it."));
     await h.settle();
-    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(0);
     expect(shown(container).messages).toEqual([...SEED, "Ship it."]);
   });
 
-  /** Enough unrelated events to push everything before them out of core's recent events. */
-  function floodEvents(h: Harness) {
-    for (let i = 0; i < 520; i += 1) h.daemon.completed(FAUX_AGENT, `inv_flood_${i}`, usage(1), MODEL);
-  }
-
-  test("delivered in one inbox batch after another agent's message, it is queued until the turn consumes it, then gone for good", async () => {
-    const { h, container } = await open();
-    await sendFromComposer(h, container, "Ship it.");
-    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(1);
-    h.daemon.delivered(FAUX_AGENT, 7, "Ship it.");
-    const batch = "[inbox 6] Message from agt_worker:\nChecks passed.\n[inbox 7] Message from user:device: [authenticated operator instruction]\nShip it.\n";
-    h.daemon.commit(FAUX_AGENT, text("user", batch));
-    await h.settle();
-    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(1);
-    h.daemon.consumed(FAUX_AGENT, 7);
-    await h.settle();
-    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(0);
-    // The events that settled it leave the recent window: it does not come back.
-    floodEvents(h);
-    await h.settle();
-    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(0);
-    expect(shown(container).messages).toHaveLength(SEED.length + 1);
-  });
-
-  test("its delivery event evicted before the turn, the learned inbox seq still settles it on consumption", async () => {
-    const { h, container } = await open();
-    await sendFromComposer(h, container, "Ship it.");
-    h.daemon.delivered(FAUX_AGENT, 7, "Ship it.");
-    await h.settle();
-    floodEvents(h);
-    await h.settle();
-    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(1);
-    h.daemon.commit(FAUX_AGENT, text("user", "[inbox 6] Message from agt_worker:\nChecks passed.\n[inbox 7] Message from user:device:\nShip it.\n"));
-    h.daemon.consumed(FAUX_AGENT, 7);
-    await h.settle();
-    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(0);
-  });
-
-  test("delivered before the daemon acknowledges it, it is never shown as queued", async () => {
+  test("held by the daemon, the composer keeps the text until the reply arrives, then clears", async () => {
     const { h, container } = await open();
     h.daemon.hold.add("send_message");
     await sendFromComposer(h, container, "Ship it.");
     expect(h.daemon.commands("send_message")).toHaveLength(1);
-    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(0);
-    h.daemon.commit(FAUX_AGENT, text("user", "[inbox 1] Message from user:device:\nShip it."));
-    await h.settle();
+    expect(container.querySelector<HTMLTextAreaElement>("[data-testid=composer-input]")?.value).toBe("Ship it.");
     h.daemon.release("send_message");
     await h.settle();
-    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(0);
-    expect(shown(container).messages).toEqual([...SEED, "Ship it."]);
     expect(container.querySelector<HTMLTextAreaElement>("[data-testid=composer-input]")?.value).toBe("");
   });
 
-  test("refused by the daemon, it is not queued and the text stays in the composer", async () => {
+  test("refused by the daemon, the text stays in the composer", async () => {
     const { h, container } = await open();
     h.daemon.refuse.set("send_message", { code: "forbidden", message: "not yours" });
     await sendFromComposer(h, container, "Ship it.");
-    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(0);
+    expect(shown(container).messages).toEqual(SEED);
     expect(container.querySelector<HTMLTextAreaElement>("[data-testid=composer-input]")?.value).toBe("Ship it.");
   });
 });

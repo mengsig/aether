@@ -52,18 +52,6 @@ export interface ConversationRow {
   readonly parts: readonly Part[];
   readonly live: LiveState | null;
   readonly meta: InvocationMeta | null;
-  /** Sent from the composer and not yet delivered by the daemon; drawn after every other row. */
-  readonly queued?: true;
-}
-
-/** A message the composer sent that the daemon has not yet delivered to the agent. */
-export interface QueuedMessage {
-  readonly text: string;
-  readonly at: string;
-  /** The newest committed seq when it was sent; its delivery commits after this. */
-  readonly afterSeq: number;
-  /** The inbox seq the daemon gave it, once its `inbox.delivered` event was seen; null until then. */
-  readonly inboxSeq: number | null;
 }
 
 export interface Pairing {
@@ -199,67 +187,6 @@ export function liveRows(streams: Readonly<Record<string, StreamState>>, agent: 
   rows.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   invariant(new Set(rows.map((row) => row.key)).size === rows.length, "one live tail per invocation");
   return rows;
-}
-
-/** Rows for the messages still queued, in the order they were sent. */
-export function queuedRows(queued: readonly QueuedMessage[]): ConversationRow[] {
-  return queued.map((message, index) => {
-    invariant(message.text.trim() !== "", "a queued message has text");
-    invariant(message.afterSeq >= 0, "a queued message follows a committed seq");
-    return {
-      key: `q:${message.afterSeq}:${index}`, role: "user", speaker: OPERATOR, seq: null, at: message.at, invocation: null,
-      parts: [{ kind: "text", text: message.text }], live: null, meta: null, queued: true,
-    };
-  });
-}
-
-const textOf = (content: readonly aether.ContentBlock[]): string =>
-  content.filter((block): block is aether.ContentBlockText => block.type === "text").map((block) => block.text).join("\n").trim();
-
-/** The inbox seq the daemon gave the operator's message after the send, or null while that event is unseen. */
-function inboxSeqOf(events: readonly aether.Event[], agent: string, message: QueuedMessage): number | null {
-  for (const event of events) {
-    if (event.agent_id !== agent || event.seq <= message.afterSeq || event.kind.type !== "inbox.delivered") continue;
-    const item = event.kind.item;
-    if (item.kind.kind === "message" && item.kind.from.actor === "user" && textOf(item.kind.content) === message.text) return item.seq;
-  }
-  return null;
-}
-
-/** Whether the agent's turn read its inbox up to `seq`: the daemon commits that event with the user turn. */
-function isConsumed(events: readonly aether.Event[], agent: string, seq: number): boolean {
-  return events.some((event) => event.agent_id === agent && event.kind.type === "inbox.consumed" && event.kind.up_to >= seq);
-}
-
-/**
- * Whether the daemon delivered the queued message. With its inbox seq known, the agent row's inbox
- * cursor (durable) or the `inbox.consumed` event settles it. Without it (an older daemon, or the
- * delivery event left the recent events before this screen saw it), the operator's own user row
- * committed after the send carries the text; an agent's or a notice's row never counts.
- */
-export function isDelivered(rows: readonly ConversationRow[], events: readonly aether.Event[], agent: string, inboxCursor: number, message: QueuedMessage): boolean {
-  invariant(message.text !== "", "a queued message has text");
-  invariant(agent !== "", "a queued message names its agent");
-  if (message.inboxSeq !== null) return inboxCursor >= message.inboxSeq || isConsumed(events, agent, message.inboxSeq);
-  return rows.some((row) => row.seq !== null && row.seq > message.afterSeq && row.speaker.kind === "user"
-    && row.parts.some((part) => part.kind === "text" && part.text.includes(message.text)));
-}
-
-/**
- * The messages still queued: each learns its inbox seq from the delivery event when that is in the
- * recent events, and a delivered one leaves for good. Unchanged messages keep their identity, so the
- * caller can tell whether anything settled.
- */
-export function settleQueued(sent: readonly QueuedMessage[], rows: readonly ConversationRow[], events: readonly aether.Event[], agent: string, inboxCursor: number): readonly QueuedMessage[] {
-  invariant(inboxCursor >= 0, "an inbox cursor counts delivered items");
-  const pending: QueuedMessage[] = [];
-  for (const message of sent) {
-    const seq = message.inboxSeq ?? inboxSeqOf(events, agent, message);
-    const learned = seq === message.inboxSeq ? message : { ...message, inboxSeq: seq };
-    if (!isDelivered(rows, events, agent, inboxCursor, learned)) pending.push(learned);
-  }
-  invariant(pending.length <= sent.length, "settling never adds a message");
-  return pending;
 }
 
 const modelOf = (ref: aether.ModelRef): string => `${ref.provider}/${ref.model}`;

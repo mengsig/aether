@@ -149,9 +149,8 @@ before updating.
   an issue when none does. A screen's background read that fails shows its
   error in place instead of a toast that covered the composer; registration
   offers "Keep it local" for a checkout without an origin remote; the Start
-  sheet lists an agent that already holds a task as unavailable; a message
-  sent from the composer shows at once as queued until the agent's
-  transcript carries it. An agent's page names the task it holds, which
+  sheet lists an agent that already holds a task as unavailable. An
+  agent's page names the task it holds, which
   the daemon had kept in the agent's context alone; the home's GitHub tile
   reads the watcher's "kept for the CLI" answer as a neutral tile rather
   than a failure; the chat's transcript, not its composer, takes the free

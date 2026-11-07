@@ -12,8 +12,7 @@ import "./conversation.css";
 import "./markdown.css";
 import type { ListHandle } from "./MeasuredList.tsx";
 import { AgentNameContext } from "./Message.tsx";
-import { useQueuedMessages } from "./queued.ts";
-import { entryRows, invocationMeta, liveRows, pairTools, queuedRows, rowCounts, toolActivity, type ConversationRow, type ToolActivity } from "./rows.ts";
+import { entryRows, invocationMeta, liveRows, pairTools, rowCounts, toolActivity, type ConversationRow, type ToolActivity } from "./rows.ts";
 import { SearchBar, useTranscriptSearch } from "./SearchBar.tsx";
 import { ToggleContext, ToggleSet } from "./toggles.ts";
 import { ToolActivityContext } from "./ToolCall.tsx";
@@ -41,8 +40,6 @@ export interface ConversationRows {
   /** How many rows are committed messages; the rest are live tails at the end. */
   readonly committed: number;
   readonly activity: ReadonlyMap<string, ToolActivity>;
-  /** The connection's recent durable events, which also tell when a queued message was consumed. */
-  readonly events: readonly aether.Event[];
 }
 
 /** Every row the screen shows, derived from the store: committed entries, then uncommitted live tails. */
@@ -58,7 +55,7 @@ export function useConversationRows(conn: ConnId, agent: string): ConversationRo
   const live = useMemo(() => liveRows(streams, agent, pairing.committed), [streams, agent, pairing]);
   const rows = useMemo(() => (live.length === 0 ? committed : [...committed, ...live]), [committed, live]);
   invariant(rows.length >= committed.length, "live tails only add rows");
-  return { rows, loaded: transcript !== undefined, committed: committed.length, activity, events };
+  return { rows, loaded: transcript !== undefined, committed: committed.length, activity };
 }
 
 const counted = (n: number, noun: string): string => `${n.toLocaleString("en")} ${noun}${n === 1 ? "" : "s"}`;
@@ -94,15 +91,13 @@ export function Conversation({ conn, agent }: { readonly conn: ConnId; readonly 
   const info = useSelector(useMemo(() => selectConnection(conn), [conn]));
   const row = useSelector(useMemo(() => selectAgent(conn, agent), [conn, agent]));
   const name = row?.name ?? "Agent";
-  const { rows, loaded, committed, activity, events } = useConversationRows(conn, agent);
+  const { rows, loaded, committed, activity } = useConversationRows(conn, agent);
   const [toggles] = useState(() => new ToggleSet());
   const list = useRef<ListHandle>(null);
   const stage = useRef<HTMLDivElement>(null);
-  const sent = useQueuedMessages(conn, agent, rows, events, row?.inbox_cursor ?? 0);
-  const shown = useMemo(() => (sent.queued.length === 0 ? rows : [...rows, ...queuedRows(sent.queued)]), [rows, sent.queued]);
-  const search = useTranscriptSearch({ rows: shown, list, stage, toggles });
+  const search = useTranscriptSearch({ rows, list, stage, toggles });
   const [focusFind, setFocusFind] = useState(0);
-  const counts = useMemo(() => rowCounts(shown), [shown]);
+  const counts = useMemo(() => rowCounts(rows), [rows]);
   const openFind = () => {
     search.show();
     setFocusFind((n) => n + 1);
@@ -128,14 +123,14 @@ export function Conversation({ conn, agent }: { readonly conn: ConnId; readonly 
         <ToggleContext.Provider value={toggles}>
           <ToolActivityContext.Provider value={activity}>
             <AgentNameContext.Provider value={name}>
-              <TranscriptBody loaded={loaded} info={info} rows={shown.length}>
-                <TranscriptList conn={conn} agent={agent} rows={shown} committed={committed} currentRow={search.currentRow} handle={list} />
+              <TranscriptBody loaded={loaded} info={info} rows={rows.length}>
+                <TranscriptList conn={conn} agent={agent} rows={rows} committed={committed} currentRow={search.currentRow} handle={list} />
               </TranscriptBody>
             </AgentNameContext.Provider>
           </ToolActivityContext.Provider>
         </ToggleContext.Provider>
       </div>
-      <Composer conn={conn} agent={agent} onSend={(text) => { const settle = sent.begin(text); return (accepted) => { settle(accepted); if (accepted) list.current?.scrollToEnd(); }; }} />
+      <Composer conn={conn} agent={agent} onSent={() => list.current?.scrollToEnd()} />
     </section>
   );
 }

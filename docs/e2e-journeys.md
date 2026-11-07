@@ -55,7 +55,7 @@ Reports go to `$E2E_OUT/journeys/` (default `web/e2e/.out/journeys/`): `report.j
 test, `results/` with the first-launch video.
 
 With `E2E_CAPTURE=<dir>` set, every journey also shoots the window at its key moments (the start
-sheet filled, a tool call unfolded, a queued message, Inbox with an approval, the schedule form,
+sheet filled, a tool call unfolded, a sent message, Inbox with an approval, the schedule form,
 the GitHub overview, and so on) in light and dark, full page, to `<dir>/desktop/` with one
 `manifest.jsonl` line per shot (`screen`, `state`, `file`, `journey`, `variants`). Without it the
 shots are no-ops, so the journeys check the same things either way (`specs/journeys/capture.ts`).

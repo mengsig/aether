@@ -70,14 +70,22 @@ async function expectReplyAndToolCall(run: Journey, id: string): Promise<void> {
   assert.ok(!["completed", "failed", "cancelled"].includes(held.state), `the held agent still works: ${held.state}`);
 }
 
+/** Sends while the agent holds in its shell call: the daemon keeps the message for its next turn. */
 async function sendFromComposer(window: Page): Promise<void> {
   const page = agentPage(window);
   const input = await textField(await need(page, "composer-input"));
   await input.fill(MESSAGE);
   await (await need(page, "composer-send")).click();
   await expect(input, "sending empties the composer").toHaveValue("");
-  await expect(page.getByText(MESSAGE).first(), "the message shows in the conversation").toBeVisible();
-  await shootWindow(window, "agent", "message-queued");
+  await expect(page.locator('.conv-composer-note[data-state="done"]'), "the composer says the message reaches the agent at its next turn").toBeVisible();
+  await shootWindow(window, "agent", "message-sent");
+}
+
+/** The released agent's next turn carried the message: the transcript shows it as the operator's. */
+async function expectMessageDelivered(run: Journey): Promise<void> {
+  const page = agentPage(run.window);
+  const delivered = page.locator('.conv-msg[data-speaker="user"]').filter({ hasText: MESSAGE }).first();
+  await expect(delivered, "the sent message shows in the conversation once the agent read it").toBeVisible({ timeout: REPLY_MS[run.variant] });
 }
 
 /** Releases the agent's held shell call; it then finishes its task. */
@@ -108,6 +116,7 @@ test("first-launch journey: start an agent, see it work, message, stop and resum
     await sendFromComposer(run.window);
     await stopAndResume(run.window, run.stack, id);
     await releaseAndFinish(run, id);
+    await expectMessageDelivered(run);
     if (run.variant === "real") await recordCost(run, id);
   } finally {
     await run.window.screencast.stop();
