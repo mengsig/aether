@@ -2,8 +2,9 @@
 // reasoning, tool calls (each paired with its result), coordination cards, attachments and cost.
 
 import { Badge } from "@aether-ui/ui";
+import type { ConnId } from "@aether-ui/protocol";
 import { memo, type ReactNode } from "react";
-import { CoordinationCard, FailedLine, isCard, type Directory } from "./Coordination.tsx";
+import { CoordinationCard, FailedLine, isCard } from "./Coordination.tsx";
 import { formatBytes, formatCost, formatDuration, formatTime, formatTokens } from "./format.ts";
 import { Markdown } from "./markdown.tsx";
 import type { ConversationRow, InvocationMeta, Part, ToolResultView } from "./rows.ts";
@@ -80,7 +81,7 @@ function PartView({ part, live }: { readonly part: Part; readonly live: boolean 
 }
 
 export interface MessageContext {
-  readonly directory: Directory;
+  readonly conn: ConnId;
   /** The agent that delegated this one, for its task card. */
   readonly parent: string | null;
 }
@@ -88,7 +89,7 @@ export interface MessageContext {
 function ViewPartView({ view, live, context }: { readonly view: ViewPart; readonly live: boolean; readonly context: MessageContext }): ReactNode {
   if (view.outcome === "line") return <FailedLine part={view.part} />;
   if (!isCard(view)) return <PartView part={view.part} live={live} />;
-  const card = <CoordinationCard view={view} directory={context.directory} parent={context.parent} />;
+  const card = <CoordinationCard view={view} conn={context.conn} parent={context.parent} />;
   // Drawn whole, a card keeps the call it summarises, input and result, one click away.
   if (view.outcome !== "full" || view.part.kind !== "tool") return card;
   return <>{card}<ToolCall part={view.part} live={live} /></>;
