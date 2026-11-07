@@ -106,5 +106,52 @@ waiter3=
 # shellcheck disable=SC2016
 CI_HOST_SLOTS=1 timeout 10 sh "$slot" sh -c 'sh "$1" sh -c "exit 7"' sh "$slot" && status=0 || status=$?
 [ "$status" -eq 7 ] || fail "nested invocation did not run and preserve its exit status: $status"
+cat > "$testdir/check-marker.sh" <<'CHECK_MARKER'
+#!/bin/sh
+set -eu
+slot=$1
+marker=$AETHER_CI_SLOT_HELD
+owner=${marker%%:*}; rest=${marker#*:}; ticks=${rest%%:*}; lock=${rest#*:}
+reject() {
+    result=0
+    AETHER_CI_SLOT_HELD=$1 timeout 1 sh "$slot" true >/dev/null 2>&1 || result=$?
+    [ "$result" -eq 124 ] || { echo "invalid marker bypassed the slot: $result" >&2; exit 1; }
+}
+reject "999999999:1:$lock"
+reject "$owner:0:$lock"
+reject "$owner:$ticks:$lock.foreign"
+self_ticks=$(sed 's/.*) //' "/proc/$$/stat" | awk '{print $20}')
+reject "$$:$self_ticks:$lock"
+printf '%s\n' "$marker" > "$2"
+until [ -e "$3" ]; do sleep 0.1; done
+CHECK_MARKER
+CI_HOST_SLOTS=1 sh "$slot" sh "$testdir/check-marker.sh" "$slot" "$testdir/marker" "$testdir/marker-release" &
+holder=$!
+await_file "$testdir/marker"
+result=0
+AETHER_CI_SLOT_HELD=$(cat "$testdir/marker") timeout 1 sh "$slot" true >/dev/null 2>&1 || result=$?
+[ "$result" -eq 124 ] || fail "non-descendant reused another holder's marker"
+touch "$testdir/marker-release"
+wait "$holder"
+holder=
+# shellcheck disable=SC2016
+XDG_RUNTIME_DIR="$testdir/" CI_HOST_SLOTS=1 timeout 5 sh "$slot" sh -c 'sh "$1" true' sh "$slot" || fail "nested call with trailing slash deadlocked"
+
+CI_HOST_SLOTS=1 sh "$slot" timeout 15 sh -c 'touch "$1"; while [ ! -e "$2" ]; do sleep 0.1; done' sh "$testdir/held-again" "$testdir/release-again" &
+holder=$!
+await_file "$testdir/held-again"
+CI_HOST_SLOTS=1 sh "$slot" true 2>"$testdir/head.err" &
+waiter1=$!
+await_waiting "$testdir/head.err"
+CI_HOST_SLOTS=1 sh "$slot" touch "$testdir/after-head" 2>"$testdir/after-head.err" &
+waiter2=$!
+await_waiting "$testdir/after-head.err"
+kill -KILL "$waiter1"
+wait "$waiter1" 2>/dev/null || :
+waiter1=
+touch "$testdir/release-again"
+wait "$holder"; holder=
+await_file "$testdir/after-head"
+wait "$waiter2"; waiter2=
 CI_HOST_SLOTS=1 timeout 5 sh "$slot" --status >"$testdir/empty-status" || fail "--status failed with no holders"
 echo "ci_slot_test.sh: ok"

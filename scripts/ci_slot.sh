@@ -8,22 +8,22 @@ case "$slots" in
 esac
 dir="${XDG_RUNTIME_DIR:-/tmp}/heavy-ci"
 
-process_start() { awk '{print $22}' "/proc/$1/stat" 2>/dev/null; }
+process_start() { sed 's/.*) //' "/proc/$1/stat" 2>/dev/null | awk '{print $20}'; }
 process_alive() {
     [ -r "/proc/$1/stat" ] && [ "$(process_start "$1")" = "$2" ] &&
         [ "$(awk '{print $3}' "/proc/$1/stat")" != Z ]
 }
 
-# The marker is lock-path:holder-pid:start-ticks; other slot clients may export it.
+# The marker is holder-pid:start-ticks:lock-path; other slot clients may export it.
 # A nested invocation must be a descendant of the live process holding that lock.
 already_held() {
     marker=${AETHER_CI_SLOT_HELD:-}
     [ -n "$marker" ] || return 1
-    lock=${marker%%:*}; rest=${marker#*:}; owner=${rest%%:*}; started=${rest#*:}
+    owner=${marker%%:*}; rest=${marker#*:}; started=${rest%%:*}; lock=${rest#*:}
     case "$owner:$started" in *[!0-9:]* | :* | *:) return 1 ;; esac
     case "$lock" in "$dir"/slot-*.lock) ;; *) return 1 ;; esac
     process_alive "$owner" "$started" || return 1
-    [ "$(readlink "/proc/$owner/fd/9" 2>/dev/null)" = "$lock" ] || return 1
+    [ "/proc/$owner/fd/9" -ef "$lock" ] || return 1
     ancestor=$$
     while [ "$ancestor" -gt 1 ]; do
         [ "$ancestor" -eq "$owner" ] && return 0
@@ -38,8 +38,12 @@ queue_unlock() { flock -u 8; exec 8>&-; }
 prune_queue() {
     for prune_file in "$dir"/queue/*; do
         [ -f "$prune_file" ] || continue
-        IFS=' ' read -r pid start since < "$prune_file" || continue
-        if ! process_alive "$pid" "$start"; then rm -f "$prune_file"; fi
+        pid=; start=; since=
+        IFS=' ' read -r pid start since < "$prune_file" || :
+        case "$pid:$start" in
+            *[!0-9:]* | :* | *:) rm -f "$prune_file"; continue ;;
+        esac
+        if [ -z "$since" ] || ! process_alive "$pid" "$start"; then rm -f "$prune_file"; fi
     done
 }
 
@@ -113,7 +117,10 @@ if [ "$1" = --status ]; then show_status; exit 0; fi
 queue_lock
 prune_queue
 counter=0
-[ ! -f "$dir/counter" ] || read -r counter < "$dir/counter"
+if [ -f "$dir/counter" ]; then
+    read -r counter < "$dir/counter" || { echo "ci-slot: invalid queue counter" >&2; exit 1; }
+fi
+case "$counter" in '' | *[!0-9]*) echo "ci-slot: invalid queue counter" >&2; exit 1 ;; esac
 counter=$((counter + 1))
 printf '%s\n' "$counter" > "$dir/counter"
 ticket=$(printf '%s/queue/%020d' "$dir" "$counter")
@@ -124,6 +131,7 @@ told=
 while :; do
     queue_lock
     prune_queue
+    [ -f "$ticket" ] || { echo "ci-slot: queue ticket disappeared: $ticket" >&2; exit 1; }
     position=0
     for entry in "$dir"/queue/*; do
         [ -f "$entry" ] || continue
@@ -138,7 +146,7 @@ while :; do
             if flock -n 9; then
                 rm -f "$ticket"
                 queue_unlock
-                AETHER_CI_SLOT_HELD="$file:$$:$(process_start $$)"; export AETHER_CI_SLOT_HELD
+                AETHER_CI_SLOT_HELD="$$:$(process_start $$):$file"; export AETHER_CI_SLOT_HELD
                 set_jobs
                 status=0
                 "$@" 9>&- || status=$?
