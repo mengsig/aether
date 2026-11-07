@@ -70,7 +70,7 @@ test("notifications are short plain lines, rate limited, and open only allowed r
   const shown: Array<{ title: string; body: string; click: () => void }> = [];
   const opened: Array<string | undefined> = [];
   let now = 1_000_000;
-  const notifier = new Notifier({ show: (content, click) => shown.push({ ...content, click }) }, (route) => opened.push(route), () => now);
+  const notifier = new Notifier({ show: (content, click) => { shown.push({ ...content, click }); } }, (route) => opened.push(route), () => now);
   notifier.notify({ title: " Review\nready‮ ", body: `Item\u0007 qi_1\r\n${"x".repeat(400)}`, route: "/archon/items/qi_1" });
   assert.equal(shown[0]?.title, "Review ready");
   assert.equal([...(shown[0]?.body ?? "")].length, 240);
@@ -87,6 +87,14 @@ test("notifications are short plain lines, rate limited, and open only allowed r
   shown.at(-1)?.click();
   assert.deepEqual(opened, ["/archon/items/qi_1", undefined]);
   assert.equal(plainLine("abcdef", 4), "abc…");
+});
+
+test("a notification the system refuses to show rejects to the caller instead of reporting success", async () => {
+  const failing = { show: () => Promise.reject(new Error("The system could not show the notification: denied")) };
+  const notifier = new Notifier(failing, () => undefined);
+  await assert.rejects(Promise.resolve(notifier.notify({ title: "Question", body: "ready?" })), /could not show the notification: denied/);
+  const accepting = new Notifier({ show: () => Promise.resolve() }, () => undefined);
+  assert.equal(await accepting.notify({ title: "Question", body: "ready?" }), undefined);
 });
 
 test("a folder token is opaque, single use, bound to its purpose and short lived", () => {

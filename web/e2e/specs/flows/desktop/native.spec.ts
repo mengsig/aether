@@ -50,6 +50,15 @@ function window(): Page {
 /** The toast that says how an outside link went. */
 const toast = (page: Page, text: string | RegExp) => page.locator(".ui-toast").filter({ hasText: text });
 
+/** Hands the focus to a report window and stops Playwright from faking it for the app window. */
+async function sendToBackground(page: Page): Promise<void> {
+  const session = await page.context().newCDPSession(page);
+  await session.send("Emulation.setFocusEmulationEnabled", { enabled: false });
+  await route(page, `#/archon/items/${item}`);
+  await page.locator(".item-link").filter({ hasText: REPORT_TITLE }).getByRole("link", { name: "Open" }).click();
+  await expect.poll(() => page.evaluate(() => document.hasFocus()), { message: "another native window has the focus" }).toBe(false);
+}
+
 async function launch(args: readonly string[] = []): Promise<void> {
   assert.ok(binary !== undefined && app === undefined, "one packaged app at a time");
   const { aether, archon } = stack().layout;
@@ -161,13 +170,8 @@ test("UX-045: Settings has desktop alerts and a test notification that reaches t
 test("UX-045: a real agent's questions alert the system; a click opens the question", async () => {
   test.setTimeout(120_000);
   const page = window();
-  // Under Playwright the app window always reports the focus, so the alerts are let through while
-  // it is in front; the focus rule itself is pinned by desktop-alerts.test.ts.
-  await route(page, "#/settings/notifications");
-  const front = page.getByRole("region", { name: "Desktop alerts" }).getByRole("switch", { name: /^Also while Aether is in front/ });
-  await front.click();
-  await expect(front).toBeChecked();
-  await route(page, "#/fleet");
+  await sendToBackground(page);
+  await page.evaluate(() => { location.hash = "#/fleet"; });
   stack().engine.setScript(askingScript(MARKER, QUESTIONS));
   const agent = await createAgent(stack(), "Native asker", `Ask the operator two things (${MARKER}).`);
   const alerted = await until(async () => desktop().native.notes(), (notes) => notes.some((note) => note.body === QUESTIONS[0]), "the first question's alert", 60_000);
@@ -201,29 +205,31 @@ test("UX-054: links from a second launch navigate the open window, again after m
   await shoot(page, "ux054-fleet-from-link", ["light"]);
 });
 
-test("UX-044: pairing asks where Aether runs, checks the host address and offers a retry", async () => {
-  const page = window();
-  await route(page, "#/pair/aether");
-  await expect(page.getByRole("heading", { name: "Where does Aether run?" })).toBeVisible();
-  const where = page.getByRole("group", { name: "Where Aether runs" });
-  await where.getByRole("radio", { name: /This computer/ }).check();
-  await expect(page.getByRole("link", { name: /Set up Aether on this computer|Open Connections/ })).toBeVisible();
-  await shoot(page, "ux044-this-computer");
-  await where.getByRole("radio", { name: /Another computer/ }).check();
-  const address = page.getByRole("textbox", { name: "Host address" });
-  await address.fill("http://box.example");
-  await page.getByRole("button", { name: "Open the host" }).click();
-  await expect(page.getByText("Another computer is reached over https: only, not http:")).toBeVisible();
-  await shoot(page, "ux044-invalid-address");
-  await address.fill("https://127.0.0.1:1");
-  await page.getByRole("button", { name: "Open the host" }).click();
-  const failed = page.getByRole("alert").filter({ hasText: "Could not open https://127.0.0.1:1" });
-  await expect(failed).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText(/Unexpected end of JSON input/), "no raw parser error reaches the person").toHaveCount(0);
-  await shoot(page, "ux044-open-failed");
-  await failed.getByRole("button", { name: "Retry" }).click();
-  await expect(page.getByRole("alert").filter({ hasText: "Could not open https://127.0.0.1:1" })).toBeVisible({ timeout: 30_000 });
-});
+for (const daemon of ["aether", "archon"] as const) {
+  test(`UX-044: ${daemon} pairing asks where it runs, checks the host address and offers a retry`, async () => {
+    const page = window();
+    await route(page, `#/pair/${daemon}`);
+    await expect(page.getByRole("heading", { name: /^Where does (Aether|Archon) run\?$/ })).toBeVisible();
+    const where = page.getByRole("group", { name: /^Where (Aether|Archon) runs$/ });
+    await where.getByRole("radio", { name: /This computer/ }).check();
+    await expect(page.getByRole("link", { name: /Set up (Aether|Archon) on this computer|Open Connections/ })).toBeVisible();
+    await shoot(page, `ux044-${daemon}-this-computer`);
+    await where.getByRole("radio", { name: /Another computer/ }).check();
+    const address = page.getByRole("textbox", { name: "Host address" });
+    await address.fill("http://box.example");
+    await page.getByRole("button", { name: "Open the host" }).click();
+    await expect(page.getByText("Another computer is reached over https: only, not http:")).toBeVisible();
+    await shoot(page, `ux044-${daemon}-invalid-address`);
+    await address.fill("https://127.0.0.1:1");
+    await page.getByRole("button", { name: "Open the host" }).click();
+    const failed = page.getByRole("alert").filter({ hasText: "Could not open https://127.0.0.1:1" });
+    await expect(failed).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/Unexpected end of JSON input/), "no raw parser error reaches the person").toHaveCount(0);
+    await shoot(page, `ux044-${daemon}-open-failed`);
+    await failed.getByRole("button", { name: "Retry" }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "Could not open https://127.0.0.1:1" })).toBeVisible({ timeout: 30_000 });
+  });
+}
 
 test("UX-002: Remote shows its state with one control, and verifies every change", async () => {
   test.setTimeout(120_000);

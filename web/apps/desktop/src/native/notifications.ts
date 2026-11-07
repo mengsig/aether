@@ -12,7 +12,8 @@ export interface Note {
 }
 
 export interface NotificationSink {
-  show(content: { title: string; body: string }, onClick: () => void): void;
+  /** Settles once the system accepted the note; rejects with the system's reason if it did not. */
+  show(content: { title: string; body: string }, onClick: () => void): void | Promise<void>;
 }
 
 const MAX_TITLE = 64;
@@ -40,7 +41,7 @@ export class Notifier {
     this.now = now;
   }
 
-  notify(note: Note): void {
+  notify(note: Note): void | Promise<void> {
     if (note.route !== undefined && !isAllowedRoute(note.route)) throw new BridgeRefusal("A notification opens only an app route");
     const title = plainLine(note.title, MAX_TITLE);
     if (title === "") throw new BridgeRefusal("A notification has a title");
@@ -49,6 +50,6 @@ export class Notifier {
     if (this.recent.length >= NOTES_PER_MINUTE) throw new BridgeRefusal("Too many notifications; try again in a minute");
     this.recent.push(at);
     const route = note.route;
-    this.sink.show({ title, body: plainLine(note.body, MAX_BODY) }, () => this.openRoute(route));
+    return this.sink.show({ title, body: plainLine(note.body, MAX_BODY) }, () => this.openRoute(route));
   }
 }

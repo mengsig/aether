@@ -19,7 +19,7 @@ export interface BridgeHost {
   push(owner: number, conn: string, frame: Frame): void;
   confirm(owner: number, confirmation: Confirmation): Promise<boolean>;
   openTerminal(argv: readonly string[]): Promise<void>;
-  notify(note: { title: string; body: string; route?: string }): void;
+  notify(note: { title: string; body: string; route?: string }): void | Promise<void>;
   /** Managed start: refused unless desktop.managed_start is on. */
   startDaemon(kind: DaemonKind): Promise<void>;
   /** The native folder picker; an opaque single-use grant for the choice, or null. */
