@@ -13,6 +13,11 @@ process_alive() {
     [ -r "/proc/$1/stat" ] && [ "$(process_start "$1")" = "$2" ] &&
         [ "$(awk '{print $3}' "/proc/$1/stat")" != Z ]
 }
+same_file() (
+    first=$(stat -L -c '%d:%i' -- "$1" 2>/dev/null) || return 1
+    second=$(stat -L -c '%d:%i' -- "$2" 2>/dev/null) || return 1
+    [ "$first" = "$second" ]
+)
 
 # The marker is holder-pid:start-ticks:lock-path; other slot clients may export it.
 # A nested invocation must be a descendant of the live process holding that lock.
@@ -23,7 +28,7 @@ already_held() {
     case "$owner:$started" in *[!0-9:]* | :* | *:) return 1 ;; esac
     case "$lock" in "$dir"/slot-*.lock) ;; *) return 1 ;; esac
     process_alive "$owner" "$started" || return 1
-    [ "/proc/$owner/fd/9" -ef "$lock" ] || return 1
+    same_file "/proc/$owner/fd/9" "$lock" || return 1
     ancestor=$$
     while [ "$ancestor" -gt 1 ]; do
         [ "$ancestor" -eq "$owner" ] && return 0
@@ -49,7 +54,17 @@ prune_queue() {
 
 holder_description() {
     lockfile=$1
-    holder=$(lslocks -n -o PID,PATH 2>/dev/null | awk -v path="$lockfile" '$2 == path {print $1; exit}')
+    holder=; holder_start=
+    if [ -r "$lockfile.owner" ]; then
+        read -r holder holder_start < "$lockfile.owner" || holder=
+        case "$holder:$holder_start" in
+            *[!0-9:]* | :* | *:) holder= ;;
+            *) process_alive "$holder" "$holder_start" && same_file "/proc/$holder/fd/9" "$lockfile" || holder= ;;
+        esac
+    fi
+    if [ -z "$holder" ]; then
+        holder=$(lslocks -n -o PID,PATH 2>/dev/null | awk -v path="$lockfile" '$2 == path {print $1; exit}')
+    fi
     case "$holder" in '' | *[!0-9]*) printf 'unknown holder'; return ;; esac
     if [ -r "/proc/$holder/stat" ]; then
         command=$(tr '\000' ' ' 2>/dev/null < "/proc/$holder/cmdline") || command=
@@ -151,12 +166,15 @@ while :; do
             file="$dir/slot-$i.lock"
             exec 9>>"$file"
             if flock -n 9; then
+                started=$(process_start $$)
+                printf '%s %s\n' "$$" "$started" > "$file.owner.$$"
+                mv -f "$file.owner.$$" "$file.owner"
                 rm -f "$ticket"
                 queue_unlock
-                AETHER_CI_SLOT_HELD="$$:$(process_start $$):$file"; export AETHER_CI_SLOT_HELD
+                AETHER_CI_SLOT_HELD="$$:$started:$file"; export AETHER_CI_SLOT_HELD
                 set_jobs
                 status=0
-                "$@" 9>&- || status=$?
+                (exec 9>&-; exec "$@") || status=$?
                 exit "$status"
             fi
             exec 9>&-
