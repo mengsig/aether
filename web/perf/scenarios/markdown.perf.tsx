@@ -11,7 +11,7 @@ test("renders a dense 200 KB message", async () => {
   const dense = "Some **bold** text with `code`, a [link](https://example.com/x) and https://auto.example/y.\nsecond line\n\n- item *one*\n- item two\n\n> quote\n\n";
   const text = dense.repeat(Math.ceil(200_000 / dense.length));
   let root: Root | undefined;
-  let container: HTMLElement;
+  let container = document.createElement("div");
   const elapsed = await timed(async () => {
     root = createRoot(container);
     await act(async () => root?.render(<Markdown text={text} />));
@@ -21,7 +21,7 @@ test("renders a dense 200 KB message", async () => {
     container = document.createElement("div");
     document.body.append(container);
   });
-  expect(container!.querySelectorAll("a").length).toBeGreaterThan(1000);
+  expect(container.querySelectorAll("a").length).toBeGreaterThan(1000);
   if (root) await act(async () => root?.unmount());
   results.time("markdown.dense.ms", elapsed);
 });
