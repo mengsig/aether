@@ -11,6 +11,8 @@ import { ARCHON_APP_CLIENT, passThroughRefusal } from "../../src/security/classe
 import { SCHEMAS } from "./support.ts";
 
 const PACKAGES = path.join(WEB_ROOT, "packages");
+/** Everything of the app that can send a command: the packages and both app shells. */
+const SOURCE_ROOTS = [PACKAGES, path.join(WEB_ROOT, "apps/web/src"), path.join(WEB_ROOT, "apps/desktop/src")];
 const SKIPPED_DIRS = new Set(["fixture", "fixtures", "test", "node_modules"]);
 /** Sources that talk only to archond: the Archon and GitHub packages, and every archon-* module. */
 const ARCHON_OWNED = /^packages\/(archon|github)\/|\/archon-[\w-]+\.tsx?$/;
@@ -25,7 +27,7 @@ function uiSends(frame: Record<string, unknown>): boolean {
 }
 
 function bridgePasses(frame: Record<string, unknown>): boolean {
-  return passThroughRefusal("archon", frame) === undefined;
+  return passThroughRefusal("archon", frame, 26) === undefined;
 }
 
 /** The product sources of the web packages: no tests, fixtures or generated protocol. */
@@ -55,7 +57,11 @@ function sentCommands(): Map<string, string[]> {
   const sent = new Map<string, string[]>();
   const add = (cmd: string, where: string) => sent.set(cmd, [...(sent.get(cmd) ?? []), where]);
   const protocol = path.join(PACKAGES, "protocol");
-  for (const file of productSources(PACKAGES).filter((at) => !at.startsWith(protocol))) {
+  // privileged.ts builds main's own frames, sent only after the user confirms them; no renderer frame.
+  const mainOwn = path.join(WEB_ROOT, "apps/desktop/src/bridge/privileged.ts");
+  const files = SOURCE_ROOTS.flatMap((root) => productSources(root)).filter((at) => !at.startsWith(protocol) && at !== mainOwn);
+  assert.ok(files.length > 100, `the scan reads the app's sources (${files.length})`);
+  for (const file of files) {
     const source = readFileSync(file, "utf8");
     const where = path.relative(WEB_ROOT, file);
     for (const [, value] of source.matchAll(/\bcmd:\s*([^,}\n]+)/g)) {

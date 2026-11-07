@@ -69,16 +69,29 @@ test("the Archon pass list names only commands Archon's schema has, and never sh
 });
 
 test("the app says, answers and reads an initiative as the web app, never with the CLI's knobs", () => {
-  assert.equal(passThroughRefusal("archon", { cmd: "say", text: "hi" }), undefined);
-  assert.equal(passThroughRefusal("archon", { cmd: "answer", question: "q_1", text: "yes" }), undefined);
+  assert.equal(passThroughRefusal("archon", { cmd: "say", text: "hi" }, 26), undefined);
+  assert.equal(passThroughRefusal("archon", { cmd: "answer", question: "q_1", text: "yes" }, 26), undefined);
   assert.equal(passThroughRefusal("archon", { cmd: "get_initiative", initiative: "in_1" }), undefined);
-  assert.match(passThroughRefusal("archon", { cmd: "answer", question: "q_1", text: "yes", chat: true }) ?? "", /archon chat/);
+  assert.match(passThroughRefusal("archon", { cmd: "answer", question: "q_1", text: "yes", chat: true }, 26) ?? "", /archon chat/);
   assert.match(passThroughRefusal("archon", { cmd: "resume", scope: "global", hard: true }) ?? "", /archon CLI/);
 });
 
 test("no frame but the hello declares a client, and none names an agent caller", () => {
-  assert.match(passThroughRefusal("archon", { cmd: "say", text: "hi", client: "archon-cli" }) ?? "", /names no client/);
-  assert.match(passThroughRefusal("archon", { cmd: "answer", question: "q_1", text: "y", caller: "agt_1" }) ?? "", /names no caller/);
+  assert.match(passThroughRefusal("archon", { cmd: "say", text: "hi", client: "archon-cli" }, 26) ?? "", /names no client/);
+  assert.match(passThroughRefusal("archon", { cmd: "answer", question: "q_1", text: "y", caller: "agt_1" }, 26) ?? "", /names no caller/);
   assert.match(passThroughRefusal("archon", { cmd: "hello", client: "archon-cli" }) ?? "", /greets archond as archon-web/);
+  assert.equal(passThroughRefusal("archon", { cmd: "hello", client: "archon-web" }), undefined);
+});
+
+test("say and answer pass only on a welcome of protocol 24 or newer; the rest keeps protocol 23", () => {
+  const say = { cmd: "say", text: "hi" };
+  const answer = { cmd: "answer", question: "q_1", text: "yes" };
+  for (const frame of [say, answer]) {
+    assert.match(passThroughRefusal("archon", frame, 23) ?? "", /Archon 1\.5\.0 or newer/);
+    assert.match(passThroughRefusal("archon", frame) ?? "", /Archon 1\.5\.0 or newer/);
+    assert.equal(passThroughRefusal("archon", frame, 24), undefined);
+  }
+  assert.equal(passThroughRefusal("archon", { cmd: "get_initiative", initiative: "in_1" }, 23), undefined);
+  assert.equal(passThroughRefusal("archon", { cmd: "pause", scope: "global" }, 23), undefined);
   assert.equal(passThroughRefusal("archon", { cmd: "hello", client: "archon-web" }), undefined);
 });

@@ -2,7 +2,7 @@
 // also stops what it spawned, and every spawn is recorded for scripts/e2e.sh's leak check.
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { appendFileSync, closeSync, openSync, readFileSync } from "node:fs";
+import { accessSync, appendFileSync, closeSync, constants, openSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -62,12 +62,22 @@ export function spawnLogged(binary: string, args: readonly string[], options: { 
   }
   const pid = child.pid;
   if (pid === undefined) {
-    // Node reports the spawn error as an event after this throw, which already says it.
+    // Node emits the spawn error on a later tick, so probe the binary for the same cause now.
     child.once("error", () => undefined);
-    throw new Error(`${binary} did not start`);
+    const cause = probeError(binary);
+    throw new Error(`${binary} did not start: ${cause?.message ?? "spawn returned no pid"}`, { cause });
   }
   record("pids", `${pid} ${startTime(pid) ?? "gone"} ${path.basename(binary)}`);
   return { child, pid, log: options.log };
+}
+
+function probeError(binary: string): Error | undefined {
+  try {
+    accessSync(binary, constants.X_OK);
+    return undefined;
+  } catch (error) {
+    return error as Error;
+  }
 }
 
 function signalGroup(pid: number, signal: NodeJS.Signals): void {

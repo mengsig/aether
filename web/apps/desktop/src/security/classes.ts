@@ -56,6 +56,8 @@ export const AETHER_BY_FIELD: ReadonlySet<string> = new Set([
  * `get_initiative`, a `Read`. The app's connections greet as the web app, so archond marks its
  * `say` and `answer` as a device's and refuses it authority confirmations: no CLI standing.
  * The web packages' `archonAccess` must agree, which test/security/ui-parity.test.ts checks.
+ * That standing exists from Archon 1.5.0 (protocol 24) on: `ARCHON_NEEDS_STANDING` commands pass
+ * only on a connection whose welcome reported at least that protocol.
  */
 export const ARCHON_PASS: ReadonlySet<string> = new Set([
   "hello", "status", "repo_list", "list_items", "list_item_summaries", "get_item", "get_stage",
@@ -65,6 +67,10 @@ export const ARCHON_PASS: ReadonlySet<string> = new Set([
   "issue_items", "list_github_objects", "get_initiative", "enqueue", "cancel_item", "retry_item", "pause",
   "resume", "answer", "say", "link_issue", "unlink_issue", "import_issue",
 ]);
+
+/** First Archon protocol (Archon 1.5.0) whose archon-web connections have a device's standing. */
+export const ARCHON_STANDING_PROTOCOL = 24;
+export const ARCHON_NEEDS_STANDING: ReadonlySet<string> = new Set(["say", "answer"]);
 
 /** The only client the app window's own connections may declare to archond. */
 export const ARCHON_APP_CLIENT = "archon-web";
@@ -131,11 +137,11 @@ export function aetherClass(frame: Frame, depth = 0): AetherClass | undefined {
 }
 
 /** Why `frame` may not pass through `request`, or undefined when it may. */
-export function passThroughRefusal(kind: DaemonKind, frame: Frame): string | undefined {
+export function passThroughRefusal(kind: DaemonKind, frame: Frame, archonProtocol?: number): string | undefined {
   const cmd = frame.cmd;
   if (typeof cmd !== "string") return "A frame names its command in cmd";
   if (cmd === "shutdown") return "shutdown is never sent from the desktop app";
-  if (kind === "archon") return archonRefusal(cmd, frame);
+  if (kind === "archon") return archonRefusal(cmd, frame, archonProtocol);
   const access = aetherClass(frame);
   if (access === undefined) return `Unknown command ${cmd}`;
   if (access !== "observe" && access !== "operate") return `${cmd} is ${access} and needs a privileged action`;
@@ -168,8 +174,11 @@ export function revokedRule(kind: DaemonKind, frame: Frame): string | undefined 
   return run.id;
 }
 
-function archonRefusal(cmd: string, frame: Frame): string | undefined {
+function archonRefusal(cmd: string, frame: Frame, protocol: number | undefined): string | undefined {
   if (!ARCHON_PASS.has(cmd)) return `${cmd} is not open to the desktop app's requests`;
+  if (ARCHON_NEEDS_STANDING.has(cmd) && (protocol === undefined || protocol < ARCHON_STANDING_PROTOCOL)) {
+    return `Message Archon and answers need Archon 1.5.0 or newer; this archond reports protocol ${String(protocol ?? "unknown")}`;
+  }
   // archond takes a connection's standing from the client its hello declares, so the app's own
   // connections greet only as the web app; CLI standing stays with main's confirmed actions.
   if (cmd === "hello" && frame.client !== ARCHON_APP_CLIENT) {
