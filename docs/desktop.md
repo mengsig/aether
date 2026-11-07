@@ -254,8 +254,8 @@ and run in the app. While the daemon's list is loading or unavailable, `/mode`,
 is loading, its last read failed (the last list stays in use) or a mode file
 could not be read, which the bar names; once the list is whole and names no
 such mode, it is sent byte for byte. The choice is remembered per daemon and
-agent; where storage refuses it, it holds for the open chat and the bar says it
-will not survive a reload. Without one, Archon's orchestrator opens in its Calm mode
+agent; where storage refuses to save or read it, the choice holds for the open
+chat and the bar says it will not survive a reload. Without one, Archon's orchestrator opens in its Calm mode
 whenever a `calm.toml` that fits it exists, whatever other modes are scoped to
 it; any other agent opens in the first user mode scoped to it, else in standard.
 

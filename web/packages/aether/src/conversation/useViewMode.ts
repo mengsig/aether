@@ -16,12 +16,12 @@ export function modeKey(conn: ConnId, agent: string): string {
   return PREFIX + JSON.stringify([conn, agent]);
 }
 
-/** The saved mode name, or null; storage that cannot be read, or holds anything else, gives none. */
-export function readSavedMode(key: string): string | null {
+/** The saved mode name, or null when none is saved or the value is not one; `problem` when storage refused the read. */
+function readSavedMode(key: string): { readonly name: string | null; readonly problem: string | null } {
   invariant(key.startsWith(PREFIX), "saved modes are read by a key from modeKey");
   const raw = localStored((store) => store.getItem(key));
-  if ("problem" in raw) return null;
-  return raw.value !== null && /^[a-z][a-z0-9_-]{0,47}$/.test(raw.value) ? raw.value : null;
+  if ("problem" in raw) return { name: null, problem: raw.problem };
+  return { name: raw.value !== null && /^[a-z][a-z0-9_-]{0,47}$/.test(raw.value) ? raw.value : null, problem: null };
 }
 
 function catalogOf(value: unknown): aether.ViewModes | null {
@@ -57,7 +57,7 @@ export interface ViewModeState {
   readonly setDetails: (on: boolean) => void;
   /** Why the catalog may be missing a mode (see `incompleteBecause`), or null when it is whole or still loading. */
   readonly problem: string | null;
-  /** Why the chosen mode will not be remembered (the store refused it), or null. */
+  /** Why the view will not be kept across a reload (storage refused a read or write), or null. */
   readonly unsaved: string | null;
 }
 
@@ -66,19 +66,21 @@ export function useViewMode(conn: ConnId, agent: aether.Agent): ViewModeState {
   const catalog = catalogOf(read?.value ?? null);
   const key = modeKey(conn, agent.id);
   const [chosen, setChosen] = useState<{ key: string; name: string } | null>(null);
-  const [unsaved, setUnsaved] = useState<string | null>(null);
+  const [unwritten, setUnwritten] = useState<string | null>(null);
   const [details, setDetails] = useState(false);
   const modes = useMemo(() => {
     const usable = (catalog?.modes ?? []).filter((m) => applies(m, agent));
     return [...usable.filter((m) => m.name === STANDARD), ...usable.filter((m) => m.name !== STANDARD)];
   }, [catalog, agent]);
-  const mode = catalog === null ? STANDARD : initialMode(modes, agent, chosen?.key === key ? chosen.name : readSavedMode(key));
+  const saved = readSavedMode(key);
+  const mode = catalog === null ? STANDARD : initialMode(modes, agent, chosen?.key === key ? chosen.name : saved.name);
   const choose = (name: string) => {
     invariant(modes.some((m) => m.name === name), `${name} is a mode this agent can use`);
-    const saved = localStored((store) => store.setItem(key, name));
-    setUnsaved("problem" in saved ? `This view is not remembered after a reload (${saved.problem})` : null);
+    const wrote = localStored((store) => store.setItem(key, name));
+    setUnwritten("problem" in wrote ? `This view is not remembered after a reload (${wrote.problem})` : null);
     setChosen({ key, name });
   };
+  const unsaved = unwritten ?? (saved.problem === null ? null : `The saved view could not be read, so this chat opens in its default (${saved.problem})`);
   const toggle = (name: string) => choose(mode === name ? STANDARD : name);
   const definition = modes.find((m) => m.name === mode);
   const rules = details || definition === undefined || mode === STANDARD ? null : definition;

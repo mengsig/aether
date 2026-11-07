@@ -166,6 +166,23 @@ describe("Chat view modes", () => {
     expect([...root.querySelectorAll(".conv-line")].map((l) => l.textContent)).toEqual(["!edit_file failedno match for the old text"]);
   });
 
+  test("Details shows a Calm card's call, input and result, and hides it again", async () => {
+    const delegated: aether.TranscriptEntry[] = [
+      { seq: 1, at: "2026-11-07T09:00:00Z", invocation: "inv_1", message: { role: "assistant", content: [{ type: "tool_use", id: "d1", name: "delegate", input: { name: "reviewer", objective: "Read the diff" } }] } },
+      { seq: 2, at: "2026-11-07T09:00:01Z", invocation: null, message: { role: "user", content: [{ type: "tool_result", tool_use_id: "d1", content: [{ type: "text", text: "agent_id agt_child" }] }] } },
+    ];
+    const withCard = (): Answer => ({ tag: "transcript_page", data: { entries: delegated, has_before: false, has_after: false, last_seq: 2 } });
+    const { h, root } = await open(orchestrator, { script: { get_transcript_page: withCard } });
+    const call = () => root.querySelector('.conv-tool[data-tool-use-id="d1"]');
+    expect(root.querySelector(".conv-card-title")?.textContent).toBe("Delegated to reviewer");
+    expect(call(), "Calm draws the card alone").toBeNull();
+    await click(h, root, /Details/);
+    expect(call()?.textContent).toContain("Read the diff");
+    expect(call()?.querySelector(".conv-tool-result")?.textContent).toContain("agent_id agt_child");
+    await click(h, root, /Details/);
+    expect(call()).toBeNull();
+  });
+
   test("a daemon without view modes keeps the standard view and says why", async () => {
     const refuse = (): Answer => ({ code: "invalid_argument", message: "unknown command list_view_modes" });
     const { root } = await open(orchestrator, { script: { list_view_modes: refuse } });
@@ -197,6 +214,16 @@ describe("Chat with an incomplete catalog", () => {
     expect(h.daemon.commands("send_message")).toEqual([]);
   });
 
+  test("a modes directory the daemon could not read holds an unknown /name, as discovery reports it", async () => {
+    // The diagnostic files.rs gives when read_dir fails (pinned by an_unreadable_modes_directory_is_a_diagnostic_not_an_empty_catalog).
+    const unreadable = (): Answer => ({ tag: "view_modes", data: { modes: [STANDARD, FOCUS], diagnostics: [{ source: "/home/me/.config/aether/modes", reason: "Not a directory (os error 20)" }] } });
+    const { h, root } = await open(orchestrator, { script: { list_view_modes: unreadable } });
+    expect(root.textContent).toContain("Some view modes could not be read: /home/me/.config/aether/modes: Not a directory (os error 20)");
+    await enter(h, root, "/calm");
+    expect(alertText(root), "Calm may be among the unread modes").toContain("so /calm is not sent: it may be a view mode");
+    expect(h.daemon.commands("send_message")).toEqual([]);
+  });
+
   test("a failed refresh keeps the cached modes but holds unknown /names until a read succeeds", async () => {
     let answer: Answer = catalog();
     const { h, root } = await open(orchestrator, { script: { list_view_modes: () => answer } });
@@ -213,17 +240,30 @@ describe("Chat with an incomplete catalog", () => {
 });
 
 describe("Chat when storage refuses", () => {
-  test("a mode choice that cannot be saved is kept for the screen and said once", async () => {
-    const refuse = () => { throw new DOMException("The operation is insecure.", "SecurityError"); };
-    vi.spyOn(localStorage, "getItem").mockImplementation(refuse);
-    vi.spyOn(localStorage, "setItem").mockImplementation(refuse);
+  const refusal = (name: string) => () => { throw new DOMException(`${name} refused`, name); };
+
+  test("an unreadable store opens the default, says so, and still takes a choice", async () => {
+    vi.spyOn(localStorage, "getItem").mockImplementation(refusal("SecurityError"));
     try {
       const { h, root } = await open();
-      expect(checked(root), "an unreadable store opens the default").toBe("Calm");
+      expect(checked(root)).toBe("Calm");
+      expect(root.textContent).toContain("The saved view could not be read, so this chat opens in its default (SecurityError refused)");
       await click(h, root, "Standard");
-      expect(checked(root), "the choice holds without storage").toBe("Standard");
+      expect(checked(root), "the choice holds without a readable store").toBe("Standard");
       expect(toolShown(root)).toBe(true);
-      expect(root.textContent).toContain("This view is not remembered after a reload (The operation is insecure.)");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  test("a full store keeps the choice for the open chat and says it will not survive a reload", async () => {
+    vi.spyOn(localStorage, "setItem").mockImplementation(refusal("QuotaExceededError"));
+    try {
+      const { h, root } = await open();
+      expect(root.querySelector(".conv-bar")?.textContent, "nothing to say before a choice").not.toContain("remembered");
+      await click(h, root, "Standard");
+      expect(checked(root)).toBe("Standard");
+      expect(root.textContent).toContain("This view is not remembered after a reload (QuotaExceededError refused)");
     } finally {
       vi.restoreAllMocks();
     }
