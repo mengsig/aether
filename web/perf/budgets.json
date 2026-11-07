@@ -426,58 +426,58 @@
       "reason": "95th percentile frame: frames where a message commits or another agent's event rebuilds the rows."
     },
     "bundle.total_bytes": {
-      "budget": 4243335,
+      "budget": 4352386,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 4243335,
+      "measured": 4352386,
       "noise": 0,
-      "reason": "Everything web/dist ships, embedded in aether-remote. Mermaid's diagram chunks are most of it; they load only when a message draws a diagram."
+      "reason": "Everything web/dist ships, embedded in aether-remote. Includes 16,794 bytes for the in-flight Archon views change and 3,463,082 bytes for Learn's rich rendering, 3,374,485 of them Mermaid's lazy diagram chunks. Current build: 4,335,592 bytes."
     },
     "bundle.js_bytes": {
-      "budget": 4150267,
+      "budget": 4242304,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 4150267,
+      "measured": 4242304,
       "noise": 0,
-      "reason": "All JavaScript chunks, Mermaid's lazy diagram engines included."
+      "reason": "All JavaScript chunks. Includes 15,430 bytes for the in-flight Archon views change and 3,455,829 bytes for Learn's rich rendering, most of them Mermaid's lazy diagram engines. Current build: 4,226,874 bytes."
     },
     "bundle.css_bytes": {
-      "budget": 84601,
+      "budget": 101615,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 84601,
+      "measured": 101615,
       "noise": 0,
-      "reason": "All stylesheets."
+      "reason": "All stylesheets. Includes 1,364 bytes for the in-flight Archon views change and 4,970 bytes for Learn's and the rich renderer's styles. Current build: 100,251 bytes."
     },
     "bundle.initial_bytes": {
-      "budget": 364545,
+      "budget": 359381,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 364545,
+      "measured": 359381,
       "noise": 0,
       "reason": "The entry script and stylesheet index.html loads before first paint."
     },
     "bundle.initial_gzip_bytes": {
-      "budget": 114660,
+      "budget": 113424,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 114660,
+      "measured": 113424,
       "noise": 0,
       "reason": "The entry's transfer size at gzip -9: what a remote device downloads first."
     },
     "bundle.js_gzip_bytes": {
-      "budget": 1223496,
+      "budget": 1257930,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 1223496,
+      "measured": 1257930,
       "noise": 0,
-      "reason": "All JavaScript at gzip -9."
+      "reason": "All JavaScript at gzip -9. Includes 5,419 bytes for the in-flight Archon views change and 984,910 bytes for Learn's rich rendering. Current build: 1,252,511 bytes."
     },
     "bundle.largest_js_bytes": {
       "budget": 687735,
@@ -486,7 +486,7 @@
       "fixture": "web/dist",
       "measured": 687735,
       "noise": 0,
-      "reason": "The largest chunk: a route that pulled a heavy module into the entry shows here."
+      "reason": "The largest chunk: a route that pulled a heavy module into the entry shows here. Mermaid's lazy diagram engine is the largest now, loaded only when a message draws a diagram."
     }
   }
 }
