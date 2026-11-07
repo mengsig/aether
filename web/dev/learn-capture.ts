@@ -18,7 +18,7 @@ const SHOTS = [
   { name: "lesson-graded", query: "graded", hash: "#/learn/sessions/ns_raft", ready: ".learn-q[data-state=correct], .learn-q[data-state=incorrect]" },
   { name: "lesson-question-open", query: "pose=vote", hash: "#/learn/sessions/ns_raft", ready: ".learn-q[data-state=open]" },
   { name: "settings", query: "", hash: "#/learn?panel=settings", ready: ".learn-settings" },
-  { name: "knowledge", query: "", hash: "#/learn/graph", ready: "h1" },
+  { name: "knowledge", query: "", hash: "#/learn/graph", ready: ".learn-graph-canvas[data-settled]" },
 ] as const;
 
 const server = await createServer({
@@ -33,7 +33,7 @@ async function shoot(page: Page, shot: (typeof SHOTS)[number], theme: "light" | 
   const query = [shot.query, `theme=${theme}`].filter((part) => part !== "").join("&");
   await page.goto(`${base}?${query}${shot.hash}`);
   await page.locator(shot.ready).first().waitFor({ timeout: 15_000 });
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(800);
   const file = path.join(out, `${shot.name}--${theme}.png`);
   await page.screenshot({ path: file, fullPage: true });
   console.log(file);
