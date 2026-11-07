@@ -109,6 +109,7 @@ describe("an item's sections", () => {
     expect(section(container, "Gates")?.textContent).toContain("Proposal · plan");
     expect(section(container, "Gates")?.textContent).toContain("Waiting on you");
     expect(container.querySelector(".queue-question")?.textContent).toContain("Approve the proposal");
+    expect(container.querySelector(".item-callout")).toBeNull();
   });
 
   test("links each dependency and shows the brief and cost", async () => {

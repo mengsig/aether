@@ -77,7 +77,7 @@ function ItemPage({ access, detail, view, stored, reload }: PageProps) {
         <p className="item-muted">{[repoName ?? item.repo ?? "no repository", pipeline, item.id].join(" · ")}{access.live ? "" : " · polled (protocol 23)"}</p>
         <Facts view={view} stored={stored} links={links} />
       </header>
-      <Outcome view={view} />
+      {mine.some((question) => question.id === view.waitingOn?.question) ? null : <Outcome view={view} />}
       <ItemActions access={access} item={item} kind={view.kind} repoName={repoName} pause={status.data?.pause ?? null} onDone={done} />
       {mine.length > 0 ? <QuestionList access={access} questions={mine} titles={null} onAnswered={done} /> : null}
       <div className="item-grid">

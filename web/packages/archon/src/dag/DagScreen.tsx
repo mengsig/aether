@@ -4,7 +4,7 @@
 import { selectItems, selectTaskGraph, useSelector, type ArchonGraph, type ArchonItem } from "@aether-ui/core";
 import { layeredLayout } from "@aether-ui/graph";
 import type { ConnectionInfo } from "@aether-ui/protocol";
-import { EmptyState, Skeleton } from "@aether-ui/ui";
+import { Button, EmptyState, Skeleton } from "@aether-ui/ui";
 import { useCallback, useMemo, useState } from "react";
 import { useArchonAccess, useArchonConnection } from "../queue/archon.ts";
 import { invariant } from "../queue/model.ts";
@@ -24,16 +24,18 @@ export interface DagWorkspaceProps {
 
 /** The graph, its canvas and its panel; the selection is the only state it keeps. */
 export function DagWorkspace({ graph, items, layout }: DagWorkspaceProps) {
-  const data = useMemo(() => dagData(graph, undefined, items), [graph, items]);
+  const [showCompleted, setShowCompleted] = useState(false);
+  const allData = useMemo(() => dagData(graph, undefined, items), [graph, items]);
+  const data = useMemo(() => showCompleted ? allData : dagData(graph, (node) => node.state !== "succeeded" && node.state !== "cancelled", items), [allData, graph, items, showCompleted]);
   const path = useMemo(() => criticalPath(data), [data]);
   const held = useMemo(() => heldUp(data), [data]);
-  const progress = useMemo(() => initiativeProgress(data, held), [data, held]);
+  const progress = useMemo(() => initiativeProgress(allData, held, items), [allData, held, items]);
   const [picked, setPicked] = useState<string>();
   // A selected item that left the graph is no longer selected.
   const selected = picked !== undefined && data.byId.has(picked) ? picked : undefined;
   const onSelect = useCallback((id: string) => setPicked(id), []);
   const onPath = useMemo(() => new Set(path.nodes), [path]);
-  if (data.nodes.length === 0) {
+  if (allData.nodes.length === 0 && progress.length === 0) {
     return <EmptyState title="Nothing in the graph">The task graph shows open items and how they depend on each other. Enqueue an item to see it here.</EmptyState>;
   }
   const summary = `${data.nodes.length.toLocaleString("en")} items · ${data.edges.length.toLocaleString("en")} links · ${progress.length} initiatives`;
@@ -41,10 +43,13 @@ export function DagWorkspace({ graph, items, layout }: DagWorkspaceProps) {
     <div className="dag">
       <header className="dag-header">
         <p className="dag-muted">{summary}{data.truncated ? ` · showing the first ${data.nodes.length.toLocaleString("en")}` : ""}</p>
+        <Button variant="quiet" size="sm" aria-pressed={showCompleted} onClick={() => setShowCompleted((value) => !value)}>Show completed</Button>
         <Legend />
       </header>
       <div className="dag-body">
-        <DagCanvas data={data} path={path} layout={layout} label="Task graph" selected={selected} onSelect={onSelect} />
+        {data.nodes.length === 0
+          ? <EmptyState title="No open items in the graph">Show completed items to see their dependency history.</EmptyState>
+          : <DagCanvas data={data} path={path} layout={layout} label="Task graph" selected={selected} onSelect={onSelect} />}
         <aside className="dag-panel" aria-label={selected === undefined ? "Graph overview" : "Selected item"}>
           {selected === undefined
             ? <DagOverview data={data} path={path} held={held} progress={progress} onSelect={onSelect} />

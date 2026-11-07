@@ -35,7 +35,8 @@
   .item-gate-content { flex: 1 1 12rem; min-inline-size: 0; overflow-wrap: anywhere; }
   .item-gate-content p { margin: var(--space-1) 0 0; white-space: pre-wrap; }
   .item-gate-content summary { cursor: pointer; }
-  .item-callout-text, .item-fact { overflow-wrap: anywhere; }
+  .item-callout-text, .item-fact, .item .queue-question-text { overflow-wrap: anywhere; }
+  .item-fact .item-muted { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
   .item-timeline { display: grid; gap: var(--space-3); }
   .item-stage {
     display: grid; gap: var(--space-1); padding-inline-start: var(--space-3);

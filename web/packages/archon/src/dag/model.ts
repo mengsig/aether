@@ -220,17 +220,20 @@ export interface InitiativeProgress {
   readonly held: number;
 }
 
-/** Each initiative of the graph with how far its items in the graph have got. */
-export function initiativeProgress(data: DagData, held: readonly HeldEntry[]): InitiativeProgress[] {
+/** Progress from all item summaries, independent of which graph nodes are visible. */
+export function initiativeProgress(data: DagData, held: readonly HeldEntry[], items: Readonly<Record<string, ArchonItem>>): InitiativeProgress[] {
   const heldIds = new Set(held.map((entry) => entry.id));
   const rows = new Map(data.initiatives.map((initiative) => [initiative.id, { id: initiative.id, title: initiative.title, state: initiative.state, total: 0, done: 0, failed: 0, held: 0 }]));
-  for (const node of data.nodes) {
-    const row = node.initiative ? rows.get(node.initiative) : undefined;
+  for (const [id, item] of Object.entries(items)) {
+    const initiative = item.summary.initiative;
+    const row = typeof initiative === "string" ? rows.get(initiative) : undefined;
     if (row === undefined) continue;
+    invariant(isStateKind(item.state), `item ${id} has a known state`);
     row.total += 1;
-    if (node.state === "succeeded") row.done += 1;
-    if (node.state === "failed") row.failed += 1;
-    if (heldIds.has(node.id)) row.held += 1;
+    if (item.state === "succeeded") row.done += 1;
+    if (item.state === "failed") row.failed += 1;
+    if (heldIds.has(id)) row.held += 1;
   }
+  invariant([...rows.values()].every((row) => row.done + row.failed <= row.total), "initiative counts fit their totals");
   return [...rows.values()].sort((a, b) => a.title.localeCompare(b.title) || byString(a.id, b.id));
 }

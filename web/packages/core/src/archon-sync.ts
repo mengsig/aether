@@ -371,7 +371,7 @@ export class ArchonSync {
 
   private async readGraph(): Promise<void> {
     if (!this.ctx.features.has("task_graph")) return;
-    const graph = replyObject(await this.ctx.request({ cmd: "task_graph", filter: {}, limit: GRAPH_LIMIT }), "task_graph");
+    const graph = replyObject(await this.ctx.request({ cmd: "task_graph", filter: { include_terminal_since: "1970-01-01T00:00:00Z" }, limit: GRAPH_LIMIT }), "task_graph");
     const nodes = Object.fromEntries(array(graph.nodes, "task_graph.nodes").map((node) => [string(object(node, "node").id, "node.id"), node as Json]));
     const snapshot: ArchonGraph = {
       nodes, edges: array(graph.edges, "task_graph.edges") as Json[], initiatives: array(graph.initiatives ?? [], "initiatives") as Json[],

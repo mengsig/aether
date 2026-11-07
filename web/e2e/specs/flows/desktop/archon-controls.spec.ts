@@ -124,3 +124,18 @@ test("an initiative's detail opens in the app window", async () => {
   await expect(page.getByRole("region", { name: "Members" }).locator(".dag-count")).toHaveText("2");
   await expect(connection(page, "archon"), "the read kept the link up").toHaveAttribute("data-state", "ready");
 });
+
+test("an import failure stays visible inside the confirmation on retry", async () => {
+  const page = window();
+  await route(page, "#/github/github.com/e2e-owner/e2e-repo/999999999");
+  await page.getByRole("button", { name: "Import as Archon work" }).click();
+  const dialog = page.getByRole("dialog", { name: /Import #999999999/ });
+  for (const theme of ["light", "dark"] as const) {
+    await page.evaluate((value) => { document.documentElement.dataset.theme = value; }, theme);
+    await dialog.getByRole("button", { name: "Import", exact: true }).click();
+    await expect(dialog.getByRole("alert")).toContainText("The import failed:");
+    await shoot(`import-error-${theme}`);
+  }
+  await dialog.getByRole("button", { name: "Not now" }).click();
+  await expect(dialog).toHaveCount(0);
+});
