@@ -14,6 +14,7 @@ export interface FauxOptions {
   readonly protocol: 23 | 24;
   readonly role?: "operator" | "observer";
   readonly refuseModelPolicy?: boolean;
+  readonly summaryLimit?: number;
 }
 
 interface Link { open: boolean; onFrame(frame: unknown): void }
@@ -73,7 +74,7 @@ export class FauxArchond {
       case "feed_history": return reply("feed", []);
       case "list_item_summaries": {
         // Protocol 23 summaries carry pr_url but not the 24 issue and pr refs.
-        const rows = [...this.world.items.values()].map(({ summary }) => (v24 ? summary : Object.fromEntries(Object.entries(summary).filter(([key]) => key !== "issue" && key !== "pr"))));
+        const rows = [...this.world.items.values()].slice(0, this.options.summaryLimit).map(({ summary }) => (v24 ? summary : Object.fromEntries(Object.entries(summary).filter(([key]) => key !== "issue" && key !== "pr"))));
         return command.with_as_of === true && v24 ? reply("item_summaries_at", { summaries: rows, as_of: this.seq }) : reply("item_summaries", rows);
       }
       case "get_item": { const entry = this.entry(command.item); return entry ? reply("item_detail", entry.detail) : missing; }

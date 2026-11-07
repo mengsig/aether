@@ -119,6 +119,15 @@ describe("the task DAG", () => {
     expect(h.faux.inner.commands("task_graph")[0]).toMatchObject({ filter: { include_terminal_since: "1970-01-01T00:00:00Z" } });
   });
 
+  it("counts members omitted from the queue summary page", async () => {
+    stubCanvas();
+    h = await graphHarness(undefined, "operator", 1);
+    const root = await h.mount(<DagScreen layout={countingLayout().layout} />);
+    await h.until(() => root.querySelector("meter[aria-label^='Offline sync:']") !== null, "complete initiative progress");
+    expect(root.querySelector("meter[aria-label^='Offline sync:']")?.getAttribute("aria-label")).toBe("Offline sync: 1 of 6 done");
+    expect(h.faux.inner.commands("get_initiative").length).toBeGreaterThan(0);
+  });
+
   it("says when a new structure could not be laid out, keeps the last layout, and lays out again on retry", async () => {
     stubCanvas();
     h = await graphHarness();

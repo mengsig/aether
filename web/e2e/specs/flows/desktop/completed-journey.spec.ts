@@ -91,6 +91,8 @@ test("completed ask run and a two-member initiative render from daemon state", a
   await route(page, "#/archon/graph");
   await expect(page.getByRole("link", { name: new RegExp(`${INITIATIVE}.*2 of 2 done`) })).toBeVisible();
   await page.getByRole("button", { name: "Show completed" }).click();
+  await expect(page.getByRole("button", { name: /First member/ })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /Second member/ })).toHaveCount(1);
   await shots(page, "completed-initiative-graph");
   expect(errors, "the desktop threw no page errors").toEqual([]);
 });
