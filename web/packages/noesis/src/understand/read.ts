@@ -12,10 +12,11 @@ export type BundleRead =
   /** Nothing to build from: not connected, not found, or not read yet. */
   | { readonly state: "missing"; readonly title: string; readonly message: string }
   | { readonly state: "error"; readonly title: string; readonly message: string; readonly retry?: () => void }
-  | { readonly state: "ready"; readonly bundle: aether.EvidenceBundle };
+  /** `goal` replaces the default "Understand <title>"; `notice` says what the bundle left out or could not read. */
+  | { readonly state: "ready"; readonly bundle: aether.EvidenceBundle; readonly goal?: string; readonly notice?: string | null };
 
-/** A hook that builds one kind's bundle from core's store: `(entity conn, entity id) => BundleRead`. */
-export type BundleSource = (conn: string, id: string) => BundleRead;
+/** A hook that builds one kind's bundle from core's store: `(entity conn, entity id, since?) => BundleRead`. */
+export type BundleSource = (conn: string, id: string, since?: string) => BundleRead;
 
 export type Reader = (app: App, conn: string, targets: readonly string[]) => Promise<void>;
 

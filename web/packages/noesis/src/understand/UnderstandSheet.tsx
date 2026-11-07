@@ -9,6 +9,8 @@ import { useGate, useNoesisChange, useNoesisConfigure, useOperateRefusal, type G
 import { classifyRefusal, invariant } from "../learn/model.ts";
 import { RefusalNote } from "../learn/RefusalNote.tsx";
 import { BUNDLE_LIMIT_BYTES, checkBundle, formatBytes, parseUnderstand, type BundleCheck, type UnderstandRequest } from "./bundle.ts";
+import { ContinueButton, ResumeNote } from "./ResumeActions.tsx";
+import { useRecordStart, useResumable } from "./resume.ts";
 import { SOURCES } from "./sources.ts";
 import "./understand.css";
 
@@ -89,7 +91,7 @@ function EnableWorkContext({ conn }: { readonly conn: string }) {
 function Preview({ conn, request }: { readonly conn: string; readonly request: UnderstandRequest }) {
   const useSource = SOURCES[request.kind];
   invariant(useSource !== undefined, `a bundle source serves ${request.kind}`);
-  const read = useSource(request.conn, request.id);
+  const read = useSource(request.conn, request.id, request.since);
   switch (read.state) {
     case "loading":
       return <div className="ui-loading understand-loading" aria-busy="true" aria-label="Gathering the evidence"><Skeleton height="var(--space-6)" width="60%" /><Skeleton height="var(--space-12)" /><Skeleton height="var(--space-12)" /></div>;
@@ -98,7 +100,7 @@ function Preview({ conn, request }: { readonly conn: string; readonly request: U
     case "error":
       return read.retry ? <ErrorState title={read.title} message={read.message} onRetry={read.retry} /> : <ErrorState title={read.title} message={read.message} />;
     case "ready":
-      return <BundlePreview key={read.bundle.title} conn={conn} bundle={read.bundle} />;
+      return <BundlePreview key={read.bundle.title} conn={conn} request={request} bundle={read.bundle} goal={read.goal} notice={read.notice} />;
   }
 }
 
@@ -133,10 +135,22 @@ function EvidenceList({ bundle }: { readonly bundle: aether.EvidenceBundle }) {
   );
 }
 
-function BundlePreview({ conn, bundle }: { readonly conn: string; readonly bundle: aether.EvidenceBundle }) {
+interface PreviewProps {
+  readonly conn: string;
+  readonly request: UnderstandRequest;
+  readonly bundle: aether.EvidenceBundle;
+  /** The session goal to offer, when the source has a better one than "Understand <title>". */
+  readonly goal?: string | undefined;
+  /** What the bundle left out or could not read. */
+  readonly notice?: string | null | undefined;
+}
+
+function BundlePreview({ conn, request, bundle, goal: offered, notice }: PreviewProps) {
   const check = useMemo(() => checkBundle(bundle), [bundle]);
-  const [goal, setGoal] = useState(`Understand ${bundle.title}`);
-  const start = useStart(conn, bundle, check);
+  const initialGoal = offered ?? `Understand ${bundle.title}`;
+  const [goal, setGoal] = useState(initialGoal);
+  const resume = useResumable(conn, request, initialGoal);
+  const start = useStart(conn, bundle, check, useRecordStart(request));
   const refusal = useOperateRefusal(conn);
   const trimmed = goal.trim();
   const submit = (event: FormEvent) => {
@@ -155,13 +169,16 @@ function BundlePreview({ conn, bundle }: { readonly conn: string; readonly bundl
         <SizeMeter check={check} />
       </div>
       {!check.ok && <p className="learn-callout" role="alert" data-testid="understand-refused">{check.reason} It will not be sent.</p>}
+      {notice && <p className="learn-callout" role="status" data-testid="understand-notice">{notice}</p>}
+      <ResumeNote resume={resume} />
       <EvidenceList bundle={bundle} />
       {start.failure}
       <div className="understand-actions">
         {refusal !== null && <span className="learn-muted">{refusal}</span>}
-        <Button variant="primary" type="submit" disabled={start.busy || !check.ok || trimmed === "" || refusal !== null} title={refusal ?? undefined}>
-          {start.busy ? "Starting…" : "Start learning"}
+        <Button variant={resume.state === "found" ? "secondary" : "primary"} type="submit" disabled={start.busy || !check.ok || trimmed === "" || refusal !== null} title={refusal ?? undefined}>
+          {start.busy ? "Starting…" : resume.state === "found" ? "Start fresh" : "Start learning"}
         </Button>
+        {resume.state === "found" && <ContinueButton session={resume.session} />}
       </div>
     </form>
   );
@@ -187,7 +204,7 @@ function RefusalView({ refusal }: { readonly refusal: UnderstandRefusal }) {
   );
 }
 
-function useStart(conn: string, bundle: aether.EvidenceBundle, check: BundleCheck) {
+function useStart(conn: string, bundle: aether.EvidenceBundle, check: BundleCheck, onStarted: (sessionId: string) => void) {
   const change = useNoesisChange(conn);
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<UnderstandRefusal | null>(null);
@@ -201,6 +218,7 @@ function useStart(conn: string, bundle: aether.EvidenceBundle, check: BundleChec
     if (!result.ok) return setRefusal(classifyUnderstandRefusal(result.error));
     const data = result.reply.data as { id?: unknown } | undefined;
     invariant(typeof data?.id === "string", "noesis_create_session answers with the new session");
+    onStarted(data.id);
     navigate(routeHref("#/learn/sessions/:id", { id: data.id }));
   };
   return { busy, send, failure: refusal === null ? null : <RefusalView refusal={refusal} /> };
