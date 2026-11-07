@@ -1,4 +1,4 @@
-import { useApp, useDraft } from "@aether-ui/core";
+import { connectionDraftKey, useApp, useDraft } from "@aether-ui/core";
 import { archon } from "@aether-ui/protocol";
 import { Button, Combo, Field, Picker, Segmented, Sheet, Switch } from "@aether-ui/ui";
 import { useState, type FormEvent } from "react";
@@ -56,7 +56,7 @@ function RepositoryFields({ draft, update, access }: {
 export function RegisterRepository({ access, open, onClose, onRegistered }: {
   readonly access: ArchonAccess; readonly open: boolean; readonly onClose: () => void; readonly onRegistered: (repo: archon.Repo) => void;
 }) {
-  const { value: draft, update, clear } = useDraft("archon/register-repository", EMPTY_REPOSITORY);
+  const { value: draft, update, clearIfUnchanged } = useDraft(connectionDraftKey("archon", access.conn, "register-repository"), EMPTY_REPOSITORY);
   const change = useChange(access);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -71,7 +71,7 @@ export function RegisterRepository({ access, open, onClose, onRegistered }: {
     const repo = replyOf<archon.Repo>(result.reply, "repo");
     invariant(typeof repo.id === "string" && repo.id.length > 0, "registration returns a repository id");
     invariant(typeof repo.name === "string", "registration returns a repository name");
-    clear(); setError(null); onRegistered(repo);
+    clearIfUnchanged(); setError(null); onRegistered(repo);
   };
   return <Sheet open={open} onClose={onClose} title="Register a repository" description="Choose a checkout, set its defaults, then queue your first item. A checkout without an origin remote can only keep its work local.">
     <form className="queue-form" onSubmit={(event) => void submit(event)} noValidate>

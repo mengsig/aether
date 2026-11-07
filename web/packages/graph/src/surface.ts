@@ -126,4 +126,3 @@ export function useSurface(canvasRef: RefObject<HTMLCanvasElement | null>): RefO
   }, [canvasRef]);
   return surface;
 }
-

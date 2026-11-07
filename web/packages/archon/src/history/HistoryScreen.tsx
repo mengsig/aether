@@ -1,7 +1,7 @@
 // `#/archon/history`: find items by text and when they last moved (`list_items` filters), then read one
 // item's transitions (`item_history`). Searches and histories are stored by core; this keeps the query.
 
-import { searchKey, selectItem, selectItems, selectSearch, useApp, useDraft, useSelector, type ItemSearch } from "@aether-ui/core";
+import { connectionDraftKey, searchKey, selectItem, selectItems, selectSearch, useApp, useDraft, useSelector, type ItemSearch } from "@aether-ui/core";
 import type { ConnectionInfo } from "@aether-ui/protocol";
 import { Button, EmptyState, ErrorState, Field, Picker, Skeleton, StatusPill } from "@aether-ui/ui";
 import { useCallback, useMemo, useState, type FormEvent } from "react";
@@ -17,8 +17,11 @@ import "./history.css";
 /** Results are read again this long after archond reports a change, so a burst rereads once. */
 export const SETTLE_MS = 1_000;
 
-function SearchBar({ initial, onSearch }: { readonly initial: SearchForm; readonly onSearch: (query: ItemSearch) => void }) {
-  const { value: form, update: setForm } = useDraft("archon/history-filters", { ...initial, range: "7" });
+/** The history filters of one archond connection. */
+const filtersKey = (conn: string): string => connectionDraftKey("archon", conn, "history-filters");
+
+function SearchBar({ conn, initial, onSearch }: { readonly conn: string; readonly initial: SearchForm; readonly onSearch: (query: ItemSearch) => void }) {
+  const { value: form, update: setForm } = useDraft(filtersKey(conn), { ...initial, range: "7" });
   const chooseRange = (range: string) => {
     if (range === "custom") return setForm({ range });
     const days = Number(range);
@@ -102,7 +105,7 @@ function useTitle(conn: string, query: ItemSearch, item: string | undefined): st
 function Explorer({ info }: { readonly info: ConnectionInfo }) {
   const access = useArchonAccess(info);
   const [initial] = useState(() => defaultForm(Date.now()));
-  const saved = useDraft("archon/history-filters", { ...initial, range: "7" });
+  const saved = useDraft(filtersKey(access.conn), { ...initial, range: "7" });
   const [query, setQuery] = useState<ItemSearch>(() => {
     const result = searchOf(saved.value);
     return "query" in result ? result.query : queryOf(initial);
@@ -116,7 +119,7 @@ function Explorer({ info }: { readonly info: ConnectionInfo }) {
   }
   return (
     <div className="history">
-      <SearchBar initial={initial} onSearch={setQuery} />
+      <SearchBar conn={access.conn} initial={initial} onSearch={setQuery} />
       <div className="history-body">
         <Results access={access} query={query} selected={picked} onSelect={onSelect} />
         <aside className="dag-panel history-panel" aria-label="Item history">

@@ -32,7 +32,10 @@ function useHasDelegates(conn: ConnId, agent: string): boolean {
   }, [conn, agent]));
 }
 
-function useComposer(conn: ConnId, agentId: string, onSent: ((text: string) => void) | undefined) {
+/** Told when a send starts; the function it returns hears whether the daemon accepted it. */
+export type OnSend = (text: string) => (accepted: boolean) => void;
+
+function useComposer(conn: ConnId, agentId: string, onSend: OnSend | undefined) {
   const agent = useSelector(useMemo(() => selectAgent(conn, agentId), [conn, agentId]));
   const info = useSelector(useMemo(() => selectConnection(conn), [conn]));
   const { refusal } = usePermission(conn, { cmd: "send_message", to: agentId });
@@ -45,12 +48,14 @@ function useComposer(conn: ConnId, agentId: string, onSent: ((text: string) => v
   const empty = text.trim() === "";
   const send = useCallback(async () => {
     if (busy || empty || blocked !== null) return;
+    // The screen learns of the send before the reply, so a delivery that lands first still counts.
+    const settle = onSend?.(text.trim());
     const reply = await run.send(sendCommand(agentId, text, subtree && delegates), "Sent");
+    settle?.(reply !== null);
     if (reply === null) return;
     invariant(typeof reply === "object", "an accepted message has a reply");
     draft.clearIfUnchanged();
-    onSent?.(text.trim());
-  }, [busy, empty, blocked, run, agentId, text, subtree, delegates, draft, onSent]);
+  }, [busy, empty, blocked, run, agentId, text, subtree, delegates, draft, onSend]);
   return { agent, draft, run, blocked, busy, empty, delegates, send };
 }
 
@@ -70,9 +75,9 @@ function SendNote({ status, empty, retry }: { readonly status: RunStatus; readon
   return null;
 }
 
-export function Composer({ conn, agent: agentId, onSent }: { readonly conn: ConnId; readonly agent: string; readonly onSent?: (text: string) => void }) {
+export function Composer({ conn, agent: agentId, onSend }: { readonly conn: ConnId; readonly agent: string; readonly onSend?: OnSend }) {
   invariant(conn !== "" && agentId !== "", "a composer names its connection and agent");
-  const { agent, draft, run, blocked, busy, empty, delegates, send } = useComposer(conn, agentId, onSent);
+  const { agent, draft, run, blocked, busy, empty, delegates, send } = useComposer(conn, agentId, onSend);
   const finished = agent !== undefined && FINISHED[agent.status.state] !== undefined;
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || event.shiftKey || event.altKey || event.nativeEvent.isComposing) return;

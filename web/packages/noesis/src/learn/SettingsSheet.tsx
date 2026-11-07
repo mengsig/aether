@@ -55,7 +55,7 @@ function SettingsForm({ conn, status, onDone }: { conn: string; status: aether.N
     setSaving(false);
     if (!result.ok) return setFailure(result.error);
     setFailure(null);
-    draft.clear();
+    draft.clearIfUnchanged();
     onDone();
   };
   return (

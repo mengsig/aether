@@ -1,7 +1,7 @@
 // Imports an issue as Archon work through `import_issue` (D2): a preview of what Archon will read, then a
 // confirm. Archon keys the import by the issue, so a repeat returns the first item rather than a second.
 
-import { routeHref, useCommand, useDraft, usePermission } from "@aether-ui/core";
+import { connectionDraftKey, routeHref, useCommand, useDraft, usePermission } from "@aether-ui/core";
 import { archon } from "@aether-ui/protocol";
 import { Badge, Button, Dialog, Picker } from "@aether-ui/ui";
 import { useId, useState } from "react";
@@ -63,7 +63,7 @@ export function ImportAction(props: ImportProps) {
   const permission = usePermission(conn, archon.importIssue({ ref }));
   const refusal = importRefusal(permission.refusal, served, imported);
   const [open, setOpen] = useState(startOpen && refusal === null);
-  const { value: draft, update, clear } = useDraft(`github/import-${page.host}-${page.repo}-${page.number}`, { priority: "normal" as archon.Priority });
+  const { value: draft, update, clear } = useDraft(connectionDraftKey("github", conn, `import-${page.host}-${page.repo}-${page.number}`), { priority: "normal" as archon.Priority });
   const priority = draft.priority;
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);

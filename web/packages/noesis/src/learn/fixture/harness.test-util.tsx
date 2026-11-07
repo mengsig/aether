@@ -40,7 +40,7 @@ function hostFor(options: FauxNoesisOptions, daemon: FauxNoesis, memory: Map<str
     getPreference: async () => undefined,
     connect: async () => "local:faux-main",
     close: async () => undefined,
-    privileged: async (action) => daemon.runPrivileged(action),
+    privileged: async (action) => { await daemon.gate; return daemon.runPrivileged(action); },
   };
   return { kind: "electron", storage, desktop: desktop as DesktopBridge };
 }

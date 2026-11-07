@@ -245,4 +245,27 @@ describe("a message sent from the composer", () => {
     expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(0);
     expect(shown(container).messages).toEqual([...SEED, "Ship it."]);
   });
+
+  test("delivered before the daemon acknowledges it, it is never shown as queued", async () => {
+    const { h, container } = await open();
+    h.daemon.hold.add("send_message");
+    await sendFromComposer(h, container, "Ship it.");
+    expect(h.daemon.commands("send_message")).toHaveLength(1);
+    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(0);
+    h.daemon.commit(FAUX_AGENT, text("user", "[inbox 1] Message from user:device:\nShip it."));
+    await h.settle();
+    h.daemon.release("send_message");
+    await h.settle();
+    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(0);
+    expect(shown(container).messages).toEqual([...SEED, "Ship it."]);
+    expect(container.querySelector<HTMLTextAreaElement>("[data-testid=composer-input]")?.value).toBe("");
+  });
+
+  test("refused by the daemon, it is not queued and the text stays in the composer", async () => {
+    const { h, container } = await open();
+    h.daemon.refuse.set("send_message", { code: "forbidden", message: "not yours" });
+    await sendFromComposer(h, container, "Ship it.");
+    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(0);
+    expect(container.querySelector<HTMLTextAreaElement>("[data-testid=composer-input]")?.value).toBe("Ship it.");
+  });
 });

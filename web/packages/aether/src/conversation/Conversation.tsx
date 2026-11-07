@@ -7,7 +7,7 @@ import type { aether, ConnId, ConnectionInfo } from "@aether-ui/protocol";
 import { Button, EmptyState } from "@aether-ui/ui";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { invariant } from "../fleet/invariant.ts";
-import { Composer } from "./Composer.tsx";
+import { Composer, type OnSend } from "./Composer.tsx";
 import "./conversation.css";
 import "./markdown.css";
 import type { ListHandle } from "./MeasuredList.tsx";
@@ -61,8 +61,12 @@ export function useConversationRows(conn: ConnId, agent: string): ConversationRo
 /** Messages sent from the composer and not yet delivered, per agent; kept while the app is open so a visit back still shows them. */
 const queuedMemory = new Map<string, readonly QueuedMessage[]>();
 
-/** The agent's queued messages, those sent here and not yet delivered, and a way to add one. */
-function useQueuedMessages(conn: ConnId, agent: string, rows: readonly ConversationRow[]): { queued: readonly QueuedMessage[]; add: (text: string) => void } {
+/**
+ * The agent's queued messages, those sent here and not yet delivered. `begin` notes the transcript's
+ * watermark when a send starts, so a delivery that lands before the daemon's reply is not shown as
+ * queued again; the message joins the list once the daemon accepted it.
+ */
+function useQueuedMessages(conn: ConnId, agent: string, rows: readonly ConversationRow[]): { queued: readonly QueuedMessage[]; begin: OnSend } {
   const memoryKey = `${conn}/${agent}`;
   const [sent, setSent] = useState<readonly QueuedMessage[]>(() => queuedMemory.get(memoryKey) ?? []);
   const queued = useMemo(() => sent.filter((message) => !isDelivered(rows, message)), [sent, rows]);
@@ -71,11 +75,15 @@ function useQueuedMessages(conn: ConnId, agent: string, rows: readonly Conversat
     newestSeq.current = rows.reduce((top, row) => Math.max(top, row.seq ?? 0), 0);
     queuedMemory.set(memoryKey, queued);
   }, [rows, queued, memoryKey]);
-  const add = useCallback((text: string) => {
+  const begin = useCallback<OnSend>((text) => {
     invariant(text.trim() !== "", "a queued message has text");
-    setSent([...(queuedMemory.get(memoryKey) ?? []), { text, at: new Date().toISOString(), afterSeq: newestSeq.current }]);
+    const message: QueuedMessage = { text, at: new Date().toISOString(), afterSeq: newestSeq.current };
+    return (accepted) => {
+      if (!accepted) return;
+      setSent([...(queuedMemory.get(memoryKey) ?? []), message]);
+    };
   }, [memoryKey]);
-  return { queued, add };
+  return { queued, begin };
 }
 
 const counted = (n: number, noun: string): string => `${n.toLocaleString("en")} ${noun}${n === 1 ? "" : "s"}`;
@@ -152,7 +160,7 @@ export function Conversation({ conn, agent }: { readonly conn: ConnId; readonly 
           </ToolActivityContext.Provider>
         </ToggleContext.Provider>
       </div>
-      <Composer conn={conn} agent={agent} onSent={(text) => { sent.add(text); list.current?.scrollToEnd(); }} />
+      <Composer conn={conn} agent={agent} onSend={(text) => { const settle = sent.begin(text); return (accepted) => { settle(accepted); if (accepted) list.current?.scrollToEnd(); }; }} />
     </section>
   );
 }

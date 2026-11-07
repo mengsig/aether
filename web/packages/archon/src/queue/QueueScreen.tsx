@@ -2,7 +2,7 @@
 // priority and text, with the waiting reasons and spend. Rows come from core's store, which the change
 // stream keeps current; against protocol 23 core refetches them after feed items instead.
 
-import { routeHref, selectItems, useSelector, useDraft, type ArchonItem } from "@aether-ui/core";
+import { connectionDraftKey, routeHref, selectItems, useSelector, useDraft, type ArchonItem } from "@aether-ui/core";
 import type { archon, ConnectionInfo } from "@aether-ui/protocol";
 import { Badge, Button, EmptyState, ErrorState, Field, Picker, StatusPill, VirtualList } from "@aether-ui/ui";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
@@ -12,7 +12,7 @@ import {
   type QueueQuery, type QueueRow,
 } from "./model.ts";
 import "./queue.css";
-import { EMPTY_ITEM, NewItemDialog, SayDialog } from "./NewItemDialog.tsx";
+import { EMPTY_ITEM, itemDraftKey, NewItemDialog, SayDialog } from "./NewItemDialog.tsx";
 import { RegisterRepository } from "./RegisterRepository.tsx";
 import { QueueStatus } from "./QueueStatus.tsx";
 
@@ -121,10 +121,10 @@ function Queue({ info }: { readonly info: ConnectionInfo }) {
   const catalog = useRead<archon.CatalogListing>(access, { cmd: "list_pipelines", repo: null }, ["catalog"], settled);
   const [dialog, setDialog] = useState<"item" | "say" | "repo" | null>(null);
   const [registered, setRegistered] = useState<archon.Repo | null>(null);
-  const itemDraft = useDraft("archon/new-item", EMPTY_ITEM);
+  const itemDraft = useDraft(itemDraftKey(access.conn), EMPTY_ITEM);
   const available = useMemo(() => registered && !repos.data?.some((repo) => repo.id === registered.id) ? [...(repos.data ?? []), registered] : repos.data ?? [], [repos.data, registered]);
   const names = useMemo(() => new Map(available.map((repo) => [repo.id, repo.name])), [available]);
-  const { value: query, update: setQuery } = useDraft("archon/queue-filters", { ...NO_QUERY });
+  const { value: query, update: setQuery } = useDraft(connectionDraftKey("archon", access.conn, "queue-filters"), { ...NO_QUERY });
   const now = useNow();
   const scoped = useMemo(() => rows.filter((row) => inScope(row, query, names)), [rows, query, names]);
   const counts = useMemo(() => FILTERS.map((filter) => scoped.filter(filter.test).length), [scoped]);

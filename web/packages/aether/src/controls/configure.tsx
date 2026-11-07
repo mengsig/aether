@@ -48,7 +48,7 @@ function ModelSection({ conn, agent, run }: { readonly conn: ConnId; readonly ag
           options={[{ id: "", label: `Keep ${agent.config.effort ?? "default"}` }, ...EFFORTS.map(id => ({ id, label: id.replace("_", " ") }))]} />
         <Action conn={conn} command={{ cmd: "update_agent", id: agent.id, patch: {} }} label="Apply model" busy={run.status.state === "busy"}
           blocked={!model && !effort ? "Choose a model or an effort first" : null}
-          onRun={async () => { if (await apply(run, agent.id, build, setProblem, "Model updated")) draft.clear(); }} />
+          onRun={async () => { if (await apply(run, agent.id, build, setProblem, "Model updated")) draft.clearIfUnchanged(); }} />
       </div>
       {problem ? <p className="b3-note" role="alert" data-state="failed">{problem}</p> : null}
     </Section>

@@ -1,7 +1,7 @@
 // Open questions with their options and a free-text answer. A gate waits on its question, so answering
 // here decides the gate, as the retired app's inbox did.
 
-import { routeHref, useDraft } from "@aether-ui/core";
+import { connectionDraftKey, routeHref, useDraft } from "@aether-ui/core";
 import type { archon } from "@aether-ui/protocol";
 import { Button } from "@aether-ui/ui";
 import { useState, type FormEvent } from "react";
@@ -12,7 +12,7 @@ function QuestionCard({ access, question, title, onAnswered }: {
   readonly access: ArchonAccess; readonly question: archon.Question; readonly title: string | null; readonly onAnswered: () => void;
 }) {
   const change = useChange(access);
-  const { value: draft, update, clear } = useDraft(`archon/question-${question.id}`, { text: "" });
+  const { value: draft, update, clear } = useDraft(connectionDraftKey("archon", access.conn, `question-${question.id}`), { text: "" });
   const text = draft.text;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

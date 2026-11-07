@@ -11,7 +11,7 @@ vi.mock("@aether-ui/graph", async (original) => ({ ...await original<typeof impo
   <div>{model.nodes.map((node) => <button key={node.id} onClick={() => onActivate(node.id)}>{node.label}</button>)}</div> }));
 
 let h: Harness | undefined;
-beforeEach(() => { vi.useFakeTimers({ now: Date.parse("2026-11-06T12:00:00Z") }); drafts.clear("github/overview-filters"); });
+beforeEach(() => { vi.useFakeTimers({ now: Date.parse("2026-11-06T12:00:00Z") }); for (const key of drafts.keys()) drafts.clear(key); });
 afterEach(() => { h?.stop(); h = undefined; vi.useRealTimers(); });
 
 function world(): GithubWorld {

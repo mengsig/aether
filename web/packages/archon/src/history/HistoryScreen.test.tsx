@@ -28,7 +28,7 @@ async function openHistory(h: GraphHarness, root: HTMLElement, title: string) {
 }
 
 let h: GraphHarness;
-beforeEach(() => { drafts.clear("archon/history-filters"); vi.useFakeTimers({ now: Date.parse("2026-11-04T10:00:00Z") }); });
+beforeEach(() => { for (const key of drafts.keys()) drafts.clear(key); vi.useFakeTimers({ now: Date.parse("2026-11-04T10:00:00Z") }); });
 afterEach(() => { h.stop(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("the history explorer", () => {

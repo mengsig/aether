@@ -1,7 +1,7 @@
 // Queueing work and messaging the orchestrator. An enqueue carries one idempotency key per open dialog,
 // so a resend after a lost reply cannot queue the item twice.
 
-import { navigate, routeHref, useDraft } from "@aether-ui/core";
+import { connectionDraftKey, navigate, routeHref, useDraft } from "@aether-ui/core";
 import type { archon } from "@aether-ui/protocol";
 import { Button, Dialog, Field, Picker, TextArea } from "@aether-ui/ui";
 import { useState, type FormEvent } from "react";
@@ -10,6 +10,9 @@ import { invariant, PRIORITIES, priorityLabel, replyOf } from "./model.ts";
 
 export type ItemDraft = { title: string; brief: string; repo: string; pipeline: string; priority: archon.Priority; review: string };
 export const EMPTY_ITEM: ItemDraft = { title: "", brief: "", repo: "", pipeline: "", priority: "normal", review: "" };
+
+/** The new-item draft of one archond connection; the queue seeds it when a repository was just registered. */
+export const itemDraftKey = (conn: string): string => connectionDraftKey("archon", conn, "new-item");
 
 export function enqueueCommand(draft: ItemDraft, key: string): Record<string, unknown> {
   invariant(draft.title.trim() !== "" && draft.brief.trim() !== "", "an item needs a title and brief");
@@ -42,8 +45,8 @@ export function NewItemDialog({ access, open, repos, onClose }: {
   readonly access: ArchonAccess; readonly open: boolean; readonly repos: readonly archon.Repo[]; readonly onClose: () => void;
 }) {
   const change = useChange(access);
-  const { value: draft, update: set, clear } = useDraft("archon/new-item", EMPTY_ITEM);
-  const { value: attempt, update: saveAttempt, clear: clearAttempt } = useDraft("archon/new-item-attempt", { key: "" });
+  const { value: draft, update: set, clearIfUnchanged } = useDraft(itemDraftKey(access.conn), EMPTY_ITEM);
+  const { value: attempt, update: saveAttempt, clear: clearAttempt } = useDraft(connectionDraftKey("archon", access.conn, "new-item-attempt"), { key: "" });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // A field says what it needs once it was left empty, not before anything was typed.
@@ -60,7 +63,8 @@ export function NewItemDialog({ access, open, repos, onClose }: {
     setBusy(false);
     if (!result.ok) return setError(result.error);
     const item = replyOf<archon.QueueItem>(result.reply, "item", "item_budgets_off");
-    clear(); clearAttempt(); setError(null); onClose();
+    // The attempt key is spent; the text is forgotten only if nothing was typed while the request ran.
+    clearIfUnchanged(); clearAttempt(); setError(null); onClose();
     if (item && typeof item.id === "string") navigate(routeHref("#/archon/items/:item", { item: item.id }));
   };
   return (
@@ -81,7 +85,7 @@ export function NewItemDialog({ access, open, repos, onClose }: {
 
 export function SayDialog({ access, open, onClose }: { readonly access: ArchonAccess; readonly open: boolean; readonly onClose: () => void }) {
   const change = useChange(access);
-  const { value: message, update, clear } = useDraft("archon/message", { text: "" });
+  const { value: message, update, clearIfUnchanged } = useDraft(connectionDraftKey("archon", access.conn, "message"), { text: "" });
   const text = message.text;
   const setText = (text: string) => update({ text });
   const [error, setError] = useState<string | null>(null);
@@ -92,7 +96,7 @@ export function SayDialog({ access, open, onClose }: { readonly access: ArchonAc
     if (!text.trim()) return setError("Write a message first.");
     const result = await change({ cmd: "say", text: text.trim() });
     if (!result.ok) return setError(result.error);
-    clear();
+    clearIfUnchanged();
     setError(null);
     setSent(true);
   };

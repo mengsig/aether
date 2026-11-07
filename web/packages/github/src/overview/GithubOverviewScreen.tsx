@@ -1,4 +1,4 @@
-import { routeHref, useDraft, useReread, type ReadEntry } from "@aether-ui/core";
+import { connectionDraftKey, routeHref, useDraft, useReread, type ReadEntry } from "@aether-ui/core";
 import { GraphCanvas } from "@aether-ui/graph";
 import { archon, type ConnectionInfo } from "@aether-ui/protocol";
 import { Badge, BarChart, Button, Donut, EmptyState, ErrorState, Picker, Skeleton, Sparkline, StatTile, StatusPill } from "@aether-ui/ui";
@@ -87,7 +87,7 @@ function CachedObjects({ info, repositories, refresh, now, onRefresh, interval }
   readonly info: ConnectionInfo; readonly repositories: readonly string[]; readonly refresh: string; readonly now: number;
   readonly onRefresh: () => void; readonly interval: number | null;
 }) {
-  const { value, update, clear } = useDraft("github/overview-filters", DEFAULT_FILTERS);
+  const { value, update, clear } = useDraft(connectionDraftKey("github", info.id, "overview-filters"), DEFAULT_FILTERS);
   const data = useOverviewRows(info, repositories, refresh);
   const rows = filterRows(data.rows, value);
   if (!data.served) return <EmptyState title="GitHub cache unavailable">Update archond to a version that serves github_import, then refresh this page.</EmptyState>;

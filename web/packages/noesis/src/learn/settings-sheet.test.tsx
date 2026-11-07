@@ -118,6 +118,19 @@ describe("budgets", () => {
     expect(drafts.get(SETTINGS_DRAFT_KEY)).toBeUndefined();
   });
 
+  test("an edit made while a slow save ran is kept; the saved fields are forgotten", async () => {
+    const { h, sheet } = await openSheet(withBilling(true));
+    await type(h, $(sheet, "[data-testid=noesis-budget-teaching]"), "3.5");
+    const finish = h.daemon.holdPrivileged();
+    await click(h, $(sheet, "[data-testid=noesis-save]"));
+    expect(h.daemon.privileged).toHaveLength(0);
+    await type(h, $(sheet, "[data-testid=noesis-budget-background]"), "4");
+    finish();
+    await h.settle();
+    expect(h.daemon.privileged).toEqual([expect.objectContaining({ patch: { "noesis.budget.interactive_usd_daily": 3.5 } })]);
+    expect(drafts.get(SETTINGS_DRAFT_KEY)).toMatchObject({ backgroundUsd: "4" });
+  });
+
   test("an unsaved edit is kept as a draft across closing the sheet, and can be discarded", async () => {
     const { h, sheet } = await openSheet(withBilling(true));
     await type(h, $(sheet, "[data-testid=noesis-budget-background]"), "4");

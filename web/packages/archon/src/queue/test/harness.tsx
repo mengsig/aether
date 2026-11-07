@@ -33,7 +33,7 @@ export interface ArchonHarness {
 
 export async function archonHarness(options: FauxOptions, world: World = demoWorld()): Promise<ArchonHarness> {
   invariant(vi.isFakeTimers(), "the Archon harness runs on fake timers");
-  for (const key of ["archon/new-item", "archon/new-item-attempt", "archon/queue-filters", "archon/register-repository", "archon/message", "archon/question-q_review_gate"]) drafts.clear(key);
+  for (const key of drafts.keys()) drafts.clear(key);
   const frames: (() => void)[] = [];
   const memory = new Map<string, unknown>();
   const faux = new FauxArchond(world, options);

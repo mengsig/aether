@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
-import { drafts } from "@aether-ui/core";
+import { connectionDraftKey, drafts } from "@aether-ui/core";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { demoWorld } from "./fixture/world.ts";
+import { itemDraftKey } from "./NewItemDialog.tsx";
 import { QueueScreen } from "./QueueScreen.tsx";
 import { folderName, repositoryCommand, EMPTY_REPOSITORY, WATCH_DESKTOP_HINT } from "./RegisterRepository.tsx";
-import { archonHarness, byText, click, pick, type, type ArchonHarness } from "./test/harness.tsx";
+import { archonHarness, byText, click, CONN, pick, type, type ArchonHarness } from "./test/harness.tsx";
 
 let h: ArchonHarness | undefined;
 beforeEach(() => vi.useFakeTimers({ now: Date.parse("2026-11-04T10:00:00Z") }));
@@ -35,7 +36,7 @@ it("registers a repository, fills its name, and opens a preselected new item", a
   expect(h.faux.commands("repo_add")[0]).toMatchObject({ path: "/home/user/example", name: "example", default_pipeline: "direct", base_branch: "main", ship: "pr", github_watch: true });
   expect(document.querySelector('[data-testid="new-item-repo"]')?.textContent).toBe("example");
   expect(document.querySelector('[data-testid="new-item-pipeline"]')?.textContent).toBe("direct");
-  expect(drafts.get("archon/register-repository")).toBeUndefined();
+  expect(drafts.get(connectionDraftKey("archon", CONN, "register-repository"))).toBeUndefined();
 });
 
 it("keeps a new item draft across closing and clears it only on success", async () => {
@@ -51,8 +52,25 @@ it("keeps a new item draft across closing and clears it only on success", async 
   expect(document.querySelector<HTMLButtonElement>('[data-testid="new-item-submit"]')?.disabled).toBe(false);
   await pick(h, "new-item-repo", "site");
   await click(h, document.querySelector('[data-testid="new-item-submit"]') as Element);
-  expect(drafts.get("archon/new-item")).toBeUndefined();
+  expect(drafts.get(itemDraftKey(CONN))).toBeUndefined();
   expect(h.faux.commands("enqueue")[0]).toMatchObject({ title: "Keep my work", repo: "repo_site", pipeline: null });
+});
+
+it("keeps what was typed while a slow enqueue ran, and keys the draft by connection", async () => {
+  expect(itemDraftKey(CONN)).toBe("archon/archon:faux/new-item");
+  expect(itemDraftKey("archon:other")).not.toBe(itemDraftKey(CONN));
+  h = await archonHarness({ protocol: 24 });
+  const root = await h.mount(<QueueScreen />);
+  await click(h, byText(root, "button", "New item"));
+  await type(h, document.querySelector('[data-testid="new-item-title"]') as Element, "Slow item");
+  await type(h, document.querySelector('[data-testid="new-item-brief"]') as Element, "First brief");
+  h.faux.hold.add("enqueue");
+  await click(h, document.querySelector('[data-testid="new-item-submit"]') as Element);
+  expect(h.faux.commands("enqueue")).toHaveLength(1);
+  await type(h, document.querySelector('[data-testid="new-item-brief"]') as Element, "Second brief, typed meanwhile");
+  h.faux.release("enqueue");
+  await h.until(() => document.querySelector("dialog[open]") === null, "the dialog to close after the enqueue");
+  expect(drafts.get(itemDraftKey(CONN))).toMatchObject({ title: "Slow item", brief: "Second brief, typed meanwhile" });
 });
 
 it("keeps filters through remount and chooses a state with its picker", async () => {

@@ -52,6 +52,23 @@ test("the schedule draft survives navigation and clears after a successful comma
   expect(drafts.get(`controls/${AGENT_ID}/schedule`)).toBeUndefined();
 });
 
+test("a model choice made while a slow apply ran is kept, a finished one is forgotten", async () => {
+  const root = await screen("Model & limits");
+  h.daemon.script = { ...h.daemon.script, update_agent: () => "hold" };
+  await pick(h, root, "Model", "Sonnet 5.5");
+  await click(h, root, "Apply model");
+  expect(h.daemon.commands("update_agent")).toHaveLength(1);
+  await click(h, root, "max");
+  // A release answers with what the script says then, so the held apply now succeeds.
+  h.daemon.script = { ...h.daemon.script, update_agent: () => ({ tag: "ok", data: null }) };
+  h.daemon.release();
+  await h.settle();
+  expect(drafts.get(`controls/${AGENT_ID}/model`)).toMatchObject({ model: "anthropic/claude-sonnet-5-5", effort: "max" });
+  await click(h, root, "Apply model");
+  expect(h.daemon.commands("update_agent")).toHaveLength(2);
+  expect(drafts.get(`controls/${AGENT_ID}/model`)).toBeUndefined();
+});
+
 test("a refused message retains the draft for recovery", async () => {
   const root = await screen("Steer");
   h.daemon.script = { ...controlsScript(), send_message: () => ({ code: "invalid_argument", message: "Agent unavailable" }) };

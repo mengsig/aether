@@ -218,6 +218,16 @@ export class FauxNoesis {
     }
   }
 
+  /** Holds every privileged action until the returned function is called, to finish a save late. */
+  holdPrivileged(): () => void {
+    let open = () => {};
+    this.gate = new Promise<void>((resolve) => { open = resolve; });
+    return open;
+  }
+
+  /** Settles once held privileged actions may run; the bridge awaits it before each action. */
+  gate: Promise<void> = Promise.resolve();
+
   /** What desktop main does with `noesis.configure`: its flat §6.1 keys sent nested, the status back. */
   runPrivileged(action: PrivilegedAction): unknown {
     invariant(action.kind === "noesis.configure", `the faux main runs noesis.configure, not ${action.kind}`);
