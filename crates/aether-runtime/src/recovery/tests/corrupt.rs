@@ -352,6 +352,7 @@ async fn cancellation_keeps_a_corrupt_descendant_in_its_durable_fence() {
     )
     .unwrap();
     let conn = rusqlite::Connection::open(&path).unwrap();
+    aether_store::register_sql_functions(&conn).unwrap();
     conn.execute(
         "UPDATE agents SET body='{' WHERE id=?1",
         [child.id.to_string()],
@@ -391,6 +392,7 @@ async fn unreadable_budget_descendant_withholds_only_its_subtree() {
         )
         .unwrap();
     let conn = rusqlite::Connection::open(&path).unwrap();
+    aether_store::register_sql_functions(&conn).unwrap();
     conn.execute(
         "UPDATE agents SET body='{' WHERE id=?1",
         [child.id.to_string()],

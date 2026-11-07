@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used, clippy::panic)]
 use super::*;
 use crate::Transport;
+use aether_core::id::{AgentId, RunId};
 use aether_protocol::{ClientFrame, Reply, ServerFrame, Welcome};
 use std::ops::RangeInclusive;
 use std::sync::{Arc, Mutex};
@@ -337,4 +338,64 @@ async fn an_expired_history_notice_exposes_its_code_and_span() {
     .expect("the reader sees the close");
     assert!(client.history_expired());
     assert_eq!(client.expired_span(), Some(4..=9));
+}
+
+/// The `get_tree` a `subtree` read sends to a daemon announcing `features`,
+/// answered with an empty tree.
+async fn subtree_request_to(features: Vec<String>, run: RunId, root: AgentId) -> Command {
+    let (client, mut peer) = connected_at(PROTOCOL_VERSION, features);
+    let daemon = tokio::spawn(async move {
+        let frame = peer.incoming.recv().await.expect("the tree request");
+        let tree = Reply::Tree(aether_protocol::AgentTree::default());
+        let reply = ServerFrame::Reply {
+            id: frame.id,
+            result: Ok(tree),
+        };
+        peer.outgoing.send(reply).await.expect("deliver the tree");
+        frame.command
+    });
+    let tree = tokio::time::timeout(DEADLINE, client.subtree(run, root))
+        .await
+        .expect("answered in time")
+        .expect("a tree");
+    assert!(tree.nodes.is_empty(), "the tree the daemon sent");
+    daemon.await.expect("the daemon's task")
+}
+
+#[tokio::test]
+async fn a_subtree_is_rooted_only_on_a_daemon_that_can_root_a_tree() {
+    let (run, root) = (RunId::new(), AgentId::new());
+    let paging = vec![aether_protocol::features::AGENTS_PAGING.to_owned()];
+    let sent = subtree_request_to(paging, run, root).await;
+    let Command::GetTree {
+        root: asked,
+        run: of,
+        include_archived,
+        after,
+        limit,
+        ..
+    } = sent
+    else {
+        panic!("a tree request: {sent:?}");
+    };
+    assert_eq!((asked, of), (Some(root), Some(run)), "rooted in its run");
+    assert!(include_archived && after.is_none() && limit.is_none());
+
+    let sent = subtree_request_to(vec![], run, root).await;
+    let Command::GetTree {
+        root: asked,
+        run: of,
+        include_archived,
+        role_prefix,
+        ..
+    } = sent
+    else {
+        panic!("a tree request: {sent:?}");
+    };
+    assert_eq!(
+        (asked, of),
+        (None, Some(run)),
+        "an older daemon's whole run"
+    );
+    assert!(include_archived && role_prefix.is_none());
 }

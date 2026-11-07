@@ -157,6 +157,8 @@ async fn reconnect_late_old_tree_reply_must_not_restore_pre_outage_status() {
             root: None,
             run: None,
             include_archived: false,
+            after: None,
+            limit: None,
         },
         Then::Tree,
     );

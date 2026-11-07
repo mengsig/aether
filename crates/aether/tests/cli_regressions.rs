@@ -540,8 +540,10 @@ async fn cli_with_socket(
                         hidden_usage: None,
                     };
                     Ok(Reply::Tree(aether_protocol::AgentTree {
+                        stale: None,
                         roots: vec![a.id],
                         nodes: [(a.id, node)].into(),
+                        next_after: None,
                     }))
                 }
                 Command::CreateMemory { spec, .. } => {

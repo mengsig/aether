@@ -80,8 +80,10 @@ pub(crate) fn projection(agent: Agent, history: Vec<Event>) -> App {
     app.reduce(AppEvent::Reply {
         then: Then::Tree,
         result: Ok(Reply::Tree(AgentTree {
+            stale: None,
             roots: vec![id],
             nodes: [(id, node)].into(),
+            next_after: None,
         })),
     });
     app.reduce(AppEvent::Reply {

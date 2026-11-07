@@ -1,5 +1,5 @@
 use super::write_tally::WriteTally;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
@@ -434,17 +434,42 @@ impl Store for SqliteStore {
     }
 
     fn fleet_usage(&self) -> Result<Usage> {
-        let agents = self.record_list(
-            "agents",
-            "SELECT id, body FROM agents WHERE status != ?1",
-            &[&AgentStatusKind::Imported.as_str()],
-            |agent: &Agent| agent.id.to_string(),
-        )?;
-        let mut total = Usage::default();
-        for agent in agents {
-            total += agent.stats.usage;
-        }
-        Ok(total)
+        self.read_fleet_usage()
+    }
+
+    fn run_totals(
+        &self,
+        run: aether_core::id::RunId,
+    ) -> Result<Option<aether_core::budget::RunTotals>> {
+        self.read_run_totals(run)
+    }
+
+    fn agent_usages(&self, agents: &[AgentId]) -> Result<BTreeMap<AgentId, Usage>> {
+        self.read_agent_usages_by_id(agents)
+    }
+
+    fn count_tasks(&self, statuses: &[aether_core::task::TaskStatusKind]) -> Result<u64> {
+        self.count_tasks_of(statuses)
+    }
+
+    fn count_pending_approvals(&self) -> Result<u64> {
+        self.count_pending()
+    }
+
+    fn tree_page(&self, query: &crate::TreeQuery) -> Result<crate::TreePage> {
+        self.read_tree_page(query)
+    }
+
+    fn subtree_usages(&self, roots: &[AgentId]) -> Result<Vec<crate::UsageNode>> {
+        self.read_subtree_usages(roots)
+    }
+
+    fn tree_usages(
+        &self,
+        shown: &[Agent],
+        run: Option<aether_core::id::RunId>,
+    ) -> Result<BTreeMap<AgentId, crate::TreeUsage>> {
+        self.read_tree_usages(shown, run)
     }
 
     fn subtree_ids(&self, root: AgentId) -> Result<BTreeSet<AgentId>> {
@@ -974,6 +999,10 @@ impl Store for SqliteStore {
             .optional()?)
     }
 
+    fn metas(&self, keys: &[String]) -> Result<Vec<Option<String>>> {
+        self.read_metas(keys)
+    }
+
     fn instance_id(&self) -> Result<String> {
         self.meta("instance_id")?
             .ok_or_else(|| StoreError::Corrupt("missing instance_id".into()))
@@ -992,6 +1021,30 @@ pub(super) fn agent_list_sql(filter: &AgentFilter, args: &mut Arguments) -> Stri
     sql
 }
 
+/// The statuses that are not terminal, as the `status` column stores them.
+pub(super) fn live_statuses() -> Vec<&'static str> {
+    // Off `is_terminal`, not a list typed here: a new terminal status must
+    // not silently start counting as live.
+    let live: Vec<&'static str> = AgentStatusKind::ALL
+        .iter()
+        .filter(|k| !k.is_terminal())
+        .map(|k| k.as_str())
+        .inspect(|name| assert!(name.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')))
+        .collect();
+    assert!(!live.is_empty(), "some status is live");
+    live
+}
+
+/// `status IN (...)` over the statuses that are not terminal, which the status
+/// index answers one status at a time.
+pub(super) fn live_status_clause() -> String {
+    let live: Vec<String> = live_statuses()
+        .into_iter()
+        .map(|name| format!("'{name}'"))
+        .collect();
+    format!("status IN ({})", live.join(", "))
+}
+
 /// The `WHERE` condition selecting `filter`'s agents by their columns.
 pub(super) fn agent_predicate(filter: &AgentFilter, args: &mut Arguments) -> String {
     debug_assert!(args.is_empty(), "placeholders are numbered from 1");
@@ -1005,17 +1058,8 @@ pub(super) fn agent_predicate(filter: &AgentFilter, args: &mut Arguments) -> Str
         sql.push_str(&format!(" AND run = ?{}", args.len()));
     }
     if filter.live_only {
-        // Off `is_terminal`, not a list typed here: a new terminal status
-        // must not silently start counting as live.
-        let terminal: Vec<String> = AgentStatusKind::ALL
-            .iter()
-            .filter(|k| k.is_terminal())
-            .map(|k| {
-                args.push(Box::new(k.as_str().to_owned()));
-                format!("?{}", args.len())
-            })
-            .collect();
-        sql.push_str(&format!(" AND status NOT IN ({})", terminal.join(",")));
+        // An `IN` the status index answers: `NOT IN` scanned every agent kept.
+        sql.push_str(&format!(" AND {}", live_status_clause()));
     }
     if !filter.statuses.is_empty() {
         let placeholders: Vec<String> = filter

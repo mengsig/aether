@@ -7,7 +7,7 @@ Start with the [README](../README.md) for prerequisites, installation, and a fir
 - [Install, update, uninstall](install.md): the installer, `aether update`,
   checksums, where files live, and building from source.
 - [Upgrading](upgrading.md): what an update from 1.2.11 to 1.3.0 asks of you,
-  in order: protocol 26, the schema 32 migration, Memory 2.0, Noesis, the web
+  in order: protocol 26, the schema 33 migration, Memory 2.0, Noesis, the web
   app, the desktop app and the mount.
 - [User guide](guide.md): models, delegation, supervision, automation, and recovery.
 - [Prerequisite details](prerequisites.md): optional programs and feature-specific setup.

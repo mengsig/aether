@@ -424,6 +424,7 @@ where
                                                     features::SUBTREE_UPDATE.into(),
                                                     features::HISTORY_EXPIRED.into(),
                                                     features::AGENTS_PAGING.into(),
+                                                    features::TREE_PAGES.into(),
                                                     features::TRANSCRIPT_PAGING.into(),
                                                     features::DELTA_ORDER.into(),
                                                     features::USAGE_BREAKDOWN.into(),

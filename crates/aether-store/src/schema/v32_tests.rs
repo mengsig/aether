@@ -33,7 +33,10 @@ fn the_backup_taken_before_v32_is_a_v31_store_the_previous_binary_opens_with_its
     let (records, before) = v31_store(&path);
 
     let store = crate::SqliteStore::open(&path).unwrap();
-    assert_eq!(store.meta("schema_version").unwrap(), Some("32".into()));
+    assert_eq!(
+        store.meta("schema_version").unwrap(),
+        Some(SCHEMA_VERSION.to_string())
+    );
     for record in &records {
         assert_eq!(store.memory(record.id).unwrap().as_ref(), Some(record));
     }
@@ -49,7 +52,10 @@ fn the_backup_taken_before_v32_is_a_v31_store_the_previous_binary_opens_with_its
         .unwrap()
         .to_string_lossy()
         .into_owned();
-    assert!(name.starts_with("schema-31-before-32-"), "{name}");
+    assert!(
+        name.starts_with(&format!("schema-31-before-{SCHEMA_VERSION}-")),
+        "{name}"
+    );
     let (_restored_dir, restored) = restore(&backups[0]);
     let backup =
         Connection::open_with_flags(&restored, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
@@ -62,15 +68,21 @@ fn the_backup_taken_before_v32_is_a_v31_store_the_previous_binary_opens_with_its
     assert!(matches!(
         refuse_newer_store(current_version(&migrated).unwrap(), 31),
         Err(StoreError::SchemaTooNew {
-            found: 32,
+            found: SCHEMA_VERSION,
             supported: 31
         })
     ));
-    // Opening a store also stamps meta and rebuilds the FTS shadow rows; V32
-    // itself must leave every definition and every other row as it was.
+    // Opening a store also stamps meta and rebuilds the FTS shadow rows, and
+    // V33 adds its usage and tree tables, archived indexes and column and swaps the
+    // status index for `(status, id)`; V32 adds nothing.
     let migration_visible = |rows: Vec<String>| -> Vec<String> {
         rows.into_iter()
             .filter(|line| !line.starts_with("meta ") && !line.starts_with("memories_fts"))
+            .filter(|line| !line.contains("agent_usage") && !line.contains("usage_totals"))
+            .filter(|line| !line.contains("agent_tree"))
+            .filter(|line| !line.contains("archived_id ON agents"))
+            .filter(|line| !line.starts_with("index agents_status"))
+            .map(|line| line.replace(", archived INTEGER NOT NULL DEFAULT 0)", ")"))
             .collect()
     };
     let after = migration_visible(dump(&migrated));

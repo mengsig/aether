@@ -17,8 +17,19 @@ use parking_lot::Mutex;
 use tokio::sync::watch;
 
 /// How long a `status` request waits for a fresh read before it answers with
-/// the last one: long enough for a healthy store, short of any client's timeout.
-pub(crate) const PATIENCE: Duration = Duration::from_secs(3);
+/// the last one: past the runtime's section deadline, so a read that cut its
+/// slow sections still lands, and under a second for the whole reply.
+pub(crate) const PATIENCE: Duration = Duration::from_millis(900);
+
+/// How long a `get_tree` or `get_github_watcher` request waits for its read:
+/// the same budget each `status` section has.
+pub(crate) const READ_BUDGET: Duration = aether_runtime::STATUS_DEADLINE;
+
+const _: () = assert!(READ_BUDGET.as_millis() < PATIENCE.as_millis());
+const _: () = assert!(
+    PATIENCE.as_millis() < 1_000,
+    "a status reply comes within a second"
+);
 
 type Read<T> = Arc<dyn Fn() -> Result<T, ErrorReply> + Send + Sync>;
 
@@ -80,6 +91,13 @@ impl<T> Default for StatusReads<T> {
             })),
             finished: Arc::new(watch::Sender::new(0)),
         }
+    }
+}
+
+impl<T> StatusReads<T> {
+    /// Whether a read is in flight, which its caller may have stopped waiting for.
+    pub(crate) fn reading(&self) -> bool {
+        self.state.lock().running.is_some()
     }
 }
 
