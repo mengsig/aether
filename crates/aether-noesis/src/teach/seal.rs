@@ -255,14 +255,16 @@ fn shows_own_secret(call: &ToolCall) -> bool {
 }
 
 /// A pose's input without each option's value and label, which name a
-/// choice's key by design; any other field of an option stays.
+/// choice's key by design; any other field of an option stays. Options as
+/// JSON text, whole or one by one, are read as the parser heals them.
 fn without_option_names(input: &Value) -> Value {
-    let mut object = match input {
-        Value::String(text) => embedded_json(text).unwrap_or_else(|| input.clone()),
-        other => other.clone(),
-    };
-    let options = object.get_mut("options").and_then(Value::as_array_mut);
-    for option in options.into_iter().flatten() {
+    let mut object = decoded(input);
+    let options = object.get_mut("options").map(|options| {
+        *options = decoded(options);
+        options
+    });
+    for option in options.and_then(Value::as_array_mut).into_iter().flatten() {
+        *option = decoded(option);
         match option {
             Value::Object(map) => {
                 map.remove("value");
@@ -272,6 +274,14 @@ fn without_option_names(input: &Value) -> Value {
         }
     }
     object
+}
+
+/// `value`, or the object or array its text holds.
+fn decoded(value: &Value) -> Value {
+    match value {
+        Value::String(text) => embedded_json(text).unwrap_or_else(|| value.clone()),
+        other => other.clone(),
+    }
 }
 
 /// The replies one model step took: the step kept, the raw reply it came
@@ -640,6 +650,24 @@ mod tests {
             "a pose's own options name its key"
         );
         assert!(reply_leaks(&sealer(&["Lyon"]), &reply("", vec![choice])));
+    }
+
+    #[test]
+    fn option_metadata_leaks_whatever_the_options_encoding() {
+        let none = Sealer::default();
+        let rich = json!({"value": "a", "label": "Paris", "explanation": "Paris is the capital."});
+        let plain = json!([{"value": "a", "label": "Paris"}, {"value": "b", "label": "Lyon"}]);
+        let pose = |options: Value| {
+            let input = json!({"kind": "choice", "prompt": "Capital?", "options": options,
+                "answer_key": ["a"], "explanation": "Paris is the capital."});
+            reply("", vec![call("call_enc", "noesis.ask", input)])
+        };
+        assert!(reply_leaks(&none, &pose(json!([rich.to_string(), "Lyon"]))));
+        assert!(reply_leaks(&none, &pose(json!([rich]).to_string().into())));
+        let legitimate = json!({"kind": "choice", "prompt": "Capital?", "options": plain.to_string(),
+            "answer_key": ["a"]});
+        let legitimate = reply("", vec![call("call_enc", "noesis.ask", legitimate)]);
+        assert!(!reply_leaks(&none, &legitimate));
     }
 
     #[test]
