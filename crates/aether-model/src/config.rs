@@ -269,7 +269,7 @@ impl Default for MemoryRetrievalSection {
     fn default() -> Self {
         Self {
             max_items: 6,
-            min_score: 0.05,
+            min_score: 0.0,
             holdout_rate: 0.05,
             holdout_seed: 0,
         }
