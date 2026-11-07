@@ -110,7 +110,7 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
       {models?.issued && choices.length === 0 ? <EmptyState title="Connect a model provider on your host" /> : null}
       <div className="b3-row" aria-label="Effort">{EFFORTS.map(value => <Button key={value} disabled={disabled} aria-pressed={effort === value} onClick={() => setEffort(value)}>{value}</Button>)}</div>
     </>}
-    {resendTo !== null ? <p className="b3-section-hint">The chat started, but its first message was not confirmed: see why below, then send it again here or <a className="ui-link" href={chatHref(conn, resendTo)} onClick={close}>open the chat</a>.</p> : null}
+    {resendTo !== null ? <p className="b3-section-hint">The chat started, but its first message was not confirmed. Read why below before sending it again here, or <a className="ui-link" href={chatHref(conn, resendTo)} onClick={close}>open the chat</a> to see whether it arrived.</p> : null}
     <Action conn={conn} command={command} label={mode === "task" ? "Create task" : resendTo !== null ? "Send first message" : mode === "chat" ? "Start chat" : "Start agent"} blocked={blocked} busy={run.status.state === "busy"} onRun={start} />
     <RunNote status={run.status} />
   </div></Sheet>;
