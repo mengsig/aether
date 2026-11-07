@@ -2,7 +2,7 @@
 // Reading the transcript: tool rows that fold, find, the connection banner and who speaks.
 
 import type { aether } from "@aether-ui/protocol";
-import { act } from "react";
+import { act, useState } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { Conversation } from "./Conversation.tsx";
 import { connected, type Harness } from "./fixture/harness.test-util.tsx";
@@ -28,6 +28,15 @@ async function open(seed: Seed) {
 }
 
 const byTestId = <T extends HTMLElement = HTMLElement>(root: ParentNode, id: string) => root.querySelector<T>(`[data-testid=${id}]`);
+
+/** A conversation whose layout a button switches, as the chat's mode bar does. */
+function Layouts({ conn }: { readonly conn: string }) {
+  const [layout, setLayout] = useState("standard");
+  return <>
+    <button type="button" data-testid="layout-focus" onClick={() => setLayout("focus+details")}>Focus</button>
+    <Conversation conn={conn} agent={FAUX_AGENT} layout={layout} />
+  </>;
+}
 
 describe("a tool call", () => {
   const seed: Seed = [
@@ -123,6 +132,31 @@ describe("find", () => {
     expect(byTestId(container, "conv-search")).toBeNull();
     await find();
     expect(scrolls, "the second find scrolls to the match again").toHaveBeenCalledTimes(2);
+  });
+
+  test("keeps a match inside a fold open when the layout changes its row keys", async () => {
+    const h = await connected({ instance: "faux-1", agents: [fauxAgent(FAUX_PARENT), fauxAgent()] });
+    current = h;
+    h.daemon.seed(FAUX_AGENT, [{ message: { role: "assistant", content: [{ type: "thinking", text: "the needle hides in thought" }, { type: "text", text: "Looking." }] }, invocation: "inv_1" }]);
+    const container = await h.mount(<Layouts conn={h.conn} />);
+    await h.settle();
+    const fold = () => container.querySelector<HTMLButtonElement>(".conv-reasoning .conv-fold-toggle");
+    expect(fold()?.getAttribute("aria-expanded"), "reasoning starts folded").toBe("false");
+    await act(async () => container.querySelector<HTMLButtonElement>(".conv-find")?.click());
+    const input = byTestId<HTMLInputElement>(container, "conv-search");
+    if (!input) throw new Error("Find opens its field");
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(input, "needle");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await h.settle();
+    expect(byTestId(container, "conv-search-count")?.textContent).toBe("1 of 1");
+    expect(fold()?.getAttribute("aria-expanded"), "the match's fold opens").toBe("true");
+    await act(async () => byTestId<HTMLButtonElement>(container, "layout-focus")?.click());
+    await h.settle();
+    expect(byTestId(container, "conv-search-count")?.textContent).toBe("1 of 1");
+    expect(fold()?.getAttribute("aria-expanded"), "the fold under its new key opens too").toBe("true");
   });
 
   test("says when nothing matches", async () => {

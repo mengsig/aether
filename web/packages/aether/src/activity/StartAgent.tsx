@@ -1,10 +1,10 @@
 // Starting work: a chat (the default) is a task-less interactive assistant that waits for the next
 // message after each reply, as the TUI starts one; a task agent finishes with its objective.
 
-import { connectionDraftKey, drafts, navigate, routeHref, selectAgents, selectRead, useApp, useDraft, usePermission, useReread, useSelector } from "@aether-ui/core";
+import { connectionDraftKey, drafts, navigate, routeHref, selectAgents, selectRead, useApp, useDraft, usePermission, useReread, useSelector, type DraftValue } from "@aether-ui/core";
 import { aether } from "@aether-ui/protocol";
 import { Button, EmptyState, Field, Sheet, Tabs } from "@aether-ui/ui";
-import { useReducer, useState } from "react";
+import { useReducer, useRef, useState } from "react";
 import { Action, RunNote, StandingNotice, useRun, type Run } from "../controls/kit.tsx";
 
 import { invariant } from "../fleet/invariant.ts";
@@ -192,8 +192,12 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
   const draftKey = connectionDraftKey("activity", conn, "start-agent");
   const draft = useDraft(draftKey, BLANK);
   const form = draft.value;
-  // The sheet closes once the chat's first message is confirmed; until then a new chat can reuse the form.
-  const chat = useChatStart(conn, () => { drafts.clear(draftKey); close(); });
+  // The stored draft a chat start submitted: every edit stores a new object, so a newer draft is left alone.
+  const submitted = useRef<DraftValue | undefined>(undefined);
+  const chat = useChatStart(conn, () => {
+    if (drafts.get(draftKey) === submitted.current) drafts.clear(draftKey);
+    close();
+  });
   const change = (patch: Partial<StartForm>) => draft.update(patch);
   const onStart = async (settings: ChatSettings | null, command: aether.CreateAgentCommand | aether.CreateTaskCommand) => {
     if (form.mode !== "chat") {
@@ -207,6 +211,7 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
       return;
     }
     invariant(settings !== null, "a chat starts from validated settings");
+    submitted.current = drafts.get(draftKey);
     return chat.begin(settings, form.objective.trim());
   };
   const busy = chat.create.status.state === "busy" || chat.first.run.status.state === "busy";

@@ -44,7 +44,8 @@ function usePaint(stage: RefObject<HTMLElement | null>, result: SearchResult, cu
     if (!root || result.query === "") return undefined;
     const paint = () => {
       const target = paintMatches(root, result.query, rowKey === null ? null : { rowKey, nth });
-      const mark = `${result.query}#${current}`;
+      // The row key names the layout too, so a mode change scrolls to the match's new row.
+      const mark = `${result.query}#${current}@${rowKey ?? ""}`;
       if (target === null || scrolled.current === mark) return;
       scrolled.current = mark;
       target.scrollIntoView?.({ block: "center" });
@@ -64,12 +65,13 @@ function useReveal({ rows, list, toggles }: SearchDeps, result: SearchResult, cu
   const revealed = useRef("");
   const row = current < 0 ? -1 : locate(result, current).row;
   useLayoutEffect(() => {
-    const mark = `${result.query}#${current}`;
     const target = rows[row];
     if (target === undefined) {
       revealed.current = "";
       return;
     }
+    // The row key names the layout: a mode change folds the match under a new key, so it opens again.
+    const mark = `${result.query}#${current}@${target.key}`;
     if (revealed.current === mark) return;
     revealed.current = mark;
     for (const key of foldsToOpen(target, result.query)) toggles.set(key, true);

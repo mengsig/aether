@@ -147,7 +147,9 @@ describe("a person's text", () => {
   });
 
   test("as a delegated agent's first turn is never its task, in every mode", () => {
-    for (const [text, body] of [[`[inbox 3] ${OPERATOR}\nstop and report`, "stop and report"], ["Please stop.", "Please stop."], ["Begin.", "Begin."]]) {
+    const delivered = [`[inbox 3] ${OPERATOR}\nstop and report`, "stop and report"];
+    const deliveredTask = [`[inbox 3] ${OPERATOR}\nYour task:\nKeep this instruction visible`, "Your task:\nKeep this instruction visible"];
+    for (const [text, body] of [delivered, deliveredTask, ["Please stop.", "Please stop."], ["Begin.", "Begin."]]) {
       const rows = turns(text ?? "");
       expect(taskRowKey(rows, true), text).toBeNull();
       for (const rules of modes) expect(drawn(rows, rules, taskRowKey(rows, true))).toEqual([["user_operator:full", body]]);

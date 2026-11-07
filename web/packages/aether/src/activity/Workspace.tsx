@@ -20,9 +20,12 @@ interface WorkspaceProps {
 export function Workspace({ conn, path, change, recent, testId = "start-workspace" }: WorkspaceProps) {
   const app = useApp();
   const name = useId();
-  const [other, setOther] = useState(false);
-  const [typed, setTyped] = useState("");
   const folders = recentWorkspaces(recent?.value);
+  // A restored draft may name a folder outside the recent list: it is the other folder, shown as typed.
+  const custom = path !== "" && !folders.some(w => w.path === path);
+  const [otherChosen, setOther] = useState(false);
+  const other = otherChosen || custom;
+  const [typed, setTyped] = useState(() => (custom ? path : ""));
   const validate = { cmd: "validate_workspace", path };
   const disabled = usePermission(conn, validate).refusal !== null;
   const validationKey = `start:validation:${path}`;
