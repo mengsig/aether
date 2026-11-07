@@ -8,14 +8,14 @@ fn delegation_response() -> aether_model::testing::ScriptedResponse {
     )
 }
 
-fn extend_delegation_limits(h: &Harness, parent: AgentId, extended: Timestamp) {
+fn extend_delegation_limits(h: &Harness, parent: AgentId, extended: Timestamp, budget: f64) {
     let updated = h
         .runtime
         .update_agent_keyed(
             parent,
             AgentUpdate {
                 deadline: Some(DeadlineUpdate::Set(extended)),
-                cost_budget: Some(3.0),
+                cost_budget: Some(budget),
                 ..Default::default()
             },
             true,
@@ -26,7 +26,7 @@ fn extend_delegation_limits(h: &Harness, parent: AgentId, extended: Timestamp) {
     assert_eq!(updated.id, parent);
     assert_eq!(
         (updated.config.deadline, updated.config.cost_budget),
-        (Some(extended), Some(3.0))
+        (Some(extended), Some(budget))
     );
 }
 
@@ -35,14 +35,11 @@ async fn extend_during_resumed_turn(
     parent: AgentId,
     previous: Timestamp,
 ) -> Timestamp {
-    let status = h
-        .wait_until(parent, |s| s.kind() == AgentStatusKind::Waiting)
+    h.wait_until(parent, |s| s.kind() == AgentStatusKind::Waiting)
         .await;
-    assert!(!status.is_terminal());
-    assert_eq!(
-        h.store.agent(parent).unwrap().unwrap().config.deadline,
-        Some(previous)
-    );
+    let waiting = h.store.agent(parent).unwrap().unwrap();
+    assert!(waiting.stats.turns >= 1);
+    assert_eq!(waiting.config.deadline, Some(previous));
     let release = h.client.hold_next_response();
     let requests_before = h.client.requests().len();
     h.runtime
@@ -53,7 +50,7 @@ async fn extend_during_resumed_turn(
     })
     .await;
     let extended = previous + chrono::Duration::hours(1);
-    extend_delegation_limits(h, parent, extended);
+    extend_delegation_limits(h, parent, extended, 4.0);
     release.cancel();
     extended
 }
@@ -83,7 +80,7 @@ async fn raised_limits_reach_delegation(after_old_deadline: bool, next_turn: boo
     h.wait_for("parent model request", || !h.client.requests().is_empty())
         .await;
     assert!(now() < old, "the original deadline must still be open");
-    extend_delegation_limits(&h, parent.id, extended);
+    extend_delegation_limits(&h, parent.id, extended, 3.0);
     if after_old_deadline {
         tokio::time::sleep((old - now()).to_std().unwrap_or_default() + Duration::from_millis(100))
             .await;
@@ -104,7 +101,10 @@ async fn raised_limits_reach_delegation(after_old_deadline: bool, next_turn: boo
         .unwrap();
     assert_eq!(children.len(), 1, "delegation should create one child");
     assert_eq!(children[0].config.deadline, Some(extended));
-    assert_eq!(children[0].config.cost_budget, Some(3.0));
+    assert_eq!(
+        children[0].config.cost_budget,
+        Some(if next_turn { 4.0 } else { 3.0 })
+    );
     assert_eq!(children[0].status.kind(), AgentStatusKind::Completed);
     if next_turn {
         assert!(h.store.agent(parent.id).unwrap().unwrap().stats.turns >= 2);
