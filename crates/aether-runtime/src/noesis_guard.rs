@@ -440,10 +440,20 @@ pub(crate) fn stops_at_model_boundary(runtime: &Runtime, lane: Option<NoesisLane
     lane == Some(NoesisLane::Background) && !runtime.config.noesis.is_enabled()
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static BOUNDARY_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Why a Noesis turn must not make another model call: a background job
 /// once the gate left Enabled, or any turn whose spend used up its budget.
-pub(crate) fn boundary_stop(runtime: &Runtime, ctx: &crate::turn::TurnCtx) -> Option<String> {
-    let turn = ctx.noesis.as_ref()?;
+pub(crate) fn boundary_stop(
+    runtime: &Runtime,
+    ctx: &crate::turn::TurnCtx,
+    turn: &NoesisTurn,
+) -> Option<String> {
+    #[cfg(test)]
+    BOUNDARY_VISITS.with(|visits| visits.set(visits.get() + 1));
     debug_assert!(
         ctx.turn_usage.cost_usd.is_finite(),
         "a turn's spend is a real amount"
@@ -460,18 +470,22 @@ pub(crate) fn boundary_stop(runtime: &Runtime, ctx: &crate::turn::TurnCtx) -> Op
 pub(crate) fn engine_start_refusal(
     runtime: &Runtime,
     ctx: &crate::turn::TurnCtx,
+    turn: &NoesisTurn,
 ) -> Option<String> {
-    let turn = ctx.noesis.as_ref()?;
     if !runtime.config.noesis.admits(turn.generation) {
         return Some("Noesis was disabled or restarted since this turn was admitted".to_owned());
     }
-    boundary_stop(runtime, ctx)
+    boundary_stop(runtime, ctx, turn)
 }
 
 /// At a native engine's model boundary: interrupt the turn when
 /// [`boundary_stop`] says so. The engine winds down as for any interrupt.
-pub(crate) fn interrupt_at_boundary(runtime: &Runtime, ctx: &crate::turn::TurnCtx) {
-    let Some(reason) = boundary_stop(runtime, ctx) else {
+pub(crate) fn interrupt_at_boundary(
+    runtime: &Runtime,
+    ctx: &crate::turn::TurnCtx,
+    turn: &NoesisTurn,
+) {
+    let Some(reason) = boundary_stop(runtime, ctx, turn) else {
         return;
     };
     let sched = runtime.sched.lock();
@@ -486,8 +500,7 @@ pub(crate) fn interrupt_at_boundary(runtime: &Runtime, ctx: &crate::turn::TurnCt
 }
 
 /// Why the Noesis billing rule forbids `model` for this turn, if it does.
-pub(crate) fn refused_model(ctx: &crate::turn::TurnCtx, model: &ModelRef) -> Option<String> {
-    let turn = ctx.noesis.as_ref()?;
+pub(crate) fn refused_model(turn: &NoesisTurn, model: &ModelRef) -> Option<String> {
     turn.charge.refuses_model(model)
 }
 

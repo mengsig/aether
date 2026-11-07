@@ -145,7 +145,10 @@ async fn manual_compaction(
 /// budget is spent, ends before its next model call as an interrupt: the
 /// agent keeps what it committed and waits.
 fn stopped_at_model_boundary(runtime: &Runtime, ctx: &TurnCtx) -> bool {
-    let Some(reason) = crate::noesis_guard::boundary_stop(runtime, ctx) else {
+    let Some(turn) = ctx.noesis.as_ref() else {
+        return false;
+    };
+    let Some(reason) = crate::noesis_guard::boundary_stop(runtime, ctx, turn) else {
         return false;
     };
     tracing::info!(agent = %ctx.agent.id, %reason, "the Noesis turn stops before its model call");
@@ -300,7 +303,9 @@ pub(super) async fn run_link(
     }
     // Checked on the row this turn runs, not the one admission read: the
     // model may have been changed in between.
-    if let Some(cause) = crate::noesis_guard::refused_model(ctx, model) {
+    if let Some(turn) = ctx.noesis.as_ref()
+        && let Some(cause) = crate::noesis_guard::refused_model(turn, model)
+    {
         return unusable_link(runtime, ctx, model, rest, cause);
     }
     if runtime.client_override.is_none() {
