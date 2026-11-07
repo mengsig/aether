@@ -6,6 +6,7 @@ import type { aether, ConnId } from "@aether-ui/protocol";
 import { Badge, EmptyState } from "@aether-ui/ui";
 import { invariant } from "../kit/invariant.ts";
 import { Action, RunNote, Section, StandingNotice, useRun, type Run } from "../kit/kit.tsx";
+import { DesktopAlerts } from "./DesktopAlerts.tsx";
 import { pushSupported, subscribeBrowser, unsubscribeBrowser } from "./push.ts";
 import { ReadView, recordOf, Unexpected } from "./read.tsx";
 
@@ -79,8 +80,9 @@ export function NotificationsPage({ conn }: { readonly conn: ConnId }) {
   const reread = () => app.reread(conn, KEY, COMMAND, ["push_config"]);
   return (
     <div className="st-stack">
+      {app.host.desktop === undefined ? null : <DesktopAlerts />}
       <StandingNotice conn={conn} />
-      <Section title="Notifications" hint="Alerts when an agent needs you, even with this page closed.">
+      <Section title={app.host.desktop === undefined ? "Notifications" : "Push to paired devices"} hint="Alerts when an agent needs you, even with this page closed.">
         <ReadView label="notification settings" entry={entry} onRetry={() => void reread()}>
           {(value) => <PushBody conn={conn} value={value} run={run} reread={reread} />}
         </ReadView>

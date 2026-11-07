@@ -2,7 +2,7 @@
 // commits only when a test settles, so each step's screen is the one a browser would paint.
 
 import { AppProvider, createApp, type App, type IdentityStore } from "@aether-ui/core";
-import type { DesktopBridge } from "@aether-ui/protocol";
+import type { DesktopBridge, KeyValueStore } from "@aether-ui/protocol";
 import { ThemeProvider } from "@aether-ui/ui";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -20,10 +20,12 @@ export interface Harness {
   unmount(): void;
 }
 
-export async function connected(options: ScriptOptions & { readonly desktop?: DesktopBridge; readonly identities?: IdentityStore } = {}): Promise<Harness> {
+export async function connected(options: ScriptOptions & {
+  readonly desktop?: DesktopBridge; readonly identities?: IdentityStore; readonly storage?: KeyValueStore;
+} = {}): Promise<Harness> {
   const frames: (() => void)[] = [];
   const daemon = new ScriptedDaemon(options);
-  const storage = { get: async () => undefined, set: async () => {} };
+  const storage = options.storage ?? { get: async () => undefined, set: async () => {} };
   const host = options.desktop ? { kind: "electron" as const, desktop: options.desktop, storage } : { kind: "browser" as const, storage };
   const app = createApp(host, {
     scheduler: (flush) => frames.push(flush),
