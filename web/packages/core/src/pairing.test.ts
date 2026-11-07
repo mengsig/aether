@@ -59,7 +59,7 @@ describe("Aether pairing", () => {
     const { fetcher } = aetherd({ state: "rejected" });
     const flow = new PairingFlow(aetherPairing(identities(), fetcher, 1), () => {});
     await flow.start("123-456", "phone");
-    expect(flow.state()).toMatchObject({ phase: "failed", message: expect.stringContaining("rejected") });
+    expect(flow.state()).toEqual({ phase: "failed", message: "The host rejected this device. Start a new pairing on the host to try again." });
   });
 });
 
@@ -69,7 +69,58 @@ describe("Archon pairing", () => {
     const flow = new PairingFlow(archonPairing(fetcher as unknown as typeof fetch), () => {});
     await flow.start("ABCD", "phone");
     expect(fetcher).toHaveBeenCalledWith("/archon/api/pair/claim", expect.objectContaining({ method: "POST", credentials: "same-origin" }));
-    expect(flow.state()).toEqual({ phase: "failed", message: "Slow down", retryAfter: 30 });
+    expect(flow.state()).toEqual({ phase: "failed", message: "Too many codes were tried just now. Wait 30 seconds and try again.", retryAfter: 30 });
+  });
+});
+
+describe("pairing failures read as plain sentences", () => {
+  async function failure(answer: () => Response | Promise<Response>) {
+    const fetcher = vi.fn(async () => answer());
+    const flow = new PairingFlow(archonPairing(fetcher as unknown as typeof fetch), () => {});
+    await flow.start("ABCD-1234", "phone");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    return flow.state();
+  }
+  const refusal = (code: string, message: string, status: number) => Response.json({ error: { code, message } }, { status });
+
+  it("an empty body is not a pairing service, whatever the status", async () => {
+    expect(await failure(() => new Response(null, { status: 404 })))
+      .toEqual({ phase: "failed", message: "The host did not answer as a pairing service (HTTP 404). Check the address." });
+    expect(await failure(() => new Response("", { status: 200 })))
+      .toMatchObject({ message: "The host did not answer as a pairing service (HTTP 200). Check the address." });
+  });
+
+  it("an HTML page or a JSON body without an error is not a pairing service", async () => {
+    const html = await failure(() => new Response("<!doctype html><title>Welcome</title>", { status: 200, headers: { "Content-Type": "text/html" } }));
+    expect(html).toMatchObject({ phase: "failed", message: expect.stringContaining("did not answer as a pairing service (HTTP 200)") });
+    expect(html).not.toMatchObject({ message: expect.stringMatching(/JSON|Unexpected/) });
+    expect(await failure(() => Response.json({ detail: "oops" }, { status: 500 }))).toMatchObject({ message: expect.stringContaining("(HTTP 500)") });
+  });
+
+  it("a wrong code says to check it", async () => {
+    expect(await failure(() => refusal("invalid_code", "that code is not open for pairing", 403)))
+      .toEqual({ phase: "failed", message: "That code is not open for pairing. Check it against the host, or start a new pairing there." });
+  });
+
+  it("an expired pairing says to start a new one", async () => {
+    expect(await failure(() => refusal("expired", "the pairing expired; start a new one on the host", 410)))
+      .toEqual({ phase: "failed", message: "That pairing expired. Start a new one on the host and type its new code." });
+  });
+
+  it("429 keeps Retry-After, and a refusal without a usable one waits a moment", async () => {
+    const limited = (retry: string) => Response.json({ error: { code: "rate_limited", message: "too many pairing attempts; wait and try again" } }, { status: 429, headers: { "Retry-After": retry } });
+    expect(await failure(() => limited("1"))).toEqual({ phase: "failed", message: "Too many codes were tried just now. Wait 1 second and try again.", retryAfter: 1 });
+    expect(await failure(() => limited("soon"))).toEqual({ phase: "failed", message: "Too many codes were tried just now. Wait a moment and try again." });
+  });
+
+  it("an unknown code keeps the daemon's message, and a prototype key is not a known code", async () => {
+    expect(await failure(() => refusal("bad_request", "device_name must be 1 to 64 characters", 400))).toMatchObject({ message: "device_name must be 1 to 64 characters" });
+    expect(await failure(() => refusal("constructor", "", 400))).toMatchObject({ message: "The host refused to pair (constructor)." });
+  });
+
+  it("a host that cannot be reached says so", async () => {
+    expect(await failure(() => Promise.reject(new TypeError("Failed to fetch"))))
+      .toEqual({ phase: "failed", message: "Could not reach the host. Check the address and the network, then try again." });
   });
 });
 

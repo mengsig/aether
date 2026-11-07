@@ -38,14 +38,74 @@ export function normalizeDeviceName(input: string): string {
   return normalized;
 }
 
+// The pairing refusals of docs/remote.md, which aetherd and archond share, as a person reads them.
+const REFUSALS: Readonly<Record<string, string>> = {
+  invalid_code: "That code is not open for pairing. Check it against the host, or start a new pairing there.",
+  expired: "That pairing expired. Start a new one on the host and type its new code.",
+  pairing_closed: "The host has no pairing open. Start one on the host, then type the code it shows.",
+  unavailable: "The host is busy or shutting down. Try again in a moment.",
+};
+
+const own = (table: Readonly<Record<string, string>>, key: string): string | undefined => (Object.hasOwn(table, key) ? table[key] : undefined);
+
+/** The calm sentence for a refusal: a known code's own, else the daemon's own message. */
+function pairingMessage(code: string, message: string, retryAfter?: number): string {
+  if (code === "rate_limited") {
+    const wait = retryAfter === undefined ? "a moment" : retryAfter === 1 ? "1 second" : `${retryAfter} seconds`;
+    return `Too many codes were tried just now. Wait ${wait} and try again.`;
+  }
+  const known = own(REFUSALS, code);
+  if (known !== undefined) return known;
+  return message.trim() || `The host refused to pair (${code}).`;
+}
+
+// How a claimed pairing ends without this device, as `/api/pair/status` reports it.
+const ENDED: Readonly<Record<string, string>> = {
+  rejected: "The host rejected this device.",
+  expired: "The pairing expired before the host confirmed it.",
+  cancelled: "The pairing was cancelled on the host.",
+};
+
+function notPairingService(status: number): Error {
+  return new Error(`The host did not answer as a pairing service (HTTP ${status}). Check the address.`);
+}
+
+function parseRecord(text: string): Json | undefined {
+  if (text.trim() === "") return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    // An HTML page or other text: the caller reports it with the HTTP status.
+    return undefined;
+  }
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? object(value, "pairing response") : undefined;
+}
+
+async function send(fetcher: typeof fetch, path: string, init: RequestInit, signal: AbortSignal): Promise<Response> {
+  try {
+    return await fetcher(path, { ...init, signal });
+  } catch (error) {
+    if (signal.aborted) throw error;
+    throw new Error("Could not reach the host. Check the address and the network, then try again.", { cause: error });
+  }
+}
+
 async function post(fetcher: typeof fetch, path: string, body: Json, signal: AbortSignal, credentials: RequestCredentials): Promise<Json> {
-  const response = await fetcher(path, { method: "POST", credentials, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal });
-  const result = object(await response.json(), "pairing response");
+  invariant(path.startsWith("/"), "pairing posts to a path of this origin");
+  const response = await send(fetcher, path, { method: "POST", credentials, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }, signal);
+  invariant(Number.isSafeInteger(response.status), "a response has an HTTP status");
+  const result = parseRecord(await response.text());
+  if (result === undefined) throw notPairingService(response.status);
   if (response.ok) return result;
-  const error = object(result.error, "pairing error");
+  const refusal = result.error;
+  if (refusal === null || typeof refusal !== "object") throw notPairingService(response.status);
+  const { code, message } = refusal as Json;
+  if (typeof code !== "string" || code === "") throw notPairingService(response.status);
   const retry = Number(response.headers.get("Retry-After"));
   const retryAfter = response.status === 429 && Number.isSafeInteger(retry) && retry > 0 && retry <= 3600 ? retry : undefined;
-  throw new DaemonError(string(error.code, "pairing error code"), String(error.message ?? error.code), retryAfter ? { retry_after: retryAfter } : {});
+  const text = pairingMessage(code, typeof message === "string" ? message : "", retryAfter);
+  throw new DaemonError(code, text, retryAfter ? { retry_after: retryAfter } : {});
 }
 
 function pause(ms: number, signal: AbortSignal): Promise<void> {
@@ -75,7 +135,7 @@ export function aetherPairing(identities: IdentityStore, fetcher: typeof fetch =
       const status = await post(fetcher, "/api/pair/status", { pairing: string(claim.pairing, "claim.pairing") }, signal, "omit");
       const state = string(status.state, "pairing state");
       if (state === "claimed") continue;
-      if (state !== "enrolled") throw new Error(`Pairing ${state}; open a new code on the host`);
+      if (state !== "enrolled") throw new Error(`${own(ENDED, state) ?? `The pairing ended as ${state}.`} Start a new pairing on the host to try again.`);
       const device = object(status.device, "enrolled device");
       if (device.role !== "operator" && device.role !== "observer") throw new Error("Invalid enrolled role");
       await identities.save({ ...identity, deviceId: string(device.id, "device id"), name: string(device.name, "device name"), role: device.role });
