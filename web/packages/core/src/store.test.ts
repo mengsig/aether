@@ -41,6 +41,15 @@ describe("Store", () => {
     expect(store.get().reports[0]?.message).toBe("r10");
   });
 
+  it("carries a report's tone only when one is given", () => {
+    const { store } = manualStore();
+    store.report("Started Builder", "aether:a", undefined, "success");
+    store.report("Could not refresh", "aether:a", "timeout");
+    const [ok, failed] = store.get().reports;
+    expect(ok).toMatchObject({ message: "Started Builder", tone: "success" });
+    expect(failed).not.toHaveProperty("tone");
+  });
+
   it("drops a connection's caches and moves its outbox to review as unknown", () => {
     const submission = { conn: "aether:a", key: "k", command: { cmd: "send_message" }, state: "pending" as const };
     const state: State = { ...INITIAL_STATE, aether: { "aether:a": { ...EMPTY_AETHER, lastSeq: 9, outbox: [submission] }, "aether:b": EMPTY_AETHER } };

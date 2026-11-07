@@ -10,4 +10,6 @@ export const screenTitles: Readonly<Record<string, string>> = {
   "#/github/:host/:owner/:repo/:number": "GitHub",
   "#/learn/sessions/:id": "Session",
   "#/pair/:daemon": "Pairing",
+  "#/setup": "Set up this computer",
+  "#/activity/start": "Activity",
 };

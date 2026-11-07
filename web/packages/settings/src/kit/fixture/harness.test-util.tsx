@@ -20,14 +20,24 @@ export interface Harness {
   unmount(): void;
 }
 
-export async function connected(options: ScriptOptions & { readonly desktop?: DesktopBridge; readonly identities?: IdentityStore } = {}): Promise<Harness> {
+interface HarnessOptions extends ScriptOptions {
+  readonly desktop?: DesktopBridge;
+  readonly identities?: IdentityStore;
+  /** More Aether daemons to connect to after the main one, as a person with two computers has. */
+  readonly others?: readonly { readonly daemon: ScriptedDaemon; readonly label: string }[];
+}
+
+export async function connected(options: HarnessOptions = {}): Promise<Harness> {
   const frames: (() => void)[] = [];
   const daemon = new ScriptedDaemon(options);
   const storage = { get: async () => undefined, set: async () => {} };
   const host = options.desktop ? { kind: "electron" as const, desktop: options.desktop, storage } : { kind: "browser" as const, storage };
   const app = createApp(host, {
     scheduler: (flush) => frames.push(flush),
-    endpoints: [{ daemon: "aether", transport: daemon.transport, target: "faux-aetherd", label: "studio" }],
+    endpoints: [
+      { daemon: "aether", transport: daemon.transport, target: "faux-aetherd", label: "studio" },
+      ...(options.others ?? []).map((other) => ({ daemon: "aether" as const, transport: other.daemon.transport, target: `faux-aetherd-${other.label}`, label: other.label })),
+    ],
     ...(options.identities ? { identities: options.identities } : {}),
   });
   let root: Root | null = null;
