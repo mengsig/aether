@@ -6,7 +6,7 @@ import { Action, RunNote, useRun } from "../controls/kit.tsx";
 import { invariant } from "../fleet/invariant.ts";
 import { AgentPicker, records, ReadNote } from "./shared.tsx";
 export const kinds = ["fact", "decision", "lesson", "constraint", "preference"];
-export function CreateMemory({ conn, open, close, refresh }: { conn: string; open: boolean; close: () => void; refresh: () => Promise<unknown> }) {
+export function CreateMemory({ conn, open, close, discard, refresh }: { conn: string; open: boolean; close: () => void; discard: () => void; refresh: () => Promise<unknown> }) {
   const [text, setText] = useState("");
   const [kind, setKind] = useState("fact");
   const [target, setTarget] = useState("global");
@@ -30,9 +30,9 @@ export function CreateMemory({ conn, open, close, refresh }: { conn: string; ope
     {target === "agent" && <AgentPicker conn={conn} label="Agent" value={agent} onChange={setAgent} disabled={disabled} />}
     <Field label="Tags" hint="Comma separated" value={tags} onChange={e => setTags(e.target.value)} disabled={disabled} />
     <Action conn={conn} command={command} label="Save memory" blocked={text.trim() === "" ? "Enter memory text" : scope === null ? SCOPE_BLOCK[target] ?? null : null} busy={run.status.state === "busy"}
-      onRun={async () => { if (await run.send(command)) { await refresh(); close(); } }} />
+      onRun={async () => { if (await run.send(command)) { await refresh(); discard(); } }} />
     <RunNote status={run.status} />
-    {run.status.state === "failed" && <Button variant="quiet" onClick={close}>Discard</Button>}
+    {run.status.state === "failed" && <Button variant="quiet" onClick={discard}>Discard</Button>}
   </div></Sheet>;
 }
 

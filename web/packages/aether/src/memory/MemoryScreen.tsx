@@ -23,6 +23,8 @@ export default function MemoryScreen({ params }: RouteProps) {
   const [kind, setKind] = useState("all");
   const [forgotten, setForgotten] = useState(false);
   const [open, setOpen] = useState(false);
+  const [draftVersion, setDraftVersion] = useState(0);
+  const discard = () => { setOpen(false); setDraftVersion(version => version + 1); };
   const search = text.trim();
   // A blank text must be omitted: the store orders by FTS rank whenever text is present.
   const command = { cmd: "memories", query: { ...(search === "" ? {} : { text: search }), limit: 100, include_forgotten: forgotten, include_superseded: true,
@@ -57,7 +59,7 @@ export default function MemoryScreen({ params }: RouteProps) {
       {permission.refusal ? <p role="note" className="b3-note">{permission.refusal}</p> : <><ReadNote entry={proposals} retry={refresh} />
         {records<aether.MemoryRecord>(proposals?.value).map(memory => <MemoryRow key={memory.id} conn={conn} memory={memory} proposal refresh={refresh} />)}
         {proposals?.issued && records(proposals.value).length === 0 ? <EmptyState title="No proposals to review" /> : null}</>}
-    </Section><V2Sections conn={conn} known={known} refresh={refresh} />{open && <CreateMemory conn={conn} open close={() => setOpen(false)} refresh={refresh} />}
+    </Section><V2Sections conn={conn} known={known} refresh={refresh} /><CreateMemory key={draftVersion} conn={conn} open={open} close={() => setOpen(false)} discard={discard} refresh={refresh} />
   </div>;
 }
 
