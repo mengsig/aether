@@ -16,6 +16,7 @@ it up to date.
 5. [Installing](#installing)
 6. [Updates](#updates)
 7. [CI](#ci)
+8. [Chatting with an agent](#chatting-with-an-agent)
 
 ## Packages
 
@@ -187,3 +188,38 @@ The workflow's token is read-only except in the publish job, which may write
 release assets. The signing secrets reach only the macOS build step, and only
 on a push to `main`, `next` or a release tag. A pull request, whoever opened
 it, and a manual run, which can name any branch, build unsigned.
+
+## Chatting with an agent
+
+**Start an agent** on the Activity screen starts a **Chat** by default: a
+task-less assistant, started the way the TUI starts one, that gets your first
+message and then waits for the next one after every reply. It stays open until
+you cancel it. A **Task agent** instead works on an objective and ends once it
+is done; an ended agent takes no more messages, and its composer says why and
+offers to wake it (after a failure), start a new chat or open its controls.
+
+The composer sits under the conversation. Enter sends, Shift+Enter adds a
+line, and **Stop** interrupts the running turn without losing the agent's
+context. What you type is kept per daemon and agent for the rest of the
+session (the Steer form and the Inbox's question answers keep theirs too) and
+is cleared only once the daemon confirms delivery.
+
+Typing `/` opens the command menu. Arrow keys move, Tab completes a name and
+then offers its choices, Enter runs, Escape closes; the pointer works too.
+
+| Command | Opens or does |
+| --- | --- |
+| `/settings [page]` | the settings, or one page: connections, devices, remote, providers, notifications |
+| `/usage` | providers, sign-in and limits (Settings, Providers) |
+| `/notifications` | the Inbox: questions, approvals and failures |
+| `/memory` | this daemon's memories |
+| `/report`, `/artifacts`, `/schedules`, `/approvals` | the agent's controls (Records, Schedules, Approvals) |
+| `/doctor` | Settings, Connections |
+| `/activity` | every daemon event as it happens |
+| `/help` | the command palette (Ctrl+K): every screen and its keys |
+| `/mode <name>` | a transcript view mode; `/<name>` toggles that mode with the standard one |
+
+To Archon's orchestrator the menu also offers Archon's own commands
+(`/status`, `/queue`, `/answer`, `/approve`, `/merge` and the rest), which go
+to it as typed. Any other `/line` is sent to the agent unchanged, as the TUI
+sends it.

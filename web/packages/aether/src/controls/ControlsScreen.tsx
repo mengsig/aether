@@ -5,6 +5,7 @@ import { routeHref, selectAgent, selectConnection, useSelector } from "@aether-u
 import type { aether, ConnId, RouteProps } from "@aether-ui/protocol";
 import { Badge, EmptyState, Skeleton, StatusPill, Tabs } from "@aether-ui/ui";
 import { useMemo, useState } from "react";
+import { draftKey, useDraft } from "../composer/drafts.ts";
 import { invariant } from "../fleet/invariant.ts";
 import { agentStatus } from "../fleet/rows.ts";
 import { ApprovalsPanel } from "./approvals.tsx";
@@ -16,15 +17,17 @@ import { RecordsPanel } from "./records.tsx";
 import { SchedulesPanel } from "./schedules.tsx";
 
 function SteerPanel({ conn, agent }: { readonly conn: ConnId; readonly agent: aether.Agent }) {
+  invariant(agent.id !== "", "the Steer form names its agent");
   const run = useRun(conn);
-  const [text, setText] = useState("");
+  const draft = useDraft(draftKey(conn, agent.id, "message"));
   const [subtree, setSubtree] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const send = async () => {
+    const text = draft.text;
     try {
       const command = sendCommand(agent.id, text, subtree);
       setProblem(null);
-      if (await run.send(command, "Sent")) setText("");
+      if (await run.send(command, "Sent")) draft.delivered(text);
     } catch (error) {
       if (!(error instanceof DraftError)) throw error;
       setProblem(error.message);
@@ -34,7 +37,7 @@ function SteerPanel({ conn, agent }: { readonly conn: ConnId; readonly agent: ae
     <Section title="Steer" hint="A message reaches the agent at its next turn; with its delegates, each of them gets it too.">
       <label className="b3-field">
         <span className="ui-field-label">Message</span>
-        <textarea className="b3-textarea" rows={3} value={text} onChange={(event) => setText(event.target.value)} />
+        <textarea className="b3-textarea" rows={3} value={draft.text} onChange={(event) => draft.set(event.target.value)} />
       </label>
       <div className="b3-row">
         <label className="b3-check">

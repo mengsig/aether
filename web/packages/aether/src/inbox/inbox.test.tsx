@@ -11,7 +11,7 @@ import { describeCommand } from "./describe.ts";
 import { InboxScreen } from "./InboxScreen.tsx";
 
 let current: Harness | null = null;
-afterEach(() => { current?.unmount(); current = null; });
+afterEach(() => { current?.unmount(); current = null; sessionStorage.clear(); });
 
 const ATTENTION = {
   questions: [{ agent: CHILD_ID, agent_name: "changelog-writer", question: "Should the 1.3 notes mention the fleet redesign?", question_seq: 7, asked_at: stamp(20) }],
@@ -56,6 +56,26 @@ describe("InboxScreen", () => {
     await type(h, openDialog(), "Reason (optional)", "Not before the tag");
     await click(h, openDialog(), "Deny");
     expect(h.daemon.commands("resolve_approval")[1]).toMatchObject({ id: "apr_1", decision: "denied", note: "Not before the tag" });
+  });
+
+  test("an unsent answer is kept per question across leaving the inbox, until it is delivered", async () => {
+    const first = await open({ script: { reply_to_question: () => "hold" } });
+    await type(first.h, first.root, "Answer changelog-writer", "Yes, one line.");
+    await click(first.h, first.root, "Send answer");
+    first.h.daemon.drop();
+    await first.h.settle();
+    expect(first.root.querySelector('[data-state="unconfirmed"]')).not.toBeNull();
+    first.h.unmount();
+    const back = await open();
+    const field = back.root.querySelector("textarea");
+    expect(field?.value).toBe("Yes, one line.");
+    await click(back.h, back.root, "Send answer");
+    expect(field?.value).toBe("");
+    await type(back.h, back.root, "Answer changelog-writer", "Only for question 7");
+    back.h.unmount();
+    const other = { ...ATTENTION, questions: [{ ...ATTENTION.questions?.[0], question_seq: 8 }] } as typeof ATTENTION;
+    current = (await open({ attention: other })).h;
+    expect(document.querySelector("textarea")?.value).toBe("");
   });
 
   test("a stopped agent links to its controls and its conversation", async () => {

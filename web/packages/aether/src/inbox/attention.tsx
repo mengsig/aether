@@ -5,7 +5,8 @@ import { routeHref, selectAgents, selectAttention, useSelector } from "@aether-u
 import type { ConnId } from "@aether-ui/protocol";
 import { aether } from "@aether-ui/protocol";
 import { Badge } from "@aether-ui/ui";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import { draftKey, useDraft } from "../composer/drafts.ts";
 import { invariant } from "../fleet/invariant.ts";
 import { Action, RunNote, Section, useRun } from "../controls/kit.tsx";
 
@@ -15,8 +16,10 @@ function when(iso: string): string {
 }
 
 function Question({ conn, question }: { readonly conn: ConnId; readonly question: aether.PendingQuestion }) {
+  invariant(Number.isSafeInteger(question.question_seq), "a question is numbered within its agent");
   const run = useRun(conn);
-  const [answer, setAnswer] = useState("");
+  const draft = useDraft(draftKey(conn, question.agent, `question:${question.question_seq}`));
+  const answer = draft.text;
   const name = question.agent_name ?? question.agent;
   const command = aether.replyToQuestion({ to: question.agent, question_seq: question.question_seq, content: answer.trim() });
   return (
@@ -28,11 +31,11 @@ function Question({ conn, question }: { readonly conn: ConnId; readonly question
       <p className="b3-prose">{question.question}</p>
       <label className="b3-field">
         <span className="ui-field-label">Answer {name}</span>
-        <textarea className="b3-textarea" rows={2} value={answer} onChange={(event) => setAnswer(event.target.value)} />
+        <textarea className="b3-textarea" rows={2} value={answer} onChange={(event) => draft.set(event.target.value)} />
       </label>
       <div className="b3-row">
         <Action conn={conn} command={command} label="Send answer" variant="primary" busy={run.status.state === "busy"} blocked={answer.trim() === "" ? "Write an answer first" : null}
-          onRun={async () => { if (await run.send(command, "Answer sent")) setAnswer(""); }} />
+          onRun={async () => { if (await run.send(command, "Answer sent")) draft.delivered(answer); }} />
       </div>
       <RunNote status={run.status} />
     </li>

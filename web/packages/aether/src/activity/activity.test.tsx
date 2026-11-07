@@ -17,6 +17,7 @@ const script = {
   complete_path: () => ({ tag: "path_completions", data: { entries: [{ path: "/repo", name: "repo" }], truncated: false } }),
   create_agent: () => ({ tag: "agent", data: agent }),
   create_task: () => ({ tag: "task", data: { id: "task_1" } }),
+  send_message: () => ({ tag: "message_sent", data: { seq: 1 } }),
 };
 
 test("shows live events, backward store pages, filters, and agent links", async () => {
@@ -42,6 +43,7 @@ test("start sheet reads models and workspaces, completes and validates path, sho
   await click(h, root, "Start an agent"); await h.settle();
   expect(h.daemon.commands("list_models")).toHaveLength(1);
   expect(h.daemon.commands("list_workspaces")).toHaveLength(1);
+  await click(h, document.body, "Task agent");
   await type(h, document.body, "Objective", "Build it");
   await type(h, document.body, "Name", "Builder");
   await type(h, document.body, "Workspace", "/re");
@@ -62,11 +64,43 @@ test("start sheet reads models and workspaces, completes and validates path, sho
   expect(h.daemon.commands("create_task")[0]).toMatchObject({ objective: "Build it", owner: agent.id, priority: "normal" });
 });
 
+/** Validates /repo in the open start sheet, as a person picks a workspace. */
+async function pickRepo(): Promise<void> {
+  await type(h, document.body, "Workspace", "/repo");
+  await click(h, document.body, "Validate workspace"); await h.settle(); await h.settle();
+}
+
+test("a chat is the default start: a task-less interactive assistant, then its first message, then its conversation", async () => {
+  h = await connected({ agents: [agent], script });
+  const root = await h.mount(<ActivityScreen />);
+  await click(h, root, "Start an agent"); await h.settle();
+  expect(document.body.textContent).toContain("A chat stays open");
+  await type(h, document.body, "First message", "  What changed in the parser?  ");
+  await pickRepo();
+  await click(h, document.body, "Start chat"); await h.settle();
+  const [create] = h.daemon.commands("create_agent");
+  expect(create).toMatchObject({ role: "assistant", name: "assistant", start: true, scope: { workspace_root: "/repo" }, config: { effort: "medium", interactive: true } });
+  expect(create).not.toHaveProperty("objective");
+  expect(h.daemon.commands("send_message")).toEqual([expect.objectContaining({ cmd: "send_message", to: agent.id, content: "What changed in the parser?" })]);
+  expect(window.location.hash).toBe(`#/agents/${encodeURIComponent(h.conn)}/${agent.id}`);
+});
+
+test("a chat whose create fails sends no message", async () => {
+  h = await connected({ agents: [agent], script: { ...script, create_agent: () => ({ code: "invalid_request", message: "No such model" }) } });
+  const root = await h.mount(<ActivityScreen />);
+  await click(h, root, "Start an agent");
+  await type(h, document.body, "First message", "Hello");
+  await pickRepo();
+  await click(h, document.body, "Start chat"); await h.settle();
+  expect(document.body.textContent).toContain("No such model");
+  expect(h.daemon.commands("send_message")).toHaveLength(0);
+});
+
 test("observer start operations are disabled with reasons", async () => {
   h = await connected({ role: "observer", agents: [agent], script });
   const root = await h.mount(<ActivityScreen />);
   await click(h, root, "Start an agent");
-  for (const label of ["Start agent", "Complete path", "Validate workspace"]) expect(buttonNamed(document.body, label).disabled).toBe(true);
+  for (const label of ["Start chat", "Complete path", "Validate workspace"]) expect(buttonNamed(document.body, label).disabled).toBe(true);
   expect(document.body.textContent).toContain("Observer devices cannot change daemon state");
   await click(h, document.body, "Existing agent task");
   expect(buttonNamed(document.body, "Create task").disabled).toBe(true);
@@ -113,16 +147,16 @@ test("workspace rejection blocks creation and changing the path invalidates prio
   h = await connected({ script: { ...script, validate_workspace: () => ({ tag: "workspace_validation", data: { valid: false, reason: "Folder unavailable" } }) } });
   const root = await h.mount(<ActivityScreen />);
   await click(h, root, "Start an agent");
-  await type(h, document.body, "Objective", "Build");
+  await type(h, document.body, "First message", "Build");
   await type(h, document.body, "Workspace", "/missing");
   await click(h, document.body, "Validate workspace"); await h.settle();
   expect(document.body.textContent).toContain("Folder unavailable");
-  expect(buttonNamed(document.body, "Start agent").disabled).toBe(true);
+  expect(buttonNamed(document.body, "Start chat").disabled).toBe(true);
   expect(h.daemon.commands("get_git_summary")).toHaveLength(0);
   h.daemon.script = script;
   await type(h, document.body, "Workspace", "/repo");
   await click(h, document.body, "Validate workspace"); await h.settle();
-  expect(buttonNamed(document.body, "Start agent").disabled).toBe(false);
+  expect(buttonNamed(document.body, "Start chat").disabled).toBe(false);
   await type(h, document.body, "Workspace", "/another");
-  expect(buttonNamed(document.body, "Start agent").disabled).toBe(true);
+  expect(buttonNamed(document.body, "Start chat").disabled).toBe(true);
 });
