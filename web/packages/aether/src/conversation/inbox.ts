@@ -138,15 +138,17 @@ export function withDeliveries(base: Deliveries | null, read: { readonly items: 
   return { bySeq, cursor, covers: Math.max(base?.covers ?? 0, read.covers) };
 }
 
-/** The lowest and highest `[inbox n]` seq in a turn's text, or null for none. */
+/** The lowest and highest `[inbox n]` seq in a turn's text, or null for none; a seq no inbox could hold is text. */
 export function seqRange(text: string): readonly [low: number, high: number] | null {
   let range: [number, number] | null = null;
   for (const line of text.split("\n")) {
     const seq = HEADER.exec(line)?.[1];
     if (seq === undefined) continue;
     const n = Number(seq);
+    if (!Number.isSafeInteger(n)) continue;
     range = range === null ? [n, n] : [Math.min(range[0], n), Math.max(range[1], n)];
   }
   invariant(range === null || range[0] <= range[1], "a seq range is ordered");
+  invariant(range === null || Number.isSafeInteger(range[1]), "a seq range holds only whole seqs");
   return range;
 }

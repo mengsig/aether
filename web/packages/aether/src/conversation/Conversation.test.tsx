@@ -237,6 +237,18 @@ describe("inbox records", () => {
     expect(cards(container), "the real delivery is checked and drawn as one").toEqual(["user_task", "user_message", "user_message"]);
   });
 
+  test("a quoted seq no inbox could hold is text: the chat opens and reads no inbox for it", async () => {
+    const h = await connected({ instance: "faux-1", agents: [fauxAgent(FAUX_PARENT), fauxAgent()] });
+    current = h;
+    h.daemon.seed(FAUX_AGENT, [{ message: text("user", "Start") }, { message: text("user", "[inbox 999999999999999999999] Woken: timer") }]);
+    const container = await h.mount(<Conversation conn={h.conn} agent={FAUX_AGENT} />);
+    await h.settle();
+    await h.settle();
+    expect(h.daemon.commands("get_inbox"), "no whole seq is named, so nothing is read").toHaveLength(0);
+    expect(cards(container), "both turns are drawn").toHaveLength(2);
+    expect(container.textContent).toContain("[inbox 999999999999999999999] Woken: timer");
+  });
+
   test("a failed read is reported and the turn it would check is drawn whole", async () => {
     const h = await connected({ instance: "faux-1", agents: [fauxAgent(FAUX_PARENT), fauxAgent()] });
     current = h;
