@@ -219,6 +219,20 @@ test("a store that cannot keep the outcome is said in the sheet, which still nev
   expect(h.daemon.commands("create_agent")).toHaveLength(1);
 });
 
+test("a store that cannot clear the kept copy still opens the chat a delivered first message started", async () => {
+  window.location.hash = "";
+  h = await connected({ agents: [agent], script: { ...script, send_message: () => ({ tag: "message_sent", data: { seq: 1 } }) } });
+  const removeItem = vi.spyOn(sessionStorage, "removeItem").mockImplementation(() => { throw new DOMException("denied", "SecurityError"); });
+  try {
+    await startChat("Hello");
+  } finally {
+    removeItem.mockRestore();
+  }
+  expect(window.location.hash, "the delivered start is finished").toBe(chatHash());
+  expect(h.app.store.get().reports.map((r) => r.message)).toContain("The first message's kept copy could not be cleared (denied); the chat may offer it again.");
+  expect(h.daemon.commands("create_agent")).toHaveLength(1);
+});
+
 test("observer start operations are disabled with reasons", async () => {
   h = await connected({ role: "observer", agents: [agent], script });
   const root = await h.mount(<ActivityScreen />);

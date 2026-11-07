@@ -16,14 +16,29 @@ export function draftKey(conn: ConnId, agent: string, slot: string): string {
   return PREFIX + JSON.stringify([conn, agent, slot]);
 }
 
-/** The stored draft, or "" when there is none or what is stored is not a draft (it is then removed). */
-export function readDraft(key: string): string {
+/** One sessionStorage call; a full or disabled store is an expected failure, returned as its words. */
+export function sessionStored<T>(call: (store: Storage) => T): { readonly value: T } | { readonly problem: string } {
+  try {
+    return { value: call(sessionStorage) };
+  } catch (error) {
+    if (!(error instanceof DOMException)) throw error;
+    return { problem: error.message || error.name };
+  }
+}
+
+/**
+ * The stored draft, "" when there is none or what is stored is not a draft (it is then removed), or
+ * null when the store cannot be read.
+ */
+export function readDraft(key: string): string | null {
   invariant(key.startsWith(PREFIX), "drafts are read by a key from draftKey");
-  const raw = sessionStorage.getItem(key);
-  if (raw === null) return "";
-  const text = (parsedStored(raw) as { text?: unknown } | null)?.text;
+  const raw = sessionStored((store) => store.getItem(key));
+  if ("problem" in raw) return null;
+  if (raw.value === null) return "";
+  const text = (parsedStored(raw.value) as { text?: unknown } | null)?.text;
   if (typeof text === "string" && text.length <= DRAFT_LIMIT) return text;
-  sessionStorage.removeItem(key);
+  // Not a draft of ours: dropping it is best effort, as it is never shown either way.
+  sessionStored((store) => store.removeItem(key));
   return "";
 }
 
@@ -38,33 +53,43 @@ export function parsedStored(raw: string): unknown {
   }
 }
 
-export function writeDraft(key: string, text: string): void {
+/** Stores the draft; why the store could not keep it, in words, or null. */
+export function writeDraft(key: string, text: string): string | null {
   invariant(key.startsWith(PREFIX), "drafts are written by a key from draftKey");
   invariant(text.length <= DRAFT_LIMIT, "a draft fits the store's bound");
-  if (text === "") sessionStorage.removeItem(key);
-  else sessionStorage.setItem(key, JSON.stringify({ text }));
+  const wrote = sessionStored((store) => (text === "" ? store.removeItem(key) : store.setItem(key, JSON.stringify({ text }))));
+  return "problem" in wrote ? `This draft is not kept if you leave (${wrote.problem})` : null;
 }
 
 export interface Draft {
   readonly text: string;
+  /** Why the draft lives only on this screen (the store cannot keep it), or null. */
+  readonly problem: string | null;
   readonly set: (text: string) => void;
   /** Clears the draft if it still reads `sent`; text typed since the send is kept. */
   readonly delivered: (sent: string) => void;
 }
 
+interface Held { readonly key: string; readonly text: string; readonly problem: string | null }
+
+function heldFor(key: string): Held {
+  const text = readDraft(key);
+  return text === null ? { key, text: "", problem: "This draft is not kept if you leave (the store cannot be read)" } : { key, text, problem: null };
+}
+
 /** A draft that survives unmounting; it follows `key` when the screen switches agent or question. */
 export function useDraft(key: string): Draft {
-  const [draft, setDraft] = useState(() => ({ key, text: readDraft(key) }));
-  const current = draft.key === key ? draft : { key, text: readDraft(key) };
+  const [draft, setDraft] = useState(() => heldFor(key));
+  const current = draft.key === key ? draft : heldFor(key);
   if (current !== draft) setDraft(current);
+  const shown = current.text;
   const set = useCallback((text: string) => {
-    writeDraft(key, text);
-    setDraft({ key, text });
+    setDraft({ key, text, problem: writeDraft(key, text) });
   }, [key]);
   const delivered = useCallback((sent: string) => {
-    if (readDraft(key) !== sent) return;
-    writeDraft(key, "");
-    setDraft({ key, text: "" });
-  }, [key]);
-  return { text: current.text, set, delivered };
+    // Another screen may have changed the stored draft; without a readable store, this screen's is it.
+    if ((readDraft(key) ?? shown) !== sent) return;
+    setDraft({ key, text: "", problem: writeDraft(key, "") });
+  }, [key, shown]);
+  return { text: current.text, problem: current.problem, set, delivered };
 }

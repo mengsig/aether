@@ -1,6 +1,7 @@
 // What became of a new chat's undelivered first message, said the same way in the start sheet and
 // in the chat itself, with a retry that sends the saved text as typed to that same chat.
 
+import { useApp } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
 import { aether } from "@aether-ui/protocol";
 import { Button } from "@aether-ui/ui";
@@ -40,6 +41,7 @@ export function UndeliveredFirst({ conn, agent }: { readonly conn: ConnId; reado
   const [record, setRecord] = useUndelivered(key);
   const [keepProblem, setKeepProblem] = useState<string | null>(null);
   const first = useFirstSend(conn);
+  const app = useApp();
   if (record === null) return null;
   const resend = async () => {
     const result = await first.send(agent, record.text);
@@ -48,7 +50,8 @@ export function UndeliveredFirst({ conn, agent }: { readonly conn: ConnId; reado
     setKeepProblem(result.outcome === "sent" ? null : result.keepProblem);
   };
   const dismiss = () => {
-    forgetUndelivered(key);
+    const problem = forgetUndelivered(key);
+    if (problem !== null) app.store.report(problem, conn);
     setRecord(null);
   };
   return (

@@ -118,6 +118,7 @@ export function Composer({ conn, agent, commands }: ComposerProps) {
         </div>
       </div>
       {problem ? <p className="b3-note" role="alert" data-state="failed">{problem}</p> : null}
+      {draft.problem ? <p className="b3-note" data-state="failed">{draft.problem}</p> : null}
       <RunNote status={run.status} />
     </form>
   );

@@ -4,7 +4,7 @@
 
 import type { aether } from "@aether-ui/protocol";
 import { act } from "react";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { controlsScript } from "../controls/fixture/demo.ts";
 import type { Answer, ScriptOptions } from "../controls/fixture/daemon.ts";
 import { buttonNamed, click, connected, type Harness } from "../controls/fixture/harness.test-util.tsx";
@@ -194,5 +194,18 @@ describe("Chat after its start", () => {
     const { root } = await open(agent);
     expect(root.querySelector('[aria-label="First message not delivered"]')).toBeNull();
     expect(sessionStorage.getItem(key)).toBeNull();
+  });
+
+  test("a store that cannot be read shows no first message and leaves the chat working", async () => {
+    const agent = fauxAgent(undefined, { status: { state: "waiting", condition: { on: "inbox" } } });
+    const getItem = vi.spyOn(sessionStorage, "getItem").mockImplementation(() => { throw new DOMException("denied", "SecurityError"); });
+    try {
+      const { root } = await open(agent);
+      expect(root.querySelector('[aria-label="First message not delivered"]')).toBeNull();
+      expect(root.querySelector("textarea"), "the composer is there").not.toBeNull();
+      expect(root.textContent, "its draft is said to live only here").toContain("This draft is not kept if you leave");
+    } finally {
+      getItem.mockRestore();
+    }
   });
 });
