@@ -76,8 +76,10 @@ export function SteerItem({ access, item, active, disabled, policy, onDone }: { 
   const [draft, setDraft] = useState<Draft>(EMPTY);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [aetherId, setAetherId] = useState("");
   const connections = useSelector(selectConnections);
-  const aetherConnection = Object.values(connections).find((connection) => connection.daemon === "aether" && connection.state === "ready");
+  const aethers = Object.values(connections).filter((connection) => connection.daemon === "aether" && connection.state === "ready");
+  const aetherConnection = aethers.length === 1 ? aethers[0] : aethers.find((connection) => connection.id === aetherId);
   const modelAccess: ArchonAccess = { ...access, conn: aetherConnection?.id ?? "", ready: Boolean(aetherConnection) };
   const models = useRead<aether.ModelInfo[]>(modelAccess, open && aetherConnection ? { cmd: "list_models" } : null, ["models"]);
   const choices = models.data && policy ? availableModels(models.data, policy) : [];
@@ -90,6 +92,7 @@ export function SteerItem({ access, item, active, disabled, policy, onDone }: { 
     event.preventDefault();
     const invalid = validation(draft);
     if (invalid) return setError(invalid);
+    if (draft.model && !choices.some((model) => nameOf(model.model) === draft.model)) return setError("Choose an available model.");
     if (item.state.state === "queued" && (draft.model || draft.effort) && !item.model_plan[draft.stage]?.length) {
       return setError("Choose a stage with a model plan to update.");
     }
@@ -113,8 +116,12 @@ export function SteerItem({ access, item, active, disabled, policy, onDone }: { 
   return <><Settings item={item} />{active ? <Button disabled={disabled} title={access.refusal ?? (!access.live ? "Steering requires protocol 24" : undefined)} onClick={() => setOpen(true)}>Steer item</Button> : null}
     <Dialog open={open} onClose={close} title="Steer item" description="Notes reach active work; model and effort changes may apply to future stages. For a queued stage they update every parallel slot.">
       <form className="queue-form" onSubmit={(event) => void submit(event)} noValidate>
+        {aethers.length > 1 ? <label className="queue-select"><span className="ui-field-label">Aether connection</span>
+          <select className="ui-field-input" value={aetherId} onChange={(event) => { setAetherId(event.target.value); set({ model: "" }); }}>
+            <option value="">Choose a connection</option>{aethers.map((connection) => <option key={connection.id} value={connection.id}>{connection.label}</option>)}
+          </select></label> : null}
         <Controls item={item} draft={draft} set={set} choices={choices} efforts={efforts} policyReady={Boolean(policy)} />
-        {!aetherConnection ? <p>Aether is not connected; model choices are unavailable.</p> : null}
+        {!aetherConnection ? <p>{aethers.length > 1 ? "Choose an Aether connection to see its models." : "Aether is not connected; model choices are unavailable."}</p> : null}
         {models.error ? <p role="alert">Model choices unavailable: {models.error}</p> : null}
         {error ? <p role="alert" className="queue-error">{error}</p> : null}
         <div className="queue-form-actions"><Button onClick={close}>Cancel</Button><Button type="submit" variant="primary" disabled={busy || disabled}>Apply changes</Button></div>
