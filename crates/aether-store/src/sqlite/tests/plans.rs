@@ -38,22 +38,21 @@ fn under_subquery(steps: &[(i64, i64, String)], step: &(i64, i64, String)) -> bo
 #[test]
 fn full_agent_and_task_listings_stream_in_creation_order() {
     let store = SqliteStore::open_in_memory().expect("open");
-    let live = AgentFilter {
-        live_only: true,
-        ..Default::default()
-    };
-    for filter in [AgentFilter::default(), live] {
-        let mut args = Vec::new();
-        let steps = plan(&store, &agent_list_sql(&filter, &mut args), &args);
-        assert!(
-            steps.iter().any(|s| s.2.contains("INDEX agents_created")),
-            "{steps:?}"
-        );
-        assert!(
-            !steps.iter().any(|s| s.2.contains("TEMP B-TREE")),
-            "{steps:?}"
-        );
-    }
+    // The live agents alone are sought by status and sorted, see below.
+    let mut args = Vec::new();
+    let steps = plan(
+        &store,
+        &agent_list_sql(&AgentFilter::default(), &mut args),
+        &args,
+    );
+    assert!(
+        steps.iter().any(|s| s.2.contains("INDEX agents_created")),
+        "{steps:?}"
+    );
+    assert!(
+        !steps.iter().any(|s| s.2.contains("TEMP B-TREE")),
+        "{steps:?}"
+    );
     let mut args = Vec::new();
     let steps = plan(
         &store,
@@ -269,5 +268,403 @@ fn a_runs_receipt_page_does_not_walk_every_other_runs_receipts() {
     assert!(
         steps < quiet_steps * 2,
         "other runs' receipts cost {steps} steps, against {quiet_steps} without them"
+    );
+}
+
+#[test]
+fn the_live_agents_are_sought_by_status_not_scanned() {
+    // `status` lists them on every poll: `NOT IN` over the terminal statuses
+    // walked every agent the store ever kept. Sorting the few live ones is cheap.
+    let store = SqliteStore::open_in_memory().expect("open");
+    let live = AgentFilter {
+        live_only: true,
+        ..Default::default()
+    };
+    let blocked = AgentFilter {
+        statuses: vec![aether_core::agent::AgentStatusKind::Blocked],
+        ..live.clone()
+    };
+    for filter in [live, blocked] {
+        let mut args = Vec::new();
+        let steps = plan(&store, &agent_list_sql(&filter, &mut args), &args);
+        assert!(
+            steps
+                .iter()
+                .any(|s| s.2.contains("INDEX agents_status_id (status=?)")),
+            "{steps:?}"
+        );
+        assert!(
+            !steps.iter().any(|s| s.2.starts_with("SCAN agents")),
+            "{steps:?}"
+        );
+    }
+}
+
+#[test]
+fn a_runs_receipts_are_read_from_the_run_and_type_index_in_order() {
+    let store = SqliteStore::open_in_memory().expect("open");
+    let filter = EventFilter {
+        run: Some(RunId::new()),
+        types: vec!["agent.usage_updated".into()],
+        ..Default::default()
+    };
+    for (ascending, before) in [(false, None), (false, Some(900)), (true, None)] {
+        let mut args = Vec::new();
+        let predicate = crate::sqlite::event_queries::filter_predicate(&filter, &mut args);
+        let sql = crate::sqlite::event_queries::page_sql(
+            "seq, body",
+            &predicate,
+            0,
+            before,
+            256,
+            ascending,
+            &mut args,
+        );
+        let steps = plan(&store, &sql, &args);
+        assert!(
+            steps
+                .iter()
+                .any(|s| s.2.contains("INDEX events_run_type (run=? AND type=?")),
+            "{steps:?}"
+        );
+        assert!(
+            !steps.iter().any(|s| s.2.contains("TEMP B-TREE")),
+            "{steps:?}"
+        );
+    }
+}
+
+fn no_scan_or_sort(steps: &[(i64, i64, String)]) {
+    assert!(
+        steps
+            .iter()
+            .all(|s| !s.2.starts_with("SCAN a") && !s.2.starts_with("SCAN agents")),
+        "{steps:?}"
+    );
+    assert!(
+        steps.iter().all(|s| !s.2.contains("TEMP B-TREE")),
+        "{steps:?}"
+    );
+}
+
+#[test]
+fn the_fleet_and_run_totals_are_one_row_read_by_key() {
+    use crate::sqlite::usage_totals::TOTALS_COLUMNS;
+    let store = SqliteStore::open_in_memory().expect("open");
+    let args: Arguments = vec![Box::new(String::new())];
+    let sql = format!("SELECT {TOTALS_COLUMNS} FROM usage_totals WHERE scope = ?1");
+    let steps = plan(&store, &sql, &args);
+    assert_eq!(
+        steps.iter().map(|s| s.2.as_str()).collect::<Vec<_>>(),
+        ["SEARCH usage_totals USING PRIMARY KEY (scope=?)"]
+    );
+    let args: Arguments = vec![Box::new(RunId::new().to_string())];
+    let steps = plan(
+        &store,
+        "SELECT MIN(created_at) FROM agent_usage WHERE run = ?1",
+        &args,
+    );
+    assert_eq!(
+        steps.iter().map(|s| s.2.as_str()).collect::<Vec<_>>(),
+        ["SEARCH agent_usage USING COVERING INDEX agent_usage_run (run=?)"]
+    );
+}
+
+#[test]
+fn a_members_usage_is_read_by_key() {
+    use crate::sqlite::usage_totals::USAGE_COLUMNS;
+    let store = SqliteStore::open_in_memory().expect("open");
+    let args: Arguments = vec![Box::new(AgentId::new().to_string())];
+    let sql =
+        format!("SELECT u.agent_id, {USAGE_COLUMNS} FROM agent_usage u WHERE u.agent_id = ?1");
+    let steps = plan(&store, &sql, &args);
+    assert_eq!(
+        steps.iter().map(|s| s.2.as_str()).collect::<Vec<_>>(),
+        ["SEARCH u USING PRIMARY KEY (agent_id=?)"]
+    );
+}
+
+fn tree_query(
+    run: Option<RunId>,
+    root: Option<AgentId>,
+    include_archived: bool,
+) -> crate::TreeQuery {
+    crate::TreeQuery {
+        run,
+        root,
+        include_archived,
+        role_prefix: None,
+        after: Some(AgentId::new()),
+        limit: crate::TREE_PAGE_MAX,
+    }
+}
+
+fn boxed(args: Vec<String>) -> Arguments {
+    args.into_iter()
+        .map(|arg| Box::new(arg) as Box<dyn rusqlite::ToSql>)
+        .collect()
+}
+
+/// Whether a step seeks `alias` by `index`, read from the index alone or not.
+fn seeks(steps: &[(i64, i64, String)], alias: &str, index: &str) -> bool {
+    steps.iter().any(|s| {
+        s.2 == format!("SEARCH {alias} USING INDEX {index}")
+            || s.2 == format!("SEARCH {alias} USING COVERING INDEX {index}")
+    })
+}
+
+#[test]
+fn a_tree_page_seeks_live_agents_by_status_and_finished_ones_by_index_order() {
+    use crate::sqlite::tree_pages::{pin_args, pin_sql, walk_args, walk_sql};
+    let store = SqliteStore::open_in_memory().expect("open");
+    let cases = [
+        (None, false, "agents_archived_id (archived=? AND id<?)"),
+        (
+            Some(RunId::new()),
+            false,
+            "agents_run_archived_id (run=? AND archived=? AND id<?)",
+        ),
+        (Some(RunId::new()), true, "agents_run_id (run=? AND id<?)"),
+    ];
+    for (run, include_archived, finished_index) in cases {
+        let query = tree_query(run, None, include_archived);
+        let (pin, _) = pin_sql(&query);
+        let steps = plan(&store, &pin, &boxed(pin_args(&query, "running", 501)));
+        assert!(
+            seeks(&steps, "a", "agents_status_id (status=?)"),
+            "{steps:?}"
+        );
+        no_scan_or_sort(&steps);
+        let (walk, checked) = walk_sql(&query);
+        assert!(!checked, "the index applies every filter");
+        let steps = plan(&store, &walk, &boxed(walk_args(&query, 501)));
+        assert!(seeks(&steps, "a", finished_index), "{steps:?}");
+        no_scan_or_sort(&steps);
+    }
+    let mut roles = tree_query(None, None, false);
+    roles.role_prefix = Some("rev".into());
+    let (walk, checked) = walk_sql(&roles);
+    assert!(checked, "a role is checked row by row, within the budget");
+    let steps = plan(&store, &walk, &boxed(walk_args(&roles, 4000)));
+    assert!(
+        seeks(&steps, "a", "agents_archived_id (archived=? AND id<?)"),
+        "{steps:?}"
+    );
+    no_scan_or_sort(&steps);
+}
+
+#[test]
+fn a_rooted_tree_page_walks_the_subtree_down_the_closure_key() {
+    use crate::sqlite::tree_pages::{ancestors_sql, pin_args, pin_sql, walk_args, walk_sql};
+    let store = SqliteStore::open_in_memory().expect("open");
+    let query = tree_query(Some(RunId::new()), Some(AgentId::new()), false);
+    let (walk, checked) = walk_sql(&query);
+    assert!(checked, "under a root every filter is checked row by row");
+    let steps = plan(&store, &walk, &boxed(walk_args(&query, 4000)));
+    assert!(
+        steps
+            .iter()
+            .any(|s| s.2 == "SEARCH t USING PRIMARY KEY (ancestor=? AND descendant<?)"),
+        "{steps:?}"
+    );
+    no_scan_or_sort(&steps);
+    assert!(
+        steps.iter().all(|s| !s.2.starts_with("SCAN t")),
+        "{steps:?}"
+    );
+    let (pin, _) = pin_sql(&query);
+    let steps = plan(&store, &pin, &boxed(pin_args(&query, "running", 4000)));
+    assert!(
+        seeks(&steps, "a", "agents_status_id (status=?)"),
+        "{steps:?}"
+    );
+    assert!(
+        steps.iter().any(|s| s.2.starts_with("SEARCH s ")
+            && s.2.contains("descendant=?")
+            && s.2.contains("ancestor=?")),
+        "the root is checked by key, not by walking its subtree: {steps:?}"
+    );
+    no_scan_or_sort(&steps);
+    let (above, mut args) = ancestors_sql(&query);
+    args.push("[]".to_owned());
+    args.push("1000".to_owned());
+    let steps = plan(&store, &above, &boxed(args));
+    assert!(
+        steps
+            .iter()
+            .any(|s| s.2 == "SEARCH c USING INDEX sqlite_autoindex_agents_1 (id=?)"),
+        "{steps:?}"
+    );
+    no_scan_or_sort(&steps);
+}
+
+/// Whether `alias` is read, and only ever looked up by a key that binds its id.
+fn keyed_by_id(steps: &[(i64, i64, String)], alias: &str) -> bool {
+    let reads: Vec<&str> = steps
+        .iter()
+        .map(|s| s.2.as_str())
+        .filter(|d| {
+            *d == format!("SCAN {alias}")
+                || d.starts_with(&format!("SCAN {alias} "))
+                || d.starts_with(&format!("SEARCH {alias} "))
+        })
+        .collect();
+    !reads.is_empty()
+        && reads
+            .iter()
+            .all(|d| d.starts_with("SEARCH") && (d.contains("(id=?)") || d.contains(" id=?)")))
+}
+
+/// Each step up looks the parent up by id, never a range of the agents a filter keeps
+/// as the outer loop: that would read the fleet once per ancestor.
+#[test]
+fn a_page_climbs_to_its_ancestors_by_key_under_every_filter() {
+    use crate::sqlite::tree_pages::ancestors_sql;
+    let store = SqliteStore::open_in_memory().expect("open");
+    let mut shapes = 0;
+    for root in [None, Some(AgentId::new())] {
+        for run in [None, Some(RunId::new())] {
+            for include_archived in [false, true] {
+                for role_prefix in [None, Some("review".to_owned())] {
+                    let query = crate::TreeQuery {
+                        role_prefix,
+                        ..tree_query(run, root, include_archived)
+                    };
+                    let (above, mut args) = ancestors_sql(&query);
+                    args.push("[]".to_owned());
+                    args.push("1000".to_owned());
+                    let steps = plan(&store, &above, &boxed(args));
+                    assert!(keyed_by_id(&steps, "c"), "{steps:?}");
+                    assert!(keyed_by_id(&steps, "a"), "{steps:?}");
+                    no_scan_or_sort(&steps);
+                    shapes += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(shapes, 16, "every combination of the filters");
+}
+
+#[test]
+fn a_subtree_roll_up_reads_its_totals_and_links_by_key() {
+    use crate::sqlite::tree_usages::{
+        SEEK_ANCESTORS_SQL, SHOWN_PARENTS_SQL, ancestors_read_sql, subtree_totals_sql,
+    };
+    let store = SqliteStore::open_in_memory().expect("open");
+    let id = AgentId::new().to_string();
+    let children = serde_json::to_string(&[AgentId::new().to_string()]).unwrap();
+    for (own, run) in [
+        (false, None),
+        (true, None),
+        (true, Some(RunId::new().to_string())),
+    ] {
+        let mut args = vec![id.clone(), children.clone()];
+        args.extend(run.clone());
+        let steps = plan(
+            &store,
+            &subtree_totals_sql(own, run.is_some()),
+            &boxed(args),
+        );
+        let seeks = steps
+            .iter()
+            .filter(|s| s.2 == "SEARCH usage_totals USING PRIMARY KEY (scope=?)")
+            .count();
+        assert_eq!(
+            seeks, 2,
+            "the agent's subtree and each child's, by key: {steps:?}"
+        );
+        assert_eq!(
+            own,
+            steps
+                .iter()
+                .any(|s| s.2.starts_with("SEARCH u USING PRIMARY KEY (agent_id=?)")),
+            "{steps:?}"
+        );
+        assert!(
+            steps.iter().all(|s| !s.2.starts_with("SCAN usage_totals")),
+            "{steps:?}"
+        );
+    }
+    let steps = plan(&store, SHOWN_PARENTS_SQL, &boxed(vec![children.clone()]));
+    assert!(
+        seeks(&steps, "p", "sqlite_autoindex_agents_1 (id=?)"),
+        "{steps:?}"
+    );
+    assert!(keyed_by_id(&steps, "a"), "{steps:?}");
+    no_scan_or_sort(&steps);
+    let steps = plan(&store, &ancestors_read_sql(), &boxed(vec![id.clone()]));
+    assert!(
+        seeks(&steps, "agent_tree", "agent_tree_descendant (descendant=?)"),
+        "{steps:?}"
+    );
+    let steps = plan(&store, SEEK_ANCESTORS_SQL, &boxed(vec![id, children]));
+    assert!(
+        steps.iter().any(|s| s.2.starts_with("SEARCH t ")
+            && s.2.contains("ancestor=?")
+            && s.2.contains("descendant=?")),
+        "a shown agent is sought as an ancestor by key: {steps:?}"
+    );
+}
+
+/// Virtual-machine steps to read a run's receipt page of 256, newest first.
+fn receipt_page_steps(store: &SqliteStore, run: RunId) -> i32 {
+    run_receipt_page_work(store, run).1
+}
+
+#[test]
+fn a_runs_receipt_page_costs_the_same_however_long_its_other_history() {
+    // A run alive for days writes far more events than receipts: walking its
+    // events for 256 receipts read its whole history (#414 follow-up).
+    let lived = |filler: usize| {
+        let (store, run) = receipts_among_others(15, 1);
+        let noise = (0..filler).fold(Commit::new(), |commit, _| {
+            commit.event(
+                EventDraft::new(Actor::System, EventKind::AgentReady)
+                    .agent(AgentId::new())
+                    .run(run),
+            )
+        });
+        store.commit(noise).expect("the run's other events");
+        (store, run)
+    };
+    let (short, short_run) = lived(100);
+    let (long, long_run) = lived(5_000);
+    let (short_steps, steps) = (
+        receipt_page_steps(&short, short_run),
+        receipt_page_steps(&long, long_run),
+    );
+    assert!(steps > 0 && short_steps > 0, "both pages ran");
+    assert!(
+        steps < short_steps * 2,
+        "the run's other events cost {steps} steps, against {short_steps} with few"
+    );
+}
+
+#[test]
+fn the_active_tasks_and_pending_approvals_are_counted_by_index() {
+    use crate::sqlite::fleet_reads::{COUNT_PENDING_APPROVALS_SQL, COUNT_TASKS_SQL};
+    let store = SqliteStore::open_in_memory().expect("open");
+    let args = boxed(vec![r#"["active","assigned"]"#.to_owned()]);
+    let steps = plan(&store, COUNT_TASKS_SQL, &args);
+    assert!(
+        steps
+            .iter()
+            .any(|s| s.2 == "SEARCH t USING INDEX tasks_status (status=?)"),
+        "{steps:?}"
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|s| s.2.starts_with("SEARCH m USING") && s.2.contains("(key=?)")),
+        "{steps:?}"
+    );
+    assert!(
+        steps.iter().all(|s| !s.2.starts_with("SCAN t")),
+        "{steps:?}"
+    );
+    let steps = plan(&store, COUNT_PENDING_APPROVALS_SQL, &Vec::new());
+    assert_eq!(
+        steps.iter().map(|s| s.2.as_str()).collect::<Vec<_>>(),
+        ["SEARCH approvals USING COVERING INDEX approvals_state (state=?)"]
     );
 }

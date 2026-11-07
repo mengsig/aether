@@ -991,6 +991,17 @@
     },
     "AgentTree": {
       "properties": {
+        "next_after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Older agents in scope were left out of this page: ask again with this\nas `after` for them, even when the page is short. Absent when the tree is whole."
+        },
         "nodes": {
           "additionalProperties": false,
           "patternProperties": {
@@ -1005,6 +1016,17 @@
             "$ref": "#/$defs/AgentId"
           },
           "type": "array"
+        },
+        "stale": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StatusStale"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set when no fresh read finished in the daemon's patience: this is the\nlast tree read for the same request, or empty if none finished yet."
         }
       },
       "required": [
@@ -2522,8 +2544,19 @@
           "type": "object"
         },
         {
-          "description": "The live graph: every agent in the run (or all runs) with relations.",
+          "description": "The live graph: the agents in the run (or all runs) with relations.\nOne page: the newest live agents, then the newest agents of any state,\nat most `limit` of each (1 to 500, 500 when absent); `AgentTree.next_after`\nsays older ones were left out.",
           "properties": {
+            "after": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The page of agents older than this one, from an earlier page's\n`next_after`; only the first page pins live agents. Needs `features::TREE_PAGES`."
+            },
             "cmd": {
               "const": "get_tree",
               "type": "string"
@@ -2532,6 +2565,15 @@
               "default": false,
               "description": "Include agents cleared from the view.",
               "type": "boolean"
+            },
+            "limit": {
+              "description": "At most this many agents walked, and live ones pinned on the first\npage. Needs `features::TREE_PAGES`.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "role_prefix": {
               "description": "Only agents whose role starts with this text. Needs\n`features::AGENTS_PAGING`.",
@@ -6416,6 +6458,13 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "unavailable": {
+          "description": "Sections the daemon could not read before its status deadline. Their\nfields carry no figure, so a client shows each as unavailable, never\nas the zero it holds. Empty on a complete answer, and on older daemons.",
+          "items": {
+            "$ref": "#/$defs/UnavailableSection"
+          },
+          "type": "array"
         },
         "usage_total": {
           "$ref": "#/$defs/Usage"
@@ -12795,6 +12844,58 @@
       ],
       "type": "object"
     },
+    "NoesisBilling": {
+      "oneOf": [
+        {
+          "const": "subscription",
+          "description": "An engine CLI on the user's own subscription (Claude Code, Codex).",
+          "type": "string"
+        },
+        {
+          "const": "api",
+          "description": "A provider billed per request through an API key.",
+          "type": "string"
+        }
+      ]
+    },
+    "NoesisModelChoice": {
+      "description": "The strong slot resolved: `model` when one would run, else `refusal`.",
+      "properties": {
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "refusal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "NoesisModelOffer": {
+      "description": "A model as Noesis sees it: how it is paid for and whether a step on it\ncould run now (an engine detected and signed in, an API provider keyed).",
+      "properties": {
+        "billing": {
+          "$ref": "#/$defs/NoesisBilling"
+        },
+        "id": {
+          "type": "string"
+        },
+        "ready": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "billing",
+        "ready"
+      ],
+      "type": "object"
+    },
     "NoesisProvenance": {
       "description": "Where a proposition or chain came from.",
       "properties": {
@@ -13045,6 +13146,14 @@
           "minimum": 0,
           "type": "integer"
         },
+        "models": {
+          "default": [],
+          "description": "Every model Noesis could run on, as it would judge it now.",
+          "items": {
+            "$ref": "#/$defs/NoesisModelOffer"
+          },
+          "type": "array"
+        },
         "prompt_overrides": {
           "description": "The prompt segments a file under the data dir currently replaces.",
           "items": {
@@ -13058,6 +13167,17 @@
         },
         "spend_today": {
           "$ref": "#/$defs/SpendToday"
+        },
+        "teaching_model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NoesisModelChoice"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The model a new session's agents would run on, or why there is none."
         }
       },
       "required": [
@@ -14601,6 +14721,17 @@
         },
         "prompt": {
           "type": "string"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuestionStep"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The lesson step the question is, for a client to render it as one.\nOlder daemons leave it out."
         }
       },
       "required": [
@@ -14669,6 +14800,17 @@
         "question"
       ],
       "type": "object"
+    },
+    "QuestionStep": {
+      "description": "What a question does in the lesson: a probe measures, a teach-phase\nquestion predicts before a step or checks after it.",
+      "enum": [
+        "measure",
+        "predict",
+        "check",
+        "goal",
+        "practice"
+      ],
+      "type": "string"
     },
     "QuotaWindow": {
       "description": "A subscription usage window as an engine reported it. Opaque JSON on the\nwire from the CLI; normalized here so every reader agrees.",
@@ -17691,6 +17833,10 @@
           "format": "double",
           "type": "number"
         },
+        "rate_approximate": {
+          "description": "The rate was read from only the newest receipts of a run that billed\nmore in the window than one read walks: it is a floor, not the rate.",
+          "type": "boolean"
+        },
         "rate_usd_per_hour": {
           "description": "Dollars per hour over the last 15 minutes (`RATE_WINDOW_MINUTES`) of\nreceipts, zero for a run that billed nothing in them. Derived from\n`usage.cost_usd`, so it is a floor exactly when that is.",
           "format": "double",
@@ -19671,7 +19817,7 @@
               "type": "null"
             }
           ],
-          "description": "Usage of child subtrees omitted from this tree (for example archived children).\nKept separately so live clients can replace visible usage without losing it."
+          "description": "Usage of the descendants omitted from this tree (for example archived\nchildren), up to the next shown ones. Kept separately so live clients\ncan replace visible usage without losing it."
         },
         "lease": {
           "anyOf": [
@@ -19685,7 +19831,7 @@
         },
         "subtree_usage": {
           "$ref": "#/$defs/Usage",
-          "description": "Usage rolled up over this agent and its descendants."
+          "description": "Usage of this agent, its `hidden_usage` and its children's subtrees: a\ndescendant whose parent is not shown is a root, counted there instead."
         },
         "task": {
           "anyOf": [
@@ -19797,6 +19943,24 @@
           "type": "object"
         }
       ]
+    },
+    "UnavailableSection": {
+      "description": "A [`DaemonStatus`] section left out of a reply, and why.",
+      "properties": {
+        "reason": {
+          "description": "Why it is missing: [`status_sections::TIMED_OUT`], the read ran past\nthe deadline. A read that fails fails the whole `status` instead.",
+          "type": "string"
+        },
+        "section": {
+          "description": "The section as the daemon's log names it: one of [`status_sections`].",
+          "type": "string"
+        }
+      },
+      "required": [
+        "section",
+        "reason"
+      ],
+      "type": "object"
     },
     "UnprovenAbsence": {
       "description": "Why an absent receipt does not prove its key was never executed.",

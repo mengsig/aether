@@ -64,12 +64,21 @@ async fn run_isolated(test: &str, programs: &[(&str, &str)]) -> bool {
 
 async fn detected(client: &aether_client::Client) {
     tokio::time::timeout(Duration::from_secs(60), async {
-        while client.status().await.unwrap().engines == [aether_protocol::ENGINES_STARTING] {
+        // An unread engines section is empty, not detected: wait for a read one.
+        while !engines_read(&client.status().await.unwrap()) {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
     .await
     .expect("engine detection finishes");
+}
+
+fn engines_read(status: &aether_protocol::DaemonStatus) -> bool {
+    status.stale.is_none()
+        && status
+            .unavailable(aether_protocol::status_sections::ENGINES)
+            .is_none()
+        && status.engines != [aether_protocol::ENGINES_STARTING]
 }
 
 fn started_claude_agent() -> CreateAgent {

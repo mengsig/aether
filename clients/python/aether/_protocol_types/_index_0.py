@@ -362,6 +362,9 @@ from ._ModelsPatch import ModelsPatch
 from ._MountKind import MountKind
 from ._NetworkPolicy import NetworkPolicy
 from ._NewApprovalRule import NewApprovalRule
+from ._NoesisBilling import NoesisBilling
+from ._NoesisModelChoice import NoesisModelChoice
+from ._NoesisModelOffer import NoesisModelOffer
 from ._NoesisProvenance import NoesisProvenance
 from ._NoesisSession import NoesisSession
 from ._NoesisSettingsPatch import NoesisSettingsPatch
@@ -398,9 +401,6 @@ from ._PairStatusResponse import PairStatusResponse
 from ._Pairing import Pairing
 from ._PairingCandidate import PairingCandidate
 from ._PairingState import PairingState
-from ._PathCompletion import PathCompletion
-from ._PathCompletionKind import PathCompletionKind
-from ._PathCompletions import PathCompletions
 
 __all__ = [
     'ActorSystem', 'ActorScheduler', 'ActorUser', 'ActorAgent', 'ActorTool', 'ActorRule', 'ActorClient', 'ActorImported', 'Actor', 'Agent', 'AgentAttention', 'AgentConfig', 'AgentId', 'AgentLine', 'AgentPatch', 'AgentQuery', 'AgentStats', 'AgentStatusCreated', 'AgentStatusReady', 'AgentStatusRunning',
@@ -421,6 +421,6 @@ __all__ = [
     'KindWrites', 'LastImport', 'LayerKind', 'LayerPlacement', 'Lease', 'LowDisk', 'McpAuth', 'McpAuthState', 'McpServerHealth', 'McpServerState', 'McpToolInfo', 'MemoriesInContext', 'MemoryCandidate', 'MemoryConsolidation', 'MemoryCounts', 'MemoryEvidence', 'MemoryExport', 'MemoryFeedback', 'MemoryFeedbackId', 'MemoryFeedbackList',
     'MemoryId', 'MemoryImport', 'MemoryKind', 'MemoryMigration', 'MemoryMigrationStatus', 'MemoryProvenance', 'MemoryQuerySpec', 'MemoryRecord', 'MemoryRecorder', 'MemoryRef', 'MemoryScopeGlobal', 'MemoryScopeRepository', 'MemoryScopeRole', 'MemoryScopeAgent', 'MemoryScopeRepositoryRole', 'MemoryScopeSubtree', 'MemoryScope', 'MemorySource', 'MemoryStanding', 'MemoryState',
     'MemorySupport', 'MemoryTier', 'MemoryVerdict', 'Message', 'MessageDelivery', 'MessageId', 'MessageRole', 'MigrationBackup', 'Milestone', 'MissClass', 'MissedRunPolicy', 'ModelCost', 'ModelCostTier', 'ModelErrorClass', 'ModelInfo', 'ModelRef', 'ModelSettings', 'ModelsPatch', 'MountKind', 'NetworkPolicy',
-    'NewApprovalRule', 'NoesisProvenance', 'NoesisSession', 'NoesisSettingsPatch', 'NoesisSettingsView', 'NoesisStatus', 'NoteContext', 'NoteLevel', 'Notification', 'NotificationAction', 'NotificationAnswer', 'NotificationId', 'NotificationKind', 'NotificationPost', 'NotificationState', 'OpenLoopAgent', 'OpenLoopTask', 'OpenLoopApproval', 'OpenLoop', 'OperatorMemoryScopeAgent',
-    'OperatorMemoryScopeGlobal', 'OperatorMemoryScopeRepository', 'OperatorMemoryScopeRole', 'OperatorMemoryScopeRepositoryRole', 'OperatorMemoryScope', 'OperatorMemorySpec', 'OperatorOriginLocalSocket', 'OperatorOriginTcp', 'OperatorOriginDevice', 'OperatorOrigin', 'PairClaimRequest', 'PairClaimResponse', 'PairStatusRequest', 'PairStatusResponse', 'Pairing', 'PairingCandidate', 'PairingState', 'PathCompletion', 'PathCompletionKind', 'PathCompletions',
+    'NewApprovalRule', 'NoesisBilling', 'NoesisModelChoice', 'NoesisModelOffer', 'NoesisProvenance', 'NoesisSession', 'NoesisSettingsPatch', 'NoesisSettingsView', 'NoesisStatus', 'NoteContext', 'NoteLevel', 'Notification', 'NotificationAction', 'NotificationAnswer', 'NotificationId', 'NotificationKind', 'NotificationPost', 'NotificationState', 'OpenLoopAgent', 'OpenLoopTask',
+    'OpenLoopApproval', 'OpenLoop', 'OperatorMemoryScopeAgent', 'OperatorMemoryScopeGlobal', 'OperatorMemoryScopeRepository', 'OperatorMemoryScopeRole', 'OperatorMemoryScopeRepositoryRole', 'OperatorMemoryScope', 'OperatorMemorySpec', 'OperatorOriginLocalSocket', 'OperatorOriginTcp', 'OperatorOriginDevice', 'OperatorOrigin', 'PairClaimRequest', 'PairClaimResponse', 'PairStatusRequest', 'PairStatusResponse', 'Pairing', 'PairingCandidate', 'PairingState',
 ]

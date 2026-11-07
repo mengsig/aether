@@ -688,6 +688,7 @@ impl Runtime {
             name,
             input,
             reply: reply_tx,
+            arrived: std::time::Instant::now(),
         })
         .await
         .map_err(|_| RuntimeError::Internal("engine turn ended before answering".into()))?;

@@ -5,18 +5,21 @@
 //! call is admitted by the service budget and passes the runtime's one
 //! [`NoesisCharge::before_invocation`] hook before it is sent.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use aether_core::agent::{Agent, AgentConfig};
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::{AgentId, RunId};
 use aether_core::model::{
-    ContentBlock, CostGap, Message, MessageRole, ModelRef, ModelRequest, ModelResponse,
-    StreamAccumulator, StreamEvent, SystemBlock, ToolResultBlock, ToolSpec, Usage,
+    ContentBlock, CostGap, Message, MessageRole, ModelError, ModelErrorClass, ModelRef,
+    ModelRequest, ModelResponse, StreamAccumulator, StreamEvent, SystemBlock, ToolResultBlock,
+    ToolSpec, Usage,
 };
 use aether_core::tool::ToolExposure;
 use aether_model::{ModelClient, ModelStream, Models};
@@ -28,26 +31,96 @@ use aether_noesis::teach::{
 };
 use aether_noesis::tools::{self, ToolName};
 use aether_runtime::noesis_guard::{NoesisBudget, NoesisCharge, lane_of};
-use aether_runtime::{BusMessage, CreateAgentSpec, Runtime};
+use aether_runtime::{BusMessage, CreateAgentSpec, NoesisStepStream, Runtime};
 use aether_store::Commit;
 use futures::StreamExt;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
 use super::budget::{ServiceBudget, spend_of};
+use super::engine_step::{self, EngineStepClient};
 
 /// What every engine of one running service shares.
 pub(super) struct EngineHost {
     pub runtime: Arc<Runtime>,
     pub models: Arc<Models>,
     pub budget: Arc<ServiceBudget>,
-    /// Replaces the provider's client in tests, as the runtime's override does.
+    /// Replaces an API provider's client in tests, as the runtime's override
+    /// does; an engine model's steps always go to its engine.
     pub client: Option<Arc<dyn ModelClient>>,
     /// Cancelled when the service stops, ending a model call in flight.
     pub cancel: CancellationToken,
     pub prompt_overrides: Option<PathBuf>,
     /// The one run every Noesis agent is created in.
     pub run: RunId,
+}
+
+/// Whether `model` runs on an engine CLI (a subscription), not an API.
+fn runs_on_engine(models: &Models, model: &ModelRef) -> bool {
+    models
+        .registry()
+        .provider(&model.provider)
+        .is_some_and(|provider| provider.protocol.is_engine())
+}
+
+/// Every listed model, ready only when a step on it could run now: an
+/// engine detected and launchable with its CLI signed in, an API provider
+/// with credentials, or any API model while `test_client` stands in.
+pub(super) async fn model_offers(
+    runtime: &Runtime,
+    models: &Models,
+    test_client: bool,
+) -> Vec<ModelInfo> {
+    let mut signed_in: HashMap<String, bool> = HashMap::new();
+    let mut offers = Vec::new();
+    for info in models.list() {
+        let provider = info.model.provider.clone();
+        let engine = runs_on_engine(models, &info.model);
+        if !signed_in.contains_key(&provider) {
+            let status = models.auth_status(&provider).await;
+            signed_in.insert(provider.clone(), status.configured);
+        }
+        let credentials = signed_in.get(&provider).copied().unwrap_or(false);
+        let ready = if engine {
+            credentials && runtime.engine_launchable(&info.model) == Some(true)
+        } else {
+            credentials || test_client
+        };
+        offers.push(ModelInfo {
+            id: info.model.to_string(),
+            billing: if engine {
+                Billing::Subscription
+            } else {
+                Billing::Api
+            },
+            ready,
+        });
+    }
+    debug_assert!(offers.iter().all(|offer| !offer.id.is_empty()));
+    offers
+}
+
+impl EngineHost {
+    fn is_engine(&self, model: &ModelRef) -> bool {
+        runs_on_engine(&self.models, model)
+    }
+
+    /// The client a step of `agent` is sent to: its engine for an engine
+    /// model, else the test client or the provider's own.
+    async fn client_for(&self, agent: &Agent) -> Result<Arc<dyn ModelClient>, EngineError> {
+        if self.is_engine(&agent.model) {
+            let inner = self
+                .runtime
+                .noesis_engine_client(agent)
+                .await
+                .map_err(not_sent)?;
+            return Ok(Arc::new(EngineStepClient::new(inner)));
+        }
+        match &self.client {
+            Some(client) => Ok(client.clone()),
+            None => self.models.client(&agent.model).await.map_err(not_sent),
+        }
+    }
 }
 
 /// The engine for one teaching call; cheap, it borrows the host. Like a
@@ -224,23 +297,26 @@ impl AetherEngine<'_> {
         let host = self.host;
         let handle = tokio::runtime::Handle::current();
         let cancel = host.cancel.child_token();
+        let turn = step_number(&request.messages);
         tokio::task::block_in_place(|| {
             handle.block_on(async {
-                let client = match &host.client {
-                    Some(client) => client.clone(),
-                    None => host.models.client(&agent.model).await.map_err(not_sent)?,
-                };
+                let client = host.client_for(agent).await?;
+                let mut live = NoesisStepStream::start(host.runtime.clone(), agent.id, turn);
                 let ended = agent_ended(&host.runtime, agent.id);
                 tokio::pin!(ended);
+                let opening = client.stream(request, cancel.clone());
+                tokio::pin!(opening);
                 let stream = tokio::select! {
-                    stream = client.stream(request, cancel.clone()) => stream.map_err(not_sent)?,
+                    stream = &mut opening => stream.map_err(not_sent)?,
                     () = &mut ended => {
                         cancel.cancel();
-                        return Ok(CallEnd::AgentEnded(Usage::default()));
+                        return Ok(CallEnd::AgentEnded(settled_usage(opening).await));
                     }
-                    () = cancel.cancelled() => return Err(failed(SERVICE_STOPPED)),
+                    () = cancel.cancelled() => {
+                        return Ok(stopped(settled_usage(opening).await));
+                    }
                 };
-                read_reply(stream, &cancel, ended).await
+                read_reply(stream, &cancel, ended, &mut |text| live.text(text)).await
             })
         })
     }
@@ -293,6 +369,48 @@ impl AetherEngine<'_> {
         }
     }
 
+    /// The reply failed mid-stream: what the provider reported spending is
+    /// charged and recorded, so a failed step still counts against the budget.
+    fn record_broken(&mut self, agent: AgentId, mut spent: Usage, error: String) -> EngineError {
+        debug_assert!(!error.is_empty(), "a broken reply says why");
+        spent.mark_cost_gap(CostGap::Interrupted);
+        match self.charge_spent(agent, spent) {
+            Ok(()) => failed(error),
+            Err(record) => failed(format!(
+                "{error}; and the call's spend was not recorded: {record}"
+            )),
+        }
+    }
+
+    /// Charge a call that produced no reply to keep, and record its usage.
+    fn charge_spent(&mut self, agent: AgentId, spent: Usage) -> Result<(), String> {
+        let open = self.charge.as_mut();
+        assert!(
+            open.as_ref().is_some_and(|open| open.agent == agent),
+            "the call ran under its own admission"
+        );
+        if let Some(open) = open {
+            open.spent += spent;
+        }
+        let recorded = self
+            .host
+            .runtime
+            .record_noesis_call(agent, spent, |_, _| {});
+        recorded.map(|_| ()).map_err(|error| error.to_string())
+    }
+
+    /// Refuse a call the agent's admission does not cover, given its spend
+    /// so far; asked again before each attempt of a step.
+    fn gate(&mut self, row: &Agent) -> Result<(), EngineError> {
+        let open = self.admitted(row)?;
+        debug_assert_eq!(open.agent, row.id, "the admission is the agent's");
+        let refused = open
+            .charge
+            .refuses_model(&row.model)
+            .or_else(|| open.charge.before_invocation(&open.spent));
+        refused.map_or(Ok(()), |reason| Err(not_sent(reason)))
+    }
+
     fn request(&self, agent: &Agent, history: Vec<Message>) -> Result<ModelRequest, EngineError> {
         let Some(kind) = agent_for_role(agent.role.as_str()) else {
             return Err(not_sent("not a Noesis role"));
@@ -320,27 +438,10 @@ impl AetherEngine<'_> {
 
 impl Engine for AetherEngine<'_> {
     fn models(&self) -> Vec<ModelInfo> {
-        let registry = self.host.models.registry();
-        self.host
-            .models
-            .list()
-            .into_iter()
-            .map(|info| {
-                let engine = registry
-                    .provider(&info.model.provider)
-                    .is_none_or(|provider| provider.protocol.is_engine());
-                // Engine CLIs are driven by the runtime's turns, not by this loop.
-                ModelInfo {
-                    id: info.model.to_string(),
-                    billing: if engine {
-                        Billing::Subscription
-                    } else {
-                        Billing::Api
-                    },
-                    ready: !engine,
-                }
-            })
-            .collect()
+        let host = self.host;
+        let handle = tokio::runtime::Handle::current();
+        let offers = model_offers(&host.runtime, &host.models, host.client.is_some());
+        tokio::task::block_in_place(|| handle.block_on(offers))
     }
 
     fn spawn(&mut self, spec: AgentSpec) -> Result<String, EngineError> {
@@ -395,18 +496,24 @@ impl Engine for AetherEngine<'_> {
         if row.status.is_terminal() {
             return Err(not_sent(format!("agent {agent} is {}", row.status.kind())));
         }
-        let request = self.request(&row, self.transcript(row.id)?)?;
-        let open = self.admitted(&row)?;
-        let refused = open
-            .charge
-            .refuses_model(&row.model)
-            .or_else(|| open.charge.before_invocation(&open.spent));
-        if let Some(reason) = refused {
-            return Err(not_sent(reason));
-        }
-        let response = match self.invoke(&row, request)? {
-            CallEnd::Replied(response) => response,
-            CallEnd::AgentEnded(spent) => return Err(self.record_cut_short(row.id, spent)),
+        let mut request = self.request(&row, self.transcript(row.id)?)?;
+        let mut attempt = 1;
+        let response = loop {
+            self.gate(&row)?;
+            match self.invoke(&row, request.clone())? {
+                CallEnd::Replied(response) => break response,
+                CallEnd::AgentEnded(spent) => return Err(self.record_cut_short(row.id, spent)),
+                CallEnd::Broke(spent, error)
+                    if attempt < engine_step::ATTEMPTS && engine_step::is_malformed(&error) =>
+                {
+                    self.charge_spent(row.id, spent).map_err(failed)?;
+                    request.messages.push(engine_step::retry_note());
+                    attempt += 1;
+                }
+                CallEnd::Broke(spent, error) => {
+                    return Err(self.record_broken(row.id, spent, error.to_string()));
+                }
+            }
         };
         if let Some(open) = self.charge.as_mut() {
             open.spent += response.usage;
@@ -423,6 +530,9 @@ enum CallEnd {
     Replied(ModelResponse),
     /// The agent ended mid-call: the usage the provider reported so far.
     AgentEnded(Usage),
+    /// The reply broke off with an error after the provider reported usage,
+    /// which is charged as a cut-short call's is.
+    Broke(Usage, ModelError),
 }
 
 /// Resolves once `agent` is in a terminal state, as a cancel leaves it.
@@ -471,6 +581,7 @@ async fn read_reply(
     mut stream: ModelStream,
     cancel: &CancellationToken,
     mut ended: Pin<&mut impl Future<Output = ()>>,
+    on_text: &mut impl FnMut(&str),
 ) -> Result<CallEnd, EngineError> {
     let mut reply = StreamAccumulator::new();
     let mut usage = Usage::default();
@@ -479,17 +590,19 @@ async fn read_reply(
             item = stream.next() => item,
             () = &mut ended => {
                 cancel.cancel();
-                return Ok(CallEnd::AgentEnded(usage));
+                return Ok(CallEnd::AgentEnded(drained_usage(&mut stream, usage).await));
             }
-            () = cancel.cancelled() => return Err(failed(SERVICE_STOPPED)),
+            () = cancel.cancelled() => return Ok(stopped(drained_usage(&mut stream, usage).await)),
         };
         let event = match item {
             None => break,
             Some(Ok(event)) => event,
-            Some(Err(error)) => return Err(failed(error)),
+            Some(Err(error)) => return Ok(CallEnd::Broke(usage, error)),
         };
-        if let StreamEvent::Usage { usage: reading } = &event {
-            usage = *reading;
+        match &event {
+            StreamEvent::Usage { usage: reading } => usage = *reading,
+            StreamEvent::TextDelta { text, .. } => on_text(text),
+            _ => {}
         }
         reply
             .apply(&event)
@@ -500,6 +613,60 @@ async fn read_reply(
         .map_err(|e| failed(format!("malformed model stream: {e}")))?;
     debug_assert_eq!(response.usage, usage, "the reply carries the last reading");
     Ok(CallEnd::Replied(response))
+}
+
+/// How long a cancelled call may take to report what it spent. An engine
+/// client settles its accounting as soon as it sees the cancel.
+const SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The usage a call cancelled while opening reports once it has settled;
+/// none if it does not open in time, which the cost gap then records.
+async fn settled_usage(
+    opening: Pin<&mut impl Future<Output = Result<ModelStream, ModelError>>>,
+) -> Usage {
+    match tokio::time::timeout(SETTLE_TIMEOUT, opening).await {
+        Ok(Ok(mut stream)) => drained_usage(&mut stream, Usage::default()).await,
+        Ok(Err(_)) => Usage::default(),
+        Err(_) => {
+            tracing::warn!("a cancelled Noesis model call did not settle in time");
+            Usage::default()
+        }
+    }
+}
+
+/// The latest usage reading left in a cancelled call's stream, read for at
+/// most [`SETTLE_TIMEOUT`]; `seen` when it holds none.
+async fn drained_usage(stream: &mut ModelStream, seen: Usage) -> Usage {
+    let mut usage = seen;
+    let drained = tokio::time::timeout(SETTLE_TIMEOUT, async {
+        while let Some(Ok(event)) = stream.next().await {
+            if let StreamEvent::Usage { usage: reading } = event {
+                usage = reading;
+            }
+        }
+    })
+    .await;
+    if drained.is_err() {
+        tracing::warn!("a cancelled Noesis model call did not report its usage in time");
+    }
+    usage
+}
+
+/// The service stopped mid-call: the call is charged as a broken one.
+fn stopped(usage: Usage) -> CallEnd {
+    CallEnd::Broke(
+        usage,
+        ModelError::new(ModelErrorClass::Cancelled, SERVICE_STOPPED),
+    )
+}
+
+/// The step's turn number for live deltas: one more than the replies so far.
+fn step_number(history: &[Message]) -> u32 {
+    let replies = history
+        .iter()
+        .filter(|message| message.role == MessageRole::Assistant)
+        .count();
+    u32::try_from(replies).map_or(u32::MAX, |replies| replies.saturating_add(1))
 }
 
 fn message_draft(agent: &Agent, role: MessageRole, content: Vec<ContentBlock>) -> EventDraft {
@@ -606,6 +773,63 @@ fn step_of(response: &ModelResponse) -> Step {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cancelled call's stream as an engine client settles it.
+    fn settled_stream(spent: Usage) -> ModelStream {
+        let events = vec![
+            Ok(StreamEvent::MessageStart {
+                provider_message_id: None,
+                model: None,
+            }),
+            Ok(StreamEvent::Usage { usage: spent }),
+            Err(ModelError::new(ModelErrorClass::Cancelled, "cancelled")),
+        ];
+        Box::pin(futures::stream::iter(events))
+    }
+
+    #[tokio::test]
+    async fn a_stop_racing_a_settled_stream_still_charges_its_usage() {
+        let spent = Usage {
+            input_tokens: 500,
+            output_tokens: 9,
+            ..Usage::default()
+        };
+        // The select is unbiased: repeat so both branch orders are taken.
+        for _ in 0..64 {
+            let cancel = CancellationToken::new();
+            cancel.cancel();
+            let ended = std::future::pending::<()>();
+            tokio::pin!(ended);
+            let mut texts = Vec::new();
+            let mut on_text = |text: &str| texts.push(text.to_string());
+            let end = read_reply(settled_stream(spent), &cancel, ended, &mut on_text).await;
+            let Ok(CallEnd::Broke(usage, error)) = end else {
+                panic!("a stopped call breaks");
+            };
+            assert_eq!(usage, spent, "the settled usage is charged");
+            assert_eq!(error.class, ModelErrorClass::Cancelled);
+            assert!(texts.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn an_agent_end_racing_a_settled_stream_still_charges_its_usage() {
+        let spent = Usage {
+            input_tokens: 300,
+            ..Usage::default()
+        };
+        for _ in 0..64 {
+            let cancel = CancellationToken::new();
+            let ended = std::future::ready(());
+            tokio::pin!(ended);
+            let end = read_reply(settled_stream(spent), &cancel, ended, &mut |_| {}).await;
+            let usage = match end {
+                Ok(CallEnd::AgentEnded(usage) | CallEnd::Broke(usage, _)) => usage,
+                _ => panic!("the call ended without a reply"),
+            };
+            assert_eq!(usage, spent, "the settled usage is charged");
+        }
+    }
 
     #[test]
     fn tool_names_round_trip_through_their_wire_form() {

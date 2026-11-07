@@ -5,12 +5,18 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use aether_noesis::budget::{Billing, ModelOffer, choose_model};
 use aether_noesis::settings::NoesisSettings;
+use aether_noesis::teach::engine::ModelInfo;
 use aether_protocol::ErrorReply;
-use aether_protocol::noesis::{BackgroundDisable, DisablePolicy, NoesisStatus, SpendToday};
+use aether_protocol::noesis::{
+    BackgroundDisable, DisablePolicy, NoesisBilling, NoesisModelChoice, NoesisModelOffer,
+    NoesisStatus, SpendToday,
+};
 use aether_runtime::Runtime;
 use aether_runtime::noesis_guard::NoesisLane;
 
+use super::engine::model_offers;
 use super::{NoesisService, budget, view_of};
 
 /// More prompt files than this would not be a set of overrides anyone wrote.
@@ -39,6 +45,8 @@ impl NoesisService {
         } else {
             Vec::new()
         };
+        let offers = model_offers(runtime, &self.models, self.model_client.is_some()).await;
+        let teaching_model = teaching_choice(&settings, &offers);
         Ok(NoesisStatus {
             enabled: settings.enabled,
             settings: view_of(&settings)?,
@@ -53,7 +61,46 @@ impl NoesisService {
                 background: BackgroundDisable::CancelAtModelBoundary,
             },
             prompt_overrides,
+            models: offers.into_iter().map(offer_view).collect(),
+            teaching_model: Some(teaching_model),
         })
+    }
+}
+
+/// The strong slot as a new session would resolve it.
+fn teaching_choice(settings: &NoesisSettings, offers: &[ModelInfo]) -> NoesisModelChoice {
+    let offers: Vec<ModelOffer<'_>> = offers
+        .iter()
+        .map(|offer| ModelOffer {
+            id: &offer.id,
+            billing: offer.billing,
+            ready: offer.ready,
+        })
+        .collect();
+    match choose_model(
+        settings.model_strong.as_deref(),
+        &offers,
+        settings.billing_allow_api,
+    ) {
+        Ok(model) => NoesisModelChoice {
+            model: Some(model),
+            refusal: None,
+        },
+        Err(refusal) => NoesisModelChoice {
+            model: None,
+            refusal: Some(refusal.to_string()),
+        },
+    }
+}
+
+fn offer_view(offer: ModelInfo) -> NoesisModelOffer {
+    NoesisModelOffer {
+        id: offer.id,
+        billing: match offer.billing {
+            Billing::Subscription => NoesisBilling::Subscription,
+            Billing::Api => NoesisBilling::Api,
+        },
+        ready: offer.ready,
     }
 }
 

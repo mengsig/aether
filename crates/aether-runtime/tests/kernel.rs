@@ -283,6 +283,8 @@ mod shell_leases;
 mod shutdown_recovery;
 #[path = "kernel/snapshot_reconstruction.rs"]
 mod snapshot_reconstruction;
+#[path = "kernel/status_deadline.rs"]
+mod status_deadline;
 #[path = "kernel/store_double.rs"]
 mod store_double;
 #[path = "kernel/store_lock.rs"]

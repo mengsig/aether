@@ -118,6 +118,32 @@ class SchemaRewind(unittest.TestCase):
             self.assertEqual(migration.stamp(store), 26)
             self.assertLessEqual(set(blob_tables), tables(store))
 
+    def test_a_schema_33_store_loses_its_usage_tables_and_archived_column(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = store_at(directory, 33, tables=["agent_usage", "usage_totals"])
+            with sqlite3.connect(store) as conn:
+                conn.execute("ALTER TABLE agents ADD COLUMN run TEXT")
+                conn.execute("ALTER TABLE agents ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+                conn.execute("CREATE INDEX agents_archived_id ON agents(archived, id)")
+                conn.execute("CREATE INDEX agents_run_archived_id ON agents(run, archived, id)")
+                for name, table, event in [
+                    ("agent_usage_inserted", "agents", "INSERT"),
+                    ("agent_usage_updated", "agents", "UPDATE"),
+                    ("agent_usage_deleted", "agents", "DELETE"),
+                    ("usage_totals_added", "agent_usage", "INSERT"),
+                    ("usage_totals_removed", "agent_usage", "DELETE"),
+                ]:
+                    conn.execute(f"CREATE TRIGGER {name} AFTER {event} ON {table} BEGIN SELECT 1; END")
+            self.assertEqual(migration.rewind(store, 33), 32)
+            self.assertNotIn("agent_usage", tables(store))
+            self.assertNotIn("usage_totals", tables(store))
+            with sqlite3.connect(store) as conn:
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(agents)")}
+                left = conn.execute("SELECT name FROM sqlite_master WHERE type IN ('index', 'trigger') "
+                                    "AND name NOT LIKE 'sqlite_autoindex_%'").fetchall()
+            self.assertNotIn("archived", columns)
+            self.assertEqual(left, [], "every V33 index and trigger is gone")
+
     def test_an_older_store_is_left_alone(self):
         with tempfile.TemporaryDirectory() as directory:
             store = store_at(directory, 22)

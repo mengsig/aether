@@ -3,6 +3,8 @@
 
 import type {
   DisablePolicy,
+  NoesisModelChoice,
+  NoesisModelOffer,
   NoesisSettingsView,
   Reply,
   SpendToday,
@@ -16,7 +18,9 @@ export interface NoesisStatus {
   "effective": NoesisSettingsView;
   "enabled": boolean;
   "jobs_running": number;
+  "models"?: Array<NoesisModelOffer>;
   "prompt_overrides": Array<string>;
   "settings": NoesisSettingsView;
   "spend_today": SpendToday;
+  "teaching_model"?: NoesisModelChoice | null;
 }

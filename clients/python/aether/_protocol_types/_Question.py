@@ -20,3 +20,4 @@ class Question(TypedDict, total=False):
     plan_node: str | None  # optional
     posed_at: str
     prompt: str
+    step: _protocol.QuestionStep | None  # optional

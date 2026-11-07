@@ -161,16 +161,18 @@ impl<E: Engine> Teaching<'_, E> {
             let (shown, key) = question::rekey(&shuffled, &authored.answer_key);
             (Some(shown), key)
         };
+        let collapsed = question::collapsed(row.phase, args.kind, args.intent);
         let posed = Question {
             id: id.clone(),
             kind: args.kind,
             prompt: args.prompt.clone(),
             options,
             multi: authored.multi,
-            collapsed: question::collapsed(row.phase, args.kind, args.intent),
+            collapsed,
             plan_node: args.plan_node.clone(),
             concepts: dedup(&args.concepts),
             posed_at: db::now(),
+            step: Some(question::step(row.phase, args.kind, collapsed)),
         };
         let stored = QuestionRow {
             question: posed,

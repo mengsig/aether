@@ -3,6 +3,7 @@
 
 import type {
   AgentId,
+  AgentTree,
   ArtifactId,
   CheckpointId,
   EventQuery,
@@ -221,11 +222,16 @@ export function getTranscriptPage(args: Omit<GetTranscriptPageCommand, "cmd">): 
 }
 
 /**
- * The live graph: every agent in the run (or all runs) with relations.
+ * The live graph: the agents in the run (or all runs) with relations.
+ * One page: the newest live agents, then the newest agents of any state,
+ * at most `limit` of each (1 to 500, 500 when absent); `AgentTree.next_after`
+ * says older ones were left out.
  */
 export interface GetTreeCommand {
   "cmd": "get_tree";
+  "after"?: AgentId | null;
   "include_archived"?: boolean;
+  "limit"?: number | null;
   "role_prefix"?: string | null;
   "root"?: AgentId | null;
   "run"?: RunId | null;

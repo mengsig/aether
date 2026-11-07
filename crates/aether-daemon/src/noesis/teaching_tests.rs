@@ -29,6 +29,7 @@ use super::routes::{Group, group_of};
 use super::{NoesisService, State};
 use crate::Daemon;
 
+mod engine_path;
 mod evidence;
 
 const MODEL: &str = "anthropic/claude-sonnet-5-5";
@@ -68,6 +69,30 @@ impl Harness {
         client: Arc<ScriptedClient>,
         model_client: Arc<dyn aether_model::ModelClient>,
     ) -> Self {
+        Self::boot(home, client, Some(model_client), Default::default()).await
+    }
+
+    /// Boot with no stand-in for API providers: each model is reached as
+    /// the daemon reaches it, an engine model through `engines`.
+    async fn open_on_engines(
+        home: &Home,
+        engines: std::collections::HashMap<
+            aether_engine::EngineKind,
+            Arc<dyn aether_engine::Engine>,
+        >,
+    ) -> Self {
+        Self::boot(home, Arc::new(ScriptedClient::new()), None, engines).await
+    }
+
+    async fn boot(
+        home: &Home,
+        client: Arc<ScriptedClient>,
+        model_client: Option<Arc<dyn aether_model::ModelClient>>,
+        engines: std::collections::HashMap<
+            aether_engine::EngineKind,
+            Arc<dyn aether_engine::Engine>,
+        >,
+    ) -> Self {
         let models = Arc::new(
             aether_model::Models::load(Some(home.config.path().to_path_buf())).expect("models"),
         );
@@ -75,15 +100,16 @@ impl Harness {
         let store: Arc<dyn Store> = Arc::new(
             aether_store::SqliteStore::open(home.data.path().join("aether.db")).expect("store"),
         );
-        let noesis = Arc::new(
-            NoesisService::new(
-                home.config.path(),
-                home.data.path(),
-                models.clone(),
-                gate.clone(),
-            )
-            .with_model_client(model_client),
+        let service = NoesisService::new(
+            home.config.path(),
+            home.data.path(),
+            models.clone(),
+            gate.clone(),
         );
+        let noesis = Arc::new(match model_client {
+            Some(model_client) => service.with_model_client(model_client),
+            None => service,
+        });
         noesis.start_at_boot(&store).await.expect("boot");
         let runtime = aether_runtime::Runtime::start_with_engines(
             aether_runtime::RuntimeConfig {
@@ -100,7 +126,7 @@ impl Harness {
             models.clone(),
             Arc::new(aether_tools::ToolRegistry::with_builtins()),
             None,
-            Default::default(),
+            engines,
         )
         .await
         .expect("runtime");
@@ -113,6 +139,8 @@ impl Harness {
             push: None,
             remote: Default::default(),
             status_reads: Default::default(),
+            tree_reads: Default::default(),
+            watcher_reads: Default::default(),
             noesis,
         };
         Self { daemon, client }

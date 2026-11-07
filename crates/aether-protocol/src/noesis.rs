@@ -171,6 +171,39 @@ pub struct NoesisStatus {
     pub disable_policy: DisablePolicy,
     /// The prompt segments a file under the data dir currently replaces.
     pub prompt_overrides: Vec<String>,
+    /// Every model Noesis could run on, as it would judge it now.
+    #[serde(default)]
+    pub models: Vec<NoesisModelOffer>,
+    /// The model a new session's agents would run on, or why there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub teaching_model: Option<NoesisModelChoice>,
+}
+
+/// A model as Noesis sees it: how it is paid for and whether a step on it
+/// could run now (an engine detected and signed in, an API provider keyed).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct NoesisModelOffer {
+    pub id: String,
+    pub billing: NoesisBilling,
+    pub ready: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NoesisBilling {
+    /// An engine CLI on the user's own subscription (Claude Code, Codex).
+    Subscription,
+    /// A provider billed per request through an API key.
+    Api,
+}
+
+/// The strong slot resolved: `model` when one would run, else `refusal`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct NoesisModelChoice {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<String>,
 }
 
 fn sets_budget(patch: &NoesisSettingsPatch) -> bool {

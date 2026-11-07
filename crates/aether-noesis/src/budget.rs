@@ -364,18 +364,26 @@ pub struct ModelOffer<'a> {
 pub enum ModelRefusal {
     #[error("`{model}` is billed per request; set noesis.billing.allow_api = true to use it")]
     ApiNotAllowed { model: String },
-    #[error("no ready model for Noesis{}", alternatives_hint(.alternatives))]
+    #[error("{}", no_model_text(.wanted.as_deref(), .alternatives))]
     NoModel {
         wanted: Option<String>,
         alternatives: Vec<String>,
     },
 }
 
-fn alternatives_hint(alternatives: &[String]) -> String {
+/// Names the model refused, if one was configured, and what could run instead.
+fn no_model_text(wanted: Option<&str>, alternatives: &[String]) -> String {
+    let head = match wanted {
+        Some(wanted) => format!("no ready model for Noesis: `{wanted}` is not ready"),
+        None => "no ready model for Noesis: no subscription model is ready".to_string(),
+    };
     if alternatives.is_empty() {
-        return String::new();
+        return format!(
+            "{head}; sign in to an engine CLI (claude-code, codex) or set \
+             noesis.billing.allow_api = true with a provider key"
+        );
     }
-    format!("; ready alternatives: {}", alternatives.join(", "))
+    format!("{head}; ready alternatives: {}", alternatives.join(", "))
 }
 
 /// Pick the model for a slot. A configured model is used only if it is ready
@@ -734,6 +742,9 @@ mod tests {
                 .to_string()
                 .contains("ready alternatives: claude-code/opus")
         );
+        assert!(refusal.to_string().contains("`codex/gpt` is not ready"));
+        let none = choose_model(None, &[], false).unwrap_err().to_string();
+        assert!(none.contains("sign in to an engine CLI"), "{none}");
         let missing = choose_model(Some("nobody/none"), &offers(), true).unwrap_err();
         assert!(
             matches!(missing, ModelRefusal::NoModel { alternatives, .. } if alternatives.len() == 2)
