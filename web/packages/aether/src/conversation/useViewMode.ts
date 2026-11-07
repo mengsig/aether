@@ -72,7 +72,8 @@ export function useViewMode(conn: ConnId, agent: aether.Agent): ViewModeState {
     const usable = (catalog?.modes ?? []).filter((m) => applies(m, agent));
     return [...usable.filter((m) => m.name === STANDARD), ...usable.filter((m) => m.name !== STANDARD)];
   }, [catalog, agent]);
-  const saved = readSavedMode(key);
+  // Read once per agent: the choice the chat opened with, which a later read failure cannot change.
+  const saved = useMemo(() => readSavedMode(key), [key]);
   const mode = catalog === null ? STANDARD : initialMode(modes, agent, chosen?.key === key ? chosen.name : saved.name);
   const choose = (name: string) => {
     invariant(modes.some((m) => m.name === name), `${name} is a mode this agent can use`);
@@ -80,7 +81,7 @@ export function useViewMode(conn: ConnId, agent: aether.Agent): ViewModeState {
     setUnwritten("problem" in wrote ? `This view is not remembered after a reload (${wrote.problem})` : null);
     setChosen({ key, name });
   };
-  const unsaved = unwritten ?? (saved.problem === null ? null : `The saved view could not be read, so this chat opens in its default (${saved.problem})`);
+  const unsaved = unwritten ?? (saved.problem === null ? null : `The saved view could not be read (${saved.problem}), so this chat opened in its default view`);
   const toggle = (name: string) => choose(mode === name ? STANDARD : name);
   const definition = modes.find((m) => m.name === mode);
   const rules = details || definition === undefined || mode === STANDARD ? null : definition;

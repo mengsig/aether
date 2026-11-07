@@ -243,21 +243,39 @@ describe("Chat when storage refuses", () => {
   const refusal = (name: string) => () => { throw new DOMException(`${name} refused`, name); };
 
   test("an unreadable store opens the default, says so, and still takes a choice", async () => {
-    vi.spyOn(localStorage, "getItem").mockImplementation(refusal("SecurityError"));
+    const getItem = vi.spyOn(localStorage, "getItem").mockImplementation(refusal("SecurityError"));
     try {
       const { h, root } = await open();
       expect(checked(root)).toBe("Calm");
-      expect(root.textContent).toContain("The saved view could not be read, so this chat opens in its default (SecurityError refused)");
+      const note = "The saved view could not be read (SecurityError refused), so this chat opened in its default view";
+      expect(root.textContent).toContain(note);
       await click(h, root, "Standard");
       expect(checked(root), "the choice holds without a readable store").toBe("Standard");
       expect(toolShown(root)).toBe(true);
+      expect(root.textContent, "still true of how the chat opened").toContain(note);
     } finally {
-      vi.restoreAllMocks();
+      getItem.mockRestore();
+    }
+  });
+
+  test("a read that fails after the chat opened changes neither its view nor its notes", async () => {
+    localStorage.setItem(modeKey("aether:b3", orchestrator.id), "standard");
+    const { h, root } = await open();
+    expect(checked(root)).toBe("Standard");
+    const getItem = vi.spyOn(localStorage, "getItem").mockImplementation(refusal("SecurityError"));
+    try {
+      // A new catalog answer redraws the chat itself, as any daemon update does.
+      await act(async () => { await h.app.reread(h.conn, "view-modes", { cmd: "list_view_modes" }, ["view_modes"]); });
+      await h.settle();
+      expect(checked(root), "the saved choice the chat opened with stays").toBe("Standard");
+      expect(root.textContent).not.toContain("could not be read");
+    } finally {
+      getItem.mockRestore();
     }
   });
 
   test("a full store keeps the choice for the open chat and says it will not survive a reload", async () => {
-    vi.spyOn(localStorage, "setItem").mockImplementation(refusal("QuotaExceededError"));
+    const setItem = vi.spyOn(localStorage, "setItem").mockImplementation(refusal("QuotaExceededError"));
     try {
       const { h, root } = await open();
       expect(root.querySelector(".conv-bar")?.textContent, "nothing to say before a choice").not.toContain("remembered");
@@ -265,7 +283,7 @@ describe("Chat when storage refuses", () => {
       expect(checked(root)).toBe("Standard");
       expect(root.textContent).toContain("This view is not remembered after a reload (QuotaExceededError refused)");
     } finally {
-      vi.restoreAllMocks();
+      setItem.mockRestore();
     }
   });
 });
