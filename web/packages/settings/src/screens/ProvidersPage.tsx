@@ -77,30 +77,36 @@ function ProviderList({ conn, value, auths, run, refreshAuth }: { readonly conn:
   );
 }
 
-function McpList({ value, local, onConnected }: { readonly value: unknown; readonly local: boolean; readonly onConnected: () => void }) {
+/**
+ * Mounted for the page's life, outside the read: the repair restarts Aether and rereads the servers
+ * before it ends, so it must not live inside the list those rereads replace.
+ */
+function ArchonRepair({ value, local, onConnected }: { readonly value: unknown; readonly local: boolean; readonly onConnected: () => void }) {
+  const servers = listOf<aether.McpServerHealth>(value);
+  const archon = servers === null ? null : archonTools(servers);
+  const needed = archon !== null && (archon.state === "missing" || archon.state === "failed");
+  const reason = archon !== null && archon.state !== "ready" ? archon.detail : "";
+  if (local) return <ConnectArchon needed={needed} reason={reason} onDone={onConnected} />;
+  return needed ? <p className="st-note">{reason} Connect them from the desktop app on the computer running Aether.</p> : null;
+}
+
+function McpList({ value }: { readonly value: unknown }) {
   const servers = listOf<aether.McpServerHealth>(value);
   if (servers === null) return <Unexpected label="tool servers" />;
-  const archon = archonTools(servers);
-  const repair = archon.state === "missing" || archon.state === "failed"
-    ? (local ? <ConnectArchon reason={archon.detail} onDone={onConnected} /> : <p className="st-note">{archon.detail} Connect them from the desktop app on the computer running Aether.</p>)
-    : null;
-  if (servers.length === 0) return <>{repair}<EmptyState title="No tool servers yet">Connect Archon's tools to give agents Archon's queue, items and runs.</EmptyState></>;
+  if (servers.length === 0) return <EmptyState title="No tool servers yet">Connect Archon's tools to give agents Archon's queue, items and runs.</EmptyState>;
   return (
-    <>
-      {repair}
-      <ul className="st-list">
-        {servers.map((s) => (
-          <li key={s.name} className="st-item" aria-label={s.name}>
-            <div className="st-item-head">
-              <h4 className="st-item-title">{s.name}</h4>
-              <Badge tone={MCP_STATE[s.state].tone}>{MCP_STATE[s.state].text}</Badge>
-            </div>
-            <p className="st-meta">{plural(s.tools?.length ?? 0, "tool")} · checked {formatTime(s.checked_at)}</p>
-            {s.error ? <p className="st-note" data-state="failed">{s.error}</p> : null}
-          </li>
-        ))}
-      </ul>
-    </>
+    <ul className="st-list">
+      {servers.map((s) => (
+        <li key={s.name} className="st-item" aria-label={s.name}>
+          <div className="st-item-head">
+            <h4 className="st-item-title">{s.name}</h4>
+            <Badge tone={MCP_STATE[s.state].tone}>{MCP_STATE[s.state].text}</Badge>
+          </div>
+          <p className="st-meta">{plural(s.tools?.length ?? 0, "tool")} · checked {formatTime(s.checked_at)}</p>
+          {s.error ? <p className="st-note" data-state="failed">{s.error}</p> : null}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -128,8 +134,9 @@ export function ProvidersPage({ conn }: { readonly conn: ConnId }) {
         <RunNote status={run.status} />
       </Section>
       <Section title="Tool servers (MCP)" hint="Extra tools agents can use, such as Archon's.">
+        <ArchonRepair value={mcp?.value} local={local} onConnected={() => void again(MCP, MCP_REFRESH)} />
         <ReadView label="tool servers" entry={mcp} onRetry={() => void again(MCP)}>
-          {(value) => <McpList value={value} local={local} onConnected={() => void again(MCP, MCP_REFRESH)} />}
+          {(value) => <McpList value={value} />}
         </ReadView>
         <div className="st-row">
           <Action conn={conn} command={MCP_REFRESH} label="Check servers again" onRun={() => again(MCP, MCP_REFRESH)} />

@@ -135,6 +135,25 @@ describe("ProvidersPage", () => {
     expect(steps).toEqual(["connect", "connect"]);
   });
 
+  test("UX-043: a repair stays on screen to its outcome when Aether reports the tools ready mid-run", async () => {
+    let servers: unknown[] = mcp;
+    let fail: (error: Error) => void = () => undefined;
+    const desktop = fakeDesktop();
+    const bridge = Object.assign(desktop.bridge, { setup: () => new Promise((_, reject) => { fail = reject; }) });
+    const h = current = await connected({ role: "local", desktop: bridge, script: { ...script, mcp_servers: () => ({ tag: "mcp_servers", data: servers }) } });
+    const root = await h.mount(<ProvidersPage conn={h.conn} />);
+    await click(h, root, "Connect Archon tools");
+    servers = [...mcp, { name: "archon", state: "ready", transport: "stdio", tools: [{ name: "queue_status" }] }];
+    await h.app.reread(h.conn, "settings.mcp", { cmd: "mcp_servers" }, ["mcp_servers"]);
+    await h.settle();
+    expect(root.querySelector('li[aria-label="archon"]')?.textContent).toContain("Ready");
+    expect(root.querySelector('.su-step[data-state="running"]')?.textContent).toContain("Connect Archon's tools to Aether");
+    fail(new Error("Archon could not be reached. Is it installed?"));
+    await h.settle();
+    expect(root.querySelector('.su-step[data-state="failed"]')?.textContent).toContain("Archon could not be reached. Is it installed?");
+    expect(buttonNamed(root, "Try again").disabled).toBe(false);
+  });
+
   test("UX-043: a ready Archon server needs no repair, and a remote device is told where to fix it", async () => {
     const ready = [...mcp, { name: "archon", state: "ready", transport: "stdio", tools: [{ name: "archon_status" }] }];
     const fine = current = await connected({ role: "local", desktop: fakeDesktop().bridge, script: { ...script, mcp_servers: () => ({ tag: "mcp_servers", data: ready }) } });
