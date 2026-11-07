@@ -61,10 +61,12 @@ function FleetList({ rows, names }: { readonly rows: readonly FleetRow[]; readon
 export function FleetScreen() {
   const sources = useSelector(selectFleetSources, sameSources);
   const rows = useMemo(() => fleetRows(sources), [sources]);
-  const names = useMemo(() => runNames(rows), [rows]);
-  const facets = useMemo(() => fleetFacets(rows, names), [rows, names]);
+  const [archive, setArchive] = useState("active");
+  const visible = useMemo(() => rows.filter(row => archive === "archived" ? row.agent.archived : !row.agent.archived), [rows, archive]);
+  const names = useMemo(() => runNames(visible), [visible]);
+  const facets = useMemo(() => fleetFacets(visible, names), [visible, names]);
   const [filter, setFilter] = useState<FleetFilter>(NO_FILTER);
-  const shown = useMemo(() => filterRows(rows, filter), [rows, filter]);
+  const shown = useMemo(() => filterRows(visible, filter), [visible, filter]);
   const clear = useCallback(() => setFilter(NO_FILTER), []);
 
   if (sources.length === 0) {
@@ -73,12 +75,17 @@ export function FleetScreen() {
   return (
     <section className="fleet" aria-label="Fleet">
       <div className="fleet-bar">
+        <label className="ui-field fleet-filter"><span className="ui-field-label">Archive</span>
+          <select className="ui-field-input" value={archive} onChange={event => { setArchive(event.currentTarget.value); setFilter(NO_FILTER); }}>
+            <option value="active">Active fleet</option><option value="archived">Archived</option>
+          </select>
+        </label>
         <FleetFilters facets={facets} filter={filter} onChange={setFilter} />
-        <p className="fleet-count" aria-live="polite">{shown.length.toLocaleString("en")} of {rows.length.toLocaleString("en")} agents</p>
+        <p className="fleet-count" aria-live="polite">{shown.length.toLocaleString("en")} of {visible.length.toLocaleString("en")} agents</p>
         <a className="ui-link" href="#/fleet/topology">Delegation topology</a>
       </div>
       {shown.length > 0 ? <FleetList rows={shown} names={names} />
-        : rows.length === 0 ? <EmptyState title="No agents yet">Agents appear here as soon as a daemon creates them.</EmptyState>
+        : visible.length === 0 ? <EmptyState title={archive === "archived" ? "No archived agents" : "No agents yet"}>Agents appear here when they belong to this view.</EmptyState>
           : <EmptyState title="No agent matches" action={<Button onClick={clear}>Clear filters</Button>}>Every filter must match.</EmptyState>}
     </section>
   );

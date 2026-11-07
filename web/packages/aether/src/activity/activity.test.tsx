@@ -57,7 +57,9 @@ test("start sheet reads models and workspaces, completes and validates path, sho
   expect(h.daemon.commands("create_agent")[0]).toMatchObject({ name: "Builder", objective: "Build it", role: "worker", start: true, scope: { workspace_root: "/repo" }, model: { provider: "codex", model: "astra" }, config: { effort: "high" }, approval: { require_for: ["external"] } });
   expect(document.body.textContent).toContain("Done");
   await click(h, document.body, "Existing agent task");
-  await click(h, document.body, agent.name);
+  const owner = document.body.querySelector<HTMLSelectElement>('select');
+  if (!owner) throw new Error("Owner selection missing");
+  await act(async () => { owner.value = agent.id; owner.dispatchEvent(new Event("change", { bubbles: true })); });
   await click(h, document.body, "Create task");
   expect(h.daemon.commands("create_task")[0]).toMatchObject({ objective: "Build it", owner: agent.id, priority: "normal" });
 });
@@ -79,11 +81,23 @@ test("lost start reply stays unconfirmed without resubmission", async () => {
   await click(h, root, "Start an agent");
   await click(h, document.body, "Existing agent task");
   await type(h, document.body, "Objective", "Work");
-  await click(h, document.body, agent.name);
   await click(h, document.body, "Create task");
   h.daemon.drop(); await h.settle();
   expect(document.body.querySelector('[data-state="unconfirmed"]')).not.toBeNull();
   expect(h.daemon.commands("create_task")).toHaveLength(1);
+});
+
+test("task creation offers unassigned work and excludes occupied owners", async () => {
+  h = await connected({ agents: [{ ...agent, current_task: "tsk_busy" }], script });
+  const root = await h.mount(<ActivityScreen />);
+  await click(h, root, "Start an agent");
+  await click(h, document.body, "Existing agent task");
+  await type(h, document.body, "Objective", "Queue work");
+  const options = [...document.body.querySelectorAll("select option")];
+  expect(options.find(option => option.value === agent.id)?.disabled).toBe(true);
+  expect(document.body.textContent).toContain("already owns a task");
+  await click(h, document.body, "Create task");
+  expect(h.daemon.commands("create_task")[0]).toMatchObject({ owner: null, objective: "Queue work" });
 });
 
 test("large activity uses the core virtual list", async () => {

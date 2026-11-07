@@ -16,22 +16,26 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState("medium");
   const [owner, setOwner] = useState("");
-  const agents = Object.values(useSelector(selectAgents(conn))).filter(a => !["completed", "failed", "cancelled"].includes(a.status.state));
+  const agents = Object.values(useSelector(selectAgents(conn))).filter(a => !a.archived && !["completed", "failed", "cancelled"].includes(a.status.state));
+  const eligible = agents.filter(a => !a.current_task);
   const models = useReread(conn, "start:models", { cmd: "list_models" }, ["models"]);
   const choices = configuredModels(models?.value);
   const selected = choices.find(m => `${m.model.provider}/${m.model.model}` === model) ?? choices.find(m => m.is_default) ?? choices[0];
   const validation = workspaceValidation(useSelector(selectRead(conn, `start:validation:${path}`))?.value);
-  const command = mode === "task" ? { cmd: "create_task", objective: objective.trim(), owner, priority: "normal" } :
+  const command = mode === "task" ? { cmd: "create_task", objective: objective.trim(), owner: owner || null, priority: "normal" } :
     { cmd: "create_agent", name: name.trim() || null, role: "worker", objective: objective.trim(), start: true,
       scope: { workspace_root: validation?.path }, model: selected?.model, approval: { require_for: ["external"] }, config: { effort } };
   const disabled = usePermission(conn, command).refusal !== null;
   const blocked = !objective.trim() ? "Describe the work to start" : mode === "task" ?
-    (agents.some(a => a.id === owner) ? null : "Choose an active owner") : !selected ? "Choose a configured model" :
+    (owner === "" || eligible.some(a => a.id === owner) ? null : "Choose an available owner") : !selected ? "Choose a configured model" :
       validation?.valid && validation.path?.startsWith("/") ? null : "Validate the workspace first";
   return <Sheet open onClose={close} title="Start an agent"><div className="b3-stack"><StandingNotice conn={conn} />
     <Tabs label="Work type" selected={mode} onSelect={setMode} tabs={[{ id: "agent", label: "New agent", panel: null }, { id: "task", label: "Existing agent task", panel: null }]} />
     <Field label="Objective" value={objective} disabled={disabled} onChange={e => setObjective(e.target.value)} />
-    {mode === "task" ? <div className="b3-row">{agents.map(a => <Button key={a.id} disabled={disabled} aria-pressed={owner === a.id} onClick={() => setOwner(a.id)}>{a.name}</Button>)}</div> : <>
+    {mode === "task" ? <label className="ui-field"><span className="ui-field-label">Owner</span>
+      <select className="ui-field-input" value={owner} disabled={disabled} onChange={e => setOwner(e.currentTarget.value)}>
+        <option value="">Unassigned</option>{agents.map(a => <option key={a.id} value={a.id} disabled={!!a.current_task}>{a.name}{a.current_task ? " — already owns a task" : ""}</option>)}
+      </select></label> : <>
       <Field label="Name" value={name} disabled={disabled} onChange={e => setName(e.target.value)} />
       <Workspace conn={conn} path={path} change={setPath} />
       <ReadNote entry={models} retry={() => app.reread(conn, "start:models", { cmd: "list_models" }, ["models"])} />

@@ -51,6 +51,17 @@ describe("the agent screen", () => {
     expect(container.querySelector(".agent-detail")?.textContent).toBe("the engine exited");
   });
 
+  test("shows pending approvals for this agent and clears the state after a decision", async () => {
+    const { h, container } = await screen();
+    h.app.store.updateAether(h.conn, state => ({ ...state, attention: { questions: [], agents: [], approvals: [{ id: "apr_1", agent_id: FAUX_AGENT, call_id: "call_1", tool: "read", description: "Read file", argument: "", side_effect: "read_only", status: { state: "pending" }, requested_at: "2026-11-04" }] } }));
+    await h.settle();
+    expect(container.querySelector(".agent-head .ui-pill")?.textContent).toBe("Waiting for your approval");
+    expect(container.querySelector('a[href="#/inbox"]')?.textContent).toContain("Review approval");
+    h.app.store.updateAether(h.conn, state => ({ ...state, attention: { questions: [], agents: [], approvals: [] } }));
+    await h.settle();
+    expect(container.querySelector(".agent-head .ui-pill")?.textContent).toBe("Running");
+  });
+
   test("says so for an unknown agent or connection", async () => {
     const { container } = await screen(fauxAgent(), "agt_missing");
     expect(container.textContent).toContain("No such agent");

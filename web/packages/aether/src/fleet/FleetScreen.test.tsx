@@ -62,7 +62,8 @@ describe("the fleet list", () => {
     agents.agt_00003 = { ...must(agents.agt_00003, "agt_00003"), role: "" };
     seedFleet(h.app.store, fixtureConnection(), agents);
     const container = await h.mount(<FleetScreen />);
-    const roleOptions = [...container.querySelectorAll(".fleet-filter select")][1]?.querySelectorAll("option") ?? [];
+    const roleField = [...container.querySelectorAll(".fleet-filters .fleet-filter")].find(node => node.querySelector("label")?.textContent === "Role");
+    const roleOptions = roleField?.querySelectorAll("option") ?? [];
     expect([...roleOptions].filter((option) => option.textContent === "No role (1)").map((option) => option.value)).toEqual(["="]);
     await pick(container, "Role", "=");
     expect(count(container)).toBe("1 of 5 agents");
@@ -97,9 +98,24 @@ describe("the fleet list", () => {
   test("names every control and the list, for assistive technology", async () => {
     const { container } = await fleet(300);
     for (const select of container.querySelectorAll("select")) {
-      expect(container.querySelector(`label[for="${select.id}"]`)?.textContent).toMatch(/^(Run|Role|State|Model)$/);
+      const label = select.closest("label")?.textContent ?? container.querySelector(`label[for="${select.id}"]`)?.textContent;
+      expect(label).toMatch(/^(Run|Role|State|Model|Archive)/);
     }
     expect(container.querySelector("[role=list]")?.getAttribute("aria-label")).toBe("Agents");
     expect(container.querySelector("[role=group]")?.getAttribute("aria-label")).toBe("Filter agents");
+  });
+
+  test("moves archived agents out of the default fleet and back on restore", async () => {
+    const { h, container } = await fleet(2);
+    h.app.store.updateAether("aether:fixture", state => ({ ...state, agents: { ...state.agents, agt_00000: { ...must(state.agents.agt_00000, "agent"), archived: true } } }));
+    await h.frame();
+    expect(count(container)).toBe("1 of 1 agents");
+    const archive = container.querySelector<HTMLSelectElement>('.fleet-bar > label select');
+    if (!archive) throw new Error("Archive filter missing");
+    await act(async () => { archive.value = "archived"; archive.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect(container.querySelector('[data-agent="agt_00000"]')).not.toBeNull();
+    h.app.store.updateAether("aether:fixture", state => ({ ...state, agents: { ...state.agents, agt_00000: { ...must(state.agents.agt_00000, "agent"), archived: false } } }));
+    await h.frame();
+    expect(container.textContent).toContain("No archived agents");
   });
 });
