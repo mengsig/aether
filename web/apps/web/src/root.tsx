@@ -1,14 +1,16 @@
 import { navigate, selectConnections, selectReports, useApp, useCapabilities, useEntityActions, useRoute, useRoutes, useSelector } from "@aether-ui/core";
 import type { Report } from "@aether-ui/core";
 import type { EntityAction } from "@aether-ui/protocol";
-import { ArchonToolsNotice, Welcome } from "@aether-ui/settings";
+import { loadArchonToolsNotice, loadWelcome } from "@aether-ui/settings";
 import { AppShell, type ToastMessage } from "@aether-ui/ui";
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { entityCommands, routeOffered, selectPaletteSources, sameSources } from "./palette-entities.ts";
 import { screenTitles } from "./titles.ts";
 
 // Reports stay in the store; the shell shows the newest few the user has not dismissed.
 const VISIBLE_NOTICES = 4;
+const Welcome = lazy(() => loadWelcome().then((module) => ({ default: module.Welcome })));
+const ArchonToolsNotice = lazy(() => loadArchonToolsNotice().then((module) => ({ default: module.ArchonToolsNotice })));
 
 function subscribeHash(listener: () => void): () => void {
   window.addEventListener("hashchange", listener);
@@ -27,7 +29,7 @@ export function reportNotice(report: Report): ToastMessage {
 
 /** Archon's screens say so, with the fix, when Archon's tools are not connected to Aether. */
 export function bannerFor(hash: string) {
-  return hash.startsWith("#/archon/") || hash === "#/archon" ? <ArchonToolsNotice /> : null;
+  return hash.startsWith("#/archon/") || hash === "#/archon" ? <Suspense fallback={null}><ArchonToolsNotice /></Suspense> : null;
 }
 
 export interface ShellRootProps {
@@ -67,6 +69,6 @@ export function ShellRoot({ initialRecents, onRecentsChange }: ShellRootProps) {
   return (
     <AppShell routes={routes} actions={actions} capabilities={capabilities} match={match} hash={hash}
       onNavigate={navigate} onActionError={onActionError} connections={connections} notices={notices} onDismissNotice={dismiss} titles={screenTitles}
-      home={<Welcome />} banner={bannerFor(hash)} commands={paletteEntities} initialRecents={initialRecents} onRecentsChange={onRecentsChange} />
+      home={<Suspense fallback={null}><Welcome /></Suspense>} banner={bannerFor(hash)} commands={paletteEntities} initialRecents={initialRecents} onRecentsChange={onRecentsChange} />
   );
 }
