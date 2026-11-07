@@ -231,9 +231,10 @@ picker above the transcript offers `standard`, the built-in `focus` and the
 modes in the daemon's `<config dir>/modes/*.toml` whose scope fits the agent,
 read over `list_view_modes` (see [the TUI's view modes](tui.md#view-modes)); a
 mode scoped to another agent is not offered. Arrow keys move the choice, and
-`/mode <name>` or `/<name>` (again for standard) choose one from the composer;
-they run in the app and, while the daemon's list is loading or unavailable,
-say so rather than reach the agent. The choice is remembered per daemon and agent. Without one, an agent opens in
+`/mode <name>` or `/<name>` (again for standard) choose one from the composer
+and run in the app. While the daemon's list is loading or unavailable, `/mode`
+and `/focus` say so rather than reach the agent; a user mode's `/<name>` is
+known only once the list arrives. The choice is remembered per daemon and agent. Without one, an agent opens in
 the first user mode scoped to it, so Archon's orchestrator opens in Calm when
 its `calm.toml` exists, and any other agent in standard.
 
@@ -245,7 +246,8 @@ draws delegations, messages, completions and status as one-line cards.
 Questions, approvals, errors, failed children and calls that were denied or
 cancelled stay whole in every mode. **Details** (Ctrl+T) reveals everything
 the mode hides without leaving it. Switching keeps the draft and the row at
-the top of the view.
+the top of the view. Message bodies are not escaped, so an inbox turn whose
+headers are out of order holds a quoted one, and every mode draws all of it.
 
 Delegations, messages between agents and a child's completion or failure are
 cards that open the other agent's chat and, for delegations and outcomes, the

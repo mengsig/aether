@@ -19,7 +19,7 @@ export type Part =
   | { readonly kind: "orphan-result"; readonly toolUseId: string; readonly result: ToolResultView }
   | { readonly kind: "attachment"; readonly name: string; readonly mediaType: string; readonly sizeBytes: number | null }
   | { readonly kind: "compaction"; readonly text: string }
-  | { readonly kind: "inbox"; readonly segment: Exclude<InboxSegment, { kind: "operator" }> };
+  | { readonly kind: "inbox"; readonly segment: Exclude<InboxSegment, { kind: "operator" }>; readonly inOrder: boolean };
 
 /** What `invocation.completed` or `invocation.failed` said about the invocation behind a message. */
 export interface InvocationMeta {
@@ -100,7 +100,8 @@ function blockPart(block: aether.ContentBlock, pairing: Pairing): Part | null {
 
 /** A user turn's inbox text as one part per delivery; what a person typed stays text. */
 function inboxParts(text: string): Part[] {
-  return splitInbox(text).map((segment) => (segment.kind === "operator" ? { kind: "text", text: segment.text } : { kind: "inbox", segment }));
+  const turn = splitInbox(text);
+  return turn.segments.map((segment) => (segment.kind === "operator" ? { kind: "text", text: segment.text } : { kind: "inbox", segment, inOrder: turn.inOrder }));
 }
 
 /** Committed rows in seq order; a message left with nothing of its own to show has no row. */

@@ -37,17 +37,27 @@ function appended(segment: InboxSegment, line: string): InboxSegment {
   return { ...segment, text };
 }
 
-/** The deliveries in an inbox turn, in order; a turn that is not inbox text is one operator segment. */
-export function splitInbox(text: string): InboxSegment[] {
-  if (!isInboxText(text)) return text.trim() === "" ? [] : [{ kind: "operator", text: text.trim() }];
+export interface InboxTurn {
+  readonly segments: readonly InboxSegment[];
+  /**
+   * Whether each header's seq exceeds the one before, as the daemon writes them. Bodies are not
+   * escaped, so a turn out of order quotes a header somewhere and no mode may hide any of it.
+   */
+  readonly inOrder: boolean;
+}
+
+/** The deliveries in an inbox turn, split on every header as the TUI splits them, so none is absorbed. */
+export function splitInbox(text: string): InboxTurn {
+  if (!isInboxText(text)) return { segments: text.trim() === "" ? [] : [{ kind: "operator", text: text.trim() }], inOrder: true };
   const segments: InboxSegment[] = [];
   let current: InboxSegment | null = null;
   let seq = -1;
+  let inOrder = true;
   for (const line of text.trim().split("\n")) {
     const header = HEADER.exec(line);
-    // Bodies are not escaped; deliveries go up in seq, so a quoted earlier header stays body text.
-    if (header?.[2] !== undefined && Number(header[1]) > seq) {
+    if (header?.[2] !== undefined) {
       if (current !== null) segments.push(current);
+      inOrder &&= Number(header[1]) > seq;
       seq = Number(header[1]);
       current = opened(header[2]);
       continue;
@@ -58,5 +68,5 @@ export function splitInbox(text: string): InboxSegment[] {
   if (current !== null) segments.push(current);
   const kept = segments.map((s) => ({ ...s, text: s.text.trim() })).filter((s) => s.kind !== "operator" || s.text !== "");
   invariant(kept.length <= segments.length, "splitting only drops empty operator turns");
-  return kept;
+  return { segments: kept, inOrder };
 }

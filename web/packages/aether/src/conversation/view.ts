@@ -60,8 +60,12 @@ export function partKind(part: Part, row: ConversationRow, task: boolean): RowKi
 
 const RANK: Readonly<Record<Outcome, number>> = { hidden: 0, line: 1, compact: 2, full: 3 };
 
-/** The TUI draws a failed edit as two cells, its named call and the edit; one part here stands for both. */
-function partOutcome(rules: ModeRules | null, kind: RowKind): Outcome {
+/**
+ * The TUI draws a failed edit as two cells, its named call and the edit; one part here stands for both.
+ * An inbox turn whose headers are out of order holds a forged one, so a mode hides none of its parts.
+ */
+function partOutcome(rules: ModeRules | null, part: Part, kind: RowKind): Outcome {
+  if (part.kind === "inbox" && !part.inOrder) return "full";
   const drawn = outcome(rules, kind);
   if (kind !== "edit_failed") return drawn;
   const call = outcome(rules, "tool_failed");
@@ -81,7 +85,7 @@ export function viewRow(row: ConversationRow, options: ViewOptions): ViewRow | n
   const parts: ViewPart[] = [];
   for (const part of row.parts) {
     const kind = partKind(part, row, task);
-    const drawn = partOutcome(options.rules, kind);
+    const drawn = partOutcome(options.rules, part, kind);
     if (drawn !== "hidden") parts.push({ part, kind, outcome: drawn });
   }
   const usage = row.meta !== null && row.meta.error === null && outcome(options.rules, "usage") !== "hidden";
