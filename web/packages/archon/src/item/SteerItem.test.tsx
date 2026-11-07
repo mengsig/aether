@@ -16,6 +16,7 @@ test("shows the stored plan and submits a validated steer", async () => {
   h = await archonHarness({ protocol: 24 }, world);
   const container = await h.mount(<ItemRoute params={{ item: "qi_rate_limit" }} />);
   await h.until(() => container.textContent?.includes("codex/astra · high") === true, "stored settings");
+  await h.until(() => !(byText(container, "button", "Steer item") as HTMLButtonElement).disabled, "steering permission");
   expect(container.textContent).toContain("Budget: $12");
   expect(container.textContent).toContain("build: 600s");
   await click(h, byText(container, "button", "Steer item"));
@@ -44,6 +45,7 @@ test("updates the priority of a queued item", async () => {
   h = await archonHarness({ protocol: 24 });
   const container = await h.mount(<ItemRoute params={{ item: "qi_rate_limit" }} />);
   await h.until(() => container.querySelector(".item-actions select") !== null, "priority control");
+  await h.until(() => !(container.querySelector(".item-actions select") as HTMLSelectElement).disabled, "editing permission");
   const select = container.querySelector(".item-actions select");
   if (!select) throw new Error("missing priority");
   await type(h, select, "high");
@@ -64,5 +66,6 @@ test("disables steering with a visible reason when the daemon refuses the policy
   const container = await h.mount(<ItemRoute params={{ item: "qi_rate_limit" }} />);
   await h.until(() => container.textContent?.includes("Steering is unavailable") === true, "the refusal");
   expect((byText(container, "button", "Steer item") as HTMLButtonElement).disabled).toBe(true);
+  expect((byText(container, "button", "Update priority") as HTMLButtonElement).disabled).toBe(true);
   expect(container.textContent).toContain("model policy is unavailable");
 });

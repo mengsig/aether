@@ -21,6 +21,7 @@ function Settings({ item }: { readonly item: archon.QueueItem }) {
     <p>Budget: {item.budget_usd == null ? "Not set" : `$${item.budget_usd}`}</p>
     <p>Stage timeouts: {Object.entries(item.stage_timeouts ?? {}).map(([stage, seconds]) => `${stage}: ${seconds}s`).join(", ") || "Defaults"}</p>
     {stages.length ? stages.map(([stage, choices]) => <p key={stage}>{stage}: {choices.map((choice) => `${nameOf(choice.model)} · ${choice.effort}`).join(", ") || "No model selected"}</p>) : <p>Model plan: Not available</p>}
+    <p className="item-muted">For a running item, its run page shows recorded plan settings and attempts.</p>
   </div>;
 }
 
@@ -69,7 +70,7 @@ function Controls({ item, draft, set, choices, efforts, policyReady }: FormProps
   </>;
 }
 
-export function SteerItem({ access, item, active, disabled, onDone }: { readonly access: ArchonAccess; readonly item: archon.QueueItem; readonly active: boolean; readonly disabled: boolean; readonly onDone: () => void }) {
+export function SteerItem({ access, item, active, disabled, policy, onDone }: { readonly access: ArchonAccess; readonly item: archon.QueueItem; readonly active: boolean; readonly disabled: boolean; readonly policy: archon.ModelPolicy | undefined; readonly onDone: () => void }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<Draft>(EMPTY);
   const [error, setError] = useState<string | null>(null);
@@ -78,9 +79,8 @@ export function SteerItem({ access, item, active, disabled, onDone }: { readonly
   const aetherConnection = Object.values(connections).find((connection) => connection.daemon === "aether" && connection.state === "ready");
   const modelAccess: ArchonAccess = { ...access, conn: aetherConnection?.id ?? "", ready: Boolean(aetherConnection) };
   const models = useRead<aether.ModelInfo[]>(modelAccess, open && aetherConnection ? { cmd: "list_models" } : null, ["models"]);
-  const policy = useRead<archon.ModelPolicy>(access, active ? { cmd: "model_policy", repo: item.repo ?? null } : null, ["model_policy"]);
-  const choices = models.data && policy.data ? availableModels(models.data, policy.data) : [];
-  const max = policy.data?.max_effort === "xhigh" ? "x_high" : policy.data?.max_effort;
+  const choices = models.data && policy ? availableModels(models.data, policy) : [];
+  const max = policy?.max_effort === "xhigh" ? "x_high" : policy?.max_effort;
   const efforts = EFFORTS.slice(0, max ? EFFORTS.indexOf(max) + 1 : EFFORTS.length);
   const set = (patch: Partial<Draft>) => setDraft((current) => ({ ...current, ...patch }));
   const close = () => { setOpen(false); setDraft(EMPTY); setError(null); };
@@ -109,14 +109,12 @@ export function SteerItem({ access, item, active, disabled, onDone }: { readonly
     if (!result.ok) return setError(result.error);
     close(); onDone();
   };
-  const policyRefusal = policy.error ? `Steering is unavailable: ${policy.error}` : null;
-  return <><Settings item={item} />{active ? <Button disabled={disabled || !policy.data} title={access.refusal ?? policyRefusal ?? (!access.live ? "Steering requires protocol 24" : undefined)} onClick={() => setOpen(true)}>Steer item</Button> : null}
-    {active && policyRefusal ? <p className="item-muted">{policyRefusal}</p> : null}
-    <Dialog open={open} onClose={close} title="Steer item" description="Notes reach active work; model and effort changes may apply to future stages. Archon decides how to deliver each change.">
+  return <><Settings item={item} />{active ? <Button disabled={disabled} title={access.refusal ?? (!access.live ? "Steering requires protocol 24" : undefined)} onClick={() => setOpen(true)}>Steer item</Button> : null}
+    <Dialog open={open} onClose={close} title="Steer item" description="Notes reach active work; model and effort changes may apply to future stages. For a queued stage they update every parallel slot.">
       <form className="queue-form" onSubmit={(event) => void submit(event)} noValidate>
-        <Controls item={item} draft={draft} set={set} choices={choices} efforts={efforts} policyReady={Boolean(policy.data)} />
+        <Controls item={item} draft={draft} set={set} choices={choices} efforts={efforts} policyReady={Boolean(policy)} />
         {!aetherConnection ? <p>Aether is not connected; model choices are unavailable.</p> : null}
-        {models.error || policy.error ? <p role="alert">Model choices unavailable: {models.error ?? policy.error}</p> : null}
+        {models.error ? <p role="alert">Model choices unavailable: {models.error}</p> : null}
         {error ? <p role="alert" className="queue-error">{error}</p> : null}
         <div className="queue-form-actions"><Button onClick={close}>Cancel</Button><Button type="submit" variant="primary" disabled={busy || disabled}>Apply changes</Button></div>
       </form>
