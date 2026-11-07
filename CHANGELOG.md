@@ -11,6 +11,9 @@ release is also the text of its GitHub release.
 - `list_view_modes` serves the shared TUI and desktop transcript-mode catalog,
   including scoped user modes and file diagnostics, to any authenticated reader.
   The `view_modes` handshake feature announces it.
+- The web palette (Ctrl+K) now switches context: it finds agents on every
+  connection by name, role or id, Archon items, initiatives, pull requests and
+  Learn sessions, and lists recent destinations first when the query is empty.
 
 ## 1.3.0
 
