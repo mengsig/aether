@@ -9,10 +9,11 @@ use super::engine::{Engine, Input, ToolCall, ToolResult};
 use super::phase::{Trigger, advance};
 use super::records::{
     EvidenceDraft, EvidenceKind, EvidenceOutcome, NoesisEvent, Outcome, Phase, Problem, Question,
+    SessionRole,
 };
 use super::seal::Sealer;
 use super::service::{Caller, Teaching, TurnEnd, driving_agent};
-use super::{PROBE_DONE_ACK, TeachError, agent_for_role, plan, question};
+use super::{PROBE_DONE_ACK, TeachError, agent_for_role, history, plan, question};
 use crate::learner::{self, LearnerError, Selection};
 use crate::prompts::Agent;
 use crate::tools::args::{
@@ -246,16 +247,19 @@ impl<E: Engine> Teaching<'_, E> {
         }
         // The Teacher and its hand-off input exist before the phase moves, so a
         // failed wake later finds the input persisted and recovers.
-        let teacher = match self.spawn_teacher(row, args) {
-            Ok(teacher) => teacher,
+        let (teacher, handed_off_at) = match self.spawn_teacher(row, args) {
+            Ok(spawned) => spawned,
             Err(TeachError::Engine(error)) => {
                 return refuse(format!("the hand-off failed, call again: {error}"));
             }
             Err(error) => return Err(error),
         };
-        if !db::transition(self.conn(), &row.id, Phase::Probe, Phase::Plan, &teacher)? {
+        let tx = self.conn().unchecked_transaction()?;
+        if !db::transition(&tx, &row.id, Phase::Probe, Phase::Plan, &teacher)? {
             return refuse("the probe is already recorded; noesis.probe_done is called once");
         }
+        history::add_agent(&tx, &row.id, &teacher, SessionRole::Teacher, handed_off_at)?;
+        tx.commit()?;
         self.events.push(NoesisEvent::PhaseChanged {
             session: row.id.clone(),
             from: Phase::Probe,
@@ -270,11 +274,12 @@ impl<E: Engine> Teaching<'_, E> {
         Ok(Ok((json!(PROBE_DONE_ACK), Some(TurnEnd::HandedOff))))
     }
 
+    /// The new Teacher and the seq its hand-off input was recorded at.
     fn spawn_teacher(
         &mut self,
         row: &SessionRow,
         args: &ProbeDoneArgs,
-    ) -> Result<String, TeachError> {
+    ) -> Result<(String, Option<u64>), TeachError> {
         // The Teacher is a new agent: the session's bundle goes with the hand-off.
         let bundle = crate::evidence::store::load(self.conn(), &row.id)
             .map_err(|error| TeachError::Corrupt(error.to_string()))?;
@@ -290,8 +295,8 @@ impl<E: Engine> Teaching<'_, E> {
                 .map_err(|error| TeachError::Corrupt(error.to_string()))?;
             handoff.push_str(&rendered);
         }
-        self.engine.deliver(&teacher, Input::Handoff(handoff))?;
-        Ok(teacher)
+        let handed_off_at = self.engine.deliver(&teacher, Input::Handoff(handoff))?;
+        Ok((teacher, handed_off_at))
     }
 
     fn plan(&mut self, row: &SessionRow, args: &PlanArgs) -> Handled {
@@ -337,11 +342,12 @@ impl<E: Engine> Teaching<'_, E> {
         })
     }
 
-    fn push_plan_event(&mut self, session: &str) -> Result<(), TeachError> {
+    /// Announce the session's plan with its statuses as they now are.
+    pub(super) fn push_plan_event(&mut self, session: &str) -> Result<(), TeachError> {
         let Some((revision, dag)) = db::latest_plan(self.conn(), session)? else {
             return Ok(());
         };
-        let tree = plan::tree(revision, &dag, &db::tagged_nodes(self.conn(), session)?);
+        let tree = plan::tree(revision, &dag, &db::plan_marks(self.conn(), session)?);
         self.events.push(NoesisEvent::PlanUpdated {
             session: session.to_string(),
             plan: tree,

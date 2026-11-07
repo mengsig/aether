@@ -77,8 +77,10 @@ impl std::fmt::Debug for ToolResult {
 /// an input whose turn failed is still there for the retry.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
-    /// The learner's own message, or the session goal.
+    /// The learner's own message.
     Learner(String),
+    /// A session's first input: its goal, practice targets and any bundle.
+    Opening(String),
     /// The probe assessment handed to a new Teacher.
     Handoff(String),
     /// Results of tool calls the loop ran in the agent's last step.
@@ -114,17 +116,21 @@ pub enum EngineError {
     /// The call may have reached a model; its estimate is charged.
     #[error("the engine failed: {0}")]
     Failed(String),
+    /// The Noesis budget refused the call, so nothing reached a model.
+    #[error("{0}")]
+    BudgetSpent(String),
 }
 
 pub trait Engine {
     fn models(&self) -> Vec<ModelInfo>;
     /// Create an agent; returns its Aether agent id.
     fn spawn(&mut self, spec: AgentSpec) -> Result<String, EngineError>;
-    /// Persist an input for the agent's next step. A failed delivery may be
+    /// Persist an input for the agent's next step; the transcript seq it was
+    /// recorded at, or `None` when it added nothing. A failed delivery may be
     /// repeated, so a tool result or answer seen twice (same id) is ignored.
     /// Inputs are the agent's private context, sealed only against what is
     /// committed when they go: a host publishes turn reports, never them.
-    fn deliver(&mut self, agent: &str, input: Input) -> Result<(), EngineError>;
+    fn deliver(&mut self, agent: &str, input: Input) -> Result<Option<u64>, EngineError>;
     /// The estimated spend of the agent's next step, admitted before it runs.
     fn estimate(&self, agent: &str) -> Spend;
     /// Whether [`Engine::step`] admits and settles each call against the

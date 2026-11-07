@@ -145,7 +145,8 @@ impl Sealer {
             | NoesisEvent::QuestionPosed { .. }
             | NoesisEvent::AnswerRecorded { .. }
             | NoesisEvent::ProblemPosed { .. }
-            | NoesisEvent::PracticeConcluded { .. } => {}
+            | NoesisEvent::PracticeConcluded { .. }
+            | NoesisEvent::SessionStalled { .. } => {}
         }
     }
 
@@ -425,5 +426,40 @@ mod tests {
         assert_eq!(plan.nodes[1].id, "sealed-2");
         assert_eq!(plan.edges[0].to, "sealed-2");
         assert!(!format!("{plan:?}").to_lowercase().contains("mitochondria"));
+    }
+
+    #[test]
+    fn a_session_history_holds_no_live_secret_and_reveals_it_once_answered() {
+        use super::super::faux::FauxEngine;
+        use super::super::records::Answer;
+        use super::super::{Teaching, testkit};
+
+        let (_dir, noesis) = testkit::fixture();
+        let mut t = Teaching::new(&noesis, FauxEngine::new());
+        let id = testkit::teacher_session(&mut t);
+        let mut ask = testkit::recall("Name the rule for f(g(x))", "KEY-HISTORY-CHAIN");
+        ask["explanation"] = Value::from("EXPLAIN-HISTORY-OUTER");
+        assert!(
+            !testkit::call(&mut t, &id, testkit::ASK, ask, "")
+                .result
+                .is_error
+        );
+        let live = Sealer::new(t.live_secrets(&id).unwrap());
+        assert!(live.holds("KEY-HISTORY-CHAIN") && live.holds("EXPLAIN-HISTORY-OUTER"));
+        let open = serde_json::to_value(t.get_session(&id).unwrap()).unwrap();
+        assert!(!live.reveals(&open), "{open}");
+
+        let question = t.get_session(&id).unwrap().questions[0].question.id.clone();
+        let answer = Answer {
+            text: Some("the chain rule".into()),
+            ..Answer::default()
+        };
+        t.answer(&id, &question, &answer).unwrap();
+        let history = serde_json::to_value(t.get_session(&id).unwrap().questions).unwrap();
+        assert!(
+            live.reveals(&history),
+            "the reveal carries the key once answered"
+        );
+        assert!(t.live_secrets(&id).unwrap().is_empty());
     }
 }

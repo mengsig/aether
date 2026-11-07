@@ -5,7 +5,6 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use aether_core::model::Usage;
 use aether_noesis::budget::{Billing, ModelOffer, choose_model};
 use aether_noesis::settings::NoesisSettings;
 use aether_noesis::teach::engine::ModelInfo;
@@ -32,11 +31,15 @@ impl NoesisService {
         let effective = self.effective(&settings);
         let store = runtime.store().clone();
         let day = budget::today();
-        let (interactive, background) =
-            tokio::task::spawn_blocking(move || budget::usage_today(store.as_ref(), day))
-                .await
-                .map_err(|e| ErrorReply::internal(format!("the spend read did not finish: {e}")))?
-                .map_err(crate::connection::store_err)?;
+        let used = tokio::task::spawn_blocking(move || budget::usage_today(store.as_ref(), day))
+            .await
+            .map_err(|e| ErrorReply::internal(format!("the spend read did not finish: {e}")))?
+            .map_err(crate::connection::store_err)?;
+        let (interactive, background) = budget::by_lane(&used);
+        let (subscription, api) = budget::by_billing(
+            &self.models,
+            used.iter().map(|(agent, usage)| (&agent.model, usage)),
+        );
         let jobs_running = runtime
             .noesis_turns_running()
             .iter()
@@ -57,8 +60,8 @@ impl NoesisService {
             spend_today: SpendToday {
                 interactive,
                 background,
-                subscription: Usage::default(),
-                api: Usage::default(),
+                subscription,
+                api,
             },
             disable_policy: DisablePolicy {
                 grace_seconds: settings.disable_grace_seconds,

@@ -50,6 +50,9 @@ pub struct LaneSpend {
     pub background: Spend,
 }
 
+/// The setting a learner raises when today's teaching budget is spent.
+pub const INTERACTIVE_BUDGET_SETTING: &str = "noesis.budget.interactive_usd_daily";
+
 /// Why a call was refused. Nothing was sent to a model.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum Refusal {

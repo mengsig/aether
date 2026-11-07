@@ -657,7 +657,7 @@ impl Engine for Unreachable {
         Err(EngineError::NotSent("unreachable".into()))
     }
 
-    fn deliver(&mut self, _agent: &str, _input: Input) -> Result<(), EngineError> {
+    fn deliver(&mut self, _agent: &str, _input: Input) -> Result<Option<u64>, EngineError> {
         Err(EngineError::NotSent("the daemon went down".into()))
     }
 
@@ -787,7 +787,48 @@ async fn every_invocation_is_charged_and_a_spent_budget_refuses_before_the_call(
         1,
         "the answer is still delivered"
     );
+    assert_stalled_and_refused(&harness, &created.id).await;
     harness.close().await;
+}
+
+/// A turn the budget stopped is recorded on the session and announced; a new
+/// session or message is refused up front, naming spent, limit and setting.
+async fn assert_stalled_and_refused(harness: &Harness, id: &str) {
+    use aether_core::noesis::StallReason;
+    const SETTING: &str = "noesis.budget.interactive_usd_daily";
+    let session = harness.session(id).await.expect("session");
+    let stall = session
+        .stalled
+        .expect("the refused turn stalls the session");
+    assert_eq!(stall.reason, StallReason::BudgetExhausted);
+    assert!(stall.message.contains(SETTING), "{}", stall.message);
+    let announced = harness.events().into_iter().any(|event| {
+        matches!(&event.kind, EventKind::NoesisSessionStalled { stall: s, .. } if *s == stall)
+    });
+    assert!(announced, "noesis.session_stalled is published");
+    let usage = session.usage.expect("usage of a session read");
+    assert_eq!(usage.api.cost_usd, 0.05, "an API model's use is charged");
+    assert_eq!(usage.subscription, Usage::default());
+
+    let send = json!({"cmd": "noesis_send", "session": id, "text": "hello?",
+                      "idempotency_key": "send-spent"});
+    let create = json!({"cmd": "noesis_create_session", "goal": "Learn more",
+                        "mode": "teach", "idempotency_key": "create-spent"});
+    for command in [send, create] {
+        let refused = harness
+            .send_json(command)
+            .await
+            .expect_err("refused up front");
+        assert_eq!(refused.code, ErrorCode::Unavailable);
+        assert_eq!(
+            refused.reason.as_deref(),
+            Some(aether_protocol::NOESIS_BUDGET_EXHAUSTED)
+        );
+        for named in ["$0.05", "$0.01", SETTING] {
+            assert!(refused.message.contains(named), "{}", refused.message);
+        }
+    }
+    assert_eq!(harness.client.requests().len(), 1, "no model was asked");
 }
 
 #[tokio::test(flavor = "multi_thread")]

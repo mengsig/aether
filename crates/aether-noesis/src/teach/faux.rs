@@ -115,7 +115,8 @@ impl Engine for FauxEngine {
         Ok(id)
     }
 
-    fn deliver(&mut self, agent: &str, input: Input) -> Result<(), EngineError> {
+    /// Every input is recorded; its seq is its place among all inputs.
+    fn deliver(&mut self, agent: &str, input: Input) -> Result<Option<u64>, EngineError> {
         assert!(
             self.kind_of(agent).is_some(),
             "input for an unknown agent {agent}"
@@ -127,7 +128,8 @@ impl Engine for FauxEngine {
             ));
         }
         self.inputs.push((agent.to_string(), input));
-        Ok(())
+        let seq = u64::try_from(self.inputs.len()).expect("a test's inputs fit");
+        Ok(Some(seq))
     }
 
     fn estimate(&self, _agent: &str) -> Spend {

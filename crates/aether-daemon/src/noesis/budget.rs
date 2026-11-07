@@ -10,7 +10,9 @@ use aether_core::event::EventKind;
 use aether_core::id::AgentId;
 use aether_core::model::{ModelRef, Usage};
 use aether_model::Models;
-use aether_noesis::budget::{Accountant, Admission, Lane, LaneSpend, Spend};
+use aether_noesis::budget::{
+    Accountant, Admission, INTERACTIVE_BUDGET_SETTING, Lane, LaneSpend, Spend,
+};
 use aether_noesis::settings::NoesisSettings;
 use aether_runtime::noesis_guard::{
     NoesisBudget, NoesisCharge, NoesisLane, NoesisRefusal, lane_of, usage_spent,
@@ -45,7 +47,7 @@ fn lane(lane: NoesisLane) -> Lane {
 /// Events read per page when rebuilding the day.
 const PAGE: usize = 2_000;
 
-/// Today's Noesis usage per lane (interactive, background), rebuilt from the
+/// Each Noesis agent with its usage today, rebuilt from the
 /// `agent.usage_updated` records of `noesis.*` agents since UTC midnight.
 /// Each record's absolute total is turned into a charge by the same
 /// [`usage_spent`] a turn settles with, so completed and failed invocations
@@ -53,16 +55,16 @@ const PAGE: usize = 2_000;
 pub(crate) fn usage_today(
     store: &dyn Store,
     day: NaiveDate,
-) -> aether_store::Result<(Usage, Usage)> {
+) -> aether_store::Result<Vec<(Agent, Usage)>> {
     let midnight = day.and_hms_opt(0, 0, 0).map(|time| time.and_utc());
     debug_assert!(midnight.is_some(), "midnight exists on every day");
-    let lanes = noesis_lanes(store)?;
+    let mut agents = noesis_agents(store)?;
     let filter = EventFilter {
         types: vec!["agent.usage_updated".into()],
         ..EventFilter::default()
     };
     let mut last_total: HashMap<AgentId, Usage> = HashMap::new();
-    let (mut interactive, mut background) = (Usage::default(), Usage::default());
+    let mut today: HashMap<AgentId, Usage> = HashMap::new();
     let mut after = 0u64;
     loop {
         let page = store.events(after, PAGE, &filter)?;
@@ -75,43 +77,84 @@ pub(crate) fn usage_today(
             else {
                 continue;
             };
-            let Some(lane_kind) = lanes.get(&agent) else {
+            if !agents.contains_key(&agent) {
                 continue;
-            };
+            }
             let before = last_total.insert(agent, *total).unwrap_or_default();
             if midnight.is_some_and(|midnight| event.at < midnight) {
                 continue;
             }
-            let charge = usage_spent(&before, total);
-            match lane_kind {
-                NoesisLane::Interactive => interactive += charge,
-                NoesisLane::Background => background += charge,
-            }
+            *today.entry(agent).or_default() += usage_spent(&before, total);
         }
         if page.len() < PAGE {
             break;
         }
     }
-    Ok((interactive, background))
+    let used: Vec<(Agent, Usage)> = today
+        .into_iter()
+        .filter_map(|(id, usage)| agents.remove(&id).map(|agent| (agent, usage)))
+        .collect();
+    debug_assert!(
+        used.iter()
+            .all(|(agent, _)| agent.role.as_str().starts_with(ROLE_PREFIX))
+    );
+    Ok(used)
 }
 
-/// The lane of every Noesis agent, by its role.
-fn noesis_lanes(store: &dyn Store) -> aether_store::Result<HashMap<AgentId, NoesisLane>> {
+/// Every Noesis agent, by its role.
+fn noesis_agents(store: &dyn Store) -> aether_store::Result<HashMap<AgentId, Agent>> {
     let agents = store.agents(&AgentFilter {
         exclude_archived: false,
         ..AgentFilter::default()
     })?;
     Ok(agents
-        .iter()
+        .into_iter()
         .filter(|agent| agent.role.as_str().starts_with(ROLE_PREFIX))
-        .map(|agent| (agent.id, lane_of(agent.role.as_str())))
+        .map(|agent| (agent.id, agent))
         .collect())
+}
+
+/// Whether `model` runs on an engine CLI (a subscription), not an API.
+pub(crate) fn runs_on_engine(models: &Models, model: &ModelRef) -> bool {
+    models
+        .registry()
+        .provider(&model.provider)
+        .is_some_and(|provider| provider.protocol.is_engine())
+}
+
+/// Agents' usage summed per lane: (interactive, background).
+pub(crate) fn by_lane(used: &[(Agent, Usage)]) -> (Usage, Usage) {
+    let (mut interactive, mut background) = (Usage::default(), Usage::default());
+    for (agent, usage) in used {
+        match lane_of(agent.role.as_str()) {
+            NoesisLane::Interactive => interactive += *usage,
+            NoesisLane::Background => background += *usage,
+        }
+    }
+    (interactive, background)
+}
+
+/// Usage on each model summed by billing: (subscription, API). Only an API
+/// provider bills per request; an engine's use is covered by its plan.
+pub(crate) fn by_billing<'a>(
+    models: &Models,
+    used: impl IntoIterator<Item = (&'a ModelRef, &'a Usage)>,
+) -> (Usage, Usage) {
+    let (mut subscription, mut api) = (Usage::default(), Usage::default());
+    for (model, usage) in used {
+        if runs_on_engine(models, model) {
+            subscription += *usage;
+        } else {
+            api += *usage;
+        }
+    }
+    (subscription, api)
 }
 
 /// Today's spend per lane as the accountant is seeded with it, so a restart
 /// does not reset the day.
 pub(crate) fn spent_today(store: &dyn Store, day: NaiveDate) -> aether_store::Result<LaneSpend> {
-    let (interactive, background) = usage_today(store, day)?;
+    let (interactive, background) = by_lane(&usage_today(store, day)?);
     let spent = LaneSpend {
         interactive: spend_of(&interactive),
         background: spend_of(&background),
@@ -208,8 +251,13 @@ impl ServiceBudget {
         if !*self.open.lock() || self.book.retired.load(Ordering::SeqCst) {
             return Some("Noesis is not taking background work now".into());
         }
+        self.spent(NoesisLane::Background)
+    }
+
+    /// Why `lane` admits nothing more today, naming spent, limit and setting.
+    pub(crate) fn spent(&self, lane_kind: NoesisLane) -> Option<String> {
         let unsettled = self.book.unsettled.lock();
-        self.book.spent_out(&unsettled, NoesisLane::Background)
+        self.book.spent_out(&unsettled, lane_kind)
     }
 
     /// Admissions not yet settled, started or not.
@@ -226,16 +274,10 @@ impl Book {
         if self.allow_api {
             return None;
         }
-        let registry = self.models.registry();
-        let billed = |model: &ModelRef| {
-            !registry
-                .provider(&model.provider)
-                .is_some_and(|provider| provider.protocol.is_engine())
-        };
         let compactor = self.models.compactor_for(model);
         [model, &compactor]
             .into_iter()
-            .find(|model| billed(model))
+            .find(|model| !runs_on_engine(&self.models, model))
             .map(|model| {
                 format!(
                     "`{}/{}` is billed per request; set noesis.billing.allow_api = true to use it",
@@ -253,16 +295,22 @@ impl Book {
         let unsettled = unsettled[i];
         let usd = settled.usd + unsettled.usd;
         debug_assert!(usd.is_finite() && usd >= 0.0, "spend is a real amount");
+        let (name, setting) = match lane_kind {
+            NoesisLane::Interactive => ("interactive", INTERACTIVE_BUDGET_SETTING),
+            NoesisLane::Background => ("background", "noesis.budget.background_usd_daily"),
+        };
         if usd >= self.usd_daily[i] {
             return Some(format!(
-                "today's Noesis {lane_kind:?} budget of ${:.2} is spent",
+                "today's Noesis {name} budget is spent: ${usd:.2} of ${:.2}; \
+                 raise {setting} to continue today",
                 self.usd_daily[i]
             ));
         }
         let tokens = settled.tokens.saturating_add(unsettled.tokens);
         if lane_kind == NoesisLane::Background && tokens >= self.background_tokens_daily {
             return Some(format!(
-                "today's Noesis background budget of {} tokens is spent",
+                "today's Noesis background budget is spent: {tokens} of {} tokens; \
+                 raise noesis.budget.background_tokens_daily to continue today",
                 self.background_tokens_daily
             ));
         }

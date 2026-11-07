@@ -23,21 +23,21 @@ use aether_core::model::{
 };
 use aether_core::tool::ToolExposure;
 use aether_model::{ModelClient, ModelStream, Models};
-use aether_noesis::budget::{Billing, Spend};
+use aether_noesis::budget::{Billing, INTERACTIVE_BUDGET_SETTING, Spend};
 use aether_noesis::prompts;
 use aether_noesis::teach::engine::ModelInfo;
 use aether_noesis::teach::{
     AgentSpec, Engine, EngineError, Input, Step, ToolCall, ToolResult, agent_for_role,
 };
 use aether_noesis::tools::{self, ToolName};
-use aether_runtime::noesis_guard::{NoesisBudget, NoesisCharge, lane_of};
+use aether_runtime::noesis_guard::{NoesisBudget, NoesisCharge, NoesisRefusal, lane_of};
 use aether_runtime::{BusMessage, CreateAgentSpec, NoesisStepStream, Runtime};
 use aether_store::Commit;
 use futures::StreamExt;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
-use super::budget::{ServiceBudget, spend_of};
+use super::budget::{ServiceBudget, runs_on_engine, spend_of};
 use super::engine_step::{self, EngineStepClient};
 
 /// What every engine of one running service shares.
@@ -53,14 +53,6 @@ pub(super) struct EngineHost {
     pub prompt_overrides: Option<PathBuf>,
     /// The one run every Noesis agent is created in.
     pub run: RunId,
-}
-
-/// Whether `model` runs on an engine CLI (a subscription), not an API.
-fn runs_on_engine(models: &Models, model: &ModelRef) -> bool {
-    models
-        .registry()
-        .provider(&model.provider)
-        .is_some_and(|provider| provider.protocol.is_engine())
 }
 
 /// Every listed model, ready only when a step on it could run now: an
@@ -157,7 +149,7 @@ impl<'a> AetherEngine<'a> {
                 .host
                 .budget
                 .admit(agent, lane_of(agent.role.as_str()))
-                .map_err(|refusal| not_sent(format!("{refusal:?}")))?;
+                .map_err(|refusal| self.refused(agent, refusal))?;
             self.charge = Some(OpenCharge {
                 agent: agent.id,
                 charge,
@@ -249,12 +241,16 @@ impl AetherEngine<'_> {
         agent: &Agent,
         role: MessageRole,
         content: Vec<ContentBlock>,
-    ) -> Result<(), EngineError> {
+    ) -> Result<u64, EngineError> {
         debug_assert!(!content.is_empty(), "an entry carries content");
         let mut commit = Commit::new();
         commit.push_event(message_draft(agent, role, content));
-        self.host.runtime.apply(commit).map_err(not_sent)?;
-        Ok(())
+        let events = self.host.runtime.apply(commit).map_err(not_sent)?;
+        debug_assert_eq!(events.len(), 1, "one message event per entry");
+        let message = events
+            .first()
+            .ok_or_else(|| not_sent("the transcript entry was not committed"))?;
+        Ok(message.seq)
     }
 
     /// The blocks `input` adds to the transcript; results the last reply's
@@ -262,7 +258,9 @@ impl AetherEngine<'_> {
     fn blocks_of(&self, history: &[Message], input: Input) -> Vec<ContentBlock> {
         let (calls, answered) = last_calls(history);
         match input {
-            Input::Learner(text) | Input::Handoff(text) => vec![ContentBlock::Text { text }],
+            Input::Learner(text) | Input::Opening(text) | Input::Handoff(text) => {
+                vec![ContentBlock::Text { text }]
+            }
             Input::ToolResults(results) => results
                 .into_iter()
                 .filter(|result| !answered.contains(&result.call))
@@ -408,7 +406,29 @@ impl AetherEngine<'_> {
             .charge
             .refuses_model(&row.model)
             .or_else(|| open.charge.before_invocation(&open.spent));
-        refused.map_or(Ok(()), |reason| Err(not_sent(reason)))
+        let Some(reason) = refused else {
+            return Ok(());
+        };
+        // A spent budget is told apart: the session records it as its stall.
+        Err(match self.host.budget.spent(lane_of(row.role.as_str())) {
+            Some(spent) => EngineError::BudgetSpent(spent),
+            None => not_sent(reason),
+        })
+    }
+
+    /// The error of a refused admission; a spent budget names its setting.
+    fn refused(&self, agent: &Agent, refusal: NoesisRefusal) -> EngineError {
+        match refusal {
+            NoesisRefusal::Busy(reason) => not_sent(reason),
+            NoesisRefusal::Exhausted(reason) => EngineError::BudgetSpent(
+                self.host
+                    .budget
+                    .spent(lane_of(agent.role.as_str()))
+                    .unwrap_or_else(|| {
+                        format!("{reason}; raise {INTERACTIVE_BUDGET_SETTING} to continue today")
+                    }),
+            ),
+        }
     }
 
     fn request(&self, agent: &Agent, history: Vec<Message>) -> Result<ModelRequest, EngineError> {
@@ -473,14 +493,14 @@ impl Engine for AetherEngine<'_> {
         Ok(agent.id.to_string())
     }
 
-    fn deliver(&mut self, agent: &str, input: Input) -> Result<(), EngineError> {
+    fn deliver(&mut self, agent: &str, input: Input) -> Result<Option<u64>, EngineError> {
         let row = self.agent(agent)?;
         let history = self.transcript(row.id)?;
         let blocks = self.blocks_of(&history, input);
         if blocks.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
-        self.record(&row, MessageRole::User, blocks)
+        self.record(&row, MessageRole::User, blocks).map(Some)
     }
 
     fn estimate(&self, _agent: &str) -> Spend {

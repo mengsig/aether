@@ -5,6 +5,7 @@
 mod db;
 pub mod engine;
 mod handlers;
+mod history;
 pub mod phase;
 pub mod plan;
 pub mod question;
@@ -18,6 +19,8 @@ mod turn;
 mod evidence_flow;
 #[cfg(test)]
 mod faux;
+#[cfg(test)]
+mod history_tests;
 #[cfg(test)]
 mod parity;
 #[cfg(test)]

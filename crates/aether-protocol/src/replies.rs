@@ -13,6 +13,9 @@ use super::{
 
 /// [`ErrorReply::reason`] of a Noesis command refused while Noesis is disabled.
 pub const NOESIS_DISABLED: &str = "noesis_disabled";
+/// [`ErrorReply::reason`] of a Noesis command refused because today's
+/// interactive budget (`noesis.budget.interactive_usd_daily`) is spent.
+pub const NOESIS_BUDGET_EXHAUSTED: &str = "noesis_budget_exhausted";
 /// [`ErrorReply::reason`] of a command that conflicts with work in progress.
 pub const CONFLICT: &str = "conflict";
 

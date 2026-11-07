@@ -8,19 +8,33 @@ use serde_json::Value;
 
 use super::db;
 use super::engine::{Engine, EngineError, Input, Step, ToolResult};
+use super::history;
+use super::records::{NoesisEvent, SessionStall, StallReason};
 use super::seal::{self, Sealer};
 use super::service::{
     CallRecord, Caller, MAX_STEPS, StepRecord, Teaching, TurnEnd, TurnReport, driving_agent,
 };
 use super::{TeachError, question, role_of};
-use crate::budget::Lane;
+use crate::budget::{INTERACTIVE_BUDGET_SETTING, Lane, Refusal};
 use crate::tools::SEALED;
 
 impl<E: Engine> Teaching<'_, E> {
     /// Run the session's agent until it waits, and on a hand-off run the new
     /// Teacher's first turn too. A failed turn leaves its inputs persisted,
-    /// so calling this again recovers.
+    /// so calling this again recovers; one the budget refused stalls the session.
     pub fn advance(&mut self, session: &str) -> Result<Vec<TurnReport>, TeachError> {
+        let ran = self.run_turns(session);
+        // A store failure here outranks the turn's own error, which recurs.
+        match ran.as_ref().err().and_then(budget_stall) {
+            Some(message) => self.stall_session(session, message)?,
+            None => {
+                history::clear_stall(self.conn(), session)?;
+            }
+        }
+        ran
+    }
+
+    fn run_turns(&mut self, session: &str) -> Result<Vec<TurnReport>, TeachError> {
         let first = self.run_turn(session)?;
         let handed_off = first.end == TurnEnd::HandedOff;
         let mut reports = vec![first];
@@ -29,6 +43,25 @@ impl<E: Engine> Teaching<'_, E> {
         }
         debug_assert!(reports.iter().skip(1).all(|r| r.end != TurnEnd::HandedOff));
         Ok(reports)
+    }
+
+    /// Record why the session's turn could not run, and announce it.
+    fn stall_session(&mut self, session: &str, message: String) -> Result<(), TeachError> {
+        debug_assert!(
+            message.contains(INTERACTIVE_BUDGET_SETTING),
+            "it names the setting"
+        );
+        let stall = SessionStall {
+            reason: StallReason::BudgetExhausted,
+            message,
+            at: db::now(),
+        };
+        history::set_stall(self.conn(), session, &stall)?;
+        self.events.push(NoesisEvent::SessionStalled {
+            session: session.to_string(),
+            stall,
+        });
+        Ok(())
     }
 
     /// One turn of the session's current agent: model calls, each admitted
@@ -266,13 +299,28 @@ impl<E: Engine> Teaching<'_, E> {
                 admission.settle(step.usage);
                 Ok(step)
             }
-            Err(EngineError::NotSent(reason)) => {
+            Err(error @ (EngineError::NotSent(_) | EngineError::BudgetSpent(_))) => {
                 admission.abandon_unsent();
-                Err(EngineError::NotSent(reason).into())
+                Err(error.into())
             }
             // Dropping the admission charges the estimate: the call may have run.
             Err(error) => Err(error.into()),
         }
+    }
+}
+
+/// What the learner is told when the teaching budget refused a turn's call.
+fn budget_stall(error: &TeachError) -> Option<String> {
+    match error {
+        TeachError::Budget(
+            refusal @ (Refusal::BudgetZero { .. }
+            | Refusal::BudgetExhausted { .. }
+            | Refusal::WouldExceed { .. }),
+        ) => Some(format!(
+            "{refusal}; raise {INTERACTIVE_BUDGET_SETTING} to continue today"
+        )),
+        TeachError::Engine(EngineError::BudgetSpent(message)) => Some(message.clone()),
+        _ => None,
     }
 }
 
