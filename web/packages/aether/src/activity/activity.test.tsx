@@ -4,7 +4,6 @@ import { act } from "react";
 import type { aether } from "@aether-ui/protocol";
 import { connected, click, buttonNamed, type, type Harness } from "../controls/fixture/harness.test-util.tsx";
 import { fauxAgent } from "../conversation/fixture/transcript.ts";
-import { draftKey, readDraft } from "../composer/drafts.ts";
 import ActivityScreen from "./ActivityScreen.tsx";
 let h: Harness;
 afterEach(() => h?.unmount());
@@ -97,28 +96,38 @@ test("a chat whose create fails sends no message", async () => {
   expect(h.daemon.commands("send_message")).toHaveLength(0);
 });
 
-test("a chat whose first message fails opens with that message as its draft, and is never created twice", async () => {
-  h = await connected({ agents: [agent], script: { ...script, send_message: () => ({ code: "invalid_request", message: "Inbox is full" }) } });
+test("a chat whose first message is refused stays in the sheet, says why, and retries against the same chat", async () => {
+  let refusals = 1;
+  const send_message = () => (refusals-- > 0 ? { code: "invalid_request", message: "Inbox is full" } : { tag: "message_sent", data: { seq: 1 } });
+  window.location.hash = "";
+  h = await connected({ agents: [agent], script: { ...script, send_message } });
   const root = await h.mount(<ActivityScreen />);
   await click(h, root, "Start an agent");
-  await type(h, document.body, "First message", "  Hello there  ");
+  await type(h, document.body, "First message", "/calm please");
   await pickRepo();
   await click(h, document.body, "Start chat"); await h.settle();
-  expect(h.daemon.commands("create_agent")).toHaveLength(1);
-  expect(h.daemon.commands("send_message")).toHaveLength(1);
+  expect(document.body.textContent).toContain("Inbox is full");
+  expect(document.body.textContent).toContain("its first message was not confirmed");
+  expect(window.location.hash).not.toContain(agent.id);
+  await click(h, document.body, "Send first message"); await h.settle();
+  expect(h.daemon.commands("create_agent"), "a retry never creates another chat").toHaveLength(1);
+  expect(h.daemon.commands("send_message").map((c) => [c.to, c.content]), "sent as typed, never read as a command").toEqual([[agent.id, "/calm please"], [agent.id, "/calm please"]]);
   expect(window.location.hash).toBe(`#/agents/${encodeURIComponent(h.conn)}/${agent.id}`);
-  expect(readDraft(draftKey(h.conn, agent.id, "message"))).toBe("Hello there");
-  expect(document.body.textContent, "the start sheet closed").not.toContain("A chat stays open");
 });
 
-test("a delivered first message leaves no draft behind", async () => {
-  h = await connected({ agents: [agent], script });
+test("a chat whose first reply is lost says so and keeps the retry on the same chat", async () => {
+  h = await connected({ agents: [agent], script: { ...script, send_message: () => "hold" } });
   const root = await h.mount(<ActivityScreen />);
   await click(h, root, "Start an agent");
   await type(h, document.body, "First message", "Hello");
   await pickRepo();
   await click(h, document.body, "Start chat"); await h.settle();
-  expect(readDraft(draftKey(h.conn, agent.id, "message"))).toBe("");
+  h.daemon.drop();
+  await h.settle();
+  expect(document.body.querySelector('[data-state="unconfirmed"]')?.textContent).toContain("It waits in the recovery review");
+  expect(document.body.textContent).toContain("its first message was not confirmed");
+  expect(buttonNamed(document.body, "Send first message"), "a retry goes to the same chat").not.toBeNull();
+  expect(h.daemon.commands("create_agent")).toHaveLength(1);
 });
 
 test("observer start operations are disabled with reasons", async () => {

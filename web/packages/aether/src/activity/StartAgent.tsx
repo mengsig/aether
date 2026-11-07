@@ -5,7 +5,6 @@ import { navigate, routeHref, selectAgents, selectRead, useApp, usePermission, u
 import { aether } from "@aether-ui/protocol";
 import { Button, EmptyState, Field, Sheet, Tabs } from "@aether-ui/ui";
 import { useState } from "react";
-import { draftKey, writeDraft } from "../composer/drafts.ts";
 import { Action, RunNote, StandingNotice, useRun, type Run } from "../controls/kit.tsx";
 import { EFFORTS } from "../controls/commands.ts";
 import { invariant } from "../fleet/invariant.ts";
@@ -40,23 +39,17 @@ export function createCommand(draft: NewAgentDraft, objective: string): aether.C
   return aether.createAgent({ ...common, name: draft.name.trim() || "assistant", role: "assistant", config: { effort: draft.effort, interactive: true } });
 }
 
-/**
- * A chat gets its first message once it exists, then opens. The message waits as the chat's draft until
- * it is delivered, so a refused or unconfirmed send is retried from the chat, never by a second create.
- */
-async function startChat(run: Run, conn: string, command: aether.CreateAgentCommand, message: string, close: () => void): Promise<void> {
+/** The chat create_agent made, or null when the create failed or its reply never came. */
+async function createChat(run: Run, command: aether.CreateAgentCommand): Promise<string | null> {
   invariant(command.objective === undefined, "a chat is started without a task");
-  invariant(message.trim() !== "", "a chat starts with a message");
   const reply = await run.send(command, "Started");
-  if (reply === null) return;
+  if (reply === null) return null;
   const agent = reply.data as { id?: unknown } | null;
   invariant(reply.reply === "agent" && typeof agent?.id === "string", "create_agent answers with the agent it made");
-  const draft = draftKey(conn, agent.id, "message");
-  writeDraft(draft, message.trim());
-  if (await run.send(aether.sendMessage({ to: agent.id, content: message.trim() }), "Sent")) writeDraft(draft, "");
-  close();
-  navigate(routeHref("#/agents/:conn/:agent", { conn, agent: agent.id }));
+  return agent.id;
 }
+
+const chatHref = (conn: string, agent: string): string => routeHref("#/agents/:conn/:agent", { conn, agent });
 
 function useStartData(conn: string, path: string) {
   const app = useApp();
@@ -76,16 +69,35 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState<aether.Effort>("medium");
   const [owner, setOwner] = useState("");
+  // A chat whose first message has not been delivered: a retry sends to it rather than creating another.
+  const [created, setCreated] = useState<string | null>(null);
   const { live, models, choices, validation, retryModels } = useStartData(conn, path);
   const selected = choices.find(m => `${m.model.provider}/${m.model.model}` === model) ?? choices.find(m => m.is_default) ?? choices[0];
   const workspace = validation?.valid ? validation.path ?? "" : "";
+  const resendTo = mode === "chat" ? created : null;
   const command = mode === "task" ? aether.createTask({ objective: objective.trim(), owner, priority: "normal" })
-    : selected && workspace !== "" && objective.trim() !== "" ? createCommand({ mode, name, workspace, model: selected.model, effort }, objective) : aether.createAgent({ role: "assistant" });
+    : resendTo !== null ? aether.sendMessage({ to: resendTo, content: objective.trim() })
+      : selected && workspace !== "" && objective.trim() !== "" ? createCommand({ mode, name, workspace, model: selected.model, effort }, objective) : aether.createAgent({ role: "assistant" });
   const disabled = usePermission(conn, command).refusal !== null;
   const blocked = !objective.trim() ? (mode === "chat" ? "Write the first message" : "Describe the work to start") : mode === "task" ?
-    (live.some(a => a.id === owner) ? null : "Choose an active owner") : !selected ? "Choose a configured model" :
+    (live.some(a => a.id === owner) ? null : "Choose an active owner") : resendTo !== null ? null : !selected ? "Choose a configured model" :
       workspace.startsWith("/") ? null : "Validate the workspace first";
-  const start = () => (command.cmd === "create_agent" && mode === "chat" ? startChat(run, conn, command, objective, close) : run.send(command));
+  // The first message goes as typed, never read as a command; the chat opens only once it is delivered.
+  const startChat = async () => {
+    let agent = created;
+    if (agent === null) {
+      invariant(command.cmd === "create_agent", "a new chat starts from its create command");
+      agent = await createChat(run, command);
+    }
+    if (agent === null) return;
+    if (await run.send(aether.sendMessage({ to: agent, content: objective.trim() }), "Sent") === null) {
+      setCreated(agent);
+      return;
+    }
+    close();
+    navigate(chatHref(conn, agent));
+  };
+  const start = () => (mode === "chat" ? startChat() : run.send(command));
   return <Sheet open onClose={close} title="Start an agent"><div className="b3-stack"><StandingNotice conn={conn} />
     <Tabs label="Work type" selected={mode} onSelect={id => setMode(id as Mode)} tabs={[{ id: "chat", label: "Chat", panel: null }, { id: "agent", label: "Task agent", panel: null }, { id: "task", label: "Existing agent task", panel: null }]} />
     <p className="b3-section-hint">{MODE_HINTS[mode]}</p>
@@ -98,7 +110,8 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
       {models?.issued && choices.length === 0 ? <EmptyState title="Connect a model provider on your host" /> : null}
       <div className="b3-row" aria-label="Effort">{EFFORTS.map(value => <Button key={value} disabled={disabled} aria-pressed={effort === value} onClick={() => setEffort(value)}>{value}</Button>)}</div>
     </>}
-    <Action conn={conn} command={command} label={mode === "task" ? "Create task" : mode === "chat" ? "Start chat" : "Start agent"} blocked={blocked} busy={run.status.state === "busy"} onRun={start} />
+    {resendTo !== null ? <p className="b3-section-hint">The chat started, but its first message was not confirmed: see why below, then send it again here or <a className="ui-link" href={chatHref(conn, resendTo)} onClick={close}>open the chat</a>.</p> : null}
+    <Action conn={conn} command={command} label={mode === "task" ? "Create task" : resendTo !== null ? "Send first message" : mode === "chat" ? "Start chat" : "Start agent"} blocked={blocked} busy={run.status.state === "busy"} onRun={start} />
     <RunNote status={run.status} />
   </div></Sheet>;
 }
