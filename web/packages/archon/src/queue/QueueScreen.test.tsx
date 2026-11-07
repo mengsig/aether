@@ -201,6 +201,18 @@ describe("the queue's changes", () => {
     expect(spend).toContain("2026-10-29 to 2026-11-04: $7.49 · site $6.42 · api $1.07");
   });
 
+  test("greys Message Archon and answers on an Archon before 1.5.0, with a hint and no error", async () => {
+    const { container } = await queue({ protocol: 23 });
+    const hint = "Message Archon and answers need Archon 1.5.0 or newer; update Archon to use them here.";
+    const say = byText<HTMLButtonElement>(container, "button", "Message Archon");
+    expect(say.disabled).toBe(true);
+    expect(say.title).toBe(hint);
+    expect(byText<HTMLButtonElement>(container, "button", "Send").disabled).toBe(true);
+    expect(container.textContent).toContain(hint);
+    expect(container.querySelector("[role=alert]")).toBeNull();
+    expect(byText<HTMLButtonElement>(container, "button", "New item").disabled).toBe(false);
+  });
+
   test("disables every change for an observer device", async () => {
     const { container } = await queue({ protocol: 24, role: "observer" });
     const controls = ["New item", "Message Archon", "Pause new work", "Approve", "Revise", "Send"].map((label) => byText<HTMLButtonElement>(container, "button", label));
