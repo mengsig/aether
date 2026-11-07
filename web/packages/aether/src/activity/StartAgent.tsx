@@ -84,7 +84,7 @@ function ModelChoice({ conn, models, choices, value, disabled, onChange }: {
   invariant(value === "" || choices.some(m => modelKey(m) === value), "the shown model is one of the ready models");
   return <>
     <ReadNote entry={models} retry={() => app.reread(conn, "start:models", { cmd: "list_models" }, ["models"])} />
-    {models?.issued && choices.length === 0 ? <EmptyState title="Connect a model provider on your host" /> :
+    {models?.issued && choices.length === 0 ? <EmptyState title="No model is ready yet" action={<a className="ui-link" href="#/settings/providers">Open providers</a>}>Sign in to a model provider to start agents.</EmptyState> :
       <SelectField label="Model" value={value} disabled={disabled || choices.length === 0} onChange={onChange}>
         {modelGroups(choices).map(g => <optgroup key={g.provider} label={g.provider}>
           {g.models.map(m => <option key={modelKey(m)} value={modelKey(m)}>{m.name}</option>)}</optgroup>)}</SelectField>}
