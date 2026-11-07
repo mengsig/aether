@@ -426,20 +426,20 @@
       "reason": "95th percentile frame: frames where a message commits or another agent's event rebuilds the rows."
     },
     "bundle.total_bytes": {
-      "budget": 779932,
+      "budget": 780233,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 779932,
+      "measured": 780233,
       "noise": 0,
       "reason": "Everything web/dist ships, embedded in aether-remote."
     },
     "bundle.js_bytes": {
-      "budget": 692249,
+      "budget": 694418,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 692249,
+      "measured": 694418,
       "noise": 0,
       "reason": "All JavaScript chunks."
     },
@@ -448,7 +448,7 @@
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 81499,
+      "measured": 79631,
       "noise": 0,
       "reason": "All stylesheets."
     },
@@ -457,7 +457,7 @@
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 359381,
+      "measured": 361901,
       "noise": 0,
       "reason": "The entry script and stylesheet index.html loads before first paint."
     },
@@ -466,25 +466,25 @@
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 113424,
+      "measured": 113738,
       "noise": 0,
       "reason": "The entry's transfer size at gzip -9: what a remote device downloads first."
     },
     "bundle.js_gzip_bytes": {
-      "budget": 237648,
+      "budget": 238421,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 237648,
+      "measured": 238421,
       "noise": 0,
       "reason": "All JavaScript at gzip -9."
     },
     "bundle.largest_js_bytes": {
-      "budget": 337797,
+      "budget": 338030,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 337797,
+      "measured": 338030,
       "noise": 0,
       "reason": "The largest chunk: a route that pulled a heavy module into the entry shows here."
     }
