@@ -93,7 +93,7 @@ test("completed ask run and a two-member initiative render from daemon state", a
   const made = await stack.archon.request({ cmd: "enqueue_initiative", title: INITIATIVE, contract: CONTRACT, members });
   assert.equal(made.reply, "initiative");
   const id = String((made.data.initiative as { id?: unknown } | undefined)?.id ?? made.data.id);
-  assert.match(id, /^in_/);
+  assert.match(id, /^ini_/);
   await route(page, `#/archon/initiatives/${id}`);
   await expect(page.locator(".initiative-title")).toHaveText(INITIATIVE);
   await expect(page.getByRole("region", { name: "Contract" })).toContainText(CONTRACT);
