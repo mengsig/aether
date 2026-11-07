@@ -14,6 +14,7 @@ import { DeepLinkRouter } from "../native/deep-links.ts";
 import { notificationSink, pickFolder, windowTarget } from "../native/electron.ts";
 import { FolderTokens } from "../native/folder-tokens.ts";
 import { Notifier } from "../native/notifications.ts";
+import { ReportWindows } from "../native/report-windows.ts";
 import { RemoteWindows } from "../remote/remote-windows.ts";
 import type { BuildInfo } from "../update/updates.ts";
 import { APP_ENTRY, APP_ORIGIN, APP_SCHEME } from "../security/csp.ts";
@@ -49,6 +50,7 @@ export interface Desktop {
   readonly appWindow: BrowserWindow;
   readonly bridge: Bridge;
   readonly remote: RemoteWindows;
+  readonly reports: ReportWindows;
   readonly preferences: PreferenceStore;
   readonly appWindowIds: ReadonlySet<number>;
   readonly deepLinks: DeepLinkRouter;
@@ -58,6 +60,7 @@ export interface Desktop {
 
 interface HostParts {
   readonly remote: RemoteWindows;
+  readonly reports: ReportWindows;
   readonly preferences: PreferenceStore;
   readonly protocolVersions: BridgeHost["protocolVersions"];
   readonly deepLinks: DeepLinkRouter;
@@ -77,7 +80,7 @@ function daemonsOf(machine: Machine, preferences: PreferenceStore, hello: (kind:
 }
 
 function host(options: DesktopOptions, parts: HostParts): BridgeHost {
-  const { remote, preferences, protocolVersions, push, deepLinks, folders } = parts;
+  const { remote, reports, preferences, protocolVersions, push, deepLinks, folders } = parts;
   const version = app.getVersion();
   const daemons = daemonsOf(machineOf(options.env, process.platform, os.userInfo().homedir), preferences,
     (kind) => helloFrame(kind, protocolVersions[kind], version));
@@ -92,6 +95,7 @@ function host(options: DesktopOptions, parts: HostParts): BridgeHost {
     startDaemon: daemons.start,
     pickDirectory: (owner, purpose) => pickFolder(owner, purpose, folders),
     openExternal: openExternalLink,
+    openReport: async (url) => { await reports.open(url); },
     openRemote: async (origin) => { await remote.open(origin); },
     getPreference: (key) => preferences.get(key),
     setPreference: (key, value) => preferences.set(key, value),
@@ -112,13 +116,14 @@ export async function startDesktop(options: DesktopOptions): Promise<Desktop> {
   });
   const extra = options.offscreen ? { offscreen: true } : {};
   const remote = new RemoteWindows(extra);
+  const reports = new ReportWindows(extra);
   const preferences = new PreferenceStore(path.join(app.getPath("userData"), "preferences.json"), (origin) => remote.forget(origin));
   const appWindowIds = new Set<number>();
   const protocolVersions = { aether: schemas.frames.aether.protocolVersion, archon: schemas.frames.archon.protocolVersion };
   const deepLinks = options.deepLinks ?? new DeepLinkRouter();
   const folders = new FolderTokens();
   const bridge: Bridge = new Bridge(new Validator(schemas), host(options, {
-    remote, preferences, protocolVersions, deepLinks, folders,
+    remote, reports, preferences, protocolVersions, deepLinks, folders,
     push: (owner, conn, frame) => { if (!pushFrame(owner, conn, frame)) bridge.connections.closeOwner(owner); },
   }));
   registerIpc(ipcMain, bridge, appWindowIds);
@@ -134,5 +139,5 @@ export async function startDesktop(options: DesktopOptions): Promise<Desktop> {
   await appWindow.loadURL(APP_ENTRY);
   if (!options.offscreen) appWindow.show();
   deepLinks.attach(windowTarget(appWindow));
-  return { appWindow, bridge, remote, preferences, appWindowIds, deepLinks, folders };
+  return { appWindow, bridge, remote, reports, preferences, appWindowIds, deepLinks, folders };
 }

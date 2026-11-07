@@ -1,4 +1,4 @@
-// Every BrowserWindow option of the app and remote windows, the navigation and window-open
+// Every BrowserWindow option of the app, remote and report windows, the navigation and window-open
 // guards, and the permission handlers, checked against fakes of Electron's objects.
 
 import assert from "node:assert/strict";
@@ -7,6 +7,7 @@ import { test } from "node:test";
 import type { Session, WebContents } from "electron";
 import { appWindowOptions } from "../../src/main/app-window.ts";
 import { PRELOAD } from "../../src/main/paths.ts";
+import { reportPartition, reportWindowOptions } from "../../src/native/report-window-options.ts";
 import { remoteWindowOptions } from "../../src/remote/remote-window.ts";
 import { APP_ORIGIN } from "../../src/security/csp.ts";
 import { guardSession, pinContents } from "../../src/security/navigation.ts";
@@ -37,6 +38,21 @@ test("a remote window has no preload and its own per-origin partition", () => {
   assert.notEqual(remotePartition(origin), remotePartition("https://other.example"));
   assert.ok(remotePartition(origin).startsWith("persist:remote:"));
   assert.throws(() => remoteWindowOptions("https://BOX.example.ts.net"), /normalized/);
+});
+
+test("a report window has no preload and a per-origin partition that is never stored", () => {
+  const origin = "http://127.0.0.1:4387";
+  const options = reportWindowOptions(origin);
+  assert.deepEqual(options, {
+    title: "Report", width: 1200, height: 860, minWidth: 480, minHeight: 400, show: false, autoHideMenuBar: true,
+    webPreferences: { partition: reportPartition(origin), ...HARDENED },
+  });
+  assert.equal(options.webPreferences && "preload" in options.webPreferences, false);
+  assert.ok(!reportPartition(origin).startsWith("persist:"), "nothing a report page stores outlives the app");
+  assert.notEqual(reportPartition(origin), reportPartition("http://127.0.0.1:4388"));
+  for (const bad of ["https://127.0.0.1:4387", "http://127.0.0.1:4387/", "http://127.0.0.1:4387/session"]) {
+    assert.throws(() => reportPartition(bad), /loopback http origin/, bad);
+  }
 });
 
 class FakeContents extends EventEmitter {

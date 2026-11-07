@@ -27,8 +27,28 @@ ipcRenderer.on("desktop:deep-link", (_event, route) => {
  * @returns {Promise<any>}
  */
 function call(method, ...args) {
-  return ipcRenderer.invoke(`desktop:${method}`, ...args);
+  return ipcRenderer.invoke(`desktop:${method}`, ...args).catch((/** @type {unknown} */ error) => {
+    throw plainRefusal(error);
+  });
 }
+
+/** Electron wraps what main threw as "Error invoking remote method 'desktop:x': Name: message". */
+const IPC_PREFIX = /^Error invoking remote method '[^']*': (?:(\w+): )?/;
+
+/**
+ * Main's own error, so the page can show and compare its message as main wrote it.
+ * @param {unknown} error
+ * @returns {Error}
+ */
+function plainRefusal(error) {
+  const text = error instanceof Error ? error.message : String(error);
+  const match = IPC_PREFIX.exec(text);
+  if (match === null) return error instanceof Error ? error : new Error(text);
+  const plain = new Error(text.slice(match[0].length).trim() || "The desktop app refused without giving a reason");
+  plain.name = match[1] ?? "Error";
+  return plain;
+}
+
 
 /**
  * @param {string} conn

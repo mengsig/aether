@@ -3,7 +3,8 @@
 
 import type { LocalDaemon, PreferenceKey, PrivilegedAction } from "@aether-ui/protocol";
 import { revokedRule, type DaemonKind } from "../security/classes.ts";
-import type { Confirmation } from "../security/confirm.ts";
+import { confirmation, labelSlot, TEMPLATES, valueSlot, type Confirmation } from "../security/confirm.ts";
+import { externalTarget } from "../native/external.ts";
 import { normalizeOrigin } from "../security/origins.ts";
 import { BridgeRefusal, Validator, type Sender, type ValidCall } from "../security/validate.ts";
 import { ConnectionTable, type LocalDaemonRecord } from "./connections.ts";
@@ -23,7 +24,10 @@ export interface BridgeHost {
   startDaemon(kind: DaemonKind): Promise<void>;
   /** The native folder picker; an opaque single-use grant for the choice, or null. */
   pickDirectory(owner: number, purpose: string): Promise<string | null>;
+  /** Opens an https: URL main checked in the system browser. */
   openExternal(url: string): Promise<void>;
+  /** Opens a loopback report page main checked in a report window. */
+  openReport(url: string): Promise<void>;
   openRemote(origin: string): Promise<void>;
   getPreference(key: PreferenceKey): unknown;
   setPreference(key: PreferenceKey, value: unknown): Promise<void>;
@@ -69,7 +73,7 @@ export class Bridge {
       case "startDaemon": return this.host.startDaemon(call.kind);
       case "pickDirectory": return this.host.pickDirectory(owner, call.purpose);
       case "notify": return this.host.notify(call.note);
-      case "openExternal": return this.host.openExternal(externalUrl(call.url));
+      case "openExternal": return this.openExternal(owner, call.url);
       case "openRemote": return this.openRemote(call.origin);
       case "diagnostics": return this.diagnostics();
       case "getPreference": return this.host.getPreference(call.key);
@@ -132,6 +136,25 @@ export class Bridge {
     return helloFrame(kind, this.host.protocolVersions[kind], this.host.versions.app ?? "0.0.0");
   }
 
+  /** GitHub and remote.origins open at once, another https: site after a native question, a local report in its window. */
+  private async openExternal(owner: number, value: string): Promise<void> {
+    const target = externalTarget(value, this.remoteOrigins());
+    if (target.kind === "report") return this.host.openReport(target.url);
+    if (!target.trusted) {
+      const asked = confirmation(TEMPLATES["external.open"], { origin: valueSlot(target.origin), url: labelSlot(target.url) });
+      if (!(await this.host.confirm(owner, asked))) throw new BridgeRefusal("Cancelled");
+    }
+    await this.host.openExternal(target.url);
+  }
+
+  private remoteOrigins(): string[] {
+    const origins = this.host.getPreference("remote.origins");
+    if (!Array.isArray(origins) || !origins.every((origin) => typeof origin === "string")) {
+      throw new Error("remote.origins holds a list of origins");
+    }
+    return origins;
+  }
+
   private async openRemote(value: string): Promise<void> {
     const origin = normalizeOrigin(value);
     const allowed = this.host.getPreference("remote.origins");
@@ -157,13 +180,4 @@ function publicDaemon(daemon: LocalDaemonRecord & { reachable: boolean; version?
   const found: LocalDaemon = { id: daemon.id, kind: daemon.kind, label: daemon.label, reachable: daemon.reachable };
   if (daemon.version !== undefined) found.version = daemon.version;
   return found;
-}
-
-/** An https: URL with no user name or password, as given; anything else is refused. */
-export function externalUrl(value: string): string {
-  const url = URL.parse(value);
-  if (url === null) throw new BridgeRefusal("Not a URL");
-  if (url.protocol !== "https:") throw new BridgeRefusal(`openExternal opens https: links only, not ${url.protocol}`);
-  if (url.username !== "" || url.password !== "") throw new BridgeRefusal("openExternal refuses links with a user name or password");
-  return url.href;
 }

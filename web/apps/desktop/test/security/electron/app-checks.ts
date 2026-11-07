@@ -117,6 +117,10 @@ export async function bridgeChecks(ctx: Context): Promise<void> {
     }
     assert.ok(!ctx.daemon.lines.some((line) => /"req":900[2-7]\b/.test(line)), "nothing refused reached the daemon");
   });
+  await ctx.check("a refused link reads as main's own sentence", async () => {
+    const result = await call(`return desktop.openExternal("file:///etc/passwd");`);
+    assert.equal(result.error, "The app opens https: links only, not file:");
+  });
   await ctx.check("privileged action sends the confirmed frame", async () => {
     ctx.answers.push(true);
     const result = await call(`return desktop.privileged({ kind: "memory.accept", conn: testConn, memory: "${MEMORY}" });`);

@@ -147,6 +147,8 @@ export const TEMPLATES = {
     detail: `Item {item} runs again from where it stopped.${ON}` },
   "archon.settings": { title: "Archon settings", message: "Change these Archon settings?", confirm: "Change",
     detail: `{changes}${ON}` },
+  "external.open": { title: "Open link", message: "Open this link in your browser?", confirm: "Open in browser",
+    detail: "The page is on {origin}, a site Aether does not know.\nLink: {url}" },
   "engine.login": { title: "Sign in", message: "Open a terminal to sign in?", confirm: "Open terminal",
     detail: `A terminal runs {command} to sign in to {engine}. Your sign-in stays with that tool.${ON}` },
 } as const satisfies Readonly<Record<string, Template>>;
