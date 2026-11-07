@@ -28,9 +28,9 @@ const CATEGORY: Readonly<Record<RowKind, aether.ViewModeCategory>> = {
   compaction: "compaction", compaction_failed: "compaction", usage: "usage",
 };
 
-/** Rows every mode draws besides decisions and errors: a call stuck or refused, a failed child or compaction. */
+/** Rows every mode draws besides decisions and errors: the operator's text, a call stuck or refused, a failure. */
 const ALWAYS: ReadonlySet<RowKind> = new Set<RowKind>([
-  "header", "tool_awaiting", "tool_failed", "tool_denied", "tool_cancelled", "edit_failed", "child_failed", "compaction_failed",
+  "header", "user_operator", "tool_awaiting", "tool_failed", "tool_denied", "tool_cancelled", "edit_failed", "child_failed", "compaction_failed",
 ]);
 const DECISIONS: ReadonlySet<aether.ViewModeCategory> = new Set<aether.ViewModeCategory>(["question", "approval", "error"]);
 const COORDINATION: ReadonlySet<aether.ViewModeCategory> = new Set<aether.ViewModeCategory>(["delegation", "agent_message", "completion", "status"]);

@@ -40,24 +40,24 @@ function appended(segment: InboxSegment, line: string): InboxSegment {
 export interface InboxTurn {
   readonly segments: readonly InboxSegment[];
   /**
-   * Whether each header's seq exceeds the one before, as the daemon writes them. Bodies are not
-   * escaped, so a turn out of order quotes a header somewhere and no mode may hide any of it.
+   * Whether no mode may hide or fold any delivery. Bodies are not escaped: a turn whose seqs fall out
+   * of order quotes a header, and a header after the operator's may be a line of their own text.
    */
-  readonly inOrder: boolean;
+  readonly whole: boolean;
 }
 
 /** The deliveries in an inbox turn, split on every header as the TUI splits them, so none is absorbed. */
 export function splitInbox(text: string): InboxTurn {
-  if (!isInboxText(text)) return { segments: text.trim() === "" ? [] : [{ kind: "operator", text: text.trim() }], inOrder: true };
+  if (!isInboxText(text)) return { segments: text.trim() === "" ? [] : [{ kind: "operator", text: text.trim() }], whole: false };
   const segments: InboxSegment[] = [];
   let current: InboxSegment | null = null;
   let seq = -1;
-  let inOrder = true;
+  let whole = false;
   for (const line of text.trim().split("\n")) {
     const header = HEADER.exec(line);
     if (header?.[2] !== undefined) {
       if (current !== null) segments.push(current);
-      inOrder &&= Number(header[1]) > seq;
+      whole ||= Number(header[1]) <= seq || current?.kind === "operator";
       seq = Number(header[1]);
       current = opened(header[2]);
       continue;
@@ -68,5 +68,5 @@ export function splitInbox(text: string): InboxTurn {
   if (current !== null) segments.push(current);
   const kept = segments.map((s) => ({ ...s, text: s.text.trim() })).filter((s) => s.kind !== "operator" || s.text !== "");
   invariant(kept.length <= segments.length, "splitting only drops empty operator turns");
-  return { segments: kept, inOrder };
+  return { segments: kept, whole };
 }

@@ -19,7 +19,7 @@ export type Part =
   | { readonly kind: "orphan-result"; readonly toolUseId: string; readonly result: ToolResultView }
   | { readonly kind: "attachment"; readonly name: string; readonly mediaType: string; readonly sizeBytes: number | null }
   | { readonly kind: "compaction"; readonly text: string }
-  | { readonly kind: "inbox"; readonly segment: Exclude<InboxSegment, { kind: "operator" }>; readonly inOrder: boolean };
+  | { readonly kind: "inbox"; readonly segment: Exclude<InboxSegment, { kind: "operator" }>; readonly whole: boolean };
 
 /** What `invocation.completed` or `invocation.failed` said about the invocation behind a message. */
 export interface InvocationMeta {
@@ -41,6 +41,8 @@ export interface ConversationRow {
   readonly seq: number | null;
   readonly at: string | null;
   readonly invocation: string | null;
+  /** A user turn of inbox deliveries: it never carries the agent's task. */
+  readonly delivered: boolean;
   readonly parts: readonly Part[];
   readonly live: LiveState | null;
   readonly meta: InvocationMeta | null;
@@ -101,7 +103,7 @@ function blockPart(block: aether.ContentBlock, pairing: Pairing): Part | null {
 /** A user turn's inbox text as one part per delivery; what a person typed stays text. */
 function inboxParts(text: string): Part[] {
   const turn = splitInbox(text);
-  return turn.segments.map((segment) => (segment.kind === "operator" ? { kind: "text", text: segment.text } : { kind: "inbox", segment, inOrder: turn.inOrder }));
+  return turn.segments.map((segment) => (segment.kind === "operator" ? { kind: "text", text: segment.text } : { kind: "inbox", segment, whole: turn.whole }));
 }
 
 /** Committed rows in seq order; a message left with nothing of its own to show has no row. */
@@ -112,9 +114,11 @@ export function entryRows(entries: readonly aether.TranscriptEntry[], pairing: P
     invariant(entry.seq > last, `transcript entries ascend by seq (${entry.seq} after ${last})`);
     last = entry.seq;
     const parts: Part[] = [];
+    let delivered = false;
     for (const block of entry.message.content) {
       if (entry.message.role === "user" && block.type === "text" && isInboxText(block.text)) {
         parts.push(...inboxParts(block.text));
+        delivered = true;
         continue;
       }
       const part = blockPart(block, pairing);
@@ -123,7 +127,7 @@ export function entryRows(entries: readonly aether.TranscriptEntry[], pairing: P
     if (parts.length === 0) continue;
     const invocation = entry.invocation ?? null;
     rows.push({
-      key: `e:${entry.seq}`, role: entry.message.role, seq: entry.seq, at: entry.at, invocation, parts, live: null,
+      key: `e:${entry.seq}`, role: entry.message.role, seq: entry.seq, at: entry.at, invocation, delivered, parts, live: null,
       meta: invocation === null ? null : meta.get(invocation) ?? null,
     });
   }
@@ -141,7 +145,7 @@ export function liveRows(streams: Readonly<Record<string, StreamState>>, agent: 
     for (const tool of stream.tools) parts.push({ kind: "tool", id: tool.id, name: tool.name, input: tool.input, result: null });
     if (parts.length === 0 && !stream.recovering) continue;
     rows.push({
-      key: `s:${stream.invocation}`, role: "assistant", seq: null, at: null, invocation: stream.invocation, parts,
+      key: `s:${stream.invocation}`, role: "assistant", seq: null, at: null, invocation: stream.invocation, delivered: false, parts,
       live: { partial: stream.partial, recovering: stream.recovering }, meta: null,
     });
   }

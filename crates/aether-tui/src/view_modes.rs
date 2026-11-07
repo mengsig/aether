@@ -94,7 +94,15 @@ impl Policy<'_> {
         let Some(definition) = self.definition else {
             return true;
         };
-        if definition.show.contains(&category(model)) {
+        // What the operator typed is theirs: no mode hides it, and none folds `user_text`.
+        let operator = matches!(
+            model,
+            CellModel::User {
+                from: UserFrom::Operator,
+                ..
+            }
+        );
+        if operator || definition.show.contains(&category(model)) {
             return true;
         }
         // A failed edit's line is its named-only call cell; the edit itself is tool detail.

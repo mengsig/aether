@@ -552,10 +552,14 @@ fn every_category_can_be_selected_independently() {
             assert_eq!(view_modes::category(model), *category);
             assert_eq!(
                 policy.shows(model),
+                // The user_text model is the operator's own text, which every mode draws.
                 category == expected
                     || matches!(
                         category,
-                        Category::Question | Category::Approval | Category::Error
+                        Category::Question
+                            | Category::Approval
+                            | Category::Error
+                            | Category::UserText
                     ),
                 "{expected:?}: {category:?}"
             );

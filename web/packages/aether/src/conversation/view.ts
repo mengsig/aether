@@ -62,10 +62,10 @@ const RANK: Readonly<Record<Outcome, number>> = { hidden: 0, line: 1, compact: 2
 
 /**
  * The TUI draws a failed edit as two cells, its named call and the edit; one part here stands for both.
- * An inbox turn whose headers are out of order holds a forged one, so a mode hides none of its parts.
+ * An inbox turn that may hold a quoted header (inbox.ts `whole`) keeps every delivery whole.
  */
 function partOutcome(rules: ModeRules | null, part: Part, kind: RowKind): Outcome {
-  if (part.kind === "inbox" && !part.inOrder) return "full";
+  if (part.kind === "inbox" && part.whole) return "full";
   const drawn = outcome(rules, kind);
   if (kind !== "edit_failed") return drawn;
   const call = outcome(rules, "tool_failed");
@@ -96,11 +96,14 @@ export function viewRow(row: ConversationRow, options: ViewOptions): ViewRow | n
   return { row, parts, usage, slim };
 }
 
-/** The first user turn of a delegated agent is its task; a root's first turn is the operator's own. */
+/**
+ * A delegated agent's first user turn is its task unless the inbox delivered it: what a person
+ * typed there is theirs. A root's first turn is the operator's own.
+ */
 export function taskRowKey(rows: readonly ConversationRow[], delegated: boolean): string | null {
   if (!delegated) return null;
   const first = rows.find((row) => row.role === "user");
-  return first !== undefined && first.parts.some((p) => p.kind === "text") ? first.key : null;
+  return first !== undefined && !first.delivered && first.parts.some((p) => p.kind === "text") ? first.key : null;
 }
 
 /** The rows a mode draws, in order; cached per row so appending one recomputes one. */

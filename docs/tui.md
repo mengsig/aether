@@ -847,7 +847,8 @@ A view mode changes presentation of the viewed agent's retained transcript.
 The default `standard` keeps the stock view. The built-in `focus` shows prose,
 delegations, messages, completions and status, with compact coordination rows.
 Tools, thinking, memory, compaction and accounting remain available with Ctrl+T.
-Questions, approvals, failures and actionable health notices always stay visible.
+The operator's own messages, questions, approvals, failures and actionable health
+notices always stay visible, whole, even in a mode that omits `user_text`.
 A failed tool call is tool detail: a mode without `tool` keeps one line for it.
 Modes do not alter agent execution, event ingestion, approval controls or the board.
 The desktop reads the same catalog from the daemon over `list_view_modes`;

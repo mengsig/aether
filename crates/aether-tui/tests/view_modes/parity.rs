@@ -32,7 +32,7 @@ fn shared_fixture_matches_tui_presentation_and_scope() {
     let fixture: Fixture =
         serde_json::from_str(include_str!("../fixtures/view_mode_parity.json")).unwrap();
     assert_eq!(fixture.version, 1);
-    assert_eq!(fixture.modes.len(), 4);
+    assert_eq!(fixture.modes.len(), 5);
     let catalog = Catalog::default();
     let definitions: BTreeMap<_, Option<Definition>> = fixture
         .modes

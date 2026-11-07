@@ -243,11 +243,13 @@ The rules are the TUI's, pinned row for row by one shared fixture
 suites read. A named mode hides the categories it does not list, draws a
 failed tool call or edit as one line when it omits `tool`, and with `compact` density
 draws delegations, messages, completions and status as one-line cards.
-Questions, approvals, errors, failed children and calls that were denied or
-cancelled stay whole in every mode. **Details** (Ctrl+T) reveals everything
-the mode hides without leaving it. Switching keeps the draft and the row at
-the top of the view. Message bodies are not escaped, so an inbox turn whose
-headers are out of order holds a quoted one, and every mode draws all of it.
+What the operator typed, questions, approvals, errors, failed children and
+calls that were denied or cancelled stay whole in every mode. **Details** (Ctrl+T)
+reveals everything the mode hides without leaving it. Switching keeps the draft
+and the row at the top of the view. Message bodies are not escaped, so every mode
+draws all of an inbox turn that may quote a header: one whose headers are out of
+order, or one with a header after the operator's message. A delegated agent's
+first turn is its task only when the inbox did not deliver it.
 
 Delegations, messages between agents and a child's completion or failure are
 cards that open the other agent's chat and, for delegations and outcomes, the
