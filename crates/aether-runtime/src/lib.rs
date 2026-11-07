@@ -22,6 +22,7 @@ pub mod memory_context;
 pub mod memory_curation;
 mod memory_feedback;
 pub mod memory_v2;
+mod noesis_engine;
 pub mod noesis_guard;
 pub mod noesis_seal;
 pub mod notes;
@@ -67,8 +68,10 @@ use tokio_util::sync::CancellationToken;
 pub use approval::{Gate, Remember};
 pub use bus::{BusMessage, DeltaKind, DeltaStream, EventBus};
 pub use commands::{
-    AgentUpdate, CreateAgentSpec, CreateTaskSpec, MessageDelivery, RuntimeStatus, pending_question,
+    AgentUpdate, CreateAgentSpec, CreateTaskSpec, MessageDelivery, RuntimeStatus, STATUS_DEADLINE,
+    pending_question,
 };
+pub use noesis_engine::NoesisStepStream;
 pub use retention::HistorySweep;
 
 #[derive(Debug, thiserror::Error)]
@@ -348,6 +351,8 @@ pub struct Runtime {
     pub(crate) seeded_repositories: parking_lot::Mutex<std::collections::HashSet<AgentId>>,
     /// Free space on the store's filesystem, as the disk guard last saw it.
     pub(crate) disk: parking_lot::Mutex<disk::DiskState>,
+    /// `status` readers still running, perhaps for a `status` that gave up on them.
+    pub(crate) status_in_flight: parking_lot::Mutex<std::collections::BTreeSet<&'static str>>,
     problems: problems::Problems,
     recovery_failed: std::sync::atomic::AtomicBool,
     workspace_gc_cursor: parking_lot::Mutex<workspace_gc::WorkspaceGcCursor>,
@@ -481,6 +486,7 @@ impl Runtime {
             storage_last_run: parking_lot::Mutex::new(None),
             seeded_repositories: parking_lot::Mutex::new(std::collections::HashSet::new()),
             disk: parking_lot::Mutex::new(disk::DiskState::default()),
+            status_in_flight: Default::default(),
         });
         runtime.apply(Commit::new().event(EventDraft::new(
             Actor::System,

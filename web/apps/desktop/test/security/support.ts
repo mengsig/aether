@@ -18,6 +18,7 @@ export const APP_SENDER: Sender = { isAppWindow: true, isTopFrame: true, frameUr
 
 export const CONNECTIONS: Connections = {
   kindOf: (conn) => (conn === AETHER_CONN ? "aether" : conn === ARCHON_CONN ? "archon" : undefined),
+  protocolOf: (conn) => (conn === ARCHON_CONN ? 26 : undefined),
 };
 
 export const IDENTITY = { kind: "aether", label: "aetherd", socket: "/run/user/1000/aether/aetherd.sock" } as const;

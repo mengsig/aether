@@ -25,6 +25,8 @@ pub mod paths;
 pub mod read_models;
 pub mod remote;
 pub mod schema;
+pub mod view_modes;
+pub use view_modes::{ViewMode, ViewModes};
 
 use std::collections::BTreeMap;
 
@@ -184,6 +186,8 @@ pub const PROTOCOL_VERSION: u32 = 26;
 
 /// Optional features a peer may advertise. Unknown ones are ignored.
 pub mod features {
+    /// The daemon serves the shared transcript catalog with `list_view_modes`.
+    pub const VIEW_MODES: &str = "view_modes";
     /// The daemon serves bounded stale provider usage refreshes.
     pub const PROVIDER_USAGE_REFRESH: &str = "provider_usage_refresh";
     pub const DELTAS: &str = "deltas";
@@ -238,6 +242,9 @@ pub mod features {
     /// The daemon serves `list_agents_page` and the `root` and `role_prefix`
     /// filters of `get_tree`.
     pub const AGENTS_PAGING: &str = "agents_paging";
+    /// The daemon pages `get_tree`: `after` and `limit` on the command, and
+    /// `AgentTree.next_after` when older agents were left out.
+    pub const TREE_PAGES: &str = "tree_pages";
     /// The daemon serves `get_transcript_page`.
     pub const TRANSCRIPT_PAGING: &str = "transcript_paging";
     /// Listed by a client, delta frames carry `invocation_seq` and tool input
@@ -265,7 +272,7 @@ mod replies;
 pub use replies::{
     AgentTree, AuthInfo, DaemonStatus, ENGINES_STARTING, ErrorCode, ErrorReply, MessageDelivery,
     ModelInfo, NOESIS_DISABLED, ProviderInfo, Reply, RunListing, StatusStale, SubmissionResolution,
-    TranscriptEntry, TreeNode,
+    TranscriptEntry, TreeNode, UnavailableSection, status_sections,
 };
 mod frames;
 pub use frames::{ClientFrame, Delta, ServerFrame, decode, encode};

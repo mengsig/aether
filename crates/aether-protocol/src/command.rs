@@ -68,7 +68,10 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
     },
-    /// The live graph: every agent in the run (or all runs) with relations.
+    /// The live graph: the agents in the run (or all runs) with relations.
+    /// One page: the newest live agents, then the newest agents of any state,
+    /// at most `limit` of each (1 to 500, 500 when absent); `AgentTree.next_after`
+    /// says older ones were left out.
     GetTree {
         run: Option<RunId>,
         /// Include agents cleared from the view.
@@ -81,6 +84,14 @@ pub enum Command {
         /// Only this agent and its descendants. Needs `features::AGENTS_PAGING`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         root: Option<AgentId>,
+        /// The page of agents older than this one, from an earlier page's
+        /// `next_after`; only the first page pins live agents. Needs `features::TREE_PAGES`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<AgentId>,
+        /// At most this many agents walked, and live ones pinned on the first
+        /// page. Needs `features::TREE_PAGES`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
     },
     UpdateAgent {
         id: AgentId,
@@ -571,6 +582,8 @@ pub enum Command {
     },
 
     ListModels,
+    /// Built-in and user transcript modes from the daemon's configuration.
+    ListViewModes,
     AuthStatus,
     /// Every provider the registry knows, with its live health.
     Providers,

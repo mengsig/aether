@@ -10,6 +10,7 @@ export default defineConfig({
       "apps/web/{src,test}/**/*.test.{ts,tsx}",
       "scripts/**/*.test.ts",
       "perf/**/*.test.ts",
+      "e2e/harness/**/*.test.ts",
     ],
     environment: "node",
     testTimeout: 30_000,

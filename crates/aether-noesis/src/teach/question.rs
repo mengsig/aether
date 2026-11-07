@@ -7,7 +7,7 @@ use std::fmt;
 use super::plan::PlanDag;
 use super::records::{
     Answer, CONFIDENCE_STOPS, ChoiceOption, DEFAULT_CONFIDENCE, EvidenceKind, Intent, Phase,
-    QuestionKind,
+    QuestionKind, QuestionStep,
 };
 use super::seal::Sealer;
 use crate::tools::args::AskArgs;
@@ -430,6 +430,17 @@ fn grade_choice(
 pub fn collapsed(phase: Phase, kind: QuestionKind, intent: Option<Intent>) -> bool {
     let teaching = matches!(phase, Phase::Plan | Phase::Teach);
     teaching && kind != QuestionKind::Goal && intent.unwrap_or(Intent::Check) == Intent::Check
+}
+
+/// The lesson step a question posed in `phase` is, as its evidence says.
+pub fn step(phase: Phase, kind: QuestionKind, collapsed: bool) -> QuestionStep {
+    match (kind, phase) {
+        (QuestionKind::Goal, _) => QuestionStep::Goal,
+        (_, Phase::Probe) => QuestionStep::Measure,
+        (_, Phase::Practice) => QuestionStep::Practice,
+        _ if collapsed => QuestionStep::Check,
+        _ => QuestionStep::Predict,
+    }
 }
 
 /// What an answer is evidence of; goal questions are not about knowledge.

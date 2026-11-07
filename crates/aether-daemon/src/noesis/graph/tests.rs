@@ -8,7 +8,7 @@ use aether_noesis::extract::jobs as job_rows;
 use aether_noesis::graph::store::{self as graph_store, SourceRow};
 use aether_noesis::store::NoesisStore;
 use aether_protocol::noesis::{
-    BudgetPatch, ConcurrencyPatch, ExtractionPatch, NoesisSettingsPatch,
+    BillingPatch, BudgetPatch, ConcurrencyPatch, ExtractionPatch, NoesisSettingsPatch,
 };
 use aether_protocol::{Command, ErrorCode, ErrorReply, Reply};
 use aether_runtime::CreateAgentSpec;
@@ -173,6 +173,40 @@ async fn a_spent_background_budget_fails_an_import_s_job_before_any_model_call()
     assert!(
         matches!(graph, Reply::NoesisGraph { ref nodes, .. } if nodes.is_empty()),
         "{graph:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unset_cheap_slot_never_falls_back_to_a_billed_default_when_api_is_allowed() {
+    let harness = running(NoesisSettingsPatch {
+        billing: Some(BillingPatch {
+            allow_api: Some(true),
+        }),
+        ..Default::default()
+    })
+    .await;
+    let artifact = publish(&harness, "Alpha holds.\n\nBeta follows from alpha.").await;
+    let import =
+        format!(r#"{{"cmd":"noesis_import_source","name":"Notes","artifact":"{artifact}"}}"#);
+    let Reply::NoesisImport { job, .. } = harness.send(command(&import)).await.expect("import")
+    else {
+        panic!("an import reply");
+    };
+    let job = ended(&harness, &job.id).await;
+    assert_eq!(job.state, JobState::Failed, "{job:?}");
+    let error = job.error.unwrap_or_default();
+    assert!(error.contains("no subscription model is ready"), "{error}");
+    let agents = harness
+        .daemon
+        .runtime
+        .store()
+        .agents(&Default::default())
+        .expect("agents");
+    assert!(
+        agents
+            .iter()
+            .all(|agent| !agent.role.0.starts_with("noesis.")),
+        "no extraction agent ran on the runtime default"
     );
 }
 

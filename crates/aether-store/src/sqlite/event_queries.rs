@@ -143,8 +143,14 @@ pub(super) fn page_sql(
     ascending: bool,
     args: &mut Arguments,
 ) -> String {
-    args.push(Box::new(after as i64));
-    let after_arg = args.len();
+    // Every seq is at least 1, so `seq > 0` is left out: given both bounds, the
+    // planner takes the type index's closed range over a run's own index.
+    let lower = if after == 0 {
+        String::new()
+    } else {
+        args.push(Box::new(after as i64));
+        format!(" AND seq > ?{}", args.len())
+    };
     let upper = if let Some(before) = before.filter(|seq| *seq <= i64::MAX as u64) {
         args.push(Box::new(before as i64));
         format!(" AND seq < ?{}", args.len())
@@ -154,7 +160,7 @@ pub(super) fn page_sql(
     args.push(Box::new(i64::try_from(limit).unwrap_or(i64::MAX)));
     let order = if ascending { "ASC" } else { "DESC" };
     format!(
-        "SELECT {columns} FROM events WHERE {predicate} AND seq > ?{after_arg}{upper} ORDER BY seq {order} LIMIT ?{}",
+        "SELECT {columns} FROM events WHERE {predicate}{lower}{upper} ORDER BY seq {order} LIMIT ?{}",
         args.len()
     )
 }
@@ -197,9 +203,10 @@ fn filter_predicate_with_agent(
             sql.push_str(&format!(" AND {column} = ?{}", args.len()));
         }
     }
-    // With only a run to narrow by, `+type` keeps the planner on the run's
-    // index: the type index would walk every receipt of every run (#333).
-    let type_column = if filter.run.is_some() && filter.agent.is_none() {
+    // With only a run to narrow by, `+type` keeps the planner off the type
+    // index, which walks every run's receipts (#333). One type is read from
+    // `events_run_type` instead: the run's own receipts, already in order.
+    let type_column = if filter.run.is_some() && filter.agent.is_none() && filter.types.len() > 1 {
         "+type"
     } else {
         "type"

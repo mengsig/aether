@@ -59,6 +59,7 @@ import type {
   Task,
   TranscriptEntry,
   UsageBreakdown,
+  ViewModes,
   Welcome,
   Workspace,
   WorkspaceDiff,
@@ -401,6 +402,11 @@ export interface ReplyModels {
   "reply": "models";
 }
 
+export interface ReplyViewModes {
+  "data": ViewModes;
+  "reply": "view_modes";
+}
+
 export interface ReplyProviders {
   "data": Array<ProviderInfo>;
   "reply": "providers";
@@ -556,6 +562,7 @@ export type Reply =
     ReplyRunImported |
     ReplyMcpServers |
     ReplyModels |
+    ReplyViewModes |
     ReplyProviders |
     ReplyProviderUsage |
     ReplyAuth |

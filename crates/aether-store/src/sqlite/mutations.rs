@@ -16,10 +16,12 @@ impl SqliteStore {
             }
             Mutation::UpsertAgent(agent) => {
                 tx.execute(
-                    "INSERT INTO agents(id, parent, role, status, run, created_at, updated_at, body)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                    "INSERT INTO agents(id, parent, role, status, run, created_at, updated_at, body, archived)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                      ON CONFLICT(id) DO UPDATE SET parent = excluded.parent, role = excluded.role,
-                       status = excluded.status, updated_at = excluded.updated_at, body = excluded.body",
+                       status = excluded.status, run = excluded.run,
+                       created_at = excluded.created_at, updated_at = excluded.updated_at,
+                       body = excluded.body, archived = excluded.archived",
                     params![
                         agent.id.to_string(),
                         agent.parent.map(|p| p.to_string()),
@@ -29,6 +31,7 @@ impl SqliteStore {
                         agent.created_at.to_rfc3339(),
                         agent.updated_at.to_rfc3339(),
                         tally.json("agents", &agent)?,
+                        agent.archived,
                     ],
                 )?;
             }

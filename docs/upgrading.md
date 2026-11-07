@@ -8,13 +8,13 @@ page explains them for the releases that change more than a patch.
 ## From 1.2.11 to 1.3.0
 
 1.3.0 is released with Archon 1.5.0. It serves one web app from the remote
-listener and the new desktop app, migrates the store to schema 32 and
+listener and the new desktop app, migrates the store to schema 33 and
 speaks protocol 26.
 
 | | 1.2.11 | 1.3.0 |
 | --- | --- | --- |
 | Daemon protocol | 25, serves 17 to 25 | 26, serves 17 to 26 |
-| Store schema (`aether.db`) | 28 | 32, one-way migration with a backup |
+| Store schema (`aether.db`) | 28 | 33, one-way migration with a backup |
 | Remote listener | the phone app | the web app from `web/dist/`; the phone app is removed |
 | Archon | 1.4.x served its own web app | Archon 1.5.0 is mounted at `/archon` on this listener |
 | Desktop app | none | `web/apps/desktop`, packaged per [Desktop app](desktop.md) |
@@ -36,9 +36,14 @@ its queue on Aether 1.2.11 or 1.3.0. Its remote access needs Aether 1.3.0:
 only 1.3.0 mounts archond at `/archon`. Archon's own upgrade notes describe
 its side.
 
+The desktop app's Message Archon and question or gate answers also need
+Archon 1.5.0: its `archon-web` connections have a device's standing only from
+protocol 24. Against an older archond the app greys those controls with a hint
+and the bridge refuses `say` and `answer`; everything else works as before.
+
 ### The store migrations
 
-The first start of 1.3.0 on a schema 28 store migrates it to 32 in one step:
+The first start of 1.3.0 on a schema 28 store migrates it to 33 in one step:
 
 | Version | What it does |
 | --- | --- |
@@ -46,13 +51,19 @@ The first start of 1.3.0 on a schema 28 store migrates it to 32 in one step:
 | V30 | Memory tiers and states, support, verification and refs; every existing memory becomes active, unchanged |
 | V31 | `memory_stale` and `memory_holdouts` |
 | V32 | No table change: only the version stamp moves |
+| V33 | `agent_usage`, each agent's usage, and `usage_totals`, the fleet's, each run's and each agent's subtree's over every run and within each, kept by triggers and filled from the existing agents, so `status` and a tree's roll-ups read rows by key instead of every agent; `agent_tree`, each agent's ancestors, so a rooted tree pages without walking its subtree; `agents.archived` and its indexes, and `agents(status, id)` in place of `agents(status)`, so `get_tree` filters before it reads an agent and pins the newest live ones by index |
 
 Before it migrates, the daemon writes one verified backup,
-`migration-backups/schema-28-before-32-<id>.sqlite.zst`, beside `aether.db`
+`migration-backups/schema-28-before-33-<id>.sqlite.zst`, beside `aether.db`
 (see [Migration backups](migration-backups.md)). Startup fails, and nothing
 migrates, if the backup cannot be written. The migration is one way: 1.2.11
-refuses to start on a schema 32 store (`store schema version 32 is newer than
+refuses to start on a schema 33 store (`store schema version 33 is newer than
 supported 28`).
+
+From schema 33, writing an agent into `aether.db` with another program, such
+as the `sqlite3` shell, fails: the triggers that keep the usage totals call a
+function only Aether registers, so no agent is written uncounted. Reading the
+store that way is unaffected.
 
 To go back to 1.2.11: stop the daemon, restore that backup as
 [Migration backups](migration-backups.md#restoring-a-backup) describes, and

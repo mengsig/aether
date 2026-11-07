@@ -64,6 +64,7 @@ impl aether_client::mcp::CommandSink for RecordingSink {
                 writes: None,
                 bridge: None,
                 stale: None,
+                unavailable: Vec::new(),
             }),
             Command::ListAgents { .. } => Reply::Agents(Vec::new()),
             Command::SendMessage { .. } => Reply::MessageSent {

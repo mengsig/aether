@@ -37,6 +37,7 @@ class DaemonStatus(TypedDict, total=False):
     stale: _protocol.StatusStale | None  # optional
     started_at: str
     tasks_active: int
+    unavailable: list[_protocol.UnavailableSection]  # optional
     usage_total: _protocol.Usage
     version: str
     writes: _protocol.WriteStats | None  # optional

@@ -14,7 +14,10 @@ const ENGINE_DETECTION_WAIT: Duration = Duration::from_secs(20);
 
 /// Answered at once: none acts on anything the startup probes set.
 fn answers_while_starting(command: &Command) -> bool {
-    matches!(command, Command::Ping | Command::Status | Command::Shutdown)
+    matches!(
+        command,
+        Command::Ping | Command::Status | Command::Shutdown | Command::ListViewModes
+    )
 }
 
 /// Hold `command` until the startup probes have finished, so no request acts
@@ -54,6 +57,7 @@ mod tests {
         assert!(answers_while_starting(&Command::Ping));
         assert!(answers_while_starting(&Command::Status));
         assert!(answers_while_starting(&Command::Shutdown));
+        assert!(answers_while_starting(&Command::ListViewModes));
         assert!(!answers_while_starting(&Command::ListModels));
     }
 }
