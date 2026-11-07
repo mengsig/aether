@@ -8,11 +8,13 @@ import { CreateMemory, kinds } from "./CreateMemory.tsx";
 import { MemoryRow } from "./MemoryRow.tsx";
 import { AgentPicker, records, ReadNote } from "./shared.tsx";
 import { V2Sections } from "./V2Sections.tsx";
+import { useMemoryV2 } from "./v2.ts";
 import "./memory.css";
 const proposed = { cmd: "memories", query: { proposed: true } };
 export default function MemoryScreen({ params }: RouteProps) {
   const conn = params.conn ?? "";
   const app = useApp();
+  const memoryV2 = useMemoryV2(conn);
   const [text, setText] = useState("");
   const [scope, setScope] = useState("all");
   const [repository, setRepository] = useState("");
@@ -24,14 +26,16 @@ export default function MemoryScreen({ params }: RouteProps) {
   // A blank text must be omitted: the store orders by FTS rank whenever text is present.
   const command = { cmd: "memories", query: { ...(search === "" ? {} : { text: search }), limit: 100, include_forgotten: forgotten, include_superseded: true,
     kinds: kind === "all" ? [] : [kind], scope: scopeFilter(scope, repository, agent) } };
-  const entry = useReread(conn, "memory:list", command, ["memories"]);
+  const filterReady = scope === "all" || scope === "global" || (scope === "repository" ? repository.trim() !== "" : agent !== "");
+  const entry = useReread(conn, "memory:list", filterReady ? command : null, ["memories"]);
   const permission = useReadPermission(conn, proposed);
   const proposals = useReread(conn, "memory:proposals", permission.refusal === null ? proposed : null, ["memories"]);
   const refresh = async () => {
-    await app.reread(conn, "memory:list", command, ["memories"]);
+    if (filterReady) await app.reread(conn, "memory:list", command, ["memories"]);
     if (permission.refusal === null) await app.reread(conn, "memory:proposals", proposed, ["memories"]);
+    if (memoryV2) await app.reread(conn, "memory:migration", { cmd: "memory_migration_status" }, ["memory_migration_status"]);
   };
-  const rows = records<aether.MemoryRecord>(entry?.value);
+  const rows = records<aether.MemoryRecord>(filterReady ? entry?.value : null);
   const known = useMemo(() => new Map(rows.map(memory => [memory.id, memory.text])), [rows]);
   return <div className="ui-page b3-screen mem-screen"><header className="ui-page-head b3-screen-head"><h1 className="ui-visually-hidden b3-screen-title">Memory</h1>
     <p className="ui-page-lede b3-screen-sub">Review what stays with your agents.</p><Button onClick={() => setOpen(true)}>Create memory</Button></header>
@@ -41,8 +45,8 @@ export default function MemoryScreen({ params }: RouteProps) {
         { id: "agent", label: "Agent", panel: <AgentPicker conn={conn} label="Agent filter" value={agent} onChange={setAgent} /> }]} />
       <Tabs label="Kind" selected={kind} onSelect={setKind} tabs={["all", ...kinds].map(id => ({ id, label: id, panel: null }))} />
       <label className="b3-check"><input type="checkbox" checked={forgotten} onChange={e => setForgotten(e.target.checked)} /><span>Include forgotten</span></label>
-      <ReadNote entry={entry} retry={refresh} />
-      {entry?.issued && !rows.length ? <EmptyState title="No memories yet" /> : null}
+      {filterReady ? <ReadNote entry={entry} retry={refresh} /> : <p className="b3-note">Choose a scope to filter memories.</p>}
+      {filterReady && entry?.issued && !rows.length ? <EmptyState title="No memories yet" /> : null}
       {rows.map(memory => <MemoryRow key={memory.id} conn={conn} memory={memory} refresh={refresh} />)}
     </Section>
     <Section title="Proposals" hint="Host only · Review proposed memories before accepting them.">

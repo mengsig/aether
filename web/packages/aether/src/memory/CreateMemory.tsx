@@ -33,10 +33,10 @@ export function CreateMemory({ conn, open, close, refresh }: { conn: string; ope
 const SCOPE_BLOCK: Record<string, string> = { repository: "Enter the repository root", agent: "Choose an agent" };
 
 /** The scope to create in, or null while the chosen target lacks its repository or agent. */
-function createScope(target: string, repository: string, agent: string): aether.MemoryScope | null {
+function createScope(target: string, repository: string, agent: string): aether.OperatorMemoryScope | null {
   invariant(["global", "repository", "agent"].includes(target), "the scope target is one the form offers");
   invariant(repository === repository.trim(), "the repository id arrives trimmed");
   if (target === "global") return { scope: "global" };
-  if (target === "repository") return repository === "" ? null : { scope: "repository", id: repository };
+  if (target === "repository") return repository === "" ? null : { scope: "repository", root: repository };
   return agent === "" ? null : { scope: "agent", id: agent };
 }

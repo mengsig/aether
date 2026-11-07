@@ -137,12 +137,34 @@ test("scope and kind filters and forgotten toggle use exact query fields", async
   await click(h, root, "Global");
   expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "global" } } });
   await click(h, root, "Repository");
+  expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "global" } } });
   await type(h, root, "Repository filter", "/repo");
   await click(h, root, "decision");
   const checkbox = root.querySelector('input[type="checkbox"]') as HTMLInputElement;
   await import("react").then(({ act }) => act(async () => checkbox.click()));
   await h.settle();
   expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "repository", id: "/repo" }, kinds: ["decision"], include_forgotten: true, limit: 100 } });
+});
+
+test("repository creation uses the operator root and refreshes the store count", async () => {
+  let total = 0;
+  h = await connected({ features: ["memory_v2"], script: {
+    memories: () => ({ tag: "memories", data: [] }),
+    create_memory: () => { total++; return { tag: "memory", data: memory }; },
+    memory_migration_status: () => ({ tag: "memory_migration_status", data: {
+      schema_version: 32, migrations: [], memories: { total, admitted: total, implicit: 0, candidates: 0, stale: 0, held_out: 0 }, backups: [],
+    } }),
+  } });
+  const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
+  await click(h, root, "Create memory");
+  await type(h, document.body, "Memory text", "A repository fact");
+  await click(h, document.querySelector('[aria-label="Memory scope"]') as HTMLElement, "Repository");
+  await type(h, document.body, "Repository root", "/repo");
+  await click(h, document.body, "Save memory");
+  await h.settle();
+  expect(h.daemon.commands("create_memory")[0]).toMatchObject({ spec: { scope: { scope: "repository", root: "/repo" } } });
+  expect(h.daemon.commands("memory_migration_status")).toHaveLength(2);
+  expect(root.querySelector(".mem-big")?.textContent).toBe("1");
 });
 
 test("an agent-scoped memory is created, filtered and shown by its agent", async () => {
