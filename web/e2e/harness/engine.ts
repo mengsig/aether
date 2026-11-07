@@ -1,5 +1,5 @@
-// The faux engine: an OpenAI chat-completions server on loopback that streams a scripted reply,
-// so agents run with no model and no credentials. Every request is kept for assertions.
+// The faux engine: an OpenAI chat-completions server on loopback that streams a scripted reply or
+// tool call, so agents run with no model and no credentials. Every request is kept for assertions.
 
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -8,10 +8,17 @@ import type { AddressInfo } from "node:net";
 export interface EngineRequest {
   readonly model: string;
   readonly lastUserText: string;
+  /** Every user message's text, oldest first. */
+  readonly userTexts: readonly string[];
+  /** The tools the model already called in this conversation, oldest first. */
+  readonly toolsCalled: readonly string[];
 }
 
-/** The text an agent receives for a request; the default names the faux engine. */
-export type Script = (request: EngineRequest) => string;
+/** One tool call the model makes instead of replying, such as `ask_user` with its question. */
+export interface ToolCall { readonly tool: string; readonly arguments: Readonly<Record<string, unknown>> }
+
+/** What an agent receives for a request: text, or a tool call; the default names the faux engine. */
+export type Script = (request: EngineRequest) => string | ToolCall;
 
 export interface FauxEngine {
   /** `http://127.0.0.1:<port>/v1`, the provider's `base_url`. */
@@ -23,6 +30,18 @@ export interface FauxEngine {
 
 export const DEFAULT_REPLY = "Faux engine reply.";
 const MAX_BODY_BYTES = 16 * 1024 * 1024;
+
+function userTexts(messages: unknown): string[] {
+  if (!Array.isArray(messages)) return [];
+  return (messages as { role?: unknown }[]).filter((message) => message.role === "user").map((message) => lastUserText([message]));
+}
+
+function toolsCalled(messages: unknown): string[] {
+  if (!Array.isArray(messages)) return [];
+  return (messages as { role?: unknown; tool_calls?: unknown }[])
+    .filter((message) => message.role === "assistant" && Array.isArray(message.tool_calls))
+    .flatMap((message) => (message.tool_calls as { function?: { name?: unknown } }[]).map((call) => String(call.function?.name ?? "")));
+}
 
 function lastUserText(messages: unknown): string {
   if (!Array.isArray(messages)) return "";
@@ -50,16 +69,27 @@ async function readJson(request: http.IncomingMessage): Promise<Record<string, u
   return parsed as Record<string, unknown>;
 }
 
-function streamReply(response: http.ServerResponse, model: string, text: string): void {
+let calls = 0;
+
+function streamReply(response: http.ServerResponse, model: string, reply: string | ToolCall): void {
   const id = `chatcmpl-faux-${Date.now()}`;
   const chunk = (delta: Record<string, unknown>, finish: string | null, usage?: Record<string, number>) =>
     `data: ${JSON.stringify({ id, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model,
       choices: [{ index: 0, delta, finish_reason: finish }], ...(usage ? { usage } : {}) })}\n\n`;
   response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
   response.write(chunk({ role: "assistant", content: "" }, null));
-  for (let at = 0; at < text.length; at += 8) response.write(chunk({ content: text.slice(at, at + 8) }, null));
+  const text = typeof reply === "string" ? reply : JSON.stringify(reply.arguments);
+  if (typeof reply === "string") {
+    for (let at = 0; at < text.length; at += 8) response.write(chunk({ content: text.slice(at, at + 8) }, null));
+  } else {
+    assert.match(reply.tool, /^[a-z_]+$/, "a tool call names a tool");
+    calls += 1;
+    const call = { index: 0, id: `call_faux_${calls}`, type: "function", function: { name: reply.tool, arguments: text } };
+    response.write(chunk({ tool_calls: [call] }, null));
+  }
   const tokens = Math.max(1, Math.ceil(text.length / 4));
-  response.write(chunk({}, "stop", { prompt_tokens: 10, completion_tokens: tokens, total_tokens: 10 + tokens }));
+  const finish = typeof reply === "string" ? "stop" : "tool_calls";
+  response.write(chunk({}, finish, { prompt_tokens: 10, completion_tokens: tokens, total_tokens: 10 + tokens }));
   response.end("data: [DONE]\n\n");
 }
 
@@ -74,7 +104,10 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     return;
   }
   const body = await readJson(request);
-  const seen: EngineRequest = { model: String(body.model ?? ""), lastUserText: lastUserText(body.messages) };
+  const seen: EngineRequest = {
+    model: String(body.model ?? ""), lastUserText: lastUserText(body.messages),
+    userTexts: userTexts(body.messages), toolsCalled: toolsCalled(body.messages),
+  };
   state.requests.push(seen);
   streamReply(response, seen.model, state.script(seen));
 }

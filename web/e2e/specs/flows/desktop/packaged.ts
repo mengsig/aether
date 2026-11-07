@@ -1,6 +1,7 @@
 // The packaged desktop app, for a flow that must prove the shipped build: E2E_DESKTOP_PACKAGED
 // names its binary. Its fuses close the Node inspector, so Playwright drives it over CDP.
-// The shipped main shows a real window, so it runs on a private headless sway, never the desktop.
+// The shipped main shows a real window, so it runs on a private headless sway, never the desktop,
+// with a private session bus and a recording `xdg-open`: no notification or browser escapes.
 
 import assert from "node:assert/strict";
 import { accessSync, constants, existsSync, readdirSync, readFileSync } from "node:fs";
@@ -10,16 +11,32 @@ import { chromium, expect, type Browser, type Page } from "@playwright/test";
 import { tempBase } from "../../../harness/env.ts";
 import { record, spawnLogged, stopGroup, type Spawned } from "../../../harness/process.ts";
 import { failLaunch, runAll } from "../../../harness/teardown.ts";
+import { startNativeHost, type NativeHost } from "./native-host.ts";
 
 const READY_MS = 60_000;
 const POLL_MS = 200;
 /** sway's IPC socket, `sway-ipc.<uid>.<pid>.sock`, must fit in a socket address (108 bytes). */
 const MAX_RUNTIME_DIR = 70;
 const SWAY_CONFIG = "output HEADLESS-1 resolution 1600x1000\nxwayland disable\n";
+/** How long a second instance may take to hand its link over and exit. */
+const AGAIN_MS = 30_000;
 
 export interface PackagedApp {
   readonly window: Page;
+  /** Every page the app has open, the app window and any report window among them. */
+  readonly browser: Browser;
+  /** The run's own notification server and `xdg-open`. */
+  readonly native: NativeHost;
+  /** The environment that reaches the run's own compositor, for its keyboard and window list. */
+  readonly compositor: NodeJS.ProcessEnv;
+  /** Runs the binary again on the same profile, as the system does for a link; resolves once it exits. */
+  again(args: readonly string[]): Promise<number | null>;
   close(): Promise<void>;
+}
+
+export interface PackagedOptions {
+  /** Extra command-line arguments, such as a launch-time `aether-app://` link. */
+  readonly args?: readonly string[];
 }
 
 /** The packaged binary to drive, or undefined to run the flows on test/e2e/main.ts. */
@@ -91,8 +108,26 @@ function logTail(log: string): string {
   return readFileSync(log, "utf8").split("\n").slice(-40).join("\n");
 }
 
+/** sway's IPC socket in `runtime`, for swaymsg. */
+function swaySocket(runtime: string): string | undefined {
+  const name = readdirSync(runtime).find((entry) => /^sway-ipc\..+\.sock$/.test(entry));
+  return name === undefined ? undefined : path.join(runtime, name);
+}
+
+/** Runs a second instance of `binary` with `args`, which hands them to the first and exits. */
+async function runAgain(binary: string, args: readonly string[], options: { env: NodeJS.ProcessEnv; cwd: string; log: string }): Promise<number | null> {
+  assert.ok(args.every((arg) => !arg.startsWith("--user-data-dir")), "a second instance shares the first one's profile");
+  const second = spawnLogged(binary, args, options);
+  const deadline = new Promise<"late">((resolve) => setTimeout(() => resolve("late"), AGAIN_MS));
+  const exited = new Promise<number | null>((resolve) => second.child.once("exit", (code) => resolve(code)));
+  const outcome = await Promise.race([exited, deadline]);
+  if (outcome !== "late") return outcome;
+  await stopGroup(second);
+  throw new Error(`a second instance did not exit within ${AGAIN_MS} ms:\n${logTail(options.log)}`);
+}
+
 /** Starts the packaged app on `sockets`, its profile, compositor and logs in a fresh root under the run's temp dir. */
-export async function launchPackaged(binary: string, sockets: { aether: string; archon: string }): Promise<PackagedApp> {
+export async function launchPackaged(binary: string, sockets: { aether: string; archon: string }, options: PackagedOptions = {}): Promise<PackagedApp> {
   assert.ok(path.isAbsolute(sockets.aether) && path.isAbsolute(sockets.archon), "the app gets absolute socket paths");
   const root = await mkdtemp(path.join(tempBase(), "pk-"));
   record("roots", root);
@@ -105,9 +140,11 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
   let sway: Spawned | undefined;
   let app: Spawned | undefined;
   let browser: Browser | undefined;
+  let native: NativeHost | undefined;
   const close = () => runAll([
     async () => browser?.close(),
     async () => app !== undefined && stopGroup(app),
+    async () => native?.close(),
     async () => sway !== undefined && stopGroup(sway),
     () => rm(root, { recursive: true, force: true, maxRetries: 3 }),
   ]);
@@ -115,11 +152,20 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
     const runtime = path.join(root, "run");
     sway = await spawnCompositor(root, runtime, env);
     const display = await waylandSocket(runtime, sway);
-    const appEnv = { ...env, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display };
-    app = spawnLogged(binary, [`--user-data-dir=${profile}`, "--ozone-platform=wayland", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0"],
+    native = await startNativeHost(root, env);
+    const appEnv = { ...env, ...native.env, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display };
+    const shared = [`--user-data-dir=${profile}`, "--ozone-platform=wayland"];
+    app = spawnLogged(binary, [...shared, "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", ...(options.args ?? [])],
       { env: appEnv, cwd: root, log });
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${await devtoolsPort(profile, app)}`);
-    return { window: await appWindow(browser), close };
+    const ipc = await until(() => swaySocket(runtime), "sway's IPC socket", sway);
+    const compositor = { PATH: env.PATH, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display, SWAYSOCK: ipc };
+    let runs = 0;
+    const again = (args: readonly string[]) => {
+      runs += 1;
+      return runAgain(binary, [...shared, ...args], { env: appEnv, cwd: root, log: path.join(root, `again-${runs}.log`) });
+    };
+    return { window: await appWindow(browser), browser, native, compositor, again, close };
   } catch (error) {
     const tails = `${logTail(log)}\n-- sway:\n${logTail(path.join(root, "sway.log"))}`;
     return failLaunch(error, `The packaged app did not start; its logs ended:\n${tails}`, close);
