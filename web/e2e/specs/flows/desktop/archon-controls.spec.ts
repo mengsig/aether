@@ -85,7 +85,7 @@ test("Message Archon from the app window lands in archond's feed as the operator
     const feed = data as unknown as Array<{ entry: { entry: string; text?: string } }>;
     return feed.some((item) => item.entry.entry === "operator" && item.entry.text === MESSAGE);
   }, { message: "archond's feed holds the app's line" }).toBe(true);
-  await dialog.getByRole("button", { name: "Close" }).click();
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
   await expect(dialog).toHaveCount(0);
 });
 
