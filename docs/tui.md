@@ -852,6 +852,8 @@ A failed tool call is tool detail: a mode without `tool` keeps one line for it.
 Modes do not alter agent execution, event ingestion, approval controls or the board.
 The desktop reads the same catalog from the daemon over `list_view_modes`;
 the daemon reloads its configuration directory's mode files on each request.
+Both apply the same rules, pinned by `crates/aether-tui/tests/fixtures/view_mode_parity.json`
+(see [the desktop's view modes](desktop.md#view-modes)).
 
 Embedders can supply `<config dir>/modes/brief.toml` alongside `ui.toml`:
 

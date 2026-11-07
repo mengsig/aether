@@ -30,7 +30,8 @@ interface Shown { readonly messages: readonly string[]; readonly tail: string | 
 
 /** What a reader sees: committed message bodies in order, the live tail's body, and the tail's badges. */
 function shown(container: HTMLElement): Shown {
-  const body = (node: Element) => (node.querySelector(".conv-msg-body")?.textContent ?? "").trim();
+  // A delegated agent's first message is its task, drawn as a card: its text is the card's.
+  const body = (node: Element) => ((node.querySelector(".conv-card-text") ?? node.querySelector(".conv-msg-body"))?.textContent ?? "").trim();
   const messages = [...container.querySelectorAll(".conv-msg:not([data-live])")].map(body);
   const live = [...container.querySelectorAll(".conv-msg[data-live]")];
   expect(live.length).toBeLessThanOrEqual(1);

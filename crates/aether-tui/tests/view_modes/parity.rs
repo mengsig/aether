@@ -44,8 +44,10 @@ fn shared_fixture_matches_tui_presentation_and_scope() {
                     None
                 }
                 "focus" => {
-                    assert_eq!(value, "built-in");
-                    Some(catalog.modes["focus"].definition.clone())
+                    // The desktop reads focus from this copy; it must stay the built-in itself.
+                    let copy: Definition = serde_json::from_value(value.clone()).unwrap();
+                    assert_eq!(copy, catalog.modes["focus"].definition);
+                    Some(copy)
                 }
                 _ => Some(serde_json::from_value(value.clone()).unwrap()),
             };

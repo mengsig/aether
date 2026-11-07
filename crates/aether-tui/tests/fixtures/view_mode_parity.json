@@ -3,7 +3,13 @@
   "about": "One transcript and what each view mode draws of each row. The TUI (tests/view_modes.rs) and the desktop chat (web/packages/aether/src/conversation) both check their rules against it. Outcomes: full, compact (one line), line (a failed call's one-line row) or hidden.",
   "modes": {
     "standard": null,
-    "focus": "built-in",
+    "focus": {
+      "version": 1,
+      "label": "Focus",
+      "description": "Coordination without tool detail",
+      "density": "compact",
+      "show": ["user_text", "assistant_text", "delegation", "agent_message", "completion", "status", "question", "approval", "error"]
+    },
     "calm": {
       "version": 1,
       "label": "Calm",

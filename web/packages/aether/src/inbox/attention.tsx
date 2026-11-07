@@ -15,7 +15,7 @@ function when(iso: string): string {
   return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
 }
 
-function Question({ conn, question }: { readonly conn: ConnId; readonly question: aether.PendingQuestion }) {
+export function Question({ conn, question }: { readonly conn: ConnId; readonly question: aether.PendingQuestion }) {
   invariant(Number.isSafeInteger(question.question_seq), "a question is numbered within its agent");
   const run = useRun(conn);
   const draft = useDraft(draftKey(conn, question.agent, `question:${question.question_seq}`));
@@ -42,7 +42,7 @@ function Question({ conn, question }: { readonly conn: ConnId; readonly question
   );
 }
 
-function Approval({ conn, request, name }: { readonly conn: ConnId; readonly request: aether.ApprovalRequest; readonly name: string }) {
+export function Approval({ conn, request, name }: { readonly conn: ConnId; readonly request: aether.ApprovalRequest; readonly name: string }) {
   const run = useRun(conn);
   const approve = aether.resolveApproval({ id: request.id, decision: "approved" });
   const deny = (note: string) => aether.resolveApproval({ id: request.id, decision: "denied", ...(note ? { note } : {}) });

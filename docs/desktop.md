@@ -223,3 +223,31 @@ To Archon's orchestrator the menu also offers Archon's own commands
 (`/status`, `/queue`, `/answer`, `/approve`, `/merge` and the rest), which go
 to it as typed. Any other `/line` is sent to the agent unchanged, as the TUI
 sends it.
+
+### View modes
+
+A view mode changes what the conversation draws, never what the agent does. The
+picker above the transcript offers `standard`, the built-in `focus` and the
+modes in the daemon's `<config dir>/modes/*.toml` whose scope fits the agent,
+read over `list_view_modes` (see [the TUI's view modes](tui.md#view-modes)); a
+mode scoped to another agent is not offered. Arrow keys move the choice, and
+`/mode <name>` or `/<name>` (again for standard) choose one from the composer.
+The choice is remembered per daemon and agent. Without one, an agent opens in
+the first user mode scoped to it, so Archon's orchestrator opens in Calm when
+its `calm.toml` exists, and any other agent in standard.
+
+The rules are the TUI's, pinned row for row by one shared fixture
+(`crates/aether-tui/tests/fixtures/view_mode_parity.json`) that both test
+suites read. A named mode hides the categories it does not list, draws a
+failed tool call as one line when it omits `tool`, and with `compact` density
+draws delegations, messages, completions and status as one-line cards.
+Questions, approvals, errors, failed children and calls that were denied or
+cancelled stay whole in every mode. **Details** (Ctrl+T) reveals everything
+the mode hides without leaving it. Switching keeps the draft and the row at
+the top of the view.
+
+Delegations, messages between agents and a child's completion or failure are
+cards that open the other agent's chat and, for delegations and outcomes, the
+fleet graph. A line beside the picker says what the agent is working on or
+waiting for, and its open questions and approvals are pinned above the
+transcript until they are answered.

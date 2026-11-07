@@ -4,6 +4,7 @@
 import type { StreamState } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
 import { invariant } from "../fleet/invariant.ts";
+import { isInboxText, splitInbox, type InboxSegment } from "./inbox.ts";
 
 export interface ToolResultView {
   readonly text: string;
@@ -17,7 +18,8 @@ export type Part =
   | { readonly kind: "tool"; readonly id: string | null; readonly name: string; readonly input: string; readonly result: ToolResultView | null }
   | { readonly kind: "orphan-result"; readonly toolUseId: string; readonly result: ToolResultView }
   | { readonly kind: "attachment"; readonly name: string; readonly mediaType: string; readonly sizeBytes: number | null }
-  | { readonly kind: "compaction"; readonly text: string };
+  | { readonly kind: "compaction"; readonly text: string }
+  | { readonly kind: "inbox"; readonly segment: Exclude<InboxSegment, { kind: "operator" }> };
 
 /** What `invocation.completed` or `invocation.failed` said about the invocation behind a message. */
 export interface InvocationMeta {
@@ -96,6 +98,11 @@ function blockPart(block: aether.ContentBlock, pairing: Pairing): Part | null {
   }
 }
 
+/** A user turn's inbox text as one part per delivery; what a person typed stays text. */
+function inboxParts(text: string): Part[] {
+  return splitInbox(text).map((segment) => (segment.kind === "operator" ? { kind: "text", text: segment.text } : { kind: "inbox", segment }));
+}
+
 /** Committed rows in seq order; a message left with nothing of its own to show has no row. */
 export function entryRows(entries: readonly aether.TranscriptEntry[], pairing: Pairing, meta: ReadonlyMap<string, InvocationMeta>): ConversationRow[] {
   const rows: ConversationRow[] = [];
@@ -105,6 +112,10 @@ export function entryRows(entries: readonly aether.TranscriptEntry[], pairing: P
     last = entry.seq;
     const parts: Part[] = [];
     for (const block of entry.message.content) {
+      if (entry.message.role === "user" && block.type === "text" && isInboxText(block.text)) {
+        parts.push(...inboxParts(block.text));
+        continue;
+      }
       const part = blockPart(block, pairing);
       if (part) parts.push(part);
     }

@@ -40,7 +40,11 @@ describe("the agent screen", () => {
     expect(fact(container, "Tokens")).toBe("1.2M in · 88k out");
     expect(fact(container, "Turns")).toBe("42");
     expect(fact(container, "Budget")).toBe("$25.00 · 4.0M tokens");
-    expect([...container.querySelectorAll(".conv-msg-body")].map((node) => node.textContent)).toEqual(["Build it.", "On it."]);
+    const task = container.querySelector(".conv-card[data-kind=\"user_task\"]");
+    expect(task?.querySelector(".conv-card-title")?.textContent, "a delegated agent's first message is its task").toBe("Task from planner");
+    expect(task?.querySelector("a")?.getAttribute("href")).toContain(encodeURIComponent(FAUX_PARENT));
+    expect([...container.querySelectorAll(".conv-msg-body")].map((node) => node.querySelector(".conv-card-text")?.textContent ?? node.textContent)).toEqual(["Build it.", "On it."]);
+    expect(container.querySelector('textarea[aria-label="Message builder"]'), "the chat has its composer").not.toBeNull();
   });
 
   test("updates from the store when a refetched row replaces the agent", async () => {

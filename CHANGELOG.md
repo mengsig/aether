@@ -14,6 +14,12 @@ release is also the text of its GitHub release.
 - The web palette (Ctrl+K) now switches context: it finds agents on every
   connection by name, role or id, Archon items, initiatives, pull requests and
   Learn sessions, and lists recent destinations first when the query is empty.
+- The desktop chat has the TUI's view modes: a picker, `/mode`, `/calm` and
+  `/focus`, Details (Ctrl+T) and the choice remembered per agent; Archon's
+  orchestrator opens in its Calm mode. Both apply one set of rules, pinned by a
+  shared fixture. Delegations, messages and outcomes are cards that link to the
+  other agent, open questions and approvals stay pinned until answered, and a
+  composer with a `/` menu sends, stops and keeps unsent drafts.
 
 ## 1.3.0
 

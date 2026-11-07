@@ -1,11 +1,14 @@
-// One transcript row: a committed message or a live tail, with its reasoning, tool calls
-// (each paired with its result), attachments, model and cost.
+// One transcript row as its view mode draws it: a committed message or a live tail, with its
+// reasoning, tool calls (each paired with its result), coordination cards, attachments and cost.
 
 import { Badge } from "@aether-ui/ui";
 import { memo, type ReactNode } from "react";
+import { invariant } from "../fleet/invariant.ts";
+import { CARD_KINDS, CoordinationCard, FailedLine, type Directory } from "./Coordination.tsx";
 import { formatBytes, formatCost, formatDuration, formatTime, formatTokens } from "./format.ts";
 import { Markdown } from "./markdown.tsx";
 import type { ConversationRow, InvocationMeta, Part, ToolResultView } from "./rows.ts";
+import type { ViewPart, ViewRow } from "./view.ts";
 
 /** Long tool input and output stay readable without one call filling the screen. */
 const MAX_TOOL_TEXT = 20_000;
@@ -74,14 +77,28 @@ function PartView({ part, live }: { readonly part: Part; readonly live: boolean 
           <p className="conv-reasoning-text">{part.text}</p>
         </details>
       );
+    case "inbox":
+      invariant(false, "an inbox delivery draws as a coordination card");
   }
 }
 
-function MetaLine({ meta }: { readonly meta: InvocationMeta }) {
+export interface MessageContext {
+  readonly directory: Directory;
+  /** The agent that delegated this one, for its task card. */
+  readonly parent: string | null;
+}
+
+function ViewPartView({ view, live, context }: { readonly view: ViewPart; readonly live: boolean; readonly context: MessageContext }): ReactNode {
+  if (view.outcome === "line") return <FailedLine part={view.part} />;
+  if (CARD_KINDS.has(view.kind)) return <CoordinationCard view={view} directory={context.directory} parent={context.parent} />;
+  return <PartView part={view.part} live={live} />;
+}
+
+function MetaLine({ meta, usage }: { readonly meta: InvocationMeta; readonly usage: boolean }) {
   const bits: string[] = [];
-  if (meta.model) bits.push(meta.model);
-  if (meta.usage) bits.push(formatCost(meta.usage), `${formatTokens(meta.usage.input_tokens)} in · ${formatTokens(meta.usage.output_tokens)} out`);
-  if (meta.durationMs !== null) bits.push(formatDuration(meta.durationMs));
+  if (meta.model && usage) bits.push(meta.model);
+  if (meta.usage && usage) bits.push(formatCost(meta.usage), `${formatTokens(meta.usage.input_tokens)} in · ${formatTokens(meta.usage.output_tokens)} out`);
+  if (meta.durationMs !== null && usage) bits.push(formatDuration(meta.durationMs));
   return (
     <span className="conv-meta">
       {bits.join(" · ")}
@@ -101,29 +118,33 @@ function LiveBadges({ row }: { readonly row: ConversationRow }) {
   );
 }
 
-export const MessageView = memo(function MessageView({ row }: { readonly row: ConversationRow }) {
+export const MessageView = memo(function MessageView({ view, context }: { readonly view: ViewRow; readonly context: MessageContext }) {
+  const row = view.row;
   const live = row.live !== null;
   return (
-    <article className="conv-msg" data-role={row.role} data-live={live ? "true" : undefined} data-seq={row.seq ?? undefined} data-invocation={row.invocation ?? undefined}>
-      <header className="conv-msg-head">
-        <span className="conv-role">{row.role === "assistant" ? "Assistant" : "User"}</span>
-        {row.at ? <time className="conv-note" dateTime={row.at}>{formatTime(row.at)}</time> : null}
-        <LiveBadges row={row} />
-        {row.meta ? <MetaLine meta={row.meta} /> : null}
-      </header>
+    <article className="conv-msg" data-role={row.role} data-slim={view.slim || undefined} data-live={live ? "true" : undefined} data-seq={row.seq ?? undefined} data-invocation={row.invocation ?? undefined}>
+      {view.slim ? null : (
+        <header className="conv-msg-head">
+          <span className="conv-role">{row.role === "assistant" ? "Assistant" : "User"}</span>
+          {row.at ? <time className="conv-note" dateTime={row.at}>{formatTime(row.at)}</time> : null}
+          <LiveBadges row={row} />
+          {row.meta ? <MetaLine meta={row.meta} usage={view.usage} /> : null}
+        </header>
+      )}
       <div className="conv-msg-body">
         {row.live?.recovering && row.parts.length === 0 ? <p className="conv-note">Reading the transcript to catch up with the live output…</p> : null}
-        {row.parts.map((part, index) => <PartView key={index} part={part} live={live} />)}
+        {view.parts.map((part, index) => <ViewPartView key={index} view={part} live={live} context={context} />)}
       </div>
     </article>
   );
 });
 
 /** A first guess at a row's height in px, before it is drawn and measured. */
-export function estimateRow(row: ConversationRow): number {
-  let height = 56;
-  for (const part of row.parts) {
-    if (part.kind === "text") height += 24 * Math.min(60, Math.ceil(part.text.length / 90) + part.text.split("\n").length - 1);
+export function estimateRow(view: ViewRow): number {
+  let height = view.slim ? 16 : 56;
+  for (const { part, outcome } of view.parts) {
+    if (outcome !== "full") height += 32;
+    else if (part.kind === "text") height += 24 * Math.min(60, Math.ceil(part.text.length / 90) + part.text.split("\n").length - 1);
     else if (part.kind === "attachment") height += 36;
     else height += 44;
   }
