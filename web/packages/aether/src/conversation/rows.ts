@@ -4,7 +4,7 @@
 import type { StreamState } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
 import { invariant } from "../fleet/invariant.ts";
-import { isInboxText, splitInbox, type InboxSegment } from "./inbox.ts";
+import { isInboxText, splitInbox, type Deliveries, type InboxSegment } from "./inbox.ts";
 
 export interface ToolResultView {
   readonly text: string;
@@ -101,12 +101,15 @@ function blockPart(block: aether.ContentBlock, pairing: Pairing): Part | null {
 }
 
 /** A user turn's inbox text as one part per delivery; what a person typed stays text. */
-function inboxParts(text: string): Part[] {
-  return splitInbox(text).map((segment) => (segment.kind === "operator" ? { kind: "text", text: segment.text } : { kind: "inbox", segment }));
+function inboxParts(text: string, records: Deliveries | null): Part[] {
+  return splitInbox(text, records).map((segment) => (segment.kind === "operator" ? { kind: "text", text: segment.text } : { kind: "inbox", segment }));
 }
 
-/** Committed rows in seq order; a message left with nothing of its own to show has no row. */
-export function entryRows(entries: readonly aether.TranscriptEntry[], pairing: Pairing, meta: ReadonlyMap<string, InvocationMeta>): ConversationRow[] {
+/**
+ * Committed rows in seq order; a message left with nothing of its own to show has no row. `records`,
+ * the agent's inbox items when read, decide where one delivery ends and the next begins.
+ */
+export function entryRows(entries: readonly aether.TranscriptEntry[], pairing: Pairing, meta: ReadonlyMap<string, InvocationMeta>, records: Deliveries | null = null): ConversationRow[] {
   const rows: ConversationRow[] = [];
   let last = -Infinity;
   for (const entry of entries) {
@@ -116,7 +119,7 @@ export function entryRows(entries: readonly aether.TranscriptEntry[], pairing: P
     let delivered = false;
     for (const block of entry.message.content) {
       if (entry.message.role === "user" && block.type === "text" && isInboxText(block.text)) {
-        parts.push(...inboxParts(block.text));
+        parts.push(...inboxParts(block.text, records));
         delivered = true;
         continue;
       }

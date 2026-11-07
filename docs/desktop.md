@@ -194,13 +194,21 @@ it, and a manual run, which can name any branch, build unsigned.
 **Start an agent** on the Activity screen starts a **Chat** by default: a
 task-less assistant, started the way the TUI starts one, that gets your first
 message and then waits for the next one after every reply. It stays open until
-you cancel it. The chat opens once its first message is delivered, sent as
-typed. If that message is refused or its reply never comes, the sheet stays open
-with the reason and **Send first message** retries it to the same chat, so trying
-again never starts a second one. That chat's settings are fixed by then; **Start
-a different chat** offers them again for a new one. A **Task agent** instead works on an objective and ends once it
-is done; an ended agent takes no more messages, and its composer says why and
-offers to wake it (after a failure), start a new chat or open its controls.
+you cancel it. A first message that is empty or too long to keep (over 200,000
+characters) is refused before any chat is created. The chat opens once its first
+message is delivered, sent as typed: a `/` at its start is never read as a
+command. If that message is refused, or its reply never comes, the sheet stays
+open with the chat's settings shown fixed, the message as typed, the reason and,
+for a lost reply, a warning that it may have arrived. **Send it again** resends
+the same text to the same chat, so a retry never starts a second one. **Open the
+chat** goes there, and the chat shows the same notice with **Send it as typed**
+until the message is delivered or dismissed. **New chat with different
+settings** is the only way to create another, and the form keeps what you typed.
+If the reply to the create itself never comes, the chat may exist, so the sheet
+says so and points to the recovery review instead of creating it again. A **Task
+agent** instead works on an objective and ends once it is done; an ended agent
+takes no more messages, and its composer says why and offers to wake it (after a
+failure), start a new chat or open its controls.
 
 The composer sits under the conversation. Enter sends, Shift+Enter adds a
 line, and **Stop** interrupts the running turn without losing the agent's
@@ -238,9 +246,10 @@ mode scoped to another agent is not offered. Arrow keys move the choice, and
 `/mode <name>` or `/<name>` (again for standard) choose one from the composer
 and run in the app. While the daemon's list is loading or unavailable, `/mode`,
 `/focus` and Archon's `/calm` say so rather than reach the agent; any other user
-mode's `/<name>` is known only once the list arrives. The choice is remembered per daemon and agent. Without one, an agent opens in
-Calm when a `calm.toml` scoped to it exists, else in the first other user mode
-scoped to it, so Archon's orchestrator opens in Calm and any other agent in standard.
+mode's `/<name>` is known only once the list arrives. The choice is remembered
+per daemon and agent. Without one, Archon's orchestrator opens in its Calm mode
+whenever a `calm.toml` that fits it exists, whatever other modes are scoped to
+it; any other agent opens in the first user mode scoped to it, else in standard.
 
 The rules are the TUI's, pinned row for row by one shared fixture
 (`crates/aether-tui/tests/fixtures/view_mode_parity.json`) that both test
@@ -250,10 +259,16 @@ draws delegations, messages, completions and status as one-line cards.
 What the operator typed, questions, approvals, errors, failed children and
 calls that were denied or cancelled stay whole in every mode. **Details** (Ctrl+T)
 reveals everything the mode hides without leaving it. Switching keeps the draft
-and the row at the top of the view. Message bodies are not escaped, so an inbox
-turn that may quote a header (its headers out of order, or one after the
-operator's message) is drawn verbatim as one card, whole in every mode, rather
-than split into deliveries. A delegated agent's first turn is its task only when
+and the row at the top of the view.
+
+An inbox turn holds several deliveries, and message bodies are not escaped, so
+a body can quote an `[inbox n]` header. The chat reads the agent's inbox records
+(`get_inbox`) and splits a turn only at headers a record of that seq and kind
+confirms, in ascending order; any other header line stays text of the delivery
+it sits in, and an operator's delivery must match its record word for word.
+Where the records are not read yet, are older than the turn, or leave a
+boundary in doubt, the turn is drawn verbatim as one card, quoted headers and
+all, whole in every mode. A delegated agent's first turn is its task only when
 the inbox did not deliver it.
 
 Delegations, messages between agents and a child's completion or failure are
