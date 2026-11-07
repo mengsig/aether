@@ -144,7 +144,7 @@ test("an import failure stays visible inside the confirmation on retry", async (
 test("an unknown initiative settles on an error and can be retried without reconnecting", async () => {
   const page = window();
   await route(page, "#/archon/initiatives/in_00000000000000000000000000");
-  const error = page.getByRole("alert");
+  const error = page.locator("section[role=alert]");
   await expect(error).toBeVisible();
   await shoot("initiative-missing-light");
   await page.getByRole("button", { name: "Try again" }).click();
