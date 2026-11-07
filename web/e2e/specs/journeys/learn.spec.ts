@@ -8,7 +8,7 @@ import { noesisStatus } from "../noesis/noesis.ts";
 import { shootWindow } from "./capture.ts";
 import { connectionsReady, journeyHooks, type Journey } from "./journey.ts";
 import { PRACTICE_STATEMENT, PROBER_QUESTION } from "./scripts.ts";
-import { need, note, open, textField } from "./ui.ts";
+import { choose, need, note, open, textField } from "./ui.ts";
 
 // On X11: main's confirmation is a GTK dialog, which the seat's virtual Wayland keyboard never reaches.
 const journey = journeyHooks({ archon: false, x11: true, fauxOnly: "a learning session spawns several teaching agents; the real variant spends only on journey 1's checks" });
@@ -33,6 +33,10 @@ async function turnNoesisOn(run: Journey): Promise<void> {
   await expect(sheet, "the turn-on opens Noesis settings").toBeVisible();
   await expect(await need(sheet, "noesis-enable"), "the turn-on already chose Noesis on").toBeChecked();
   await switchOn(sheet, "noesis-allow-api");
+  // The faux engine is API-billed and no subscription model is ready, so the default slot cannot start a session.
+  await expect(sheet, "the default slot says to choose a model").toContainText("No subscription model is ready");
+  await choose(window, await need(sheet, "noesis-model-strong"), /mock/);
+  await choose(window, await need(sheet, "noesis-model-cheap"), /mock/);
   await expect(await need(sheet, "noesis-save"), "the settings are ready to save").toBeEnabled();
   await shootWindow(window, "noesis-settings", "turn-on");
   await saveBehindConfirmation(run, sheet);

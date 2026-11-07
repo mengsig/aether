@@ -2,7 +2,7 @@
 // here) appear as the daemon lists them, live, with the model they run on.
 
 import { createAgent, listAgents } from "../../harness/agents.ts";
-import { pairBoth } from "../../harness/pair.ts";
+import { fleetLink, pairBoth } from "../../harness/pair.ts";
 import { expect, test } from "../../harness/fixtures.ts";
 
 test("the fleet lists the daemon's agents live, on the faux engine", async ({ page, stack }, info) => {
@@ -12,7 +12,7 @@ test("the fleet lists the daemon's agents live, on the faux engine", async ({ pa
 
   const requests = stack.engine.requests.length;
   await createAgent(stack, "Smoke worker", "Say hello from the fleet smoke test.");
-  const row = fleet.locator(".fleet-row", { has: page.getByRole("link", { name: "Smoke worker" }) });
+  const row = fleet.locator(".fleet-row", { has: await fleetLink(page, "Smoke worker") });
   await expect(row).toBeVisible();
   await expect(row.locator(".fleet-model")).toHaveText("mock/mock-1");
   await expect.poll(() => stack.engine.requests.slice(requests).some((request) => request.lastUserText.includes("fleet smoke test"))).toBe(true);

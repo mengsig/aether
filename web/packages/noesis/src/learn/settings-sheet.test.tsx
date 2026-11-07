@@ -14,7 +14,7 @@ import { modelList } from "./models.ts";
 import { draftOf, patchOf, settingsDraftKey } from "./settings-draft.ts";
 
 const SETTINGS_DRAFT_KEY = settingsDraftKey(CONN);
-import { DEFAULT_MODEL_LABEL, hiddenModelNote } from "./SettingsSheet.tsx";
+import { DEFAULT_MODEL_LABEL, defaultModelNote, hiddenModelNote } from "./SettingsSheet.tsx";
 import SessionsRoute from "./SessionsScreen.tsx";
 
 let harness: Harness | null = null;
@@ -66,6 +66,21 @@ describe("model pickers", () => {
     expect(strong?.textContent).toContain("anthropic/claude-opus-5-5 is not offered");
     expect(hiddenModelNote("", { models: MODELS, providers: PROVIDERS, loaded: true, error: null }, false)).toBeUndefined();
     expect(hiddenModelNote("codex/gpt-6-luna", { models: MODELS, providers: PROVIDERS, loaded: true, error: null }, false)).toBeUndefined();
+  });
+
+  test("with API billing on and no subscription model ready, the default slot says to choose a model", async () => {
+    const apiOnly = MODELS.filter((entry) => entry.model.provider === "anthropic");
+    const status = withBilling(true);
+    const unset = { ...status, settings: { ...status.settings, models: { strong: null, cheap: null } }, effective: { ...status.effective, models: { strong: null, cheap: null } } };
+    const { h, sheet } = await openSheet(unset, "ipc", { models: apiOnly });
+    const strong = $(sheet, "[data-testid=noesis-model-strong]").closest(".ui-picker");
+    expect(strong?.textContent).toContain("No subscription model is ready, so the default cannot start a session");
+    await click(h, $(sheet, "[data-testid=noesis-allow-api]"));
+    expect(strong?.textContent).not.toContain("No subscription model is ready");
+    const choices = { models: apiOnly, providers: PROVIDERS, loaded: true, error: null };
+    expect(defaultModelNote("anthropic/claude-opus-5-5", choices, true)).toBeUndefined();
+    expect(defaultModelNote("", { ...choices, models: MODELS }, true)).toBeUndefined();
+    expect(defaultModelNote("", { ...choices, loaded: false }, true)).toBeUndefined();
   });
 
   test("billing follows the daemon's providers, not the sign-in words: an unlisted provider is hidden while API billing is off", async () => {

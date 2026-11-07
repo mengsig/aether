@@ -116,6 +116,17 @@ function BudgetFields({ draft, errors, host, set }: SectionProps & { errors: Par
 }
 
 /** Why a saved model is not in the list: it is billed per request with that off, or not ready now. */
+/**
+ * Why the default slot cannot start a session: the daemon fills it with a subscription model only,
+ * so with none ready and API billing allowed the person is asked to choose one of the ready models.
+ */
+export function defaultModelNote(ref: string, choices: ModelChoices, allowApi: boolean): string | undefined {
+  if (ref !== "" || !allowApi || !choices.loaded) return undefined;
+  const ready = (allowApiBilled: boolean) => modelOptions(choices.models, choices.providers, { allowApiBilled }).some((option) => option.disabled !== true);
+  if (ready(false) || !ready(true)) return undefined;
+  return "No subscription model is ready, so the default cannot start a session: choose one of the API-billed models.";
+}
+
 export function hiddenModelNote(ref: string, choices: ModelChoices, allowApi: boolean): string | undefined {
   if (ref === "" || !choices.loaded) return undefined;
   const listed = modelOptions(choices.models, choices.providers, { allowApiBilled: allowApi });
@@ -152,7 +163,8 @@ function ModelFields({ draft, choices, active, disabled, set }: SectionProps & {
       {pickers.map((picker) => (
         <ModelPicker key={picker.field} label={picker.label} data-testid={picker.testid} models={choices.models} providers={choices.providers} value={draft[picker.field]}
           defaultLabel={DEFAULT_MODEL_LABEL} allowApiBilled={draft.allowApi} disabled={disabled}
-          hint={hiddenModelNote(draft[picker.field], choices, draft.allowApi) ?? picker.hint} onChange={(ref) => set({ [picker.field]: ref })} />
+          hint={hiddenModelNote(draft[picker.field], choices, draft.allowApi) ?? defaultModelNote(draft[picker.field], choices, draft.allowApi) ?? picker.hint}
+          onChange={(ref) => set({ [picker.field]: ref })} />
       ))}
       {extraction}
     </fieldset>

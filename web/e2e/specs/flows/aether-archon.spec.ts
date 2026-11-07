@@ -2,7 +2,7 @@
 // archond through Aether's /archon mount, and an item queued from the page lands in archond.
 
 import { createAgent, enqueueItem, itemTitles, listAgents, pauseQueue } from "../../harness/agents.ts";
-import { everyQueueRow, pairBoth } from "../../harness/pair.ts";
+import { everyQueueRow, fleetLink, pairBoth } from "../../harness/pair.ts";
 import { expect, test } from "../../harness/fixtures.ts";
 
 const AGENT = "Flow fleet agent";
@@ -19,7 +19,7 @@ test("the fleet and the queue work through one origin, and a queued item is on b
   await pairBoth(page, stack, { aether: "operator", archon: "operator" }, "Flow both");
 
   const fleet = page.getByRole("region", { name: "Fleet" });
-  await expect(fleet.getByRole("link", { name: AGENT })).toBeVisible();
+  await fleetLink(page, AGENT);
   const agents = await listAgents(stack);
   await expect(fleet.locator(".fleet-count")).toHaveText(`${agents.length} of ${agents.length} agents`);
 

@@ -3,7 +3,7 @@
 
 import { existsSync } from "node:fs";
 import { createAgent, listAgents } from "../../harness/agents.ts";
-import { connection, pairAether } from "../../harness/pair.ts";
+import { connection, fleetLink, pairAether } from "../../harness/pair.ts";
 import { expect, test } from "../../harness/fixtures.ts";
 import { startPrivateStack, stopPrivateStack, type PrivateStack } from "./private.ts";
 
@@ -37,7 +37,7 @@ test("with Aether alone the app works and shows Archon as absent, without errors
   await expect(connection(page, "aether")).toHaveAttribute("data-state", "ready");
   await expect(connection(page, "archon"), "no Archon connection is listed").toHaveCount(0);
   const fleet = page.getByRole("region", { name: "Fleet" });
-  await expect(fleet.getByRole("link", { name: "Alone on Aether" })).toBeVisible();
+  await fleetLink(page, "Alone on Aether");
   const agents = await listAgents(stack);
   await expect(fleet.locator(".fleet-count")).toHaveText(`${agents.length} of ${agents.length} agents`);
   await page.screenshot({ path: info.outputPath("fleet-aether-only.png") });
