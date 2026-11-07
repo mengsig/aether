@@ -76,7 +76,7 @@ export function QueueStatus({ access, items, names, settled }: {
     <div className="queue-status">
       <div className="queue-actions">
         <Button variant="primary" disabled={access.refusal !== null} title={access.refusal ?? undefined} onClick={() => setDialog("item")}>New item</Button>
-        <Button disabled={access.refusal !== null} title={access.refusal ?? undefined} onClick={() => setDialog("say")}>Message Archon</Button>
+        <Button disabled={access.speakRefusal !== null} title={access.speakRefusal ?? undefined} onClick={() => setDialog("say")}>Message Archon</Button>
       </div>
       {status.error && !status.data ? <ErrorState title="Could not read Archon's status" message={status.error} onRetry={status.reload} /> : null}
       {status.data ? (
