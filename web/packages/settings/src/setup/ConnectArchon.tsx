@@ -1,9 +1,9 @@
 // "Connect Archon tools": the repair half of setup, offered wherever Archon's tools are missing
 // from Aether. It runs the same connect, start and check steps as first-run setup.
-// Callers keep it mounted and say whether it is needed: the repair restarts Aether, and its own
-// rereads report the tools ready before it ends, so a started repair stays on screen to its outcome.
+// The repair restarts Aether, which can change the connection or the screen a view hangs on, so the
+// run belongs to the app: every view that offers it shows the same run until it ends or fails.
 
-import { selectConnections, useApp, useReread, useSelector } from "@aether-ui/core";
+import { selectConnections, useApp, useReread, useSelector, type App } from "@aether-ui/core";
 import type { archon, DesktopSetup } from "@aether-ui/protocol";
 import { Button } from "@aether-ui/ui";
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
@@ -11,17 +11,32 @@ import { invariant } from "../kit/invariant.ts";
 import { archonHealth } from "./readiness.ts";
 import { desktopSetup, type StepId } from "./steps.ts";
 import { StepList } from "./StepList.tsx";
-import { useSetup } from "./useSetup.ts";
+import { SetupRunner, useSetupRunner, type SetupRun } from "./useSetup.ts";
 import "./setup.css";
 
 const REPAIR: readonly StepId[] = ["connect", "start", "check"];
 const STATUS = { key: "setup.archon-status", command: { cmd: "status" }, tags: ["status"] } as const;
+const CONNECTED = "Archon's tools are connected and ready";
+const ELSEWHERE = "Connect them from the desktop app on the computer running Aether.";
+
+/** Each app's one repair run; the success notice comes from the run, so no view has to outlive it. */
+const repairs = new WeakMap<App, SetupRunner>();
+
+function repairOf(app: App, setup: DesktopSetup): SetupRunner {
+  const known = repairs.get(app);
+  if (known !== undefined) return known;
+  const runner = new SetupRunner(app, setup, REPAIR, () => app.store.report(CONNECTED, undefined, undefined, "success"));
+  repairs.set(app, runner);
+  return runner;
+}
 
 export interface ConnectArchonProps {
-  /** Whether the tools need connecting now; a repair already started shows until it ends either way. */
+  /** Whether the tools need connecting now; a repair that is running or failed shows either way. */
   readonly needed: boolean;
   /** Why the tools need connecting, as the screen found it; empty when they do not. */
   readonly reason: string;
+  /** The tools belong to another computer's Aether, so this app only says where to connect them. */
+  readonly remote?: boolean;
   /** Called once the tools are connected and checked, so the screen can read again. */
   readonly onDone?: (() => void) | undefined;
   /** Shows it as a banner above the screen rather than inline. */
@@ -32,53 +47,56 @@ function framed(banner: boolean, content: ReactNode): ReactNode {
   return banner ? <aside className="su-banner" aria-label="Archon's tools">{content}</aside> : content;
 }
 
-export function ConnectArchon({ needed, reason, onDone, banner = false }: ConnectArchonProps) {
+export function ConnectArchon({ needed, reason, remote = false, onDone, banner = false }: ConnectArchonProps) {
   invariant(!needed || reason.trim() !== "", "a needed repair says what it repairs");
   const app = useApp();
   const setup = useMemo(() => desktopSetup(app), [app]);
-  if (setup === null) {
-    if (!needed) return null;
-    return framed(banner, <p className="su-repair-text">{reason} Connect them from the Aether desktop app on the computer that runs Aether.</p>);
-  }
-  return <ConnectArchonRun setup={setup} needed={needed} reason={reason} onDone={onDone} banner={banner} />;
+  if (setup === null) return needed ? framed(banner, <p className="su-repair-text">{reason} {ELSEWHERE}</p>) : null;
+  const runner = repairOf(app, setup);
+  return <ConnectArchonRun runner={runner} needed={needed} reason={reason} remote={remote} onDone={onDone} banner={banner} />;
 }
 
-function ConnectArchonRun({ setup, needed, reason, onDone, banner = false }: ConnectArchonProps & { readonly setup: DesktopSetup }) {
-  const app = useApp();
-  const run = useSetup(setup, REPAIR);
-  const reported = useRef(false);
+function ConnectArchonRun({ runner, needed, reason, remote = false, onDone, banner = false }: ConnectArchonProps & { readonly runner: SetupRunner }) {
+  const run = useSetupRunner(runner);
+  const doneSeen = useRef(false);
   useEffect(() => {
-    if (!run.finished || reported.current) return;
-    reported.current = true;
-    app.store.report("Archon's tools are connected and ready", undefined, undefined, "success");
+    if (!run.finished) doneSeen.current = false;
+    if (!run.finished || doneSeen.current) return;
+    doneSeen.current = true;
     onDone?.();
-  }, [app, run.finished, onDone]);
-  const started = REPAIR.some((step) => run.states[step].state !== "waiting");
-  if (!needed && !started) return null;
-  invariant(started || reason.trim() !== "", "an offered repair says why");
-  const headline = run.finished ? "Archon's tools are connected and ready." : reason;
-  return framed(banner, (
+  }, [run.finished, onDone]);
+  const failed = REPAIR.some((step) => run.states[step].state === "failed");
+  if (run.busy || failed) return framed(banner, <RepairPanel headline={remote ? "" : reason} run={run} />);
+  if (!needed) return null;
+  if (remote) return framed(banner, <p className="su-repair-text">{reason} {ELSEWHERE}</p>);
+  return framed(banner, <RepairPanel headline={reason} run={run} onStart={() => void run.run(REPAIR[0])} />);
+}
+
+/** The offer, or the run under way with each step's progress and any failure with its fix. */
+function RepairPanel({ headline, run, onStart }: { readonly headline: string; readonly run: SetupRun; readonly onStart?: () => void }) {
+  invariant(onStart !== undefined || run.busy || run.steps.some((step) => run.states[step].state === "failed"), "only an idle repair is offered");
+  invariant(onStart === undefined || headline.trim() !== "", "an offered repair says why");
+  return (
     <div className="su-repair" role="group" aria-label="Connect Archon tools">
-      {started && headline === "" ? null : (
+      {headline === "" ? null : (
         <div className="su-repair-head">
           <p className="su-repair-text">{headline}</p>
-          {started ? null : <Button variant="primary" size="sm" onClick={() => void run.run()}>Connect Archon tools</Button>}
+          {onStart === undefined ? null : <Button variant="primary" size="sm" onClick={onStart}>Connect Archon tools</Button>}
         </div>
       )}
-      {started ? <StepList run={run} /> : null}
+      {onStart === undefined ? <StepList run={run} /> : null}
     </div>
-  ));
+  );
 }
 
 /**
  * Above Archon's screens: says so, with the fix, when Archon reports its tools are not in Aether.
- * Shows nothing while Archon is not connected or its tools are ready or still starting, unless a
- * repair started here is still running or has an outcome to show.
+ * Shows nothing while Archon's tools are ready or still starting, unless a repair is under way or failed.
  */
 export function ArchonToolsNotice() {
   const connections = useSelector(selectConnections);
   const archonConn = Object.values(connections).find((c) => c.daemon === "archon" && c.state === "ready");
-  if (archonConn === undefined) return null;
+  if (archonConn === undefined) return <ConnectArchon needed={false} reason="" banner />;
   return <ArchonHealthNotice conn={archonConn.id} />;
 }
 

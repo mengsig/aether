@@ -1,9 +1,9 @@
 // Runs setup steps one after another and keeps how each went, so a screen shows progress, a plain
 // error on the step that stopped, and a retry that picks up from there.
 
-import { useApp } from "@aether-ui/core";
+import { useApp, type App } from "@aether-ui/core";
 import type { DesktopSetup } from "@aether-ui/protocol";
-import { useCallback, useRef, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { invariant } from "../kit/invariant.ts";
 import { runStep, SetupError, STEP_ORDER, type SetupFacts, type StepId } from "./steps.ts";
 
@@ -33,47 +33,79 @@ function asSetupError(error: unknown): SetupError {
   return new SetupError(message || "This step did not finish.");
 }
 
-export function useSetup(setup: DesktopSetup, steps: readonly StepId[] = STEP_ORDER): SetupRun {
-  invariant(steps.length > 0, "a setup run has steps");
-  invariant(steps.every((step, i) => i === 0 || STEP_ORDER.indexOf(step) > STEP_ORDER.indexOf(steps[i - 1] ?? "tools")), "steps keep the setup order");
-  const app = useApp();
-  const [states, setStates] = useState<Record<StepId, StepState>>(initialStates);
-  const [facts, setFacts] = useState<SetupFacts>({});
-  const [busy, setBusy] = useState(false);
-  const running = useRef(false);
-  const known = useRef<{ states: Record<StepId, StepState>; facts: SetupFacts }>({ states: initialStates(), facts: {} });
+/**
+ * One setup run held outside React, so a run outlives the view that started it and any view that
+ * mounts later shows the same progress. `onFinished` hears each run that completes every step.
+ */
+export class SetupRunner {
+  readonly steps: readonly StepId[];
+  private readonly app: App;
+  private readonly setup: DesktopSetup;
+  private readonly onFinished: (() => void) | undefined;
+  private readonly listeners = new Set<() => void>();
+  private snapshot: SetupRun;
 
-  const mark = useCallback((step: StepId, state: StepState) => {
-    known.current = { ...known.current, states: { ...known.current.states, [step]: state } };
-    setStates(known.current.states);
-  }, []);
+  constructor(app: App, setup: DesktopSetup, steps: readonly StepId[] = STEP_ORDER, onFinished?: () => void) {
+    invariant(steps.length > 0, "a setup run has steps");
+    invariant(steps.every((step, i) => i === 0 || STEP_ORDER.indexOf(step) > STEP_ORDER.indexOf(steps[i - 1] ?? "tools")), "steps keep the setup order");
+    this.app = app;
+    this.setup = setup;
+    this.steps = steps;
+    this.onFinished = onFinished;
+    this.snapshot = { steps, states: initialStates(), facts: {}, busy: false, finished: false, run: this.run };
+  }
 
-  const run = useCallback(async (from?: StepId) => {
-    if (running.current) return;
-    invariant(from === undefined || steps.includes(from), `${String(from)} is a step of this run`);
-    running.current = true;
-    if (from !== undefined) for (const step of steps.slice(steps.indexOf(from))) mark(step, WAITING);
-    setBusy(true);
+  readonly get = (): SetupRun => this.snapshot;
+
+  readonly subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  };
+
+  readonly run = async (from?: StepId): Promise<void> => {
+    if (this.snapshot.busy) return;
+    invariant(from === undefined || this.steps.includes(from), `${String(from)} is a step of this run`);
+    if (from !== undefined) for (const step of this.steps.slice(this.steps.indexOf(from))) this.mark(step, WAITING);
+    this.update({ busy: true });
     try {
-      for (const step of steps) {
-        if (known.current.states[step].state === "done") continue;
-        mark(step, { state: "running" });
+      for (const step of this.steps) {
+        if (this.snapshot.states[step].state === "done") continue;
+        this.mark(step, { state: "running" });
         try {
-          const learned = await runStep(step, known.current.facts, { app, setup });
-          known.current = { ...known.current, facts: { ...known.current.facts, ...learned } };
-          setFacts(known.current.facts);
-          mark(step, { state: "done" });
+          const learned = await runStep(step, this.snapshot.facts, { app: this.app, setup: this.setup });
+          this.update({ facts: { ...this.snapshot.facts, ...learned } });
+          this.mark(step, { state: "done" });
         } catch (error) {
-          mark(step, { state: "failed", error: asSetupError(error) });
+          this.mark(step, { state: "failed", error: asSetupError(error) });
           return;
         }
       }
     } finally {
-      running.current = false;
-      setBusy(false);
+      this.update({ busy: false });
     }
-  }, [app, mark, setup, steps]);
+    invariant(this.snapshot.finished, "a run that stopped on no step has done every step");
+    this.onFinished?.();
+  };
 
-  const finished = steps.every((step) => states[step].state === "done");
-  return { steps, states, facts, busy, finished, run };
+  private mark(step: StepId, state: StepState): void {
+    this.update({ states: { ...this.snapshot.states, [step]: state } });
+  }
+
+  private update(change: Partial<Pick<SetupRun, "states" | "facts" | "busy">>): void {
+    const next = { ...this.snapshot, ...change };
+    this.snapshot = { ...next, finished: this.steps.every((step) => next.states[step].state === "done") };
+    for (const listener of this.listeners) listener();
+  }
+}
+
+/** Follows a runner's progress in a view. */
+export function useSetupRunner(runner: SetupRunner): SetupRun {
+  return useSyncExternalStore(runner.subscribe, runner.get);
+}
+
+/** A run that belongs to the view that shows it, as first-run setup is. */
+export function useSetup(setup: DesktopSetup, steps: readonly StepId[] = STEP_ORDER): SetupRun {
+  const app = useApp();
+  const [runner] = useState(() => new SetupRunner(app, setup, steps));
+  return useSetupRunner(runner);
 }

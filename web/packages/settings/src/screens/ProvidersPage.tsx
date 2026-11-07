@@ -77,17 +77,13 @@ function ProviderList({ conn, value, auths, run, refreshAuth }: { readonly conn:
   );
 }
 
-/**
- * Mounted for the page's life, outside the read: the repair restarts Aether and rereads the servers
- * before it ends, so it must not live inside the list those rereads replace.
- */
+/** Outside the read, so a repair that restarts Aether is not replaced along with the server list. */
 function ArchonRepair({ value, local, onConnected }: { readonly value: unknown; readonly local: boolean; readonly onConnected: () => void }) {
   const servers = listOf<aether.McpServerHealth>(value);
   const archon = servers === null ? null : archonTools(servers);
   const needed = archon !== null && (archon.state === "missing" || archon.state === "failed");
   const reason = archon !== null && archon.state !== "ready" ? archon.detail : "";
-  if (local) return <ConnectArchon needed={needed} reason={reason} onDone={onConnected} />;
-  return needed ? <p className="st-note">{reason} Connect them from the desktop app on the computer running Aether.</p> : null;
+  return <ConnectArchon needed={needed} reason={reason} remote={!local} onDone={onConnected} />;
 }
 
 function McpList({ value }: { readonly value: unknown }) {
