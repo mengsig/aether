@@ -35,8 +35,8 @@ async function turnNoesisOn(run: Journey): Promise<void> {
   await switchOn(sheet, "noesis-allow-api");
   // The faux engine is API-billed and no subscription model is ready, so the default slot cannot start a session.
   await expect(sheet, "the default slot says to choose a model").toContainText("No subscription model is ready");
-  await choose(window, await need(sheet, "noesis-model-strong"), /mock/);
-  await choose(window, await need(sheet, "noesis-model-cheap"), /mock/);
+  await choose(window, await need(sheet, "noesis-model-strong"), /Faux model/);
+  await choose(window, await need(sheet, "noesis-model-cheap"), /Faux model/);
   await expect(await need(sheet, "noesis-save"), "the settings are ready to save").toBeEnabled();
   await shootWindow(window, "noesis-settings", "turn-on");
   await saveBehindConfirmation(run, sheet);
