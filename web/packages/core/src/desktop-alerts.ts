@@ -119,10 +119,14 @@ export class DesktopAlerts {
   private readonly seen = new Map<ConnId, { readonly attention: aether.Attention; readonly keys: ReadonlySet<string> }>();
   /** Each shown question alert's ticket, oldest first, and the inbox entry its click opens. */
   private readonly tickets = new Map<string, string>();
+  /** Unique to this page's lifetime: a notification from before a reload names no ticket of ours. */
+  private readonly lifetime: string;
   private issued = 0;
 
-  constructor(host: AlertHost) {
+  constructor(host: AlertHost, lifetime: string = crypto.randomUUID()) {
+    invariant(/^[A-Za-z0-9][A-Za-z0-9-]{7,63}$/.test(lifetime), "a lifetime id is a plain route segment of 8 or more characters");
     this.host = host;
+    this.lifetime = lifetime;
   }
 
   /** The alerts that started waiting since the last look at `state`; each is returned once. */
@@ -169,7 +173,7 @@ export class DesktopAlerts {
   private routeOf(alert: Alert): string {
     if (alert.anchor === undefined) return INBOX_ROUTE;
     this.issued += 1;
-    const ticket = `alert-${this.issued}`;
+    const ticket = `${this.lifetime}.${this.issued}`;
     this.tickets.set(ticket, alert.anchor);
     const oldest = this.tickets.keys().next().value;
     if (this.tickets.size > MAX_TICKETS && oldest !== undefined) this.tickets.delete(oldest);

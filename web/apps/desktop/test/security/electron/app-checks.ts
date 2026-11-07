@@ -129,6 +129,10 @@ export async function bridgeChecks(ctx: Context): Promise<void> {
     const result = await call(`return desktop.openExternal("file:///etc/passwd");`);
     assert.equal(result.error, "The app opens https: links only, not file:");
   });
+  await ctx.check("a refused notification reaches the page with main's reason", async () => {
+    const result = await call(`return desktop.notify({ title: "Review ready", body: "", route: "/pair/aether:local" });`);
+    assert.equal(result.error, "A notification opens only an app route");
+  });
   await ctx.check("privileged action sends the confirmed frame", async () => {
     ctx.answers.push(true);
     const result = await call(`return desktop.privileged({ kind: "memory.accept", conn: testConn, memory: "${MEMORY}" });`);

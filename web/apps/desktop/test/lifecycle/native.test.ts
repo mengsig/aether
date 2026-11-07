@@ -19,7 +19,7 @@ test("a deep link opens only an allowlisted route", () => {
     ["AETHER-APP://open?route=/archon/items/qi_01ABC", "/archon/items/qi_01ABC"],
     ["aether-app://open?route=/archon/items/qi_1/runs/run-2", "/archon/items/qi_1/runs/run-2"],
     ["aether-app://open?route=/agents/local:1f2e/agt_01X", "/agents/local:1f2e/agt_01X"],
-    ["aether-app://open?route=/inbox/alert-12", "/inbox/alert-12"],
+    ["aether-app://open?route=/inbox/0f8c2b9e-4b1d-4c55-9a2e-5d7f3c1a8b60.12", "/inbox/0f8c2b9e-4b1d-4c55-9a2e-5d7f3c1a8b60.12"],
   ];
   for (const [link, route] of good) assert.equal(parseDeepLink(link), route, link);
   const bad = [

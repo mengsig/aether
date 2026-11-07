@@ -83,10 +83,28 @@ describe("DesktopAlerts", () => {
     const fresh = alerts.fresh(stateOf({ "aether:local": later }));
     expect(fresh.map((alert) => alert.key)).toEqual(["q:aether:local/a1:2"]);
     expect(await alerts.deliver(fresh)).toBe(1);
-    expect(notify).toHaveBeenCalledWith({ title: "Agent a1 asks", body: "Ship it?", route: "/inbox/alert-1" });
+    const route = notify.mock.calls[0]?.[0].route ?? "";
+    expect(notify).toHaveBeenCalledWith({ title: "Agent a1 asks", body: "Ship it?", route });
+    expect(route).toMatch(/^\/inbox\/[0-9a-f-]{36}\.1$/);
     expect(alerts.fresh(stateOf({ "aether:local": attention([question("a1", 2, "Ship it?")]) }))).toEqual([]);
-    expect(alerts.landing("/inbox/alert-1")).toEqual({ hash: "#/inbox", anchor: "aether:local/a1:2" });
-    expect(alerts.landing("/inbox/alert-1"), "a second click on the same alert finds it again").toEqual({ hash: "#/inbox", anchor: "aether:local/a1:2" });
+    expect(alerts.landing(route)).toEqual({ hash: "#/inbox", anchor: "aether:local/a1:2" });
+    expect(alerts.landing(route), "a second click on the same alert finds it again").toEqual({ hash: "#/inbox", anchor: "aether:local/a1:2" });
+  });
+
+  test("a notification from before a reload never opens a question asked after it", async () => {
+    const before = alerter();
+    before.alerts.fresh(stateOf({ c: attention([]) }));
+    await before.alerts.deliver(before.alerts.fresh(stateOf({ c: attention([question("a1", 1, "Old?")]) })));
+    const after = alerter();
+    after.alerts.fresh(stateOf({ c: attention([]) }));
+    await after.alerts.deliver(after.alerts.fresh(stateOf({ c: attention([question("a1", 2, "New?")]) })));
+    const old = before.notify.mock.calls[0]?.[0].route ?? "";
+    const fresh = after.notify.mock.calls[0]?.[0].route ?? "";
+    expect(old).not.toBe(fresh);
+    expect(after.alerts.landing(old), "the old click opens the inbox only").toEqual({ hash: "#/inbox" });
+    expect(after.alerts.landing(fresh)).toEqual({ hash: "#/inbox", anchor: "c/a1:2" });
+    expect(() => new DesktopAlerts({ desktop: { notify: () => {} }, settings: async () => DEFAULT_ALERT_SETTINGS, isFocused: () => false }, "x/y"))
+      .toThrow(/lifetime/);
   });
 
   test("each alert's click opens its own question, on its own daemon", async () => {
@@ -103,7 +121,7 @@ describe("DesktopAlerts", () => {
     const { alerts } = alerter();
     expect(alerts.landing("/fleet")).toEqual({ hash: "#/fleet" });
     expect(alerts.landing("/inbox")).toEqual({ hash: "#/inbox" });
-    expect(alerts.landing("/inbox/alert-9"), "an unknown or forgotten ticket opens the inbox only").toEqual({ hash: "#/inbox" });
+    expect(alerts.landing("/inbox/0000aaaa.9"), "an unknown or forgotten ticket opens the inbox only").toEqual({ hash: "#/inbox" });
     expect(() => alerts.landing("inbox")).toThrow();
   });
 
