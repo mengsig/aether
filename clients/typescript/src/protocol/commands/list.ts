@@ -148,6 +148,17 @@ export function listTasks(args: Omit<ListTasksCommand, "cmd">): ListTasksCommand
 }
 
 /**
+ * Built-in and user transcript modes from the daemon's configuration.
+ */
+export interface ListViewModesCommand {
+  "cmd": "list_view_modes";
+}
+
+export function listViewModes(): ListViewModesCommand {
+  return { cmd: "list_view_modes" };
+}
+
+/**
  * Workspaces holding root agents, most recently active first.
  */
 export interface ListWorkspacesCommand {

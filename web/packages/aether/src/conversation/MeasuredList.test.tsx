@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { MeasuredList, rowAt, rowOffsets, rowRange } from "./MeasuredList.tsx";
+import { firstAtOrAfter, MeasuredList, rowAt, rowOffsets, rowRange } from "./MeasuredList.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,6 +19,44 @@ describe("row geometry", () => {
     expect(rowRange(offsets, 30, 20, 0)).toEqual({ start: 2, end: 3 });
     expect(rowRange(offsets, 30, 20, 15)).toEqual({ start: 1, end: 4 });
     expect(rowRange(rowOffsets(0, () => 0), 0, 600, 800)).toEqual({ start: 0, end: 0 });
+  });
+
+  test("finds the first row at or after a position in the shared order", () => {
+    const positions = [2, 4, 4, 9];
+    const at = (wanted: number) => firstAtOrAfter(positions.length, (i) => positions[i] ?? 0, wanted);
+    expect([at(0), at(2), at(3), at(4), at(9), at(10)]).toEqual([0, 0, 1, 1, 3, 4]);
+  });
+});
+
+describe("a layout change", () => {
+  test("keeps the row at the top of the view in view, or the next one a new layout still draws", async () => {
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("conv-list") ? 400 : 0;
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const all = Array.from({ length: 1_000 }, (_, i) => i);
+    const draw = (layout: string, positions: readonly number[]) => (
+      <MeasuredList label="Rows" count={positions.length} rowKey={(i) => `${layout}|${positions[i]}`} estimate={() => 50}
+        renderRow={(i) => <span>row {positions[i]}</span>} layout={layout} position={(i) => positions[i] ?? 0} />
+    );
+    await act(async () => root.render(draw("standard", all)));
+    const list = container.querySelector<HTMLElement>(".conv-list");
+    if (!list) throw new Error("the list is drawn");
+    await act(async () => {
+      list.scrollTop = 301 * 50 + 10;
+      list.dispatchEvent(new Event("scroll"));
+    });
+    const odd = all.filter((p) => p % 2 === 1);
+    await act(async () => root.render(draw("calm", odd)));
+    expect(list.scrollTop, "row 301 is the 151st odd row, 10px in as before").toBe(150 * 50 + 10);
+    const even = all.filter((p) => p % 2 === 0);
+    await act(async () => root.render(draw("focus", even)));
+    expect(list.scrollTop, "row 301 is not drawn; the next one, 302, is at the top").toBe(151 * 50);
+    act(() => root.unmount());
+    container.remove();
+    vi.restoreAllMocks();
   });
 });
 

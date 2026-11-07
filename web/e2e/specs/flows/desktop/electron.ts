@@ -45,6 +45,8 @@ export interface DesktopApp {
   confirmations(): Promise<Shown[]>;
   /** Queues answers for the next native confirmations; with none queued main refuses. */
   answer(...answers: boolean[]): Promise<void>;
+  /** Makes main refuse the window's next request for `cmd`, as the daemon would, without sending it. */
+  refuseNext(cmd: string, message: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -118,7 +120,8 @@ async function launchOnce(launch: DesktopLaunch): Promise<DesktopApp> {
   }
 }
 
-type MainState = { e2e: { calls: Array<{ method: string; args: unknown[] }>; confirmations: Shown[]; answers: boolean[] } };
+type Fault = { cmd: string; code: string; message: string };
+type MainState = { e2e: { calls: Array<{ method: string; args: unknown[] }>; confirmations: Shown[]; answers: boolean[]; faults: Fault[] } };
 
 function desktopApp(electron: ElectronApplication, window: Page, dir: string): DesktopApp {
   let closed = false;
@@ -128,6 +131,10 @@ function desktopApp(electron: ElectronApplication, window: Page, dir: string): D
     confirmations: () => electron.evaluate(() => (globalThis as unknown as MainState).e2e.confirmations.map((shown) => ({ ...shown }))),
     answer: async (...answers) => {
       await electron.evaluate((_electron, queued) => { (globalThis as unknown as MainState).e2e.answers.push(...queued); }, answers);
+    },
+    refuseNext: async (cmd, message) => {
+      assert.ok(cmd !== "" && message !== "", "a scripted refusal names its command and its reason");
+      await electron.evaluate((_electron, fault) => { (globalThis as unknown as MainState).e2e.faults.push(fault); }, { cmd, code: "invalid_request", message });
     },
     async close() {
       if (closed) return;
