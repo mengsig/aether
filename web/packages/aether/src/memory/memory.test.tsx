@@ -171,6 +171,24 @@ test("repository creation uses the operator root and refreshes the store count",
   expect(root.querySelector(".mem-big")?.textContent).toBe("1");
 });
 
+test("a rejected memory can be discarded or corrected and retried", async () => {
+  let reject = true;
+  h = await connected({ script: { memories: () => ({ tag: "memories", data: [] }), create_memory: () => reject
+    ? { code: "invalid_request", message: "Memory text is too short" } : { tag: "memory", data: memory } } });
+  const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
+  await click(h, root, "Create memory");
+  await type(h, document.body, "Memory text", "x");
+  await click(h, document.body, "Save memory");
+  expect(document.body.textContent).toContain("Memory text is too short");
+  await click(h, document.body, "Discard");
+  await click(h, root, "Create memory");
+  expect((document.querySelector('dialog input') as HTMLInputElement).value).toBe("");
+  await type(h, document.body, "Memory text", "A corrected memory");
+  reject = false;
+  await click(h, document.body, "Save memory");
+  expect(h.daemon.commands("create_memory")).toHaveLength(2);
+});
+
 test("an agent-scoped memory is created, filtered and shown by its agent", async () => {
   const scoped = { ...memory, scope: { scope: "agent", id: AGENT_ID } } as aether.MemoryRecord;
   h = await connected({ agents: demoAgents(), script: { memories: () => ({ tag: "memories", data: [scoped] }), create_memory: () => ({ tag: "memory", data: scoped }) } });

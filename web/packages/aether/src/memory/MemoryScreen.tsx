@@ -57,7 +57,7 @@ export default function MemoryScreen({ params }: RouteProps) {
       {permission.refusal ? <p role="note" className="b3-note">{permission.refusal}</p> : <><ReadNote entry={proposals} retry={refresh} />
         {records<aether.MemoryRecord>(proposals?.value).map(memory => <MemoryRow key={memory.id} conn={conn} memory={memory} proposal refresh={refresh} />)}
         {proposals?.issued && records(proposals.value).length === 0 ? <EmptyState title="No proposals to review" /> : null}</>}
-    </Section><V2Sections conn={conn} known={known} refresh={refresh} /><CreateMemory conn={conn} open={open} close={() => setOpen(false)} refresh={refresh} />
+    </Section><V2Sections conn={conn} known={known} refresh={refresh} />{open && <CreateMemory conn={conn} open close={() => setOpen(false)} refresh={refresh} />}
   </div>;
 }
 

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { aether } from "@aether-ui/protocol";
-import { Field, Sheet, Tabs } from "@aether-ui/ui";
+import { Button, Field, Sheet, Tabs } from "@aether-ui/ui";
 import { useApp, usePermission, useReread } from "@aether-ui/core";
 import { Action, RunNote, useRun } from "../controls/kit.tsx";
 import { invariant } from "../fleet/invariant.ts";
@@ -32,6 +32,7 @@ export function CreateMemory({ conn, open, close, refresh }: { conn: string; ope
     <Action conn={conn} command={command} label="Save memory" blocked={text.trim() === "" ? "Enter memory text" : scope === null ? SCOPE_BLOCK[target] ?? null : null} busy={run.status.state === "busy"}
       onRun={async () => { if (await run.send(command)) { await refresh(); close(); } }} />
     <RunNote status={run.status} />
+    {run.status.state === "failed" && <Button variant="quiet" onClick={close}>Discard</Button>}
   </div></Sheet>;
 }
 

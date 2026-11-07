@@ -87,6 +87,9 @@ test("a refused memory shows its reason and can be corrected or discarded", asyn
   await expect(sheet.getByRole("alert")).toContainText("tags");
   await expect(connection(page(), "aether")).toHaveAttribute("data-state", "ready");
   await screenshot("ux-019-refused");
+  await sheet.getByRole("button", { name: "Discard" }).click();
+  await page().getByRole("button", { name: "Create memory" }).click();
+  await sheet.getByLabel("Memory text").fill("A durable fact that can be corrected.");
   await sheet.getByLabel("Tags").fill("release");
   await sheet.getByRole("button", { name: "Save memory" }).click();
   await expect(sheet).toHaveCount(0);
