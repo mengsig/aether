@@ -11,6 +11,7 @@ export function CreateMemory({ conn, open, close, refresh }: { conn: string; ope
   const [kind, setKind] = useState("fact");
   const [target, setTarget] = useState("global");
   const [repository, setRepository] = useState("");
+  const [otherRepository, setOtherRepository] = useState(false);
   const [agent, setAgent] = useState("");
   const [tags, setTags] = useState("");
   const run = useRun(conn);
@@ -24,7 +25,7 @@ export function CreateMemory({ conn, open, close, refresh }: { conn: string; ope
     <Field label="Memory text" value={text} onChange={e => setText(e.target.value)} disabled={disabled} />
     <Tabs label="Memory kind" selected={kind} onSelect={setKind} tabs={kinds.map(id => ({ id, label: id, panel: null }))} />
     <Tabs label="Memory scope" selected={target} onSelect={setTarget} tabs={["global", "repository", "agent"].map(id => ({ id, label: id.charAt(0).toUpperCase() + id.slice(1), panel: null }))} />
-    {target === "repository" && (repositories.length ? <label className="b3-field"><span className="ui-field-label">Repository root</span><select className="b3-select" value={repository} onChange={e => setRepository(e.target.value)} disabled={disabled}><option value="">Choose a repository</option>{repositories.map(workspace => <option key={workspace.path} value={workspace.path}>{workspace.path}</option>)}</select></label> : <Field label="Repository root" value={repository} onChange={e => setRepository(e.target.value)} disabled={disabled} />)}
+    {target === "repository" && (repositories.length ? <><label className="b3-field"><span className="ui-field-label">Repository root</span><select className="b3-select" value={otherRepository ? "__other__" : repository} onChange={e => { setOtherRepository(e.target.value === "__other__"); setRepository(e.target.value === "__other__" ? "" : e.target.value); }} disabled={disabled}><option value="">Choose a repository</option>{repositories.map(workspace => <option key={workspace.path} value={workspace.path}>{workspace.path}</option>)}<option value="__other__">Other folder</option></select></label>{otherRepository && <Field label="Other repository root" value={repository} onChange={e => setRepository(e.target.value)} disabled={disabled} />}</> : <Field label="Repository root" value={repository} onChange={e => setRepository(e.target.value)} disabled={disabled} />)}
     {target === "repository" && workspaces?.error && <ReadNote entry={workspaces} retry={() => app.reread(conn, "memory:workspaces", { cmd: "list_workspaces" }, ["workspaces"])} />}
     {target === "agent" && <AgentPicker conn={conn} label="Agent" value={agent} onChange={setAgent} disabled={disabled} />}
     <Field label="Tags" hint="Comma separated" value={tags} onChange={e => setTags(e.target.value)} disabled={disabled} />

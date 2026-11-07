@@ -145,6 +145,9 @@ test("scope and kind filters and forgotten toggle use exact query fields", async
   await import("react").then(({ act }) => act(async () => checkbox.click()));
   await h.settle();
   expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "repository", id: "/repo" }, kinds: ["decision"], include_forgotten: true, limit: 100 } });
+  await type(h, root, "Repository filter", "__other__");
+  await type(h, root, "Repository identity", "github.com/example/older-repo");
+  expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "repository", id: "github.com/example/older-repo" } } });
 });
 
 test("repository creation uses the operator root and refreshes the store count", async () => {

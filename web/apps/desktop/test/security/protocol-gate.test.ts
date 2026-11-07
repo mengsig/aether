@@ -26,7 +26,8 @@ test("memory writes and export require native confirmation before the frame is s
   const sent: Frame[] = [];
   const shown: unknown[] = [];
   let allowed = false;
-  const link = { isOpen: true, request: async (text: string) => { sent.push(JSON.parse(text) as Frame); return {}; }, close: () => {} } as unknown as DaemonLink;
+  const link = { isOpen: true, request: async (text: string) => { sent.push(JSON.parse(text) as Frame); return {}; },
+    send: (text: string) => { sent.push(JSON.parse(text) as Frame); }, hasPending: () => false, close: () => {} } as unknown as DaemonLink;
   const host = { findDaemons: async () => [{ id: "aether:local", kind: "aether", label: "test", socket: "/private/aether.sock", reachable: true }],
     openLink: async () => link, confirm: async (_owner: number, confirmation: unknown) => { shown.push(confirmation); return allowed; } } as unknown as BridgeHost;
   const bridge = new Bridge(VALIDATOR, host);
@@ -41,8 +42,10 @@ test("memory writes and export require native confirmation before the frame is s
     sent.length = 0;
   }
   assert.equal(shown.length, 6);
+  await assert.rejects(bridge.handle(APP_SENDER, OWNER, "subscribe", [conn, { cmd: "memory_import", dry_run: false, artifact: "{}", req: 4 }]), /Cancelled/);
+  assert.equal(sent.length, 0);
   await send(bridge, conn, { cmd: "consolidate_memories", dry_run: true, req: 3 });
-  assert.equal(shown.length, 6);
+  assert.equal(shown.length, 7);
 });
 
 /** An archond that welcomes with `protocol` and answers anything else Ok. */
