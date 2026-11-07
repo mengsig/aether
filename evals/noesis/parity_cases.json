@@ -244,7 +244,7 @@
             {
               "crate": "aether-noesis",
               "file": "crates/aether-noesis/src/teach/regressions.rs",
-              "name": "a_question_whose_key_the_plan_shows_is_refused_in_either_order"
+              "name": "a_reply_whose_plan_shows_its_own_key_is_discarded_in_either_order"
             },
             {
               "crate": "aether-noesis",
@@ -384,11 +384,12 @@
       "clauses": [
         {
           "clause": "Plan-node status (current, visited, upcoming) is derived from the latest tagged question",
+          "noesis": "differs: a node is visited once a question tagged to it is answered right, and the next step becomes current",
           "tests": [
             {
               "crate": "aether-noesis",
               "file": "crates/aether-noesis/src/teach/parity.rs",
-              "name": "t09_plan_node_status_follows_the_latest_tagged_question"
+              "name": "t09_a_passed_check_visits_its_node_and_the_next_step_is_current"
             }
           ]
         }
@@ -507,7 +508,7 @@
             {
               "crate": "aether-noesis",
               "file": "crates/aether-noesis/src/teach/regressions.rs",
-              "name": "a_stringified_argument_cannot_carry_an_escaped_active_solution"
+              "name": "a_stringified_argument_escaping_the_active_solution_is_discarded"
             }
           ]
         }
