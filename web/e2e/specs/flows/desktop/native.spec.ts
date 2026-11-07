@@ -236,14 +236,14 @@ test("UX-002: Remote shows its state with one control, and verifies every change
   await shoot(page, "ux002-remote-on");
   for (const [action, after] of [["Turn off remote access", "Verified: remote access is off"], ["Turn on remote access", /^Verified: remote access is on/]] as const) {
     await page.getByRole("button", { name: action }).click();
-    await page.getByRole("dialog").getByRole("button", { name: action }).click();
+    await page.getByRole("dialog").getByRole("button", { name: action, exact: true }).click();
     await answerNative("Remote access", true, action === "Turn off remote access" ? "ux002-native-confirm" : undefined);
     await expect(verified).toHaveText(after, { timeout: 30_000 });
     await expect(page.getByRole("button", { name: /remote access$/ })).toHaveCount(1);
   }
   await shoot(page, "ux002-remote-verified");
   await page.getByRole("button", { name: "Turn off remote access" }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Turn off remote access" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Turn off remote access", exact: true }).click();
   await answerNative("Remote access", false);
   await expect(page.locator(".ui-badge").filter({ hasText: /^(On|Off)$/ }).first(), "a cancelled change leaves it on").toHaveText("On");
 });
