@@ -97,6 +97,9 @@ pub struct Step {
     pub text: String,
     pub calls: Vec<ToolCall>,
     pub usage: Spend,
+    /// What earlier attempts of this step streamed before they failed and
+    /// were retried: shown live, though never kept.
+    pub shown_before: String,
 }
 
 /// Debug omits the text, which may hold a sealed answer until it is checked.
@@ -104,6 +107,7 @@ impl std::fmt::Debug for Step {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Step")
             .field("text_chars", &self.text.chars().count())
+            .field("shown_before_chars", &self.shown_before.chars().count())
             .field("calls", &self.calls)
             .field("usage", &self.usage)
             .finish()

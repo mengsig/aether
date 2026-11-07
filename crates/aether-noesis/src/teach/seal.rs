@@ -37,22 +37,38 @@ impl fmt::Debug for Sealer {
 
 impl Sealer {
     pub fn new<S: AsRef<str>>(secrets: impl IntoIterator<Item = S>) -> Self {
-        let mut normalised: Vec<String> = Vec::new();
+        let mut sealer = Self::default();
+        sealer.extend(secrets);
+        sealer
+    }
+
+    /// This seal joined by the sealed texts `step`'s own calls carry: what
+    /// the step's records are kept under. `None` when a sealing call's input
+    /// is unreadable, so its secrets are unknown and the step fails closed.
+    pub fn with_step(&self, step: &Step) -> Option<Sealer> {
+        let (own, unreadable) = step_secrets(step);
+        if unreadable {
+            return None;
+        }
+        let mut sealer = self.clone();
+        sealer.extend(&own);
+        debug_assert!(own.iter().all(|secret| sealer.holds(secret)));
+        Some(sealer)
+    }
+
+    fn extend<S: AsRef<str>>(&mut self, secrets: impl IntoIterator<Item = S>) {
         for secret in secrets {
             let secret = matchable(normalise(secret.as_ref()));
-            if !secret.is_empty() && !normalised.contains(&secret) {
-                normalised.push(secret);
+            if !secret.is_empty() && !self.secrets.contains(&secret) {
+                self.secrets.push(secret);
             }
         }
-        debug_assert!(normalised.iter().all(|s| s.trim() == s && !s.is_empty()));
-        debug_assert!(normalised.iter().all(|s| {
+        debug_assert!(self.secrets.iter().all(|s| s.trim() == s && !s.is_empty()));
+        debug_assert!(self.secrets.iter().all(|s| {
             let alnum = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
             !s.chars().any(char::is_alphanumeric)
                 || (alnum(s.chars().next()) && alnum(s.chars().next_back()))
         }));
-        Self {
-            secrets: normalised,
-        }
     }
 
     /// Whether this seals nothing, so text may be shown as it is written.

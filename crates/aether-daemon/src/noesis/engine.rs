@@ -27,13 +27,15 @@ use aether_noesis::budget::{Billing, INTERACTIVE_BUDGET_SETTING, Spend};
 use aether_noesis::prompts;
 use aether_noesis::teach::engine::ModelInfo;
 use aether_noesis::teach::{
-    AgentSpec, Engine, EngineError, Input, Sealer, Step, ToolCall, ToolResult, agent_for_role,
+    AgentSpec, Engine, EngineError, Input, Sealer, Step, ToolCall, ToolResult, WITHHELD,
+    agent_for_role,
 };
 use aether_noesis::tools::{self, ToolName};
 use aether_runtime::noesis_guard::{NoesisBudget, NoesisCharge, NoesisRefusal, lane_of};
 use aether_runtime::{BusMessage, CreateAgentSpec, NoesisStepStream, Runtime};
 use aether_store::Commit;
 use futures::StreamExt;
+use serde_json::Value;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
@@ -291,12 +293,12 @@ impl AetherEngine<'_> {
 
     /// One model call over the agent's transcript, ended if the service
     /// stops or the agent ends (a cancel) while it runs. Its text streams
-    /// live only when `stream_text`; the turn's deltas stream either way.
+    /// live only when `streamed` is given, which gathers what was shown.
     fn invoke(
         &self,
         agent: &Agent,
         request: ModelRequest,
-        stream_text: bool,
+        mut streamed: Option<&mut String>,
     ) -> Result<CallEnd, EngineError> {
         let host = self.host;
         let handle = tokio::runtime::Handle::current();
@@ -321,8 +323,9 @@ impl AetherEngine<'_> {
                     }
                 };
                 let mut on_text = |text: &str| {
-                    if stream_text {
+                    if let Some(shown) = streamed.as_deref_mut() {
                         live.text(text);
+                        shown.push_str(text);
                     }
                 };
                 read_reply(stream, &cancel, ended, &mut on_text).await
@@ -332,14 +335,15 @@ impl AetherEngine<'_> {
 
     /// Record the reply and its usage, so the day's spend survives a restart.
     /// Only the agent's stats are written, over the row as it is now, and
-    /// its text as `live` seals it.
+    /// its blocks as `live` and the `step`'s own calls seal them.
     fn record_reply(
         &self,
         agent: AgentId,
         response: &ModelResponse,
+        step: &Step,
         live: &Sealer,
     ) -> Result<(), EngineError> {
-        let content = transcript_content(response, live);
+        let content = transcript_content(response, live.with_step(step).as_ref());
         let row = self
             .host
             .runtime
@@ -530,9 +534,13 @@ impl Engine for AetherEngine<'_> {
         }
         let mut request = self.request(&row, self.transcript(row.id)?)?;
         let mut attempt = 1;
+        // Text a retried attempt streamed was shown, so the turn's pose check reads it.
+        let mut shown_before = String::new();
         let response = loop {
             self.gate(&row)?;
-            match self.invoke(&row, request.clone(), live.is_empty())? {
+            let mut streamed = String::new();
+            let stream = live.is_empty().then_some(&mut streamed);
+            match self.invoke(&row, request.clone(), stream)? {
                 CallEnd::Replied(response) => break response,
                 CallEnd::AgentEnded(spent) => return Err(self.record_cut_short(row.id, spent)),
                 CallEnd::Broke(spent, error)
@@ -540,6 +548,8 @@ impl Engine for AetherEngine<'_> {
                 {
                     self.charge_spent(row.id, spent).map_err(failed)?;
                     request.messages.push(engine_step::retry_note());
+                    shown_before.push_str(&streamed);
+                    shown_before.push('\n');
                     attempt += 1;
                 }
                 CallEnd::Broke(spent, error) => {
@@ -550,8 +560,12 @@ impl Engine for AetherEngine<'_> {
         if let Some(open) = self.charge.as_mut() {
             open.spent += response.usage;
         }
-        self.record_reply(row.id, &response, live)?;
-        Ok(step_of(&response))
+        let step = Step {
+            shown_before,
+            ..step_of(&response)
+        };
+        self.record_reply(row.id, &response, &step, live)?;
+        Ok(step)
     }
 }
 
@@ -692,25 +706,78 @@ fn stopped(usage: Usage) -> CallEnd {
     )
 }
 
-/// A reply's blocks as its transcript keeps them: thinking dropped and
-/// text sealed against the secrets live while it was written.
-fn transcript_content(response: &ModelResponse, live: &Sealer) -> Vec<ContentBlock> {
-    let content: Vec<ContentBlock> = response
+/// A reply's blocks as its transcript keeps them, thinking dropped, sealed
+/// by `sealer`: the secrets live while it was written and its own calls'.
+/// `None` fails closed, as when a sealing call's input is unreadable.
+fn transcript_content(response: &ModelResponse, sealer: Option<&Sealer>) -> Vec<ContentBlock> {
+    let withhold_text = sealer.is_none_or(|sealer| text_reveals(response, sealer));
+    let mut content = Vec::with_capacity(response.content.len());
+    let mut withheld = false;
+    for block in &response.content {
+        match block {
+            ContentBlock::Thinking { .. } => {}
+            // One withheld note stands for every text block, which together gave it away.
+            ContentBlock::Text { .. } if withhold_text => {
+                if !withheld {
+                    content.push(ContentBlock::Text {
+                        text: WITHHELD.to_string(),
+                    });
+                    withheld = true;
+                }
+            }
+            ContentBlock::ToolUse { id, name, input } => content.push(ContentBlock::ToolUse {
+                id: id.clone(),
+                name: name.clone(),
+                input: kept_input(name, input, sealer),
+            }),
+            other => content.push(other.clone()),
+        }
+    }
+    debug_assert!(
+        !withhold_text
+            || !content.iter().any(|block| matches!(block,
+        ContentBlock::Text { text } if text != WITHHELD))
+    );
+    debug_assert!(
+        content
+            .iter()
+            .all(|block| !matches!(block, ContentBlock::Thinking { .. }))
+    );
+    content
+}
+
+/// Whether the reply's text gives a secret away, read as its readers join
+/// the blocks: run together, as the step reads them, or apart, as Learn shows them.
+fn text_reveals(response: &ModelResponse, sealer: &Sealer) -> bool {
+    let blocks: Vec<&str> = response
         .content
         .iter()
-        .filter(|block| !matches!(block, ContentBlock::Thinking { .. }))
-        .map(|block| match block {
-            ContentBlock::Text { text } => ContentBlock::Text {
-                text: live.step_text(text),
-            },
-            other => other.clone(),
+        .filter_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
         })
         .collect();
-    debug_assert!(content.iter().all(|block| match block {
-        ContentBlock::Text { text } => !live.holds(text),
-        _ => true,
-    }));
-    content
+    sealer.holds(&blocks.concat()) || sealer.holds(&blocks.join("\n"))
+}
+
+/// A call's input as the transcript keeps it: sealed whole where it holds a
+/// secret, or field by field for a sealing tool, whose sealed fields the
+/// runtime seals itself. Without a sealer every input is sealed whole.
+fn kept_input(wire: &str, input: &Value, sealer: Option<&Sealer>) -> Value {
+    let Some(sealer) = sealer else {
+        return Value::String(tools::SEALED.to_string());
+    };
+    let sealed_fields = ToolName::parse(&tool_name(wire)).map_or(&[][..], ToolName::sealed_fields);
+    let mut kept = input.clone();
+    match kept.as_object_mut() {
+        Some(fields) if !sealed_fields.is_empty() => fields
+            .iter_mut()
+            .filter(|(field, _)| !sealed_fields.contains(&field.as_str()))
+            .for_each(|(_, value)| sealer.value(value)),
+        _ => sealer.value(&mut kept),
+    }
+    debug_assert!(sealed_fields.is_empty() || kept.is_object() == input.is_object());
+    kept
 }
 
 /// The step's turn number for live deltas: one more than the replies so far.
@@ -820,6 +887,7 @@ fn step_of(response: &ModelResponse) -> Step {
         text: response.text(),
         calls,
         usage: spend_of(&response.usage),
+        shown_before: String::new(),
     }
 }
 
@@ -945,3 +1013,7 @@ mod tests {
         assert_eq!(merged[0].content.len(), 2);
     }
 }
+
+#[cfg(test)]
+#[path = "engine_seal_tests.rs"]
+mod seal_tests;

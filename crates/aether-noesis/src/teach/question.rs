@@ -63,13 +63,12 @@ pub fn author(
     }
     if reveals_key(args, visible_text) {
         problems.push(
-            "your visible message gives away the answer; rewrite it without the answer and pose again"
-                .to_string(),
+            "what your turn has shown gives away the answer; ask a different question".to_string(),
         );
     }
     if Sealer::new(args.explanation.iter()).holds(visible_text) {
         problems.push(
-            "your visible message gives away the explanation; keep it until the learner answers"
+            "what your turn has shown gives away the explanation; keep it until the learner answers"
                 .to_string(),
         );
     }

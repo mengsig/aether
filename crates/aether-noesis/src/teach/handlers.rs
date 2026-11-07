@@ -397,7 +397,7 @@ impl<E: Engine> Teaching<'_, E> {
         }
         if solution.holds(visible_text) {
             return refuse(
-                "your visible message gives away the solution; pose a problem it does not solve",
+                "what your turn has shown gives away the solution; pose a problem it does not solve",
             );
         }
         let targets = match self.problem_targets(&args.targets, &solution)? {

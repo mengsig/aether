@@ -325,7 +325,7 @@ fn a_call_id_holding_a_key_committed_later_never_leaves_the_crate() {
     let step = Step {
         text: String::new(),
         calls: vec![read],
-        usage: Default::default(),
+        ..Step::default()
     };
     t.engine_mut().script_step(Agent::Prober, step);
     t.engine_mut().script(

@@ -16,7 +16,7 @@ use super::service::{
 };
 use super::{TeachError, question, role_of};
 use crate::budget::{INTERACTIVE_BUDGET_SETTING, Lane, Refusal};
-use crate::tools::SEALED;
+use crate::tools::{self, SEALED};
 
 impl<E: Engine> Teaching<'_, E> {
     /// Run the session's agent until it waits, and on a hand-off run the new
@@ -135,6 +135,9 @@ impl<E: Engine> Teaching<'_, E> {
         turn: &mut Turn,
     ) -> Result<(Option<TurnEnd>, Vec<ToolResult>), TeachError> {
         let (own, unreadable) = seal::step_secrets(&step);
+        if !step.shown_before.is_empty() {
+            turn.discarded.push(step.shown_before);
+        }
         let mut pending = PendingStep {
             fail_closed: unreadable,
             text: step.text,
@@ -145,8 +148,8 @@ impl<E: Engine> Teaching<'_, E> {
             turn.steps.push(pending);
             return Ok((Some(TurnEnd::AwaitingLearner), Vec::new()));
         }
-        // Text streams as it is written, so a pose is checked against all the
-        // turn has shown, not only its own step's text.
+        // Text streams as it is written and each step is kept as it ends, so a
+        // pose is checked against all the turn has shown, not only its step's text.
         let shown = turn.shown_with(&pending.text);
         let mut end = None;
         let mut owed = Vec::new();
@@ -353,6 +356,8 @@ struct Turn {
     steps: Vec<PendingStep>,
     /// Every sealed text the turn's calls carried.
     own: Vec<String>,
+    /// What failed attempts of the turn's steps streamed before a retry.
+    discarded: Vec<String>,
     /// Public call id to the engine's own id, for delivering results.
     engine_ids: HashMap<String, String>,
     /// Where the turn's events start in the pending event list.
@@ -375,16 +380,26 @@ impl Turn {
         Self {
             steps: Vec::new(),
             own: Vec::new(),
+            discarded: Vec::new(),
             engine_ids: HashMap::new(),
             events_from,
         }
     }
 
-    /// Every text the turn has shown, its earlier steps' and `current`, one
-    /// per line so no phrase is matched across two steps.
+    /// Every text the turn has shown or kept: its earlier steps' text and
+    /// call inputs as the transcript keeps them, what failed attempts
+    /// streamed, and `current`, one per line so no phrase spans two.
     fn shown_with(&self, current: &str) -> String {
-        let earlier = self.steps.iter().map(|step| step.text.as_str());
-        earlier.chain([current]).collect::<Vec<_>>().join("\n")
+        let mut shown: Vec<String> = Vec::new();
+        for step in &self.steps {
+            shown.push(step.text.clone());
+            for call in &step.calls {
+                shown.extend(tools::visible_texts(&call.name, &call.input));
+            }
+        }
+        shown.extend(self.discarded.iter().cloned());
+        shown.push(current.to_string());
+        shown.join("\n")
     }
 
     /// A fresh opaque id for an engine call id; only [`Turn::engine_id`]

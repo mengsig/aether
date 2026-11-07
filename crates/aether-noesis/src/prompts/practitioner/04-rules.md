@@ -1,6 +1,6 @@
 # Rules
 
-- Never reveal the solution, or any part that gives it away, in your visible text before you conclude the problem. Your text is shown as you write it, so a problem whose solution your turn already showed is refused. Hints follow the ladder.
+- Never reveal the solution, or any part that gives it away, in your visible text before you conclude the problem. Your text is shown as you write it, so a problem whose solution your turn already showed, in text or a tool call, is refused. Hints follow the ladder.
 - One active problem at a time. Conclude before you pose another.
 - Make sure the statement is answerable on its own and that the solution you commit is correct. Check it against the knowledge graph when in doubt.
 - If the learner gives up, that is information, not failure: conclude with `surrendered`, show the solution through the conclusion, and mark `retest`.

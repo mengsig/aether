@@ -103,6 +103,44 @@ pub fn seal_input(tool: &str, input: &Value) -> Value {
     Value::String(SEALED.to_string())
 }
 
+/// Every text a call's input leaves on the record once the transcript seals
+/// it: each key, string and number, but a sealing tool's sealed fields. A
+/// sealing tool's input that is no object is sealed whole and shows nothing.
+pub fn visible_texts(tool: &str, input: &Value) -> Vec<String> {
+    let sealed = ToolName::parse(tool).map_or(&[][..], ToolName::sealed_fields);
+    let mut texts = Vec::new();
+    match input {
+        Value::Object(map) => {
+            for (key, value) in map
+                .iter()
+                .filter(|(key, _)| !sealed.contains(&key.as_str()))
+            {
+                texts.push(key.clone());
+                collect_shown(value, &mut texts);
+            }
+        }
+        other if sealed.is_empty() => collect_shown(other, &mut texts),
+        _ => {}
+    }
+    texts
+}
+
+/// Every key, string and number in `value`, as a reader of the record sees them.
+fn collect_shown(value: &Value, texts: &mut Vec<String>) {
+    match value {
+        Value::String(text) => texts.push(text.clone()),
+        Value::Number(number) => texts.push(number.to_string()),
+        Value::Array(items) => items.iter().for_each(|item| collect_shown(item, texts)),
+        Value::Object(map) => {
+            for (key, item) in map {
+                texts.push(key.clone());
+                collect_shown(item, texts);
+            }
+        }
+        Value::Bool(_) | Value::Null => {}
+    }
+}
+
 /// Every sealed text a call carries, read as the parser reads it: the sealed
 /// fields, a choice key both as its options' labels and as the model's own
 /// values, which posing re-keys. `None` when a sealed input is no object.

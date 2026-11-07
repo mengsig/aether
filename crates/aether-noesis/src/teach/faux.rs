@@ -56,6 +56,7 @@ impl FauxEngine {
                 usd: 0.002,
                 tokens: 100,
             },
+            shown_before: String::new(),
         };
         self.scripts.entry(agent).or_default().push_back(Ok(step));
         self

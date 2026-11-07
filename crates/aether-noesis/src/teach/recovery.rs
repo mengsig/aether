@@ -37,7 +37,7 @@ fn raw_tool_calls_and_steps_debug_only_the_sealed_projection() {
     let step = Step {
         text: format!("Hint: {SECRET}."),
         calls: vec![ask.clone(), problem],
-        usage: Default::default(),
+        ..Step::default()
     };
     let shown = format!("{ask:?} {step:?}");
     for secret in [SECRET, "the-why", "x-equals-4"] {
@@ -90,6 +90,59 @@ fn a_key_the_turn_already_showed_is_never_posed() {
         .open_question
         .expect("the fresh question is open");
     assert_eq!(open.prompt, "Capital of France?");
+    assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
+}
+
+/// Each step is kept as it ends, so a key an earlier call of the turn named
+/// is on the record before the pose: the pose is refused.
+#[test]
+fn a_key_an_earlier_call_of_the_turn_named_is_never_posed() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Learn cells", Mode::Teach, &[])
+        .unwrap()
+        .id;
+    let search = json!({"query": format!("what the {SECRET} does")});
+    let prober = t.engine_mut();
+    prober.script(Agent::Prober, "", vec![("noesis.graph_search", search)]);
+    let question = recall("Name the powerhouse of the cell", SECRET);
+    prober.script(Agent::Prober, "One question:", vec![(ASK, question)]);
+    prober.script(Agent::Prober, "Then:", vec![(ASK, capital_question())]);
+    let report = t.advance(&id).unwrap().remove(0);
+    let refused: Vec<bool> = report.steps.iter().map(|s| s.calls[0].is_error).collect();
+    assert_eq!(refused, [false, true, false], "{report:?}");
+    let open = session(&t, &id).open_question.expect("the fresh question");
+    assert_eq!(open.prompt, "Capital of France?");
+    assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
+}
+
+/// A retried attempt's text streamed before it failed, so its key is
+/// refused even though the step that poses it never repeats it.
+#[test]
+fn a_key_a_retried_attempt_streamed_is_never_posed() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Learn cells", Mode::Teach, &[])
+        .unwrap()
+        .id;
+    let ask = ToolCall {
+        id: "call_retried".into(),
+        name: ASK.into(),
+        input: recall("Name the powerhouse of the cell", SECRET),
+    };
+    let step = Step {
+        text: "One question:".into(),
+        calls: vec![ask],
+        shown_before: format!("It is the {SECRET}."),
+        ..Step::default()
+    };
+    t.engine_mut().script_step(Agent::Prober, step);
+    let report = t.advance(&id).unwrap().remove(0);
+    assert!(report.steps[0].calls[0].is_error, "{report:?}");
+    assert_eq!(report.steps[0].text, "One question:");
+    assert!(session(&t, &id).open_question.is_none());
     assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
 }
 
