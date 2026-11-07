@@ -184,10 +184,13 @@ pub struct ProblemConclusion {
 
 /// A session's usage by billing: subscription use is covered by the
 /// learner's plan and never charged per request; API use is.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SessionUsage {
     pub subscription: Usage,
     pub api: Usage,
+    /// Use on a provider no longer configured, so what paid for it is unknown.
+    #[serde(default)]
+    pub unknown: Usage,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

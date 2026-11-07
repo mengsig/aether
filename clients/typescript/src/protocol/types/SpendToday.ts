@@ -13,4 +13,5 @@ export interface SpendToday {
   "background": Usage;
   "interactive": Usage;
   "subscription"?: Usage;
+  "unknown"?: Usage;
 }

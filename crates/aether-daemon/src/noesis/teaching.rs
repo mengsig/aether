@@ -11,7 +11,7 @@ use std::sync::atomic::Ordering;
 
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::idempotency::Submission;
-use aether_core::noesis::{ConceptId, NoesisSession, SessionMode, SessionUsage};
+use aether_core::noesis::{ConceptId, NoesisSession, SessionMode};
 use aether_model::Models;
 use aether_noesis::Noesis;
 use aether_noesis::budget::INTERACTIVE_BUDGET_SETTING;
@@ -476,11 +476,10 @@ fn with_usage(runtime: &Runtime, models: &Models, reply: Reply) -> Result<Reply,
             ran.push(agent);
         }
     }
-    let (subscription, api) = budget::by_billing(
+    session.usage = Some(budget::by_billing(
         models,
         ran.iter().map(|agent| (&agent.model, &agent.stats.usage)),
-    );
-    session.usage = Some(SessionUsage { subscription, api });
+    ));
     Ok(Reply::NoesisSession(session))
 }
 

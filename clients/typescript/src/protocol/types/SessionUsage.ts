@@ -12,4 +12,5 @@ import type {
 export interface SessionUsage {
   "api": Usage;
   "subscription": Usage;
+  "unknown"?: Usage;
 }

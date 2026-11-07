@@ -14,6 +14,13 @@ describe("billing words", () => {
     expect(billingWords({ subscription: none(), api: used(1.5) })).toBe("$1.50 billed to your API key.");
   });
 
+  test("use on a removed provider reads as unknown, never as an API charge", () => {
+    expect(billingWords({ subscription: none(), api: none(), unknown: used(0.3) })).toBe("Some ran on a provider no longer configured, so what paid for it is unknown.");
+    expect(billingWords({ subscription: used(0.02), api: none(), unknown: used(0.3) })).toBe(
+      "Ran on your subscription — no per-request charge (≈$0.02 at API list price); some ran on a provider no longer configured, so what paid for it is unknown.",
+    );
+  });
+
   test("a daemon without the split says it does not report it, rather than no use", () => {
     expect(billingWords({})).toBe("This daemon does not report what paid for its model use.");
     expect(billingWords(null)).toBe("No model use recorded yet.");

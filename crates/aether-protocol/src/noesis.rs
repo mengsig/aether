@@ -150,6 +150,10 @@ pub struct SpendToday {
     /// Today's use of both lanes billed per request through an API key.
     #[serde(default)]
     pub api: Usage,
+    /// Today's use on a provider no longer configured, so what paid for it
+    /// is unknown.
+    #[serde(default)]
+    pub unknown: Usage,
 }
 
 /// What a disable does to work in flight.

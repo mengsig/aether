@@ -13,3 +13,4 @@ class SessionUsage(TypedDict, total=False):
     """
     api: _protocol.Usage
     subscription: _protocol.Usage
+    unknown: _protocol.Usage  # optional

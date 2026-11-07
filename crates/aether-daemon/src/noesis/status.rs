@@ -35,7 +35,7 @@ impl NoesisService {
             .map_err(|e| ErrorReply::internal(format!("the spend read did not finish: {e}")))?
             .map_err(crate::connection::store_err)?;
         let (interactive, background) = budget::by_lane(&used);
-        let (subscription, api) = budget::by_billing(
+        let billing = budget::by_billing(
             &self.models,
             used.iter().map(|(agent, usage)| (&agent.model, usage)),
         );
@@ -59,8 +59,9 @@ impl NoesisService {
             spend_today: SpendToday {
                 interactive,
                 background,
-                subscription,
-                api,
+                subscription: billing.subscription,
+                api: billing.api,
+                unknown: billing.unknown,
             },
             disable_policy: DisablePolicy {
                 grace_seconds: settings.disable_grace_seconds,

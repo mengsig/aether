@@ -97,22 +97,26 @@ export const usd = (value: number): string => `$${value.toFixed(value >= 100 ? 0
 
 const tokensOf = (usage: aether.Usage): number => usage.input_tokens + usage.output_tokens + usage.cache_read_tokens + usage.cache_write_tokens;
 
+type BillingSplit = { readonly subscription?: aether.Usage; readonly api?: aether.Usage; readonly unknown?: aether.Usage };
+
+const used = (usage: aether.Usage | undefined): boolean => usage !== undefined && (tokensOf(usage) > 0 || spentUsd(usage) > 0);
+
 /**
  * What paid for some model use, in words: subscription use is covered by the plan (its dollars are a
- * list-price estimate), API use is billed per request. Subscription use never reads as a charge.
+ * list-price estimate), API use is billed per request. Subscription use never reads as a charge, and
+ * use on a provider no longer configured is named as unknown rather than guessed.
  */
-export function billingWords(usage: { readonly subscription?: aether.Usage; readonly api?: aether.Usage } | null | undefined): string {
+export function billingWords(usage: BillingSplit | null | undefined): string {
   if (usage == null) return "No model use recorded yet.";
   // A daemon from before the billing split reports neither half: say so rather than claim no use.
   if (usage.api === undefined && usage.subscription === undefined) return "This daemon does not report what paid for its model use.";
-  const billed = spentUsd(usage.api);
-  const listPrice = spentUsd(usage.subscription);
-  const api = (usage.api !== undefined && tokensOf(usage.api) > 0) || billed > 0;
-  const subscription = (usage.subscription !== undefined && tokensOf(usage.subscription) > 0) || listPrice > 0;
-  const covered = `no per-request charge (≈${usd(listPrice)} at API list price)`;
-  if (api && subscription) return `${usd(billed)} billed to your API key; the rest ran on your subscription — ${covered}.`;
-  if (api) return `${usd(billed)} billed to your API key.`;
-  return subscription ? `Ran on your subscription — ${covered}.` : "No model use recorded yet.";
+  const covered = `no per-request charge (≈${usd(spentUsd(usage.subscription))} at API list price)`;
+  const parts: string[] = [];
+  if (used(usage.api)) parts.push(`${usd(spentUsd(usage.api))} billed to your API key`);
+  if (used(usage.subscription)) parts.push(parts.length > 0 ? `the rest ran on your subscription — ${covered}` : `Ran on your subscription — ${covered}`);
+  const unknown = "ran on a provider no longer configured, so what paid for it is unknown";
+  if (used(usage.unknown)) parts.push(parts.length > 0 ? `some ${unknown}` : `Some ${unknown}`);
+  return parts.length === 0 ? "No model use recorded yet." : `${parts.join("; ")}.`;
 }
 
 /** Every step of the plan is done: the lesson is complete. */

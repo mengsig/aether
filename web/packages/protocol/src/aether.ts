@@ -1,7 +1,7 @@
 // The Aether daemon protocol as TypeScript types and command builders.
 // Generated from clients/protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: 2756dcbd68a960cbcbb71e4b474ded95ef9ac93e931e732fcc9b2acb52d6a521
+// Schema SHA-256: c190aaa64b51ab8e1dbbf9fa96a976a3a00e8e2d414dc3fda3f1f940577d567e
 
 export const PROTOCOL_VERSION = 26;
 export const MIN_PROTOCOL_VERSION = 17;
@@ -4824,6 +4824,7 @@ export interface SessionStall {
 export interface SessionUsage {
   "api": Usage;
   "subscription": Usage;
+  "unknown"?: Usage;
 }
 
 /**
@@ -4875,6 +4876,7 @@ export interface SpendToday {
   "background": Usage;
   "interactive": Usage;
   "subscription"?: Usage;
+  "unknown"?: Usage;
 }
 
 /**

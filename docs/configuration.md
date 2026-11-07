@@ -814,7 +814,8 @@ refused unless `billing.allow_api = true`: a fallback never reaches a billed
 endpoint silently. `noesis_status` splits today's spend both by lane
 (`spend_today.interactive`, `background`) and by billing
 (`spend_today.subscription`, covered by the plan and priced only as an
-estimate, and `spend_today.api`, charged per request).
+estimate, `spend_today.api`, charged per request, and
+`spend_today.unknown`, use on a provider no longer configured).
 
 Once today's interactive budget is spent, `noesis_create_session` and
 `noesis_send` are refused before anything is stored with `unavailable`
@@ -831,7 +832,8 @@ them as the learner's), `questions` (every question, oldest first, with the
 learner's `answer` and its `result` once answered), `problems` (every
 problem with its `conclusion`, solution included, once concluded), `context`
 (the evidence bundle it started from) and `usage` (summed over its agents,
-as `subscription` and `api`). An open question's key and an active
+as `subscription`, `api` and `unknown`, the last for use on a provider no
+longer configured, whose billing cannot be told). An open question's key and an active
 problem's solution never appear. `noesis_list_sessions` carries only the
 current view and `stalled`. A plan step is `visited` once its check is
 answered correctly, and the next ready step becomes `current`.

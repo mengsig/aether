@@ -18703,6 +18703,19 @@
         },
         "subscription": {
           "$ref": "#/$defs/Usage"
+        },
+        "unknown": {
+          "$ref": "#/$defs/Usage",
+          "default": {
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "cost_basis": "unknown",
+            "cost_complete": true,
+            "cost_usd": 0.0,
+            "input_tokens": 0,
+            "output_tokens": 0
+          },
+          "description": "Use on a provider no longer configured, so what paid for it is unknown."
         }
       },
       "required": [
@@ -18899,6 +18912,19 @@
             "output_tokens": 0
           },
           "description": "Today's use of both lanes on subscription engines: covered by the\nlearner's plan, so its dollars are a list-price estimate, not a charge."
+        },
+        "unknown": {
+          "$ref": "#/$defs/Usage",
+          "default": {
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "cost_basis": "unknown",
+            "cost_complete": true,
+            "cost_usd": 0.0,
+            "input_tokens": 0,
+            "output_tokens": 0
+          },
+          "description": "Today's use on a provider no longer configured, so what paid for it\nis unknown."
         }
       },
       "required": [

@@ -14,3 +14,4 @@ class SpendToday(TypedDict, total=False):
     background: _protocol.Usage
     interactive: _protocol.Usage
     subscription: _protocol.Usage  # optional
+    unknown: _protocol.Usage  # optional

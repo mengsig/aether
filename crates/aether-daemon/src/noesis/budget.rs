@@ -9,6 +9,7 @@ use aether_core::agent::Agent;
 use aether_core::event::EventKind;
 use aether_core::id::AgentId;
 use aether_core::model::{ModelRef, Usage};
+use aether_core::noesis::SessionUsage;
 use aether_model::Models;
 use aether_noesis::budget::{
     Accountant, Admission, INTERACTIVE_BUDGET_SETTING, Lane, LaneSpend, Spend,
@@ -134,21 +135,30 @@ pub(crate) fn by_lane(used: &[(Agent, Usage)]) -> (Usage, Usage) {
     (interactive, background)
 }
 
-/// Usage on each model summed by billing: (subscription, API). Only an API
-/// provider bills per request; an engine's use is covered by its plan.
+/// Usage on each model summed by billing. Only an API provider bills per
+/// request; an engine's use is covered by its plan. A provider no longer
+/// configured cannot say which it was, so its use is counted as unknown.
 pub(crate) fn by_billing<'a>(
     models: &Models,
     used: impl IntoIterator<Item = (&'a ModelRef, &'a Usage)>,
-) -> (Usage, Usage) {
-    let (mut subscription, mut api) = (Usage::default(), Usage::default());
+) -> SessionUsage {
+    let mut split = SessionUsage::default();
+    let mut total_tokens = 0;
     for (model, usage) in used {
-        if runs_on_engine(models, model) {
-            subscription += *usage;
-        } else {
-            api += *usage;
-        }
+        total_tokens += usage.input_tokens;
+        let bucket = match models.registry().provider(&model.provider) {
+            Some(provider) if provider.protocol.is_engine() => &mut split.subscription,
+            Some(_) => &mut split.api,
+            None => &mut split.unknown,
+        };
+        *bucket += *usage;
     }
-    (subscription, api)
+    debug_assert_eq!(
+        split.subscription.input_tokens + split.api.input_tokens + split.unknown.input_tokens,
+        total_tokens,
+        "every use lands in exactly one bucket"
+    );
+    split
 }
 
 /// Today's spend per lane as the accountant is seeded with it, so a restart
@@ -434,3 +444,7 @@ impl Drop for Charge {
         self.finish(reported);
     }
 }
+
+#[cfg(test)]
+#[path = "budget_tests.rs"]
+mod tests;
