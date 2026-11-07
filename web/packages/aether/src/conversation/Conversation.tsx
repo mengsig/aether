@@ -7,12 +7,13 @@ import type { aether, ConnId, ConnectionInfo } from "@aether-ui/protocol";
 import { Button, EmptyState } from "@aether-ui/ui";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { invariant } from "../fleet/invariant.ts";
-import { Composer, type OnSend } from "./Composer.tsx";
+import { Composer } from "./Composer.tsx";
 import "./conversation.css";
 import "./markdown.css";
 import type { ListHandle } from "./MeasuredList.tsx";
 import { AgentNameContext } from "./Message.tsx";
-import { entryRows, invocationMeta, isDelivered, liveRows, pairTools, queuedRows, rowCounts, toolActivity, type ConversationRow, type QueuedMessage, type ToolActivity } from "./rows.ts";
+import { useQueuedMessages } from "./queued.ts";
+import { entryRows, invocationMeta, liveRows, pairTools, queuedRows, rowCounts, toolActivity, type ConversationRow, type ToolActivity } from "./rows.ts";
 import { SearchBar, useTranscriptSearch } from "./SearchBar.tsx";
 import { ToggleContext, ToggleSet } from "./toggles.ts";
 import { ToolActivityContext } from "./ToolCall.tsx";
@@ -60,34 +61,6 @@ export function useConversationRows(conn: ConnId, agent: string): ConversationRo
   return { rows, loaded: transcript !== undefined, committed: committed.length, activity, events };
 }
 
-/** Messages sent from the composer and not yet delivered, per agent; kept while the app is open so a visit back still shows them. */
-const queuedMemory = new Map<string, readonly QueuedMessage[]>();
-
-/**
- * The agent's queued messages, those sent here and not yet delivered. `begin` notes the transcript's
- * watermark when a send starts, so a delivery that lands before the daemon's reply is not shown as
- * queued again; the message joins the list once the daemon accepted it.
- */
-function useQueuedMessages(conn: ConnId, agent: string, rows: readonly ConversationRow[], events: readonly aether.Event[]): { queued: readonly QueuedMessage[]; begin: OnSend } {
-  const memoryKey = `${conn}/${agent}`;
-  const [sent, setSent] = useState<readonly QueuedMessage[]>(() => queuedMemory.get(memoryKey) ?? []);
-  const queued = useMemo(() => sent.filter((message) => !isDelivered(rows, events, agent, message)), [sent, rows, events, agent]);
-  const newestSeq = useRef(0);
-  useEffect(() => {
-    newestSeq.current = rows.reduce((top, row) => Math.max(top, row.seq ?? 0), 0);
-    queuedMemory.set(memoryKey, queued);
-  }, [rows, queued, memoryKey]);
-  const begin = useCallback<OnSend>((text) => {
-    invariant(text.trim() !== "", "a queued message has text");
-    const message: QueuedMessage = { text, at: new Date().toISOString(), afterSeq: newestSeq.current };
-    return (accepted) => {
-      if (!accepted) return;
-      setSent([...(queuedMemory.get(memoryKey) ?? []), message]);
-    };
-  }, [memoryKey]);
-  return { queued, begin };
-}
-
 const counted = (n: number, noun: string): string => `${n.toLocaleString("en")} ${noun}${n === 1 ? "" : "s"}`;
 
 /** A quiet line over the transcript while the connection is down; what arrived stays readable. */
@@ -125,7 +98,7 @@ export function Conversation({ conn, agent }: { readonly conn: ConnId; readonly 
   const [toggles] = useState(() => new ToggleSet());
   const list = useRef<ListHandle>(null);
   const stage = useRef<HTMLDivElement>(null);
-  const sent = useQueuedMessages(conn, agent, rows, events);
+  const sent = useQueuedMessages(conn, agent, rows, events, row?.inbox_cursor ?? 0);
   const shown = useMemo(() => (sent.queued.length === 0 ? rows : [...rows, ...queuedRows(sent.queued)]), [rows, sent.queued]);
   const search = useTranscriptSearch({ rows: shown, list, stage, toggles });
   const [focusFind, setFocusFind] = useState(0);

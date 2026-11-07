@@ -246,7 +246,12 @@ describe("a message sent from the composer", () => {
     expect(shown(container).messages).toEqual([...SEED, "Ship it."]);
   });
 
-  test("delivered in one inbox batch after another agent's message, it is queued until the turn consumes it", async () => {
+  /** Enough unrelated events to push everything before them out of core's recent events. */
+  function floodEvents(h: Harness) {
+    for (let i = 0; i < 520; i += 1) h.daemon.completed(FAUX_AGENT, `inv_flood_${i}`, usage(1), MODEL);
+  }
+
+  test("delivered in one inbox batch after another agent's message, it is queued until the turn consumes it, then gone for good", async () => {
     const { h, container } = await open();
     await sendFromComposer(h, container, "Ship it.");
     expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(1);
@@ -258,7 +263,25 @@ describe("a message sent from the composer", () => {
     h.daemon.consumed(FAUX_AGENT, 7);
     await h.settle();
     expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(0);
+    // The events that settled it leave the recent window: it does not come back.
+    floodEvents(h);
+    await h.settle();
+    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(0);
     expect(shown(container).messages).toHaveLength(SEED.length + 1);
+  });
+
+  test("its delivery event evicted before the turn, the learned inbox seq still settles it on consumption", async () => {
+    const { h, container } = await open();
+    await sendFromComposer(h, container, "Ship it.");
+    h.daemon.delivered(FAUX_AGENT, 7, "Ship it.");
+    await h.settle();
+    floodEvents(h);
+    await h.settle();
+    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(1);
+    h.daemon.commit(FAUX_AGENT, text("user", "[inbox 6] Message from agt_worker:\nChecks passed.\n[inbox 7] Message from user:device:\nShip it.\n"));
+    h.daemon.consumed(FAUX_AGENT, 7);
+    await h.settle();
+    expect(container.querySelectorAll(".conv-msg[data-queued]")).toHaveLength(0);
   });
 
   test("delivered before the daemon acknowledges it, it is never shown as queued", async () => {
