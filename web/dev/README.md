@@ -51,6 +51,12 @@ the real shell over the scripted daemon and the Memory 2.0 demo data, never a re
 full-page screenshots at a desktop and a 390 px phone width. `--flows` adds the retrieval explain, the
 import and consolidate dry runs, the dark theme, an observer and a daemon without `memory_v2`.
 
+## Learn screenshots
+
+`node dev/learn-capture.ts <out-dir>` serves the Learn fixture (`packages/noesis/src/learn/fixture`)
+with Vite over its faux Noesis daemon and writes full-page screenshots in the light and dark themes:
+the sessions home, a graded lesson, an open question, the settings sheet and the Knowledge view.
+
 ## Shared Markdown security and rendering
 
 `node dev/markdown-check.ts` builds the UI Markdown fixture and opens it in Chromium under
