@@ -68,6 +68,6 @@ export function controlsScript(): Script {
     read_artifact: () => ({ tag: "artifact_bytes", data: { base64: btoa("# 1.3\n\n- Faster fleet view\n"), truncated: false } }),
     get_run_report: () => ({ tag: "run_report", data: REPORT }),
     list_runs: () => ({ tag: "runs", data: [{ run: RUN, agents: 2, agents_live: 2, objective: "Ship the 1.3 release", started_at: stamp(1), updated_at: stamp(40), usage: REPORT.body.usage }] }),
-    get_inbox: () => ({ tag: "inbox", data: [{ id: "inb_1", agent_id: AGENT_ID, seq: 3, delivered_at: stamp(11), kind: { kind: "wake", reason: "schedule" } }] }),
+    get_inbox: (c) => ({ tag: "inbox", data: [{ id: "inb_1", agent_id: typeof c.agent === "string" ? c.agent : AGENT_ID, seq: 3, delivered_at: stamp(11), kind: { kind: "wake", reason: "schedule" } }] }),
   };
 }

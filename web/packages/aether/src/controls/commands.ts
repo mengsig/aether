@@ -48,10 +48,11 @@ export function budgetPatch(draft: BudgetDraft): aether.AgentPatch {
   return patch;
 }
 
-export function sendCommand(agent: string, content: string, subtree: boolean): aether.SendMessageCommand {
+/** A message to `agent`, trimmed unless `verbatim` (a `/` line goes to the agent byte for byte). */
+export function sendCommand(agent: string, content: string, subtree: boolean, verbatim = false): aether.SendMessageCommand {
   invariant(agent !== "", "a message names its agent");
   need(content.trim() !== "", "Write a message first");
-  return aether.sendMessage({ to: agent, content: content.trim(), ...(subtree ? { subtree: true } : {}) });
+  return aether.sendMessage({ to: agent, content: verbatim ? content : content.trim(), ...(subtree ? { subtree: true } : {}) });
 }
 
 export interface RuleDraft {

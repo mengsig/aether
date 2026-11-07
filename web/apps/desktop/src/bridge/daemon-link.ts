@@ -38,6 +38,8 @@ export class DaemonLink {
   private readonly chunks: Buffer[] = [];
   private buffered = 0;
   private closed = false;
+  /** Whether any reply settled a request, which ends the handshake. */
+  private settled = false;
   onFrame: (frame: Frame) => void = () => {};
   onClose: (reason: string) => void = () => {};
 
@@ -141,14 +143,29 @@ export class DaemonLink {
       return;
     }
     const reply = frame as Frame;
-    const waiting = reply.frame === "reply" && typeof reply.id === "number" ? this.pending.get(reply.id) : undefined;
-    if (waiting === undefined) {
+    const req = this.addressee(reply);
+    const waiting = req === undefined ? undefined : this.pending.get(req);
+    if (req === undefined || waiting === undefined) {
       this.onFrame(reply);
       return;
     }
-    this.pending.delete(reply.id as number);
+    this.pending.delete(req);
     clearTimeout(waiting.timer);
-    waiting.resolve(reply);
+    this.settled = true;
+    waiting.resolve(reply.id === req ? reply : { ...reply, id: req });
+  }
+
+  /**
+   * The request a reply settles. An older archond refuses a hello it cannot speak with an id-0 error
+   * and closes, so before any reply settled, an id-0 reply answers the one request then waiting.
+   */
+  private addressee(reply: Frame): number | undefined {
+    if (reply.frame !== "reply" || typeof reply.id !== "number") return undefined;
+    if (reply.id !== 0) return reply.id;
+    if (this.settled || this.pending.size !== 1) return undefined;
+    const [only] = this.pending.keys();
+    if (only === undefined || only < 1) throw new Error("a waiting request has a positive id");
+    return only;
   }
 
   private fail(reason: string): void {

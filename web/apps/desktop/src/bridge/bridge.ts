@@ -1,7 +1,7 @@
 // The bridge's main side: every IPC call enters through `handle`, passes the Validator, and
 // only then reaches the method that serves it. Electron-specific effects come in through BridgeHost.
 
-import type { LocalDaemon, PreferenceKey, PrivilegedAction } from "@aether-ui/protocol";
+import type { LocalDaemon, PreferenceKey, PrivilegedAction, SetupResult, SetupStep } from "@aether-ui/protocol";
 import { revokedRule, type DaemonKind } from "../security/classes.ts";
 import type { Confirmation } from "../security/confirm.ts";
 import { normalizeOrigin } from "../security/origins.ts";
@@ -27,6 +27,8 @@ export interface BridgeHost {
   openRemote(origin: string): Promise<void>;
   getPreference(key: PreferenceKey): unknown;
   setPreference(key: PreferenceKey, value: unknown): Promise<void>;
+  /** One step of setting up this computer; its daemons come back without socket paths. */
+  setup(owner: number, step: SetupStep): Promise<SetupResult>;
   readonly versions: Readonly<Record<string, string>>;
   readonly logPath: string;
   readonly protocolVersions: Readonly<Record<"aether" | "archon", number>>;
@@ -74,6 +76,7 @@ export class Bridge {
       case "diagnostics": return this.diagnostics();
       case "getPreference": return this.host.getPreference(call.key);
       case "setPreference": return this.host.setPreference(call.key, call.value);
+      case "setup": return this.host.setup(owner, call.step);
     }
   }
 
@@ -153,7 +156,7 @@ export function helloFrame(kind: DaemonKind, protocol_version: number, client_ve
 }
 
 /** What the renderer learns of a daemon: its health, never its socket path. */
-function publicDaemon(daemon: LocalDaemonRecord & { reachable: boolean; version?: string }): LocalDaemon {
+export function publicDaemon(daemon: LocalDaemonRecord & { reachable: boolean; version?: string }): LocalDaemon {
   const found: LocalDaemon = { id: daemon.id, kind: daemon.kind, label: daemon.label, reachable: daemon.reachable };
   if (daemon.version !== undefined) found.version = daemon.version;
   return found;
