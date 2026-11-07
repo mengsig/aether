@@ -11,7 +11,7 @@ export const AETHER_OBSERVE: ReadonlySet<string> = new Set([
   "get_github_watcher", "get_inbox", "get_invocation", "get_notification", "get_push_config",
   "get_run_report", "get_schedule", "get_snapshot", "get_task", "get_transcript", "get_transcript_page",
   "get_tree", "hello", "latest_checkpoint", "list_agents", "list_agents_page", "list_approval_rules",
-  "list_approvals", "list_artifacts", "list_invocations", "list_models", "list_notifications",
+  "list_approvals", "list_artifacts", "list_invocations", "list_models", "list_view_modes", "list_notifications",
   "list_repository_aliases", "list_runs", "list_schedules", "list_tasks", "list_workspaces", "memories",
   "memory_migration_status",
   "noesis_get_session", "noesis_graph", "noesis_jobs", "noesis_learner", "noesis_learner_evidence",

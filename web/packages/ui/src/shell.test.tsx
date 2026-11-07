@@ -68,6 +68,19 @@ describe("AppShell", () => {
     expect(document.title).toBe("Agent · Aether");
   });
 
+  test("the overview shows the home the app gives it, and a banner sits above the screen", async () => {
+    const bare = await render(shell().node);
+    await settle();
+    expect(bare.container.textContent).toContain("Pick a screen");
+    expect(bare.container.querySelector(".ui-shell-banner")).toBeNull();
+    document.body.innerHTML = "";
+    const { container } = await render(shell({ home: <p className="home">Set up</p>, banner: <p className="fix">Connect</p> }).node);
+    await settle();
+    expect(container.querySelector(".home")?.textContent).toBe("Set up");
+    expect(container.textContent).not.toContain("Pick a screen");
+    expect(container.querySelector("#ui-main > .ui-shell-banner .fix")?.textContent).toBe("Connect");
+  });
+
   test("names a route with no nav entry by its listed title, else by the product", async () => {
     const route: RouteDef = { path: "#/archon/items/:item", owner: "C1", load };
     const match = { route, params: { item: "qi_1" } };
@@ -137,6 +150,27 @@ describe("AppShell", () => {
     await press(input as HTMLInputElement, "Enter");
     expect(props.onNavigate).toHaveBeenCalledWith("#/fleet/topology");
     expect(container.querySelector("[role=combobox]")).toBeNull();
+  });
+
+  test("running a destination remembers it first for next time; a theme command is not remembered", async () => {
+    const onRecentsChange = vi.fn();
+    const { node } = shell({ initialRecents: ["go:#/archon/queue"], onRecentsChange });
+    const { container } = await render(node);
+    const open = async () => {
+      await press(document.body, "k", { ctrlKey: true });
+      return container.querySelector<HTMLInputElement>("[role=combobox]") as HTMLInputElement;
+    };
+    let input = await open();
+    expect(container.querySelector(".ui-palette-label")?.textContent).toBe("Queue");
+    await type(input, "topo");
+    await press(input, "Enter");
+    expect(onRecentsChange).toHaveBeenLastCalledWith(["go:#/fleet/topology", "go:#/archon/queue"]);
+    input = await open();
+    await type(input, "dark theme");
+    await press(input, "Enter");
+    expect(onRecentsChange).toHaveBeenCalledTimes(1);
+    await open();
+    expect([...container.querySelectorAll(".ui-palette-label")].slice(0, 2).map((node) => node.textContent)).toEqual(["Topology", "Queue"]);
   });
 
   test("arrow keys scroll the active command into view, wrapping at either end", async () => {

@@ -70,7 +70,7 @@ describe("RemotePage", () => {
     await click(h, root, "Turn on remote access");
     expect(desktop.actions).toHaveLength(0);
     expect(document.querySelector("dialog[open]")?.textContent).toContain("Paired devices can reach this daemon from its public origins.");
-    await click(h, document.body, "Keep it");
+    await click(h, document.body, "Cancel");
     expect(desktop.actions).toHaveLength(0);
     expect(h.daemon.commands("get_remote")).toHaveLength(1);
   });

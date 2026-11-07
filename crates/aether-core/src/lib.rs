@@ -49,6 +49,7 @@ pub mod text;
 pub mod time;
 pub mod tool;
 pub mod transfer;
+pub mod view_modes;
 pub mod workspace_review;
 pub mod write_stats;
 

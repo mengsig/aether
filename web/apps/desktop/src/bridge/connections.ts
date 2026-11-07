@@ -23,7 +23,7 @@ interface Entry {
   readonly daemon: LocalDaemonRecord;
   readonly link: DaemonLink;
   /** Taken from the daemon's welcome only, never from a frame the renderer sent. */
-  protocol?: number;
+  protocol?: number | undefined;
 }
 
 export class ConnectionTable implements Connections {

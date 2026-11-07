@@ -1,8 +1,8 @@
-import { Component, createElement, lazy, Suspense, useEffect, useMemo, useRef, useState, type ComponentType, type ErrorInfo, type LazyExoticComponent, type ReactNode } from "react";
+import { Component, createElement, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ErrorInfo, type LazyExoticComponent, type ReactNode } from "react";
 import type { Capabilities, ConnectionInfo, EntityAction, RouteDef, RouteProps } from "@aether-ui/protocol";
 import { Button } from "./button.tsx";
 import { invariant } from "./classes.ts";
-import { CommandPalette, type Command } from "./command-palette.tsx";
+import { CommandPalette, pushRecent, type Command } from "./command-palette.tsx";
 import { EntityActionProvider } from "./entity-actions.tsx";
 import { navSections, NavRail, type NavSection } from "./nav-rail.tsx";
 import { ConnectionList, ThemeMenu } from "./shell-parts.tsx";
@@ -30,8 +30,15 @@ export interface AppShellProps {
   readonly onDismissNotice?: (id: ToastMessage["id"]) => void;
   /** Extra palette commands, after navigation and theme. */
   readonly commands?: readonly Command[];
+  /** The palette's recent destinations (command ids, newest first) to start from, and where each change is saved. */
+  readonly initialRecents?: readonly string[];
+  readonly onRecentsChange?: (recents: readonly string[]) => void;
   /** The header of each route with no nav entry, by route path. */
   readonly titles?: Readonly<Record<string, string>>;
+  /** What the overview at `#/` shows; a plain hint to pick a screen when absent. */
+  readonly home?: ReactNode;
+  /** A notice above the routed screen, such as a fix the current screen needs. */
+  readonly banner?: ReactNode;
 }
 
 type RouteComponent = ComponentType<RouteProps>;
@@ -57,7 +64,7 @@ function paletteCommands(sections: readonly NavSection[], onNavigate: (href: str
   })));
   if (theme) {
     for (const preference of THEME_PREFERENCES) {
-      commands.push({ id: `theme:${preference}`, label: `Use ${preference} theme`, group: "Theme", run: () => theme.setPreference(preference) });
+      commands.push({ id: `theme:${preference}`, label: `Use ${preference} theme`, group: "Theme", transient: true, run: () => theme.setPreference(preference) });
     }
   }
   return commands;
@@ -78,6 +85,7 @@ export function AppShell(props: AppShellProps) {
   const sections = useMemo(() => navSections(routes, capabilities), [routes, capabilities]);
   const commands = useMemo(() => [...paletteCommands(sections, onNavigate, theme), ...(props.commands ?? [])],
     [sections, onNavigate, theme, props.commands]);
+  const { recents, remember } = useRecents(props.initialRecents, props.onRecentsChange);
   const title = screenTitle(props.match, props.titles);
   useGlobalShortcut(() => setPaletteOpen(true));
   useScreenFocus(hash, title);
@@ -99,14 +107,27 @@ export function AppShell(props: AppShellProps) {
             </div>
           </header>
           <main className="ui-shell-main" id="ui-main" tabIndex={-1}>
-            <RouteView match={props.match} hash={hash} capabilities={capabilities} hasRoutes={sections.length > 0} />
+            {props.banner ? <div className="ui-shell-banner">{props.banner}</div> : null}
+            <RouteView match={props.match} hash={hash} capabilities={capabilities} hasRoutes={sections.length > 0} home={props.home} />
           </main>
         </div>
         <ToastRegion toasts={props.notices ?? []} onDismiss={props.onDismissNotice ?? (() => undefined)} />
-        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
+        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} recents={recents} onRun={remember} />
       </div>
     </EntityActionProvider>
   );
+}
+
+/** The ids of the last destinations the palette ran; `remember` skips transient commands and reports each change. */
+function useRecents(initial: readonly string[] = [], onChange?: (recents: readonly string[]) => void) {
+  const [recents, setRecents] = useState<readonly string[]>(initial);
+  const remember = useCallback((command: Command) => {
+    if (command.transient) return;
+    const next = pushRecent(recents, command.id);
+    setRecents(next);
+    onChange?.(next);
+  }, [recents, onChange]);
+  return { recents, remember };
 }
 
 function useGlobalShortcut(open: () => void): void {
@@ -137,11 +158,12 @@ function useScreenFocus(hash: string, title: string): void {
   }, [hash]);
 }
 
-function RouteView(props: { readonly match: ShellMatch | null; readonly hash: string; readonly capabilities: Capabilities; readonly hasRoutes: boolean }) {
+function RouteView(props: { readonly match: ShellMatch | null; readonly hash: string; readonly capabilities: Capabilities; readonly hasRoutes: boolean; readonly home: ReactNode }) {
   const { match } = props;
   if (match === null) {
     const home = props.hash === "" || props.hash === "#" || props.hash === "#/";
     if (!home) return <EmptyState title="No screen here" action={<a className="ui-link" href="#/">Back to the overview</a>}>Nothing is registered at {props.hash}.</EmptyState>;
+    if (props.home !== undefined && props.home !== null) return <>{props.home}</>;
     return props.hasRoutes
       ? <EmptyState title="Pick a screen">Choose one from the navigation, or press Ctrl K to jump anywhere.</EmptyState>
       : <EmptyState title="No screens yet">The feature packages have not registered any screens in this build.</EmptyState>;

@@ -79,7 +79,7 @@ function hold(conn, callback) {
   };
 }
 
-/** @type {import("@aether-ui/protocol").DesktopBridge} */
+/** @type {import("@aether-ui/protocol").DesktopBridge & import("@aether-ui/protocol").DesktopSetup} */
 const desktop = {
   version: 1,
   discover: () => call("discover"),
@@ -118,6 +118,7 @@ const desktop = {
   diagnostics: () => call("diagnostics"),
   getPreference: (key) => call("getPreference", key),
   setPreference: (key, value) => call("setPreference", key, value),
+  setup: (step) => call("setup", step),
 };
 
 contextBridge.exposeInMainWorld("desktop", Object.freeze(desktop));

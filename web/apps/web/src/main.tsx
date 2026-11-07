@@ -18,6 +18,11 @@ import { ShellRoot } from "./root.tsx";
 import { appRoutes } from "./routes.ts";
 
 const THEME_KEY = "theme";
+const RECENTS_KEY = "palette-recents";
+
+function isIdList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string" && entry.length > 0);
+}
 
 async function boot(): Promise<void> {
   const mount = document.getElementById("root");
@@ -25,6 +30,7 @@ async function boot(): Promise<void> {
   const host = detectHost({ desktop: (window as { desktop?: unknown }).desktop, localStorage: window.localStorage });
   const stored = await host.storage.get(THEME_KEY);
   const preference: ThemePreference = isThemePreference(stored) ? stored : "system";
+  const storedRecents = await host.storage.get(RECENTS_KEY);
   applyTheme(document.documentElement, resolveTheme(preference, systemPrefersDark()));
 
   // Before the router reads the hash: a pairing URL becomes the pairing route.
@@ -35,11 +41,14 @@ async function boot(): Promise<void> {
   const persist = (next: ThemePreference) => {
     host.storage.set(THEME_KEY, next).catch((error: unknown) => app.store.report(`The theme was not saved: ${String(error)}`));
   };
+  const persistRecents = (next: readonly string[]) => {
+    host.storage.set(RECENTS_KEY, next).catch((error: unknown) => app.store.report(`Recent destinations were not saved: ${String(error)}`));
+  };
   createRoot(mount).render(
     <StrictMode>
       <AppProvider app={app}>
         <ThemeProvider initialPreference={preference} onPreferenceChange={persist}>
-          <ShellRoot />
+          <ShellRoot initialRecents={isIdList(storedRecents) ? storedRecents : []} onRecentsChange={persistRecents} />
         </ThemeProvider>
       </AppProvider>
     </StrictMode>,

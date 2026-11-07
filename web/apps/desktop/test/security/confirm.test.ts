@@ -117,6 +117,7 @@ function fakeHost(recorded: Recorded, shown: Confirmation[], answer: boolean): B
     notify: () => {}, startDaemon: async () => {}, pickDirectory: async () => null,
     openExternal: async () => {}, openReport: async () => {}, openRemote: async () => {},
     getPreference: () => undefined, setPreference: async () => {},
+    setup: async () => { throw new Error("no setup in this test"); },
     versions: { app: "0.0.0" }, logPath: "/tmp/log", protocolVersions: { aether: 26, archon: 24 },
   };
 }

@@ -32,6 +32,7 @@ function hostWith(origins: unknown, opened: string[], asked: Confirmation[] = []
     openReport: async (url) => { opened.push(`report ${url}`); },
     openRemote: async (origin) => { opened.push(origin); },
     getPreference: (key) => (key === "remote.origins" ? origins : undefined), setPreference: async () => {},
+    setup: async () => { throw new Error("no setup in this test"); },
     versions: {}, logPath: "/tmp/log", protocolVersions: { aether: 26, archon: 24 },
   };
 }
