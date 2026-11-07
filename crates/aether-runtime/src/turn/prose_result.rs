@@ -19,11 +19,7 @@ pub(super) fn prose_result(text: String) -> TaskResult {
         return TaskResult::summary(text);
     };
     let (summary, structured) = match tool_input(&object) {
-        Some(input) => (
-            input.summary.unwrap_or(text),
-            input.artifacts,
-            input.structured,
-        ),
+        Some(input) => (input.summary.unwrap_or(text), input.structured),
         None => (text, object),
     };
     if Value::Object(structured.clone()).to_string().len() > MAX_STRUCTURED_BYTES {
