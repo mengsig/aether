@@ -1,8 +1,9 @@
 // Coordination as cards: a delegation, a message to another agent, a wait, a question or the task
 // from the parent, each one line when compact, linking to the other agent's chat and to the task graph.
 
-import { routeHref } from "@aether-ui/core";
+import { routeHref, selectAgents, useSelector } from "@aether-ui/core";
 import type { aether, ConnId } from "@aether-ui/protocol";
+import { useMemo } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import type { RowKind } from "./modes.ts";
 import type { Part } from "./rows.ts";
@@ -73,7 +74,9 @@ function cardOf(view: ViewPart, directory: Directory, parent: string | null): Ca
   return { icon: "↘", title: parent === null ? "Task" : `Task from ${name(parent)}`, text: part.text.slice(TASK_TURN.length), agent: parent, tone: "accent" };
 }
 
-export function CoordinationCard({ view, directory, parent }: { readonly view: ViewPart; readonly directory: Directory; readonly parent: string | null }) {
+export function CoordinationCard({ view, conn, parent }: { readonly view: ViewPart; readonly conn: ConnId; readonly parent: string | null }) {
+  const agents = useSelector(useMemo(() => selectAgents(conn), [conn]));
+  const directory = { conn, agents };
   invariant(isCard(view), `${view.kind} ${view.part.kind} is drawn as a card`);
   const card = cardOf(view, directory, parent);
   const compact = view.outcome === "compact";

@@ -2,7 +2,7 @@
 // through a measured virtual list. Opening it asks core to watch the agent, which subscribes to its
 // deltas and pages its transcript in with `get_transcript_page`; a delta gap rereads from the last entry.
 
-import { selectAgent, selectAgents, selectConnection, selectEvents, selectStreams, selectTranscript, useApp, useSelector, type State } from "@aether-ui/core";
+import { selectAgent, selectConnection, selectEvents, selectStreams, selectTranscript, useApp, useSelector, type State } from "@aether-ui/core";
 import type { aether, ConnId } from "@aether-ui/protocol";
 import { EmptyState, Skeleton } from "@aether-ui/ui";
 import { useCallback, useEffect, useMemo } from "react";
@@ -61,13 +61,12 @@ export function useConversationRows(conn: ConnId, agent: string): { rows: readon
 /** The rows a mode draws, recomputed per row only when a row or the mode changes. */
 function useViewRows(conn: ConnId, agent: string, rows: readonly ConversationRow[], rules: ModeRules | null): { views: readonly ViewRow[]; context: MessageContext } {
   const self = useSelector(useMemo(() => selectAgent(conn, agent), [conn, agent]));
-  const agents = useSelector(useMemo(() => selectAgents(conn), [conn]));
   const parent = self?.parent ?? null;
   const taskRow = taskRowKey(rows, parent !== null);
   // One cache per mode: a row's view is computed once while the mode holds.
   const mode = useMemo(() => ({ options: { rules, taskRow }, cache: new WeakMap<ConversationRow, ViewRow | null>() }), [rules, taskRow]);
   const views = useMemo(() => viewRows(rows, mode.options, mode.cache), [rows, mode]);
-  const context = useMemo(() => ({ directory: { conn, agents }, parent }), [conn, agents, parent]);
+  const context = useMemo(() => ({ conn, parent }), [conn, parent]);
   return { views, context };
 }
 
