@@ -123,9 +123,11 @@ export interface PackagedApp {
 /** Only these reach the app: its own home and XDG dirs, one display and the two sockets. */
 function appEnv(dir: string, launch: PackagedLaunch): NodeJS.ProcessEnv {
   const { sway } = launch;
+  // On X11, GTK's default input method is IBus (its immodule claims every locale); its class
+  // initialisation deadlocks GLib's worker thread on a fresh config dir, so the built-in one is pinned.
   const display: NodeJS.ProcessEnv = sway.x11Display === undefined
     ? { WAYLAND_DISPLAY: sway.display, XDG_SESSION_TYPE: "wayland" }
-    : { DISPLAY: sway.x11Display, XDG_SESSION_TYPE: "x11" };
+    : { DISPLAY: sway.x11Display, XDG_SESSION_TYPE: "x11", GTK_IM_MODULE: "gtk-im-context-simple" };
   const env: NodeJS.ProcessEnv = {
     PATH: SYSTEM_PATH, HOME: path.join(dir, "home"),
     XDG_CONFIG_HOME: path.join(dir, "config"), XDG_CACHE_HOME: path.join(dir, "cache"), XDG_DATA_HOME: path.join(dir, "data"),
