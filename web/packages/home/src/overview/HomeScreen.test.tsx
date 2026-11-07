@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { HomeScreen } from "../index.ts";
+import { HomeScreen } from "./HomeScreen.tsx";
 import { HOME_REFRESH_MS } from "./sources.ts";
 import { harness, type Harness, type Replies } from "./fixture/harness.test-util.tsx";
 import { aetherInfo, archonInfo, BREAKDOWN, fixtureEvents, QUESTIONS, NOW, seedWorld, WATCHER, AETHER_CONN, ARCHON_CONN } from "./fixture/world.ts";

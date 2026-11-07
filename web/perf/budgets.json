@@ -426,31 +426,31 @@
       "reason": "95th percentile frame: frames where a message commits or another agent's event rebuilds the rows."
     },
     "bundle.total_bytes": {
-      "budget": 889304,
+      "budget": 1066918,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 889304,
+      "measured": 1066918,
       "noise": 0,
-      "reason": "Everything web/dist ships, embedded in aether-remote. Includes 16,794 bytes for the in-flight Archon views change. Current build: 872,510 bytes."
+      "reason": "Everything web/dist ships, embedded in aether-remote. Includes 16,794 bytes for the in-flight Archon views change. Current build: 1,050,124 bytes."
     },
     "bundle.js_bytes": {
-      "budget": 786475,
+      "budget": 926598,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 786475,
+      "measured": 926598,
       "noise": 0,
-      "reason": "All JavaScript chunks. Includes 15,430 bytes for the in-flight Archon views change. Current build: 771,045 bytes."
+      "reason": "All JavaScript chunks. Includes 15,430 bytes for the in-flight Archon views change. Current build: 911,168 bytes."
     },
     "bundle.css_bytes": {
-      "budget": 96645,
+      "budget": 134136,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 96645,
+      "measured": 134136,
       "noise": 0,
-      "reason": "All stylesheets. Includes 1,364 bytes for the in-flight Archon views change. Current build: 95,281 bytes."
+      "reason": "All stylesheets. Includes 1,364 bytes for the in-flight Archon views change. Current build: 132,772 bytes."
     },
     "bundle.initial_bytes": {
       "budget": 359381,
@@ -471,13 +471,13 @@
       "reason": "The entry's transfer size at gzip -9: what a remote device downloads first."
     },
     "bundle.js_gzip_bytes": {
-      "budget": 273020,
+      "budget": 327590,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 273020,
+      "measured": 327590,
       "noise": 0,
-      "reason": "All JavaScript at gzip -9. Includes 5,419 bytes for the in-flight Archon views change. Current build: 267,601 bytes."
+      "reason": "All JavaScript at gzip -9. Includes 5,419 bytes for the in-flight Archon views change. Current build: 322,171 bytes."
     },
     "bundle.largest_js_bytes": {
       "budget": 337797,

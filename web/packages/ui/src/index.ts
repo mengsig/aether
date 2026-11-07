@@ -6,7 +6,6 @@ import "./tokens.css";
 import "./base.css";
 import "./primitives.css";
 import "./shell.css";
-import "./charts.css";
 
 export { classes } from "./classes.ts";
 export { ThemeProvider, useTheme, resolveTheme, applyTheme, systemPrefersDark, isThemePreference, THEME_PREFERENCES } from "./theme.tsx";

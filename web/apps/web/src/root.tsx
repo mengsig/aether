@@ -1,6 +1,6 @@
 import { navigate, selectConnections, selectReports, useApp, useCapabilities, useEntityActions, useRoute, useRoutes, useSelector } from "@aether-ui/core";
 import type { EntityAction } from "@aether-ui/protocol";
-import { HomeScreen } from "@aether-ui/home";
+import { loadHomeScreen } from "@aether-ui/home";
 import { loadArchonToolsNotice, loadWelcome } from "@aether-ui/settings";
 import { AppShell, type ToastMessage } from "@aether-ui/ui";
 import { lazy, Suspense, useCallback, useMemo, useState, useSyncExternalStore } from "react";
@@ -9,7 +9,8 @@ import { noticesOf } from "./notices.ts";
 import { entityCommands, routeOffered, selectPaletteSources, sameSources } from "./palette-entities.ts";
 import { screenTitles } from "./titles.ts";
 
-// Setup's screens load on demand: the first paint of a connected app does not pay for onboarding.
+// Setup's screens and the home tiles load on demand: the entry paints the shell before either.
+const HomeScreen = lazy(() => loadHomeScreen().then((module) => ({ default: module.HomeScreen })));
 const Welcome = lazy(() => loadWelcome().then((module) => ({ default: module.Welcome })));
 const ArchonToolsNotice = lazy(() => loadArchonToolsNotice().then((module) => ({ default: module.ArchonToolsNotice })));
 

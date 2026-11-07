@@ -4,9 +4,9 @@
 import { compareStamps, type NoesisCache } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
 
-export function invariant(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new Error(`Invariant failed: ${message}`);
-}
+import { invariant } from "./invariant.ts";
+
+export { invariant };
 
 export type Mastery = aether.ConceptStateKind;
 

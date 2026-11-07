@@ -3,6 +3,7 @@
 
 import { useId, type CSSProperties, type ReactNode } from "react";
 import { invariant } from "./classes.ts";
+import "./charts.css";
 
 export type ChartTone = "accent" | "success" | "warning" | "danger" | "info" | "neutral";
 export interface ChartPoint { readonly label: string; readonly value: number }
