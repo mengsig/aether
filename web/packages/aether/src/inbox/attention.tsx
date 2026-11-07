@@ -1,7 +1,7 @@
 // What needs a person on one daemon, from core's synced attention: questions to answer, tool calls
 // to approve or deny, and agents that failed or are blocked, with the way to their controls.
 
-import { routeHref, selectAgents, selectAttention, useSelector } from "@aether-ui/core";
+import { questionAnchor, routeHref, selectAgents, selectAttention, useSelector } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
 import { aether } from "@aether-ui/protocol";
 import { Badge } from "@aether-ui/ui";
@@ -20,7 +20,7 @@ function Question({ conn, question }: { readonly conn: ConnId; readonly question
   const name = question.agent_name ?? question.agent;
   const command = aether.replyToQuestion({ to: question.agent, question_seq: question.question_seq, content: answer.trim() });
   return (
-    <li className="b3-item">
+    <li className="b3-item" data-question={questionAnchor(question)}>
       <div className="b3-item-head">
         <p className="b3-item-title">{name} asks</p>
         <span className="b3-meta">{when(question.asked_at)}</span>

@@ -20,7 +20,7 @@ const UNEXPLAINED_REPORT = "Something failed without saying why";
 /** A report as a toast. Daemons may send a blank message, and a toast must have a title. */
 export function reportNotice(report: Report): ToastMessage {
   const title = report.message.trim() === "" ? UNEXPLAINED_REPORT : report.message;
-  return { id: report.id, title, tone: "danger", ...(report.code ? { body: report.code } : {}) };
+  return { id: report.id, title, tone: report.tone ?? "danger", ...(report.code ? { body: report.code } : {}) };
 }
 
 /** Feeds the shell everything it renders from core: routes, actions, capabilities, the route, connections and reports. */
