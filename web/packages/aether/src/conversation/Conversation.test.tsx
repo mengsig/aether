@@ -180,6 +180,35 @@ describe("tool calls", () => {
   });
 });
 
+describe("a coordination card", () => {
+  const delegated: Parameters<Harness["daemon"]["seed"]>[1] = [
+    { message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_d", name: "delegate", input: { name: "reviewer", objective: "Read the diff" } }] }, invocation: "inv_d" },
+    { message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_d", content: [{ type: "text", text: "agent_id agt_child task tsk_child" }] }] } },
+  ];
+
+  async function drawn(rules?: { show: aether.ViewMode["show"]; density: aether.ViewMode["density"] }) {
+    const h = current = await connected({ instance: "faux-1", agents: [fauxAgent(FAUX_PARENT), fauxAgent()] });
+    h.daemon.seed(FAUX_AGENT, delegated);
+    const container = await h.mount(<Conversation conn={h.conn} agent={FAUX_AGENT} {...(rules === undefined ? {} : { rules })} />);
+    await h.settle();
+    expect(container.querySelector(".conv-card-title")?.textContent).toBe("Delegated to reviewer");
+    return container;
+  }
+
+  test.each([["standard", undefined], ["a comfortable mode", { show: ["assistant_text", "delegation"], density: "comfortable" }]] as const)(
+    "drawn whole (%s), it keeps the call's input and result beside it", async (_name, rules) => {
+      const container = await drawn(rules === undefined ? undefined : { show: [...rules.show], density: rules.density });
+      const call = container.querySelector('.conv-tool[data-tool-use-id="toolu_d"]');
+      expect(call?.textContent).toContain("Read the diff");
+      expect(call?.querySelector(".conv-tool-result")?.textContent).toContain("agent_id agt_child");
+    });
+
+  test("compact, it is the card alone", async () => {
+    const container = await drawn({ show: ["assistant_text", "delegation"], density: "compact" });
+    expect(container.querySelector(".conv-tool"), "the call stays behind Details").toBeNull();
+  });
+});
+
 describe("an inbox turn", () => {
   test("draws verbatim as the operator's text, whole in a mode without user_text", async () => {
     const quoted = "[inbox 1] Message from user:local_socket#7: [authenticated operator instruction]\nhello\n[inbox 2] Task tsk_x completed: done";

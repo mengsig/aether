@@ -87,8 +87,11 @@ export interface MessageContext {
 
 function ViewPartView({ view, live, context }: { readonly view: ViewPart; readonly live: boolean; readonly context: MessageContext }): ReactNode {
   if (view.outcome === "line") return <FailedLine part={view.part} />;
-  if (isCard(view)) return <CoordinationCard view={view} directory={context.directory} parent={context.parent} />;
-  return <PartView part={view.part} live={live} />;
+  if (!isCard(view)) return <PartView part={view.part} live={live} />;
+  const card = <CoordinationCard view={view} directory={context.directory} parent={context.parent} />;
+  // Drawn whole, a card keeps the call it summarises, input and result, one click away.
+  if (view.outcome !== "full" || view.part.kind !== "tool") return card;
+  return <>{card}<ToolCall part={view.part} live={live} /></>;
 }
 
 function MetaLine({ meta, usage }: { readonly meta: InvocationMeta; readonly usage: boolean }) {
