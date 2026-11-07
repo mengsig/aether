@@ -85,6 +85,25 @@ describe("Welcome", () => {
     expect(pairedRoot.textContent).not.toContain("Connect Archon tools");
   });
 
+  test("a home check that fails or reads oddly says so with Check again and the setup path, and recovers", async () => {
+    let answer: () => { tag: string; data: unknown } | { code: string; message: string } = () => ({ code: "internal", message: "the tool servers are busy" });
+    const h = current = await connected({ role: "local", desktop: setupDesktop(() => null).bridge, script: { mcp_servers: () => answer() } });
+    const root = await h.mount(<Welcome />);
+    const group = () => root.querySelector('[role="group"][aria-label="Check Archon\'s tools"]');
+    expect(group()?.querySelector('[role="alert"]')?.textContent).toContain("The app could not check Archon's tools: the tool servers are busy");
+    expect(group()?.querySelector('a[href="#/setup"]')?.textContent).toBe("Set up on this computer");
+
+    answer = () => ({ tag: "mcp_servers", data: { servers: [] } });
+    await click(h, root, "Check again");
+    expect(group()?.textContent).toContain("The app could not read the tool servers Aether reported.");
+
+    answer = () => ({ tag: "mcp_servers", data: [] });
+    await click(h, root, "Check again");
+    expect(group()).toBeNull();
+    expect(root.textContent).toContain("Archon's tools are not connected to Aether yet. Connect them to finish setting up this computer.");
+    expect(h.daemon.commands("mcp_servers").filter((c) => c.refresh === true)).toHaveLength(2);
+  });
+
   test("once Aether answers, the overview leads to starting a task", async () => {
     const h = current = await connected({ role: "local", desktop: setupDesktop(() => null).bridge });
     const root = await h.mount(<Welcome />);

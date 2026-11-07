@@ -3,6 +3,7 @@
 
 import { selectConnections, useApp, useCapabilities, useReread, useSelector } from "@aether-ui/core";
 import type { aether as wire, ConnId } from "@aether-ui/protocol";
+import { Button } from "@aether-ui/ui";
 import { useMemo } from "react";
 import { invariant } from "../kit/invariant.ts";
 import { listOf } from "../screens/read.tsx";
@@ -11,6 +12,7 @@ import { archonTools } from "./readiness.ts";
 import { desktopSetup } from "./steps.ts";
 
 const MCP = { key: "settings.mcp", command: { cmd: "mcp_servers" }, tags: ["mcp_servers"] } as const;
+const MCP_REFRESH = { cmd: "mcp_servers", refresh: true };
 import "./setup.css";
 
 export function Welcome() {
@@ -77,13 +79,36 @@ function Waiting({ text, canSetUp }: { readonly text: string; readonly canSetUp:
 function FinishSetup({ conn }: { readonly conn: ConnId }) {
   const app = useApp();
   const entry = useReread(conn, MCP.key, MCP.command, MCP.tags);
-  const servers = listOf<wire.McpServerHealth>(entry?.value);
-  const tools = servers === null ? null : archonTools(servers);
-  const left = tools !== null && (tools.state === "missing" || tools.state === "failed") ? tools : null;
+  const check = () => void app.reread(conn, MCP.key, MCP_REFRESH, MCP.tags);
+  if (entry === undefined || (entry.value === null && entry.error === null)) return null;
+  if (entry.value === null) {
+    invariant(entry.error !== null, "a read with no value has failed");
+    return <CheckFailed conn={conn} text={`The app could not check Archon's tools: ${entry.error}`} onRetry={check} />;
+  }
+  const servers = listOf<wire.McpServerHealth>(entry.value);
+  if (servers === null) return <CheckFailed conn={conn} text="The app could not read the tool servers Aether reported." onRetry={check} />;
+  const tools = archonTools(servers);
+  const left = tools.state === "missing" || tools.state === "failed" ? tools : null;
   invariant(left === null || left.detail.trim() !== "", "an unfinished setup says what is left");
   const reason = left === null ? "" : `${left.detail} Connect them to finish setting up this computer.`;
-  const reread = () => void app.reread(conn, MCP.key, { cmd: "mcp_servers", refresh: true }, MCP.tags);
-  return <ConnectArchon needed={left !== null} reason={reason} origin={conn} onDone={reread} />;
+  return <ConnectArchon needed={left !== null} reason={reason} origin={conn} onDone={check} />;
+}
+
+/** The check could not tell whether setup is finished: say so, offer to check again or run setup. */
+function CheckFailed({ conn, text, onRetry }: { readonly conn: ConnId; readonly text: string; readonly onRetry: () => void }) {
+  invariant(text.trim() !== "", "a failed check says why");
+  return (
+    <>
+      <div className="su-repair" role="group" aria-label="Check Archon's tools">
+        <div className="su-repair-head">
+          <p className="su-repair-text" role="alert">{text}</p>
+          <Button size="sm" onClick={onRetry}>Check again</Button>
+          <a className="ui-link" href="#/setup">Set up on this computer</a>
+        </div>
+      </div>
+      <ConnectArchon needed={false} reason="" origin={conn} onDone={onRetry} />
+    </>
+  );
 }
 
 function Connected({ archon, local }: { readonly archon: boolean; readonly local: ConnId | null }) {
