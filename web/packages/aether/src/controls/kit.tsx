@@ -18,12 +18,26 @@ export type RunStatus =
   | { readonly state: "idle" | "busy"; readonly message?: undefined }
   | { readonly state: "done" | "failed" | "unconfirmed"; readonly message: string };
 
+/** One command's outcome: its reply, or why there is none (refused, or the reply never came). */
+export type Attempt =
+  | { readonly reply: Json; readonly status: { readonly state: "done"; readonly message: string } }
+  | { readonly reply: null; readonly status: { readonly state: "failed" | "unconfirmed"; readonly message: string } };
+
 export interface Run {
   readonly status: RunStatus;
   /** Sends one command through `useCommand`; resolves to its reply, or null when it failed. */
   readonly send: (command: CommandInput, done?: string) => Promise<Json | null>;
+  /** As `send`, for a caller whose next step depends on whether the command was refused or lost. */
+  readonly attempt: (command: CommandInput, done?: string) => Promise<Attempt>;
   /** Runs a host-only action through the desktop's native confirmation. */
   readonly privileged: (action: LocalAction, done?: string) => Promise<boolean>;
+}
+
+/** A refusal, or a lost reply: only a command core holds (one with a body) waits in the recovery review. */
+function failure(error: unknown, message: string, held: boolean): Extract<Attempt, { reply: null }>["status"] {
+  if (!UNCONFIRMED.has(codeOf(error) ?? "")) return { state: "failed", message };
+  if (!held) return { state: "failed", message: "The reply never arrived, so it is not known whether this happened. Check its current state before trying again." };
+  return { state: "unconfirmed", message: "The reply never arrived, so it is not known whether this happened. It waits in the recovery review." };
 }
 
 export function useRun(conn: ConnId): Run {
@@ -31,33 +45,29 @@ export function useRun(conn: ConnId): Run {
   const command = useCommand(conn);
   const [status, setStatus] = useState<RunStatus>({ state: "idle" });
   /** A lost reply waits in the recovery review; core keeps keyed commands, an unkeyed one is noted there. */
-  const fail = useCallback((error: unknown, command: Json | null) => {
+  const fail = useCallback((error: unknown, command: Json | null): Extract<Attempt, { reply: null }>["status"] => {
     const message = error instanceof Error ? error.message : String(error);
-    if (!UNCONFIRMED.has(codeOf(error) ?? "")) {
-      setStatus({ state: "failed", message });
-      return;
-    }
-    if (command === null) {
-      setStatus({ state: "failed", message: "The reply never arrived, so it is not known whether this happened. Check its current state before trying again." });
-      return;
-    }
-    if (!isKeyed(command)) app.noteUnconfirmed(conn, command, message || "No reply");
-    setStatus({ state: "unconfirmed", message: "The reply never arrived, so it is not known whether this happened. It waits in the recovery review." });
+    const status = failure(error, message, command !== null);
+    if (status.state === "unconfirmed" && command !== null && !isKeyed(command)) app.noteUnconfirmed(conn, command, message || "No reply");
+    setStatus(status);
+    return status;
   }, [app, conn]);
-  const send = useCallback(async (input: CommandInput, done = "Done") => {
+  const attempt = useCallback(async (input: CommandInput, done = "Done"): Promise<Attempt> => {
     const json = input as Json;
     invariant(typeof json.cmd === "string", "a control sends a named command");
     setStatus({ state: "busy" });
     try {
       const reply = await command(json);
+      invariant(reply !== null && typeof reply === "object", "a delivered command has a reply");
       drafts.clear(confirmationDraftKey(conn, json));
-      setStatus({ state: "done", message: done });
-      return reply;
+      const status = { state: "done" as const, message: done };
+      setStatus(status);
+      return { reply, status };
     } catch (error) {
-      fail(error, json);
-      return null;
+      return { reply: null, status: fail(error, json) };
     }
   }, [command, fail, conn]);
+  const send = useCallback(async (input: CommandInput, done?: string) => (await attempt(input, done)).reply, [attempt]);
   const privileged = useCallback(async (action: LocalAction, done = "Done") => {
     setStatus({ state: "busy" });
     try {
@@ -69,7 +79,7 @@ export function useRun(conn: ConnId): Run {
       return false;
     }
   }, [app, conn, fail]);
-  return { status, send, privileged };
+  return { status, send, attempt, privileged };
 }
 
 /** What became of the last run: announced politely, with the way to the recovery review when unconfirmed. */

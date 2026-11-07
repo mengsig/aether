@@ -53,6 +53,7 @@
   .b3-check { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--color-text-muted); }
   .b3-check input { accent-color: var(--color-accent); }
   .b3-quote { padding-inline-start: var(--space-3); border-inline-start: 2px solid var(--color-border-strong); color: var(--color-text-muted); font-size: var(--text-sm); }
+  .b3-quote[data-verbatim] { margin: 0; max-block-size: 12rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-text); }
   /* Fields share rows of equal columns; a wide control and the action take a row of their own. */
   .b3-form { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr)); align-items: end; }
   .b3-form > * { min-inline-size: 0; }

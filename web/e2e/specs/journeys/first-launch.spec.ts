@@ -11,7 +11,7 @@ import { agent, agentIds, cancelLive, capAgent, toolCallInputs } from "./daemon.
 import { connectionsReady, pairIfAsked, journeyHooks, type Journey } from "./journey.ts";
 import { FAUX_COMMANDS, LISTED_REPLY, OBJECTIVES, REAL_COMMANDS, REAL_OBJECTIVES, RELEASE_FILE } from "./scripts.ts";
 import { shootWindow } from "./capture.ts";
-import { chooseWorkspace, expectDefaultModel, landOnAgent, newAgentId, objectiveField, openConversation, openStart, stopAndResume, submitStart, agentPage } from "./steps.ts";
+import { agentPage, chooseWorkspace, chooseWorkType, expectDefaultModel, landOnAgent, newAgentId, objectiveField, openConversation, openStart, stopAndResume, submitStart } from "./steps.ts";
 import { need, note, open, textField } from "./ui.ts";
 
 const journey = journeyHooks();
@@ -35,6 +35,7 @@ async function startFromActivity(run: Journey): Promise<string> {
   const { window, stack, variant } = run;
   const before = await agentIds(stack);
   await openStart(window);
+  await chooseWorkType(window, "Task agent");
   await (await objectiveField(window)).fill(variant === "faux" ? OBJECTIVES.firstLaunch : REAL_OBJECTIVES.firstLaunch);
   await chooseWorkspace(window, stack.layout.aether.work);
   await expectDefaultModel(window, variant);
@@ -77,7 +78,7 @@ async function sendFromComposer(window: Page): Promise<void> {
   await input.fill(MESSAGE);
   await (await need(page, "composer-send")).click();
   await expect(input, "sending empties the composer").toHaveValue("");
-  await expect(page.locator('.conv-composer-note[data-state="done"]'), "the composer says the message reaches the agent at its next turn").toBeVisible();
+  await expect(page.locator('.cmp .b3-note[data-state="done"]'), "the composer says the message was sent").toBeVisible();
   await shootWindow(window, "agent", "message-sent");
 }
 

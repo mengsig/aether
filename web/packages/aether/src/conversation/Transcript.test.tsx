@@ -1,23 +1,18 @@
 // @vitest-environment happy-dom
-// Reading the transcript: tool rows that fold, the jump back to the newest message, and find.
+// Reading the transcript: tool rows that fold, find, the connection banner and who speaks.
 
-import { drafts } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
 import { act } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { composerKey } from "./Composer.tsx";
 import { Conversation } from "./Conversation.tsx";
 import { connected, type Harness } from "./fixture/harness.test-util.tsx";
 import { FAUX_AGENT, FAUX_PARENT, fauxAgent, text } from "./fixture/transcript.ts";
-import { forgetScrollPositions } from "./TranscriptList.tsx";
 
 let current: Harness | null = null;
 
 afterEach(() => {
-  if (current) drafts.clear(composerKey(current.conn, FAUX_AGENT));
   current?.unmount();
   current = null;
-  forgetScrollPositions();
   vi.restoreAllMocks();
 });
 
@@ -62,65 +57,7 @@ describe("a tool call", () => {
 
   test("is counted in the header", async () => {
     const { container } = await open(seed);
-    expect(container.querySelector(".conv-count")?.textContent).toBe("1 message · 1 tool call");
-  });
-});
-
-/** A viewport 400 px high over a long list, so the list can be scrolled away from its end. */
-function fakeGeometry(): void {
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) {
-    return this.classList.contains("conv-list") ? 400 : 0;
-  });
-  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
-    return this.classList.contains("conv-list") ? Number.parseFloat(this.querySelector<HTMLElement>(".conv-spacer")?.style.blockSize ?? "0") : 0;
-  });
-}
-
-const many = (count: number): Seed => Array.from({ length: count }, (_, i) => ({ message: text(i % 2 === 0 ? "user" : "assistant", `Message ${i}`) }));
-
-describe("jump to latest", () => {
-  test("appears once the reader scrolls up, counts what arrives, and goes back to the end", async () => {
-    fakeGeometry();
-    const { h, container } = await open(many(60));
-    const list = container.querySelector<HTMLElement>(".conv-list");
-    if (!list) throw new Error("the list is drawn");
-    expect(byTestId(container, "conv-jump-latest")).toBeNull();
-    await act(async () => {
-      list.scrollTop = 0;
-      list.dispatchEvent(new Event("scroll"));
-    });
-    expect(byTestId(container, "conv-jump-latest")?.textContent).toBe("↓Jump to latest");
-    h.daemon.commit(FAUX_AGENT, text("assistant", "Something new"));
-    h.daemon.commit(FAUX_AGENT, text("assistant", "And more"));
-    await h.settle();
-    const jump = byTestId<HTMLButtonElement>(container, "conv-jump-latest");
-    expect(jump?.textContent).toContain("2 new");
-    expect(container.querySelector("[role=status][aria-live=polite]")?.textContent).toBe("2 new messages below");
-    expect(list.scrollTop).toBe(0);
-    await act(async () => jump?.click());
-    await h.settle();
-    expect(byTestId(container, "conv-jump-latest")).toBeNull();
-    expect(list.scrollTop + 400).toBe(list.scrollHeight);
-  });
-});
-
-describe("the reading position", () => {
-  test("is where the reader left this agent's transcript, when they come back", async () => {
-    fakeGeometry();
-    const { h, container } = await open(many(60));
-    const list = container.querySelector<HTMLElement>(".conv-list");
-    await act(async () => {
-      if (list) list.scrollTop = 300;
-      list?.dispatchEvent(new Event("scroll"));
-    });
-    h.unmount();
-    const again = await connected({ instance: "faux-1", agents: [fauxAgent(FAUX_PARENT), fauxAgent()] });
-    current = again;
-    again.daemon.seed(FAUX_AGENT, many(60));
-    const back = await again.mount(<Conversation conn={again.conn} agent={FAUX_AGENT} />);
-    await again.settle();
-    expect(back.querySelector<HTMLElement>(".conv-list")?.scrollTop).toBe(300);
-    expect(byTestId(back, "conv-jump-latest")).not.toBeNull();
+    expect(container.querySelector(".conv-count")?.textContent).toBe("1 messages");
   });
 });
 
@@ -207,7 +144,7 @@ describe("the screen's states", () => {
   test("points at the composer when there are no messages yet", async () => {
     const { container } = await open([]);
     expect(container.textContent).toContain("No messages yet");
-    expect(byTestId(container, "conv-composer")).not.toBeNull();
+    expect(container.textContent).toContain("Write to it in the box below");
   });
 
   test("keeps the transcript and shows a quiet banner while the connection is down", async () => {

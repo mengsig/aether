@@ -5,6 +5,7 @@ import { AppShell, type ToastMessage } from "@aether-ui/ui";
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { useNoticeLifetime } from "./notice-lifetime.ts";
 import { noticesOf } from "./notices.ts";
+import { entityCommands, routeOffered, selectPaletteSources, sameSources } from "./palette-entities.ts";
 import { screenTitles } from "./titles.ts";
 
 function subscribeHash(listener: () => void): () => void {
@@ -14,8 +15,14 @@ function subscribeHash(listener: () => void): () => void {
 
 const readHash = (): string => window.location.hash || "#/";
 
-/** Feeds the shell everything it renders from core: routes, actions, capabilities, the route, connections and reports. */
-export function ShellRoot() {
+export interface ShellRootProps {
+  /** The palette's recent destinations to start from, and where each change is saved. */
+  readonly initialRecents: readonly string[];
+  readonly onRecentsChange: (recents: readonly string[]) => void;
+}
+
+/** Feeds the shell everything it renders from core: routes, actions, capabilities, the route, connections, reports and palette entities. */
+export function ShellRoot({ initialRecents, onRecentsChange }: ShellRootProps) {
   const app = useApp();
   const routes = useRoutes();
   const actions = useEntityActions();
@@ -24,10 +31,15 @@ export function ShellRoot() {
   const hash = useSyncExternalStore(subscribeHash, readHash, () => "#/");
   const connectionMap = useSelector(selectConnections);
   const reports = useSelector(selectReports);
+  const sources = useSelector(selectPaletteSources, sameSources);
   const [dismissed, setDismissed] = useState<ReadonlySet<ToastMessage["id"]>>(() => new Set());
 
   const connections = useMemo(() => Object.values(connectionMap), [connectionMap]);
   const notices = useMemo(() => noticesOf(reports, dismissed), [reports, dismissed]);
+  const paletteEntities = useMemo(
+    () => entityCommands(sources, { navigate, offered: (pattern) => routeOffered(routes, capabilities, pattern) }),
+    [sources, routes, capabilities],
+  );
   const dismiss = useCallback((id: ToastMessage["id"]) => setDismissed((old) => new Set([...old, id])), []);
   const dismissAll = useCallback(() => setDismissed((old) => new Set([...old, ...notices.map((notice) => notice.id)])), [notices]);
   useNoticeLifetime(notices, dismiss);
@@ -38,6 +50,6 @@ export function ShellRoot() {
   return (
     <AppShell routes={routes} actions={actions} capabilities={capabilities} match={match} hash={hash}
       onNavigate={navigate} onActionError={onActionError} connections={connections} notices={notices} onDismissNotice={dismiss} onDismissAllNotices={dismissAll} titles={screenTitles}
-      home={<HomeScreen />} />
+      home={<HomeScreen />} commands={paletteEntities} initialRecents={initialRecents} onRecentsChange={onRecentsChange} />
   );
 }

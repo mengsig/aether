@@ -26,6 +26,13 @@ export async function openStart(page: Page): Promise<void> {
   await expect(startSheet(page), "the start sheet opens").toBeVisible();
 }
 
+/** The sheet's work type: "Chat" (the default), "Task agent" or "Existing agent task". */
+export async function chooseWorkType(page: Page, type: "Chat" | "Task agent" | "Existing agent task"): Promise<void> {
+  const tabs = (await need(startSheet(page), "start-mode")).getByRole("tablist", { name: "Work type" });
+  await choose(page, tabs, type);
+  await expect(tabs.getByRole("tab", { name: type, exact: true }), `the sheet is set to ${type}`).toHaveAttribute("aria-selected", "true");
+}
+
 export async function objectiveField(page: Page): Promise<Locator> {
   return textField(await need(startSheet(page), "start-objective"));
 }

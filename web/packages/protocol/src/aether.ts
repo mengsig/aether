@@ -1,7 +1,7 @@
 // The Aether daemon protocol as TypeScript types and command builders.
 // Generated from clients/protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: 520b4d073045dcbc407a2cb296ccbd391d49fbb67475c9e4bac6f16f33d9965c
+// Schema SHA-256: 55f268054e55693b0194c13f29b1afccac5dad05d8fed990797afcef4972e551
 
 export const PROTOCOL_VERSION = 26;
 export const MIN_PROTOCOL_VERSION = 17;
@@ -4047,6 +4047,11 @@ export interface ReplyModels {
   "reply": "models";
 }
 
+export interface ReplyViewModes {
+  "data": ViewModes;
+  "reply": "view_modes";
+}
+
 export interface ReplyProviders {
   "data": Array<ProviderInfo>;
   "reply": "providers";
@@ -4261,6 +4266,7 @@ export type Reply =
   | ReplyRunImported
   | ReplyMcpServers
   | ReplyModels
+  | ReplyViewModes
   | ReplyProviders
   | ReplyProviderUsage
   | ReplyAuth
@@ -5333,6 +5339,35 @@ export interface UsageWindow {
  */
 export type Verification = "inferred" | "observed" | "verified";
 
+export interface ViewMode {
+  "builtin": boolean;
+  "density": ViewModeDensity;
+  "description"?: string | null;
+  "label"?: string | null;
+  "name": string;
+  "scope"?: ViewModeScope | null;
+  "show": Array<ViewModeCategory>;
+}
+
+export type ViewModeCategory = "user_text" | "assistant_text" | "delegation" | "agent_message" | "completion" | "status" | "question" | "approval" | "error" | "tool" | "reasoning" | "memory" | "compaction" | "usage";
+
+export type ViewModeDensity = "comfortable" | "compact";
+
+export interface ViewModeDiagnostic {
+  "reason": string;
+  "source": string;
+}
+
+export interface ViewModeScope {
+  "name"?: string | null;
+  "role"?: string | null;
+}
+
+export interface ViewModes {
+  "diagnostics": Array<ViewModeDiagnostic>;
+  "modes": Array<ViewMode>;
+}
+
 /**
  * What a waiting agent is waiting for. A typed expression the scheduler
  * evaluates; the model never polls. Leaves are single facts, and `Any`,
@@ -6230,6 +6265,17 @@ export interface ListTasksCommand {
 
 export function listTasks(args: Omit<ListTasksCommand, "cmd">): ListTasksCommand {
   return { cmd: "list_tasks", ...args };
+}
+
+/**
+ * Built-in and user transcript modes from the daemon's configuration.
+ */
+export interface ListViewModesCommand {
+  "cmd": "list_view_modes";
+}
+
+export function listViewModes(): ListViewModesCommand {
+  return { cmd: "list_view_modes" };
 }
 
 /**
@@ -7266,6 +7312,7 @@ export type Command =
   | ListRunsCommand
   | ListSchedulesCommand
   | ListTasksCommand
+  | ListViewModesCommand
   | ListWorkspacesCommand
   | MarkNotificationReadCommand
   | McpServersCommand

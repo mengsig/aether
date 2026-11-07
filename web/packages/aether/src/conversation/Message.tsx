@@ -1,14 +1,18 @@
-// One transcript row: who speaks (the operator on a tonal surface with a mark, the agent plain on the
-// page, a notice quietly), then its text, folded reasoning, tool rows, attachments, model and cost.
+// One transcript row as its view mode draws it: who speaks (the operator on a tonal surface with a
+// mark, the agent plain on the page, a notice quietly), then its text, folded reasoning, tool rows
+// (each paired with its result), coordination cards, attachments, model and cost.
 
 import { Badge } from "@aether-ui/ui";
+import type { ConnId } from "@aether-ui/protocol";
 import { createContext, memo, useContext, useId, type ReactNode } from "react";
 import { invariant } from "../fleet/invariant.ts";
+import { CoordinationCard, FailedLine, isCard } from "./Coordination.tsx";
 import { formatBytes, formatCost, formatDuration, formatTime, formatTokens } from "./format.ts";
 import { Markdown } from "./markdown.tsx";
 import type { ConversationRow, InvocationMeta, Part, Speaker } from "./rows.ts";
 import { foldKey, orphanKey, toolKey, useToggle } from "./toggles.ts";
 import { OrphanResult, ToolCall } from "./ToolCall.tsx";
+import type { ViewPart, ViewRow } from "./view.ts";
 
 /** Reasoning or a compaction summary: one quiet line that opens to the text. */
 function Fold({ label, text, toggleKey }: { readonly label: string; readonly text: string | null; readonly toggleKey: string }) {
@@ -26,7 +30,15 @@ function Fold({ label, text, toggleKey }: { readonly label: string; readonly tex
   );
 }
 
-function PartView({ part, live, rowKey, index }: { readonly part: Part; readonly live: boolean; readonly rowKey: string; readonly index: number }): ReactNode {
+interface PartProps {
+  readonly part: Part;
+  readonly live: boolean;
+  /** The list's key for the row, so a fold's state follows the row as the list is redrawn. */
+  readonly rowKey: string;
+  readonly index: number;
+}
+
+function PartView({ part, live, rowKey, index }: PartProps): ReactNode {
   switch (part.kind) {
     case "text": return <Markdown text={part.text} />;
     case "reasoning":
@@ -45,11 +57,26 @@ function PartView({ part, live, rowKey, index }: { readonly part: Part; readonly
   }
 }
 
-function MetaLine({ meta }: { readonly meta: InvocationMeta }) {
+export interface MessageContext {
+  readonly conn: ConnId;
+  /** The agent that delegated this one, for its task card. */
+  readonly parent: string | null;
+}
+
+function ViewPartView({ view, context, ...part }: { readonly view: ViewPart; readonly context: MessageContext } & Omit<PartProps, "part">): ReactNode {
+  if (view.outcome === "line") return <FailedLine part={view.part} />;
+  if (!isCard(view)) return <PartView part={view.part} {...part} />;
+  const card = <CoordinationCard view={view} conn={context.conn} parent={context.parent} />;
+  // Drawn whole, a card keeps the call it summarises, input and result, one click away.
+  if (view.outcome !== "full" || view.part.kind !== "tool") return card;
+  return <>{card}<ToolCall part={view.part} live={part.live} toggleKey={toolKey(part.rowKey, part.index, view.part.id)} /></>;
+}
+
+function MetaLine({ meta, usage }: { readonly meta: InvocationMeta; readonly usage: boolean }) {
   const bits: string[] = [];
-  if (meta.model) bits.push(meta.model);
-  if (meta.usage) bits.push(formatCost(meta.usage), `${formatTokens(meta.usage.input_tokens)} in · ${formatTokens(meta.usage.output_tokens)} out`);
-  if (meta.durationMs !== null) bits.push(formatDuration(meta.durationMs));
+  if (meta.model && usage) bits.push(meta.model);
+  if (meta.usage && usage) bits.push(formatCost(meta.usage), `${formatTokens(meta.usage.input_tokens)} in · ${formatTokens(meta.usage.output_tokens)} out`);
+  if (meta.durationMs !== null && usage) bits.push(formatDuration(meta.durationMs));
   return (
     <span className="conv-meta">
       {bits.join(" · ")}
@@ -86,7 +113,8 @@ export function speakerName(speaker: Speaker, agentName: string): { name: string
   }
 }
 
-function MessageHead({ row }: { readonly row: ConversationRow }) {
+function MessageHead({ view }: { readonly view: ViewRow }) {
+  const row = view.row;
   const { name, mark } = speakerName(row.speaker, useContext(AgentNameContext));
   const marked = row.speaker.kind === "user" || row.speaker.kind === "agent";
   return (
@@ -95,32 +123,45 @@ function MessageHead({ row }: { readonly row: ConversationRow }) {
       <span className="conv-role" title={row.speaker.from ?? undefined}>{name}</span>
       {row.at ? <time className="conv-time" dateTime={row.at}>{formatTime(row.at)}</time> : null}
       <LiveBadges row={row} />
-      {row.meta ? <MetaLine meta={row.meta} /> : null}
+      {row.meta ? <MetaLine meta={row.meta} usage={view.usage} /> : null}
     </header>
   );
 }
 
-export const MessageView = memo(function MessageView({ row, current = false }: { readonly row: ConversationRow; readonly current?: boolean }) {
+export interface MessageViewProps {
+  readonly view: ViewRow;
+  readonly context: MessageContext;
+  /** The list's key for this row; folds are remembered under it. Defaults to the row's own key. */
+  readonly rowKey?: string;
+  /** Holds Find's current match. */
+  readonly current?: boolean;
+}
+
+export const MessageView = memo(function MessageView({ view, context, rowKey, current = false }: MessageViewProps) {
+  const row = view.row;
   const live = row.live !== null;
   invariant(row.key !== "", "a row has a key");
+  const scope = rowKey ?? row.key;
   return (
-    <article className="conv-msg" data-role={row.role} data-speaker={row.speaker.kind} data-live={live ? "true" : undefined}
+    <article className="conv-msg" data-role={row.role} data-speaker={row.speaker.kind} data-slim={view.slim || undefined} data-live={live ? "true" : undefined}
       data-seq={row.seq ?? undefined} data-invocation={row.invocation ?? undefined} data-current={current ? "true" : undefined}>
-      <MessageHead row={row} />
+      {view.slim ? null : <MessageHead view={view} />}
       <div className="conv-msg-body">
         {row.live?.recovering && row.parts.length === 0 ? <p className="conv-note">Reading the transcript to catch up with the live output…</p> : null}
-        {row.parts.map((part, index) => <PartView key={index} part={part} live={live} rowKey={row.key} index={index} />)}
+        {view.parts.map((part, index) => <ViewPartView key={index} view={part} live={live} context={context} rowKey={scope} index={index} />)}
       </div>
     </article>
   );
 });
 
 /** A first guess at a row's height in px, before it is drawn and measured. */
-export function estimateRow(row: ConversationRow): number {
-  let height = 64;
-  for (const part of row.parts) {
-    if (part.kind === "text") height += 26 * Math.min(60, Math.ceil(part.text.length / 80) + part.text.split("\n").length - 1);
-    else height += 40;
+export function estimateRow(view: ViewRow): number {
+  let height = view.slim ? 16 : 56;
+  for (const { part, outcome } of view.parts) {
+    if (outcome !== "full") height += 32;
+    else if (part.kind === "text") height += 24 * Math.min(60, Math.ceil(part.text.length / 90) + part.text.split("\n").length - 1);
+    else if (part.kind === "attachment") height += 36;
+    else height += 44;
   }
   return height;
 }

@@ -161,6 +161,27 @@ describe("AppShell", () => {
     expect(container.querySelector("[role=combobox]")).toBeNull();
   });
 
+  test("running a destination remembers it first for next time; a theme command is not remembered", async () => {
+    const onRecentsChange = vi.fn();
+    const { node } = shell({ initialRecents: ["go:#/archon/queue"], onRecentsChange });
+    const { container } = await render(node);
+    const open = async () => {
+      await press(document.body, "k", { ctrlKey: true });
+      return container.querySelector<HTMLInputElement>("[role=combobox]") as HTMLInputElement;
+    };
+    let input = await open();
+    expect(container.querySelector(".ui-palette-label")?.textContent).toBe("Queue");
+    await type(input, "topo");
+    await press(input, "Enter");
+    expect(onRecentsChange).toHaveBeenLastCalledWith(["go:#/fleet/topology", "go:#/archon/queue"]);
+    input = await open();
+    await type(input, "dark theme");
+    await press(input, "Enter");
+    expect(onRecentsChange).toHaveBeenCalledTimes(1);
+    await open();
+    expect([...container.querySelectorAll(".ui-palette-label")].slice(0, 2).map((node) => node.textContent)).toEqual(["Topology", "Queue"]);
+  });
+
   test("arrow keys scroll the active command into view, wrapping at either end", async () => {
     const commands = Array.from({ length: 40 }, (_, index) => ({ id: `c${index}`, label: `Command ${index}`, group: "Test", run: vi.fn() }));
     const scrolled: string[] = [];

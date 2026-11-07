@@ -4,6 +4,24 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## Unreleased
+
+### Added
+
+- `list_view_modes` serves the shared TUI and desktop transcript-mode catalog,
+  including scoped user modes and file diagnostics, to any authenticated reader.
+  The `view_modes` handshake feature announces it.
+- The web palette (Ctrl+K) now switches context: it finds agents on every
+  connection by name, role or id, Archon items, initiatives, pull requests and
+  Learn sessions, and lists recent destinations first when the query is empty.
+- The desktop chat has the TUI's view modes: a picker, `/mode`, `/calm` and
+  `/focus`, Details (Ctrl+T) and the choice remembered per agent; Archon's
+  orchestrator opens in its Calm mode. Both apply one set of rules, pinned by a
+  shared fixture. Delegations and messages to other agents are cards that link to
+  the other agent, inbox turns are drawn verbatim, open questions and approvals
+  stay pinned until answered, and a composer with a `/` menu sends, stops and
+  keeps unsent drafts.
+
 ## 1.3.0
 
 Released with Archon 1.5.0. One web app now serves every screen, from

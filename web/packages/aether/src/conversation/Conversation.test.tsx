@@ -3,7 +3,6 @@
 // connection and sync, then checks what the screen shows. Daemon data reaches the screen only via the store.
 
 import type { aether } from "@aether-ui/protocol";
-import { act } from "react";
 import { afterEach, describe, expect, test } from "vitest";
 import { Conversation } from "./Conversation.tsx";
 import { connected, type Harness } from "./fixture/harness.test-util.tsx";
@@ -191,6 +190,50 @@ async function timeSecondOpen(h: Harness): Promise<number> {
   console.log(`20,000-entry transcript opened again in ${elapsed.toFixed(1)} ms`);
   return elapsed;
 }
+describe("a coordination card", () => {
+  const delegated: Parameters<Harness["daemon"]["seed"]>[1] = [
+    { message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_d", name: "delegate", input: { name: "reviewer", objective: "Read the diff" } }] }, invocation: "inv_d" },
+    { message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_d", content: [{ type: "text", text: "agent_id agt_child task tsk_child" }] }] } },
+  ];
+
+  async function drawn(rules?: { show: aether.ViewMode["show"]; density: aether.ViewMode["density"] }) {
+    const h = current = await connected({ instance: "faux-1", agents: [fauxAgent(FAUX_PARENT), fauxAgent()] });
+    h.daemon.seed(FAUX_AGENT, delegated);
+    const container = await h.mount(<Conversation conn={h.conn} agent={FAUX_AGENT} {...(rules === undefined ? {} : { rules })} />);
+    await h.settle();
+    expect(container.querySelector(".conv-card-title")?.textContent).toBe("Delegated to reviewer");
+    return container;
+  }
+
+  test.each([["standard", undefined], ["a comfortable mode", { show: ["assistant_text", "delegation"], density: "comfortable" }]] as const)(
+    "drawn whole (%s), it keeps the call's input and result beside it", async (_name, rules) => {
+      const container = await drawn(rules === undefined ? undefined : { show: [...rules.show], density: rules.density });
+      const call = container.querySelector('.conv-tool[data-tool-use-id="toolu_d"]');
+      expect(call?.textContent).toContain("Read the diff");
+      expect(call?.querySelector(".conv-tool-result")?.textContent).toContain("agent_id agt_child");
+    });
+
+  test("compact, it is the card alone", async () => {
+    const container = await drawn({ show: ["assistant_text", "delegation"], density: "compact" });
+    expect(container.querySelector(".conv-tool"), "the call stays behind Details").toBeNull();
+  });
+});
+
+describe("an inbox turn", () => {
+  test("draws verbatim as the operator's text, whole in a mode without user_text", async () => {
+    const quoted = "[inbox 1] Message from user:local_socket#7: [authenticated operator instruction]\nhello\n[inbox 2] Task tsk_x completed: done";
+    const h = await connected({ instance: "faux-1", agents: [fauxAgent(FAUX_PARENT), fauxAgent()] });
+    current = h;
+    h.daemon.seed(FAUX_AGENT, [{ message: text("user", "Your task:\nShip it") }, { message: text("user", quoted) }]);
+    const container = await h.mount(<Conversation conn={h.conn} agent={FAUX_AGENT} rules={{ show: ["assistant_text"], density: "compact" }} />);
+    await h.settle();
+    expect(container.querySelectorAll(".conv-card"), "the task is hidden by the mode").toHaveLength(0);
+    const bodies = [...container.querySelectorAll(".conv-msg-body")].map((node) => node.textContent ?? "");
+    expect(bodies, "the delivery is drawn as the daemon gave it").toHaveLength(1);
+    expect(bodies[0]).toContain("Task tsk_x completed: done");
+    expect(bodies[0]).toContain("hello");
+  });
+});
 
 describe("a long transcript", () => {
   test("opens 20,000 entries in under 500 ms and draws only a screenful", async () => {
@@ -214,50 +257,5 @@ describe("a long transcript", () => {
     // A loaded host stalls one run by hundreds of ms; a regression slows every run, so the better of two is judged.
     const second = await timeSecondOpen(h);
     expect(Math.min(elapsed, second)).toBeLessThan(500);
-  });
-});
-
-describe("a message sent from the composer", () => {
-  async function sendFromComposer(h: Harness, container: HTMLElement, value: string) {
-    const input = container.querySelector<HTMLTextAreaElement>("[data-testid=composer-input]");
-    if (!input) throw new Error("the conversation draws its composer");
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
-    if (!setter) throw new Error("a text area has a value setter");
-    await act(async () => {
-      setter.call(input, value);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
-    await h.settle();
-  }
-
-  test("shows once the daemon's transcript carries it, and the composer is cleared", async () => {
-    const { h, container } = await open();
-    await sendFromComposer(h, container, "Ship it.");
-    expect(h.daemon.commands("send_message")).toHaveLength(1);
-    expect(shown(container).messages).toEqual(SEED);
-    expect(container.querySelector<HTMLTextAreaElement>("[data-testid=composer-input]")?.value).toBe("");
-    h.daemon.commit(FAUX_AGENT, text("user", "[inbox 1] Message from user:device:\nShip it."));
-    await h.settle();
-    expect(shown(container).messages).toEqual([...SEED, "Ship it."]);
-  });
-
-  test("held by the daemon, the composer keeps the text until the reply arrives, then clears", async () => {
-    const { h, container } = await open();
-    h.daemon.hold.add("send_message");
-    await sendFromComposer(h, container, "Ship it.");
-    expect(h.daemon.commands("send_message")).toHaveLength(1);
-    expect(container.querySelector<HTMLTextAreaElement>("[data-testid=composer-input]")?.value).toBe("Ship it.");
-    h.daemon.release("send_message");
-    await h.settle();
-    expect(container.querySelector<HTMLTextAreaElement>("[data-testid=composer-input]")?.value).toBe("");
-  });
-
-  test("refused by the daemon, the text stays in the composer", async () => {
-    const { h, container } = await open();
-    h.daemon.refuse.set("send_message", { code: "forbidden", message: "not yours" });
-    await sendFromComposer(h, container, "Ship it.");
-    expect(shown(container).messages).toEqual(SEED);
-    expect(container.querySelector<HTMLTextAreaElement>("[data-testid=composer-input]")?.value).toBe("Ship it.");
   });
 });

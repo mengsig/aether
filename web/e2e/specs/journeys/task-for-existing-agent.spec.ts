@@ -7,8 +7,8 @@ import { until } from "../../harness/process.ts";
 import { agent, cancelLive, createAgentOn, taskObjectives } from "./daemon.ts";
 import { connectionsReady, journeyHooks } from "./journey.ts";
 import { shootWindow } from "./capture.ts";
-import { agentPage, landOnAgent, objectiveField, openStart, startSheet, submitStart } from "./steps.ts";
-import { choose, need } from "./ui.ts";
+import { agentPage, chooseWorkType, landOnAgent, objectiveField, openStart, startSheet, submitStart } from "./steps.ts";
+import { need } from "./ui.ts";
 
 const journey = journeyHooks({ archon: false });
 const OWNER = "Journey owner";
@@ -27,9 +27,11 @@ test("task-for-existing-agent journey: a task in task mode lands on its owner", 
   try {
     await openStart(window);
     const sheet = startSheet(window);
-    await choose(window, (await need(sheet, "start-mode")).getByRole("radiogroup", { name: "Work type" }), "Task for an existing agent");
+    await chooseWorkType(window, "Existing agent task");
     await (await objectiveField(window)).fill(TASK);
-    await choose(window, await need(sheet, "start-owner"), OWNER);
+    const ownerChoice = (await need(sheet, "start-owner")).getByRole("button", { name: OWNER, exact: true });
+    await ownerChoice.click();
+    await expect(ownerChoice, "the owner is chosen").toHaveAttribute("aria-pressed", "true");
     await shootWindow(window, "start-agent", "task-mode");
     await submitStart(window, "Create task");
     const tasks = await until(() => taskObjectives(stack, owner), (objectives) => objectives.includes(TASK), "the task on its owner", 30_000);

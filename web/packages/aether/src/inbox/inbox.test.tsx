@@ -1,18 +1,18 @@
 // @vitest-environment happy-dom
-import { drafts } from "@aether-ui/core";
 // The inbox answers questions and approvals from core's attention, and the recovery review never
 // resends a lost change on its own: it checks with resolve_submission, then the operator chooses.
 
 import { act } from "react";
-import { beforeEach, afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { AGENT_ID, CHILD_ID, controlsScript, demoAgents } from "../controls/fixture/demo.ts";
 import { stamp, type Answer, type ScriptOptions } from "../controls/fixture/daemon.ts";
 import { buttonNamed, click, connected, type, type Harness } from "../controls/fixture/harness.test-util.tsx";
 import { describeCommand } from "./describe.ts";
 import { InboxScreen } from "./InboxScreen.tsx";
+import { forgetDrafts } from "../composer/drafts.ts";
 
 let current: Harness | null = null;
-afterEach(() => { current?.unmount(); current = null; });
+afterEach(() => { current?.unmount(); current = null; sessionStorage.clear(); forgetDrafts(); });
 
 const ATTENTION = {
   questions: [{ agent: CHILD_ID, agent_name: "changelog-writer", question: "Should the 1.3 notes mention the fleet redesign?", question_seq: 7, asked_at: stamp(20) }],
@@ -57,6 +57,37 @@ describe("InboxScreen", () => {
     await type(h, openDialog(), "Reason (optional)", "Not before the tag");
     await click(h, openDialog(), "Deny");
     expect(h.daemon.commands("resolve_approval")[1]).toMatchObject({ id: "apr_1", decision: "denied", note: "Not before the tag" });
+  });
+
+  test("an answer the session store cannot keep says so", async () => {
+    const setItem = vi.spyOn(sessionStorage, "setItem").mockImplementation(() => { throw new DOMException("full", "QuotaExceededError"); });
+    try {
+      const { h, root } = await open();
+      await type(h, root, "Answer changelog-writer", "Yes, one line.");
+      expect(root.textContent).toContain("Drafts are kept while the app is open, but not across a reload (full).");
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+
+  test("an unsent answer is kept per question across leaving the inbox, until it is delivered", async () => {
+    const first = await open({ script: { reply_to_question: () => "hold" } });
+    await type(first.h, first.root, "Answer changelog-writer", "Yes, one line.");
+    await click(first.h, first.root, "Send answer");
+    first.h.daemon.drop();
+    await first.h.settle();
+    expect(first.root.querySelector('[data-state="unconfirmed"]')).not.toBeNull();
+    first.h.unmount();
+    const back = await open();
+    const field = back.root.querySelector("textarea");
+    expect(field?.value).toBe("Yes, one line.");
+    await click(back.h, back.root, "Send answer");
+    expect(field?.value).toBe("");
+    await type(back.h, back.root, "Answer changelog-writer", "Only for question 7");
+    back.h.unmount();
+    const other = { ...ATTENTION, questions: [{ ...ATTENTION.questions?.[0], question_seq: 8 }] } as typeof ATTENTION;
+    current = (await open({ attention: other })).h;
+    expect(document.querySelector("textarea")?.value).toBe("");
   });
 
   test("a stopped agent links to its controls and its conversation", async () => {
@@ -185,17 +216,4 @@ describe("describeCommand", () => {
     expect(describeCommand({ cmd: "send_message", to: "agt_1", content: "x".repeat(200) }, {}).detail).toHaveLength(140);
     expect(() => describeCommand({}, {})).toThrow();
   });
-});
-
-beforeEach(() => { for (const key of drafts.keys()) drafts.clear(key); });
-
-test("an answer draft survives remount and clears only after sending", async () => {
-  const first = await open();
-  await type(first.h, first.root, "Answer changelog-writer", "Keep my answer");
-  first.h.unmount();
-  const second = await open();
-  expect(second.root.querySelector("textarea")?.value).toBe("Keep my answer");
-  await click(second.h, second.root, "Send answer");
-  expect(second.h.daemon.commands("reply_to_question")[0]).toMatchObject({ to: CHILD_ID, question_seq: 7, content: "Keep my answer" });
-  expect(drafts.get(`inbox/${CHILD_ID}/7/answer`)).toBeUndefined();
 });

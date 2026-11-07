@@ -6,6 +6,9 @@ use aether_tui::app::transcript::{
 use aether_tui::app::{App, AppEvent, Effect};
 use aether_tui::testing::{app_with_transcript, render_to};
 use aether_tui::view_modes::{self, Catalog, Category, Definition, Density, Mode, Policy};
+#[path = "view_modes/parity.rs"]
+mod parity;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 const BRIEF: &str = r#"version = 1
@@ -549,10 +552,14 @@ fn every_category_can_be_selected_independently() {
             assert_eq!(view_modes::category(model), *category);
             assert_eq!(
                 policy.shows(model),
+                // The user_text model is the operator's own text, which every mode draws.
                 category == expected
                     || matches!(
                         category,
-                        Category::Question | Category::Approval | Category::Error
+                        Category::Question
+                            | Category::Approval
+                            | Category::Error
+                            | Category::UserText
                     ),
                 "{expected:?}: {category:?}"
             );
