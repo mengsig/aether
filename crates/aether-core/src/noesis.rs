@@ -83,8 +83,9 @@ pub struct NoesisSession {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub problems: Vec<PosedProblem>,
     /// What the session's model calls used, split by how they were paid for.
+    /// Boxed so the session's event stays small; the wire form is the same.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub usage: Option<SessionUsage>,
+    pub usage: Option<Box<SessionUsage>>,
     /// The evidence bundle the session started from, when it had one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<EvidenceBundle>,

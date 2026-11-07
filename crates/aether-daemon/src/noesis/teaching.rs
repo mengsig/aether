@@ -476,10 +476,10 @@ fn with_usage(runtime: &Runtime, models: &Models, reply: Reply) -> Result<Reply,
             ran.push(agent);
         }
     }
-    session.usage = Some(budget::by_billing(
+    session.usage = Some(Box::new(budget::by_billing(
         models,
         ran.iter().map(|agent| (&agent.model, &agent.stats.usage)),
-    ));
+    )));
     Ok(Reply::NoesisSession(session))
 }
 
