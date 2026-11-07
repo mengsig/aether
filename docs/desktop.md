@@ -197,7 +197,8 @@ message and then waits for the next one after every reply. It stays open until
 you cancel it. The chat opens once its first message is delivered, sent as
 typed. If that message is refused or its reply never comes, the sheet stays open
 with the reason and **Send first message** retries it to the same chat, so trying
-again never starts a second one. A **Task agent** instead works on an objective and ends once it
+again never starts a second one. That chat's settings are fixed by then; **Start
+a different chat** offers them again for a new one. A **Task agent** instead works on an objective and ends once it
 is done; an ended agent takes no more messages, and its composer says why and
 offers to wake it (after a failure), start a new chat or open its controls.
 

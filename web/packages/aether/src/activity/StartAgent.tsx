@@ -51,6 +51,15 @@ async function createChat(run: Run, command: aether.CreateAgentCommand): Promise
 
 const chatHref = (conn: string, agent: string): string => routeHref("#/agents/:conn/:agent", { conn, agent });
 
+/** A chat that exists but whose first message is unconfirmed: its settings are fixed now. */
+function CreatedChat({ conn, agent, close, discard }: { conn: string; agent: string; close: () => void; discard: () => void }) {
+  invariant(agent.startsWith("agt_"), "a created chat is an agent");
+  return <div className="b3-stack">
+    <p className="b3-section-hint">The chat started, but its first message was not confirmed. Read why below before sending it again here, or <a className="ui-link" href={chatHref(conn, agent)} onClick={close}>open the chat</a> to see whether it arrived. Its workspace and model are set.</p>
+    <div className="b3-row"><Button onClick={discard}>Start a different chat</Button></div>
+  </div>;
+}
+
 function useStartData(conn: string, path: string) {
   const app = useApp();
   const live = Object.values(useSelector(selectAgents(conn))).filter(a => !ENDED.has(a.status.state));
@@ -74,7 +83,8 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
   const { live, models, choices, validation, retryModels } = useStartData(conn, path);
   const selected = choices.find(m => `${m.model.provider}/${m.model.model}` === model) ?? choices.find(m => m.is_default) ?? choices[0];
   const workspace = validation?.valid ? validation.path ?? "" : "";
-  const resendTo = mode === "chat" ? created : null;
+  invariant(created === null || mode === "chat", "only a chat is kept for its first message");
+  const resendTo = created;
   const command = mode === "task" ? aether.createTask({ objective: objective.trim(), owner, priority: "normal" })
     : resendTo !== null ? aether.sendMessage({ to: resendTo, content: objective.trim() })
       : selected && workspace !== "" && objective.trim() !== "" ? createCommand({ mode, name, workspace, model: selected.model, effort }, objective) : aether.createAgent({ role: "assistant" });
@@ -99,10 +109,12 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
   };
   const start = () => (mode === "chat" ? startChat() : run.send(command));
   return <Sheet open onClose={close} title="Start an agent"><div className="b3-stack"><StandingNotice conn={conn} />
-    <Tabs label="Work type" selected={mode} onSelect={id => setMode(id as Mode)} tabs={[{ id: "chat", label: "Chat", panel: null }, { id: "agent", label: "Task agent", panel: null }, { id: "task", label: "Existing agent task", panel: null }]} />
-    <p className="b3-section-hint">{MODE_HINTS[mode]}</p>
+    {resendTo !== null ? <CreatedChat conn={conn} agent={resendTo} close={close} discard={() => setCreated(null)} /> : <>
+      <Tabs label="Work type" selected={mode} onSelect={id => setMode(id as Mode)} tabs={[{ id: "chat", label: "Chat", panel: null }, { id: "agent", label: "Task agent", panel: null }, { id: "task", label: "Existing agent task", panel: null }]} />
+      <p className="b3-section-hint">{MODE_HINTS[mode]}</p>
+    </>}
     <Field label={mode === "chat" ? "First message" : "Objective"} value={objective} disabled={disabled} onChange={e => setObjective(e.target.value)} />
-    {mode === "task" ? <div className="b3-row">{live.map(a => <Button key={a.id} disabled={disabled} aria-pressed={owner === a.id} onClick={() => setOwner(a.id)}>{a.name}</Button>)}</div> : <>
+    {resendTo !== null ? null : mode === "task" ? <div className="b3-row">{live.map(a => <Button key={a.id} disabled={disabled} aria-pressed={owner === a.id} onClick={() => setOwner(a.id)}>{a.name}</Button>)}</div> : <>
       <Field label="Name" value={name} disabled={disabled} onChange={e => setName(e.target.value)} />
       <Workspace conn={conn} path={path} change={setPath} />
       <ReadNote entry={models} retry={retryModels} />
@@ -110,7 +122,6 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
       {models?.issued && choices.length === 0 ? <EmptyState title="Connect a model provider on your host" /> : null}
       <div className="b3-row" aria-label="Effort">{EFFORTS.map(value => <Button key={value} disabled={disabled} aria-pressed={effort === value} onClick={() => setEffort(value)}>{value}</Button>)}</div>
     </>}
-    {resendTo !== null ? <p className="b3-section-hint">The chat started, but its first message was not confirmed. Read why below before sending it again here, or <a className="ui-link" href={chatHref(conn, resendTo)} onClick={close}>open the chat</a> to see whether it arrived.</p> : null}
     <Action conn={conn} command={command} label={mode === "task" ? "Create task" : resendTo !== null ? "Send first message" : mode === "chat" ? "Start chat" : "Start agent"} blocked={blocked} busy={run.status.state === "busy"} onRun={start} />
     <RunNote status={run.status} />
   </div></Sheet>;

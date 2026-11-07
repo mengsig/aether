@@ -109,10 +109,28 @@ test("a chat whose first message is refused stays in the sheet, says why, and re
   expect(document.body.textContent).toContain("Inbox is full");
   expect(document.body.textContent).toContain("its first message was not confirmed");
   expect(window.location.hash).not.toContain(agent.id);
+  const labels = [...document.body.querySelectorAll("label")].map((label) => label.textContent ?? "");
+  expect(labels.filter((text) => /^(Name|Workspace)/.test(text)), "the chat's settings are fixed once it exists").toEqual([]);
+  expect(document.body.querySelector('[aria-label="Effort"]')).toBeNull();
+  expect(document.body.textContent).not.toContain("Task agent");
   await click(h, document.body, "Send first message"); await h.settle();
   expect(h.daemon.commands("create_agent"), "a retry never creates another chat").toHaveLength(1);
   expect(h.daemon.commands("send_message").map((c) => [c.to, c.content]), "sent as typed, never read as a command").toEqual([[agent.id, "/calm please"], [agent.id, "/calm please"]]);
   expect(window.location.hash).toBe(`#/agents/${encodeURIComponent(h.conn)}/${agent.id}`);
+});
+
+test("a different chat after a refused first message is an explicit new create with fresh settings", async () => {
+  window.location.hash = "";
+  h = await connected({ agents: [agent], script: { ...script, send_message: () => ({ code: "invalid_request", message: "Inbox is full" }) } });
+  const root = await h.mount(<ActivityScreen />);
+  await click(h, root, "Start an agent");
+  await type(h, document.body, "First message", "Hello");
+  await pickRepo();
+  await click(h, document.body, "Start chat"); await h.settle();
+  await click(h, document.body, "Start a different chat");
+  expect(document.body.querySelector('[aria-label="Effort"]'), "its settings are offered again").not.toBeNull();
+  await click(h, document.body, "Start chat"); await h.settle();
+  expect(h.daemon.commands("create_agent")).toHaveLength(2);
 });
 
 test("a chat whose first reply is lost says so and keeps the retry on the same chat", async () => {
