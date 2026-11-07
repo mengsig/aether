@@ -42,4 +42,6 @@ shares the patched KaTeX 0.19 engine with Mermaid; its declared 0.16 dependency 
 trust-bypass advisory GHSA-238p-pmpm-9mq7. The browser fixture also exercises Mermaid math
 labels to check this API compatibility. Direct
 MIT notices ship in `apps/web/public/THIRD-PARTY-NOTICES-rendering.txt`; `npm run licenses`
-checks every locked dependency without new licence exceptions.
+checks every locked dependency. Two of Mermaid's own dependencies need named runtime exceptions
+in `web/scripts/licenses.ts`: khroma (an MIT licence file, though its manifest declares none) and
+robust-predicates (the Unlicense, a public-domain dedication).
