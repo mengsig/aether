@@ -1,4 +1,4 @@
-import type { App } from "@aether-ui/core";
+import { DaemonError, type App } from "@aether-ui/core";
 import type { DesktopSetup, SetupResult, SetupStep } from "@aether-ui/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { archonHealth, archonTools, providerReadiness } from "./readiness.ts";
@@ -95,6 +95,23 @@ describe("setup steps", () => {
     expect(error.signIn).toEqual(["claude"]);
     const silent = fakeApp({}, ["aether"]).app;
     await expect(runStep("check", {}, { app: silent, setup: bridge({}), ...quick })).rejects.toThrow("Archon started, but the app could not connect to it. Try again in a moment.");
+  });
+
+  it("asks again when Aether's link closes mid-check after a restart, and says so plainly if it never comes back", async () => {
+    const { app, sent } = fakeApp({});
+    const send = vi.mocked(app.manager.send);
+    const closed = () => new DaemonError("disconnected", "The link closed before the answer: local:1 is not an open local connection");
+    send.mockRejectedValueOnce(closed()).mockRejectedValueOnce(closed());
+    const facts = await runStep("check", { mode: "shared" }, { app, setup: bridge({}), waitMs: 5_000, sleep: async () => {} });
+    expect(facts.archonTools).toBe(2);
+    expect(sent.map(([, c]) => c.cmd)).toEqual(["mcp_servers", "status", "providers", "auth_status"]);
+    send.mockImplementation(async () => { throw closed(); });
+    const error = (await runStep("check", { mode: "shared" }, { app, setup: bridge({}), ...quick }).catch((e: unknown) => e)) as SetupError;
+    expect(error).toBeInstanceOf(SetupError);
+    expect(error.message).toBe("Aether stopped answering while the app checked it. Try again in a moment.");
+    send.mockReset().mockRejectedValue(new DaemonError("forbidden", "not allowed"));
+    await expect(runStep("check", { mode: "shared" }, { app, setup: bridge({}), waitMs: 5_000, sleep: async () => {} })).rejects.toThrow(/^not allowed$/);
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it("finds the bridge only on a desktop that has it", () => {

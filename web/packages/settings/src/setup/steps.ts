@@ -1,7 +1,7 @@
 // The steps of "Set up on this computer", each one call the wizard can run, show and retry:
 // main does the host work (find, connect, start); the check reads the daemons through core.
 
-import type { App } from "@aether-ui/core";
+import { codeOf, type App } from "@aether-ui/core";
 import type { aether, archon, ConnId, DesktopSetup, SetupResult, SetupStep, SetupTool } from "@aether-ui/protocol";
 import { invariant } from "../kit/invariant.ts";
 import { archonHealth, archonTools, providerReadiness, type Readiness, type ToolsCheck } from "./readiness.ts";
@@ -24,8 +24,8 @@ export class SetupError extends Error {
   /** The step a retry starts from, when it is an earlier one than the step that failed. */
   readonly retryFrom: StepId | undefined;
 
-  constructor(message: string, help: { missing?: readonly SetupTool["name"][]; signIn?: readonly ("claude" | "codex")[]; retryFrom?: StepId } = {}) {
-    super(message);
+  constructor(message: string, help: { missing?: readonly SetupTool["name"][]; signIn?: readonly ("claude" | "codex")[]; retryFrom?: StepId; cause?: unknown } = {}) {
+    super(message, help.cause === undefined ? undefined : { cause: help.cause });
     this.name = "SetupError";
     this.missing = help.missing ?? [];
     this.signIn = help.signIn ?? [];
@@ -99,18 +99,19 @@ function toolsFound(tools: readonly SetupTool[]): SetupFacts {
   return { tools };
 }
 
+interface Clock { readonly deadline: number; readonly sleep: (ms: number) => Promise<void> }
+
 async function check(facts: SetupFacts, deps: StepDeps): Promise<SetupFacts> {
-  const sleep = deps.sleep ?? wait;
-  const deadline = Date.now() + (deps.waitMs ?? 30_000);
-  const aetherConn = await localConnection(deps.app, "aether", deadline, sleep);
-  const archonConn = await localConnection(deps.app, "archon", deadline, sleep);
+  const clock: Clock = { deadline: Date.now() + (deps.waitMs ?? 30_000), sleep: deps.sleep ?? wait };
+  await localConnection(deps.app, "aether", clock);
+  await localConnection(deps.app, "archon", clock);
   if (facts.mode !== "dedicated") {
-    const tools = archonTools(listOf<aether.McpServerHealth>(await deps.app.manager.send(aetherConn, { cmd: "mcp_servers", refresh: true }), "MCP servers"));
+    const tools = archonTools(listOf<aether.McpServerHealth>(await readLocal(deps.app, "aether", { cmd: "mcp_servers", refresh: true }, clock), "MCP servers"));
     if (tools.state !== "ready") throw new SetupError(`${tools.detail} Connect them again to fix this.`, { retryFrom: "connect" });
   }
-  const tools = await archonView(deps.app, archonConn, deadline, sleep);
+  const tools = await archonView(deps.app, clock);
   if (tools.state !== "ready") throw new SetupError(`${tools.detail} Connect them again to fix this.`, { retryFrom: "connect" });
-  const providers = await providerChecks(deps.app, aetherConn);
+  const providers = await providerChecks(deps.app, clock);
   if (!providers.some((p) => p.readiness.ready)) {
     const signIn = providers.flatMap((p) => (p.readiness.signIn ? [p.readiness.signIn] : []));
     throw new SetupError("No model provider is ready to run work yet. Sign in to one, then check again.", { signIn });
@@ -119,28 +120,46 @@ async function check(facts: SetupFacts, deps: StepDeps): Promise<SetupFacts> {
 }
 
 /** Archon checks Aether on its own clock, so its view may lag Aether's: ask until it agrees or time runs out. */
-async function archonView(app: App, conn: ConnId, deadline: number, sleep: (ms: number) => Promise<void>): Promise<ToolsCheck> {
+async function archonView(app: App, clock: Clock): Promise<ToolsCheck> {
   for (;;) {
-    const status = recordOf<archon.DaemonStatus>(await app.manager.send(conn, { cmd: "status" }), "Archon's status");
+    const status = recordOf<archon.DaemonStatus>(await readLocal(app, "archon", { cmd: "status" }, clock), "Archon's status");
     const view = archonHealth(status.mcp);
-    if (view.state === "ready" || view.state === "failed" || Date.now() >= deadline) return view;
-    await sleep(500);
+    if (view.state === "ready" || view.state === "failed" || Date.now() >= clock.deadline) return view;
+    await clock.sleep(500);
   }
 }
 
-async function providerChecks(app: App, conn: ConnId): Promise<ProviderCheck[]> {
-  const providers = listOf<aether.ProviderInfo>(await app.manager.send(conn, { cmd: "providers" }), "providers");
-  const auths = listOf<aether.AuthInfo>(await app.manager.send(conn, { cmd: "auth_status" }), "sign-ins");
+async function providerChecks(app: App, clock: Clock): Promise<ProviderCheck[]> {
+  const providers = listOf<aether.ProviderInfo>(await readLocal(app, "aether", { cmd: "providers" }, clock), "providers");
+  const auths = listOf<aether.AuthInfo>(await readLocal(app, "aether", { cmd: "auth_status" }, clock), "sign-ins");
   return providers.map((p) => ({ id: p.provider, name: p.name, readiness: providerReadiness(p, auths.find((a) => a.provider === p.provider)) }));
 }
 
+/**
+ * One read of a local daemon that rides out its restart: a link that closes before the answer is
+ * opened again and the read asked again, until the deadline. Any other failure stops the check.
+ */
+async function readLocal(app: App, daemon: "aether" | "archon", command: { readonly cmd: string; readonly refresh?: boolean }, clock: Clock): Promise<Record<string, unknown>> {
+  invariant(command.cmd.trim() !== "", "a check reads a named command");
+  for (;;) {
+    const conn = await localConnection(app, daemon, clock);
+    try {
+      return await app.manager.send(conn, command);
+    } catch (error) {
+      if (codeOf(error) !== "disconnected") throw error;
+      if (Date.now() >= clock.deadline) throw new SetupError(`${TOOL_LABEL[daemon]} stopped answering while the app checked it. Try again in a moment.`, { cause: error });
+    }
+    await clock.sleep(250);
+  }
+}
+
 /** The desktop's own connection to a local daemon once it is ready, waiting for it until the deadline. */
-async function localConnection(app: App, daemon: "aether" | "archon", deadline: number, sleep: (ms: number) => Promise<void>): Promise<ConnId> {
+async function localConnection(app: App, daemon: "aether" | "archon", clock: Clock): Promise<ConnId> {
   for (;;) {
     const local = app.manager.all().find((c) => c.endpoint.daemon === daemon && c.endpoint.transport.id === "ipc");
     if (local?.current.state === "ready") return local.id;
-    if (Date.now() >= deadline) throw new SetupError(`${TOOL_LABEL[daemon]} started, but the app could not connect to it. Try again in a moment.`);
-    await sleep(250);
+    if (Date.now() >= clock.deadline) throw new SetupError(`${TOOL_LABEL[daemon]} started, but the app could not connect to it. Try again in a moment.`);
+    await clock.sleep(250);
   }
 }
 
