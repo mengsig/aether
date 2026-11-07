@@ -100,7 +100,7 @@ fn login_lists_providers_and_cli_handoffs_require_a_terminal() {
 }
 
 #[test]
-fn malformed_config_fails_auto_start_promptly_and_names_the_key() {
+fn malformed_config_fails_auto_start_before_creating_the_store() {
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join("config")).unwrap();
     std::fs::write(
@@ -108,13 +108,12 @@ fn malformed_config_fails_auto_start_promptly_and_names_the_key() {
         "bad_startup_key = true\n",
     )
     .unwrap();
-    let began = Instant::now();
     let output = run_isolated(root.path(), &["models"]);
-    assert!(began.elapsed() < Duration::from_secs(5));
     assert!(!output.status.success());
     let message = stderr(&output);
     assert!(message.contains("bad_startup_key"), "{message}");
     assert!(message.contains("before it listened"), "{message}");
+    assert!(!root.path().join("data/aether.db").exists());
 }
 
 #[test]

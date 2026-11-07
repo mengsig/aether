@@ -1013,3 +1013,28 @@ fn memory_retrieval_defaults_to_the_contract_and_refuses_values_out_of_range() {
         );
     }
 }
+
+#[test]
+fn concurrent_template_writers_publish_complete_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            let barrier = barrier.clone();
+            let path = dir.path();
+            scope.spawn(move || {
+                barrier.wait();
+                super::ensure_templates(path).unwrap();
+                crate::Models::load(Some(path.to_path_buf())).unwrap();
+            });
+        }
+    });
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("config.toml")).unwrap(),
+        super::CONFIG_TEMPLATE
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("providers.toml")).unwrap(),
+        super::templates::providers_template()
+    );
+}

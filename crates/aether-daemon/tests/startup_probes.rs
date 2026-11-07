@@ -442,3 +442,55 @@ async fn engines_read(client: &aether_client::Client) -> Vec<String> {
     .await
     .expect("a status reads the engines")
 }
+
+#[tokio::test]
+async fn invalid_configuration_does_not_change_an_older_store() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(root.path());
+    drop(SqliteStore::open(&config.store_path).unwrap());
+    let conn = rusqlite::Connection::open(&config.store_path).unwrap();
+    conn.execute(
+        "UPDATE meta SET value = '32' WHERE key = 'schema_version'",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    let before = std::fs::read(&config.store_path).unwrap();
+    let config_dir = config.config_dir.as_ref().unwrap();
+    std::fs::create_dir_all(config_dir).unwrap();
+    for (contents, key) in [
+        ("bad_startup_key = true\n", "bad_startup_key"),
+        ("[remote]\npush_hosts = ['not a host']\n", "push_hosts"),
+        (
+            "[scheduler]\nrun_hard_stop_tokens = 0\n",
+            "run_hard_stop_tokens",
+        ),
+    ] {
+        std::fs::write(config_dir.join("config.toml"), contents).unwrap();
+        let error = tokio::time::timeout(
+            Duration::from_secs(5),
+            aether_daemon::run(config.clone(), CancellationToken::new()),
+        )
+        .await
+        .expect("invalid configuration must refuse startup")
+        .unwrap_err();
+        assert!(format!("{error:#}").contains(key), "{error:#}");
+        assert_eq!(std::fs::read(&config.store_path).unwrap(), before);
+        assert!(!config.socket.exists());
+        assert!(!config.store_path.with_extension("db-wal").exists());
+        assert!(!config.store_path.with_extension("db-shm").exists());
+    }
+    let conn = rusqlite::Connection::open_with_flags(
+        &config.store_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let version: String = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(version, "32");
+}

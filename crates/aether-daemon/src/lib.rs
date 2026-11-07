@@ -215,12 +215,6 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     let pid_path = aether_protocol::paths::pid_path_for(socket);
     instance_lock::check_private_file_replacement(&pid_path)?;
     clock.finished("preflight");
-    let store_path = instance.prepare_store()?;
-    crash::report_previous(&store_path);
-    crash::begin_run(&store_path);
-    let store = Arc::new(SqliteStore::open(&store_path)?);
-    clock.finished("store");
-    let instance_id = aether_store::Store::instance_id(store.as_ref())?;
     let config_dir = aether_model::config::config_dir(config.config_dir.clone());
     match aether_model::config::ensure_templates(&config_dir) {
         Ok(written) => {
@@ -247,7 +241,6 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     // Nothing binds until remote control is enabled, but a stanza that
     // could never be honoured fails the start, where the operator is looking.
     let remote_config = remote::configured(&models.config().remote)?;
-    let push_config = push::configured(&models.config().remote, &instance_id, &config.store_path)?;
     let yolo = config.yolo || models.config().approval.yolo;
     if yolo {
         tracing::warn!(
@@ -345,6 +338,21 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     if let Some(bytes) = models.config().storage.free_space_floor_bytes {
         disk_floor = (bytes > 0).then_some(aether_core::disk::DiskFloor::Bytes(bytes));
     }
+    // Validate push settings before opening the store; fill in its identity afterwards.
+    let mut push_config = push::configured(&models.config().remote, "", &config.store_path)?;
+    let review_sweep_prs = models
+        .config()
+        .github_watcher
+        .review_sweep_prs()
+        .map_err(config_error)?;
+    let store_path = instance.prepare_store()?;
+    crash::report_previous(&store_path);
+    crash::begin_run(&store_path);
+    let store = Arc::new(SqliteStore::open(&store_path)?);
+    clock.finished("store");
+    let instance_id = aether_store::Store::instance_id(store.as_ref())?;
+    push_config.instance_id.clone_from(&instance_id);
+
     // MCP health transitions become events once the runtime exists, so the
     // channel is created before it and drained after it starts.
     let (mcp_tx, mcp_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -443,11 +451,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             // Beside the resolved store: an engine opens the file from its agent's workspace.
             attachment_dir: Some(aether_protocol::paths::attachment_dir_for(&store_path)),
             github_checkout_root: Some(config.store_path.with_extension("github-workspaces")),
-            github_review_sweep_prs: models
-                .config()
-                .github_watcher
-                .review_sweep_prs()
-                .map_err(config_error)?,
+            github_review_sweep_prs: review_sweep_prs,
             delegated_workspace_root: Some(
                 config.store_path.with_extension("delegated-workspaces"),
             ),
