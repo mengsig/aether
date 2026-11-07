@@ -102,6 +102,7 @@ describe("generate-protocol CLI", () => {
   beforeEach(() => {
     out = mkdtempSync(path.join(os.tmpdir(), "aether-ui-protocol-"));
     copyFileSync(APP, path.join(out, "app.ts"));
+    copyFileSync(path.join(path.dirname(APP), "setup.ts"), path.join(out, "setup.ts"));
   });
   afterEach(() => rmSync(out, { recursive: true, force: true }));
 
@@ -122,7 +123,7 @@ describe("generate-protocol CLI", () => {
     const missing = path.join(out, "absent.json");
     expect(runCli("--check", "--archon-schema", missing, "--out-dir", out).status).toBe(1);
     expect(runCli("--archon-schema", missing, "--out-dir", out).status).toBe(0);
-    expect(Object.keys(snapshot(out))).toEqual(["aether.ts", "app.ts", "index.ts"]);
+    expect(Object.keys(snapshot(out))).toEqual(["aether.ts", "app.ts", "index.ts", "setup.ts"]);
   });
 
   it("typechecks the Archon module beside app.ts", () => {

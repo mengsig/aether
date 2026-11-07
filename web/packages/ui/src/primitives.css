@@ -59,7 +59,8 @@
   .ui-dialog[open] { animation: ui-pop var(--motion-base) var(--ease-emphasized); }
   .ui-dialog::backdrop { background: color-mix(in srgb, var(--color-text) 32%, transparent); backdrop-filter: blur(var(--blur-sm)); }
   .ui-dialog[open]::backdrop { animation: ui-fade var(--motion-base) var(--ease-standard); }
-  .ui-dialog-frame { display: grid; gap: var(--space-4); padding: var(--space-6); }
+  .ui-dialog-frame { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); padding: var(--space-6); }
+  .ui-dialog-body { min-inline-size: 0; overflow-wrap: anywhere; }
   .ui-dialog-header { display: flex; align-items: start; justify-content: space-between; gap: var(--space-4); }
   .ui-dialog-title { font: var(--weight-bold) var(--text-xl) / var(--leading-tight) var(--font-display); letter-spacing: -0.01em; }
   .ui-dialog-description { color: var(--color-text-muted); font-size: var(--text-sm); }
@@ -69,6 +70,12 @@
     border-block: 0; border-inline-end: 0; border-radius: var(--radius-xl) 0 0 var(--radius-xl);
   }
   .ui-dialog[data-kind="sheet"][open] { animation: ui-slide var(--motion-slow) var(--ease-emphasized); }
+  /* A sheet's body scrolls inside the frame, so its header and footer stay in view. */
+  .ui-dialog[data-kind="sheet"] { overflow: hidden; }
+  .ui-dialog[data-kind="sheet"] .ui-dialog-frame { display: flex; flex-direction: column; box-sizing: border-box; block-size: 100%; max-block-size: inherit; }
+  .ui-dialog[data-kind="sheet"] .ui-dialog-body { flex: 1 1 auto; min-block-size: 0; overflow: hidden auto; }
+  .ui-dialog[data-kind="sheet"] .ui-dialog-header, .ui-dialog[data-kind="sheet"] .ui-dialog-footer { flex: none; }
+  .ui-dialog[data-kind="sheet"] .ui-dialog-footer { padding-block-start: var(--space-4); border-block-start: 1px solid var(--color-border); }
 
   /* Tabs: text that darkens, with one underline that follows the selection. */
   .ui-tablist { display: flex; gap: var(--space-4); border-block-end: 1px solid var(--color-border); }

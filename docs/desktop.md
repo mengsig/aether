@@ -136,9 +136,37 @@ The app says when it is unsigned:
   (`libfuse2`). Without it, run it with `--appimage-extract-and-run`.
 - **macOS**: open the dmg and drag Aether to Applications.
 
-The app never starts or stops a daemon unless you turn on managed start in
-its settings, and even then it never stops one. Install and run the daemons
-as [install.md](install.md) describes.
+Install the daemons as [install.md](install.md) describes. The app starts a
+daemon only when managed start is on, and it never stops one on its own.
+
+### Setting up this computer
+
+The app's setup runs in three steps, each one when you click it:
+
+1. **Find the programs.** It runs `aether version` and `archon --version`.
+   Apps opened from a dock or menu often get a shorter `PATH` than a
+   terminal, so the app adds `~/.local/bin`, `~/.cargo/bin`,
+   `/usr/local/bin` and, on macOS, `/opt/homebrew/bin` after your own `PATH`
+   when they exist. Managed start uses the same `PATH`.
+2. **Connect Archon's tools.** The app first asks in a native dialog. If
+   Aether is already running, the same dialog says Aether may restart. If
+   you cancel, nothing is written and nothing is run. If you agree and
+   Archon has no config file yet (`$ARCHON_CONFIG_DIR/config.toml`, else on
+   Linux `$XDG_CONFIG_HOME/archon/config.toml` or
+   `~/.config/archon/config.toml`, on macOS
+   `~/Library/Application Support/archon/config.toml`), the app writes one
+   with `[aether] mode = "shared"`, so Archon uses this computer's Aether.
+   It never changes a config file that exists. Then it runs
+   `archon setup --json`, which registers Archon's tools with Aether. If
+   Aether started on its own while you answered and has not loaded the
+   tools, setup stops there; trying again asks with the restart named.
+3. **Start.** Clicking "Set up" turns managed start on. Aether reads its
+   tools only when it starts. If Aether was running without Archon's tools
+   and you agreed to the restart in step 2, the app runs `aether stop`,
+   waits until Aether has stopped, and starts it again; working agents
+   pause and pick up where they left off. Without that agreement nothing is
+   stopped. Then it starts Aether and Archon, leaving alone any that
+   already run.
 
 ## Updates
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { readInFlight, routeHref, selectConnections, selectEvents, useApp, useReread, useSelector } from "@aether-ui/core";
+import { navigate, readInFlight, routeHref, selectConnections, selectEvents, useApp, useReread, useSelector } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
 import { Button, EmptyState, Field, VirtualList } from "@aether-ui/ui";
 import { Section } from "../controls/kit.tsx";
@@ -8,24 +8,30 @@ import { records, ReadNote } from "../memory/shared.tsx";
 import { orderedEvents } from "./data.ts";
 import { StartAgent } from "./StartAgent.tsx";
 
-export default function ActivityScreen() {
+/** `start` opens the Start sheet on the first ready connection, for "Start a task" links (#/activity/start). */
+export default function ActivityScreen({ start = false }: { start?: boolean }) {
   const connections = Object.values(useSelector(selectConnections)).filter(c => c.daemon === "aether");
+  const starting = start ? connections.find(c => c.state === "ready")?.id : undefined;
   return <div className="ui-page b3-screen"><header className="ui-page-head b3-screen-head"><h1 className="ui-visually-hidden b3-screen-title">Activity</h1>
     <p className="ui-page-lede b3-screen-sub">Recent work across your connections.</p></header>
     {connections.length === 0 && <EmptyState title="Connect an Aether daemon to see activity" />}
-    {connections.map(c => <ConnectionActivity key={c.id} conn={c.id} label={c.label} />)}
+    {connections.map(c => <ConnectionActivity key={c.id} conn={c.id} label={c.label} startOpen={c.id === starting} />)}
   </div>;
 }
 
 /** The first history page reads the newest events, so the screen is not empty until something happens. */
 const NEWEST = Number.MAX_SAFE_INTEGER;
 
-function ConnectionActivity({ conn, label }: { conn: string; label: string }) {
+function ConnectionActivity({ conn, label, startOpen }: { conn: string; label: string; startOpen: boolean }) {
   const live = useSelector(selectEvents(conn));
   const [cursors, setCursors] = useState<number[]>([NEWEST]);
   const [family, setFamily] = useState("");
   const [agent, setAgent] = useState("");
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(startOpen);
+  const close = () => {
+    setOpen(false);
+    if (startOpen) navigate("#/activity");
+  };
   const reads = useSelector(state => state.reads[conn]);
   const pages = cursors.flatMap(before => records<aether.Event>(reads?.[`activity:before:${before}`]?.value));
   const all = orderedEvents([...pages, ...live]);
@@ -45,7 +51,7 @@ function ConnectionActivity({ conn, label }: { conn: string; label: string }) {
     {cursors.map(before => <HistoryPage key={before} conn={conn} before={before} />)}
     <Button disabled={Boolean(exhausted) || (lastRead !== undefined && !lastRead.error && readInFlight(lastRead)) || cursors.includes(oldest)}
       onClick={() => setCursors([...cursors, oldest])}>{exhausted ? "Beginning of history" : "Show older"}</Button>
-    {open && <StartAgent conn={conn} close={() => setOpen(false)} />}
+    {open && <StartAgent conn={conn} close={close} />}
   </Section>;
 }
 
