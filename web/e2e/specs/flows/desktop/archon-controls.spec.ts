@@ -173,5 +173,24 @@ test("a queued item exposes steering and saves its priority", async () => {
   await shoot("steer-item-dark");
   await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
   await shoot("steer-item-light");
-  await dialog.getByRole("button", { name: "Cancel" }).click();
+  const stage = dialog.getByLabel("Stage");
+  const model = dialog.getByLabel("Model");
+  await expect.poll(() => model.locator("option").count()).toBeGreaterThan(1);
+  await expect.poll(() => stage.locator("option").count()).toBeGreaterThan(1);
+  const stageId = await stage.locator("option").nth(1).getAttribute("value");
+  const modelId = await model.locator("option").nth(1).getAttribute("value");
+  assert.ok(stageId && modelId, "the catalog and queued plan offer concrete choices");
+  await stage.selectOption(stageId);
+  await model.selectOption(modelId);
+  await dialog.getByLabel("Effort").selectOption("low");
+  await dialog.getByRole("button", { name: "Apply changes" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(async () => {
+    const detail = await stack().archon.request({ cmd: "get_item", item: id });
+    return JSON.stringify(detail.data.item);
+  }).toContain('"effort":"low"');
+  await actions.getByRole("button", { name: "Steer item" }).click();
+  await dialog.getByLabel("Note").fill("Focus the queued work on the requested outcome.");
+  await dialog.getByRole("button", { name: "Apply changes" }).click();
+  await expect(dialog).toHaveCount(0);
 });
