@@ -24,11 +24,12 @@ export interface DagWorkspaceProps {
   readonly progressItems?: Readonly<Record<string, ArchonItem>> | null;
   readonly progressFailure?: string | null;
   readonly retryProgress?: () => void;
+  readonly initialShowCompleted?: boolean;
 }
 
 /** The graph, its canvas and its panel; the selection is the only state it keeps. */
-export function DagWorkspace({ graph, items, layout, progressItems = items, progressFailure = null, retryProgress }: DagWorkspaceProps) {
-  const [showCompleted, setShowCompleted] = useState(false);
+export function DagWorkspace({ graph, items, layout, progressItems = items, progressFailure = null, retryProgress, initialShowCompleted = false }: DagWorkspaceProps) {
+  const [showCompleted, setShowCompleted] = useState(initialShowCompleted);
   const allData = useMemo(() => dagData(graph, undefined, items), [graph, items]);
   const data = useMemo(() => showCompleted ? allData : dagData(graph, (node) => node.state !== "succeeded" && node.state !== "cancelled", items), [allData, graph, items, showCompleted]);
   const path = useMemo(() => criticalPath(data), [data]);
