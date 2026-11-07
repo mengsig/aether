@@ -12,13 +12,13 @@ test("shows the stored plan and submits a validated steer", async () => {
   const world = demoWorld();
   const entry = world.items.get("qi_rate_limit");
   if (!entry) throw new Error("missing item");
-  entry.detail.item = { ...entry.detail.item as object, model_plan: { build: [{ model: { provider: "codex", model: "astra" }, effort: "high" }] }, budget_usd: 12, stage_timeouts: { build: 600 } };
+  entry.detail.item = { ...entry.detail.item as object, model_plan: { build: [{ model: { provider: "codex", model: "astra" }, effort: "high" }] }, budget_usd: 12, stage_timeouts: { build: 10 } };
   h = await archonHarness({ protocol: 24 }, world);
   const container = await h.mount(<ItemRoute params={{ item: "qi_rate_limit" }} />);
   await h.until(() => container.textContent?.includes("codex/astra · high") === true, "stored settings");
   await h.until(() => !(byText(container, "button", "Steer item") as HTMLButtonElement).disabled, "steering permission");
   expect(container.textContent).toContain("Budget: $12");
-  expect(container.textContent).toContain("build: 600s");
+  expect(container.textContent).toContain("build: 10 min");
   await click(h, byText(container, "button", "Steer item"));
   await h.until(() => document.querySelector('select[disabled]') === null, "policy");
   await click(h, byText(document, "dialog button", "Apply changes"));

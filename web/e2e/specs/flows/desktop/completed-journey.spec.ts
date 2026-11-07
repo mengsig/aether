@@ -49,7 +49,7 @@ test("completed ask run and a two-member initiative render from daemon state", a
   const page = app.window;
   stack.engine.setScript(() => ({ name: "complete_task", arguments: { summary: SUMMARY, structured: { answer: "Ready", evidence: ["First", "Second"] } } }));
   const plan = { answer: [{ model: "mock/mock-1", effort: "low" }] };
-  const queued = await stack.archon.request({ cmd: "enqueue", title: TITLE, brief: "Answer the request.", pipeline: "ask", model_plan: plan });
+  const queued = await stack.archon.request({ cmd: "enqueue", title: TITLE, brief: "Answer the request.", pipeline: "ask", model_plan: plan, stage_timeouts: { answer: 5 } });
   assert.equal(queued.reply, "item");
   const item = String(queued.data.id);
   assert.match(item, /^qi_/);
@@ -67,7 +67,12 @@ test("completed ask run and a two-member initiative render from daemon state", a
   await expect(page.locator("#pipeline-title")).toHaveText("Run 1 · ask");
   await expect(page.locator(".pipeline-attempts")).toContainText("answer");
   await expect(page.locator(".pipeline-summary")).toContainText(/requested answer|Ready/);
+  await expect(page.locator(".pipeline-note")).toContainText("Final plan");
+  await expect(page.locator('[aria-label="Resolved plan settings"]')).toContainText("5 min (override)");
   await shots(page, "completed-run");
+  await route(page, `#/archon/items/${item}`);
+  await route(page, `#/archon/items/${item}/runs/${runs[0].id}`);
+  await expect(page.locator(".pipeline-note")).toContainText("Final plan");
   await setPaused(stack, true);
   const added = await stack.archon.request({ cmd: "repo_add", path: await fixtureRepository(stack.layout), name: "journey-repo" });
   assert.notEqual(added.reply, "error");

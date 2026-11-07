@@ -19,7 +19,7 @@ function Settings({ item }: { readonly item: archon.QueueItem }) {
   const stages = Object.entries(item.model_plan);
   return <div className="item-steering-summary" aria-label="Current item settings">
     <p>Budget: {item.budget_usd == null ? "Not set" : `$${item.budget_usd}`}</p>
-    <p>Stage timeouts: {Object.entries(item.stage_timeouts ?? {}).map(([stage, seconds]) => `${stage}: ${seconds}s`).join(", ") || "Defaults"}</p>
+    <p>Stage timeouts: {Object.entries(item.stage_timeouts ?? {}).map(([stage, minutes]) => `${stage}: ${minutes} min`).join(", ") || "Defaults"}</p>
     {stages.length ? stages.map(([stage, choices]) => <p key={stage}>{stage}: {choices.map((choice) => `${nameOf(choice.model)} · ${choice.effort}`).join(", ") || "No model selected"}</p>) : <p>Model plan: Not available</p>}
     <p className="item-muted">For a running item, its run page shows recorded plan settings and attempts.</p>
   </div>;
