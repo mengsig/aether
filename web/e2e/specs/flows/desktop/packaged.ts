@@ -92,6 +92,26 @@ async function devtoolsPort(profile: string, app: Spawned): Promise<number> {
   return port;
 }
 
+/**
+ * Waits until the app window has committed its own document. Attaching while it is still on the
+ * initial empty one races that first navigation, whose commit Playwright then never sees.
+ */
+async function appDocument(port: number, app: Spawned): Promise<void> {
+  const deadline = Date.now() + READY_MS;
+  for (;;) {
+    const reply = await fetch(`http://127.0.0.1:${port}/json/list`);
+    assert.ok(reply.ok, `DevTools lists the app's targets: HTTP ${reply.status}`);
+    const targets = await reply.json() as unknown;
+    assert.ok(Array.isArray(targets), "DevTools answers a target list");
+    const committed = (targets as Array<{ type?: unknown; url?: unknown; title?: unknown }>).some((target) =>
+      target.type === "page" && String(target.url).startsWith("app://") && /(^|· )Aether$/.test(String(target.title)));
+    if (committed) return;
+    assert.ok(app.child.exitCode === null && app.child.signalCode === null, `${path.basename(app.log)}: it exited before its window loaded`);
+    assert.ok(Date.now() < deadline, "timed out waiting for the app window's document");
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  }
+}
+
 async function appWindow(browser: Browser): Promise<Page> {
   let found: Page | undefined;
   await expect.poll(() => {
@@ -157,7 +177,9 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
     const shared = [`--user-data-dir=${profile}`, "--ozone-platform=wayland"];
     app = spawnLogged(binary, [...shared, "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", ...(options.args ?? [])],
       { env: appEnv, cwd: root, log });
-    browser = await chromium.connectOverCDP(`http://127.0.0.1:${await devtoolsPort(profile, app)}`);
+    const port = await devtoolsPort(profile, app);
+    await appDocument(port, app);
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
     const ipc = await until(() => swaySocket(runtime), "sway's IPC socket", sway);
     const compositor = { PATH: env.PATH, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display, SWAYSOCK: ipc };
     let runs = 0;
