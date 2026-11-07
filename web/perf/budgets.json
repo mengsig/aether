@@ -426,65 +426,65 @@
       "reason": "95th percentile frame: frames where a message commits or another agent's event rebuilds the rows."
     },
     "bundle.total_bytes": {
-      "budget": 780233,
+      "budget": 4243290,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 780233,
+      "measured": 4243290,
       "noise": 0,
-      "reason": "Everything web/dist ships, embedded in aether-remote."
+      "reason": "Everything web/dist ships, embedded in aether-remote. Mermaid's diagram chunks are most of it; they load only when a message draws a diagram."
     },
     "bundle.js_bytes": {
-      "budget": 694418,
+      "budget": 4150222,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 694418,
+      "measured": 4150222,
       "noise": 0,
-      "reason": "All JavaScript chunks."
+      "reason": "All JavaScript chunks, Mermaid's lazy diagram engines included."
     },
     "bundle.css_bytes": {
-      "budget": 81499,
+      "budget": 84601,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 79631,
+      "measured": 84601,
       "noise": 0,
       "reason": "All stylesheets."
     },
     "bundle.initial_bytes": {
-      "budget": 359381,
+      "budget": 364500,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 361901,
+      "measured": 364500,
       "noise": 0,
       "reason": "The entry script and stylesheet index.html loads before first paint."
     },
     "bundle.initial_gzip_bytes": {
-      "budget": 113424,
+      "budget": 114622,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 113738,
+      "measured": 114622,
       "noise": 0,
       "reason": "The entry's transfer size at gzip -9: what a remote device downloads first."
     },
     "bundle.js_gzip_bytes": {
-      "budget": 238421,
+      "budget": 1223339,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 238421,
+      "measured": 1223339,
       "noise": 0,
       "reason": "All JavaScript at gzip -9."
     },
     "bundle.largest_js_bytes": {
-      "budget": 338030,
+      "budget": 687735,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 338030,
+      "measured": 687735,
       "noise": 0,
       "reason": "The largest chunk: a route that pulled a heavy module into the entry shows here."
     }

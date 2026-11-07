@@ -60,8 +60,9 @@ outside the repository's licence allowlist. A scoped npm override makes Mermaid
 share the patched direct KaTeX 0.19 engine, avoiding both its vulnerable 0.16 dependency
 and a second math runtime.
 
-The initial-load byte budgets stay unchanged. Only total JavaScript, total distribution,
-gzipped JavaScript and largest-chunk budgets account for the measured lazy vendor cost.
+The lazy vendor cost lands in the total JavaScript, total distribution, gzipped JavaScript and
+largest-chunk budgets: Mermaid's diagram chunks take web/dist from about 0.8 MB to 4.2 MB.
+The initial load grew by 5 KB (1.2 KB gzipped) for the shared renderer and the Learn fixes.
 The service worker still precaches the whole distribution for offline use; lazy imports
 keep vendor parsing/execution out of the initial page, not out of that background cache.
 
