@@ -6,11 +6,6 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
-### Fixed
-
-- Delegated children inherit their parent's current deadline and cost budget,
-  including extensions made while a turn is in flight.
-
 ### Added
 
 - `list_view_modes` serves the shared TUI and desktop transcript-mode catalog,
@@ -26,6 +21,11 @@ release is also the text of its GitHub release.
   the other agent, inbox turns are drawn verbatim, open questions and approvals
   stay pinned until answered, and a composer with a `/` menu sends, stops and
   keeps unsent drafts.
+
+### Fixed
+
+- Delegated children inherit their parent's current deadline and cost budget,
+  including extensions made while a turn is in flight.
 
 ## 1.3.0
 

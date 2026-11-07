@@ -30,6 +30,34 @@ fn extend_delegation_limits(h: &Harness, parent: AgentId, extended: Timestamp) {
     );
 }
 
+async fn extend_during_resumed_turn(
+    h: &Harness,
+    parent: AgentId,
+    previous: Timestamp,
+) -> Timestamp {
+    let status = h
+        .wait_until(parent, |s| s.kind() == AgentStatusKind::Waiting)
+        .await;
+    assert!(!status.is_terminal());
+    assert_eq!(
+        h.store.agent(parent).unwrap().unwrap().config.deadline,
+        Some(previous)
+    );
+    let release = h.client.hold_next_response();
+    let requests_before = h.client.requests().len();
+    h.runtime
+        .send_message(parent, vec![ContentBlock::text("continue")], Actor::user())
+        .unwrap();
+    h.wait_for("resumed model request", || {
+        h.client.requests().len() > requests_before
+    })
+    .await;
+    let extended = previous + chrono::Duration::hours(1);
+    extend_delegation_limits(h, parent, extended);
+    release.cancel();
+    extended
+}
+
 async fn raised_limits_reach_delegation(after_old_deadline: bool, next_turn: bool) {
     let mut responses = Vec::new();
     if next_turn {
@@ -45,8 +73,8 @@ async fn raised_limits_reach_delegation(after_old_deadline: bool, next_turn: boo
     ]);
     let h = harness(responses).await;
     let release = h.client.hold_next_response();
-    let old = now() + chrono::Duration::seconds(5);
-    let extended = old + chrono::Duration::hours(1);
+    let old = now() + chrono::Duration::seconds(if after_old_deadline { 5 } else { 60 });
+    let mut extended = old + chrono::Duration::hours(1);
     let mut parent_spec = spec("delegate");
     let config = parent_spec.config.as_mut().unwrap();
     config.deadline = Some(old);
@@ -63,15 +91,7 @@ async fn raised_limits_reach_delegation(after_old_deadline: bool, next_turn: boo
     }
     release.cancel();
     if next_turn {
-        h.wait_until(parent.id, |s| s.kind() == AgentStatusKind::Waiting)
-            .await;
-        h.runtime
-            .send_message(
-                parent.id,
-                vec![ContentBlock::text("continue")],
-                Actor::user(),
-            )
-            .unwrap();
+        extended = extend_during_resumed_turn(&h, parent.id, extended).await;
     }
     let status = h.wait_until(parent.id, |s| s.is_terminal()).await;
     assert_eq!(status.kind(), AgentStatusKind::Completed);
