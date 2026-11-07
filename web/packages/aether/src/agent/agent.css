@@ -1,7 +1,7 @@
 @layer app {
-  /* The page fills the viewport under the shell header; only the transcript inside it scrolls. */
+  /* The page fills the viewport under the shell header: title, facts card, then the chat, which alone scrolls. */
   .agent {
-    grid-template-rows: auto minmax(0, 1fr); gap: var(--space-3); max-inline-size: 100rem;
+    grid-template-rows: auto auto minmax(0, 1fr); gap: var(--space-3); max-inline-size: 100rem;
     block-size: calc(100dvh - 3.5rem - var(--space-4) * 2); min-block-size: 30rem;
     margin-block-end: calc(var(--space-4) - var(--space-12));
   }

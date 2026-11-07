@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { until } from "../../harness/process.ts";
 import { AGENT_LIMITS, isRealModel } from "../../harness/real-engine.ts";
 import { agent, agentIds, cancelLive, capAgent, toolCallInputs } from "./daemon.ts";
@@ -65,10 +65,20 @@ async function expectReplyAndToolCall(run: Journey, id: string): Promise<void> {
   await expect(toggle, "the shell call unfolds").toHaveAttribute("aria-expanded", "true");
   const output = page.getByTestId("conv-tool-output").filter({ hasText: command }).first();
   await expect(output, "the unfolded call shows its command").toBeVisible();
+  await expectFactsAboveTranscript(page);
   await shootWindow(window, "agent", "tool-unfolded");
   await until(() => toolCallInputs(stack, id), (inputs) => inputs.some((input) => input.includes(RELEASE_FILE)), "the agent to hold in its shell call", REPLY_MS[variant]);
   const held = await agent(stack, id);
   assert.ok(!["completed", "failed", "cancelled"].includes(held.state), `the held agent still works: ${held.state}`);
+}
+
+/** The facts card and the transcript have rows of their own on the page: neither draws over the other. */
+async function expectFactsAboveTranscript(page: Locator): Promise<void> {
+  const facts = await page.locator(".agent-facts").boundingBox();
+  const toolbar = await page.locator(".conv-toolbar").boundingBox();
+  assert.ok(facts !== null && toolbar !== null, "the facts card and the transcript toolbar are laid out");
+  const factsEnd = facts.y + facts.height;
+  assert.ok(factsEnd <= toolbar.y, `the transcript starts below the facts card (facts end at ${factsEnd}, the toolbar at ${toolbar.y})`);
 }
 
 /** Sends while the agent holds in its shell call: the daemon keeps the message for its next turn. */
