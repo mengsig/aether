@@ -17,7 +17,7 @@ function availableModels(models: aether.ModelInfo[], policy: archon.ModelPolicy)
 
 function Settings({ item }: { readonly item: archon.QueueItem }) {
   const stages = Object.entries(item.model_plan);
-  return <div aria-label="Current item settings">
+  return <div className="item-steering-summary" aria-label="Current item settings">
     <p>Budget: {item.budget_usd == null ? "Not set" : `$${item.budget_usd}`}</p>
     <p>Stage timeouts: {Object.entries(item.stage_timeouts ?? {}).map(([stage, seconds]) => `${stage}: ${seconds}s`).join(", ") || "Defaults"}</p>
     {stages.length ? stages.map(([stage, choices]) => <p key={stage}>{stage}: {choices.map((choice) => `${nameOf(choice.model)} · ${choice.effort}`).join(", ") || "No model selected"}</p>) : <p>Model plan: Not available</p>}
