@@ -12,7 +12,9 @@ test("the fleet lists the daemon's agents live, on the faux engine", async ({ pa
 
   const requests = stack.engine.requests.length;
   await createAgent(stack, "Smoke worker", "Say hello from the fleet smoke test.");
-  const row = fleet.locator(".fleet-row", { has: await fleetLink(page, "Smoke worker") });
+  await fleetLink(page, "Smoke worker");
+  // `has` is queried from each row, so the link locator must not be scoped through the region.
+  const row = fleet.locator(".fleet-row", { has: page.getByRole("link", { name: "Smoke worker" }) });
   await expect(row).toBeVisible();
   await expect(row.locator(".fleet-model")).toHaveText("mock/mock-1");
   await expect.poll(() => stack.engine.requests.slice(requests).some((request) => request.lastUserText.includes("fleet smoke test"))).toBe(true);

@@ -133,5 +133,6 @@ it("keeps a question answer through navigation and clears it after sending", asy
   expect(reopened.querySelector<HTMLInputElement>(".queue-answer input")?.value).toBe("Keep the draft");
   await click(h, byText(reopened, ".queue-answer button", "Send"));
   expect(h.faux.commands("answer")[0]).toMatchObject({ question: "q_review_gate", text: "Keep the draft" });
-  expect(drafts.get("archon/question-q_review_gate")).toBeUndefined();
+  expect(drafts.get(connectionDraftKey("archon", CONN, "question-q_review_gate"))).toBeUndefined();
+  expect(drafts.keys().filter((key) => key.includes("question-"))).toEqual([]);
 });
