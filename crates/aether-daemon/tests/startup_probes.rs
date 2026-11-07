@@ -372,8 +372,10 @@ async fn hello_is_answered_while_engine_probes_run_and_engine_requests_wait() {
         "hello took {answered:?}, of which the host stalled {stalled:?}"
     );
     assert!(!probes.join("release").exists());
-    let status = client.status().await.unwrap();
-    assert_eq!(status.engines, [aether_protocol::ENGINES_STARTING]);
+    assert_eq!(
+        engines_read(&client).await,
+        [aether_protocol::ENGINES_STARTING]
+    );
 
     let creating = tokio::spawn(async move {
         client
@@ -407,7 +409,7 @@ async fn hello_is_answered_while_engine_probes_run_and_engine_requests_wait() {
     let client = aether_client::Client::connect(&config.socket)
         .await
         .unwrap();
-    let engines = client.status().await.unwrap().engines;
+    let engines = engines_read(&client).await;
     assert!(
         engines.iter().any(|label| label.starts_with("claude-code")),
         "{engines:?}"
@@ -423,4 +425,20 @@ async fn hello_is_answered_while_engine_probes_run_and_engine_requests_wait() {
         .unwrap()
         .unwrap()
         .unwrap();
+}
+
+/// The engines a fresh status read, waiting out one that missed its deadline.
+async fn engines_read(client: &aether_client::Client) -> Vec<String> {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let status = client.status().await.unwrap();
+            let unread = status.unavailable(aether_protocol::status_sections::ENGINES);
+            if status.stale.is_none() && unread.is_none() {
+                return status.engines;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("a status reads the engines")
 }

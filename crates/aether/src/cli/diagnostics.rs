@@ -93,14 +93,7 @@ pub(super) async fn doctor_report(socket: PathBuf, explicit_socket: bool) -> cra
         doctor::check_recovery(status.as_ref()),
         doctor::check_crash(&paths, &command),
         doctor::check_shutdown(&paths, answering, &command),
-        doctor::check_disk(
-            &paths,
-            disk_floor,
-            status
-                .as_ref()
-                .filter(|s| s.stale.is_none())
-                .and_then(|s| s.low_disk.as_ref()),
-        ),
+        doctor::check_disk_status(&paths, disk_floor, status.as_ref()),
         doctor::check_agent_temp(
             &paths,
             config.as_ref().and_then(|c| c.agents.temp_root.as_deref()),

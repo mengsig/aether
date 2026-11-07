@@ -321,6 +321,7 @@ fn a_slow_status_poll_is_not_stacked_and_its_failure_frees_the_next() {
         result: Err(ClientError::TimedOut {
             command: "status".into(),
             timeout: std::time::Duration::from_secs(60),
+            queries: None,
             host: None,
         }),
     });
@@ -366,6 +367,7 @@ fn a_slow_reply_is_not_blamed_on_an_older_build() {
     let timed_out = |command: &str| ClientError::TimedOut {
         command: command.into(),
         timeout: std::time::Duration::from_secs(60),
+        queries: None,
         host: None,
     };
     let slow = explain(&theme, &timed_out("status"), Then::Status, "aether");
@@ -383,6 +385,7 @@ fn a_timeout_on_an_overloaded_host_names_the_host_not_a_guess() {
     let error = ClientError::TimedOut {
         command: "status".into(),
         timeout: std::time::Duration::from_secs(60),
+        queries: None,
         host: Some("this host is overloaded: load 45.0 on 12 cores".into()),
     };
     let said = error.to_string();

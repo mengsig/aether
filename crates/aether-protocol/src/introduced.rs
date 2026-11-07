@@ -42,6 +42,9 @@ impl Command {
             | Self::WorkspaceDiscard { .. } => Introduced::Feature(features::WORKSPACE_REVIEW),
             Self::UpdateAgent { subtree: true, .. } => Introduced::Feature(features::SUBTREE_UPDATE),
             Self::ListAgentsPage { .. } => Introduced::Feature(features::AGENTS_PAGING),
+            Self::GetTree { after, limit, .. } if after.is_some() || limit.is_some() => {
+                Introduced::Feature(features::TREE_PAGES)
+            }
             Self::GetTree { role_prefix, root, .. } if role_prefix.is_some() || root.is_some() => {
                 Introduced::Feature(features::AGENTS_PAGING)
             }
@@ -225,6 +228,14 @@ mod tests {
             (
                 json!({"cmd": "get_tree", "run": null, "role_prefix": "x"}),
                 features::AGENTS_PAGING,
+            ),
+            (
+                json!({"cmd": "get_tree", "run": null, "after": agent}),
+                features::TREE_PAGES,
+            ),
+            (
+                json!({"cmd": "get_tree", "run": null, "limit": 10}),
+                features::TREE_PAGES,
             ),
             (
                 json!({"cmd": "get_transcript_page", "agent": agent}),

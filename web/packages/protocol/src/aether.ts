@@ -1,7 +1,7 @@
 // The Aether daemon protocol as TypeScript types and command builders.
 // Generated from clients/protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: 70f2e1a101f057452b5231080f7e3ff36eb9f8fdfe9268a66f6450c60c4ade1d
+// Schema SHA-256: 55f268054e55693b0194c13f29b1afccac5dad05d8fed990797afcef4972e551
 
 export const PROTOCOL_VERSION = 26;
 export const MIN_PROTOCOL_VERSION = 17;
@@ -265,8 +265,10 @@ export type AgentStatus =
 export type AgentStatusKind = "created" | "ready" | "running" | "waiting" | "blocked" | "completed" | "failed" | "cancelled" | "imported";
 
 export interface AgentTree {
+  "next_after"?: AgentId | null;
   "nodes": Record<string, unknown>;
   "roots": Array<AgentId>;
+  "stale"?: StatusStale | null;
 }
 
 /**
@@ -943,6 +945,7 @@ export interface DaemonStatus {
   "stale"?: StatusStale | null;
   "started_at": string;
   "tasks_active": number;
+  "unavailable"?: Array<UnavailableSection>;
   "usage_total": Usage;
   "version": string;
   "writes"?: WriteStats | null;
@@ -4549,6 +4552,7 @@ export interface RunSummary {
   "agents": number;
   "agents_live": number;
   "forecast_usd_next_hour": number;
+  "rate_approximate"?: boolean;
   "rate_usd_per_hour": number;
   "run": RunId;
   "started_at": string;
@@ -5248,6 +5252,14 @@ export type TurnOutcome =
   | TurnOutcomeFailed
   | TurnOutcomeInterrupted
   | TurnOutcomeNotStarted;
+
+/**
+ * A [`DaemonStatus`] section left out of a reply, and why.
+ */
+export interface UnavailableSection {
+  "reason": string;
+  "section": string;
+}
 
 /**
  * Why an absent receipt does not prove its key was never executed.
@@ -6050,11 +6062,16 @@ export function getTranscriptPage(args: Omit<GetTranscriptPageCommand, "cmd">): 
 }
 
 /**
- * The live graph: every agent in the run (or all runs) with relations.
+ * The live graph: the agents in the run (or all runs) with relations.
+ * One page: the newest live agents, then the newest agents of any state,
+ * at most `limit` of each (1 to 500, 500 when absent); `AgentTree.next_after`
+ * says older ones were left out.
  */
 export interface GetTreeCommand {
   "cmd": "get_tree";
+  "after"?: AgentId | null;
   "include_archived"?: boolean;
+  "limit"?: number | null;
   "role_prefix"?: string | null;
   "root"?: AgentId | null;
   "run"?: RunId | null;

@@ -198,3 +198,217 @@ fn ancestry_skips_unknown_ids_and_missing_parents_and_ends_on_cycles() {
     assert_eq!(cycle.len(), 2);
     assert!(cycle.iter().all(|x| x.id != bystander.id));
 }
+
+/// [`forest`] with most agents finished, some archived, some workers, over two runs.
+fn mixed_forest(size: usize) -> (Vec<Agent>, [RunId; 2]) {
+    let runs = [RunId::new(), RunId::new()];
+    let mut agents = forest(size);
+    for (n, agent) in agents.iter_mut().enumerate() {
+        if n % 4 != 0 {
+            agent.status = AgentStatus::Completed { summary: None };
+        }
+        agent.archived = n % 5 == 3;
+        agent.run = runs[n % 7 / 5];
+        if n % 3 == 1 {
+            agent.role = Role::new("worker");
+        }
+    }
+    (agents, runs)
+}
+
+/// Every page of `query`, from the store's SQL and from the in-memory page of
+/// its unpaged scope, checked to agree; then the ids they showed together.
+fn walk_pages(store: &SqliteStore, mut query: crate::TreeQuery) -> BTreeSet<AgentId> {
+    let scope: BTreeSet<AgentId> = store
+        .tree_scope(&query)
+        .unwrap()
+        .iter()
+        .map(|a| a.id)
+        .collect();
+    let mut shown_over_pages = BTreeSet::new();
+    for _ in 0..=scope.len() {
+        let sql = store.tree_page(&query).unwrap();
+        let memory = crate::tree_page_of(store.tree_scope(&query).unwrap(), &query).unwrap();
+        let shown: BTreeSet<AgentId> = sql.agents.iter().map(|a| a.id).collect();
+        assert_eq!(shown.len(), sql.agents.len(), "a page shows an agent once");
+        assert_eq!(
+            shown,
+            memory.agents.iter().map(|a| a.id).collect(),
+            "{query:?}"
+        );
+        assert_eq!(sql.next_after, memory.next_after, "{query:?}");
+        for agent in &sql.agents {
+            assert!(scope.contains(&agent.id), "only the scope is shown");
+            // Up to `limit` ancestors: past the scope's size none is left out.
+            let uncapped = query.limit >= scope.len();
+            if let Some(parent) = agent.parent.filter(|p| uncapped && scope.contains(p)) {
+                assert!(
+                    shown.contains(&parent),
+                    "a page holds its agents' in-scope parents"
+                );
+            }
+        }
+        shown_over_pages.extend(shown);
+        let Some(next) = sql.next_after else {
+            return shown_over_pages;
+        };
+        query.after = Some(next);
+    }
+    panic!("pages of {query:?} never ended");
+}
+
+#[test]
+fn tree_pages_agree_with_the_in_memory_page_and_together_show_the_scope() {
+    let store = SqliteStore::open_in_memory().expect("open");
+    let (agents, runs) = mixed_forest(48);
+    let mut commit = Commit::new();
+    for a in &agents {
+        commit = commit.mutate(Mutation::UpsertAgent(a.clone()));
+    }
+    store.commit(commit).expect("seed");
+    let nested = agents
+        .iter()
+        .find(|a| agents.iter().filter(|c| c.parent == Some(a.id)).count() > 1)
+        .expect("an agent with children");
+    let shapes = [
+        (None, None, false, None),
+        (None, None, true, None),
+        (Some(runs[0]), None, false, None),
+        (Some(runs[1]), None, true, Some("work")),
+        (None, Some(agents[0].id), true, None),
+        (Some(runs[0]), Some(nested.id), false, None),
+    ];
+    for (run, root, include_archived, prefix) in shapes {
+        for limit in [1, 3, crate::TREE_PAGE_MAX] {
+            let query = crate::TreeQuery {
+                run,
+                root,
+                include_archived,
+                role_prefix: prefix.map(str::to_owned),
+                after: None,
+                limit,
+            };
+            let scope: BTreeSet<AgentId> = store
+                .tree_scope(&query)
+                .unwrap()
+                .iter()
+                .map(|a| a.id)
+                .collect();
+            assert_eq!(
+                walk_pages(&store, query),
+                scope,
+                "every agent in scope is shown"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_rooted_tree_shows_its_finished_root_on_the_first_page() {
+    let store = SqliteStore::open_in_memory().expect("open");
+    let mut root = agent();
+    root.status = AgentStatus::Completed { summary: None };
+    let mut commit = Commit::new().mutate(Mutation::UpsertAgent(root.clone()));
+    for _ in 0..5 {
+        let mut child = agent();
+        child.parent = Some(root.id);
+        child.run = root.run;
+        child.status = AgentStatus::Completed { summary: None };
+        commit = commit.mutate(Mutation::UpsertAgent(child));
+    }
+    store.commit(commit).expect("seed");
+    let page = store
+        .tree_page(&crate::TreeQuery {
+            run: None,
+            root: Some(root.id),
+            include_archived: false,
+            role_prefix: None,
+            after: None,
+            limit: 1,
+        })
+        .unwrap();
+    assert!(
+        page.agents.iter().any(|a| a.id == root.id),
+        "the root is pinned"
+    );
+    assert_eq!(page.agents.len(), 2, "the root and one finished child");
+    assert!(
+        page.next_after.is_some(),
+        "four children are left for later pages"
+    );
+}
+
+/// Agents written oldest first in one commit, each finished, each under the
+/// one before it when `chained`.
+fn finished(count: usize, chained: bool) -> Vec<Agent> {
+    let mut agents: Vec<Agent> = Vec::with_capacity(count);
+    for _ in 0..count {
+        let mut next = agent();
+        next.status = AgentStatus::Completed { summary: None };
+        next.parent = agents.last().filter(|_| chained).map(|a| a.id);
+        agents.push(next);
+    }
+    assert!(agents.windows(2).all(|w| w[0].id < w[1].id), "ids grow");
+    agents
+}
+
+fn seed_all(store: &SqliteStore, agents: &[Agent]) {
+    let commit = agents.iter().fold(Commit::new(), |commit, a| {
+        commit.mutate(Mutation::UpsertAgent(a.clone()))
+    });
+    store.commit(commit).expect("seed");
+}
+
+#[test]
+fn a_selective_filter_reads_a_bounded_walk_and_goes_on_below_it() {
+    let store = SqliteStore::open_in_memory().expect("open");
+    let mut agents = finished(crate::sqlite::tree_pages::TREE_SCAN_MAX + 20, false);
+    for agent in &mut agents[..3] {
+        agent.role = Role::new("reviewer");
+    }
+    seed_all(&store, &agents);
+    let mut query = crate::TreeQuery {
+        run: None,
+        root: None,
+        include_archived: false,
+        role_prefix: Some("rev".into()),
+        after: None,
+        limit: 10,
+    };
+    let first = store.tree_page(&query).unwrap();
+    assert!(first.agents.is_empty(), "no reviewer among the newest read");
+    let stop = first
+        .next_after
+        .expect("the budget ran out, not the agents");
+    assert_eq!(stop, agents[20].id, "it stops at the last agent read");
+    query.after = Some(stop);
+    let second = store.tree_page(&query).unwrap();
+    let shown: Vec<AgentId> = second.agents.iter().map(|a| a.id).collect();
+    assert_eq!(shown, [agents[2].id, agents[1].id, agents[0].id]);
+    assert_eq!(second.next_after, None, "the walk read the rest");
+}
+
+#[test]
+fn a_page_holds_at_most_limit_ancestors_nearest_first() {
+    let store = SqliteStore::open_in_memory().expect("open");
+    let chain = finished(30, true);
+    seed_all(&store, &chain);
+    let query = crate::TreeQuery {
+        run: None,
+        root: None,
+        include_archived: false,
+        role_prefix: None,
+        after: None,
+        limit: 3,
+    };
+    let page = store.tree_page(&query).unwrap();
+    let shown: BTreeSet<AgentId> = page.agents.iter().map(|a| a.id).collect();
+    let expected: BTreeSet<AgentId> = chain[24..].iter().map(|a| a.id).collect();
+    assert_eq!(
+        shown, expected,
+        "three walked, then their three nearest above"
+    );
+    assert_eq!(page.next_after, Some(chain[27].id));
+    let memory = crate::tree_page_of(store.tree_scope(&query).unwrap(), &query).unwrap();
+    assert_eq!(page, memory, "the in-memory page caps them alike");
+}

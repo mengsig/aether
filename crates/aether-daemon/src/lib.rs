@@ -19,6 +19,7 @@ pub mod remote;
 mod secrets;
 mod startup;
 mod status_reads;
+mod tree_reads;
 mod usage_breakdown;
 
 use std::path::{Path, PathBuf};
@@ -185,6 +186,10 @@ pub struct Daemon {
     pub remote: remote::RemoteSlot,
     /// The reads behind `status`, shared by every request.
     pub(crate) status_reads: status_reads::StatusReads<status_reads::Figures>,
+    /// The reads behind `get_tree`, shared per request shape.
+    pub(crate) tree_reads: tree_reads::TreeReads,
+    /// The reads behind `get_github_watcher`: one at a time, however many ask.
+    pub(crate) watcher_reads: status_reads::StatusReads<aether_core::github::GithubWatcherStatus>,
     /// Noesis, dormant unless `[noesis] enabled`; the runtime's guard follows it.
     pub(crate) noesis: Arc<noesis::NoesisService>,
 }
@@ -508,6 +513,8 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             push: Some(push),
             remote: remote::RemoteSlot::default(),
             status_reads: Default::default(),
+            tree_reads: Default::default(),
+            watcher_reads: Default::default(),
             noesis: noesis.clone(),
         });
         noesis.resume_teaching(&runtime);
