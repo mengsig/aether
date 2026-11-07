@@ -22,6 +22,29 @@ test("a local refusal is a definite error reply and other failures remain visibl
   await assert.rejects(requestWithRefusal(async () => { throw new Error("link lost"); }, { req: 7 }), /link lost/);
 });
 
+test("memory writes and export require native confirmation before the frame is sent", async () => {
+  const sent: Frame[] = [];
+  const shown: unknown[] = [];
+  let allowed = false;
+  const link = { isOpen: true, request: async (text: string) => { sent.push(JSON.parse(text) as Frame); return {}; }, close: () => {} } as unknown as DaemonLink;
+  const host = { findDaemons: async () => [{ id: "aether:local", kind: "aether", label: "test", socket: "/private/aether.sock", reachable: true }],
+    openLink: async () => link, confirm: async (_owner: number, confirmation: unknown) => { shown.push(confirmation); return allowed; } } as unknown as BridgeHost;
+  const bridge = new Bridge(VALIDATOR, host);
+  const conn = await bridge.handle(APP_SENDER, OWNER, "connect", ["aether:local"]) as string;
+  for (const frame of [{ cmd: "consolidate_memories", dry_run: false }, { cmd: "memory_import", dry_run: false, artifact: "{}" }, { cmd: "memory_export" }]) {
+    await assert.rejects(send(bridge, conn, { ...frame, req: 1 }), /Cancelled/);
+    assert.equal(sent.length, 0);
+    allowed = true;
+    await send(bridge, conn, { ...frame, req: 2 });
+    assert.deepEqual(sent.at(-1), { ...frame, req: 2 });
+    allowed = false;
+    sent.length = 0;
+  }
+  assert.equal(shown.length, 6);
+  await send(bridge, conn, { cmd: "consolidate_memories", dry_run: true, req: 3 });
+  assert.equal(shown.length, 6);
+});
+
 /** An archond that welcomes with `protocol` and answers anything else Ok. */
 function bridgeToArchond(protocol: number | "garbled", sent: Frame[]): Bridge {
   const link = {

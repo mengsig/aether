@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import path from "node:path";
+import { promisify } from "node:util";
 import { expect, test, type Page } from "../../../harness/fixtures.ts";
 import { connection } from "../../../harness/pair.ts";
 import { startPrivateStack, stopPrivateStack, type PrivateStack } from "../private.ts";
@@ -7,7 +9,7 @@ import { launchPackaged, packagedBinary } from "./packaged.ts";
 import { aetherConn, route } from "./state.ts";
 
 let running: PrivateStack | undefined;
-let app: { window: Page; close(): Promise<void> } | undefined;
+let app: { window: Page; waylandDisplay: string; close(): Promise<void> } | undefined;
 let conn = "";
 
 function page(): Page {
@@ -69,7 +71,7 @@ test("repository creation, filtering and store counts agree", async () => {
   await expect(page().getByRole("region", { name: "Store" })).toContainText("1");
   await page().getByRole("tab", { name: "Repository", exact: true }).click();
   const repository = page().getByLabel("Repository filter");
-  await expect(repository.locator("option")).toHaveCount(2);
+  await expect(repository.locator("option")).toHaveCount(3);
   await repository.selectOption({ index: 1 });
   await expect(page().getByText("The private repository keeps its release notes here.")).toBeVisible();
   await expect(connection(page(), "aether")).toHaveAttribute("data-state", "ready");
@@ -90,4 +92,30 @@ test("a refused memory shows its reason and can be corrected or discarded", asyn
   await expect(sheet).toHaveCount(0);
   await route(page(), "#/inbox");
   await expect(page().getByRole("region", { name: "Recovery review" })).toHaveCount(0);
+});
+
+test("a reviewed import reaches the store after native confirmation", async () => {
+  const donor = await startPrivateStack();
+  let artifact: string;
+  try {
+    await donor.stack.aether.request({ cmd: "create_memory", spec: { text: "A memory imported from another private store.", kind: "fact", scope: { scope: "global" } } });
+    const exported = await donor.stack.aether.request({ cmd: "memory_export" });
+    assert.equal(exported.reply, "memory_export");
+    artifact = String(exported.data.artifact);
+  } finally {
+    await stopPrivateStack(donor);
+  }
+  assert.ok(app, "the packaged desktop is running");
+  await route(page(), `#/memory/${encodeURIComponent(conn)}`);
+  const maintenance = page().getByRole("region", { name: "Maintenance" });
+  await maintenance.getByLabel("Export file (.jsonl)").setInputFiles({ name: "memories.jsonl", mimeType: "application/jsonl", buffer: Buffer.from(artifact) });
+  await maintenance.getByRole("button", { name: "Dry run import" }).click();
+  await expect(maintenance).toContainText("Would insert");
+  await maintenance.getByRole("button", { name: "Import", exact: true }).click();
+  await page().getByRole("dialog", { name: "Import memories?" }).getByRole("button", { name: "Import memories" }).click();
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  await promisify(execFile)("wtype", ["-k", "Tab", "-k", "Return"], { env: { ...process.env, WAYLAND_DISPLAY: app.waylandDisplay, XDG_RUNTIME_DIR: path.dirname(app.waylandDisplay) } });
+  await expect(maintenance).toContainText("Imported", { timeout: 15_000 });
+  await expect(page().getByText("A memory imported from another private store.")).toBeVisible();
+  await screenshot("ux-017-import");
 });

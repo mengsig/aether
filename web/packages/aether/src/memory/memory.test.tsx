@@ -5,6 +5,7 @@ import { connected, click, buttonNamed, type, type Harness } from "../controls/f
 import { AGENT_ID, demoAgents } from "../controls/fixture/demo.ts";
 import MemoryScreen from "./MemoryScreen.tsx";
 import { MemoryRow } from "./MemoryRow.tsx";
+import { V2_FEATURES } from "./fixture/data.ts";
 let h: Harness;
 afterEach(() => h?.unmount());
 const memory: aether.MemoryRecord = { id: "mem_1", text: "Remember the invariant", kind: "fact", scope: { scope: "global" }, tags: ["design"], created_at: "2026-11-04", confidence: 1, importance: 1, provenance: {} };
@@ -148,7 +149,7 @@ test("scope and kind filters and forgotten toggle use exact query fields", async
 
 test("repository creation uses the operator root and refreshes the store count", async () => {
   let total = 0;
-  h = await connected({ features: ["memory_v2"], script: {
+  h = await connected({ features: V2_FEATURES, script: {
     memories: () => ({ tag: "memories", data: [] }),
     create_memory: () => { total++; return { tag: "memory", data: memory }; },
     memory_migration_status: () => ({ tag: "memory_migration_status", data: {

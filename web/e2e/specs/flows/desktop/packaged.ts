@@ -19,6 +19,7 @@ const SWAY_CONFIG = "output HEADLESS-1 resolution 1600x1000\nxwayland disable\n"
 
 export interface PackagedApp {
   readonly window: Page;
+  readonly waylandDisplay: string;
   close(): Promise<void>;
 }
 
@@ -119,7 +120,7 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
     app = spawnLogged(binary, [`--user-data-dir=${profile}`, "--ozone-platform=wayland", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0"],
       { env: appEnv, cwd: root, log });
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${await devtoolsPort(profile, app)}`);
-    return { window: await appWindow(browser), close };
+    return { window: await appWindow(browser), waylandDisplay: display, close };
   } catch (error) {
     const tails = `${logTail(log)}\n-- sway:\n${logTail(path.join(root, "sway.log"))}`;
     return failLaunch(error, `The packaged app did not start; its logs ended:\n${tails}`, close);

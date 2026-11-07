@@ -1,10 +1,10 @@
 import { useState } from "react";
 import type { aether } from "@aether-ui/protocol";
 import { Field, Sheet, Tabs } from "@aether-ui/ui";
-import { usePermission, useReread } from "@aether-ui/core";
+import { useApp, usePermission, useReread } from "@aether-ui/core";
 import { Action, RunNote, useRun } from "../controls/kit.tsx";
 import { invariant } from "../fleet/invariant.ts";
-import { AgentPicker, records } from "./shared.tsx";
+import { AgentPicker, records, ReadNote } from "./shared.tsx";
 export const kinds = ["fact", "decision", "lesson", "constraint", "preference"];
 export function CreateMemory({ conn, open, close, refresh }: { conn: string; open: boolean; close: () => void; refresh: () => Promise<unknown> }) {
   const [text, setText] = useState("");
@@ -14,6 +14,7 @@ export function CreateMemory({ conn, open, close, refresh }: { conn: string; ope
   const [agent, setAgent] = useState("");
   const [tags, setTags] = useState("");
   const run = useRun(conn);
+  const app = useApp();
   const workspaces = useReread(conn, "memory:workspaces", open ? { cmd: "list_workspaces" } : null, ["workspaces"]);
   const repositories = records<aether.Workspace>(workspaces?.value).filter(workspace => workspace.exists);
   const scope = createScope(target, repository.trim(), agent);
@@ -24,6 +25,7 @@ export function CreateMemory({ conn, open, close, refresh }: { conn: string; ope
     <Tabs label="Memory kind" selected={kind} onSelect={setKind} tabs={kinds.map(id => ({ id, label: id, panel: null }))} />
     <Tabs label="Memory scope" selected={target} onSelect={setTarget} tabs={["global", "repository", "agent"].map(id => ({ id, label: id.charAt(0).toUpperCase() + id.slice(1), panel: null }))} />
     {target === "repository" && (repositories.length ? <label className="b3-field"><span className="ui-field-label">Repository root</span><select className="b3-select" value={repository} onChange={e => setRepository(e.target.value)} disabled={disabled}><option value="">Choose a repository</option>{repositories.map(workspace => <option key={workspace.path} value={workspace.path}>{workspace.path}</option>)}</select></label> : <Field label="Repository root" value={repository} onChange={e => setRepository(e.target.value)} disabled={disabled} />)}
+    {target === "repository" && workspaces?.error && <ReadNote entry={workspaces} retry={() => app.reread(conn, "memory:workspaces", { cmd: "list_workspaces" }, ["workspaces"])} />}
     {target === "agent" && <AgentPicker conn={conn} label="Agent" value={agent} onChange={setAgent} disabled={disabled} />}
     <Field label="Tags" hint="Comma separated" value={tags} onChange={e => setTags(e.target.value)} disabled={disabled} />
     <Action conn={conn} command={command} label="Save memory" blocked={text.trim() === "" ? "Enter memory text" : scope === null ? SCOPE_BLOCK[target] ?? null : null} busy={run.status.state === "busy"}

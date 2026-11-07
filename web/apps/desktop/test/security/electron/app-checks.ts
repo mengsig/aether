@@ -113,7 +113,8 @@ export async function bridgeChecks(ctx: Context): Promise<void> {
       `return desktop.request(testConn, { cmd: "send_message", id: "x", text: "a".repeat(1024 * 1024), req: 9007 });`,
     ]) {
       const result = await call(body);
-      assert.ok(result.error !== undefined, `refused: ${body.slice(0, 80)}`);
+      const reply = result.ok as { result?: { Err?: { code?: string } } } | undefined;
+      assert.ok(result.error !== undefined || reply?.result?.Err?.code === "forbidden", `refused: ${body.slice(0, 80)}`);
     }
     assert.ok(!ctx.daemon.lines.some((line) => /"req":900[2-7]\b/.test(line)), "nothing refused reached the daemon");
   });

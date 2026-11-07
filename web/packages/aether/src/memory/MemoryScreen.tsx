@@ -18,6 +18,7 @@ export default function MemoryScreen({ params }: RouteProps) {
   const [text, setText] = useState("");
   const [scope, setScope] = useState("all");
   const [repository, setRepository] = useState("");
+  const [otherRepository, setOtherRepository] = useState(false);
   const [agent, setAgent] = useState("");
   const [kind, setKind] = useState("all");
   const [forgotten, setForgotten] = useState(false);
@@ -43,8 +44,9 @@ export default function MemoryScreen({ params }: RouteProps) {
     <p className="ui-page-lede b3-screen-sub">Review what stays with your agents.</p><Button onClick={() => setOpen(true)}>Create memory</Button></header>
     <StandingNotice conn={conn} />
     <Section title="Memories"><Field label="Search memories" value={text} onChange={e => setText(e.target.value)} />
-      <Tabs label="Scope" selected={scope} onSelect={setScope} tabs={[{ id: "all", label: "All scopes", panel: null }, { id: "global", label: "Global", panel: null }, { id: "repository", label: "Repository", panel: <label className="b3-field"><span className="ui-field-label">Repository filter</span><select className="b3-select" value={repository} onChange={e => setRepository(e.target.value)}><option value="">Choose a repository</option>{repositories.map(id => <option key={id} value={id}>{id}</option>)}</select></label> },
+      <Tabs label="Scope" selected={scope} onSelect={setScope} tabs={[{ id: "all", label: "All scopes", panel: null }, { id: "global", label: "Global", panel: null }, { id: "repository", label: "Repository", panel: <><label className="b3-field"><span className="ui-field-label">Repository filter</span><select className="b3-select" value={otherRepository ? "__other__" : repository} onChange={e => { setOtherRepository(e.target.value === "__other__"); setRepository(e.target.value === "__other__" ? "" : e.target.value); }}><option value="">Choose a repository</option>{repositories.map(id => <option key={id} value={id}>{id}</option>)}<option value="__other__">Other repository</option></select></label>{otherRepository && <Field label="Repository identity" value={repository} onChange={e => setRepository(e.target.value)} />}</> },
         { id: "agent", label: "Agent", panel: <AgentPicker conn={conn} label="Agent filter" value={agent} onChange={setAgent} /> }]} />
+      {scope === "repository" && repositoryChoices?.error && <ReadNote entry={repositoryChoices} retry={() => app.reread(conn, "memory:repositories", { cmd: "memories", query: { limit: 100, include_forgotten: true, include_superseded: true } }, ["memories"])} />}
       <Tabs label="Kind" selected={kind} onSelect={setKind} tabs={["all", ...kinds].map(id => ({ id, label: id, panel: null }))} />
       <label className="b3-check"><input type="checkbox" checked={forgotten} onChange={e => setForgotten(e.target.checked)} /><span>Include forgotten</span></label>
       {filterReady ? <ReadNote entry={entry} retry={refresh} /> : <p className="b3-note">Choose a scope to filter memories.</p>}
