@@ -44,27 +44,33 @@ function useWatchAgent(conn: ConnId, agent: string): void {
   }, [app, conn, agent, known]);
 }
 
-/** The lowest and highest inbox seq the loaded user turns name, or null when they name none. */
-function deliveredSpan(entries: readonly aether.TranscriptEntry[]): readonly [low: number, high: number] | null {
-  let span: [number, number] | null = null;
+/** Where the loaded inbox turns are: the lowest inbox seq they name and the last such turn's seq. */
+interface InboxSpan { readonly low: number; readonly lastTurn: number }
+
+function inboxSpan(entries: readonly aether.TranscriptEntry[]): InboxSpan | null {
+  let low = Number.POSITIVE_INFINITY;
+  let lastTurn: number | null = null;
   for (const entry of entries) {
     if (entry.message.role !== "user") continue;
     for (const block of entry.message.content) {
       const range = block.type === "text" ? seqRange(block.text) : null;
-      if (range !== null) span = span === null ? [range[0], range[1]] : [Math.min(span[0], range[0]), Math.max(span[1], range[1])];
+      if (range === null) continue;
+      low = Math.min(low, range[0]);
+      lastTurn = entry.seq;
     }
   }
-  return span;
+  invariant(lastTurn === null || Number.isSafeInteger(low), "a named inbox seq is a whole number");
+  return lastTurn === null ? null : { low, lastTurn };
 }
 
-/** Records read for one agent from seq `from` on; a turn below `from` needs a fresh read. */
+/** Records read for one agent from inbox seq `from` on; a turn naming a lower seq needs a fresh read. */
 interface InboxRead { readonly agent: string; readonly from: number; readonly records: Deliveries }
 
-/** The next `get_inbox` the loaded turns need: only seqs above what is read, or all from their lowest. */
-function nextRead(read: InboxRead | null, agent: string, span: readonly [number, number]) {
-  const kept = read !== null && read.agent === agent && read.from <= span[0] ? read : null;
-  if (kept !== null && kept.records.last >= span[1]) return null;
-  return { from: kept?.from ?? span[0], after: kept === null ? span[0] - 1 : kept.records.last, through: span[1], base: kept?.records ?? null };
+/** The next `get_inbox` the loaded turns need: after the cursor for turns written since, or all from their lowest seq. */
+function nextRead(read: InboxRead | null, agent: string, span: InboxSpan) {
+  const kept = read !== null && read.agent === agent && read.from <= span.low ? read : null;
+  if (kept !== null && kept.records.covers >= span.lastTurn) return null;
+  return { from: kept?.from ?? span.low, after: kept === null ? Math.max(span.low - 1, 0) : kept.records.cursor, covers: span.lastTurn, base: kept?.records ?? null };
 }
 
 /**
@@ -75,15 +81,22 @@ function nextRead(read: InboxRead | null, agent: string, span: readonly [number,
 function useDeliveries(conn: ConnId, agent: string, entries: readonly aether.TranscriptEntry[]): Deliveries | null {
   const app = useApp();
   const ready = useSelector(useCallback((state: State) => state.connections[conn]?.state === "ready", [conn]));
-  const span = useMemo(() => deliveredSpan(entries), [entries]);
+  const span = useMemo(() => inboxSpan(entries), [entries]);
+  // By value: a turn that names no delivery changes neither, so it starts no read.
+  const low = span?.low ?? null;
+  const lastTurn = span?.lastTurn ?? null;
   const [read, setRead] = useState<InboxRead | null>(null);
-  const need = useMemo(() => (span === null || !ready ? null : nextRead(read, agent, span)), [read, agent, span, ready]);
+  const need = useMemo(
+    () => (low === null || lastTurn === null || !ready ? null : nextRead(read, agent, { low, lastTurn })),
+    [read, agent, low, lastTurn, ready],
+  );
   useEffect(() => {
     if (need === null) return undefined;
     let live = true;
     app.send(conn, aether.getInbox({ agent, after: need.after }) as unknown as Record<string, unknown>).then((reply) => {
       invariant(reply.reply === "inbox" && Array.isArray(reply.data), "get_inbox answers with a list of items");
-      if (live) setRead({ agent, from: need.from, records: withDeliveries(need.base, reply.data as aether.InboxItem[], agent, need.through) });
+      const items = reply.data as aether.InboxItem[];
+      if (live) setRead({ agent, from: need.from, records: withDeliveries(need.base, { items, after: need.after, covers: need.covers }, agent) });
     }).catch((error: unknown) => {
       if (live) app.store.report(`Could not read ${agent}'s inbox, so its inbox turns are drawn as delivered: ${error instanceof Error ? error.message : String(error)}`, conn);
     });

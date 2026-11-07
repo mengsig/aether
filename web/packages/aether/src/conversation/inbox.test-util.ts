@@ -17,9 +17,9 @@ export const approved = (approval: string): aether.InboxKind =>
   ({ kind: "approval_resolved", approval, decision: { decision: "approved" } } as unknown as aether.InboxKind);
 export const wake: aether.InboxKind = { kind: "wake", reason: "timer" } as aether.InboxKind;
 
-/** The records an agent's inbox read returns, by seq. */
-export function records(kinds: Readonly<Record<number, aether.InboxKind>>): Deliveries {
+/** The records an agent's inbox read returns, by seq, read after every turn up to `covers` was written. */
+export function records(kinds: Readonly<Record<number, aether.InboxKind>>, covers = Number.MAX_SAFE_INTEGER): Deliveries {
   const items = Object.entries(kinds).map(([seq, kind]): aether.InboxItem =>
     ({ id: `ibx_${seq}`, agent_id: INBOX_AGENT, seq: Number(seq), delivered_at: "2026-11-07T09:00:00Z", kind }));
-  return withDeliveries(null, items, INBOX_AGENT, 0);
+  return withDeliveries(null, { items, after: 0, covers }, INBOX_AGENT);
 }

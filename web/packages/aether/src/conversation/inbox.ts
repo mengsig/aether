@@ -17,8 +17,13 @@ export type InboxSegment =
 /** The agent's inbox records (`get_inbox`) by seq: what each `[inbox n]` header really delivered. */
 export interface Deliveries {
   readonly bySeq: ReadonlyMap<number, aether.InboxKind>;
-  /** The highest seq the reads cover; a turn naming a higher one came after them, so it cannot be checked. */
-  readonly last: number;
+  /** The highest inbox seq the reads asked past or returned; the next read asks only after it. */
+  readonly cursor: number;
+  /**
+   * The transcript seq of the last turn written before a read: a delivery is written to the turn after
+   * it arrives, so every delivery such a turn holds is in `bySeq`. A later turn cannot be checked yet.
+   */
+  readonly covers: number;
 }
 
 const HEADER = /^\[inbox (\d+)\] (.*)$/;
@@ -77,14 +82,14 @@ interface Opened {
 /**
  * The deliveries in an inbox turn. With the agent's records, a header line opens a delivery only when
  * a record of that seq and kind exists and seqs ascend; any other header line is quoted text of the
- * delivery it sits in, and an operator's text must equal its record. Without records that cover the
- * turn, or when any boundary is in doubt, it stays one verbatim segment: no line of anyone's text is lost.
+ * delivery it sits in, and an operator's text must equal its record. `records` must cover the turn
+ * (`Deliveries.covers`). Without them, or when any boundary is in doubt, it stays one verbatim segment.
  */
 export function splitInbox(text: string, records: Deliveries | null = null): readonly InboxSegment[] {
   const trimmed = text.trim();
   if (!isInboxText(text)) return trimmed === "" ? [] : [{ kind: "operator", text: trimmed }];
   const verbatim: readonly InboxSegment[] = [{ kind: "verbatim", text: trimmed }];
-  if (records === null || (seqRange(trimmed)?.[1] ?? 0) > records.last) return verbatim;
+  if (records === null) return verbatim;
   const parts = splitByRecords(trimmed, records.bySeq);
   if (parts === null || !parts.every((part) => operatorIntact(part.segment, records.bySeq.get(part.seq)))) return verbatim;
   const kept = parts.map((part) => ({ ...part.segment, text: part.segment.text.trim() })).filter((s) => s.kind !== "operator" || s.text !== "");
@@ -116,20 +121,21 @@ function splitByRecords(text: string, records: Deliveries["bySeq"]): Opened[] | 
 }
 
 /**
- * `base` with a later `get_inbox` read added. The read was made once every turn up to seq `through`
- * was written, so a seq up to it with no record was never delivered: those headers are quoted text.
+ * `base` with a later `get_inbox` read added: the items after inbox seq `after`, read once every
+ * transcript turn up to seq `covers` was written. Only seqs the daemon returned move the cursor.
  */
-export function withDeliveries(base: Deliveries | null, items: readonly aether.InboxItem[], agent: string, through: number): Deliveries {
-  invariant(Number.isSafeInteger(through) && through >= 0, "a read covers seqs up to a whole number");
+export function withDeliveries(base: Deliveries | null, read: { readonly items: readonly aether.InboxItem[]; readonly after: number; readonly covers: number }, agent: string): Deliveries {
+  invariant(Number.isSafeInteger(read.after) && read.after >= 0 && (base === null || read.after === base.cursor), "a read asks after a whole seq, the cursor when it adds to one");
+  invariant(Number.isSafeInteger(read.covers) && read.covers >= 0, "a read covers turns up to a whole transcript seq");
   const bySeq = new Map(base?.bySeq);
-  let last = Math.max(base?.last ?? 0, through);
-  for (const item of items) {
+  let cursor = Math.max(base?.cursor ?? 0, read.after);
+  for (const item of read.items) {
     invariant(item.agent_id === agent, "get_inbox answers with the agent's own items");
-    invariant(!bySeq.has(item.seq), "an inbox seq names one item");
+    invariant(item.seq > read.after && !bySeq.has(item.seq), "an inbox seq after the cursor names one item");
     bySeq.set(item.seq, item.kind);
-    last = Math.max(last, item.seq);
+    cursor = Math.max(cursor, item.seq);
   }
-  return { bySeq, last };
+  return { bySeq, cursor, covers: Math.max(base?.covers ?? 0, read.covers) };
 }
 
 /** The lowest and highest `[inbox n]` seq in a turn's text, or null for none. */

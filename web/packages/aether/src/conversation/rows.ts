@@ -107,7 +107,8 @@ function inboxParts(text: string, records: Deliveries | null): Part[] {
 
 /**
  * Committed rows in seq order; a message left with nothing of its own to show has no row. `records`,
- * the agent's inbox items when read, decide where one delivery ends and the next begins.
+ * the agent's inbox items when read, decide where one delivery ends and the next begins in the turns
+ * they cover; a later turn is drawn verbatim until they are read again.
  */
 export function entryRows(entries: readonly aether.TranscriptEntry[], pairing: Pairing, meta: ReadonlyMap<string, InvocationMeta>, records: Deliveries | null = null): ConversationRow[] {
   const rows: ConversationRow[] = [];
@@ -119,7 +120,7 @@ export function entryRows(entries: readonly aether.TranscriptEntry[], pairing: P
     let delivered = false;
     for (const block of entry.message.content) {
       if (entry.message.role === "user" && block.type === "text" && isInboxText(block.text)) {
-        parts.push(...inboxParts(block.text, records));
+        parts.push(...inboxParts(block.text, records !== null && entry.seq <= records.covers ? records : null));
         delivered = true;
         continue;
       }
