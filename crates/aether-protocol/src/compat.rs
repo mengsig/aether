@@ -564,6 +564,7 @@ mod tests {
             ("list_runs", &["limit"]),
             ("list_schedules", &[]),
             ("list_tasks", &["query"]),
+            ("list_view_modes", &[]),
             ("list_workspaces", &[]),
             ("mark_notification_read", &["id"]),
             ("mcp_servers", &[]),
