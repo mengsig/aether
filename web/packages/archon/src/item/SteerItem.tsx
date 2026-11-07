@@ -93,6 +93,7 @@ export function SteerItem({ access, item, active, disabled, policy, onDone }: { 
     const invalid = validation(draft);
     if (invalid) return setError(invalid);
     if (draft.model && !choices.some((model) => nameOf(model.model) === draft.model)) return setError("Choose an available model.");
+    if (draft.effort && !efforts.includes(draft.effort as archon.Effort)) return setError("Choose an effort allowed by the current policy.");
     if (item.state.state === "queued" && (draft.model || draft.effort) && !item.model_plan[draft.stage]?.length) {
       return setError("Choose a stage with a model plan to update.");
     }
