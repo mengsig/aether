@@ -4,6 +4,7 @@
 
 import { matchRoute } from "@aether-ui/core";
 import type { ConnectionInfo } from "@aether-ui/protocol";
+import { act } from "react";
 import { afterEach, describe, expect, test } from "vitest";
 import { ScriptedDaemon } from "../kit/fixture/daemon.ts";
 import { fakeDesktop } from "../kit/fixture/desktop.test-util.ts";
@@ -65,6 +66,17 @@ describe("SettingsScreen", () => {
     expect(shown()).toBe(h.conn);
     await click(h, root, "Connect Archon tools");
 
+    const picker = root.querySelector<HTMLSelectElement>(".st-picker select");
+    expect(picker?.disabled).toBe(true);
+    expect(root.querySelector(".st-picker")?.textContent).toContain("Settings stays on this daemon until connecting Archon's tools ends.");
+    await act(async () => {
+      if (picker === null) return;
+      picker.value = "aether:laptop";
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await h.settle();
+    expect(shown()).toBe(h.conn);
+
     h.daemon.drop();
     await h.settle();
     expect(h.app.store.get().connections[h.conn]?.state).not.toBe("ready");
@@ -75,5 +87,6 @@ describe("SettingsScreen", () => {
     await h.settle();
     expect(root.querySelector('.su-step[data-state="failed"]')?.textContent).toContain("Archon could not be reached. Is it installed?");
     expect(h.app.store.get().reports.filter((r) => r.message.startsWith("Connecting Archon's tools stopped"))).toHaveLength(1);
+    expect(root.querySelector<HTMLSelectElement>(".st-picker select")?.disabled).toBe(false);
   });
 });

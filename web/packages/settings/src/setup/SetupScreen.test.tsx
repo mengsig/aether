@@ -70,6 +70,21 @@ describe("Welcome", () => {
     expect(relaunch.querySelector(".su-choice")).toBeNull();
   });
 
+  test("this computer's Aether running without Archon's tools offers to finish setup; a paired one does not", async () => {
+    const desktop = setupDesktop(() => { throw new Error("Archon could not be reached. Is it installed?"); });
+    const none = { mcp_servers: () => ({ tag: "mcp_servers", data: [] }) };
+    const h = current = await connected({ role: "local", desktop: desktop.bridge, script: none });
+    const root = await h.mount(<Welcome />);
+    expect(root.textContent).toContain("Archon's tools are not connected to Aether yet. Connect them to finish setting up this computer.");
+    await click(h, root, "Connect Archon tools");
+    expect(desktop.calls).toEqual(["connect"]);
+    h.unmount();
+    const paired = current = await connected({ role: "operator", desktop: setupDesktop(() => null).bridge, script: none });
+    const pairedRoot = await paired.mount(<Welcome />);
+    expect(pairedRoot.querySelector('a[href="#/activity/start"]')).not.toBeNull();
+    expect(pairedRoot.textContent).not.toContain("Connect Archon tools");
+  });
+
   test("once Aether answers, the overview leads to starting a task", async () => {
     const h = current = await connected({ role: "local", desktop: setupDesktop(() => null).bridge });
     const root = await h.mount(<Welcome />);

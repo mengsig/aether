@@ -51,3 +51,18 @@ test("nothing is offered when nothing is needed and no repair was started", asyn
   const root = await h.mount(<><ConnectArchon needed={false} reason="" /><ArchonToolsNotice /></>);
   expect(root.textContent).toBe("");
 });
+
+test("a remote Archon missing its tools is told where to connect them, never offered a repair of this computer", async () => {
+  const bridge = Object.assign(fakeDesktop().bridge, { setup: async () => { throw new Error("no repair runs here"); } });
+  const h = current = await connected({ role: "local", desktop: bridge });
+  const far = "archon:far";
+  const status = { mcp: { failed_refreshes: 0, health: { state: "not_loaded" } } };
+  h.app.store.update((state) => ({
+    ...state,
+    connections: { ...state.connections, [far]: { id: far, daemon: "archon", state: "ready", features: [], label: "far" } },
+    reads: { ...state.reads, [far]: { "setup.archon-status": { value: status, asOf: null, issued: 1, requested: 1, settled: 1, error: null, errorIssued: 0 } } },
+  }));
+  const root = await h.mount(<ArchonToolsNotice />);
+  expect(root.querySelector('aside[aria-label="Archon\'s tools"]')?.textContent).toContain("Connect them from the desktop app on the computer running Aether.");
+  expect(root.textContent).not.toContain("Connect Archon tools");
+});

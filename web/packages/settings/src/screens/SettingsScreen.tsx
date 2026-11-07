@@ -1,5 +1,5 @@
 // `#/settings/*`: the settings pages as tabs. The daemon the pages act on is the first ready Aether
-// connection unless the person picks another, or a running repair started on one; the pick is view state.
+// connection unless the person picks another; a running repair holds the one it started on until it ends.
 
 import { navigate, selectConnections, useSelector } from "@aether-ui/core";
 import type { ConnectionInfo, ConnId, RouteProps } from "@aether-ui/protocol";
@@ -34,10 +34,11 @@ export function pickConnection(candidates: readonly ConnectionInfo[], chosen: Co
   return candidates.find((c) => c.id === chosen) ?? candidates.find((c) => c.state === "ready") ?? candidates[0];
 }
 
-function ConnectionPicker({ candidates, value, onPick }: { readonly candidates: readonly ConnectionInfo[]; readonly value: ConnId; readonly onPick: (id: ConnId) => void }) {
+function ConnectionPicker({ candidates, value, held, onPick }: { readonly candidates: readonly ConnectionInfo[]; readonly value: ConnId; readonly held: boolean; readonly onPick: (id: ConnId) => void }) {
   if (candidates.length < 2) return null;
+  const hint = held ? "Settings stays on this daemon until connecting Archon's tools ends." : undefined;
   return (
-    <SelectField className="st-picker" label="Daemon" value={value} onChange={onPick} options={candidates.map((c) => ({ value: c.id, label: c.label }))} />
+    <SelectField className="st-picker" label="Daemon" value={value} disabled={held} hint={hint} onChange={onPick} options={candidates.map((c) => ({ value: c.id, label: c.label }))} />
   );
 }
 
@@ -58,7 +59,8 @@ export default function SettingsScreen({ params }: RouteProps) {
   const [chosen, setChosen] = useState<ConnId | null>(null);
   const pinned = useRepairPin();
   const candidates = useMemo(() => Object.values(connections).filter((c) => c.daemon === "aether"), [connections]);
-  const conn = pickConnection(candidates, chosen ?? pinned)?.id ?? null;
+  const conn = pickConnection(candidates, pinned ?? chosen)?.id ?? null;
+  const held = pinned !== null && conn === pinned;
   const tabs: TabItem[] = PAGES.map((id) => ({ id, label: LABELS[id], panel: pagePanel(id, conn) }));
   return (
     <div className="ui-page st-screen">
@@ -66,7 +68,7 @@ export default function SettingsScreen({ params }: RouteProps) {
         <h2 className="ui-visually-hidden st-screen-title">Settings</h2>
         <p className="ui-page-lede st-screen-sub">Connections, devices, remote access, providers and notifications.</p>
       </header>
-      {conn !== null && page !== "connections" ? <ConnectionPicker candidates={candidates} value={conn} onPick={setChosen} /> : null}
+      {conn !== null && page !== "connections" ? <ConnectionPicker candidates={candidates} value={conn} held={held} onPick={setChosen} /> : null}
       <Tabs label="Settings pages" tabs={tabs} selected={page} onSelect={(id) => navigate(`#/settings/${id}`)} />
     </div>
   );

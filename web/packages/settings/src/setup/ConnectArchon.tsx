@@ -82,13 +82,16 @@ export function ArchonToolsNotice() {
   return <ArchonHealthNotice conn={archonConn.id} />;
 }
 
+/** A remote Archon's tools belong to the Aether on its own computer, so only the local one is repaired here. */
 function ArchonHealthNotice({ conn }: { readonly conn: string }) {
   const app = useApp();
+  const local = app.manager.get(conn)?.endpoint.transport.id === "ipc";
   const entry = useReread(conn, STATUS.key, STATUS.command, STATUS.tags);
   const status = entry?.value as archon.DaemonStatus | null | undefined;
   const view = status !== null && typeof status === "object" ? archonHealth(status.mcp) : null;
   const needed = view !== null && (view.state === "missing" || view.state === "failed");
   const reason = view !== null && view.state !== "ready" ? `${view.detail} Archon's runs cannot use its tools until they are connected.` : "";
   const reread = () => void app.reread(conn, STATUS.key, STATUS.command, STATUS.tags);
-  return <ConnectArchon needed={needed} reason={reason} onDone={reread} banner />;
+  invariant(!needed || reason !== "", "a missing tool server is explained");
+  return <ConnectArchon needed={needed} reason={reason} remote={!local} onDone={reread} banner />;
 }

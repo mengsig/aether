@@ -1,10 +1,16 @@
 // The overview at #/: on a computer with nothing set up, one clear way to set it up (and pairing as
 // the second choice); once connected, the next thing to do.
 
-import { selectConnections, useApp, useCapabilities, useSelector } from "@aether-ui/core";
+import { selectConnections, useApp, useCapabilities, useReread, useSelector } from "@aether-ui/core";
+import type { aether as wire, ConnId } from "@aether-ui/protocol";
 import { useMemo } from "react";
 import { invariant } from "../kit/invariant.ts";
+import { listOf } from "../screens/read.tsx";
+import { ConnectArchon } from "./ConnectArchon.tsx";
+import { archonTools } from "./readiness.ts";
 import { desktopSetup } from "./steps.ts";
+
+const MCP = { key: "settings.mcp", command: { cmd: "mcp_servers" }, tags: ["mcp_servers"] } as const;
 import "./setup.css";
 
 export function Welcome() {
@@ -13,7 +19,10 @@ export function Welcome() {
   const caps = useCapabilities();
   const connections = Object.values(useSelector(selectConnections));
   const aether = connections.filter((c) => c.daemon === "aether");
-  if (aether.some((c) => c.state === "ready")) return <Connected archon={connections.some((c) => c.daemon === "archon" && c.state === "ready")} />;
+  if (aether.some((c) => c.state === "ready")) {
+    const local = canSetUp ? aether.find((c) => c.state === "ready" && app.manager.get(c.id)?.endpoint.transport.id === "ipc") : undefined;
+    return <Connected archon={connections.some((c) => c.daemon === "archon" && c.state === "ready")} local={local?.id ?? null} />;
+  }
   if (aether.length > 0) return <Waiting text="Connecting to Aether…" canSetUp={canSetUp} />;
   if (caps["desktop.managed_start"] === true) return <Waiting text="Starting Aether and Archon on this computer…" canSetUp={canSetUp} />;
   return <FirstRun canSetUp={canSetUp} />;
@@ -61,7 +70,23 @@ function Waiting({ text, canSetUp }: { readonly text: string; readonly canSetUp:
   );
 }
 
-function Connected({ archon }: { readonly archon: boolean }) {
+/**
+ * This computer's Aether may already run without Archon's tools, as when it was started before the
+ * app's first launch: setup is not finished then, so the home offers to finish it first.
+ */
+function FinishSetup({ conn }: { readonly conn: ConnId }) {
+  const app = useApp();
+  const entry = useReread(conn, MCP.key, MCP.command, MCP.tags);
+  const servers = listOf<wire.McpServerHealth>(entry?.value);
+  const tools = servers === null ? null : archonTools(servers);
+  const left = tools !== null && (tools.state === "missing" || tools.state === "failed") ? tools : null;
+  invariant(left === null || left.detail.trim() !== "", "an unfinished setup says what is left");
+  const reason = left === null ? "" : `${left.detail} Connect them to finish setting up this computer.`;
+  const reread = () => void app.reread(conn, MCP.key, { cmd: "mcp_servers", refresh: true }, MCP.tags);
+  return <ConnectArchon needed={left !== null} reason={reason} origin={conn} onDone={reread} />;
+}
+
+function Connected({ archon, local }: { readonly archon: boolean; readonly local: ConnId | null }) {
   return (
     <div className="ui-page su-page">
       <section className="su-card su-welcome" aria-labelledby="su-home-title">
@@ -70,6 +95,7 @@ function Connected({ archon }: { readonly archon: boolean }) {
           <h1 id="su-home-title" className="su-title">What should an agent do next?</h1>
           <p className="su-lede">Start a task and follow it as it runs.</p>
         </header>
+        {local === null ? null : <FinishSetup conn={local} />}
         <footer className="su-actions">
           <a className="ui-button su-primary" data-variant="primary" data-size="md" href="#/activity/start">Start a task</a>
           <a className="ui-link" href="#/activity">See recent activity</a>
