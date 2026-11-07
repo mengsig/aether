@@ -66,7 +66,8 @@ function Controls({ item, draft, set, choices, efforts, policyReady }: FormProps
     </select></label>
     <label className="queue-select"><span className="ui-field-label">Note</span><textarea className="ui-field-input" rows={3} value={draft.note} onChange={(e) => set({ note: e.target.value })} /></label>
     <Field label="Budget (USD)" type="number" min="0" step="any" value={draft.budget} onChange={(e) => set({ budget: e.target.value })} />
-    <Field label="Extra time (minutes)" type="number" min="1" step="1" value={draft.minutes} onChange={(e) => set({ minutes: e.target.value })} />
+    <Field label="Extra time (minutes)" type="number" min="1" step="1" disabled={item.state.state !== "running"} value={draft.minutes} onChange={(e) => set({ minutes: e.target.value })} />
+    {item.state.state !== "running" ? <p className="item-muted">Extra time can be added once a stage is running.</p> : null}
   </>;
 }
 

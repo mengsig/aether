@@ -34,10 +34,10 @@ test("shows the stored plan and submits a validated steer", async () => {
   await type(h, field("Effort"), "medium");
   await type(h, field("Note"), "  Focus on tests  ");
   await type(h, field("Budget"), "20");
-  await type(h, field("Extra time"), "15");
+  expect((field("Extra time") as HTMLInputElement).disabled).toBe(true);
   await click(h, byText(document, "dialog button", "Apply changes"));
   expect(h.faux.commands("update_item")).toEqual([expect.objectContaining({ item: "qi_rate_limit", patch: { model_plan: { build: [{ model: { provider: "codex", model: "astra" }, effort: "medium" }] } } })]);
-  expect(h.faux.commands("steer_item")).toEqual([expect.objectContaining({ item: "qi_rate_limit", steer: { stage: "build", note: "Focus on tests", budget_usd: 20, extend_minutes: 15 } })]);
+  expect(h.faux.commands("steer_item")).toEqual([expect.objectContaining({ item: "qi_rate_limit", steer: { stage: "build", note: "Focus on tests", budget_usd: 20 } })]);
 });
 
 
@@ -51,6 +51,19 @@ test("updates the priority of a queued item", async () => {
   await type(h, select, "high");
   await click(h, byText(container, "button", "Update priority"));
   expect(h.faux.commands("update_item")).toEqual([expect.objectContaining({ item: "qi_rate_limit", patch: { priority: "high" } })]);
+});
+
+test("allows extra time only for a running stage", async () => {
+  h = await archonHarness({ protocol: 24 });
+  const container = await h.mount(<ItemRoute params={{ item: "qi_dark_mode" }} />);
+  await h.until(() => container.textContent?.includes("Steer item") === true && !(byText(container, "button", "Steer item") as HTMLButtonElement).disabled, "steering permission");
+  await click(h, byText(container, "button", "Steer item"));
+  const field = document.querySelector<HTMLInputElement>('dialog input[type="number"][step="1"]');
+  if (!field) throw new Error("missing extra time field");
+  expect(field.disabled).toBe(false);
+  await type(h, field, "15");
+  await click(h, byText(document, "dialog button", "Apply changes"));
+  expect(h.faux.commands("steer_item")).toEqual([expect.objectContaining({ item: "qi_dark_mode", steer: { extend_minutes: 15 } })]);
 });
 
 test.each([{ protocol: 23 as const }, { protocol: 24 as const, role: "observer" as const }])("refuses edits without a protocol 24 operator", async (options) => {
