@@ -67,6 +67,12 @@ pub fn author(
                 .to_string(),
         );
     }
+    if Sealer::new(args.explanation.iter()).holds(visible_text) {
+        problems.push(
+            "your visible message gives away the explanation; keep it until the learner answers"
+                .to_string(),
+        );
+    }
     if problems.is_empty() {
         Ok(authored)
     } else {

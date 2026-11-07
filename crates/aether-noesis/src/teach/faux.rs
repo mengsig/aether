@@ -6,6 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use serde_json::Value;
 
 use super::engine::{AgentSpec, Engine, EngineError, Input, ModelInfo, Step, ToolCall};
+use super::seal::Sealer;
 use crate::budget::{Billing, Spend};
 use crate::prompts::Agent;
 
@@ -19,6 +20,8 @@ pub struct FauxEngine {
     pub spawned: Vec<(String, AgentSpec)>,
     pub inputs: Vec<(String, Input)>,
     pub steps_run: usize,
+    /// For each step run, the live seal it was given.
+    pub step_seals: Vec<Sealer>,
     pub fail_spawn: bool,
     /// Refuse this many next deliveries with `NotSent`.
     pub fail_deliveries: usize,
@@ -137,9 +140,10 @@ impl Engine for FauxEngine {
     }
 
     /// An agent without a scripted step replies with nothing and waits.
-    fn step(&mut self, agent: &str) -> Result<Step, EngineError> {
+    fn step(&mut self, agent: &str, live: &Sealer) -> Result<Step, EngineError> {
         let kind = self.kind_of(agent).expect("a step for a spawned agent");
         self.steps_run += 1;
+        self.step_seals.push(live.clone());
         let next = self.scripts.get_mut(&kind).and_then(VecDeque::pop_front);
         next.unwrap_or_else(|| Ok(Step::default()))
     }

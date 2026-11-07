@@ -5,6 +5,8 @@
 
 use serde_json::Value;
 
+use super::seal::Sealer;
+
 use crate::budget::{Billing, Spend};
 use crate::prompts::Agent;
 use crate::tools::ToolDef;
@@ -138,6 +140,8 @@ pub trait Engine {
     fn charges_own_calls(&self) -> bool {
         false
     }
-    /// Run one model call over the agent's pending inputs.
-    fn step(&mut self, agent: &str) -> Result<Step, EngineError>;
+    /// Run one model call over the agent's pending inputs. While `live`
+    /// holds any secret the step's text is never streamed, and the
+    /// transcript keeps it only as [`Sealer::step_text`] reads it.
+    fn step(&mut self, agent: &str, live: &Sealer) -> Result<Step, EngineError>;
 }

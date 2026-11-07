@@ -874,6 +874,13 @@ validate at the end of the reply. A reply with a nonstandard prefix or field
 order waits for complete validation before any public text is shown. Final
 engine receipts settle usage without repeating text already streamed.
 
+Because text is shown as it streams, the seal holds before a step's tool
+calls are known. A question whose key or explanation, or a problem whose
+solution, appears in any text its turn has shown is refused, however often
+the model retries it. A step that runs while an answer is unrevealed (an
+active problem's solution) streams no text, and its transcript keeps the
+text as `<withheld: …>` if it gives that answer away.
+
 In the Learn screen's settings:
 
 - **Model choosers.** The teaching and light models are picked from

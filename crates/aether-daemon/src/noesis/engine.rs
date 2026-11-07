@@ -27,7 +27,7 @@ use aether_noesis::budget::{Billing, INTERACTIVE_BUDGET_SETTING, Spend};
 use aether_noesis::prompts;
 use aether_noesis::teach::engine::ModelInfo;
 use aether_noesis::teach::{
-    AgentSpec, Engine, EngineError, Input, Step, ToolCall, ToolResult, agent_for_role,
+    AgentSpec, Engine, EngineError, Input, Sealer, Step, ToolCall, ToolResult, agent_for_role,
 };
 use aether_noesis::tools::{self, ToolName};
 use aether_runtime::noesis_guard::{NoesisBudget, NoesisCharge, NoesisRefusal, lane_of};
@@ -290,8 +290,14 @@ impl AetherEngine<'_> {
     }
 
     /// One model call over the agent's transcript, ended if the service
-    /// stops or the agent ends (a cancel) while it runs.
-    fn invoke(&self, agent: &Agent, request: ModelRequest) -> Result<CallEnd, EngineError> {
+    /// stops or the agent ends (a cancel) while it runs. Its text streams
+    /// live only when `stream_text`; the turn's deltas stream either way.
+    fn invoke(
+        &self,
+        agent: &Agent,
+        request: ModelRequest,
+        stream_text: bool,
+    ) -> Result<CallEnd, EngineError> {
         let host = self.host;
         let handle = tokio::runtime::Handle::current();
         let cancel = host.cancel.child_token();
@@ -314,20 +320,26 @@ impl AetherEngine<'_> {
                         return Ok(stopped(settled_usage(opening).await));
                     }
                 };
-                read_reply(stream, &cancel, ended, &mut |text| live.text(text)).await
+                let mut on_text = |text: &str| {
+                    if stream_text {
+                        live.text(text);
+                    }
+                };
+                read_reply(stream, &cancel, ended, &mut on_text).await
             })
         })
     }
 
     /// Record the reply and its usage, so the day's spend survives a restart.
-    /// Only the agent's stats are written, over the row as it is now.
-    fn record_reply(&self, agent: AgentId, response: &ModelResponse) -> Result<(), EngineError> {
-        let content: Vec<ContentBlock> = response
-            .content
-            .iter()
-            .filter(|block| !matches!(block, ContentBlock::Thinking { .. }))
-            .cloned()
-            .collect();
+    /// Only the agent's stats are written, over the row as it is now, and
+    /// its text as `live` seals it.
+    fn record_reply(
+        &self,
+        agent: AgentId,
+        response: &ModelResponse,
+        live: &Sealer,
+    ) -> Result<(), EngineError> {
+        let content = transcript_content(response, live);
         let row = self
             .host
             .runtime
@@ -511,7 +523,7 @@ impl Engine for AetherEngine<'_> {
         true
     }
 
-    fn step(&mut self, agent: &str) -> Result<Step, EngineError> {
+    fn step(&mut self, agent: &str, live: &Sealer) -> Result<Step, EngineError> {
         let row = self.agent(agent)?;
         if row.status.is_terminal() {
             return Err(not_sent(format!("agent {agent} is {}", row.status.kind())));
@@ -520,7 +532,7 @@ impl Engine for AetherEngine<'_> {
         let mut attempt = 1;
         let response = loop {
             self.gate(&row)?;
-            match self.invoke(&row, request.clone())? {
+            match self.invoke(&row, request.clone(), live.is_empty())? {
                 CallEnd::Replied(response) => break response,
                 CallEnd::AgentEnded(spent) => return Err(self.record_cut_short(row.id, spent)),
                 CallEnd::Broke(spent, error)
@@ -538,7 +550,7 @@ impl Engine for AetherEngine<'_> {
         if let Some(open) = self.charge.as_mut() {
             open.spent += response.usage;
         }
-        self.record_reply(row.id, &response)?;
+        self.record_reply(row.id, &response, live)?;
         Ok(step_of(&response))
     }
 }
@@ -678,6 +690,27 @@ fn stopped(usage: Usage) -> CallEnd {
         usage,
         ModelError::new(ModelErrorClass::Cancelled, SERVICE_STOPPED),
     )
+}
+
+/// A reply's blocks as its transcript keeps them: thinking dropped and
+/// text sealed against the secrets live while it was written.
+fn transcript_content(response: &ModelResponse, live: &Sealer) -> Vec<ContentBlock> {
+    let content: Vec<ContentBlock> = response
+        .content
+        .iter()
+        .filter(|block| !matches!(block, ContentBlock::Thinking { .. }))
+        .map(|block| match block {
+            ContentBlock::Text { text } => ContentBlock::Text {
+                text: live.step_text(text),
+            },
+            other => other.clone(),
+        })
+        .collect();
+    debug_assert!(content.iter().all(|block| match block {
+        ContentBlock::Text { text } => !live.holds(text),
+        _ => true,
+    }));
+    content
 }
 
 /// The step's turn number for live deltas: one more than the replies so far.

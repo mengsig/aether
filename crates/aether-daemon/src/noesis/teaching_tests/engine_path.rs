@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::*;
 
+mod live_seal;
 mod streaming;
 
 const ENGINE_MODEL: &str = "faux-engine/tutor";

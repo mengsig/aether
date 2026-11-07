@@ -55,6 +55,11 @@ impl Sealer {
         }
     }
 
+    /// Whether this seals nothing, so text may be shown as it is written.
+    pub fn is_empty(&self) -> bool {
+        self.secrets.is_empty()
+    }
+
     /// Whether `text` holds any secret.
     pub fn holds(&self, text: &str) -> bool {
         if self.secrets.is_empty() {

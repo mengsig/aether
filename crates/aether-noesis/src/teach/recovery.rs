@@ -54,8 +54,10 @@ fn raw_tool_calls_and_steps_debug_only_the_sealed_projection() {
     );
 }
 
+/// Step text streams as it is written, so a key any text of the turn showed
+/// is never posed, however the model retries it.
 #[test]
-fn a_pose_refused_for_giving_away_its_key_withholds_the_step_text() {
+fn a_key_the_turn_already_showed_is_never_posed() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = t
@@ -69,11 +71,25 @@ fn a_pose_refused_for_giving_away_its_key_withholds_the_step_text() {
     prober.script(Agent::Prober, &leaky, vec![(ASK, question.clone())]);
     prober.script(Agent::Prober, &leaky, vec![(ASK, malformed)]);
     prober.script(Agent::Prober, "One question:", vec![(ASK, question)]);
+    prober.script(
+        Agent::Prober,
+        "Another one:",
+        vec![(ASK, capital_question())],
+    );
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingAnswer);
     let texts: Vec<&str> = report.steps.iter().map(|s| s.text.as_str()).collect();
-    assert_eq!(texts, [WITHHELD, WITHHELD, "One question:"]);
-    assert!(report.steps[0].calls[0].is_error && report.steps[1].calls[0].is_error);
+    assert_eq!(texts, [WITHHELD, WITHHELD, "One question:", "Another one:"]);
+    let refused: Vec<bool> = report.steps.iter().map(|s| s.calls[0].is_error).collect();
+    assert_eq!(
+        refused,
+        [true, true, true, false],
+        "the shown key is refused again"
+    );
+    let open = session(&t, &id)
+        .open_question
+        .expect("the fresh question is open");
+    assert_eq!(open.prompt, "Capital of France?");
     assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
 }
 
@@ -187,21 +203,35 @@ fn step_text_is_withheld_for_every_sealed_text_shape() {
     let explained = json!({"kind": "recall", "prompt": "Name it", "answer_key": "organelle", "explanation": SECRET});
     let unreadable = json!("not an object");
     let prober = t.engine_mut();
-    // The refused shapes come first; the explained pose succeeds and parks.
-    for input in [goal, json!(stringified), unreadable, explained] {
+    // Every shape is refused, the explained pose too, since the text showed
+    // its explanation; once shown it stays refused, so a fresh pose parks.
+    for input in [goal, json!(stringified), unreadable, explained.clone()] {
         prober.script(Agent::Prober, &leaky, vec![(ASK, input)]);
     }
+    prober.script(Agent::Prober, "Name it:", vec![(ASK, explained)]);
+    let fresh = json!({"kind": "recall", "prompt": "Name it", "answer_key": "organelle", "explanation": "it makes ATP"});
+    prober.script(Agent::Prober, "Then this:", vec![(ASK, fresh)]);
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingAnswer);
     let texts: Vec<&str> = report.steps.iter().map(|s| s.text.as_str()).collect();
-    assert_eq!(texts, [WITHHELD; 4]);
+    assert_eq!(
+        texts,
+        [
+            WITHHELD,
+            WITHHELD,
+            WITHHELD,
+            WITHHELD,
+            "Name it:",
+            "Then this:"
+        ]
+    );
     let refused: Vec<bool> = report.steps.iter().map(|s| s.calls[0].is_error).collect();
-    assert_eq!(refused, [true, true, true, false]);
+    assert_eq!(refused, [true, true, true, true, true, false]);
     assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
 }
 
 #[test]
-fn a_practice_solution_in_the_step_text_is_withheld_until_conclude() {
+fn a_problem_whose_solution_the_turn_showed_is_refused() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = t
@@ -214,15 +244,51 @@ fn a_practice_solution_in_the_step_text_is_withheld_until_conclude() {
     practitioner.script(
         Agent::Practitioner,
         "Try this: x = 4 by halving",
-        vec![(PROBLEM, problem)],
+        vec![(PROBLEM, problem.clone())],
     );
+    practitioner.script(Agent::Practitioner, "Try this.", vec![(PROBLEM, problem)]);
+    let other =
+        json!({"statement": "Solve 3y = 9", "mode": "recall", "solution": "y = 3 by thirds"});
+    practitioner.script(Agent::Practitioner, "Or this.", vec![(PROBLEM, other)]);
     let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.steps[0].text, WITHHELD);
-    assert!(
-        !report.steps[0].calls[0].is_error,
-        "the problem itself is posed"
+    let texts: Vec<&str> = report.steps.iter().map(|s| s.text.as_str()).collect();
+    // A problem does not end the turn; the unscripted step after it is empty.
+    assert_eq!(texts, [WITHHELD, "Try this.", "Or this.", ""]);
+    let refused: Vec<bool> = report.steps[..3]
+        .iter()
+        .map(|s| s.calls[0].is_error)
+        .collect();
+    assert_eq!(
+        refused,
+        [true, true, false],
+        "a shown solution stays refused"
     );
     assert!(!format!("{report:?}").contains("halving"));
+}
+
+/// A step that runs while a solution is unrevealed must not stream its text,
+/// so the engine is handed the solution to seal against.
+#[test]
+fn a_step_while_a_problem_is_active_is_sealed_against_its_solution() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Practise algebra", Mode::Practice, &[])
+        .unwrap()
+        .id;
+    let solution = "x = 4 by halving";
+    let problem = json!({"statement": "Solve 2x = 8", "mode": "recall", "solution": solution});
+    let practitioner = t.engine_mut();
+    practitioner.script(Agent::Practitioner, "Here it is.", vec![(PROBLEM, problem)]);
+    practitioner.script(Agent::Practitioner, "Take your time.", vec![]);
+    t.advance(&id).unwrap();
+    let seals = &t.engine().step_seals;
+    assert_eq!(seals.len(), 2, "one seal per step");
+    assert!(seals[0].is_empty(), "nothing is sealed before the problem");
+    assert!(
+        seals[1].holds(solution),
+        "the active solution seals the next step"
+    );
 }
 
 #[test]

@@ -281,7 +281,7 @@ fn a_numeric_key_or_solution_followed_by_a_unit_is_still_sealed() {
 }
 
 #[test]
-fn a_pose_late_in_a_turn_seals_what_its_earlier_steps_showed() {
+fn a_pose_whose_key_an_earlier_step_streamed_is_refused_and_that_step_sealed() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = t
@@ -301,11 +301,12 @@ fn a_pose_late_in_a_turn_seals_what_its_earlier_steps_showed() {
         vec![(ASK, recall("Which organelle makes ATP?", SECRET))],
     );
     let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.end, TurnEnd::AwaitingAnswer);
-    assert_eq!(report.steps.len(), 2);
+    assert_eq!(report.end, TurnEnd::AwaitingLearner, "{report:?}");
     assert_eq!(report.steps[0].text, seal::WITHHELD);
     assert_eq!(report.steps[1].text, "One question:");
+    assert!(report.steps[1].calls[0].is_error, "{report:?}");
     assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
+    assert!(session(&t, &id).open_question.is_none());
 }
 
 #[test]
@@ -355,7 +356,7 @@ fn a_call_id_holding_a_key_committed_later_never_leaves_the_crate() {
 }
 
 #[test]
-fn a_key_committed_in_a_later_step_seals_every_earlier_record_of_the_turn() {
+fn a_key_refused_in_a_later_step_seals_every_earlier_record_of_the_turn() {
     let (_dir, noesis) = fixture();
     add_proposition(&noesis, "p_atp", SECRET, "powerhouse");
     let mut t = Teaching::new(&noesis, FauxEngine::new());
@@ -372,12 +373,12 @@ fn a_key_committed_in_a_later_step_seals_every_earlier_record_of_the_turn() {
     tagged["plan_node"] = json!("a");
     teacher.script(Agent::Teacher, "Now a check:", vec![(ASK, tagged)]);
     let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
-    assert_eq!(report.steps.len(), 3);
+    assert_eq!(report.end, TurnEnd::AwaitingLearner, "{report:?}");
     assert_eq!(report.steps[0].text, seal::WITHHELD);
     let search = &report.steps[0].calls[0];
     assert_eq!(search.result, json!(crate::tools::SEALED), "{search:?}");
     assert_eq!(report.steps[2].text, "Now a check:");
+    assert!(report.steps[2].calls[0].is_error, "{report:?}");
     assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
     let events = serde_json::to_string(&t.take_events()).unwrap();
     assert!(events.contains("\"revision\""), "a plan event: {events}");
@@ -435,7 +436,8 @@ fn a_numeric_key_shown_with_a_unit_before_the_pose_is_sealed() {
     let question = recall("Convert 42000 grams to kilograms; give the number.", "42");
     teacher.script(Agent::Teacher, "Your turn:", vec![(ASK, question)]);
     let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
+    assert_eq!(report.end, TurnEnd::AwaitingLearner, "{report:?}");
+    assert!(report.steps[1].calls[0].is_error, "{report:?}");
     assert_eq!(report.steps[0].text, seal::WITHHELD);
     assert_eq!(report.steps[0].calls[0].input, json!(crate::tools::SEALED));
     let shown = format!("{report:?}");

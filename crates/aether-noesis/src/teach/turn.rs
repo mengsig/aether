@@ -68,8 +68,9 @@ impl<E: Engine> Teaching<'_, E> {
     /// against the interactive budget, until the agent waits. A session with
     /// an open question waits for the learner and makes no model call.
     ///
-    /// Nothing the turn produces is published before it ends: its steps and
-    /// events are sealed together against the secrets left at its end.
+    /// Its steps and events are published once it ends, sealed together
+    /// against the secrets left then. Only its text streams before, which
+    /// the live seal and the turn-wide pose check account for.
     pub fn run_turn(&mut self, session: &str) -> Result<TurnReport, TeachError> {
         let row = db::session(self.conn(), session)?;
         let caller = Caller {
@@ -110,7 +111,7 @@ impl<E: Engine> Teaching<'_, E> {
             return Ok(TurnEnd::AwaitingAnswer);
         }
         for _ in 0..MAX_STEPS {
-            let step = self.model_step(&caller.agent)?;
+            let step = self.model_step(session, &caller.agent)?;
             let (end, results) = self.run_calls(session, caller, step, turn)?;
             if !results.is_empty() {
                 let input = Input::ToolResults(results);
@@ -144,10 +145,13 @@ impl<E: Engine> Teaching<'_, E> {
             turn.steps.push(pending);
             return Ok((Some(TurnEnd::AwaitingLearner), Vec::new()));
         }
+        // Text streams as it is written, so a pose is checked against all the
+        // turn has shown, not only its own step's text.
+        let shown = turn.shown_with(&pending.text);
         let mut end = None;
         let mut owed = Vec::new();
         for call in step.calls {
-            let outcome = self.call_tool(session, caller, &call, &pending.text)?;
+            let outcome = self.call_tool(session, caller, &call, &shown)?;
             let public = turn.public_id(call.id);
             if outcome.ends.is_none() {
                 owed.push(pending.calls.len());
@@ -283,10 +287,13 @@ impl<E: Engine> Teaching<'_, E> {
         Ok(())
     }
 
-    /// One model call, admitted before it is made and settled after.
-    fn model_step(&mut self, agent: &str) -> Result<Step, TeachError> {
+    /// One model call, admitted before it is made and settled after, and
+    /// sealed against what `session` holds unrevealed as it starts, so no
+    /// text holding a live secret is shown.
+    fn model_step(&mut self, session: &str, agent: &str) -> Result<Step, TeachError> {
+        let live = Sealer::new(self.live_secrets(session)?);
         if self.engine.charges_own_calls() {
-            return Ok(self.engine.step(agent)?);
+            return Ok(self.engine.step(agent, &live)?);
         }
         let today = chrono::Local::now().date_naive();
         let estimate = self.engine.estimate(agent);
@@ -294,7 +301,7 @@ impl<E: Engine> Teaching<'_, E> {
             .noesis
             .accountant()
             .admit(Lane::Interactive, estimate, today)?;
-        match self.engine.step(agent) {
+        match self.engine.step(agent, &live) {
             Ok(step) => {
                 admission.settle(step.usage);
                 Ok(step)
@@ -371,6 +378,13 @@ impl Turn {
             engine_ids: HashMap::new(),
             events_from,
         }
+    }
+
+    /// Every text the turn has shown, its earlier steps' and `current`, one
+    /// per line so no phrase is matched across two steps.
+    fn shown_with(&self, current: &str) -> String {
+        let earlier = self.steps.iter().map(|step| step.text.as_str());
+        earlier.chain([current]).collect::<Vec<_>>().join("\n")
     }
 
     /// A fresh opaque id for an engine call id; only [`Turn::engine_id`]

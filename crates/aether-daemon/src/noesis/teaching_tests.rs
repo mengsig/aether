@@ -16,7 +16,9 @@ use aether_model::testing::{ScriptedClient, ScriptedResponse};
 use aether_noesis::budget::Billing;
 use aether_noesis::teach::engine::ModelInfo;
 use aether_noesis::teach::records::Answer;
-use aether_noesis::teach::{AgentSpec, Engine, EngineError, Input, Step, TeachError, Teaching};
+use aether_noesis::teach::{
+    AgentSpec, Engine, EngineError, Input, Sealer, Step, TeachError, Teaching,
+};
 use aether_protocol::noesis::{
     BillingPatch, BudgetPatch, DisablePatch, ModelsPatch, NoesisSettingsPatch,
 };
@@ -667,7 +669,7 @@ impl Engine for Unreachable {
         aether_noesis::budget::Spend::default()
     }
 
-    fn step(&mut self, _agent: &str) -> Result<Step, EngineError> {
+    fn step(&mut self, _agent: &str, _live: &Sealer) -> Result<Step, EngineError> {
         Err(EngineError::NotSent("unreachable".into()))
     }
 }

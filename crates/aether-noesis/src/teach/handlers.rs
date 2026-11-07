@@ -108,7 +108,7 @@ impl<E: Engine> Teaching<'_, E> {
             ToolArgs::Ask(args) => self.ask(&row, &args, visible_text),
             ToolArgs::ProbeDone(args) => self.probe_done(&row, &args),
             ToolArgs::Plan(args) => self.plan(&row, &args),
-            ToolArgs::Problem(args) => self.problem(&row, args),
+            ToolArgs::Problem(args) => self.problem(&row, args, visible_text),
             ToolArgs::Conclude(args) => self.conclude(&row, &args),
             ToolArgs::GraphSearch(args) => {
                 let found = db::search_propositions(self.conn(), &args.query, args.limit)?;
@@ -387,13 +387,18 @@ impl<E: Engine> Teaching<'_, E> {
         Ok(Ok(targets))
     }
 
-    fn problem(&mut self, row: &SessionRow, args: ProblemArgs) -> Handled {
+    fn problem(&mut self, row: &SessionRow, args: ProblemArgs, visible_text: &str) -> Handled {
         if db::active_problem(self.conn(), &row.id)?.is_some() {
             return refuse("a problem is already active; noesis.conclude it first");
         }
         let solution = Sealer::new([&args.solution]);
         if solution.holds(&args.statement) || args.targets.iter().any(|t| solution.holds(t)) {
             return refuse("the statement or a target gives away the solution; rewrite it");
+        }
+        if solution.holds(visible_text) {
+            return refuse(
+                "your visible message gives away the solution; pose a problem it does not solve",
+            );
         }
         let targets = match self.problem_targets(&args.targets, &solution)? {
             Ok(targets) => targets,
