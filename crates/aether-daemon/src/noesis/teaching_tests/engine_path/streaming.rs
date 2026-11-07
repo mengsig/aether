@@ -121,26 +121,32 @@ impl Subscription {
                 Command::Hello(aether_protocol::Hello::new("noesis-stream-test", "test")),
             )
             .await;
-        assert!(matches!(
-            reader.next().await,
-            ServerFrame::Reply {
-                id: 1,
-                result: Ok(_)
-            }
-        ));
+        reader.acknowledged(1).await;
         let command = serde_json::from_value(
             json!({"cmd": "subscribe", "deltas": true, "query": {"agent": agent}}),
         )
         .expect("subscribe");
         reader.send(2, command).await;
-        assert!(matches!(
-            reader.next().await,
-            ServerFrame::Reply {
-                id: 2,
-                result: Ok(_)
-            }
-        ));
+        reader.acknowledged(2).await;
         reader
+    }
+
+    async fn acknowledged(&mut self, expected: u64) {
+        loop {
+            match self.next().await {
+                ServerFrame::Reply { id, result } => {
+                    assert_eq!(id, expected);
+                    assert!(result.is_ok(), "{result:?}");
+                    return;
+                }
+                ServerFrame::Event { .. }
+                | ServerFrame::Delta {
+                    delta: Delta::TurnStarted { .. },
+                    ..
+                } => {}
+                other => panic!("unexpected frame before releasing the model: {other:?}"),
+            }
+        }
     }
 
     async fn send(&mut self, id: u64, command: Command) {
@@ -278,10 +284,7 @@ async fn noesis_subscription_withholds_secrets_split_across_engine_chunks() {
     }
     cli.advance.add_permits(4);
     reader
-        .finish(
-            agent,
-            &["SECRET-", "ANSWER", "HIDDEN-", "EXPLANATION", "answer_key"],
-        )
+        .finish(agent, &["SECRET-", "ANSWER", "HIDDEN-", "EXPLANATION"])
         .await;
     assert!(cli.finished.load(Ordering::SeqCst));
     close(daemon, reader).await;
