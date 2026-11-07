@@ -9,7 +9,6 @@ use aether_noesis::budget::{Billing, ModelOffer, choose_model};
 use aether_noesis::settings::NoesisSettings;
 use aether_noesis::teach::engine::ModelInfo;
 use aether_protocol::ErrorReply;
-use aether_core::model::Usage;
 use aether_protocol::noesis::{
     BackgroundDisable, DisablePolicy, NoesisBilling, NoesisModelChoice, NoesisModelOffer,
     NoesisStatus, SpendToday,
