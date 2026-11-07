@@ -112,6 +112,22 @@ describe("InboxScreen", () => {
 });
 
 describe("recovery review", () => {
+  test("a legacy bridge refusal can retry a corrected repository scope", async () => {
+    let refused = true;
+    const { h, root } = await open({ script: { create_memory: () => refused
+      ? { code: "disconnected", message: "Desktop bridge call failed: BridgeRefusal: invalid scope" }
+      : { tag: "memory", data: {} } } });
+    await act(async () => { await h.app.send(h.conn, { cmd: "create_memory", spec: { text: "Remember this", kind: "fact", scope: { scope: "repository", id: "/repo" } } }).catch(() => undefined); });
+    await h.settle();
+    expect(root.textContent).toContain("refused this request before sending it");
+    expect(root.textContent).toContain("invalid scope");
+    expect(() => buttonNamed(root, "Check what happened")).toThrow();
+    refused = false;
+    await click(h, root, "Try again");
+    expect(h.daemon.commands("create_memory").at(-1)).toMatchObject({ spec: { scope: { scope: "repository", root: "/repo" } } });
+    expect(h.app.store.get().aether[h.conn]?.outbox).toEqual([]);
+  });
+
   test("a lost change waits for a check; absent_safe offers a confirmed resend with the same key", async () => {
     let lost = true;
     const { h, root } = await open({ script: { cancel: () => (lost ? timedOut() : { tag: "ok", data: null }), resolve_submission: () => ({ tag: "submission_resolved", data: { outcome: "absent_safe", horizon: stamp(1), retained_since: stamp(0) } }) } });
