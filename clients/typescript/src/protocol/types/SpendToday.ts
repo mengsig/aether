@@ -9,6 +9,8 @@ import type {
  * What Noesis spent today, split by who asked for the work.
  */
 export interface SpendToday {
+  "api"?: Usage;
   "background": Usage;
   "interactive": Usage;
+  "subscription"?: Usage;
 }

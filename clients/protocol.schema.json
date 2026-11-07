@@ -1660,6 +1660,40 @@
       },
       "type": "object"
     },
+    "AskedQuestion": {
+      "description": "A posed question with what the learner answered and what it revealed.",
+      "properties": {
+        "answer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecordedAnswer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent while the question is open."
+        },
+        "question": {
+          "$ref": "#/$defs/Question"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuestionResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent while the question is open."
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "type": "object"
+    },
     "AttachmentId": {
       "description": "The SHA-256 of the stored bytes, in lowercase hex.",
       "pattern": "^[0-9a-f]{64}$",
@@ -9355,6 +9389,27 @@
           "type": "object"
         },
         {
+          "description": "A turn stopped before any model call; the session carries it too.",
+          "properties": {
+            "session": {
+              "type": "string"
+            },
+            "stall": {
+              "$ref": "#/$defs/SessionStall"
+            },
+            "type": {
+              "const": "noesis.session_stalled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "session",
+            "stall"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "job": {
               "$ref": "#/$defs/Job"
@@ -12881,6 +12936,24 @@
         "agent": {
           "$ref": "#/$defs/AgentId"
         },
+        "agents": {
+          "description": "Every agent that ran the session, in the order they ran: the Prober,\nthen the Teacher or the Practitioner. Only `noesis_get_session` fills\nthe four history fields below; events and older daemons leave them out.",
+          "items": {
+            "$ref": "#/$defs/SessionAgent"
+          },
+          "type": "array"
+        },
+        "context": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EvidenceBundle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The evidence bundle the session started from, when it had one."
+        },
         "created_at": {
           "format": "date-time",
           "type": "string"
@@ -12917,9 +12990,45 @@
             }
           ]
         },
+        "problems": {
+          "description": "Every practice problem posed, oldest first, with its conclusion.",
+          "items": {
+            "$ref": "#/$defs/PosedProblem"
+          },
+          "type": "array"
+        },
+        "questions": {
+          "description": "Every question posed, oldest first, with the answer and its result.",
+          "items": {
+            "$ref": "#/$defs/AskedQuestion"
+          },
+          "type": "array"
+        },
+        "stalled": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionStall"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why the session's last turn could not run, until a later turn runs.\nEvery session read carries it; events leave it out."
+        },
         "updated_at": {
           "format": "date-time",
           "type": "string"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the session's model calls used, split by how they were paid for."
         }
       },
       "required": [
@@ -14042,6 +14151,28 @@
       ],
       "type": "object"
     },
+    "PosedProblem": {
+      "description": "A posed problem with its conclusion once it has one.",
+      "properties": {
+        "conclusion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProblemConclusion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "problem": {
+          "$ref": "#/$defs/Problem"
+        }
+      },
+      "required": [
+        "problem"
+      ],
+      "type": "object"
+    },
     "PracticeOutcome": {
       "enum": [
         "solved",
@@ -14116,6 +14247,50 @@
         "mode",
         "targets",
         "posed_at"
+      ],
+      "type": "object"
+    },
+    "ProblemConclusion": {
+      "description": "How a problem ended, as `noesis.practice_concluded` announced it.",
+      "properties": {
+        "concluded_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "miss_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MissClass"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "$ref": "#/$defs/PracticeOutcome"
+        },
+        "retest": {
+          "type": "boolean"
+        },
+        "rung": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "solution": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "retest",
+        "solution",
+        "concluded_at"
       ],
       "type": "object"
     },
@@ -14791,6 +14966,53 @@
       },
       "required": [
         "used_percent"
+      ],
+      "type": "object"
+    },
+    "RecordedAnswer": {
+      "description": "The learner's answer as recorded.",
+      "properties": {
+        "answered_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "chosen": {
+          "description": "The labels of the options chosen, in the order they were shown.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "confidence": {
+          "description": "One of [`CONFIDENCE_LEVELS`].",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "dont_know": {
+          "type": "boolean"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thinking": {
+          "description": "The reasoning the learner gave with the answer.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "dont_know",
+        "answered_at"
       ],
       "type": "object"
     },
@@ -18350,6 +18572,31 @@
         }
       ]
     },
+    "SessionAgent": {
+      "description": "One agent of a session and the inputs Noesis wrote to it.",
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/AgentId"
+        },
+        "internal": {
+          "description": "The transcript seqs of the user-role messages Noesis wrote for the\nagent (the opening context, a hand-off). They are never the\nlearner's own words, so a client does not show them as the learner's.",
+          "items": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "role": {
+          "$ref": "#/$defs/SessionRole"
+        }
+      },
+      "required": [
+        "agent",
+        "role"
+      ],
+      "type": "object"
+    },
     "SessionExtraction": {
       "enum": [
         "manual",
@@ -18363,6 +18610,53 @@
         "practice"
       ],
       "type": "string"
+    },
+    "SessionRole": {
+      "description": "What an agent did in its session.",
+      "enum": [
+        "prober",
+        "teacher",
+        "practitioner"
+      ],
+      "type": "string"
+    },
+    "SessionStall": {
+      "description": "A turn that stopped before any model call, and why.",
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "message": {
+          "description": "What the learner can do about it, naming the setting to change.",
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/StallReason"
+        }
+      },
+      "required": [
+        "reason",
+        "message",
+        "at"
+      ],
+      "type": "object"
+    },
+    "SessionUsage": {
+      "description": "A session's usage by billing: subscription use is covered by the\nlearner's plan and never charged per request; API use is.",
+      "properties": {
+        "api": {
+          "$ref": "#/$defs/Usage"
+        },
+        "subscription": {
+          "$ref": "#/$defs/Usage"
+        }
+      },
+      "required": [
+        "subscription",
+        "api"
+      ],
+      "type": "object"
     },
     "SideEffectClass": {
       "description": "What a tool does to the world. Drives retry policy, idempotency tracking\nand approval requirements.",
@@ -18521,11 +18815,37 @@
     "SpendToday": {
       "description": "What Noesis spent today, split by who asked for the work.",
       "properties": {
+        "api": {
+          "$ref": "#/$defs/Usage",
+          "default": {
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "cost_basis": "unknown",
+            "cost_complete": true,
+            "cost_usd": 0.0,
+            "input_tokens": 0,
+            "output_tokens": 0
+          },
+          "description": "Today's use of both lanes billed per request through an API key."
+        },
         "background": {
           "$ref": "#/$defs/Usage"
         },
         "interactive": {
           "$ref": "#/$defs/Usage"
+        },
+        "subscription": {
+          "$ref": "#/$defs/Usage",
+          "default": {
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "cost_basis": "unknown",
+            "cost_complete": true,
+            "cost_usd": 0.0,
+            "input_tokens": 0,
+            "output_tokens": 0
+          },
+          "description": "Today's use of both lanes on subscription engines: covered by the\nlearner's plan, so its dollars are a list-price estimate, not a charge."
         }
       },
       "required": [
@@ -18557,6 +18877,15 @@
         "since"
       ],
       "type": "object"
+    },
+    "StallReason": {
+      "oneOf": [
+        {
+          "const": "budget_exhausted",
+          "description": "Today's interactive budget (`noesis.budget.interactive_usd_daily`) is spent.",
+          "type": "string"
+        }
+      ]
     },
     "StatusStale": {
       "description": "Why a [`DaemonStatus`] is not fresh, and how old it is.",
