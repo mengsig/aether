@@ -58,7 +58,8 @@ export async function scheduleNames(stack: Stack): Promise<string[]> {
   return rows.filter((row) => row.status.state === "active" || row.status.state === "paused").map((row) => row.name);
 }
 
-export interface SavedSchedule { readonly name: string; readonly recurrence: unknown; readonly target?: unknown; readonly spawn?: unknown }
+export interface SavedSpawn { readonly model?: unknown; readonly objective?: unknown; readonly scope?: { readonly workspace_root?: unknown } | null }
+export interface SavedSchedule { readonly name: string; readonly recurrence: unknown; readonly target?: unknown; readonly spawn?: SavedSpawn | null }
 
 /** The live schedule called `name` as the daemon holds it, or undefined. */
 export async function scheduleNamed(stack: Stack, name: string): Promise<SavedSchedule | undefined> {
@@ -208,12 +209,13 @@ export async function toolCalls(stack: Stack, id: string): Promise<ToolCall[]> {
   return calls;
 }
 
-/** The decision an approval was resolved with, or null while it is pending. */
-export async function approvalDecision(stack: Stack, approvalId: string): Promise<string | null> {
-  const rows = await list(stack, { cmd: "list_approvals" }, "approvals") as Array<{ id: string; status: { state: string; decision?: string } }>;
-  const row = rows.find((candidate) => candidate.id === approvalId);
-  assert.ok(row !== undefined, `the daemon still lists approval ${approvalId}`);
-  return row.status.state === "resolved" ? String(row.status.decision) : null;
+/** The decision the agent's approval was resolved with, from the daemon's persisted events; null while it is pending. */
+export async function approvalDecision(stack: Stack, agentId: string, approvalId: string): Promise<string | null> {
+  assert.match(approvalId, /^apr_/, "an approval id");
+  const events = await list(stack, { cmd: "get_events", after: 0, limit: 500, query: { agent: agentId, types: ["approval.resolved"] } }, "events") as Array<{ kind: { type: string; approval?: string; decision?: string } }>;
+  const resolved = events.filter((event) => event.kind.type === "approval.resolved" && event.kind.approval === approvalId);
+  assert.ok(resolved.length <= 1, `approval ${approvalId} is resolved once`);
+  return resolved[0] === undefined ? null : String(resolved[0].kind.decision);
 }
 
 /** A global memory created on the daemon directly, as a neighbour for what the screen creates. */

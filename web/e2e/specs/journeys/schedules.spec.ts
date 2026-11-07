@@ -39,11 +39,11 @@ async function fillSchedule(page: Page, controls: Locator, work: string): Promis
 function checkSaved(saved: SavedSchedule, work: string): void {
   assert.deepEqual(saved.recurrence, { kind: "cron", expression: CRON, timezone: "UTC" }, "the saved recurrence is the weekday cron in UTC");
   assert.equal(saved.target ?? null, null, "a schedule for a new agent names no existing one");
-  const spawn = saved.spawn as { model?: unknown; objective?: unknown } | null | undefined;
+  const spawn = saved.spawn;
   assert.ok(spawn, "the schedule spawns a new agent");
   assert.deepEqual(spawn.model, FAUX_MODEL, "the new agent runs on the chosen model");
   assert.equal(spawn.objective, "Check the workspace, then finish.", "the new agent gets the objective typed");
-  assert.ok(JSON.stringify(spawn).includes(work), `the new agent works in ${work}`);
+  assert.equal(spawn.scope?.workspace_root, work, "the new agent works in the workspace chosen");
 }
 
 test("schedules journey: create a weekday schedule, see it listed, delete it", async () => {

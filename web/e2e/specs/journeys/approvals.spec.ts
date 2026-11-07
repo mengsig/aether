@@ -75,7 +75,7 @@ test("approvals journey: Inbox approves a waiting tool call and the agent goes o
   assert.ok(first !== undefined, "the waiting call has an id");
   await approveFromInbox(run, true);
   await until(() => pendingApprovals(run.stack, id), (rows) => rows.every((row) => row.id !== first), "the approval to be answered", WAIT_MS[run.variant]);
-  assert.equal(await approvalDecision(run.stack, first), "approved", "the Inbox's Approve approved the call");
+  assert.equal(await approvalDecision(run.stack, id, first), "approved", "the Inbox's Approve approved the call");
   if (run.variant === "real") {
     await approveUntilFinished(run, id);
     assert.equal((await agent(run.stack, id)).state, "completed", "the agent finished through its approved call");
