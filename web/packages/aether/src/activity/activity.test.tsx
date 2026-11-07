@@ -16,6 +16,7 @@ const script = {
   list_models: () => ({ tag: "models", data: [{ name: "Astra", configured: true, is_default: true, model: { provider: "codex", model: "astra" } }] }),
   list_workspaces: () => ({ tag: "workspaces", data: [{ path: "/repo", exists: true }] }),
   validate_workspace: () => ({ tag: "workspace_validation", data: { valid: true, path: "/repo" } }),
+  status: () => ({ tag: "status", data: { pid: 7, instance_id: "b3", network_default: "allowed" } }),
   get_git_summary: () => ({ tag: "git_summary", data: { repository: true, branch: "main", dirty: false } }),
   complete_path: () => ({ tag: "path_completions", data: { entries: [{ path: "/repo", name: "repo" }], truncated: false } }),
   create_agent: () => ({ tag: "agent", data: agent }),
@@ -100,10 +101,25 @@ test("starting an agent sends the form, closes the sheet, opens the new agent an
   await type(h, document.body, "Model", "claude/sonnet");
   await choose("old-repo");
   await click(h, document.body, "Start agent"); await h.settle();
-  expect(h.daemon.commands("create_agent")[0]).toMatchObject({ name: "Builder", objective: "Build it", role: "worker", start: true, scope: { workspace_root: "/work/old-repo" }, model: { provider: "claude", model: "sonnet" }, config: { effort: "high" }, approval: { require_for: ["external"] } });
+  expect(h.daemon.commands("create_agent")[0]).toMatchObject({ name: "Builder", objective: "Build it", role: "worker", start: true, scope: { workspace_root: "/work/old-repo", network: "allowed" }, model: { provider: "claude", model: "sonnet" }, config: { effort: "high" }, approval: { require_for: ["external"] } });
   expect(document.body.querySelector("dialog")).toBeNull();
   expect(location.hash).toBe(routeHref("#/agents/:conn/:agent", { conn: h.conn, agent: agent.id }));
   expect(h.app.store.get().reports.at(-1)).toMatchObject({ message: `Started ${agent.name}`, tone: "success", conn: h.conn });
+});
+
+test("UX-043: a started agent keeps the daemon's network default, so Archon's tools reach it", async () => {
+  h = await connected({ agents: [agent], script: { ...startScript, status: () => "hold" } });
+  const root = await h.mount(<ActivityScreen />);
+  await click(h, root, "Start an agent"); await h.settle();
+  await type(h, document.body, "What should the agent do?", "Build it");
+  expect(buttonNamed(document.body, "Start agent").disabled).toBe(true);
+  expect(document.body.querySelector(".ui-dialog-footer")?.textContent).toContain("Reading this computer's settings…");
+  h.unmount();
+  h = await connected({ agents: [agent], script: { ...startScript, status: () => ({ tag: "status", data: { pid: 7, instance_id: "b3", network_default: "denied" } }) } });
+  await click(h, await h.mount(<ActivityScreen />), "Start an agent"); await h.settle();
+  await type(h, document.body, "What should the agent do?", "Build it");
+  await click(h, document.body, "Start agent"); await h.settle();
+  expect(h.daemon.commands("create_agent")[0]).toMatchObject({ scope: { workspace_root: "/work/repo", network: "denied" } });
 });
 
 test("a start in flight cannot be submitted twice", async () => {

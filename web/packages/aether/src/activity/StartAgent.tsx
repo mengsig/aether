@@ -5,7 +5,7 @@ import { Field, Sheet, Tabs, EmptyState } from "@aether-ui/ui";
 import { Action, RunNote, StandingNotice, useRun, type Run } from "../controls/kit.tsx";
 import { invariant } from "../fleet/invariant.ts";
 import { ReadNote } from "../memory/shared.tsx";
-import { configuredModels, createdAgent, DEFAULT_EFFORT, EFFORTS, modelGroups, modelKey, pickModel, recentWorkspaces, workspaceValidation } from "./data.ts";
+import { configuredModels, createdAgent, DEFAULT_EFFORT, EFFORTS, modelGroups, modelKey, networkDefault, pickModel, recentWorkspaces, workspaceValidation } from "./data.ts";
 import { SelectField, TextAreaField } from "./fields.tsx";
 import { Workspace } from "./Workspace.tsx";
 import "./activity.css";
@@ -25,15 +25,17 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
   const agents = Object.values(useSelector(selectAgents(conn))).filter(a => !INACTIVE.includes(a.status.state));
   const models = useReread(conn, "start:models", { cmd: "list_models" }, ["models"]);
   const recent = useReread(conn, "start:workspaces", { cmd: "list_workspaces" }, ["workspaces"]);
+  const network = networkDefault(useReread(conn, "start:status", { cmd: "status" }, ["status"])?.value);
   const choices = configuredModels(models?.value);
   const selected = pickModel(choices, model);
   const path = picked ?? recentWorkspaces(recent?.value)[0]?.path ?? "";
   const validation = workspaceValidation(useSelector(selectRead(conn, `start:validation:${path}`))?.value);
   const command = mode === "task" ? { cmd: "create_task", objective: objective.trim(), owner, priority: "normal" } :
     { cmd: "create_agent", name: name.trim() || null, role: "worker", objective: objective.trim(), start: true,
-      scope: { workspace_root: validation?.path }, model: selected?.model, approval: { require_for: ["external"] }, config: { effort } };
+      scope: { workspace_root: validation?.path, network }, model: selected?.model, approval: { require_for: ["external"] }, config: { effort } };
   const disabled = usePermission(conn, command).refusal !== null;
-  const blocked = blockedReason(mode, objective, agents.some(a => a.id === owner), selected, path, validation);
+  const blocked = blockedReason(mode, objective, agents.some(a => a.id === owner), selected, path, validation) ??
+    (mode === "agent" && network === undefined ? "Reading this computer's settings…" : null);
   const ownerName = agents.find(a => a.id === owner)?.name ?? owner;
   const submit = async () => {
     invariant(blocked === null, "a blocked form is not submitted");

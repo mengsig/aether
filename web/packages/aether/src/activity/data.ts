@@ -17,6 +17,18 @@ export function workspaceValidation(value: unknown): aether.WorkspaceValidation 
   return validation;
 }
 
+/**
+ * The network a new agent gets from this daemon. An explicit scope that leaves `network` out is
+ * denied, which also withholds every MCP tool, so the Start form names the daemon's own default.
+ */
+export function networkDefault(value: unknown): aether.NetworkPolicy | undefined {
+  if (value === null || value === undefined) return undefined;
+  invariant(typeof value === "object" && "pid" in value, "the daemon's status names its process");
+  const policy = (value as aether.DaemonStatus).network_default ?? "denied";
+  invariant(policy === "allowed" || policy === "denied", `a known network policy, not ${String(policy)}`);
+  return policy;
+}
+
 export function orderedEvents(events: readonly aether.Event[]): aether.Event[] {
   invariant(events.every(e => typeof e.id === "string" && e.id.length > 0), "events have durable identities");
   invariant(events.every(e => Number.isSafeInteger(e.seq) && e.seq > 0), "events have positive durable sequences");
