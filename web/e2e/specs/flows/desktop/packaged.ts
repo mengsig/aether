@@ -50,17 +50,27 @@ async function until<T>(read: () => T | undefined, what: string, alive: Spawned)
   }
 }
 
-/** Starts a headless sway whose Wayland socket lives in `runtime`; resolves to that socket's path. */
-async function startCompositor(root: string, runtime: string, env: NodeJS.ProcessEnv): Promise<{ sway: Spawned; display: string }> {
+/** Starts a headless sway whose Wayland socket will appear in `runtime`. */
+async function spawnCompositor(root: string, runtime: string, env: NodeJS.ProcessEnv): Promise<Spawned> {
   assert.ok(runtime.length <= MAX_RUNTIME_DIR, `the compositor's runtime dir is short enough for its sockets: ${runtime}`);
   await mkdir(runtime, { mode: 0o700 });
   const config = path.join(root, "sway.conf");
   await writeFile(config, SWAY_CONFIG);
   const swayEnv: NodeJS.ProcessEnv = { ...env, XDG_RUNTIME_DIR: runtime, WLR_BACKENDS: "headless", WLR_RENDERER: "pixman", WLR_LIBINPUT_NO_DEVICES: "1" };
-  delete swayEnv.SWAYSOCK;
-  const sway = spawnLogged(onPath("sway"), ["-c", config], { env: swayEnv, cwd: root, log: path.join(root, "sway.log") });
+  return spawnLogged(onPath("sway"), ["-c", config], { env: swayEnv, cwd: root, log: path.join(root, "sway.log") });
+}
+
+/** The absolute path of the Wayland socket `sway` opens in `runtime`. */
+async function waylandSocket(runtime: string, sway: Spawned): Promise<string> {
   const socket = await until(() => readdirSync(runtime).find((name) => /^wayland-\d+$/.test(name)), "sway's Wayland socket", sway);
-  return { sway, display: path.join(runtime, socket) };
+  return path.join(runtime, socket);
+}
+
+/** Runs every step, then reports each one that failed. */
+async function runAll(steps: ReadonlyArray<() => Promise<unknown>>): Promise<void> {
+  const failures: unknown[] = [];
+  for (const step of steps) await step().catch((error: unknown) => failures.push(error));
+  if (failures.length > 0) throw new AggregateError(failures, "the packaged app's teardown failed");
 }
 
 async function devtoolsPort(profile: string, app: Spawned): Promise<number> {
@@ -97,25 +107,28 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
   const env: NodeJS.ProcessEnv = { ...process.env, AETHER_SOCKET: sockets.aether, ARCHON_SOCKET: sockets.archon };
   delete env.DISPLAY;
   delete env.WAYLAND_DISPLAY;
-  let compositor: { sway: Spawned; display: string } | undefined;
+  delete env.SWAYSOCK;
+  let sway: Spawned | undefined;
   let app: Spawned | undefined;
   let browser: Browser | undefined;
-  const close = async () => {
-    await browser?.close().catch(() => undefined);
-    if (app !== undefined) await stopGroup(app);
-    if (compositor !== undefined) await stopGroup(compositor.sway);
-    await rm(root, { recursive: true, force: true, maxRetries: 3 });
-  };
+  const close = () => runAll([
+    async () => browser?.close(),
+    async () => app !== undefined && stopGroup(app),
+    async () => sway !== undefined && stopGroup(sway),
+    () => rm(root, { recursive: true, force: true, maxRetries: 3 }),
+  ]);
   try {
-    compositor = await startCompositor(root, path.join(root, "run"), env);
-    const appEnv = { ...env, XDG_RUNTIME_DIR: path.dirname(compositor.display), WAYLAND_DISPLAY: compositor.display };
+    const runtime = path.join(root, "run");
+    sway = await spawnCompositor(root, runtime, env);
+    const display = await waylandSocket(runtime, sway);
+    const appEnv = { ...env, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display };
     app = spawnLogged(binary, [`--user-data-dir=${profile}`, "--ozone-platform=wayland", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0"],
       { env: appEnv, cwd: root, log });
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${await devtoolsPort(profile, app)}`);
     return { window: await appWindow(browser), close };
   } catch (error) {
     const tails = `${logTail(log)}\n-- sway:\n${logTail(path.join(root, "sway.log"))}`;
-    await close();
+    await close().catch((teardown: unknown) => { throw new AggregateError([error, teardown], "the packaged app neither started nor tore down"); });
     throw new Error(`The packaged app did not start; its logs ended:\n${tails}`, { cause: error });
   }
 }
