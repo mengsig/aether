@@ -811,7 +811,30 @@ background by its role, with subscription engines counted at their
 estimated cost. Today's spend is read back from Aether's usage records, so
 a restart does not reset it. A model chain with an API-billed link is
 refused unless `billing.allow_api = true`: a fallback never reaches a billed
-endpoint silently.
+endpoint silently. `noesis_status` splits today's spend both by lane
+(`spend_today.interactive`, `background`) and by billing
+(`spend_today.subscription`, covered by the plan and priced only as an
+estimate, and `spend_today.api`, charged per request).
+
+Once today's interactive budget is spent, `noesis_create_session` and
+`noesis_send` are refused before anything is stored with `unavailable`
+(reason `noesis_budget_exhausted`); the message names what was spent, the
+limit and `noesis.budget.interactive_usd_daily`. A turn already under way
+that the budget stops records why on the session as `stalled`
+(`reason: "budget_exhausted"`, `message`, `at`) and publishes
+`noesis.session_stalled`; the next turn that runs clears it.
+
+`noesis_get_session` returns the session's whole history: `agents` (each
+agent that ran it, in order, with its `role` and, as `internal`, the
+transcript seqs of the inputs Noesis wrote for it, so a client does not show
+them as the learner's), `questions` (every question, oldest first, with the
+learner's `answer` and its `result` once answered), `problems` (every
+problem with its `conclusion`, solution included, once concluded), `context`
+(the evidence bundle it started from) and `usage` (summed over its agents,
+as `subscription` and `api`). An open question's key and an active
+problem's solution never appear. `noesis_list_sessions` carries only the
+current view and `stalled`. A plan step is `visited` once its check is
+answered correctly, and the next ready step becomes `current`.
 
 Noesis runs on subscription engines (`claude-code`, `codex`) with
 `allow_api = false`. An engine model is ready when its CLI is detected,
