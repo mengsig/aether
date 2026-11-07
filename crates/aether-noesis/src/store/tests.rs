@@ -324,12 +324,12 @@ fn checks_refuse_values_outside_the_wire_enums() {
     let (_dir, store) = open_temp();
     let conn = store.connection();
     let bad_session = conn.execute(
-        "INSERT INTO sessions VALUES ('ns_1', 'g', 'lecture', 'probe', 'agt_1', 't', 't')",
+        "INSERT INTO sessions (id, goal, mode, phase, agent, created_at, updated_at) VALUES ('ns_1', 'g', 'lecture', 'probe', 'agt_1', 't', 't')",
         [],
     );
     assert!(bad_session.is_err());
     let bad_prefix = conn.execute(
-        "INSERT INTO sessions VALUES ('x_1', 'g', 'teach', 'probe', 'agt_1', 't', 't')",
+        "INSERT INTO sessions (id, goal, mode, phase, agent, created_at, updated_at) VALUES ('x_1', 'g', 'teach', 'probe', 'agt_1', 't', 't')",
         [],
     );
     assert!(bad_prefix.is_err());
@@ -480,12 +480,19 @@ fn an_n2_store_upgrades_to_n3_keeping_every_row() {
     drop(conn);
 
     let store = NoesisStore::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 3);
+    assert_eq!(store.schema_version().unwrap(), 4);
     let after = dump(store.connection());
+    // N4 then adds columns to sessions and questions and a session_agents table; the N3 to N4
+    // test checks those rows survive.
     let unchanged = |(table, _): &&(String, Vec<Vec<rusqlite::types::Value>>)| {
         !matches!(
             table.as_str(),
-            "meta" | "evidence_bundles" | "evidence_items"
+            "meta"
+                | "evidence_bundles"
+                | "evidence_items"
+                | "sessions"
+                | "questions"
+                | "session_agents"
         )
     };
     assert_eq!(

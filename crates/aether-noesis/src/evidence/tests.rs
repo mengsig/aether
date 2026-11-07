@@ -153,7 +153,7 @@ fn store_with_session(id: &str) -> (tempfile::TempDir, NoesisStore) {
     store
         .connection()
         .execute(
-            "INSERT INTO sessions VALUES (?1, 'learn', 'teach', 'probe', 'agt_1', 't0', 't0')",
+            "INSERT INTO sessions (id, goal, mode, phase, agent, created_at, updated_at) VALUES (?1, 'learn', 'teach', 'probe', 'agt_1', 't0', 't0')",
             [id],
         )
         .unwrap();

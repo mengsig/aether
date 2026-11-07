@@ -194,7 +194,7 @@ export function classifyUnderstandRefusal(message: string): UnderstandRefusal {
 }
 
 function RefusalView({ refusal }: { readonly refusal: UnderstandRefusal }) {
-  if (refusal.kind !== "engineering" && refusal.kind !== "noesis") return <RefusalNote refusal={refusal} />;
+  if (refusal.kind === "model" || refusal.kind === "budget" || refusal.kind === "other") return <RefusalNote refusal={refusal} />;
   const what = refusal.kind === "engineering" ? "Learning from your work was turned off" : "Noesis was turned off";
   return (
     <div className="learn-callout" role="status" data-kind={refusal.kind}>
