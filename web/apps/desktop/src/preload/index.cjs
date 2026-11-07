@@ -1,7 +1,7 @@
 // The app window's preload: exposes one frozen object, window.desktop (CONTRACTS.md §2.4),
 // whose every method is one IPC call main validates. Sandboxed preloads load as CommonJS.
 "use strict";
-/* global require, console, queueMicrotask */
+/* global require, queueMicrotask */
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { contextBridge, ipcRenderer } = require("electron");
@@ -103,9 +103,8 @@ const desktop = {
   privileged: (action) => call("privileged", action),
   startDaemon: (kind) => call("startDaemon", kind),
   pickDirectory: (purpose) => call("pickDirectory", purpose),
-  notify(note) {
-    call("notify", note).catch((error) => console.error("desktop.notify failed:", error));
-  },
+  // Typed void in CONTRACTS.md §2.4; main's answer is still returned, so a refusal reaches the page.
+  notify: (note) => call("notify", note),
   openExternal: (url) => call("openExternal", url),
   openRemote: (origin) => call("openRemote", origin),
   onDeepLink(callback) {

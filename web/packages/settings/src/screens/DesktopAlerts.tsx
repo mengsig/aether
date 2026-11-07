@@ -2,7 +2,7 @@
 // do while Aether is in front, and a test. These are this computer's own settings, kept in the
 // app's storage, not the daemon's; push for paired devices stays below.
 
-import { DEFAULT_ALERT_SETTINGS, INBOX_ROUTE, readAlertSettings, useApp, writeAlertSettings, type AlertSettings } from "@aether-ui/core";
+import { DEFAULT_ALERT_SETTINGS, INBOX_ROUTE, notifyDesktop, readAlertSettings, useApp, writeAlertSettings, type AlertSettings } from "@aether-ui/core";
 import { Button } from "@aether-ui/ui";
 import { useEffect, useState } from "react";
 import { invariant } from "../kit/invariant.ts";
@@ -62,8 +62,10 @@ export function DesktopAlerts() {
       (error: unknown) => { setSettings(settings); setStatus({ state: "failed", message: `Not saved: ${String(error)}` }); });
   };
   const test = () => {
-    desktop.notify(TEST_ALERT);
-    setStatus({ state: "done", message: "Test notification sent. If none appeared, allow notifications for Aether in your system settings." });
+    setStatus({ state: "busy" });
+    notifyDesktop(desktop, TEST_ALERT).then(
+      () => setStatus({ state: "done", message: "Test notification sent. If none appeared, allow notifications for Aether in your system settings." }),
+      (error: unknown) => setStatus({ state: "failed", message: `No test notification: ${error instanceof Error ? error.message : String(error)}` }));
   };
   return (
     <Section title="Desktop alerts" hint="Alerts from this computer's Aether app, without opening it.">
@@ -74,7 +76,7 @@ export function DesktopAlerts() {
         ))}
       </div>
       <div className="st-row">
-        <Button size="sm" variant="secondary" onClick={test} disabled={settings === null}>Send test notification</Button>
+        <Button size="sm" variant="secondary" onClick={test} disabled={settings === null || status.state === "busy"}>Send test notification</Button>
       </div>
       <RunNote status={status} />
     </Section>

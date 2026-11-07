@@ -109,6 +109,23 @@ describe("deep links and alert clicks", () => {
     expect(() => deliver("fleet")).toThrow(/app routes/);
   });
 
+  test("a click on a question alert opens the inbox on that alert's own question", async () => {
+    let deliver: (route: string) => void = () => {};
+    const notify = vi.fn<(note: { title: string; body: string; route?: string }) => Promise<void>>(async () => {});
+    const alerts = new DesktopAlerts({ desktop: { notify }, settings: async () => DEFAULT_ALERT_SETTINGS, isFocused: () => false });
+    followDeepLinks({ onDeepLink: (callback) => { deliver = callback; return () => {}; } }, alerts, document);
+    const asked = (conn: string) => ({ key: `q:${conn}/a1:1`, kind: "question" as const, title: "A asks", body: "Which?", anchor: `${conn}/a1:1` });
+    expect(await alerts.deliver([asked("c1"), asked("c2")])).toBe(2);
+    const first = question("c1/a1:1");
+    const second = question("c2/a1:1");
+    const [toFirst, toSecond] = notify.mock.calls.map(([note]) => note.route ?? "");
+    deliver(toSecond ?? "");
+    expect(location.hash).toBe("#/inbox");
+    expect(document.activeElement, "the later alert's question, on its own daemon").toBe(second);
+    deliver(toFirst ?? "");
+    expect(document.activeElement, "the earlier alert still finds its own question").toBe(first);
+  });
+
   test("focusQuestion waits for the entry to render, then puts the cursor in its answer", () => {
     const frames: Array<() => void> = [];
     focusQuestion(document, "a1:2", (step) => frames.push(step));

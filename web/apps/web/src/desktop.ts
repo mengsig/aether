@@ -2,7 +2,7 @@
 // links to anywhere outside the app open through main with visible feedback, and new questions
 // and approvals raise desktop alerts.
 
-import { DesktopAlerts, INBOX_ROUTE, navigate, readAlertSettings, type App, type ReportTone } from "@aether-ui/core";
+import { DesktopAlerts, navigate, readAlertSettings, type App, type ReportTone } from "@aether-ui/core";
 import type { DesktopBridge } from "@aether-ui/protocol";
 
 type Say = (message: string, tone: ReportTone) => void;
@@ -70,8 +70,8 @@ export function focusQuestion(doc: Document, anchor: string, frame: (step: () =>
 export function followDeepLinks(desktop: Pick<DesktopBridge, "onDeepLink">, alerts: DesktopAlerts, doc: Document): () => void {
   return desktop.onDeepLink((route) => {
     if (typeof route !== "string" || !route.startsWith("/")) throw new Error(`main sends app routes, not ${String(route)}`);
-    navigate(`#${route}`);
-    const anchor = route === INBOX_ROUTE ? alerts.takeAnchor() : undefined;
+    const { hash, anchor } = alerts.landing(route);
+    navigate(hash);
     if (anchor !== undefined) focusQuestion(doc, anchor, (step) => requestAnimationFrame(step));
   });
 }

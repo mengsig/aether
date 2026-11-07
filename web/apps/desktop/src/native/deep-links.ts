@@ -11,7 +11,7 @@ const MAX_LINK_LENGTH = 1024;
  * features.test.ts pins that list), with `:name` a single id segment. Pairing is not here.
  */
 export const DEEP_LINK_ROUTES: readonly string[] = [
-  "/fleet", "/fleet/topology", "/inbox", "/agents/:conn/:agent",
+  "/fleet", "/fleet/topology", "/inbox", "/inbox/:alert", "/agents/:conn/:agent",
   "/archon/queue", "/archon/items/:item", "/archon/items/:item/runs/:run",
 ];
 

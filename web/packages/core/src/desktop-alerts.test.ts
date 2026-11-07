@@ -1,10 +1,11 @@
 // Desktop alerts: settings survive bad storage field by field, the first attention only primes,
-// every new question or approval alerts once, a burst becomes one summary, and settings filter.
+// every new question or approval alerts once, each click finds its own question, a burst becomes
+// one summary, settings filter, and a notification main refuses is reported, not counted.
 
 import type { aether } from "@aether-ui/protocol";
 import { describe, expect, test, vi } from "vitest";
 import {
-  ALERT_SETTINGS_KEY, DEFAULT_ALERT_SETTINGS, DesktopAlerts, alertSettingsOf, alertsOf, questionAnchor,
+  ALERT_SETTINGS_KEY, DEFAULT_ALERT_SETTINGS, DesktopAlerts, MAX_TICKETS, alertSettingsOf, notifyDesktop, alertsOf, questionAnchor,
   readAlertSettings, writeAlertSettings, type AlertSettings,
 } from "./desktop-alerts.ts";
 import type { State } from "./store.ts";
@@ -24,7 +25,7 @@ const stateOf = (byConn: Record<string, aether.Attention | null>): State =>
   ({ aether: Object.fromEntries(Object.entries(byConn).map(([conn, value]) => [conn, { attention: value }])) } as unknown as State);
 
 function alerter(settings: Partial<AlertSettings> = {}, focused = false) {
-  const notify = vi.fn();
+  const notify = vi.fn<(note: { title: string; body: string; route?: string }) => Promise<void>>(async () => {});
   const alerts = new DesktopAlerts({
     desktop: { notify },
     settings: async () => ({ ...DEFAULT_ALERT_SETTINGS, ...settings }),
@@ -53,12 +54,22 @@ describe("alert settings", () => {
 
 describe("alerts of an attention", () => {
   test("questions name their agent and anchor; only pending approvals alert", () => {
-    const found = alertsOf(attention([question("a2", 7)], [approval("ap1"), approval("ap2", "approved")]));
+    const found = alertsOf("c1", attention([question("a2", 7)], [approval("ap1"), approval("ap2", "approved")]));
     expect(found).toEqual([
-      { key: "q:a2:7", kind: "question", title: "Agent a2 asks", body: "Which branch?", anchor: "a2:7" },
+      { key: "q:c1/a2:7", kind: "question", title: "Agent a2 asks", body: "Which branch?", anchor: "c1/a2:7" },
       { key: "a:ap1", kind: "approval", title: "Builder needs an approval", body: "shell: Run the migration" },
     ]);
-    expect(questionAnchor({ agent: "a2", question_seq: 7 })).toBe("a2:7");
+    expect(questionAnchor("c2", { agent: "a2", question_seq: 7 }), "the same question on another daemon is another entry").toBe("c2/a2:7");
+    expect(() => questionAnchor("", { agent: "a2", question_seq: 7 })).toThrow();
+  });
+});
+
+describe("notifyDesktop", () => {
+  test("settles with main's answer, or at once when the bridge returns none", async () => {
+    await expect(notifyDesktop({ notify: () => {} }, { title: "t", body: "" })).resolves.toBeUndefined();
+    await expect(notifyDesktop({ notify: async () => { throw new Error("Too many notifications"); } }, { title: "t", body: "" }))
+      .rejects.toThrow("Too many notifications");
+    await expect(notifyDesktop({ notify: () => {} }, { title: "", body: "" })).rejects.toThrow(/title/);
   });
 });
 
@@ -70,12 +81,51 @@ describe("DesktopAlerts", () => {
     expect(alerts.fresh(stateOf({ "aether:local": waiting }))).toEqual([]);
     const later = attention([question("a1", 1), question("a1", 2, "Ship it?")]);
     const fresh = alerts.fresh(stateOf({ "aether:local": later }));
-    expect(fresh.map((alert) => alert.key)).toEqual(["q:a1:2"]);
+    expect(fresh.map((alert) => alert.key)).toEqual(["q:aether:local/a1:2"]);
     expect(await alerts.deliver(fresh)).toBe(1);
-    expect(notify).toHaveBeenCalledWith({ title: "Agent a1 asks", body: "Ship it?", route: "/inbox" });
+    expect(notify).toHaveBeenCalledWith({ title: "Agent a1 asks", body: "Ship it?", route: "/inbox/alert-1" });
     expect(alerts.fresh(stateOf({ "aether:local": attention([question("a1", 2, "Ship it?")]) }))).toEqual([]);
-    expect(alerts.takeAnchor()).toBe("a1:2");
-    expect(alerts.takeAnchor()).toBeUndefined();
+    expect(alerts.landing("/inbox/alert-1")).toEqual({ hash: "#/inbox", anchor: "aether:local/a1:2" });
+    expect(alerts.landing("/inbox/alert-1"), "a second click on the same alert finds it again").toEqual({ hash: "#/inbox", anchor: "aether:local/a1:2" });
+  });
+
+  test("each alert's click opens its own question, on its own daemon", async () => {
+    const { alerts, notify } = alerter();
+    alerts.fresh(stateOf({ c1: attention([]), c2: attention([]) }));
+    const fresh = alerts.fresh(stateOf({ c1: attention([question("a1", 1, "First?"), question("a1", 2, "Second?")]), c2: attention([question("a1", 1, "Other?")]) }));
+    expect(await alerts.deliver(fresh)).toBe(3);
+    const routes = notify.mock.calls.map(([note]) => note.route ?? "");
+    expect(new Set(routes).size, "every alert has a route of its own").toBe(3);
+    expect(routes.map((route) => alerts.landing(route).anchor)).toEqual(["c1/a1:1", "c1/a1:2", "c2/a1:1"]);
+  });
+
+  test("routes that are not an alert's ticket land where they say, or on the inbox", () => {
+    const { alerts } = alerter();
+    expect(alerts.landing("/fleet")).toEqual({ hash: "#/fleet" });
+    expect(alerts.landing("/inbox")).toEqual({ hash: "#/inbox" });
+    expect(alerts.landing("/inbox/alert-9"), "an unknown or forgotten ticket opens the inbox only").toEqual({ hash: "#/inbox" });
+    expect(() => alerts.landing("inbox")).toThrow();
+  });
+
+  test("only the latest alerts keep their tickets", async () => {
+    const { alerts, notify } = alerter({ whileFocused: true });
+    alerts.fresh(stateOf({ c: attention([]) }));
+    for (let seq = 1; seq <= MAX_TICKETS + 1; seq += 1) {
+      await alerts.deliver(alerts.fresh(stateOf({ c: attention([question("a1", seq)]) })));
+    }
+    const routes = notify.mock.calls.map(([note]) => note.route ?? "");
+    expect(routes).toHaveLength(MAX_TICKETS + 1);
+    expect(alerts.landing(routes[0] ?? "")).toEqual({ hash: "#/inbox" });
+    expect(alerts.landing(routes.at(-1) ?? "")).toEqual({ hash: "#/inbox", anchor: `c/a1:${MAX_TICKETS + 1}` });
+  });
+
+  test("a notification main refuses fails the delivery with main's reason", async () => {
+    const notify = vi.fn(async (note: { title: string }) => { if (note.title === "Agent a2 asks") throw new Error("Too many notifications; try again in a minute"); });
+    const alerts = new DesktopAlerts({ desktop: { notify }, settings: async () => DEFAULT_ALERT_SETTINGS, isFocused: () => false });
+    const found = alertsOf("c", attention([question("a1", 1), question("a2", 1)]));
+    await expect(alerts.deliver(found)).rejects.toThrow(/^Too many notifications; try again in a minute$/);
+    expect(notify, "the other alert was still shown").toHaveBeenCalledTimes(2);
+    await expect(alerts.deliver(alertsOf("c", attention([question("a2", 2), question("a2", 3)])))).rejects.toThrow(/^2 of 2: Too many/);
   });
 
   test("a connection that goes away and comes back primes again", () => {
@@ -93,11 +143,11 @@ describe("DesktopAlerts", () => {
     expect(notify).toHaveBeenCalledExactlyOnceWith({
       title: "4 things need you in Aether", body: "Agents are waiting for answers and approvals.", route: "/inbox",
     });
-    expect(alerts.takeAnchor()).toBeUndefined();
+    expect(alerts.landing("/inbox")).toEqual({ hash: "#/inbox" });
   });
 
   test("settings decide: off, focused, or the kind turned off alerts nothing", async () => {
-    const found = alertsOf(attention([question("a1", 1)], [approval("ap1")]));
+    const found = alertsOf("c", attention([question("a1", 1)], [approval("ap1")]));
     for (const [settings, focused] of [[{ enabled: false }, false], [{}, true], [{ questions: false, approvals: false }, false]] as const) {
       const { alerts, notify } = alerter(settings, focused);
       expect(await alerts.deliver(found)).toBe(0);
@@ -106,6 +156,18 @@ describe("DesktopAlerts", () => {
     const focusedToo = alerter({ whileFocused: true, approvals: false }, true);
     expect(await focusedToo.alerts.deliver(found)).toBe(1);
     expect(focusedToo.notify).toHaveBeenCalledWith(expect.objectContaining({ title: "Agent a1 asks" }));
+  });
+
+  test("watch reports a notification main refused", async () => {
+    let snapshot = stateOf({ c: attention([]) });
+    const listeners: Array<() => void> = [];
+    const store = { getSnapshot: () => snapshot, subscribe: (listener: () => void) => { listeners.push(listener); return () => {}; } };
+    const report = vi.fn();
+    const notify = vi.fn(async () => { throw new Error("This system shows no notifications"); });
+    new DesktopAlerts({ desktop: { notify }, settings: async () => DEFAULT_ALERT_SETTINGS, isFocused: () => false }).watch(store, report);
+    snapshot = stateOf({ c: attention([question("a1", 1)]) });
+    for (const listener of listeners) listener();
+    await vi.waitFor(() => expect(report).toHaveBeenCalledWith("A desktop alert was not shown: This system shows no notifications"));
   });
 
   test("watch alerts on store changes and reports a failed delivery", async () => {

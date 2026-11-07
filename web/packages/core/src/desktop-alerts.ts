@@ -1,6 +1,6 @@
 // Desktop alerts: a native notification when an Aether agent starts waiting on a person. It
-// watches the attention core keeps synced, alerts each question or approval once, and opens the
-// inbox on a click. What alerts, and whether it does while the app is in front, is the user's.
+// watches the attention core keeps synced, alerts each question or approval once, and a click
+// opens the inbox on that very question. What alerts, and when, is the user's.
 
 import type { aether, ConnId, DesktopBridge, KeyValueStore } from "@aether-ui/protocol";
 import { invariant } from "./guards.ts";
@@ -40,8 +40,12 @@ export async function writeAlertSettings(storage: KeyValueStore, settings: Alert
 }
 
 export const INBOX_ROUTE = "/inbox";
+/** A clicked question alert's route: `/inbox/<ticket>`, the ticket naming that alert's question. */
+const TICKET_ROUTE = /^\/inbox\/([^/]+)$/;
 /** More new alerts than this at once become one summary. */
 export const ALERT_BURST = 3;
+/** How many clicked-later question alerts are remembered; an older click opens the inbox only. */
+export const MAX_TICKETS = 64;
 
 export interface Alert {
   /** Unique within its connection while the thing waits. */
@@ -53,18 +57,19 @@ export interface Alert {
   readonly anchor?: string;
 }
 
-/** The inbox entry of a question, as the inbox marks it for an alert's click to find. */
-export function questionAnchor(question: Pick<aether.PendingQuestion, "agent" | "question_seq">): string {
+/** The inbox entry of a question on daemon `conn`, as the inbox marks it for an alert's click to find. */
+export function questionAnchor(conn: ConnId, question: Pick<aether.PendingQuestion, "agent" | "question_seq">): string {
+  invariant(conn !== "", "a question belongs to a connection");
   invariant(question.agent !== "" && Number.isSafeInteger(question.question_seq), "a question has an agent and a sequence number");
-  return `${question.agent}:${question.question_seq}`;
+  return `${conn}/${question.agent}:${question.question_seq}`;
 }
 
-/** Every alert one daemon's attention calls for: its questions and pending approvals. */
-export function alertsOf(attention: aether.Attention): Alert[] {
+/** Every alert daemon `conn`'s attention calls for: its questions and pending approvals. */
+export function alertsOf(conn: ConnId, attention: aether.Attention): Alert[] {
   invariant(Array.isArray(attention.questions) && Array.isArray(attention.approvals), "attention lists questions and approvals");
   const names = new Map(attention.agents.map((agent) => [agent.agent, agent.agent_name ?? agent.agent]));
   const questions = attention.questions.map((question): Alert => {
-    const anchor = questionAnchor(question);
+    const anchor = questionAnchor(conn, question);
     return { key: `q:${anchor}`, kind: "question", title: `${question.agent_name ?? question.agent} asks`, body: question.question, anchor };
   });
   const approvals = attention.approvals.filter((request) => request.status.state === "pending").map((request): Alert => ({
@@ -72,6 +77,18 @@ export function alertsOf(attention: aether.Attention): Alert[] {
     body: `${request.tool}: ${request.description}`,
   }));
   return [...questions, ...approvals];
+}
+
+type Note = Parameters<DesktopBridge["notify"]>[0];
+
+/**
+ * Shows `note` and settles with main's answer. The frozen bridge types `notify` as void, but the
+ * desktop preload returns main's reply, so a refusal (rate limit, no notifier) is not hidden.
+ */
+export async function notifyDesktop(desktop: Pick<DesktopBridge, "notify">, note: Note): Promise<void> {
+  invariant(note.title !== "", "a notification has a title");
+  const reply: unknown = desktop.notify(note);
+  if (typeof (reply as { then?: unknown } | undefined)?.then === "function") await (reply as PromiseLike<unknown>);
 }
 
 export interface AlertHost {
@@ -87,6 +104,12 @@ function summary(count: number): { title: string; body: string; route: string } 
   return { title: `${count} things need you in Aether`, body: "Agents are waiting for answers and approvals.", route: INBOX_ROUTE };
 }
 
+/** Where a route main sent lands: the hash to open, and the inbox entry a clicked alert named. */
+export interface Landing {
+  readonly hash: string;
+  readonly anchor?: string;
+}
+
 /**
  * Turns attention changes into notifications. The first attention seen for a connection only
  * learns what already waits, so starting the app alerts nothing; later arrivals alert once.
@@ -94,7 +117,9 @@ function summary(count: number): { title: string; body: string; route: string } 
 export class DesktopAlerts {
   private readonly host: AlertHost;
   private readonly seen = new Map<ConnId, { readonly attention: aether.Attention; readonly keys: ReadonlySet<string> }>();
-  private anchor: string | undefined;
+  /** Each shown question alert's ticket, oldest first, and the inbox entry its click opens. */
+  private readonly tickets = new Map<string, string>();
+  private issued = 0;
 
   constructor(host: AlertHost) {
     this.host = host;
@@ -108,7 +133,7 @@ export class DesktopAlerts {
       const attention = daemon.attention;
       const before = this.seen.get(conn);
       if (attention === null || before?.attention === attention) continue;
-      const alerts = alertsOf(attention);
+      const alerts = alertsOf(conn, attention);
       this.seen.set(conn, { attention, keys: new Set(alerts.map((alert) => alert.key)) });
       if (before !== undefined) found.push(...alerts.filter((alert) => !before.keys.has(alert.key)));
     }
@@ -116,7 +141,10 @@ export class DesktopAlerts {
     return found;
   }
 
-  /** Shows `alerts` as the user's settings allow: one each, or one summary for a burst. */
+  /**
+   * Shows `alerts` as the user's settings allow: one each, or one summary for a burst. Resolves
+   * to how many notifications the system took; throws when main refused any of them.
+   */
   async deliver(alerts: readonly Alert[]): Promise<number> {
     if (alerts.length === 0) return 0;
     const settings = await this.host.settings();
@@ -124,20 +152,38 @@ export class DesktopAlerts {
     const wanted = alerts.filter((alert) => (alert.kind === "question" ? settings.questions : settings.approvals));
     if (wanted.length === 0) return 0;
     if (wanted.length > ALERT_BURST) {
-      this.anchor = undefined;
-      this.host.desktop.notify(summary(wanted.length));
+      await notifyDesktop(this.host.desktop, summary(wanted.length));
       return 1;
     }
-    for (const alert of wanted) this.host.desktop.notify({ title: alert.title, body: alert.body, route: INBOX_ROUTE });
-    this.anchor = wanted.findLast((alert) => alert.anchor !== undefined)?.anchor;
-    return wanted.length;
+    const sent = await Promise.allSettled(wanted.map((alert) =>
+      notifyDesktop(this.host.desktop, { title: alert.title, body: alert.body, route: this.routeOf(alert) })));
+    const refused = sent.filter((result) => result.status === "rejected");
+    invariant(sent.length === wanted.length, "every wanted alert was handed to the system");
+    if (refused.length === 0) return wanted.length;
+    const reason: unknown = refused[0]?.reason;
+    const message = reason instanceof Error ? reason.message : String(reason);
+    throw new Error(refused.length === 1 ? message : `${refused.length} of ${wanted.length}: ${message}`, { cause: reason });
   }
 
-  /** The inbox entry the last alert named, handed once to the click that opens the inbox. */
-  takeAnchor(): string | undefined {
-    const anchor = this.anchor;
-    this.anchor = undefined;
-    return anchor;
+  /** The route a click on `alert` opens: its own ticket for a question, else the inbox. */
+  private routeOf(alert: Alert): string {
+    if (alert.anchor === undefined) return INBOX_ROUTE;
+    this.issued += 1;
+    const ticket = `alert-${this.issued}`;
+    this.tickets.set(ticket, alert.anchor);
+    const oldest = this.tickets.keys().next().value;
+    if (this.tickets.size > MAX_TICKETS && oldest !== undefined) this.tickets.delete(oldest);
+    invariant(this.tickets.size <= MAX_TICKETS, "only the latest alerts keep their tickets");
+    return `${INBOX_ROUTE}/${ticket}`;
+  }
+
+  /** Where `route` from main lands; an alert's ticket opens the inbox on its question, every click. */
+  landing(route: string): Landing {
+    invariant(route.startsWith("/"), `main sends app routes, not ${route}`);
+    const ticket = TICKET_ROUTE.exec(route)?.[1];
+    if (ticket === undefined) return { hash: `#${route}` };
+    const anchor = this.tickets.get(ticket);
+    return anchor === undefined ? { hash: `#${INBOX_ROUTE}` } : { hash: `#${INBOX_ROUTE}`, anchor };
   }
 
   /** Alerts on every committed store change until the returned function is called. */

@@ -32,8 +32,8 @@ function savedStorage(failing = false) {
   };
 }
 
-async function mountOnDesktop(storage: ReturnType<typeof savedStorage>["storage"]) {
-  const notify = vi.fn();
+async function mountOnDesktop(storage: ReturnType<typeof savedStorage>["storage"], refusal?: string) {
+  const notify = vi.fn(async () => { if (refusal !== undefined) throw new Error(refusal); });
   const bridge = { ...fakeDesktop().bridge, notify } as DesktopBridge;
   current = await connected({ desktop: bridge, storage });
   const root = await current.mount(<NotificationsPage conn={current.conn} />);
@@ -87,5 +87,14 @@ describe("DesktopAlerts", () => {
     expect(notify).toHaveBeenCalledExactlyOnceWith(TEST_ALERT);
     expect(TEST_ALERT.route).toBe("/inbox");
     expect(root.textContent).toContain("Test notification sent.");
+  });
+
+  test("a test notification main refuses says why instead of claiming it was sent", async () => {
+    const { storage } = savedStorage();
+    const { root, notify, h } = await mountOnDesktop(storage, "Too many notifications; try again in a minute");
+    await click(h, root, "Send test notification");
+    expect(notify).toHaveBeenCalledOnce();
+    expect(root.textContent).toContain("No test notification: Too many notifications; try again in a minute");
+    expect(root.textContent).not.toContain("Test notification sent.");
   });
 });

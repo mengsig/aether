@@ -19,13 +19,14 @@ test("a deep link opens only an allowlisted route", () => {
     ["AETHER-APP://open?route=/archon/items/qi_01ABC", "/archon/items/qi_01ABC"],
     ["aether-app://open?route=/archon/items/qi_1/runs/run-2", "/archon/items/qi_1/runs/run-2"],
     ["aether-app://open?route=/agents/local:1f2e/agt_01X", "/agents/local:1f2e/agt_01X"],
+    ["aether-app://open?route=/inbox/alert-12", "/inbox/alert-12"],
   ];
   for (const [link, route] of good) assert.equal(parseDeepLink(link), route, link);
   const bad = [
     "aether-app://open?route=/pair/aether:local", "aether-app://open?route=/settings", "aether-app://open?route=fleet",
     "aether-app://open?route=/fleet/", "aether-app://open?route=/fleet?x=1", "aether-app://open?route=/fleet#x",
     "aether-app://open?route=/archon/items/../queue", "aether-app://open?route=/archon/items/%2e%2e",
-    "aether-app://open?route=/archon/items/a%2Fb", "aether-app://open?route=/agents/x/y/z",
+    "aether-app://open?route=/archon/items/a%2Fb", "aether-app://open?route=/agents/x/y/z", "aether-app://open?route=/inbox/a/b",
     "aether-app://open?route=/fleet&route=/archon/queue", "aether-app://open?route=/fleet&x=1", "aether-app://open",
     "aether-app://open/fleet?route=/fleet", "aether-app://other?route=/fleet", "aether-app://u:p@open?route=/fleet",
     "aether-app://open:1?route=/fleet", "aether-app://open?route=/fleet#frag", "https://open?route=/fleet",

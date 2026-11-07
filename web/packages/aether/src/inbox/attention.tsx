@@ -20,7 +20,7 @@ function Question({ conn, question }: { readonly conn: ConnId; readonly question
   const name = question.agent_name ?? question.agent;
   const command = aether.replyToQuestion({ to: question.agent, question_seq: question.question_seq, content: answer.trim() });
   return (
-    <li className="b3-item" data-question={questionAnchor(question)}>
+    <li className="b3-item" data-question={questionAnchor(conn, question)}>
       <div className="b3-item-head">
         <p className="b3-item-title">{name} asks</p>
         <span className="b3-meta">{when(question.asked_at)}</span>
