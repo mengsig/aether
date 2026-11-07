@@ -536,6 +536,28 @@ mod tests {
     }
 
     #[test]
+    fn a_pose_shows_its_kept_input_as_well_as_its_healed_one() {
+        let input = json!({"kind": "recall", "prompt": "Capital?", "answer_key": "Paris",
+            "multi": "yes", "hint": null});
+        let pose = reply("", vec![call("call_p", "noesis.ask", input.clone())]);
+        assert!(
+            reply_leaks(&sealer(&["yes"]), &pose),
+            "healed to true, kept as text"
+        );
+        assert!(
+            reply_leaks(&sealer(&["hint"]), &pose),
+            "dropped when healed, kept"
+        );
+        assert!(!reply_leaks(&sealer(&["Lyon"]), &pose));
+        let shown = tools::visible_texts("noesis.ask", &input);
+        assert!(
+            shown.iter().any(|text| text == "true"),
+            "the healed flag: {shown:?}"
+        );
+        assert!(!shown.iter().any(|text| text == "Paris"), "{shown:?}");
+    }
+
+    #[test]
     fn a_reply_leaks_the_secrets_its_own_calls_introduce() {
         let none = Sealer::default();
         let posed = ask("Capital of France?", "Paris");
