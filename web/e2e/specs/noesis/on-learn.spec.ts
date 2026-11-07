@@ -22,7 +22,7 @@ test.afterAll(async ({ stack }) => {
 
 test("a Learn from this link with Learn from my work off turns it on in place and asks no model", async ({ page, stack }) => {
   const sent = recordCommands(page);
-  await pairBoth(page, stack);
+  await pairBoth(page, stack, { aether: "operator" });
   const conn = await openAgent(page, stack, AGENT);
   const agent = /agt_[0-9A-Z]{26}/.exec(page.url())?.[0];
   expect(agent, "the agent route names the agent").toBeDefined();
