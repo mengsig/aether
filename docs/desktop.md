@@ -231,15 +231,16 @@ picker above the transcript offers `standard`, the built-in `focus` and the
 modes in the daemon's `<config dir>/modes/*.toml` whose scope fits the agent,
 read over `list_view_modes` (see [the TUI's view modes](tui.md#view-modes)); a
 mode scoped to another agent is not offered. Arrow keys move the choice, and
-`/mode <name>` or `/<name>` (again for standard) choose one from the composer.
-The choice is remembered per daemon and agent. Without one, an agent opens in
+`/mode <name>` or `/<name>` (again for standard) choose one from the composer;
+they run in the app and, while the daemon's list is loading or unavailable,
+say so rather than reach the agent. The choice is remembered per daemon and agent. Without one, an agent opens in
 the first user mode scoped to it, so Archon's orchestrator opens in Calm when
 its `calm.toml` exists, and any other agent in standard.
 
 The rules are the TUI's, pinned row for row by one shared fixture
 (`crates/aether-tui/tests/fixtures/view_mode_parity.json`) that both test
 suites read. A named mode hides the categories it does not list, draws a
-failed tool call as one line when it omits `tool`, and with `compact` density
+failed tool call or edit as one line when it omits `tool`, and with `compact` density
 draws delegations, messages, completions and status as one-line cards.
 Questions, approvals, errors, failed children and calls that were denied or
 cancelled stay whole in every mode. **Details** (Ctrl+T) reveals everything
