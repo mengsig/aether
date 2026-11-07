@@ -1,13 +1,17 @@
 import { navigate, selectConnections, selectReports, useApp, useCapabilities, useEntityActions, useRoute, useRoutes, useSelector } from "@aether-ui/core";
 import type { EntityAction } from "@aether-ui/protocol";
 import { HomeScreen } from "@aether-ui/home";
-import { ArchonToolsNotice, Welcome } from "@aether-ui/settings";
+import { loadArchonToolsNotice, loadWelcome } from "@aether-ui/settings";
 import { AppShell, type ToastMessage } from "@aether-ui/ui";
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { useNoticeLifetime } from "./notice-lifetime.ts";
 import { noticesOf } from "./notices.ts";
 import { entityCommands, routeOffered, selectPaletteSources, sameSources } from "./palette-entities.ts";
 import { screenTitles } from "./titles.ts";
+
+// Setup's screens load on demand: the first paint of a connected app does not pay for onboarding.
+const Welcome = lazy(() => loadWelcome().then((module) => ({ default: module.Welcome })));
+const ArchonToolsNotice = lazy(() => loadArchonToolsNotice().then((module) => ({ default: module.ArchonToolsNotice })));
 
 function subscribeHash(listener: () => void): () => void {
   window.addEventListener("hashchange", listener);
@@ -18,7 +22,7 @@ const readHash = (): string => window.location.hash || "#/";
 
 /** Archon's screens say so, with the fix, when Archon's tools are not connected to Aether. */
 export function bannerFor(hash: string) {
-  return hash.startsWith("#/archon/") || hash === "#/archon" ? <ArchonToolsNotice /> : null;
+  return hash.startsWith("#/archon/") || hash === "#/archon" ? <Suspense fallback={null}><ArchonToolsNotice /></Suspense> : null;
 }
 
 export interface ShellRootProps {
@@ -56,6 +60,6 @@ export function ShellRoot({ initialRecents, onRecentsChange }: ShellRootProps) {
   return (
     <AppShell routes={routes} actions={actions} capabilities={capabilities} match={match} hash={hash}
       onNavigate={navigate} onActionError={onActionError} connections={connections} notices={notices} onDismissNotice={dismiss} onDismissAllNotices={dismissAll} titles={screenTitles}
-      home={<Welcome connected={<HomeScreen />} />} banner={bannerFor(hash)} commands={paletteEntities} initialRecents={initialRecents} onRecentsChange={onRecentsChange} />
+      home={<Suspense fallback={null}><Welcome connected={<HomeScreen />} /></Suspense>} banner={bannerFor(hash)} commands={paletteEntities} initialRecents={initialRecents} onRecentsChange={onRecentsChange} />
   );
 }

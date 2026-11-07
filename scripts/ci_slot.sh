@@ -50,20 +50,27 @@ prune_queue() {
 holder_description() {
     lockfile=$1
     holder=$(lslocks -n -o PID,PATH 2>/dev/null | awk -v path="$lockfile" '$2 == path {print $1; exit}')
-    if [ -n "$holder" ] && [ -r "/proc/$holder/stat" ]; then
-        command=$(tr '\000' ' ' < "/proc/$holder/cmdline")
-        [ -n "$command" ] || command=$(ps -p "$holder" -o comm=)
-        age=$(ps -p "$holder" -o etimes= | tr -d ' ')
-        since=$(ps -p "$holder" -o lstart=)
+    case "$holder" in '' | *[!0-9]*) printf 'unknown holder'; return ;; esac
+    if [ -r "/proc/$holder/stat" ]; then
+        command=$(tr '\000' ' ' 2>/dev/null < "/proc/$holder/cmdline") || command=
+        [ -n "$command" ] || command=$(ps -p "$holder" -o comm= 2>/dev/null) || command=
+        age=$(ps -p "$holder" -o etimes= 2>/dev/null | tr -d ' ') || age=
+        since=$(ps -p "$holder" -o lstart= 2>/dev/null) || since=
+        if [ -z "$command" ] || [ -z "$since" ]; then printf 'unknown holder'; return; fi
         printf 'pid %s, command %s, start %s, age %ss' "$holder" "$command" "$since" "$age"
-        # CPU time of the holder and current descendants is a conservative idle estimate.
-        cpu=$(ps -eo pid=,ppid=,time= | awk -v root="$holder" '
-            { p[$1]=$2; t[$1]=$3 } END {
+        processes=$(ps -eo pid=,ppid=,time=,pcpu=) || return
+        cpu=$(printf '%s\n' "$processes" | awk -v root="$holder" '
+            { p[$1]=$2; t[$1]=$3; cpu[$1]=$4 } END {
                 for (id in p) { a=id; while (a>1 && a!=root && p[a]!=a) a=p[a];
-                    if (a==root) { n=split(t[id],v,":"); s=0; for(i=1;i<=n;i++) s=s*60+v[i]; total+=s } }
+                    if (a==root) { days=split(t[id],d,"-"); n=split(d[days],v,":"); s=0;
+                        for(i=1;i<=n;i++) s=s*60+v[i]; if (days==2) s+=d[1]*86400; total+=s;
+                        if (cpu[id]>0) busy=1 } }
+                if (busy) total+=5;
                 print total+0
             }')
-        if [ "${age:-0}" -ge 300 ] && [ "$cpu" -lt 5 ]; then printf ' (idle holder)'; fi
+        case "$age" in '' | *[!0-9]*) ;; *)
+            if [ "$age" -ge 300 ] && [ "$cpu" -lt 5 ]; then printf ' (idle holder)'; fi ;;
+        esac
     else
         printf 'unknown holder'
     fi
@@ -86,7 +93,7 @@ show_status() {
         IFS=' ' read -r pid start since < "$ticket" || continue
         if process_alive "$pid" "$start"; then
             printf 'pid %s, waiting since %s, command ' "$pid" "$since"
-            tr '\000' ' ' < "/proc/$pid/cmdline"; printf '\n'
+            tr '\000' ' ' 2>/dev/null < "/proc/$pid/cmdline" || printf 'unknown command'; printf '\n'
         fi
     done
     awk '/^MemAvailable:|^SwapTotal:|^SwapFree:/ {v[$1]=$2} END {printf "MemAvailable: %s kB; swap in use: %s kB\n", v["MemAvailable:"], v["SwapTotal:"]-v["SwapFree:"]}' /proc/meminfo

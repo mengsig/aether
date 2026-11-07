@@ -27,7 +27,7 @@
       "fixture": "5,000 agents",
       "measured": 632,
       "noise": 0,
-      "reason": "The list is virtualized (§5.4): DOM grows with the viewport, never with the fleet."
+      "reason": "The list is virtualized (\u00a75.4): DOM grows with the viewport, never with the fleet."
     },
     "fleet.mount.row_renders": {
       "budget": 18,
@@ -162,7 +162,7 @@
       "fixture": "20,000 entries",
       "measured": 201,
       "noise": 0,
-      "reason": "The full-height chat: speaker marks, folded tool rows with Copy, the find bar, jump to latest and the pinned composer (§5.5)."
+      "reason": "The full-height chat: speaker marks, folded tool rows with Copy, the find bar, jump to latest and the pinned composer (\u00a75.5)."
     },
     "conversation.mount.row_renders": {
       "budget": 21,
@@ -315,7 +315,7 @@
       "fixture": "2,000 items",
       "measured": 0,
       "noise": 0,
-      "reason": "Selecting an item never lays out again (§5.4)."
+      "reason": "Selecting an item never lays out again (\u00a75.4)."
     },
     "dag.select.canvas_frames": {
       "budget": 1,
@@ -351,7 +351,7 @@
       "fixture": "2,000 items",
       "measured": 0,
       "noise": 0,
-      "reason": "A state change never lays out again (§5.4): its budget is 0."
+      "reason": "A state change never lays out again (\u00a75.4): its budget is 0."
     },
     "dag.delta.canvas_frames": {
       "budget": 1,
@@ -387,7 +387,7 @@
       "fixture": "10 s: 3 streams x 40 deltas/s, 15 commits, 200 row updates",
       "measured": 443,
       "noise": 0,
-      "reason": "Store updates batch to one commit per frame (§5.4): at most one per frame with a visible change, of 600."
+      "reason": "Store updates batch to one commit per frame (\u00a75.4): at most one per frame with a visible change, of 600."
     },
     "deltas.row_renders": {
       "budget": 460,
@@ -426,67 +426,67 @@
       "reason": "95th percentile frame: frames where a message commits or another agent's event rebuilds the rows."
     },
     "bundle.total_bytes": {
-      "budget": 963037,
+      "budget": 889304,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 963037,
+      "measured": 889304,
       "noise": 0,
-      "reason": "The overhaul's screens: the GitHub overview with charts and a graph, the home dashboard, the graph canvas, the kit pickers and the draft store."
+      "reason": "Everything web/dist ships, embedded in aether-remote. Includes 16,794 bytes for the in-flight Archon views change. Current build: 872,510 bytes."
     },
     "bundle.js_bytes": {
-      "budget": 836051,
+      "budget": 786475,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 836051,
+      "measured": 786475,
       "noise": 0,
-      "reason": "As bundle.total_bytes: the overhaul's screens, canvases and pickers."
+      "reason": "All JavaScript chunks. Includes 15,430 bytes for the in-flight Archon views change. Current build: 771,045 bytes."
     },
     "bundle.css_bytes": {
-      "budget": 120802,
+      "budget": 96645,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 120802,
+      "measured": 96645,
       "noise": 0,
-      "reason": "One token system, the kit's pickers, combos, switches and segments, chart and canvas styles, the chat and the dashboard."
+      "reason": "All stylesheets. Includes 1,364 bytes for the in-flight Archon views change. Current build: 95,281 bytes."
     },
     "bundle.initial_bytes": {
-      "budget": 418485,
+      "budget": 359381,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 418485,
+      "measured": 359381,
       "noise": 0,
-      "reason": "The first screen carries the kit (pickers, model picker, draft store), the navigation rail with icons and the home dashboard."
+      "reason": "The entry script and stylesheet index.html loads before first paint."
     },
     "bundle.initial_gzip_bytes": {
-      "budget": 128241,
+      "budget": 113424,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 128241,
+      "measured": 113424,
       "noise": 0,
-      "reason": "As bundle.initial_bytes, compressed."
+      "reason": "The entry's transfer size at gzip -9: what a remote device downloads first."
     },
     "bundle.js_gzip_bytes": {
-      "budget": 292325,
+      "budget": 273020,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 292325,
+      "measured": 273020,
       "noise": 0,
-      "reason": "As bundle.js_bytes, compressed."
+      "reason": "All JavaScript at gzip -9. Includes 5,419 bytes for the in-flight Archon views change. Current build: 267,601 bytes."
     },
     "bundle.largest_js_bytes": {
-      "budget": 374164,
+      "budget": 337797,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 374164,
+      "measured": 337797,
       "noise": 0,
-      "reason": "The entry chunk: the kit, the navigation, the store and the home dashboard; screens stay lazy chunks."
+      "reason": "The largest chunk: a route that pulled a heavy module into the entry shows here."
     }
   }
 }

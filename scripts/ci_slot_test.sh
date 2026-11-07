@@ -44,7 +44,7 @@ await_file() {
 
 await_waiting() {
     tries=0
-    until grep -q 'waiting for one to free' "$1"; do
+    until grep -q 'waiting for one to free' "$1" 2>/dev/null; do
         tries=$((tries + 1))
         [ "$tries" -le 200 ] || fail "timed out waiting for announcement in $1"
         sleep 0.1
@@ -81,12 +81,44 @@ waiter3=$!
 await_waiting "$testdir/waiter3.err"
 [ ! -e "$testdir/order" ] || fail "a waiter ran while the only slot was held"
 
-CI_HOST_SLOTS=1 timeout 5 sh "$slot" --status >"$testdir/status" || fail "--status failed"
-grep -q "$holder" "$testdir/status" || fail "status omitted the holder PID"
+tries=0
+while :; do
+    CI_HOST_SLOTS=1 timeout 5 sh "$slot" --status >"$testdir/status" || fail "--status failed"
+    grep -q "$holder" "$testdir/status" && break
+    tries=$((tries + 1))
+    [ "$tries" -le 50 ] || fail "status omitted the holder PID"
+    sleep 0.1
+done
 grep -q "$waiter1" "$testdir/status" || fail "status omitted a waiter PID"
 grep -qi 'holder' "$testdir/status" || fail "status omitted the holder"
 grep -qi 'waiting since' "$testdir/status" || fail "status omitted waiting since"
 grep -q "$testdir/order" "$testdir/status" || fail "status omitted the waiting command"
+
+mkdir "$testdir/mock-bin"
+cat > "$testdir/mock-bin/ps" <<'MOCK_PS'
+#!/bin/sh
+if [ "$1" = -eo ]; then
+    printf '%s 1 00:00:00 0.0\n%s %s 00:00:01 80.0\n' "$MOCK_HOLDER" "$((MOCK_HOLDER + 10000000))" "$MOCK_HOLDER"
+elif [ "$4" = etimes= ]; then
+    echo 301
+elif [ "$4" = lstart= ]; then
+    echo 'test start'
+else
+    exit 1
+fi
+MOCK_PS
+chmod +x "$testdir/mock-bin/ps"
+MOCK_HOLDER=$holder PATH="$testdir/mock-bin:$PATH" CI_HOST_SLOTS=1 timeout 5 sh "$slot" --status >"$testdir/busy-status" || fail "status failed for busy descendant"
+grep -q "pid $holder, command" "$testdir/busy-status" || fail "mock status omitted holder"
+if grep -q 'idle holder' "$testdir/busy-status"; then fail "busy descendant reported idle"; fi
+cat > "$testdir/mock-bin/tr" <<'MOCK_TR'
+#!/bin/sh
+if [ "$1" = '\000' ]; then exit 1; fi
+exec /usr/bin/tr "$@"
+MOCK_TR
+chmod +x "$testdir/mock-bin/tr"
+MOCK_HOLDER=$holder PATH="$testdir/mock-bin:$PATH" CI_HOST_SLOTS=1 timeout 5 sh "$slot" --status >"$testdir/race-status" || fail "status failed when process details disappeared"
+grep -q 'unknown holder' "$testdir/race-status" || fail "missing holder details were not reported"
 
 kill "$waiter2"
 status=0
