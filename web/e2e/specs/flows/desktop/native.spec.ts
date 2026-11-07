@@ -132,6 +132,7 @@ test("UX-031: a published report opens in its own window; a stopped server says 
   assert.ok(viewer !== undefined, "the report window was found");
   await expect(viewer.getByRole("heading", { name: REPORT_TITLE })).toBeVisible();
   expect(await viewer.evaluate(() => typeof (globalThis as { desktop?: unknown }).desktop), "a report page gets no bridge").toBe("undefined");
+  expect(await viewer.evaluate(() => Notification.permission), "a report page cannot notify around main's limit").toBe("denied");
   expect(desktop().native.opened(), "a local report never goes to the browser").not.toContain(reports?.url);
   await shootScreen(desktop().compositor, "ux031-report-window");
   await rows.filter({ hasText: GONE_TITLE }).getByRole("link", { name: "Open" }).click();
@@ -170,7 +171,7 @@ test("UX-045: a real agent's questions alert while another window is in front; a
   expect(first.actions, "the alert can be clicked").toContain("default");
   await desktop().native.click(first.id);
   await expect.poll(() => page.evaluate(() => location.hash), { message: "the click opens the inbox" }).toBe("#/inbox");
-  const card = page.locator(`[data-question^="${agent}:"]`).filter({ hasText: QUESTIONS[0] });
+  const card = page.locator(`[data-question*="/${agent}:"]`).filter({ hasText: QUESTIONS[0] });
   await expect(card.getByRole("textbox", { name: "Answer Native asker" })).toBeFocused();
   await shoot(page, "ux045-question-focused");
   await page.keyboard.type("Short bullet points.");

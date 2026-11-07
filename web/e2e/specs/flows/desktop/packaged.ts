@@ -116,7 +116,7 @@ function swaySocket(runtime: string): string | undefined {
 
 /** Runs a second instance of `binary` with `args`, which hands them to the first and exits. */
 async function runAgain(binary: string, args: readonly string[], options: { env: NodeJS.ProcessEnv; cwd: string; log: string }): Promise<number | null> {
-  assert.ok(args.every((arg) => !arg.startsWith("--user-data-dir")), "a second instance shares the first one's profile");
+  assert.equal(args.filter((arg) => arg.startsWith("--user-data-dir=")).length, 1, "a second instance names exactly one profile");
   const second = spawnLogged(binary, args, options);
   const deadline = new Promise<"late">((resolve) => setTimeout(() => resolve("late"), AGAIN_MS));
   const exited = new Promise<number | null>((resolve) => second.child.once("exit", (code) => resolve(code)));
@@ -162,6 +162,7 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
     const compositor = { PATH: env.PATH, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display, SWAYSOCK: ipc };
     let runs = 0;
     const again = (args: readonly string[]) => {
+      assert.ok(args.every((arg) => !arg.startsWith("--user-data-dir")), "a second instance shares the first one's profile");
       runs += 1;
       return runAgain(binary, [...shared, ...args], { env: appEnv, cwd: root, log: path.join(root, `again-${runs}.log`) });
     };
