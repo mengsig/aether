@@ -148,7 +148,7 @@ async fn a_malformed_reply_fails_closed_with_its_usage_and_never_quotes_itself()
         1,
         "the step, not the client, retries"
     );
-    let note = retry_note().text();
+    let note = RETRY_NOTE;
     assert!(!note.contains(secret) && note.contains("refused"), "{note}");
 }
 
@@ -175,7 +175,7 @@ async fn tool_like_prose_fails_closed_and_streams_nothing() {
     assert!(!failure.error.message.contains(secret));
     assert!(deltas.is_empty() && failure.partial.text().is_empty());
     assert!(failure.partial.usage.total_tokens() > 0, "usage is kept");
-    assert!(!retry_note().text().contains(secret));
+    assert!(!RETRY_NOTE.contains(secret));
 }
 
 #[tokio::test]

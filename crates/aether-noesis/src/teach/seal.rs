@@ -1,22 +1,32 @@
 //! The seal boundary. A [`Sealer`] owns one set of secrets (recall keys,
-//! practice solutions, explanations, correct option values and labels), and
-//! every generic projection the loop publishes goes through it.
+//! practice solutions, explanations, correct option values and labels).
+//!
+//! It guards a teaching promise, not a security boundary: an honest learner
+//! never sees an exercise's answer before trying it. One check,
+//! [`reply_leaks`], runs over everything a model reply would keep before any
+//! of it is published or persisted; a reply that fails it is discarded.
 
 use std::fmt;
 
 use serde_json::{Value, json};
 
-use super::engine::Step;
-use super::records::{NoesisEvent, PlanTree};
-use super::service::{CallRecord, StepRecord};
-use crate::tools::{self, SEALED};
-
-/// What a step's visible text reads as once it gave away a sealed answer.
-pub const WITHHELD: &str = "<withheld: this message gave away a sealed answer>";
+use super::engine::{EngineError, Step, ToolCall};
+use crate::budget::Spend;
+use crate::tools::{self, ToolName};
 
 /// What a refusal reads as once its reason would repeat a sealed text.
 pub const REFUSAL_WITHHELD: &str =
     "this call was refused; its reason is withheld because it repeats sealed text";
+
+/// What the agent is told before it writes a discarded reply again. It
+/// names no secret, so it is safe to send as it stands.
+pub const SEAL_REMINDER: &str = "Your previous reply was discarded before anyone saw it: it \
+    gave away a sealed answer (a question's answer key or explanation, or a problem's \
+    solution) before the learner tried. Write this step again without stating, hinting at \
+    or repeating any of them.";
+
+/// The step the learner sees when a reply gave a sealed answer away twice.
+pub const NEUTRAL_REPLY: &str = "Let's try that differently. Send any reply to carry on.";
 
 /// A set of secrets and the one matching rule every projection uses: a
 /// secret matches as a whole phrase, ignoring case and whitespace runs, and a
@@ -24,6 +34,9 @@ pub const REFUSAL_WITHHELD: &str =
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct Sealer {
     secrets: Vec<String>,
+    /// The active problem's solution, among `secrets`: a reply that
+    /// concludes the problem may show it.
+    solution: Option<String>,
 }
 
 /// Debug shows only how many secrets there are, never one of them.
@@ -42,18 +55,29 @@ impl Sealer {
         sealer
     }
 
-    /// This seal joined by the sealed texts `step`'s own calls carry: what
-    /// the step's records are kept under. `None` when a sealing call's input
-    /// is unreadable, so its secrets are unknown and the step fails closed.
-    pub fn with_step(&self, step: &Step) -> Option<Sealer> {
-        let (own, unreadable) = step_secrets(step);
-        if unreadable {
-            return None;
+    /// A session's live seal: `held`, every secret it holds unrevealed, of
+    /// which `solution` is the active problem's.
+    pub fn live<S: AsRef<str>>(held: impl IntoIterator<Item = S>, solution: Option<&str>) -> Self {
+        let mut sealer = Self::new(held);
+        sealer.solution = solution
+            .map(|solution| matchable(normalise(solution)))
+            .filter(|solution| !solution.is_empty());
+        if let Some(solution) = sealer.solution.clone() {
+            sealer.extend([solution]);
         }
+        debug_assert!(sealer.solution.iter().all(|s| sealer.secrets.contains(s)));
+        sealer
+    }
+
+    /// This seal for a reply that concludes the active problem, which
+    /// reveals its solution by design.
+    fn concluding(&self) -> Self {
         let mut sealer = self.clone();
-        sealer.extend(&own);
-        debug_assert!(own.iter().all(|secret| sealer.holds(secret)));
-        Some(sealer)
+        if let Some(solution) = sealer.solution.take() {
+            sealer.secrets.retain(|secret| *secret != solution);
+        }
+        debug_assert!(sealer.solution.is_none());
+        sealer
     }
 
     fn extend<S: AsRef<str>>(&mut self, secrets: impl IntoIterator<Item = S>) {
@@ -69,6 +93,14 @@ impl Sealer {
             !s.chars().any(char::is_alphanumeric)
                 || (alnum(s.chars().next()) && alnum(s.chars().next_back()))
         }));
+    }
+
+    /// This seal joined by `secrets`.
+    fn joined<S: AsRef<str>>(&self, secrets: impl IntoIterator<Item = S>) -> Self {
+        let mut sealer = self.clone();
+        sealer.extend(secrets);
+        debug_assert!(sealer.secrets.len() >= self.secrets.len());
+        sealer
     }
 
     /// Whether this seals nothing, so text may be shown as it is written.
@@ -87,23 +119,14 @@ impl Sealer {
             .any(|secret| contains_phrase(&haystack, secret))
     }
 
-    /// `text` itself, or [`SEALED`] when it holds a secret.
-    pub fn text(&self, text: &str) -> String {
-        if self.holds(text) {
-            SEALED.to_string()
-        } else {
-            text.to_string()
-        }
-    }
-
-    /// Replace `value` whole by [`SEALED`] when any part of it holds a secret.
-    /// Masking only the matching parts would show where a secret sits, which
-    /// among visible alternatives (a choice's options) names it.
+    /// Replace `value` whole by [`tools::SEALED`] when any part of it holds a
+    /// secret. Masking only the matching parts would show where a secret
+    /// sits, which among visible alternatives (a choice's options) names it.
     pub fn value(&self, value: &mut Value) {
         if self.reveals(value) {
-            *value = Value::String(SEALED.into());
+            *value = Value::String(tools::SEALED.into());
         }
-        debug_assert!(!self.reveals(value) || value.as_str() == Some(SEALED));
+        debug_assert!(!self.reveals(value) || value.as_str() == Some(tools::SEALED));
     }
 
     /// A refusal quotes the model's own names and ids, so one that holds a
@@ -117,85 +140,6 @@ impl Sealer {
             *content = json!({ "error": REFUSAL_WITHHELD });
         }
         debug_assert!(content.is_object());
-    }
-
-    /// A step's visible text as it may be published.
-    pub fn step_text(&self, text: &str) -> String {
-        if self.holds(text) {
-            WITHHELD.to_string()
-        } else {
-            text.to_string()
-        }
-    }
-
-    /// A tool call as it may be published: a sealing tool's input withheld
-    /// whole, every other part withheld where it holds a secret.
-    pub fn call(&self, call: &mut CallRecord) {
-        call.input = tools::seal_input(&call.name, &call.input);
-        self.value(&mut call.input);
-        call.name = self.text(&call.name);
-        if call.is_error {
-            self.refusal(&mut call.result);
-        } else {
-            self.value(&mut call.result);
-        }
-        debug_assert!(!self.reveals(&call.input) || call.input.as_str() == Some(SEALED));
-        debug_assert!(call.name == SEALED || !self.holds(&call.name));
-    }
-
-    pub fn step(&self, step: &mut StepRecord) {
-        step.text = self.step_text(&step.text);
-        for call in &mut step.calls {
-            self.call(call);
-        }
-        debug_assert!(step.text == WITHHELD || !self.holds(&step.text));
-    }
-
-    /// An event as it may be published. A pose's own view is not sealed here:
-    /// it necessarily shows its options, and posing refuses a view that
-    /// would give its key away. A conclusion reveals its solution by design.
-    pub fn event(&self, event: &mut NoesisEvent) {
-        match event {
-            NoesisEvent::PlanUpdated { plan, .. } => self.plan(plan),
-            NoesisEvent::SessionCreated { session } => {
-                if let Some(plan) = session.plan.as_mut() {
-                    self.plan(plan);
-                }
-            }
-            NoesisEvent::PhaseChanged { .. }
-            | NoesisEvent::QuestionPosed { .. }
-            | NoesisEvent::AnswerRecorded { .. }
-            | NoesisEvent::ProblemPosed { .. }
-            | NoesisEvent::PracticeConcluded { .. }
-            | NoesisEvent::SessionStalled { .. } => {}
-        }
-    }
-
-    /// A plan as it may be published: a title holding a secret is sealed and
-    /// a node id holding one is renamed everywhere it appears.
-    pub fn plan(&self, plan: &mut PlanTree) {
-        let node_count = plan.nodes.len();
-        for (index, node) in plan.nodes.iter_mut().enumerate() {
-            node.title = self.text(&node.title);
-            if !self.holds(&node.id) {
-                continue;
-            }
-            let renamed = format!("sealed-{}", index + 1);
-            for edge in &mut plan.edges {
-                for end in [&mut edge.from, &mut edge.to] {
-                    if *end == node.id {
-                        *end = renamed.clone();
-                    }
-                }
-            }
-            node.id = renamed;
-        }
-        debug_assert_eq!(plan.nodes.len(), node_count);
-        debug_assert!(
-            plan.edges
-                .iter()
-                .all(|e| !self.holds(&e.from) && !self.holds(&e.to))
-        );
     }
 
     /// Whether any scalar or key in `value` holds a secret; the parser reads a
@@ -213,6 +157,116 @@ impl Sealer {
             scalar => self.holds(&scalar.to_string()),
         }
     }
+}
+
+/// Whether a tool's input carries sealed fields: a question or a problem.
+fn is_pose(tool: &str) -> bool {
+    ToolName::parse(tool).is_some_and(|tool| !tool.sealed_fields().is_empty())
+}
+
+/// Whether `step`, a model reply, would give a sealed answer away if it were
+/// kept. This is the one seal check. It reads all the reply keeps: its text,
+/// run together and block by block, each call's name unless it is a Noesis
+/// tool's own, and every key and scalar of each input but a pose's sealed
+/// fields. It checks them against `live` and every sealed text the reply's
+/// own calls carry. Call ids are the engine's own, never the model's text.
+///
+/// A pose's own view necessarily shows its options, which name its key, so
+/// it is checked without its own secrets: posing refuses a view that gives
+/// its key away. A pose whose input is unreadable is refused, so its
+/// secrets never become live. A reply that concludes the active problem may
+/// show its solution. A failed attempt is neither shown nor kept.
+pub fn reply_leaks(live: &Sealer, step: &Step) -> bool {
+    let concludes = step
+        .calls
+        .iter()
+        .any(|call| call.name == ToolName::Conclude.as_str());
+    let live = if concludes {
+        live.concluding()
+    } else {
+        live.clone()
+    };
+    let own = |skip: Option<usize>| {
+        let calls = step.calls.iter().enumerate();
+        let carried = calls.filter(move |(index, _)| Some(*index) != skip);
+        carried.flat_map(|(_, call)| call_secrets(call))
+    };
+    debug_assert!(
+        step.text_blocks.is_empty() || step.text_blocks.concat() == step.text,
+        "the blocks are the text, block by block"
+    );
+    let all = live.joined(own(None));
+    let blocks = step.text_blocks.join("\n");
+    if all.holds(&step.text) || all.holds(&blocks) {
+        return true;
+    }
+    for (index, call) in step.calls.iter().enumerate() {
+        let shown = tools::visible_texts(&call.name, &call.input);
+        let leaks = if is_pose(&call.name) {
+            let others = live.joined(own(Some(index)));
+            shown.iter().any(|text| others.holds(text))
+        } else {
+            shown.iter().any(|text| all.holds(text))
+        };
+        let named = ToolName::parse(&call.name).is_none() && all.holds(&call.name);
+        if leaks || named {
+            return true;
+        }
+    }
+    debug_assert!(all.secrets.len() >= live.secrets.len());
+    false
+}
+
+/// The replies one model step took: the step kept, the raw reply it came
+/// from (`None` for [`neutral_step`]) and every raw reply discarded.
+#[derive(Debug)]
+pub struct Replies<R> {
+    pub step: Step,
+    pub kept: Option<R>,
+    pub discarded: Vec<R>,
+}
+
+/// Make one step's reply with `attempt` and keep the first that
+/// [`reply_leaks`] passes. A discarded reply is made once more, with
+/// [`SEAL_REMINDER`]; a second one that leaks becomes [`neutral_step`].
+pub fn kept_reply<R>(
+    live: &Sealer,
+    mut attempt: impl FnMut(Option<&'static str>) -> Result<(Step, R), EngineError>,
+) -> Result<Replies<R>, EngineError> {
+    let mut discarded = Vec::new();
+    let mut spent = Spend::default();
+    for reminder in [None, Some(SEAL_REMINDER)] {
+        let (mut step, raw) = attempt(reminder)?;
+        if !reply_leaks(live, &step) {
+            step.usage += spent;
+            return Ok(Replies {
+                step,
+                kept: Some(raw),
+                discarded,
+            });
+        }
+        spent += step.usage;
+        discarded.push(raw);
+    }
+    debug_assert_eq!(discarded.len(), 2, "both attempts were discarded");
+    Ok(Replies {
+        step: neutral_step(spent),
+        kept: None,
+        discarded,
+    })
+}
+
+/// The step that stands for two discarded replies: [`NEUTRAL_REPLY`], no
+/// calls, and what the discarded replies spent.
+pub fn neutral_step(spent: Spend) -> Step {
+    let step = Step {
+        text: NEUTRAL_REPLY.to_string(),
+        text_blocks: vec![NEUTRAL_REPLY.to_string()],
+        calls: Vec::new(),
+        usage: spent,
+    };
+    debug_assert!(!reply_leaks(&Sealer::default(), &step));
+    step
 }
 
 /// Lowercase with every whitespace run collapsed to one space, trimmed.
@@ -284,25 +338,19 @@ pub(crate) fn embedded_json(text: &str) -> Option<Value> {
     (parsed.is_object() || parsed.is_array()).then_some(parsed)
 }
 
-/// The sealed texts the calls of a step carry, and whether any sealing
-/// call's input was unreadable (its secrets unknown, so the step fails closed).
-pub(super) fn step_secrets(step: &Step) -> (Vec<String>, bool) {
-    let mut secrets = Vec::new();
-    let mut unreadable = false;
-    for call in &step.calls {
-        match tools::sealed_texts(&call.name, &call.input) {
-            Some(found) => secrets.extend(found),
-            None => unreadable = true,
-        }
-    }
+/// The sealed texts `call` carries; none when it poses nothing, or when its
+/// input is unreadable, which posing refuses.
+pub(super) fn call_secrets(call: &ToolCall) -> Vec<String> {
+    let secrets = tools::sealed_texts(&call.name, &call.input).unwrap_or_default();
     debug_assert!(secrets.iter().all(|secret| !secret.trim().is_empty()));
-    (secrets, unreadable)
+    debug_assert!(secrets.is_empty() || is_pose(&call.name));
+    secrets
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::records::{NodeStatus, PlanEdge, PlanNode};
     use super::*;
+    use crate::tools::SEALED;
 
     fn sealer(secrets: &[&str]) -> Sealer {
         Sealer::new(secrets.iter().copied())
@@ -387,66 +435,162 @@ mod tests {
         assert_eq!(kept, json!({"error": "node `cell-wall`: duplicate id"}));
     }
 
-    #[test]
-    fn a_step_and_its_calls_are_sealed_together() {
-        let secrets = sealer(&["Paris", "opt1"]);
-        let mut step = StepRecord {
-            text: "The answer is paris.".into(),
-            calls: vec![
-                CallRecord {
-                    id: "call_1".into(),
-                    name: "noesis.ask".into(),
-                    input: json!({"prompt": "Capital?"}),
-                    result: json!({"question": "q_1"}),
-                    is_error: false,
-                },
-                CallRecord {
-                    id: "call_2".into(),
-                    name: "noesis.graph_search".into(),
-                    input: json!({"query": "opt1"}),
-                    result: json!({"error": "no `Paris`"}),
-                    is_error: true,
-                },
-            ],
-        };
-        secrets.step(&mut step);
-        assert_eq!(step.text, WITHHELD);
-        assert_eq!(step.calls[0].input, json!(SEALED), "a sealing tool's input");
-        assert_eq!(step.calls[0].result, json!({"question": "q_1"}));
-        assert_eq!(step.calls[1].input, json!(SEALED));
-        assert_eq!(step.calls[1].result, json!({"error": REFUSAL_WITHHELD}));
-        assert_eq!(step.calls[1].id, "call_2", "public ids are opaque");
-        assert!(
-            !format!("{step:?}{secrets:?}")
-                .to_lowercase()
-                .contains("paris")
-        );
+    fn call(id: &str, name: &str, input: Value) -> ToolCall {
+        ToolCall {
+            id: id.into(),
+            name: name.into(),
+            input,
+        }
+    }
+
+    fn reply(text: &str, calls: Vec<ToolCall>) -> Step {
+        Step {
+            text: text.into(),
+            calls,
+            ..Step::default()
+        }
+    }
+
+    fn ask(prompt: &str, key: &str) -> ToolCall {
+        let input = json!({"kind": "recall", "prompt": prompt, "answer_key": key});
+        call("call_ask", "noesis.ask", input)
     }
 
     #[test]
-    fn a_plan_holding_a_secret_is_sealed_in_titles_ids_and_edges() {
-        let node = |id: &str, title: &str| PlanNode {
-            id: id.into(),
-            title: title.into(),
-            status: NodeStatus::Upcoming,
+    fn a_reply_leaks_a_live_secret_from_anything_it_would_keep() {
+        let live = sealer(&["mitochondria"]);
+        let search = |input: Value| reply("", vec![call("c", "noesis.graph_search", input)]);
+        let leaks = [
+            reply("It is the Mitochondria.", vec![]),
+            search(json!({"query": "the mitochondria"})),
+            search(json!({"mitochondria": 1})),
+            search(json!({"query": r#"{"q": "\u006ditochondria"}"#})),
+            reply("", vec![call("c", "mitochondria_tool", json!({}))]),
+            reply("", vec![ask("Name the mitochondria's role", "energy")]),
+        ];
+        for step in &leaks {
+            assert!(reply_leaks(&live, step), "{step:?}");
+        }
+        let split = Step {
+            text: "x =4".into(),
+            text_blocks: vec!["x =".into(), "4".into()],
+            ..Step::default()
         };
-        let mut plan = PlanTree {
-            revision: 1,
-            nodes: vec![
-                node("intro", "Mitochondria basics"),
-                node("mitochondria", "Two"),
-            ],
-            edges: vec![PlanEdge {
-                from: "intro".into(),
-                to: "mitochondria".into(),
-            }],
+        assert!(
+            reply_leaks(&sealer(&["x = 4"]), &split),
+            "read block by block"
+        );
+        for (secret, input) in [
+            ("true", json!({"flag": true})),
+            ("null", json!({"q": null})),
+        ] {
+            assert!(reply_leaks(&sealer(&[secret]), &search(input)), "{secret}");
+        }
+        let kept = reply(
+            "Cells have parts.",
+            vec![call(
+                "call_mitochondria",
+                "noesis.graph_search",
+                json!({"query": "cells"}),
+            )],
+        );
+        assert!(!reply_leaks(&live, &kept), "ids are the engine's own");
+        assert!(!reply_leaks(
+            &sealer(&["ask"]),
+            &reply("", vec![ask("Capital?", "Paris")])
+        ));
+    }
+
+    #[test]
+    fn a_reply_leaks_the_secrets_its_own_calls_introduce() {
+        let none = Sealer::default();
+        let posed = ask("Capital of France?", "Paris");
+        assert!(reply_leaks(
+            &none,
+            &reply("Hint: it is Paris.", vec![posed.clone()])
+        ));
+        let search = call("c", "noesis.graph_search", json!({"query": "paris"}));
+        assert!(reply_leaks(&none, &reply("", vec![search, posed.clone()])));
+        assert!(!reply_leaks(&none, &reply("One question:", vec![posed])));
+        let options = json!([{"value": "a", "label": "Paris"}, {"value": "b", "label": "Lyon"}]);
+        let choice = json!({"kind": "choice", "prompt": "Capital?", "options": options, "answer_key": ["a"]});
+        let choice = call("call_choice", "noesis.ask", choice);
+        assert!(
+            !reply_leaks(&none, &reply("", vec![choice.clone()])),
+            "a pose's own options name its key"
+        );
+        assert!(reply_leaks(&sealer(&["Lyon"]), &reply("", vec![choice])));
+    }
+
+    /// Replies made one by one from `script`, with the reminder each was told.
+    fn attempts(
+        script: Vec<Step>,
+    ) -> (
+        Result<Replies<usize>, EngineError>,
+        Vec<Option<&'static str>>,
+    ) {
+        let mut script = script.into_iter();
+        let mut told = Vec::new();
+        let replies = kept_reply(&sealer(&["Paris"]), |reminder| {
+            told.push(reminder);
+            let step = script.next().expect("a scripted reply");
+            Ok((step, told.len()))
+        });
+        (replies, told)
+    }
+
+    #[test]
+    fn a_leaking_reply_is_discarded_and_made_again_once_with_a_reminder() {
+        let spent = |usd| Spend { usd, tokens: 10 };
+        let leak = Step {
+            usage: spent(0.25),
+            ..reply("It is Paris.", vec![])
         };
-        sealer(&["mitochondria"]).plan(&mut plan);
-        assert_eq!(plan.nodes[0].title, SEALED);
-        assert_eq!(plan.nodes[0].id, "intro");
-        assert_eq!(plan.nodes[1].id, "sealed-2");
-        assert_eq!(plan.edges[0].to, "sealed-2");
-        assert!(!format!("{plan:?}").to_lowercase().contains("mitochondria"));
+        let clean = Step {
+            usage: spent(0.5),
+            ..reply("Try again.", vec![])
+        };
+        let (replies, told) = attempts(vec![clean.clone()]);
+        let replies = replies.unwrap();
+        assert_eq!(
+            (replies.step, replies.kept, told),
+            (clean.clone(), Some(1), vec![None])
+        );
+        assert!(replies.discarded.is_empty());
+
+        let (replies, told) = attempts(vec![leak.clone(), clean]);
+        let replies = replies.unwrap();
+        assert_eq!(told, vec![None, Some(SEAL_REMINDER)]);
+        assert_eq!((replies.kept, replies.discarded), (Some(2), vec![1]));
+        assert_eq!(replies.step.text, "Try again.");
+        assert_eq!(
+            replies.step.usage,
+            Spend {
+                usd: 0.75,
+                tokens: 20
+            },
+            "the discarded one is spent too"
+        );
+
+        let (replies, _) = attempts(vec![leak.clone(), leak]);
+        let replies = replies.unwrap();
+        assert_eq!((replies.kept, replies.discarded), (None, vec![1, 2]));
+        assert_eq!(
+            replies.step,
+            neutral_step(Spend {
+                usd: 0.5,
+                tokens: 20
+            })
+        );
+        assert!(!SEAL_REMINDER.contains("Paris") && replies.step.calls.is_empty());
+    }
+
+    #[test]
+    fn a_failed_reply_fails_the_step_and_keeps_nothing() {
+        let failed = kept_reply(&Sealer::default(), |_| -> Result<(Step, ()), EngineError> {
+            Err(EngineError::Failed("broke".into()))
+        });
+        assert!(matches!(failed, Err(EngineError::Failed(_))));
     }
 
     #[test]

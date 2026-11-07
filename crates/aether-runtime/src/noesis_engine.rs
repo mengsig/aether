@@ -6,12 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aether_core::agent::{Agent, ExecutionBackend};
-use aether_core::id::{AgentId, InvocationId};
 use aether_core::model::ModelRef;
 use aether_model::ModelClient;
 
-use crate::bus::{DeltaKind, DeltaStream};
-use crate::noesis_seal::StreamSeal;
 use crate::{Result, Runtime, RuntimeError, turn_engine};
 
 /// How long one Noesis step may run on an engine: a lesson is longer than
@@ -133,56 +130,4 @@ fn session_pricing(
     Arc::new(move |reported: &str| {
         turn_engine::TurnPricing::of_session(&runtime.upgrade()?, &configured, reported)
     })
-}
-
-/// The live deltas of one Noesis step, so a client streams the lesson as it
-/// does an ordinary turn. Only the turn's bounds and its text go out: a
-/// tool's input may hold a sealed value. Dropping it finishes the turn.
-pub struct NoesisStepStream {
-    runtime: Arc<Runtime>,
-    agent: AgentId,
-    deltas: DeltaStream,
-}
-
-impl std::fmt::Debug for NoesisStepStream {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NoesisStepStream")
-            .field("agent", &self.agent)
-            .field("deltas", &self.deltas)
-            .finish_non_exhaustive()
-    }
-}
-
-impl NoesisStepStream {
-    /// Opens turn `turn` (1 for the agent's first step) of `agent`.
-    pub fn start(runtime: Arc<Runtime>, agent: AgentId, turn: u32) -> Self {
-        assert!(turn >= 1, "turns count from one");
-        let mut deltas = DeltaStream::new(InvocationId::new(), StreamSeal::Noesis);
-        runtime
-            .bus
-            .publish_delta(agent, &mut deltas, DeltaKind::TurnStarted { turn });
-        Self {
-            runtime,
-            agent,
-            deltas,
-        }
-    }
-
-    pub fn text(&mut self, text: &str) {
-        if text.is_empty() {
-            return;
-        }
-        let delta = DeltaKind::Text { text: text.into() };
-        self.runtime
-            .bus
-            .publish_delta(self.agent, &mut self.deltas, delta);
-    }
-}
-
-impl Drop for NoesisStepStream {
-    fn drop(&mut self) {
-        self.runtime
-            .bus
-            .publish_delta(self.agent, &mut self.deltas, DeltaKind::TurnFinished);
-    }
 }

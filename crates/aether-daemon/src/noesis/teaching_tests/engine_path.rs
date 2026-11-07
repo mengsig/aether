@@ -15,7 +15,6 @@ use tokio_util::sync::CancellationToken;
 use super::*;
 
 mod live_seal;
-mod streaming;
 
 const ENGINE_MODEL: &str = "faux-engine/tutor";
 const KEY_SECRET: &str = "Paris has been the capital since 987.";
@@ -354,8 +353,11 @@ async fn a_whole_session_runs_on_the_engine_with_sealed_answers_and_charged_step
         "every step was one engine launch"
     );
     assert_history(&harness, &created.id, prober).await;
-    let streamed = live_text(&mut bus, prober);
-    assert!(streamed.contains("First, a quick check."), "{streamed}");
+    assert_eq!(
+        live_text(&mut bus, prober),
+        "",
+        "lesson text is kept whole, never streamed"
+    );
     harness.close().await;
 }
 

@@ -36,6 +36,13 @@ pub struct Spend {
     pub tokens: u64,
 }
 
+impl std::ops::AddAssign for Spend {
+    fn add_assign(&mut self, other: Spend) {
+        self.usd += other.usd;
+        self.tokens = self.tokens.saturating_add(other.tokens);
+    }
+}
+
 impl Spend {
     fn is_valid(self) -> bool {
         self.usd.is_finite() && self.usd >= 0.0

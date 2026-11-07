@@ -94,12 +94,13 @@ pub enum Input {
 /// One model call's output: visible text and a batch of tool calls.
 #[derive(Clone, PartialEq, Default)]
 pub struct Step {
+    /// The reply's text blocks run together, as the step shows them.
     pub text: String,
+    /// The same text block by block, as a transcript keeps them; empty when
+    /// the engine keeps no blocks of its own.
+    pub text_blocks: Vec<String>,
     pub calls: Vec<ToolCall>,
     pub usage: Spend,
-    /// What earlier attempts of this step streamed before they failed and
-    /// were retried: shown live, though never kept.
-    pub shown_before: String,
 }
 
 /// Debug omits the text, which may hold a sealed answer until it is checked.
@@ -107,7 +108,7 @@ impl std::fmt::Debug for Step {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Step")
             .field("text_chars", &self.text.chars().count())
-            .field("shown_before_chars", &self.shown_before.chars().count())
+            .field("text_blocks", &self.text_blocks.len())
             .field("calls", &self.calls)
             .field("usage", &self.usage)
             .finish()
@@ -144,8 +145,9 @@ pub trait Engine {
     fn charges_own_calls(&self) -> bool {
         false
     }
-    /// Run one model call over the agent's pending inputs. While `live`
-    /// holds any secret the step's text is never streamed, and the
-    /// transcript keeps it only as [`Sealer::step_text`] reads it.
+    /// Run one model step over the agent's pending inputs. Its reply is
+    /// buffered whole, never streamed, and kept only as
+    /// [`super::seal::kept_reply`] decides against `live`, the secrets the
+    /// session holds unrevealed as the step starts.
     fn step(&mut self, agent: &str, live: &Sealer) -> Result<Step, EngineError>;
 }

@@ -12,7 +12,7 @@ use crate::prompts::Agent;
 const SECRET: &str = "mitochondria";
 
 #[test]
-fn a_stringified_argument_cannot_carry_an_escaped_active_solution() {
+fn a_stringified_argument_escaping_the_active_solution_is_discarded() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = t
@@ -34,46 +34,37 @@ fn a_stringified_argument_cannot_carry_an_escaped_active_solution() {
         ],
     );
     let report = t.advance(&id).unwrap().remove(0);
-    let searches = &report.steps[1].calls;
-    assert_eq!(searches.len(), 2);
-    for call in searches {
-        assert_eq!(call.input, json!(crate::tools::SEALED), "{call:?}");
-    }
+    assert_eq!(t.engine().reminders, 1, "{report:?}");
+    assert!(report.steps[1].calls.is_empty(), "the retry replaced it");
     let shown = format!("{report:?}");
     assert!(!shown.contains("u03c0") && !shown.contains('π'), "{shown}");
 }
 
 #[test]
-fn a_question_whose_key_the_plan_shows_is_refused_in_either_order() {
+fn a_reply_whose_plan_shows_its_own_key_is_discarded_in_either_order() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = teacher_session(&mut t);
+    t.take_events();
     let leaky_plan = json!({"nodes": [{"id": "cell", "title": SECRET}], "edges": []});
     let mut tagged = recall("Which organelle makes ATP?", SECRET);
     tagged["plan_node"] = json!("cell");
-    t.engine_mut().script(
-        Agent::Teacher,
-        "",
-        vec![(PLAN, leaky_plan), (ASK, tagged.clone())],
-    );
-    t.engine_mut()
-        .script(Agent::Teacher, "Let us rethink.", vec![]);
-    let report = t.advance(&id).unwrap().remove(0);
-    let calls = &report.steps[0].calls;
-    assert!(!calls[0].is_error, "the plan alone seals nothing");
-    assert!(
-        calls[1].is_error,
-        "the pose would expose its key: {calls:?}"
-    );
-    assert!(session(&t, &id).open_question.is_none());
-
-    // The leaky plan is current; a later pose of the same key is refused too.
-    t.engine_mut()
-        .script(Agent::Teacher, "", vec![(ASK, tagged)]);
-    t.engine_mut().script(Agent::Teacher, "Again.", vec![]);
-    let report = t.advance(&id).unwrap().remove(0);
-    assert!(report.steps[0].calls[0].is_error, "{report:?}");
-    assert!(session(&t, &id).open_question.is_none());
+    let orders = [
+        vec![(PLAN, leaky_plan.clone()), (ASK, tagged.clone())],
+        vec![(ASK, tagged), (PLAN, leaky_plan)],
+    ];
+    for (turn, calls) in orders.into_iter().enumerate() {
+        t.engine_mut().script(Agent::Teacher, "", calls);
+        t.engine_mut()
+            .script(Agent::Teacher, "Let us rethink.", vec![]);
+        let report = t.advance(&id).unwrap().remove(0);
+        assert_eq!(t.engine().reminders, turn + 1, "{report:?}");
+        assert_eq!(report.steps[0].text, "Let us rethink.");
+        assert!(report.steps[0].calls.is_empty(), "{report:?}");
+        assert!(session(&t, &id).open_question.is_none());
+    }
+    let events = serde_json::to_string(&t.take_events()).unwrap();
+    assert!(!events.contains(SECRET), "the plan never ran: {events}");
 }
 
 #[test]
@@ -182,7 +173,8 @@ fn the_models_option_values_never_reach_a_reader_so_text_cannot_name_the_key() {
     );
     t.engine_mut().script(Agent::Teacher, "Rethinking.", vec![]);
     let report = t.advance(&id).unwrap().remove(0);
-    assert!(report.steps[0].calls[1].is_error, "{report:?}");
+    assert_eq!(t.engine().reminders, 1, "{report:?}");
+    assert_eq!(report.steps[0].text, "Rethinking.", "{report:?}");
     assert!(session(&t, &id).open_question.is_none());
 
     let clean = json!({"nodes": [{"id": "pick", "title": "Capitals"}], "edges": []});
@@ -276,12 +268,13 @@ fn a_numeric_key_or_solution_followed_by_a_unit_is_still_sealed() {
     t.engine_mut()
         .script(Agent::Practitioner, "Hint: about 42kg.", vec![]);
     let report = t.advance(&practice).unwrap().remove(0);
-    assert_eq!(report.steps[1].text, seal::WITHHELD, "{report:?}");
+    assert_eq!(t.engine().reminders, 1, "{report:?}");
+    assert_eq!(report.steps[1].text, "", "the retry replaced it");
     assert!(!format!("{report:?}").contains("42kg"), "{report:?}");
 }
 
 #[test]
-fn a_pose_whose_key_an_earlier_step_streamed_is_refused_and_that_step_sealed() {
+fn a_pose_whose_key_an_earlier_step_showed_is_refused() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = t
@@ -302,63 +295,15 @@ fn a_pose_whose_key_an_earlier_step_streamed_is_refused_and_that_step_sealed() {
     );
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingLearner, "{report:?}");
-    assert_eq!(report.steps[0].text, seal::WITHHELD);
+    assert_eq!(report.steps[0].text, "The answer is mitochondria.");
     assert_eq!(report.steps[1].text, "One question:");
     assert!(report.steps[1].calls[0].is_error, "{report:?}");
-    assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
+    assert_eq!(t.engine().reminders, 0, "a refused pose is no leak");
     assert!(session(&t, &id).open_question.is_none());
 }
 
 #[test]
-fn a_call_id_holding_a_key_committed_later_never_leaves_the_crate() {
-    let (_dir, noesis) = fixture();
-    let mut t = Teaching::new(&noesis, FauxEngine::new());
-    let id = t
-        .create_session("Learn cells", Mode::Teach, &[])
-        .unwrap()
-        .id;
-    let read = ToolCall {
-        id: format!("toolu_{SECRET}"),
-        name: "noesis.learner_read".into(),
-        input: json!({"concepts": ["cells"]}),
-    };
-    let step = Step {
-        text: String::new(),
-        calls: vec![read],
-        ..Step::default()
-    };
-    t.engine_mut().script_step(Agent::Prober, step);
-    t.engine_mut().script(
-        Agent::Prober,
-        "One question:",
-        vec![(ASK, recall("Which organelle makes ATP?", SECRET))],
-    );
-    let report = t.advance(&id).unwrap().remove(0);
-    // The transcript kept the earlier id as the engine gave it, so the pose is refused.
-    assert_eq!(report.end, TurnEnd::AwaitingLearner, "{report:?}");
-    assert!(report.steps[1].calls[0].is_error, "{report:?}");
-    let public = &report.steps[0].calls[0].id;
-    assert!(
-        public.starts_with("call_") && !public.contains(SECRET),
-        "{public}"
-    );
-    assert_ne!(public, &report.steps[1].calls[0].id, "ids are per call");
-    assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
-    let agent = session(&t, &id).agent;
-    let inputs = t.engine().inputs_of(&agent);
-    let raw = inputs.iter().any(|input| {
-        matches!(input, Input::ToolResults(results)
-            if results.iter().any(|r| r.call == format!("toolu_{SECRET}")))
-    });
-    assert!(raw, "the engine still correlates by its own id");
-    assert!(
-        !format!("{inputs:?}").contains(SECRET),
-        "Debug omits raw ids"
-    );
-}
-
-#[test]
-fn a_key_refused_in_a_later_step_seals_every_earlier_record_of_the_turn() {
+fn a_search_result_showing_a_key_posed_later_in_the_turn_is_sealed() {
     let (_dir, noesis) = fixture();
     add_proposition(&noesis, "p_atp", SECRET, "powerhouse");
     let mut t = Teaching::new(&noesis, FauxEngine::new());
@@ -367,7 +312,7 @@ fn a_key_refused_in_a_later_step_seals_every_earlier_record_of_the_turn() {
     let teacher = t.engine_mut();
     teacher.script(
         Agent::Teacher,
-        &format!("Think about the {SECRET}."),
+        "Let me look.",
         vec![("noesis.graph_search", json!({"query": "powerhouse"}))],
     );
     teacher.script(Agent::Teacher, "", vec![(PLAN, three_steps())]);
@@ -375,12 +320,10 @@ fn a_key_refused_in_a_later_step_seals_every_earlier_record_of_the_turn() {
     tagged["plan_node"] = json!("a");
     teacher.script(Agent::Teacher, "Now a check:", vec![(ASK, tagged)]);
     let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.end, TurnEnd::AwaitingLearner, "{report:?}");
-    assert_eq!(report.steps[0].text, seal::WITHHELD);
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
     let search = &report.steps[0].calls[0];
     assert_eq!(search.result, json!(crate::tools::SEALED), "{search:?}");
-    assert_eq!(report.steps[2].text, "Now a check:");
-    assert!(report.steps[2].calls[0].is_error, "{report:?}");
+    assert!(!report.steps[2].calls[0].is_error, "{report:?}");
     assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
     let events = serde_json::to_string(&t.take_events()).unwrap();
     assert!(events.contains("\"revision\""), "a plan event: {events}");
@@ -412,7 +355,7 @@ fn a_pose_is_refused_when_a_plan_posted_earlier_in_its_turn_shows_its_key() {
 }
 
 #[test]
-fn a_numeric_key_shown_with_a_unit_before_the_pose_is_sealed() {
+fn a_numeric_key_shown_with_a_unit_before_the_pose_is_refused() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = teacher_session(&mut t);
@@ -440,17 +383,12 @@ fn a_numeric_key_shown_with_a_unit_before_the_pose_is_sealed() {
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingLearner, "{report:?}");
     assert!(report.steps[1].calls[0].is_error, "{report:?}");
-    assert_eq!(report.steps[0].text, seal::WITHHELD);
-    assert_eq!(report.steps[0].calls[0].input, json!(crate::tools::SEALED));
-    let shown = format!("{report:?}");
-    assert!(
-        !shown.contains("42 kg") && !shown.contains("42kg"),
-        "{shown}"
-    );
+    assert_eq!(t.engine().reminders, 0, "a refused pose is no leak");
+    assert!(session(&t, &id).open_question.is_none());
 }
 
 #[test]
-fn a_rekeyed_option_value_named_before_the_pose_is_sealed() {
+fn a_rekeyed_option_value_named_before_the_pose_never_reaches_the_question() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = teacher_session(&mut t);
@@ -469,12 +407,9 @@ fn a_rekeyed_option_value_named_before_the_pose_is_sealed() {
     teacher.script(Agent::Teacher, "Pick one:", vec![(ASK, pose)]);
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
-    assert_eq!(report.steps[0].text, seal::WITHHELD);
-    assert_eq!(report.steps[0].calls[0].input, json!(crate::tools::SEALED));
-    let events = serde_json::to_string(&t.take_events()).unwrap();
-    let view = serde_json::to_string(&session(&t, &id)).unwrap();
-    let shown = format!("{report:?}{events}{view}");
-    assert!(!shown.contains("opt-right"), "{shown}");
+    let question = serde_json::to_string(&session(&t, &id).open_question).unwrap();
+    assert!(question.contains("Paris"), "{question}");
+    assert!(!question.contains("opt-right"), "{question}");
     let mut values = shown_values(&t, &id, &["Paris", "Rome"]);
     values.sort();
     assert_eq!(values, ["1", "2"], "readers see display positions only");
@@ -496,7 +431,7 @@ fn a_choice_prompt_naming_the_correct_label_is_refused() {
 }
 
 #[test]
-fn a_malformed_sibling_call_does_not_unseal_a_refused_pose_in_its_step() {
+fn a_malformed_sibling_call_does_not_hide_its_reply_s_leak() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = teacher_session(&mut t);
@@ -512,13 +447,13 @@ fn a_malformed_sibling_call_does_not_unseal_a_refused_pose_in_its_step() {
     );
     t.engine_mut().script(Agent::Teacher, "Again.", vec![]);
     let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(t.engine().reminders, 1, "{report:?}");
+    assert_eq!(report.steps[0].text, "Again.");
     assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
-    let search = &report.steps[0].calls[2];
-    assert_eq!(search.input, json!(crate::tools::SEALED), "{search:?}");
 }
 
 #[test]
-fn a_key_or_solution_ending_in_punctuation_is_sealed_without_it() {
+fn a_key_or_solution_ending_in_punctuation_is_matched_without_it() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = teacher_session(&mut t);
@@ -538,6 +473,7 @@ fn a_key_or_solution_ending_in_punctuation_is_sealed_without_it() {
         vec![(PROBLEM, problem)],
     );
     let report = t.advance(&practice).unwrap().remove(0);
-    assert_eq!(report.steps[0].text, seal::WITHHELD, "{report:?}");
+    assert_eq!(t.engine().reminders, 1, "{report:?}");
+    assert_eq!(report.steps[0].text, "", "the retry replaced it");
     assert!(!format!("{report:?}").contains("x = 4"), "{report:?}");
 }

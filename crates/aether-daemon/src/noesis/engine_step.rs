@@ -33,7 +33,7 @@ const MALFORMED_REPLY: &str = "the engine's reply was not the JSON object asked 
 
 /// What a retry adds to the transcript. The refused reply is never shown
 /// again: it may hold a value the transcript seals.
-const RETRY_NOTE: &str = "Your previous reply was refused and discarded: it was not one valid \
+pub(super) const RETRY_NOTE: &str = "Your previous reply was refused and discarded: it was not one valid \
     JSON object of the reply format. Reply again with only the JSON object.";
 
 /// Renders a Noesis request for `inner`, a one-shot engine client, and
@@ -72,11 +72,6 @@ impl ModelClient for EngineStepClient {
 /// Whether a step's error is a reply that was not the object asked for.
 pub(super) fn is_malformed(error: &ModelError) -> bool {
     error.class == ModelErrorClass::Server && error.message.starts_with(MALFORMED_REPLY)
-}
-
-/// The note a retried step's transcript ends with.
-pub(super) fn retry_note() -> Message {
-    Message::user_text(RETRY_NOTE)
 }
 
 /// The request the engine reads: the agent's prompt and the reply protocol

@@ -299,14 +299,9 @@ impl<E: Engine> Teaching<'_, E> {
         Ok((teacher, handed_off_at))
     }
 
+    /// Store a new plan revision. The reply that sent it passed the seal
+    /// check, so no node id or title holds a live secret.
     fn plan(&mut self, row: &SessionRow, args: &PlanArgs) -> Handled {
-        // Checked before validation, whose problems quote node ids.
-        let live = Sealer::new(self.live_secrets(&row.id)?);
-        let named = args.nodes.iter().flat_map(|node| [&node.id, &node.title]);
-        let linked = args.edges.iter().flat_map(|edge| [&edge.from, &edge.to]);
-        if named.chain(linked).any(|text| live.holds(text)) {
-            return refuse("the plan gives away a sealed answer; rewrite it");
-        }
         let dag = match plan::validate(args) {
             Ok(dag) => dag,
             Err(problems) => {

@@ -27,15 +27,14 @@ use aether_noesis::budget::{Billing, INTERACTIVE_BUDGET_SETTING, Spend};
 use aether_noesis::prompts;
 use aether_noesis::teach::engine::ModelInfo;
 use aether_noesis::teach::{
-    AgentSpec, Engine, EngineError, Input, Sealer, Step, ToolCall, ToolResult, WITHHELD,
-    agent_for_role,
+    AgentSpec, Engine, EngineError, Input, Sealer, Step, ToolCall, ToolResult, agent_for_role,
+    kept_reply,
 };
 use aether_noesis::tools::{self, ToolName};
 use aether_runtime::noesis_guard::{NoesisBudget, NoesisCharge, NoesisRefusal, lane_of};
-use aether_runtime::{BusMessage, CreateAgentSpec, NoesisStepStream, Runtime};
+use aether_runtime::{BusMessage, CreateAgentSpec, Runtime};
 use aether_store::Commit;
 use futures::StreamExt;
-use serde_json::Value;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
@@ -265,10 +264,6 @@ impl AetherEngine<'_> {
             }
             Input::ToolResults(results) => results
                 .into_iter()
-                .map(|result| ToolResult {
-                    call: recorded_id(&calls, result.call),
-                    ..result
-                })
                 .filter(|result| !answered.contains(&result.call))
                 .map(result_block)
                 .collect(),
@@ -296,22 +291,15 @@ impl AetherEngine<'_> {
     }
 
     /// One model call over the agent's transcript, ended if the service
-    /// stops or the agent ends (a cancel) while it runs. Its text streams
-    /// live only when `streamed` is given, which gathers what was shown.
-    fn invoke(
-        &self,
-        agent: &Agent,
-        request: ModelRequest,
-        mut streamed: Option<&mut String>,
-    ) -> Result<CallEnd, EngineError> {
+    /// stops or the agent ends (a cancel) while it runs. The reply is
+    /// buffered whole: nothing of it is published until it is kept.
+    fn invoke(&self, agent: &Agent, request: ModelRequest) -> Result<CallEnd, EngineError> {
         let host = self.host;
         let handle = tokio::runtime::Handle::current();
         let cancel = host.cancel.child_token();
-        let turn = step_number(&request.messages);
         tokio::task::block_in_place(|| {
             handle.block_on(async {
                 let client = host.client_for(agent).await?;
-                let mut live = NoesisStepStream::start(host.runtime.clone(), agent.id, turn);
                 let ended = agent_ended(&host.runtime, agent.id);
                 tokio::pin!(ended);
                 let opening = client.stream(request, cancel.clone());
@@ -326,32 +314,62 @@ impl AetherEngine<'_> {
                         return Ok(stopped(settled_usage(opening).await));
                     }
                 };
-                let mut on_text = |text: &str| {
-                    if let Some(shown) = streamed.as_deref_mut() {
-                        live.text(text);
-                        shown.push_str(text);
-                    }
-                };
-                read_reply(stream, &cancel, ended, &mut on_text).await
+                read_reply(stream, &cancel, ended).await
             })
         })
     }
 
-    /// Record the reply and its usage, so the day's spend survives a restart.
-    /// Only the agent's stats are written, over the row as it is now, and
-    /// its blocks as `live` and the `step`'s own calls seal them.
+    /// One reply to `request`, retried once with a corrective note when an
+    /// engine's reply is not the object asked for; each attempt is gated,
+    /// and what it spent is added to the agent's admission.
+    fn reply(
+        &mut self,
+        row: &Agent,
+        request: &mut ModelRequest,
+    ) -> Result<ModelResponse, EngineError> {
+        for attempt in 1..=engine_step::ATTEMPTS {
+            self.gate(row)?;
+            match self.invoke(row, request.clone())? {
+                CallEnd::Replied(response) => {
+                    if let Some(open) = self.charge.as_mut() {
+                        open.spent += response.usage;
+                    }
+                    return Ok(response);
+                }
+                CallEnd::AgentEnded(spent) => return Err(self.record_cut_short(row.id, spent)),
+                CallEnd::Broke(spent, error)
+                    if attempt < engine_step::ATTEMPTS && engine_step::is_malformed(&error) =>
+                {
+                    self.charge_spent(row.id, spent).map_err(failed)?;
+                    with_note(&mut request.messages, engine_step::RETRY_NOTE);
+                }
+                CallEnd::Broke(spent, error) => {
+                    return Err(self.record_broken(row.id, spent, error.to_string()));
+                }
+            }
+        }
+        unreachable!("the last attempt returns whatever it got")
+    }
+
+    /// Record the kept reply's `content` and the `usage` of the step, so the
+    /// day's spend survives a restart. Only the agent's stats are written,
+    /// over the row as it is now; the runtime seals a pose's sealed fields.
     fn record_reply(
         &self,
         agent: AgentId,
-        response: &ModelResponse,
-        step: &Step,
-        live: &Sealer,
+        usage: Usage,
+        content: Vec<ContentBlock>,
     ) -> Result<(), EngineError> {
-        let content = transcript_content(response, live.with_step(step).as_ref());
+        debug_assert!(
+            content
+                .iter()
+                .all(|block| !matches!(block, ContentBlock::Thinking { .. })),
+            "thinking is never kept"
+        );
         let row = self
             .host
             .runtime
-            .record_noesis_call(agent, response.usage, |row, commit| {
+            .record_noesis_call(agent, usage, |row, commit| {
                 // An agent ended meanwhile acts on no reply: only the spend lands.
                 if !content.is_empty() && !row.status.is_terminal() {
                     commit.push_event(message_draft(row, MessageRole::Assistant, content));
@@ -410,11 +428,18 @@ impl AetherEngine<'_> {
         if let Some(open) = open {
             open.spent += spent;
         }
+        self.record_spend(agent, spent)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Record what a call already charged spent, with nothing of its reply.
+    fn record_spend(&self, agent: AgentId, spent: Usage) -> Result<(), EngineError> {
+        debug_assert!(spent.cost_usd >= 0.0, "a call never refunds");
         let recorded = self
             .host
             .runtime
             .record_noesis_call(agent, spent, |_, _| {});
-        recorded.map(|_| ()).map_err(|error| error.to_string())
+        recorded.map(|_| ()).map_err(failed)
     }
 
     /// Refuse a call the agent's admission does not cover, given its spend
@@ -531,45 +556,35 @@ impl Engine for AetherEngine<'_> {
         true
     }
 
+    /// The step's reply is kept only as [`kept_reply`] decides: a reply
+    /// that gives a sealed answer away is charged and discarded, never
+    /// recorded, and made once more with the seal's reminder.
     fn step(&mut self, agent: &str, live: &Sealer) -> Result<Step, EngineError> {
         let row = self.agent(agent)?;
         if row.status.is_terminal() {
             return Err(not_sent(format!("agent {agent} is {}", row.status.kind())));
         }
         let mut request = self.request(&row, self.transcript(row.id)?)?;
-        let mut attempt = 1;
-        // Text a retried attempt streamed was shown, so the turn's pose check reads it.
-        let mut shown_before = String::new();
-        let response = loop {
-            self.gate(&row)?;
-            let mut streamed = String::new();
-            let stream = live.is_empty().then_some(&mut streamed);
-            match self.invoke(&row, request.clone(), stream)? {
-                CallEnd::Replied(response) => break response,
-                CallEnd::AgentEnded(spent) => return Err(self.record_cut_short(row.id, spent)),
-                CallEnd::Broke(spent, error)
-                    if attempt < engine_step::ATTEMPTS && engine_step::is_malformed(&error) =>
-                {
-                    self.charge_spent(row.id, spent).map_err(failed)?;
-                    request.messages.push(engine_step::retry_note());
-                    shown_before.push_str(&streamed);
-                    shown_before.push('\n');
-                    attempt += 1;
+        let mut unrecorded = None;
+        let replies = kept_reply(live, |reminder| {
+            if let Some(reminder) = reminder {
+                // The last reply was discarded: its spend lands before the next is made.
+                if let Some(spent) = unrecorded.take() {
+                    self.record_spend(row.id, spent)?;
                 }
-                CallEnd::Broke(spent, error) => {
-                    return Err(self.record_broken(row.id, spent, error.to_string()));
-                }
+                with_note(&mut request.messages, reminder);
             }
+            let response = self.reply(&row, &mut request)?;
+            unrecorded = Some(response.usage);
+            Ok((step_of(&response), response))
+        })?;
+        let (usage, content) = match (&replies.kept, replies.discarded.last()) {
+            (Some(kept), _) => (kept.usage, kept_content(kept)),
+            (None, Some(last)) => (last.usage, text_content(&replies.step.text)),
+            (None, None) => unreachable!("a step without a kept reply discarded two"),
         };
-        if let Some(open) = self.charge.as_mut() {
-            open.spent += response.usage;
-        }
-        let step = Step {
-            shown_before,
-            ..step_of(&response)
-        };
-        self.record_reply(row.id, &response, &step, live)?;
-        Ok(step)
+        self.record_reply(row.id, usage, content)?;
+        Ok(replies.step)
     }
 }
 
@@ -631,7 +646,6 @@ async fn read_reply(
     mut stream: ModelStream,
     cancel: &CancellationToken,
     mut ended: Pin<&mut impl Future<Output = ()>>,
-    on_text: &mut impl FnMut(&str),
 ) -> Result<CallEnd, EngineError> {
     let mut reply = StreamAccumulator::new();
     let mut usage = Usage::default();
@@ -649,10 +663,8 @@ async fn read_reply(
             Some(Ok(event)) => event,
             Some(Err(error)) => return Ok(CallEnd::Broke(usage, error)),
         };
-        match &event {
-            StreamEvent::Usage { usage: reading } => usage = *reading,
-            StreamEvent::TextDelta { text, .. } => on_text(text),
-            _ => {}
+        if let StreamEvent::Usage { usage: reading } = &event {
+            usage = *reading;
         }
         reply
             .apply(&event)
@@ -710,152 +722,41 @@ fn stopped(usage: Usage) -> CallEnd {
     )
 }
 
-/// A reply's blocks as its transcript keeps them, thinking dropped, sealed
-/// by `sealer`: the secrets live while it was written and its own calls'.
-/// `None` fails closed, as when a sealing call's input is unreadable.
-fn transcript_content(response: &ModelResponse, sealer: Option<&Sealer>) -> Vec<ContentBlock> {
-    let withhold_text = sealer.is_none_or(|sealer| text_reveals(response, sealer));
-    let mut content = Vec::with_capacity(response.content.len());
-    let mut withheld = false;
-    for block in &response.content {
-        match block {
-            ContentBlock::Thinking { .. } => {}
-            // One withheld note stands for every text block, which together gave it away.
-            ContentBlock::Text { .. } if withhold_text => {
-                if !withheld {
-                    content.push(ContentBlock::Text {
-                        text: WITHHELD.to_string(),
-                    });
-                    withheld = true;
-                }
-            }
-            ContentBlock::ToolUse { id, name, input } => {
-                content.push(kept_call(id, name, input, sealer));
-            }
-            other => content.push(other.clone()),
-        }
-    }
-    debug_assert!(
-        !withhold_text
-            || !content.iter().any(|block| matches!(block,
-        ContentBlock::Text { text } if text != WITHHELD))
-    );
-    debug_assert!(
-        content
-            .iter()
-            .all(|block| !matches!(block, ContentBlock::Thinking { .. }))
-    );
+/// A kept reply's blocks as its transcript keeps them: thinking dropped.
+fn kept_content(response: &ModelResponse) -> Vec<ContentBlock> {
+    let content: Vec<ContentBlock> = response
+        .content
+        .iter()
+        .filter(|block| !matches!(block, ContentBlock::Thinking { .. }))
+        .cloned()
+        .collect();
+    debug_assert!(content.len() <= response.content.len());
     content
 }
 
-/// Whether the reply's text gives a secret away, read as its readers join
-/// the blocks: run together, as the step reads them, or apart, as Learn shows them.
-fn text_reveals(response: &ModelResponse, sealer: &Sealer) -> bool {
-    let blocks: Vec<&str> = response
-        .content
-        .iter()
-        .filter_map(|block| match block {
-            ContentBlock::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    sealer.holds(&blocks.concat()) || sealer.holds(&blocks.join("\n"))
+/// The transcript entry of a step that kept no reply.
+fn text_content(text: &str) -> Vec<ContentBlock> {
+    debug_assert!(!text.is_empty(), "a neutral step says something");
+    vec![ContentBlock::Text {
+        text: text.to_string(),
+    }]
 }
 
-/// A call as the transcript keeps it. An id holding a secret becomes
-/// [`sealed_id`], which its result is mapped to; a name holding one is
-/// replaced unless it is a Noesis tool's own. `None` seals all three.
-fn kept_call(id: &str, wire: &str, input: &Value, sealer: Option<&Sealer>) -> ContentBlock {
-    let reveals = |text: &str| sealer.is_none_or(|sealer| sealer.holds(text));
-    let known = ToolName::parse(&tool_name(wire)).is_some();
-    let name = if known || !reveals(wire) {
-        wire.to_string()
-    } else {
-        SEALED_TOOL.to_string()
+/// Add `note` to the request's last message when it is the user's, else as
+/// a user message of its own, so roles still alternate.
+fn with_note(messages: &mut Vec<Message>, note: &str) {
+    let text = ContentBlock::Text {
+        text: note.to_string(),
     };
-    let id = if reveals(id) {
-        sealed_id(id)
-    } else {
-        id.to_string()
-    };
-    debug_assert!(known || name == SEALED_TOOL || !reveals(&name));
+    match messages.last_mut() {
+        Some(last) if last.role == MessageRole::User => last.content.push(text),
+        _ => messages.push(Message::user_text(note)),
+    }
     debug_assert!(
-        !id.is_empty(),
-        "a kept call keeps an id its result can name"
+        messages
+            .last()
+            .is_some_and(|last| last.role == MessageRole::User)
     );
-    ContentBlock::ToolUse {
-        id,
-        name,
-        input: kept_input(wire, input, sealer),
-    }
-}
-
-/// A call's input as the transcript keeps it: sealed whole where it holds a
-/// secret, or for a sealing tool field by field, its sealed fields left for
-/// the runtime; a field whose own name holds one seals that input whole.
-fn kept_input(wire: &str, input: &Value, sealer: Option<&Sealer>) -> Value {
-    let sealed = Value::String(tools::SEALED.to_string());
-    let Some(sealer) = sealer else {
-        return sealed;
-    };
-    let sealed_fields = ToolName::parse(&tool_name(wire)).map_or(&[][..], ToolName::sealed_fields);
-    let mut kept = input.clone();
-    let Some(fields) = kept.as_object_mut().filter(|_| !sealed_fields.is_empty()) else {
-        sealer.value(&mut kept);
-        return kept;
-    };
-    let named = fields
-        .keys()
-        .any(|field| !sealed_fields.contains(&field.as_str()) && sealer.holds(field));
-    if named {
-        return sealed;
-    }
-    fields
-        .iter_mut()
-        .filter(|(field, _)| !sealed_fields.contains(&field.as_str()))
-        .for_each(|(_, value)| sealer.value(value));
-    debug_assert!(kept.is_object(), "a sealing tool's object input stays one");
-    debug_assert!(
-        sealed_fields
-            .iter()
-            .all(|field| kept.get(*field) == input.get(*field)),
-        "the runtime, not this, seals a pose's sealed fields"
-    );
-    kept
-}
-
-/// The name a call whose own name holds a secret is kept under.
-const SEALED_TOOL: &str = "sealed_tool";
-
-/// The id a call whose own id holds a secret is kept under: a stable FNV-1a
-/// digest of it, so its result, which names the original, can be mapped.
-fn sealed_id(id: &str) -> String {
-    let digest = id.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
-    });
-    format!("sealed_{digest:016x}")
-}
-
-/// The id the transcript keeps for the engine's call id `call`: it, or its
-/// [`sealed_id`] when the last reply kept that instead.
-fn recorded_id(calls: &[(String, String)], call: String) -> String {
-    if calls.iter().any(|(id, _)| *id == call) {
-        return call;
-    }
-    let sealed = sealed_id(&call);
-    if calls.iter().any(|(id, _)| *id == sealed) {
-        return sealed;
-    }
-    call
-}
-
-/// The step's turn number for live deltas: one more than the replies so far.
-fn step_number(history: &[Message]) -> u32 {
-    let replies = history
-        .iter()
-        .filter(|message| message.role == MessageRole::Assistant)
-        .count();
-    u32::try_from(replies).map_or(u32::MAX, |replies| replies.saturating_add(1))
 }
 
 fn message_draft(agent: &Agent, role: MessageRole, content: Vec<ContentBlock>) -> EventDraft {
@@ -952,11 +853,19 @@ fn step_of(response: &ModelResponse) -> Step {
             _ => None,
         })
         .collect();
+    let text_blocks = response
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
     Step {
         text: response.text(),
+        text_blocks,
         calls,
         usage: spend_of(&response.usage),
-        shown_before: String::new(),
     }
 }
 
@@ -990,15 +899,12 @@ mod tests {
             cancel.cancel();
             let ended = std::future::pending::<()>();
             tokio::pin!(ended);
-            let mut texts = Vec::new();
-            let mut on_text = |text: &str| texts.push(text.to_string());
-            let end = read_reply(settled_stream(spent), &cancel, ended, &mut on_text).await;
+            let end = read_reply(settled_stream(spent), &cancel, ended).await;
             let Ok(CallEnd::Broke(usage, error)) = end else {
                 panic!("a stopped call breaks");
             };
             assert_eq!(usage, spent, "the settled usage is charged");
             assert_eq!(error.class, ModelErrorClass::Cancelled);
-            assert!(texts.is_empty());
         }
     }
 
@@ -1012,7 +918,7 @@ mod tests {
             let cancel = CancellationToken::new();
             let ended = std::future::ready(());
             tokio::pin!(ended);
-            let end = read_reply(settled_stream(spent), &cancel, ended, &mut |_| {}).await;
+            let end = read_reply(settled_stream(spent), &cancel, ended).await;
             let usage = match end {
                 Ok(CallEnd::AgentEnded(usage) | CallEnd::Broke(usage, _)) => usage,
                 _ => panic!("the call ended without a reply"),

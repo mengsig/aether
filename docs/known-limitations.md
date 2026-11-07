@@ -272,10 +272,13 @@ looks like a boundary and is not one.
 - Retention is not a full disk quota. Native sessions, backups, and workspaces
   have separate lifecycles.
 - A Noesis step on a subscription engine starts a fresh CLI session each
-  turn. Public text streams when the engine emits deltas and follows the
-  leading `text` JSON protocol; a nonstandard prefix or field order falls
-  back to complete-reply validation. Engines that only report completed
-  messages cannot provide token-by-token updates.
+  turn. A Noesis step's text, on an engine or an API model, arrives in one
+  piece when the step ends, not streamed, so the seal can read it first.
+- The Noesis seal matches whole phrases. A very short or common answer, such
+  as one digit, can make an innocent reply look like a leak; the step is then
+  run again and may end with "Let's try that differently."
+- A Noesis reply that concludes a problem may state its solution. If that
+  conclude is refused, the learner has seen the solution of a problem still open.
 - A Noesis lesson started before the session history was kept (store N3)
   lists only its current agent. A lesson handed off to the Teacher before the
   upgrade therefore no longer shows the Prober's conversation. The client

@@ -868,26 +868,24 @@ Answer options use inline Markdown only; HTML and images are unsupported.
 On an engine, each Noesis step is one fresh session without tools of its
 own: Aether gives it the agent's tools and transcript, sealed values as
 `"<sealed>"`, and runs the tool calls it answers with, so asking, sealing
-and budgets behave as on an API model. Subscribers using `deltas: true` for
-the agent receive its public text as the engine generates it. The subscription
-adapter incrementally decodes the leading JSON `text` string, including split
-escapes; it never forwards the raw JSON, thinking or tool inputs. Tool calls
-validate at the end of the reply. A reply with a nonstandard prefix or field
-order waits for complete validation before any public text is shown. Final
-engine receipts settle usage without repeating text already streamed.
+and budgets behave as on an API model. Tool calls validate at the end of the
+reply. A Noesis step's text is never streamed, on an engine or an API model:
+each reply is read whole before anything of it is shown or kept.
 
-Because text is shown as it streams, the seal holds before a step's tool
-calls are known. A question whose key or explanation, or a problem whose
-solution, appears in anything its turn has shown or kept is refused,
-however often the model retries it: an earlier step's text, or its call
-ids, inputs (every key and literal) and names no tool has, or text an
-attempt streamed before it failed and was retried. A step that runs while
-an answer is unrevealed (an active problem's solution) streams no text.
-Each reply is kept sealed against that answer and the ones its own calls
-carry: text that gives one away, even split across blocks, is kept as
-`<withheld: …>`; a call input that names one, in any key or value, as
-`<sealed>`; a call id that holds one under a digest of it, which its result
-follows; and a name no tool has as `sealed_tool`.
+The answer seal is a teaching guarantee: an honest learner does not see an
+exercise's answer before trying it. It is not a security boundary against an
+adversarial model. Before anything of a reply is shown or kept, Aether checks
+it once, whole: its text, joined and block by block; every key and value of
+every call's input; and the name of any call to a tool that does not exist. It
+checks them against the answers still unrevealed (an open question's key and
+explanation, the active problem's solution) and those the reply's own calls
+would pose. A reply that gives one away is discarded unseen, and its spend
+still counts. The step runs again once with a reminder; if that reply gives
+one away too, the learner sees "Let's try that differently." A reply that
+concludes a problem may state its solution. Call ids are the engine's own and
+are not checked. A question whose key or explanation, or a problem whose
+solution, appears in anything its turn already kept is refused, however often
+the model retries it.
 
 In the Learn screen's settings:
 

@@ -6,7 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use serde_json::Value;
 
 use super::engine::{AgentSpec, Engine, EngineError, Input, ModelInfo, Step, ToolCall};
-use super::seal::Sealer;
+use super::seal::{Sealer, kept_reply};
 use crate::budget::{Billing, Spend};
 use crate::prompts::Agent;
 
@@ -19,7 +19,10 @@ pub const STEP_ESTIMATE: Spend = Spend {
 pub struct FauxEngine {
     pub spawned: Vec<(String, AgentSpec)>,
     pub inputs: Vec<(String, Input)>,
+    /// Every reply made, a discarded one included.
     pub steps_run: usize,
+    /// How many replies were made again after the seal discarded one.
+    pub reminders: usize,
     /// For each step run, the live seal it was given.
     pub step_seals: Vec<Sealer>,
     pub fail_spawn: bool,
@@ -56,7 +59,7 @@ impl FauxEngine {
                 usd: 0.002,
                 tokens: 100,
             },
-            shown_before: String::new(),
+            text_blocks: Vec::new(),
         };
         self.scripts.entry(agent).or_default().push_back(Ok(step));
         self
@@ -140,12 +143,19 @@ impl Engine for FauxEngine {
         STEP_ESTIMATE
     }
 
-    /// An agent without a scripted step replies with nothing and waits.
+    /// Each reply replays the agent's next scripted step, kept as the
+    /// daemon's are; an agent without one replies with nothing and waits.
     fn step(&mut self, agent: &str, live: &Sealer) -> Result<Step, EngineError> {
         let kind = self.kind_of(agent).expect("a step for a spawned agent");
-        self.steps_run += 1;
         self.step_seals.push(live.clone());
-        let next = self.scripts.get_mut(&kind).and_then(VecDeque::pop_front);
-        next.unwrap_or_else(|| Ok(Step::default()))
+        let replies = kept_reply(live, |reminder| {
+            self.steps_run += 1;
+            self.reminders += usize::from(reminder.is_some());
+            let next = self.scripts.get_mut(&kind).and_then(VecDeque::pop_front);
+            next.unwrap_or_else(|| Ok(Step::default()))
+                .map(|step| (step, ()))
+        })?;
+        debug_assert!(replies.discarded.len() <= 2);
+        Ok(replies.step)
     }
 }
