@@ -21,7 +21,13 @@ export interface ArchonAccess {
   readonly has: (feature: string) => boolean;
   /** Why a change control is disabled, or null when this device may operate. */
   readonly refusal: string | null;
+  /** Like `refusal`, and also set while archond is older than Archon 1.5.0, which marks `say` and `answer` as a device's. */
+  readonly speakRefusal: string | null;
 }
+
+/** First Archon protocol whose archon-web standing allows a device's `say` and `answer`; the desktop bridge enforces it too. */
+export const ARCHON_SPEAK_PROTOCOL = 24;
+export const ARCHON_SPEAK_HINT = "Message Archon and answers need Archon 1.5.0 or newer; update Archon to use them here.";
 
 export function useArchonAccess(info: ConnectionInfo): ArchonAccess {
   const caps = useCapabilities();
@@ -30,7 +36,9 @@ export function useArchonAccess(info: ConnectionInfo): ArchonAccess {
   const has = useCallback((feature: string) => features.includes(feature), [features]);
   const operate = caps[`can.operate.${info.id}`] === true;
   const refusal = !ready ? "Archon is not connected" : operate ? null : "This device only observes Archon";
-  return { conn: info.id, ready, live: features.includes("changes"), has, refusal };
+  const tooOld = ready && info.protocol !== undefined && info.protocol < ARCHON_SPEAK_PROTOCOL;
+  const speakRefusal = refusal ?? (tooOld ? ARCHON_SPEAK_HINT : null);
+  return { conn: info.id, ready, live: features.includes("changes"), has, refusal, speakRefusal };
 }
 
 /**

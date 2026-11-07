@@ -36,6 +36,11 @@ its queue on Aether 1.2.11 or 1.3.0. Its remote access needs Aether 1.3.0:
 only 1.3.0 mounts archond at `/archon`. Archon's own upgrade notes describe
 its side.
 
+The desktop app's Message Archon and question or gate answers also need
+Archon 1.5.0: its `archon-web` connections have a device's standing only from
+protocol 24. Against an older archond the app greys those controls with a hint
+and the bridge refuses `say` and `answer`; everything else works as before.
+
 ### The store migrations
 
 The first start of 1.3.0 on a schema 28 store migrates it to 33 in one step:

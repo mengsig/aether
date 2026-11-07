@@ -3,16 +3,17 @@
 // confirm step; an observer sees every control off with the reason; reads land in core's store.
 
 import { act } from "react";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { invariant } from "../fleet/invariant.ts";
 import { ControlsScreen } from "./ControlsScreen.tsx";
 import { previewText } from "./records.tsx";
 import { AGENT_ID, controlsScript, demoAgents } from "./fixture/demo.ts";
 import { buttonNamed, click, connected, type, type Harness } from "./fixture/harness.test-util.tsx";
 import type { ScriptOptions } from "./fixture/daemon.ts";
+import { forgetDrafts } from "../composer/drafts.ts";
 
 let current: Harness | null = null;
-afterEach(() => { current?.unmount(); current = null; });
+afterEach(() => { current?.unmount(); current = null; sessionStorage.clear(); forgetDrafts(); });
 
 async function open(options: ScriptOptions = {}, tab?: string) {
   const h = current = await connected({ agents: demoAgents(), ...options, script: { ...controlsScript(), ...options.script } });
@@ -101,6 +102,33 @@ describe("ControlsScreen", () => {
     await act(async () => (root.querySelector(".b3-check input") as HTMLInputElement).click());
     await click(h, root, "Send");
     expect(sent(h, "send_message")).toEqual([{ cmd: "send_message", to: AGENT_ID, content: "Hold the release until CI is green", subtree: true }]);
+  });
+
+  test("an unsent Steer message survives leaving the screen and is cleared only once delivered", async () => {
+    const first = await open({ script: { send_message: () => ({ code: "unavailable", message: "daemon busy" }) } }, "Steer");
+    await type(first.h, first.root, "Message", "Hold the release");
+    await click(first.h, first.root, "Send");
+    expect(first.root.textContent).toContain("daemon busy");
+    first.h.unmount();
+    const back = await open({}, "Steer");
+    const field = back.root.querySelector("textarea");
+    expect(field?.value).toBe("Hold the release");
+    await click(back.h, back.root, "Send");
+    expect(field?.value).toBe("");
+    back.h.unmount();
+    current = (await open({}, "Steer")).h;
+    expect(document.querySelector("textarea")?.value).toBe("");
+  });
+
+  test("a Steer message the session store cannot keep says so", async () => {
+    const setItem = vi.spyOn(sessionStorage, "setItem").mockImplementation(() => { throw new DOMException("full", "QuotaExceededError"); });
+    try {
+      const { h, root } = await open({}, "Steer");
+      await type(h, root, "Message", "Hold the release");
+      expect(root.textContent).toContain("Drafts are kept while the app is open, but not across a reload (full).");
+    } finally {
+      setItem.mockRestore();
+    }
   });
 
   test("model and limits read the model list into the store and patch only what changed", async () => {
