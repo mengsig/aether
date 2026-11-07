@@ -204,6 +204,17 @@ describe("the mode an agent opens in", () => {
     if (standard === undefined) throw new Error("the catalog starts with standard");
     expect(initialMode([standard, alpha, ...rest], orchestrator, null)).toBe("calm");
     expect(initialMode([standard, alpha], orchestrator, null), "without Calm, the first scoped mode").toBe("alpha");
+    const beta = mode("beta", { scope: { role: "archon-orchestrator" } });
+    expect(initialMode([standard, alpha, beta, ...rest], orchestrator, null), "Calm before several scoped modes").toBe("calm");
+  });
+
+  test("is Calm for the orchestrator only: another agent takes the first mode scoped to it", () => {
+    const [standard] = catalog;
+    if (standard === undefined) throw new Error("the catalog starts with standard");
+    const alpha = mode("alpha", { scope: { role: "worker" } });
+    const calm = mode("calm", { scope: { role: "worker" } });
+    expect(initialMode([standard, alpha, calm], worker, null)).toBe("alpha");
+    expect(initialMode([standard, mode("calm")], orchestrator, null), "an installed Calm without a scope still applies").toBe("calm");
   });
 
   test("is the saved choice while that mode still applies", () => {

@@ -5,7 +5,7 @@ import { navigate, routeHref } from "@aether-ui/core";
 import type { aether, ConnId } from "@aether-ui/protocol";
 import { DraftError } from "../controls/commands.ts";
 import { invariant } from "../fleet/invariant.ts";
-import { CALM } from "../conversation/modes.ts";
+import { ARCHON_ORCHESTRATOR, CALM } from "../conversation/modes.ts";
 
 export interface SlashChoice { readonly value: string; readonly label: string; readonly about?: string }
 
@@ -129,7 +129,7 @@ const ARCHON_COMMANDS: readonly (readonly [name: string, args: string, about: st
 /** Archon's host commands, offered only to its orchestrator, which reads them from the line as typed. */
 export function hostCommands(agent: aether.Agent): readonly SlashCommand[] {
   invariant(agent.role.trim() !== "", "an agent has a role");
-  if (agent.role !== "archon-orchestrator") return [];
+  if (agent.role !== ARCHON_ORCHESTRATOR) return [];
   return ARCHON_COMMANDS.map(([name, args, about]) => ({ name, args, about, group: "Archon", run: null }));
 }
 
