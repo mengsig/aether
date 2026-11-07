@@ -3,7 +3,7 @@
 // resends a lost change on its own: it checks with resolve_submission, then the operator chooses.
 
 import { act } from "react";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { AGENT_ID, CHILD_ID, controlsScript, demoAgents } from "../controls/fixture/demo.ts";
 import { stamp, type Answer, type ScriptOptions } from "../controls/fixture/daemon.ts";
 import { buttonNamed, click, connected, type, type Harness } from "../controls/fixture/harness.test-util.tsx";
@@ -56,6 +56,17 @@ describe("InboxScreen", () => {
     await type(h, openDialog(), "Reason (optional)", "Not before the tag");
     await click(h, openDialog(), "Deny");
     expect(h.daemon.commands("resolve_approval")[1]).toMatchObject({ id: "apr_1", decision: "denied", note: "Not before the tag" });
+  });
+
+  test("an answer the session store cannot keep says so", async () => {
+    const setItem = vi.spyOn(sessionStorage, "setItem").mockImplementation(() => { throw new DOMException("full", "QuotaExceededError"); });
+    try {
+      const { h, root } = await open();
+      await type(h, root, "Answer changelog-writer", "Yes, one line.");
+      expect(root.textContent).toContain("This draft is not kept if you leave (full)");
+    } finally {
+      setItem.mockRestore();
+    }
   });
 
   test("an unsent answer is kept per question across leaving the inbox, until it is delivered", async () => {

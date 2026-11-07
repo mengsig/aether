@@ -298,6 +298,29 @@ describe("the slash menu", () => {
     expect(sentMessages(h)).toEqual([{ to: running.id, content: "/brief" }]);
   });
 
+  test.each([{ method: "getItem", store: "an unreadable" }, { method: "setItem", store: "a full" }] as const)(
+    "with $store store, text typed while a send is pending outlives its confirmation", async ({ method }) => {
+      const broken = vi.spyOn(sessionStorage, method).mockImplementation(() => { throw new DOMException("denied", "SecurityError"); });
+      let reply: Answer = "hold";
+      try {
+        const { h, root, input } = await open(running, { script: { send_message: () => reply } });
+        await write(h, input, "first");
+        expect(root.textContent, "the draft says it is not kept").toContain("This draft is not kept if you leave");
+        await press(h, input, "Enter");
+        await write(h, input, "second, typed while the first was in flight");
+        reply = { tag: "message_sent", data: { seq: 1 } };
+        h.daemon.release();
+        await h.settle();
+        expect(input.value).toBe("second, typed while the first was in flight");
+        await press(h, input, "Enter");
+        await h.settle();
+        expect(input.value, "a confirmed draft still clears").toBe("");
+        expect(sentMessages(h).map((m) => m.content)).toEqual(["first", "second, typed while the first was in flight"]);
+      } finally {
+        broken.mockRestore();
+      }
+    });
+
   test("a menu pick waits like Send: never twice while a send is pending, never to an ended agent", async () => {
     const orchestrator = fauxAgent(undefined, { role: "archon-orchestrator" });
     const { h, input } = await open(orchestrator, { script: { send_message: () => "hold" } });

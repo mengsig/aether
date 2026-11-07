@@ -47,6 +47,7 @@ function SteerPanel({ conn, agent }: { readonly conn: ConnId; readonly agent: ae
         <Action conn={conn} command={{ cmd: "send_message", to: agent.id }} label="Send" variant="primary" busy={run.status.state === "busy"} onRun={send} />
       </div>
       {problem ? <p className="b3-note" role="alert" data-state="failed">{problem}</p> : null}
+      {draft.problem ? <p className="b3-note" data-state="failed">{draft.problem}</p> : null}
       <RunNote status={run.status} />
     </Section>
   );

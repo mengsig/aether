@@ -2,7 +2,7 @@
 // screen does not lose it. A draft is cleared only once its delivery is confirmed.
 
 import type { ConnId } from "@aether-ui/protocol";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { invariant } from "../fleet/invariant.ts";
 
 const PREFIX = "aether.draft.v1:";
@@ -72,9 +72,11 @@ export interface Draft {
 
 interface Held { readonly key: string; readonly text: string; readonly problem: string | null }
 
+const UNREADABLE = "This draft is not kept if you leave (the store cannot be read)";
+
 function heldFor(key: string): Held {
   const text = readDraft(key);
-  return text === null ? { key, text: "", problem: "This draft is not kept if you leave (the store cannot be read)" } : { key, text, problem: null };
+  return text === null ? { key, text: "", problem: UNREADABLE } : { key, text, problem: null };
 }
 
 /** A draft that survives unmounting; it follows `key` when the screen switches agent or question. */
@@ -82,14 +84,22 @@ export function useDraft(key: string): Draft {
   const [draft, setDraft] = useState(() => heldFor(key));
   const current = draft.key === key ? draft : heldFor(key);
   if (current !== draft) setDraft(current);
-  const shown = current.text;
+  // What this screen last typed, read when a send it started is confirmed, however late.
+  const typed = useRef<Held | null>(null);
+  // A store that cannot be read gives nothing back on return, whatever it accepts.
+  const unreadable = current.problem === UNREADABLE;
   const set = useCallback((text: string) => {
-    setDraft({ key, text, problem: writeDraft(key, text) });
-  }, [key]);
+    const next = { key, text, problem: writeDraft(key, text) ?? (unreadable ? UNREADABLE : null) };
+    typed.current = next;
+    setDraft(next);
+  }, [key, unreadable]);
   const delivered = useCallback((sent: string) => {
-    // Another screen may have changed the stored draft; without a readable store, this screen's is it.
-    if ((readDraft(key) ?? shown) !== sent) return;
-    setDraft({ key, text: "", problem: writeDraft(key, "") });
-  }, [key, shown]);
+    const mine = typed.current?.key === key ? typed.current : current;
+    if (mine.text !== sent) return;
+    // Another screen may have changed the stored draft since; a store this screen could not write is stale.
+    const kept = mine.problem === null ? readDraft(key) : null;
+    if (kept !== null && kept !== sent) return;
+    set("");
+  }, [key, current, set]);
   return { text: current.text, problem: current.problem, set, delivered };
 }

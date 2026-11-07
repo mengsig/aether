@@ -215,8 +215,9 @@ line, and **Stop** interrupts the running turn without losing the agent's
 context. What you type is kept per daemon and agent for the rest of the
 session (the Steer form and the Inbox's question answers keep theirs too) and
 is cleared only once the daemon confirms delivery. Where the session store is
-full or disabled, the composer says the draft is not kept if you leave, and a
-started chat's undelivered first message stays in the sheet instead.
+full or disabled, the composer, the Steer form and the answer say the draft is
+not kept if you leave, and a started chat's undelivered first message stays in
+the sheet instead.
 
 Typing `/` opens the command menu. Arrow keys move, Tab completes a name and
 then offers its choices, Enter runs, Escape closes; the pointer works too.
@@ -273,7 +274,9 @@ Where the records are not read yet, are older than the turn, or leave a
 boundary in doubt, the turn is drawn verbatim as one card, quoted headers and
 all, whole in every mode. The records are read from the lowest seq the loaded
 turns name, then only the newer ones as deliveries arrive, so a long chat never
-rereads its history; a failed read is reported and leaves its turns verbatim.
+rereads its history. A read checks the turns written before it, and only the
+seqs it returned move it on, so a header quoted in a body never stands for a
+delivery not yet read; a failed read is reported and leaves its turns verbatim.
 A delegated agent's first turn is its task only when the inbox did not deliver
 it.
 

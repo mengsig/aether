@@ -37,6 +37,7 @@ export function Question({ conn, question }: { readonly conn: ConnId; readonly q
         <Action conn={conn} command={command} label="Send answer" variant="primary" busy={run.status.state === "busy"} blocked={answer.trim() === "" ? "Write an answer first" : null}
           onRun={async () => { if (await run.send(command, "Answer sent")) draft.delivered(answer); }} />
       </div>
+      {draft.problem ? <p className="b3-note" data-state="failed">{draft.problem}</p> : null}
       <RunNote status={run.status} />
     </li>
   );

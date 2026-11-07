@@ -3,7 +3,7 @@
 // confirm step; an observer sees every control off with the reason; reads land in core's store.
 
 import { act } from "react";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { invariant } from "../fleet/invariant.ts";
 import { ControlsScreen } from "./ControlsScreen.tsx";
 import { previewText } from "./records.tsx";
@@ -117,6 +117,17 @@ describe("ControlsScreen", () => {
     back.h.unmount();
     current = (await open({}, "Steer")).h;
     expect(document.querySelector("textarea")?.value).toBe("");
+  });
+
+  test("a Steer message the session store cannot keep says so", async () => {
+    const setItem = vi.spyOn(sessionStorage, "setItem").mockImplementation(() => { throw new DOMException("full", "QuotaExceededError"); });
+    try {
+      const { h, root } = await open({}, "Steer");
+      await type(h, root, "Message", "Hold the release");
+      expect(root.textContent).toContain("This draft is not kept if you leave (full)");
+    } finally {
+      setItem.mockRestore();
+    }
   });
 
   test("model and limits read the model list into the store and patch only what changed", async () => {
