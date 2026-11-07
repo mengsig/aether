@@ -22,3 +22,53 @@ export function orderedEvents(events: readonly aether.Event[]): aether.Event[] {
   invariant(events.every(e => Number.isSafeInteger(e.seq) && e.seq > 0), "events have positive durable sequences");
   return [...new Map(events.map(e => [e.id, e])).values()].sort((a, b) => b.seq - a.seq);
 }
+
+export const EFFORTS = [
+  { value: "low", label: "Low" }, { value: "medium", label: "Medium" }, { value: "high", label: "High" },
+  { value: "x_high", label: "Extra high" }, { value: "max", label: "Max" },
+] as const;
+export const DEFAULT_EFFORT = "medium";
+
+export const modelKey = (m: aether.ModelInfo): string => `${m.model.provider}/${m.model.model}`;
+
+/** The user's choice if it is still ready, else the default model, else the first. */
+export function pickModel(choices: readonly aether.ModelInfo[], chosen: string): aether.ModelInfo | undefined {
+  invariant(choices.every(m => m.configured), "only ready models are offered");
+  invariant(new Set(choices.map(modelKey)).size === choices.length, "model identities are unique");
+  return choices.find(m => modelKey(m) === chosen) ?? choices.find(m => m.is_default) ?? choices[0];
+}
+
+export interface ModelGroup { readonly provider: string; readonly models: readonly aether.ModelInfo[] }
+
+export function modelGroups(choices: readonly aether.ModelInfo[]): ModelGroup[] {
+  const groups = new Map<string, aether.ModelInfo[]>();
+  for (const m of choices) groups.set(m.provider_name || m.model.provider, [...groups.get(m.provider_name || m.model.provider) ?? [], m]);
+  invariant([...groups.values()].reduce((n, g) => n + g.length, 0) === choices.length, "every model lands in one group");
+  return [...groups].map(([provider, models]) => ({ provider, models }));
+}
+
+/** Existing workspaces, most recently active first. */
+export function recentWorkspaces(value: unknown): aether.Workspace[] {
+  const all = records<aether.Workspace>(value);
+  invariant(all.every(w => typeof w.path === "string" && w.path.startsWith("/")), "workspaces have absolute paths");
+  invariant(all.every(w => typeof w.exists === "boolean"), "workspace existence is explicit");
+  return all.filter(w => w.exists).sort((a, b) => (b.active_at ?? "").localeCompare(a.active_at ?? ""));
+}
+
+/** The folder's own name and the path leading to it: `/a/b/repo` is `repo` in `/a/b`. */
+export function splitPath(path: string): { name: string; parent: string } {
+  invariant(path.startsWith("/"), "a workspace path is absolute");
+  const trimmed = path.length > 1 ? path.replace(/\/+$/, "") : path;
+  const cut = trimmed.lastIndexOf("/");
+  const name = trimmed.slice(cut + 1);
+  invariant(name.length > 0 || trimmed === "/", "a folder path ends in a name");
+  return { name: name || "/", parent: cut <= 0 ? "" : trimmed.slice(0, cut) };
+}
+
+/** The agent a `create_agent` reply describes. */
+export function createdAgent(reply: Record<string, unknown>): { id: string; name: string } {
+  invariant(reply.reply === "agent", `create_agent answers with an agent, not ${String(reply.reply)}`);
+  const data = reply.data as { id?: unknown; name?: unknown } | null;
+  invariant(typeof data?.id === "string" && data.id.length > 0, "the created agent has an id");
+  return { id: data.id, name: typeof data.name === "string" && data.name !== "" ? data.name : data.id };
+}
