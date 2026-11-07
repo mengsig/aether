@@ -2,7 +2,6 @@
 //! `complete_task` input as its answer, instead of calling the tool, still
 //! hands its parent the structured result it wrote.
 
-use aether_core::id::ArtifactId;
 use aether_core::task::TaskResult;
 use aether_tools::builtin::harness::MAX_STRUCTURED_BYTES;
 use serde_json::{Map, Value};
@@ -19,13 +18,13 @@ pub(super) fn prose_result(text: String) -> TaskResult {
     let Some(object) = written_object(&text) else {
         return TaskResult::summary(text);
     };
-    let (summary, artifacts, structured) = match tool_input(&object) {
+    let (summary, structured) = match tool_input(&object) {
         Some(input) => (
             input.summary.unwrap_or(text),
             input.artifacts,
             input.structured,
         ),
-        None => (text, Vec::new(), object),
+        None => (text, object),
     };
     if Value::Object(structured.clone()).to_string().len() > MAX_STRUCTURED_BYTES {
         return TaskResult::summary(summary);
@@ -33,7 +32,8 @@ pub(super) fn prose_result(text: String) -> TaskResult {
     debug_assert!(!summary.trim().is_empty(), "the summary is never blank");
     TaskResult {
         summary,
-        artifacts,
+        // Ids written in prose are never checked against the caller's scope, so none attach.
+        artifacts: Vec::new(),
         structured: Some(Value::Object(structured)),
     }
 }
@@ -81,13 +81,12 @@ fn unfenced(text: &str) -> &str {
 
 struct ToolInput {
     summary: Option<String>,
-    artifacts: Vec<ArtifactId>,
     structured: Map<String, Value>,
 }
 
 /// An object shaped as `complete_task`'s input: no other key than `summary`,
 /// `artifacts` and `structured`; `structured` an object, `summary` text and
-/// `artifacts` valid artifact ids if present.
+/// `artifacts` an array if present (never attached).
 fn tool_input(object: &Map<String, Value>) -> Option<ToolInput> {
     if !object
         .keys()
@@ -103,17 +102,11 @@ fn tool_input(object: &Map<String, Value>) -> Option<ToolInput> {
         Some(Value::String(text)) if !text.trim().is_empty() => Some(text.clone()),
         Some(_) => return None,
     };
-    let artifacts = match object.get("artifacts") {
-        None => Vec::new(),
-        Some(Value::Array(ids)) => ids
-            .iter()
-            .map(|id| id.as_str()?.parse().ok())
-            .collect::<Option<_>>()?,
-        Some(_) => return None,
-    };
+    if !matches!(object.get("artifacts"), None | Some(Value::Array(_))) {
+        return None;
+    }
     Some(ToolInput {
         summary,
-        artifacts,
         structured: structured.clone(),
     })
 }
@@ -177,18 +170,15 @@ mod tests {
     }
 
     #[test]
-    fn the_tool_input_written_out_keeps_its_artifacts() {
-        let art = aether_core::id::ArtifactId::new();
+    fn the_tool_input_written_out_with_artifacts_attaches_none() {
         let input = json!({
-            "summary": "done", "artifacts": [art.to_string()],
+            "summary": "done", "artifacts": ["art_unchecked"],
             "structured": {"verdict": "pass"},
         });
         let result = prose_result(input.to_string());
         assert_eq!(result.summary, "done");
-        assert_eq!(result.artifacts, vec![art]);
+        assert!(result.artifacts.is_empty());
         assert_eq!(result.structured, Some(json!({"verdict": "pass"})));
-        let bad = json!({"artifacts": ["nope"], "structured": {"a": 1}});
-        assert_eq!(prose_result(bad.to_string()).structured, Some(bad));
     }
 
     #[test]
