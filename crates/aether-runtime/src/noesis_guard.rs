@@ -437,6 +437,11 @@ pub(crate) fn stops_at_model_boundary(runtime: &Runtime, lane: Option<NoesisLane
     lane == Some(NoesisLane::Background) && !runtime.config.noesis.is_enabled()
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static BOUNDARY_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Why a Noesis turn must not make another model call: a background job
 /// once the gate left Enabled, or any turn whose spend used up its budget.
 pub(crate) fn boundary_stop(
@@ -444,6 +449,8 @@ pub(crate) fn boundary_stop(
     ctx: &crate::turn::TurnCtx,
     turn: &NoesisTurn,
 ) -> Option<String> {
+    #[cfg(test)]
+    BOUNDARY_VISITS.with(|visits| visits.set(visits.get() + 1));
     debug_assert!(
         ctx.turn_usage.cost_usd.is_finite(),
         "a turn's spend is a real amount"

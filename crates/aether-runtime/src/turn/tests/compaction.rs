@@ -329,12 +329,24 @@ impl crate::noesis_guard::NoesisCharge for SpentNoesisCharge {
 #[tokio::test]
 async fn compaction_checks_noesis_budget_only_for_an_admitted_noesis_turn() {
     let (mut h, _dir) = ComposeHarness::new().await;
+    let visits = || crate::noesis_guard::BOUNDARY_VISITS.with(|count| count.get());
+    let before = visits();
     assert!(!stopped_before_compaction_attempt(&h.runtime, &h.ctx));
+    assert_eq!(
+        visits(),
+        before,
+        "ordinary compaction never enters the guard"
+    );
     h.ctx.noesis = Some(crate::noesis_guard::NoesisTurn {
         lane: crate::noesis_guard::NoesisLane::Interactive,
         generation: 1,
         charge: Arc::new(SpentNoesisCharge),
     });
     assert!(stopped_before_compaction_attempt(&h.runtime, &h.ctx));
+    assert_eq!(
+        visits(),
+        before + 1,
+        "an admitted Noesis turn enters the guard"
+    );
     h.runtime.shutdown().await;
 }
