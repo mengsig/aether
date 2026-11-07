@@ -2,6 +2,7 @@ import { normalizeDeviceName, useApp } from "@aether-ui/core";
 import type { RouteProps } from "@aether-ui/protocol";
 import { Button, EmptyState, ErrorState, Field } from "@aether-ui/ui";
 import { useEffect, useMemo, useState, useSyncExternalStore, type FormEvent } from "react";
+import { DesktopConnect } from "./desktop-connect.tsx";
 import { forgetPairCode, offeredPairCode } from "./pair-link.ts";
 
 type Daemon = "aether" | "archon";
@@ -11,7 +12,7 @@ function isDaemon(value: string | undefined): value is Daemon {
   return value === "aether" || value === "archon";
 }
 
-/** `#/pair/:daemon`: enter the host's code, then confirm the phrase the host shows. */
+/** `#/pair/:daemon`: the desktop chooses a computer; a browser types the host's code and confirms its phrase. */
 export default function PairScreen({ params }: RouteProps) {
   const daemon = params.daemon;
   if (!isDaemon(daemon)) return <EmptyState title="Unknown daemon">There is no daemon called “{daemon}” to pair with.</EmptyState>;
@@ -19,6 +20,13 @@ export default function PairScreen({ params }: RouteProps) {
 }
 
 function Pairing({ daemon }: { readonly daemon: Daemon }) {
+  const { host } = useApp();
+  // The app:// page has no pairing service; another computer pairs in its own window.
+  if (host.kind === "electron" && host.desktop) return <DesktopConnect desktop={host.desktop} name={NAMES[daemon]} />;
+  return <CodePairing daemon={daemon} />;
+}
+
+function CodePairing({ daemon }: { readonly daemon: Daemon }) {
   const app = useApp();
   const flow = useMemo(() => app.pairing(daemon), [app, daemon]);
   const state = useSyncExternalStore(flow.subscribe, flow.state, flow.state);
