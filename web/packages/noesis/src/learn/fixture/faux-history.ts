@@ -20,7 +20,10 @@ export class SessionHistory {
   start(session: aether.NoesisSession, context?: aether.EvidenceBundle): void {
     invariant(!this.held.has(session.id), `session ${session.id} starts once`);
     const role: aether.SessionRole = session.mode === "practice" ? "practitioner" : session.phase === "probe" ? "prober" : "teacher";
-    this.held.set(session.id, { agents: [{ agent: session.agent, role }], questions: [], problems: [], usage: { subscription: ZERO, api: ZERO }, context });
+    // A seeded open question or active problem is already on record, as the daemon's would be.
+    const questions = session.open_question ? [{ question: session.open_question }] : [];
+    const problems = session.active_problem ? [{ problem: session.active_problem }] : [];
+    this.held.set(session.id, { agents: [{ agent: session.agent, role }], questions, problems, usage: { subscription: ZERO, api: ZERO }, context });
   }
 
   /** The session as `noesis_get_session` reads it: the row with its whole history. */

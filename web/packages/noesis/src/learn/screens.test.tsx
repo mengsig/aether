@@ -100,6 +100,9 @@ describe("knowledge graph", () => {
     h.daemon.graph = { ...h.daemon.graph, nodes: [...h.daemon.graph.nodes, { ...must(GRAPH.nodes[0], "a node"), id: "p_new", name: "log-matching", statement: "Logs that share an entry share every earlier one." }] };
     h.daemon.finishJob("job_x", "succeeded", true);
     await h.settle(JOB_POLL_MS);
+    // The poll's job read, then the graph read it starts, each wait out their SETTLE_MS debounce.
+    await h.settle(SETTLE_MS);
+    await h.settle(SETTLE_MS);
     expect(h.daemon.names().filter((cmd) => cmd === "noesis_graph").length).toBeGreaterThan(before);
     await click(h, byText(root, "button", "List"));
     expect($(root, ".learn-prop-list").textContent).toContain("Log matching");

@@ -13,7 +13,10 @@ afterEach(() => { harness?.unmount(); harness = null; });
 
 test("teacher and learner bubbles use shared block rendering", async () => {
   const h = await connected(scenario(true, { transport: "ipc", transcripts: {
-    [LESSON.agent]: [{ role: "user", content: [{ type: "text", text: "My *reasoning*." }] }],
+    [LESSON.agent]: [
+      { role: "user", content: [{ type: "text", text: "NOESIS CONTEXT: the opening, never shown." }] },
+      { role: "user", content: [{ type: "text", text: "My *reasoning*." }] },
+    ],
   } }), vi);
   harness = h;
   location.hash = `#/learn/sessions/${LESSON.id}`;
