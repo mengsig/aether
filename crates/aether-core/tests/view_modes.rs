@@ -64,7 +64,11 @@ fn an_unreadable_modes_directory_is_a_diagnostic_not_an_empty_catalog() {
     std::fs::write(&modes, "not a directory").unwrap();
     let catalog = view_modes::discover(config.path());
     assert_eq!(catalog.modes, Catalog::default().modes);
-    assert_eq!(catalog.diagnostics.len(), 1, "clients hold unknown /names on it");
+    assert_eq!(
+        catalog.diagnostics.len(),
+        1,
+        "clients hold unknown /names on it"
+    );
     assert_eq!(catalog.diagnostics[0].source, modes.display().to_string());
     assert!(!catalog.diagnostics[0].reason.is_empty());
 }
