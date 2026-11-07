@@ -479,6 +479,7 @@ async fn invalid_configuration_does_not_change_an_older_store() {
         assert!(!config.socket.exists());
         assert!(!config.store_path.with_extension("db-wal").exists());
         assert!(!config.store_path.with_extension("db-shm").exists());
+        assert!(!root.path().join("migration-backups").exists());
     }
     let conn = rusqlite::Connection::open_with_flags(
         &config.store_path,

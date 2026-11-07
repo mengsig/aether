@@ -114,6 +114,8 @@ fn malformed_config_fails_auto_start_before_creating_the_store() {
     assert!(message.contains("bad_startup_key"), "{message}");
     assert!(message.contains("before it listened"), "{message}");
     assert!(!root.path().join("data/aether.db").exists());
+    assert!(!root.path().join("data/aether.db-wal").exists());
+    assert!(!root.path().join("data/migration-backups").exists());
 }
 
 #[test]
