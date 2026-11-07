@@ -8,6 +8,7 @@
   .topology-run { display: grid; gap: var(--space-2); width: 100%; text-align: start; padding: var(--space-3); border: 1px solid var(--color-border); background: var(--color-surface-1); color: var(--color-text); cursor: pointer; overflow-wrap: anywhere; }
   .topology-run[aria-pressed="true"] { border-color: var(--color-accent); background: var(--color-surface-2); }
   .topology-run small { color: var(--color-text-muted); }
+  .topology-zoom { position: absolute; top: var(--space-3); right: var(--space-3); display: flex; gap: var(--space-2); }
   @media (max-width: 720px) { .topology-content { grid-template-columns: minmax(0, 1fr); } .topology-runs { max-height: 14rem; } }
   .topology-canvas {
     position: relative; block-size: max(20rem, calc(100dvh - 14rem)); overflow: hidden;

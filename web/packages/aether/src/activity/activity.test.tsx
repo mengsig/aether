@@ -388,7 +388,7 @@ test("task creation allows unassigned work and marks occupied owners unavailable
   await click(h, root, "Start an agent");
   await click(h, document.body, "Existing agent task");
   await type(h, document.body, "What should the agent do?", "Queue work");
-  const option = [...document.body.querySelectorAll("select option")].find(item => item.value === agent.id);
+  const option = [...document.body.querySelectorAll<HTMLOptionElement>("select option")].find(item => item.value === agent.id);
   expect(option?.disabled).toBe(true);
   expect(option?.textContent).toContain("already owns a task");
   await click(h, document.body, "Create task");

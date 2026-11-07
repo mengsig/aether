@@ -67,7 +67,10 @@ export function TopologyScreen({ layout = layeredLayout }: TopologyScreenProps) 
       <div className="topology-content">
         <RunList runs={runs} selected={selected} onSelect={setChosen} />
         <div className="topology-canvas">
-          <GraphCanvas key={selected} model={model} layout={placed} label="Delegation topology" controls onActivate={activate} onToggleGroup={toggle} />
+          <GraphCanvas key={selected} model={model} layout={placed} label="Delegation topology" onActivate={activate} onToggleGroup={toggle}
+            renderControls={({ zoomIn, zoomOut, fit }) => <div className="topology-zoom" role="group" aria-label="Graph zoom">
+              <Button onClick={zoomIn}>Zoom in</Button><Button onClick={zoomOut}>Zoom out</Button><Button onClick={fit}>Fit</Button>
+            </div>} />
         </div>
       </div>
     </section>

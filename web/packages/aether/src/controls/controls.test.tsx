@@ -34,6 +34,11 @@ function openDialog(): HTMLElement {
   return dialog ?? document.body;
 }
 
+function required<T>(value: T | null | undefined): T {
+  invariant(value !== null && value !== undefined, "test fixture value exists");
+  return value;
+}
+
 /** The commands sent, without the request id and idempotency key core adds. */
 const sent = (h: Harness, cmd: string) => h.daemon.commands(cmd).map((c) => Object.fromEntries(Object.entries(c).filter(([k]) => k !== "req" && k !== "idempotency_key")));
 
@@ -63,7 +68,7 @@ describe("ControlsScreen", () => {
 
   test.each(["completed", "failed", "cancelled", "imported"] as const)("%s agent exposes only available lifecycle actions and cannot be messaged", async (state) => {
     const agents = demoAgents();
-    const agent = agents[0]!;
+    const agent = required(agents[0]);
     const status = state === "failed" ? { state, error: "failed" } as const
       : state === "imported" ? { state, was: "completed" } as const : { state };
     agents[0] = { ...agent, status };
@@ -71,7 +76,7 @@ describe("ControlsScreen", () => {
     for (const label of ["Interrupt", "Pause", "Compact context"]) {
       const button = buttonNamed(root, label);
       expect(button.disabled).toBe(true);
-      expect(document.getElementById(button.getAttribute("aria-describedby")!)?.textContent).toContain(state);
+      expect(document.getElementById(required(button.getAttribute("aria-describedby")))?.textContent).toContain(state);
     }
     expect(buttonNamed(root, "Wake").disabled).toBe(state !== "failed");
     expect(buttonNamed(root, "Restart").disabled).toBe(state !== "failed" && state !== "cancelled");
@@ -83,13 +88,13 @@ describe("ControlsScreen", () => {
     await click(h, root, "Steer");
     const send = buttonNamed(root, "Send");
     expect(send.disabled).toBe(true);
-    expect(document.getElementById(send.getAttribute("aria-describedby")!)?.textContent).toContain(state);
+    expect(document.getElementById(required(send.getAttribute("aria-describedby")))?.textContent).toContain(state);
     expect(sent(h, "send_message")).toEqual([]);
   });
 
   test("restart and archive require confirmation for a failed agent", async () => {
     const agents = demoAgents();
-    agents[0] = { ...agents[0]!, status: { state: "failed", error: "failed" } };
+    agents[0] = { ...required(agents[0]), status: { state: "failed", error: "failed" } };
     const { h, root } = await open({ agents });
     await click(h, root, "Restart");
     expect(sent(h, "restart")).toEqual([]);
@@ -102,18 +107,18 @@ describe("ControlsScreen", () => {
 
   test("a restarted failed agent cannot be woken or restarted again", async () => {
     const agents = demoAgents();
-    agents[0] = { ...agents[0]!, status: { state: "failed", error: "failed" }, restarted_as: CHILD_ID };
+    agents[0] = { ...required(agents[0]), status: { state: "failed", error: "failed" }, restarted_as: CHILD_ID };
     const { root } = await open({ agents });
     for (const label of ["Wake", "Restart"]) {
       const button = buttonNamed(root, label);
       expect(button.disabled).toBe(true);
-      expect(document.getElementById(button.getAttribute("aria-describedby")!)?.textContent).toContain(CHILD_ID);
+      expect(document.getElementById(required(button.getAttribute("aria-describedby")))?.textContent).toContain(CHILD_ID);
     }
   });
 
   test("waiting agents can resume without waking or pausing", async () => {
     const agents = demoAgents();
-    agents[0] = { ...agents[0]!, status: agents[1]!.status };
+    agents[0] = { ...required(agents[0]), status: required(agents[1]).status };
     const { h, root } = await open({ agents });
     expect(buttonNamed(root, "Wake").disabled).toBe(true);
     await click(h, root, "Resume");
@@ -122,7 +127,7 @@ describe("ControlsScreen", () => {
 
   test("a paused ended agent can resume its subtree and an archived agent can be restored", async () => {
     const agents = demoAgents();
-    agents[0] = { ...agents[0]!, status: { state: "completed" }, paused: true, archived: true };
+    agents[0] = { ...required(agents[0]), status: { state: "completed" }, paused: true, archived: true };
     const { h, root } = await open({ agents });
     expect(buttonNamed(root, "Resume").disabled).toBe(true);
     await act(async () => (root.querySelector(".b3-check input") as HTMLInputElement).click());
