@@ -92,6 +92,22 @@ impl FauxCli {
 }
 
 #[async_trait::async_trait]
+/// `reply` as the text deltas an engine streams it in, a few characters each.
+fn streamed(reply: &str) -> Vec<EngineEvent> {
+    let chars: Vec<char> = reply.chars().collect();
+    let deltas: Vec<EngineEvent> = chars
+        .chunks(7)
+        .map(|chunk| {
+            EngineEvent::Delta(StreamEvent::TextDelta {
+                index: 0,
+                text: chunk.iter().collect(),
+            })
+        })
+        .collect();
+    debug_assert_eq!(deltas.len(), chars.len().div_ceil(7));
+    deltas
+}
+
 impl aether_engine::Engine for FauxCli {
     fn kind(&self) -> EngineKind {
         EngineKind::CLAUDE_CODE
@@ -131,19 +147,21 @@ impl aether_engine::Engine for FauxCli {
             let content = vec![ContentBlock::Text {
                 text: reply.clone(),
             }];
-            let said = EngineEvent::Assistant {
+            // A real engine streams its reply before it sends it whole.
+            let mut events = streamed(&reply);
+            events.push(EngineEvent::Assistant {
                 content,
                 usage: None,
                 model: None,
-            };
-            let done = EngineEvent::Done(EngineOutcome {
+            });
+            events.push(EngineEvent::Done(EngineOutcome {
                 usage,
                 closing_accounting: true,
                 cost_usd: Some(0.002),
                 text: Some(reply),
                 ..Default::default()
-            });
-            for event in [said, done] {
+            }));
+            for event in events {
                 if tx.send(event).await.is_err() {
                     return;
                 }

@@ -3,6 +3,7 @@
 //! made once more with a reminder, then replaced by the neutral step.
 
 use aether_noesis::teach::{NEUTRAL_REPLY, SEAL_REMINDER};
+use tokio::sync::broadcast::error::TryRecvError;
 
 use super::*;
 
@@ -61,6 +62,44 @@ async fn a_reply_giving_its_own_key_away_is_discarded_and_made_again() {
     assert_never_kept(&harness, prober, KEY);
     assert_never_kept(&harness, prober, "Hint:");
     assert_eq!(reminded(&cli), 1, "the retry was told why");
+    harness.close().await;
+}
+
+/// A clean step whose pose carries the hidden answer: the engine streams
+/// the raw reply, key included, yet no message any client can receive
+/// (a delta of any agent, an event) and no transcript entry holds it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pose_carrying_its_answer_streams_nothing_that_holds_it() {
+    let home = Home::new();
+    let cli = Arc::new(FauxCli::default());
+    cli.queue(
+        "prober",
+        json!({"text": "One question:", "tool_calls": [tool_call("noesis_ask", ask())]}),
+    );
+    let harness = engine_harness(&home, cli.clone()).await;
+    let mut bus = harness.daemon.runtime.subscribe();
+    let created = harness.create(json!({})).await;
+    harness.settled().await;
+
+    let prober = agent_of(&created);
+    let mut deltas = 0;
+    loop {
+        let message = match bus.try_recv() {
+            Ok(message) => message,
+            Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+            Err(TryRecvError::Lagged(missed)) => panic!("{missed} messages went unread"),
+        };
+        let shown = format!("{message:?}");
+        assert!(!shown.contains(KEY), "a client could read it: {shown}");
+        if matches!(message, BusMessage::Delta { agent, .. } if agent == prober) {
+            deltas += 1;
+        }
+    }
+    assert_eq!(deltas, 0, "a lesson reply is buffered whole");
+    let session = harness.session(&created.id).await.expect("session");
+    assert_eq!(session.open_question.expect("posed").prompt, "Name the code");
+    assert_never_kept(&harness, prober, KEY);
+    assert_eq!(reminded(&cli), 0, "a clean pose is kept at once");
     harness.close().await;
 }
 
