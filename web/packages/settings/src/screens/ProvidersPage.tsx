@@ -7,7 +7,7 @@ import { Badge, EmptyState, type Tone } from "@aether-ui/ui";
 import { invariant } from "../kit/invariant.ts";
 import { Action, RunNote, Section, StandingNotice, useRun, type Run } from "../kit/kit.tsx";
 import { ConnectArchon } from "../setup/ConnectArchon.tsx";
-import { archonTools, ENGINE_OF, providerReadiness } from "../setup/readiness.ts";
+import { archonTools, ENGINE_OF, mcpServersOf, providerReadiness } from "../setup/readiness.ts";
 import { formatTime, plural } from "./format.ts";
 import { listOf, ReadView, Unexpected } from "./read.tsx";
 
@@ -79,7 +79,7 @@ function ProviderList({ conn, value, auths, run, refreshAuth }: { readonly conn:
 
 /** Outside the read, so a repair that restarts Aether is not replaced along with the server list. */
 function ArchonRepair({ conn, value, local, onConnected }: { readonly conn: ConnId; readonly value: unknown; readonly local: boolean; readonly onConnected: () => void }) {
-  const servers = listOf<aether.McpServerHealth>(value);
+  const servers = mcpServersOf(value);
   const archon = servers === null ? null : archonTools(servers);
   const needed = archon !== null && (archon.state === "missing" || archon.state === "failed");
   const reason = archon !== null && archon.state !== "ready" ? archon.detail : "";
@@ -87,7 +87,7 @@ function ArchonRepair({ conn, value, local, onConnected }: { readonly conn: Conn
 }
 
 function McpList({ value }: { readonly value: unknown }) {
-  const servers = listOf<aether.McpServerHealth>(value);
+  const servers = mcpServersOf(value);
   if (servers === null) return <Unexpected label="tool servers" />;
   if (servers.length === 0) return <EmptyState title="No tool servers yet">Connect Archon's tools to give agents Archon's queue, items and runs.</EmptyState>;
   return (

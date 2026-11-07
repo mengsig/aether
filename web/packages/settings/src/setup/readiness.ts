@@ -43,6 +43,20 @@ export type ToolsCheck =
   | { readonly state: "ready"; readonly tools: number }
   | { readonly state: "missing" | "starting" | "failed"; readonly detail: string };
 
+const MCP_STATES: ReadonlySet<unknown> = new Set(["unknown", "ready", "failed"]);
+
+/** A `mcp_servers` reply checked entry by entry: a name, a known state and, if any, a tool list; else null. */
+export function mcpServersOf(value: unknown): readonly aether.McpServerHealth[] | null {
+  if (!Array.isArray(value)) return null;
+  const valid = value.every((entry: unknown) => {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return false;
+    const server = entry as Record<string, unknown>;
+    const tools = server.tools;
+    return typeof server.name === "string" && server.name !== "" && MCP_STATES.has(server.state) && (tools === undefined || tools === null || Array.isArray(tools));
+  });
+  return valid ? (value as aether.McpServerHealth[]) : null;
+}
+
 /** Archon's tools as Aether sees them, from a `mcp_servers` reply. */
 export function archonTools(servers: readonly aether.McpServerHealth[]): ToolsCheck {
   invariant(Array.isArray(servers), "mcp_servers answers a list");

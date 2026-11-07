@@ -104,6 +104,30 @@ describe("Welcome", () => {
     expect(h.daemon.commands("mcp_servers").filter((c) => c.refresh === true)).toHaveLength(2);
   });
 
+  test("a failed recheck is shown over a cached good answer, and a malformed server entry reads as unreadable", async () => {
+    const ready = { name: "archon", state: "ready", transport: "stdio", tools: [{ name: "queue" }] };
+    let answer: () => { tag: string; data: unknown } | { code: string; message: string } = () => ({ tag: "mcp_servers", data: [ready] });
+    const h = current = await connected({ role: "local", desktop: setupDesktop(() => null).bridge, script: { mcp_servers: () => answer() } });
+    const root = await h.mount(<Welcome />);
+    const group = () => root.querySelector('[role="group"][aria-label="Check Archon\'s tools"]');
+    expect(group()).toBeNull();
+    expect(root.textContent).not.toContain("Connect them to finish");
+
+    answer = () => ({ code: "internal", message: "Aether restarted" });
+    await act(async () => { await h.app.reread(h.conn as never, "settings.mcp", { cmd: "mcp_servers", refresh: true }, ["mcp_servers"]); });
+    await h.settle();
+    expect(group()?.querySelector('[role="alert"]')?.textContent).toContain("The app could not check Archon's tools: Aether restarted");
+
+    for (const odd of [[{ ...ready, name: "" }], [{ ...ready, state: "loading" }], [{ ...ready, tools: "many" }], [null]]) {
+      answer = () => ({ tag: "mcp_servers", data: odd });
+      await click(h, root, "Check again");
+      expect(group()?.textContent).toContain("The app could not read the tool servers Aether reported.");
+    }
+    answer = () => ({ tag: "mcp_servers", data: [ready] });
+    await click(h, root, "Check again");
+    expect(group()).toBeNull();
+  });
+
   test("once Aether answers, the overview leads to starting a task", async () => {
     const h = current = await connected({ role: "local", desktop: setupDesktop(() => null).bridge });
     const root = await h.mount(<Welcome />);

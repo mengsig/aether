@@ -115,7 +115,8 @@ export class Setup {
 
   private async start(): Promise<SetupResult> {
     await this.deps.enableManagedStart();
-    const restarted = this.reloadOwed && await this.deps.isReachable("aether") ? await this.restartAether() : false;
+    // Not only when Aether answers: one that closed its socket may still hold its store.
+    const restarted = this.reloadOwed ? await this.restartAether() : false;
     this.reloadOwed = false;
     for (const kind of START_ORDER) await this.deps.start(kind);
     const daemons = (await this.deps.findDaemons()).map(publicDaemon);

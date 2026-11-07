@@ -236,6 +236,22 @@ test("a connect confirmed with its restart runs aether stop, waits until Aether 
   }
 });
 
+test("an owed restart waits on aether stop even when Aether no longer answers, so start never races its store", async () => {
+  const h = harness({ answers: { "archon setup --json": sharedAnswer("fail") }, up: true, confirm: true });
+  try {
+    await h.setup.run(1, "connect");
+    h.state.up = false;
+    h.state.stopsAfter = 2;
+    h.events.length = 0;
+    const result = await h.setup.run(1, "start");
+    assert.equal(result.step === "start" && result.restarted, true);
+    assert.deepEqual(h.events, ["enable managed start", "run aether stop --json", "run aether stop --json", "run aether stop --json", "start aether", "start archon"]);
+    assert.equal(h.state.stopsAfter, -1, "start ran only after aether stop reported stopping:false");
+  } finally {
+    h.cleanup();
+  }
+});
+
 test("an Aether that will not stop, or a failed stop, is a plain refusal and starts nothing", async () => {
   const h = harness({ answers: { "archon setup --json": sharedAnswer("fail") }, up: true, confirm: true, stopProbes: 1_000_000, stopDeadlineMs: 50 });
   try {

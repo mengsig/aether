@@ -2,13 +2,12 @@
 // the second choice); once connected, the next thing to do.
 
 import { selectConnections, useApp, useCapabilities, useReread, useSelector } from "@aether-ui/core";
-import type { aether as wire, ConnId } from "@aether-ui/protocol";
+import type { ConnId } from "@aether-ui/protocol";
 import { Button } from "@aether-ui/ui";
 import { useMemo } from "react";
 import { invariant } from "../kit/invariant.ts";
-import { listOf } from "../screens/read.tsx";
 import { ConnectArchon } from "./ConnectArchon.tsx";
-import { archonTools } from "./readiness.ts";
+import { archonTools, mcpServersOf } from "./readiness.ts";
 import { desktopSetup } from "./steps.ts";
 
 const MCP = { key: "settings.mcp", command: { cmd: "mcp_servers" }, tags: ["mcp_servers"] } as const;
@@ -81,11 +80,10 @@ function FinishSetup({ conn }: { readonly conn: ConnId }) {
   const entry = useReread(conn, MCP.key, MCP.command, MCP.tags);
   const check = () => void app.reread(conn, MCP.key, MCP_REFRESH, MCP.tags);
   if (entry === undefined || (entry.value === null && entry.error === null)) return null;
-  if (entry.value === null) {
-    invariant(entry.error !== null, "a read with no value has failed");
-    return <CheckFailed conn={conn} text={`The app could not check Archon's tools: ${entry.error}`} onRetry={check} />;
-  }
-  const servers = listOf<wire.McpServerHealth>(entry.value);
+  // An error is cleared only by a newer success, so one held here is newer than any cached value.
+  if (entry.error !== null) return <CheckFailed conn={conn} text={`The app could not check Archon's tools: ${entry.error}`} onRetry={check} />;
+  invariant(entry.value !== null, "a read with no error has a value");
+  const servers = mcpServersOf(entry.value);
   if (servers === null) return <CheckFailed conn={conn} text="The app could not read the tool servers Aether reported." onRetry={check} />;
   const tools = archonTools(servers);
   const left = tools.state === "missing" || tools.state === "failed" ? tools : null;
