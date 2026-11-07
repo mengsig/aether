@@ -79,6 +79,7 @@ export function SayDialog({ access, open, onClose }: { readonly access: ArchonAc
   const close = () => { setText(""); setError(null); setSent(false); onClose(); };
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (access.speakRefusal !== null) return setError(access.speakRefusal);
     if (!text.trim()) return setError("Write a message first.");
     const result = await change({ cmd: "say", text: text.trim() });
     if (!result.ok) return setError(result.error);

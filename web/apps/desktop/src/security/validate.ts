@@ -71,6 +71,8 @@ export const BRIDGE_METHODS: readonly BridgeMethod[] = Object.keys(ARGUMENTS) as
 /** What validation needs from the bridge's state: which connections exist and to what. */
 export interface Connections {
   kindOf(conn: string): DaemonKind | undefined;
+  /** The protocol the daemon's own welcome reported on `conn`, once it has greeted. */
+  protocolOf(conn: string): number | undefined;
 }
 
 export class Validator {
@@ -130,7 +132,7 @@ export class Validator {
     }
     const invalid = this.schemas.frames[kind].check(frame);
     if (invalid !== undefined) throw new BridgeRefusal(invalid);
-    const refusal = passThroughRefusal(kind, frame);
+    const refusal = passThroughRefusal(kind, frame, connections.protocolOf(conn));
     if (refusal !== undefined) throw new BridgeRefusal(refusal);
     return { method, conn, frame, text };
   }
