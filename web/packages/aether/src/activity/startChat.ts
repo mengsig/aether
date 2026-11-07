@@ -13,6 +13,7 @@ export interface ChatSettings {
   readonly model: aether.ModelRef;
   readonly modelName: string;
   readonly effort: aether.Effort;
+  readonly network?: aether.NetworkPolicy;
 }
 
 interface Fixed {

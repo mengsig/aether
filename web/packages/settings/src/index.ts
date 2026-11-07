@@ -20,3 +20,7 @@ for (const [file, module] of Object.entries(modules)) {
 }
 
 export const registeredModules: readonly string[] = Object.keys(modules).sort();
+
+// What the app shell composes from setup: the overview's home and the Archon tools notice.
+export { Welcome } from "./setup/Welcome.tsx";
+export { ArchonToolsNotice, ConnectArchon, type ConnectArchonProps } from "./setup/ConnectArchon.tsx";

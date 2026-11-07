@@ -6,6 +6,7 @@ import path from "node:path";
 import { absoluteHome, DAEMON_PATHS, join, type Env, type Machine } from "../discovery/socket-paths.ts";
 import type { DaemonKind } from "../security/classes.ts";
 import { BridgeRefusal } from "../security/validate.ts";
+import { isDirectory, withInstallDirs } from "./install-path.ts";
 import { LAUNCHERS, launchDetached } from "./launch.ts";
 
 /**
@@ -40,12 +41,26 @@ export function launchEnv(env: Env, mainCwd: string): Env {
   return { ...env, ...moved };
 }
 
+/** Where and with what environment the app runs the CLIs: as launched from main, in the user's home. */
+export interface ToolContext {
+  readonly env: Env;
+  readonly cwd: string;
+}
+
+/** The launch environment with the standard install directories on PATH, and the home to run in. */
+export function toolContext(machine: Machine, mainCwd: string, isDir: (dir: string) => boolean = isDirectory): ToolContext {
+  const launched = launchEnv(machine.env, mainCwd);
+  const cwd = absoluteHome({ ...machine, env: launched });
+  if (!cwd.startsWith("/")) throw new Error(`the CLIs run in an absolute home, not ${cwd}`);
+  return { env: withInstallDirs(launched, machine.platform, cwd, isDir), cwd };
+}
+
 /** Managed start on `machine`, launching in the user's home, from main running in `mainCwd`. */
 export function managedStartOn(
   machine: Machine, mainCwd: string, deps: Pick<ManagedStartDeps, "isEnabled" | "isReachable" | "logDir">,
 ): ManagedStart {
-  const env = launchEnv(machine.env, mainCwd);
-  return new ManagedStart({ ...deps, env, cwd: absoluteHome({ ...machine, env }) });
+  const context = toolContext(machine, mainCwd);
+  return new ManagedStart({ ...deps, env: context.env, cwd: context.cwd });
 }
 
 export interface ManagedStartDeps {

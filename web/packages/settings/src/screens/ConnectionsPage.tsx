@@ -5,6 +5,7 @@ import { selectConnections, useApp, useSelector } from "@aether-ui/core";
 import type { ConnectionInfo } from "@aether-ui/protocol";
 import { Badge, Button, Dialog, EmptyState, type Tone } from "@aether-ui/ui";
 import { useState } from "react";
+import { desktopSetup } from "../setup/steps.ts";
 import { invariant } from "../kit/invariant.ts";
 import { Section } from "../kit/kit.tsx";
 import { plural } from "./format.ts";
@@ -72,10 +73,23 @@ function ConnectionRow({ info }: { readonly info: ConnectionInfo }) {
   );
 }
 
+/** Nothing connected: setting up this computer comes first where the app can do it, pairing second. */
+function NotConnected() {
+  const app = useApp();
+  const canSetUp = desktopSetup(app) !== null;
+  const actions = (
+    <span className="st-row">
+      {canSetUp ? <a className="ui-button" data-variant="primary" data-size="md" href="#/setup">Set up on this computer</a> : null}
+      <a className="ui-link" href="#/pair/aether">Pair with another computer</a>
+    </span>
+  );
+  return <EmptyState title="Not connected yet" action={actions}>This app is not connected to Aether on any computer.</EmptyState>;
+}
+
 export function ConnectionsPage() {
   const connections = Object.values(useSelector(selectConnections));
   if (connections.length === 0) {
-    return <EmptyState title="No daemons yet" action={<a className="ui-link" href="#/pair/aether">Pair a daemon</a>}>This app is not connected to any daemon.</EmptyState>;
+    return <NotConnected />;
   }
   return (
     <Section title="Connections" hint="The daemons this app talks to, and what this device may do on each.">

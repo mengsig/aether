@@ -6,14 +6,16 @@ import { aether } from "@aether-ui/protocol";
 import { Button, EmptyState, Field, Sheet, Tabs } from "@aether-ui/ui";
 import { useReducer, useState } from "react";
 import { Action, RunNote, StandingNotice, useRun, type Run } from "../controls/kit.tsx";
-import { EFFORTS } from "../controls/commands.ts";
+
 import { invariant } from "../fleet/invariant.ts";
 import { ReadNote } from "../memory/shared.tsx";
-import { configuredModels, workspaceValidation } from "./data.ts";
+import { configuredModels, createdAgent, EFFORTS, modelGroups, modelKey, networkDefault, pickModel, recentWorkspaces, workspaceValidation } from "./data.ts";
+import { SelectField, TextAreaField } from "./fields.tsx";
 import { UndeliveredNote } from "./UndeliveredFirst.tsx";
 import { useFirstSend } from "./firstMessage.ts";
 import { EDITING, firstMessageProblem, startChatStep, type ChatSettings, type StartChat } from "./startChat.ts";
 import { Workspace } from "./Workspace.tsx";
+import "./activity.css";
 
 type Mode = "chat" | "agent" | "task";
 type Started = Exclude<StartChat, { phase: "editing" }>;
@@ -30,13 +32,14 @@ export interface NewAgentDraft {
   readonly workspace: string;
   readonly model: aether.ModelRef;
   readonly effort: aether.Effort;
+  readonly network?: aether.NetworkPolicy;
 }
 
 /** The create command for a chat or a task agent; only a task agent carries an objective. */
 export function createCommand(draft: NewAgentDraft, objective: string): aether.CreateAgentCommand {
   invariant(draft.workspace.startsWith("/"), "an agent starts in a validated absolute workspace");
   invariant(objective.trim() !== "", "a new agent starts with a message or an objective");
-  const common = { start: true, scope: { workspace_root: draft.workspace }, model: draft.model, approval: { require_for: ["external" as const] } };
+  const common = { start: true, scope: { workspace_root: draft.workspace, ...(draft.network ? { network: draft.network } : {}) }, model: draft.model, approval: { require_for: ["external" as const] } };
   if (draft.mode === "agent") {
     return aether.createAgent({ ...common, name: draft.name.trim() || null, role: "worker", objective: objective.trim(), config: { effort: draft.effort } });
   }
@@ -44,12 +47,6 @@ export function createCommand(draft: NewAgentDraft, objective: string): aether.C
 }
 
 const chatHref = (conn: string, agent: string): string => routeHref("#/agents/:conn/:agent", { conn, agent });
-
-function createdAgent(reply: Record<string, unknown>): string {
-  const agent = reply.data as { id?: unknown } | null;
-  invariant(reply.reply === "agent" && typeof agent?.id === "string", "create_agent answers with the agent it made");
-  return agent.id;
-}
 
 /**
  * Drives one chat start through its state model: create, then send the first message as typed;
@@ -74,7 +71,7 @@ function useChatStart(conn: string, close: () => void) {
       dispatch(status.state === "unconfirmed" ? { type: "create-lost", reason: status.message } : { type: "create-failed" });
       return;
     }
-    const agent = createdAgent(reply);
+    const agent = createdAgent(reply).id;
     dispatch({ type: "created", agent });
     await deliver(agent, text);
   };
@@ -118,26 +115,29 @@ function StartedChat({ conn, state, retry, restart, close, busy }: {
   </div>;
 }
 
-function useStartData(conn: string, path: string) {
+function useStartData(conn: string, path: string | null) {
   const app = useApp();
   const live = Object.values(useSelector(selectAgents(conn))).filter(a => !ENDED.has(a.status.state));
   const models = useReread(conn, "start:models", { cmd: "list_models" }, ["models"]);
-  const validation = workspaceValidation(useSelector(selectRead(conn, `start:validation:${path}`))?.value);
+  const recent = useReread(conn, "start:workspaces", { cmd: "list_workspaces" }, ["workspaces"]);
+  const network = networkDefault(useReread(conn, "start:status", { cmd: "status" }, ["status"])?.value);
+  const effectivePath = path ?? recentWorkspaces(recent?.value)[0]?.path ?? "";
+  const validation = workspaceValidation(useSelector(selectRead(conn, `start:validation:${effectivePath}`))?.value);
   const retryModels = () => app.reread(conn, "start:models", { cmd: "list_models" }, ["models"]);
-  return { live, models, choices: configuredModels(models?.value), validation, retryModels };
+  return { live, models, recent, network, effectivePath, choices: configuredModels(models?.value), validation, retryModels };
 }
 
 interface StartForm {
   readonly mode: Mode;
   readonly name: string;
   readonly objective: string;
-  readonly path: string;
+  readonly path: string | null;
   readonly model: string;
   readonly effort: aether.Effort;
   readonly owner: string;
 }
 
-const BLANK: StartForm = { mode: "chat", name: "", objective: "", path: "", model: "", effort: "medium", owner: "" };
+const BLANK: StartForm = { mode: "chat", name: "", objective: "", path: null, model: "", effort: "medium", owner: "" };
 
 /** The command the form would send now, and why it cannot yet; a chat checks its first message first. */
 function formCommand(form: StartForm, data: ReturnType<typeof useStartData>, selected: ReturnType<typeof configuredModels>[number] | undefined) {
@@ -148,53 +148,65 @@ function formCommand(form: StartForm, data: ReturnType<typeof useStartData>, sel
     return { command: aether.createTask({ objective, owner: form.owner, priority: "normal" }), blocked, settings: null };
   }
   const textProblem = form.mode === "chat" ? firstMessageProblem(form.objective) : objective === "" ? "Describe the work to start" : null;
-  const blocked = textProblem ?? (!selected ? "Choose a configured model" : workspace.startsWith("/") ? null : "Validate the workspace first");
-  if (blocked !== null || !selected) return { command: aether.createAgent({ role: "assistant" }), blocked, settings: null };
-  const settings: ChatSettings = { name: form.name, workspace, model: selected.model, modelName: selected.name, effort: form.effort };
+  const blocked = textProblem ?? (!selected ? "Choose a configured model" : !data.effectivePath ? "Choose a workspace" : !data.validation ? "Checking the workspace…" : !workspace.startsWith("/") ? data.validation.reason ?? "Choose a valid workspace" : data.network === undefined ? "Reading this computer's settings…" : null);
+  if (blocked !== null || !selected || data.network === undefined) return { command: aether.createAgent({ role: "assistant" }), blocked, settings: null };
+  const settings: ChatSettings = { name: form.name, workspace, model: selected.model, modelName: selected.name, effort: form.effort, network: data.network };
   return { command: createCommand({ mode: form.mode, ...settings }, objective), blocked: null, settings };
 }
 
 /** The editable start form: what to start, its first message or objective, and its settings. */
-function StartFormView({ conn, form, change, run, onStart }: {
-  conn: string; form: StartForm; change: (patch: Partial<StartForm>) => void; run: Run;
+function StartFormView({ conn, form, change, run, onStart, close }: {
+  conn: string; form: StartForm; change: (patch: Partial<StartForm>) => void; run: Run; close: () => void;
   onStart: (settings: ChatSettings | null, command: aether.CreateAgentCommand | aether.CreateTaskCommand) => void;
 }) {
   const data = useStartData(conn, form.path);
-  const selected = data.choices.find(m => `${m.model.provider}/${m.model.model}` === form.model) ?? data.choices.find(m => m.is_default) ?? data.choices[0];
+  const selected = pickModel(data.choices, form.model);
   const { command, blocked, settings } = formCommand(form, data, selected);
   const disabled = usePermission(conn, command).refusal !== null;
   const label = form.mode === "task" ? "Create task" : form.mode === "chat" ? "Start chat" : "Start agent";
-  return <>
+  const footer = <div className="start-footer"><RunNote status={run.status} />
+    <Action conn={conn} command={command} label={label} variant="primary" blocked={blocked} busy={run.status.state === "busy" || (form.mode !== "chat" && run.status.state === "done")} onRun={() => onStart(settings, command)} /></div>;
+  return <Sheet open onClose={close} title="Start an agent" footer={footer}><div className="start-form"><StandingNotice conn={conn} />
     <Tabs label="Work type" selected={form.mode} onSelect={id => change({ mode: id as Mode })} tabs={[{ id: "chat", label: "Chat", panel: null }, { id: "agent", label: "Task agent", panel: null }, { id: "task", label: "Existing agent task", panel: null }]} />
     <p className="b3-section-hint">{MODE_HINTS[form.mode]}</p>
-    <Field label={form.mode === "chat" ? "First message" : "Objective"} value={form.objective} disabled={disabled} onChange={e => change({ objective: e.target.value })} />
-    {form.mode === "task" ? <div className="b3-row">{data.live.map(a => <Button key={a.id} disabled={disabled} aria-pressed={form.owner === a.id} onClick={() => change({ owner: a.id })}>{a.name}</Button>)}</div> : <>
-      <Field label="Name" value={form.name} disabled={disabled} onChange={e => change({ name: e.target.value })} />
-      <Workspace conn={conn} path={form.path} change={path => change({ path })} />
+    <TextAreaField label={form.mode === "chat" ? "First message" : "What should the agent do?"} value={form.objective} disabled={disabled} autoFocus onChange={objective => change({ objective })} />
+    {form.mode === "task" ? <SelectField label="Agent" value={form.owner} disabled={disabled} onChange={owner => change({ owner })}>
+      <option value="">Choose an agent</option>{data.live.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</SelectField> : <>
+      <Workspace conn={conn} path={data.effectivePath} change={path => change({ path })} recent={data.recent} />
       <ReadNote entry={data.models} retry={data.retryModels} />
-      <div className="b3-row">{data.choices.map(m => <Button key={`${m.model.provider}/${m.model.model}`} disabled={disabled} aria-pressed={selected === m} onClick={() => change({ model: `${m.model.provider}/${m.model.model}` })}>{m.name}</Button>)}</div>
-      {data.models?.issued && data.choices.length === 0 ? <EmptyState title="Connect a model provider on your host" /> : null}
-      <div className="b3-row" aria-label="Effort">{EFFORTS.map(value => <Button key={value} disabled={disabled} aria-pressed={form.effort === value} onClick={() => change({ effort: value })}>{value}</Button>)}</div>
+      {data.models?.issued && data.choices.length === 0 ? <EmptyState title="No model is ready yet" action={<a className="ui-link" href="#/settings/providers">Open providers</a>}>Sign in to a model provider to start agents.</EmptyState> :
+        <SelectField label="Model" value={selected ? modelKey(selected) : ""} disabled={disabled || data.choices.length === 0} onChange={model => change({ model })}>
+          {modelGroups(data.choices).map(g => <optgroup key={g.provider} label={g.provider}>{g.models.map(m => <option key={modelKey(m)} value={modelKey(m)}>{m.name}</option>)}</optgroup>)}</SelectField>}
+      <SelectField label="Effort" value={form.effort} disabled={disabled} onChange={effort => change({ effort: effort as aether.Effort })}>
+        {EFFORTS.map(e => <option key={e.value} value={e.value}>{e.label}</option>)}</SelectField>
+      <Field label="Name" hint="Optional; the agent is named for you when blank" value={form.name} disabled={disabled} onChange={e => change({ name: e.target.value })} />
     </>}
-    <Action conn={conn} command={command} label={label} blocked={blocked} busy={run.status.state === "busy"} onRun={() => onStart(settings, command)} />
-  </>;
+  </div></Sheet>;
 }
 
 export function StartAgent({ conn, close }: { conn: string; close: () => void }) {
   const run = useRun(conn);
+  const app = useApp();
+  const agents = useSelector(selectAgents(conn));
   const [form, setForm] = useState<StartForm>(BLANK);
   const chat = useChatStart(conn, close);
   const change = (patch: Partial<StartForm>) => setForm(current => ({ ...current, ...patch }));
-  const onStart = (settings: ChatSettings | null, command: aether.CreateAgentCommand | aether.CreateTaskCommand) => {
-    if (form.mode !== "chat") return run.send(command);
+  const onStart = async (settings: ChatSettings | null, command: aether.CreateAgentCommand | aether.CreateTaskCommand) => {
+    if (form.mode !== "chat") {
+      const reply = await run.send(command, "Starting…");
+      if (reply === null) return;
+      const agent = form.mode === "task" ? { id: form.owner, name: agents[form.owner]?.name ?? form.owner } : createdAgent(reply);
+      close();
+      app.store.report(form.mode === "task" ? `Started task for ${agent.name}` : `Started ${agent.name}`, conn, undefined, "success");
+      navigate(chatHref(conn, agent.id));
+      return;
+    }
     invariant(settings !== null, "a chat starts from validated settings");
     return chat.begin(settings, form.objective.trim());
   };
   const busy = chat.create.status.state === "busy" || chat.first.run.status.state === "busy";
-  return <Sheet open onClose={close} title="Start an agent"><div className="b3-stack"><StandingNotice conn={conn} />
-    {chat.state.phase === "editing"
-      ? <><StartFormView conn={conn} form={form} change={change} run={run} onStart={onStart} />
-        <RunNote status={form.mode === "chat" ? chat.create.status : run.status} /></>
-      : <StartedChat conn={conn} state={chat.state} retry={() => void chat.retry()} restart={chat.restart} close={close} busy={busy} />}
+  if (chat.state.phase === "editing") return <StartFormView conn={conn} form={form} change={change} run={form.mode === "chat" ? chat.create : run} onStart={onStart} close={close} />;
+  return <Sheet open onClose={close} title="Start an agent"><div className="start-form"><StandingNotice conn={conn} />
+    <StartedChat conn={conn} state={chat.state} retry={() => void chat.retry()} restart={chat.restart} close={close} busy={busy} />
   </div></Sheet>;
 }
