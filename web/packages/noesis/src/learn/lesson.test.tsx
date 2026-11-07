@@ -162,6 +162,15 @@ describe("budget", () => {
     expect(($(root, "#learn-reply") as HTMLTextAreaElement).disabled).toBe(true);
     expect(($(root, "#learn-reply") as HTMLTextAreaElement).placeholder).toContain("paused");
   });
+
+  test("a session the daemon stalled on the budget says so even before today's spend is reread", async () => {
+    const stalled = { reason: "budget_exhausted" as const, message: "today's Noesis interactive budget is spent", at: LESSON.updated_at };
+    const h = await start({ sessions: [{ ...LESSON, stalled }] });
+    const root = await open(h);
+    const note = $(root, ".learn-callout[data-kind=budget]");
+    expect(note.textContent).toContain("Today's teaching budget is spent");
+    expect(byText(note, "a", "Open settings").getAttribute("href")).toContain("settings");
+  });
 });
 
 describe("the end of the path", () => {

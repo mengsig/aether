@@ -44,7 +44,7 @@ function SessionView({ conn, status, session, reload }: OpenGate & { session: ae
   const streamed = live.map((item) => (item.kind === "message" ? item.text : "")).join("");
   const turn = useLessonTurn(conn, session, items, streamed);
   const budget = exhaustedBudget(status);
-  const refusal = turn.refusal ?? (budget === null ? null : BUDGET_REFUSAL);
+  const refusal = turn.refusal ?? spentRefusal(session, budget);
   const answer = (question: string, input: AnswerInput) => turn.act({ cmd: "noesis_answer", session: session.id, question, answer: input });
   const checkAgain = () => {
     reload();
@@ -72,6 +72,12 @@ function SessionView({ conn, status, session, reload }: OpenGate & { session: ae
       </aside>
     </div>
   );
+}
+
+/** The daemon's own record of a turn it stopped for the budget speaks first; today's status is the fallback. */
+function spentRefusal(session: aether.NoesisSession, budget: BudgetUse | null): Refusal | null {
+  if (session.stalled) return { kind: "budget", message: session.stalled.message };
+  return budget === null ? null : BUDGET_REFUSAL;
 }
 
 function pausedBy(budget: BudgetUse | null): string | null {
