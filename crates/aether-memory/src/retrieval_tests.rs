@@ -72,9 +72,17 @@ const CI: &str = "Run make ci before pushing; it runs clippy and the whole test 
 const DOCKER: &str = "Integration tests need a running Docker daemon on the host.";
 const DOCS: &str = "API documentation is generated with make docs into target/doc.";
 
+/// The cutoff is opt-in; these tests set the value its docs suggest.
+fn cutting() -> RetrievalPolicy {
+    RetrievalPolicy {
+        min_score: 0.05,
+        ..Default::default()
+    }
+}
+
 #[test]
 fn a_query_sharing_no_word_with_a_memory_retrieves_nothing_but_the_pinned() {
-    let f = fixture(RetrievalPolicy::default());
+    let f = fixture(cutting());
     let ci = f.put(CI, false);
     f.put(DOCKER, false);
     let pinned = f.put(DOCS, true);
@@ -95,7 +103,7 @@ fn a_query_sharing_no_word_with_a_memory_retrieves_nothing_but_the_pinned() {
 
 #[test]
 fn without_a_query_or_with_only_function_words_nothing_is_cut() {
-    let f = fixture(RetrievalPolicy::default());
+    let f = fixture(cutting());
     for text in [CI, DOCKER, DOCS] {
         f.put(text, false);
     }
@@ -109,10 +117,12 @@ fn without_a_query_or_with_only_function_words_nothing_is_cut() {
 
 #[test]
 fn min_score_is_the_cutoff_zero_keeps_all_and_one_keeps_only_an_exact_match() {
-    let open = fixture(RetrievalPolicy {
-        min_score: 0.0,
-        ..Default::default()
-    });
+    assert_eq!(
+        RetrievalPolicy::default().min_score,
+        0.0,
+        "the cutoff is opt-in"
+    );
+    let open = fixture(RetrievalPolicy::default());
     for text in [CI, DOCKER, DOCS] {
         open.put(text, false);
     }

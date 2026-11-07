@@ -251,7 +251,7 @@ The keys are as G2 shipped them, under `[memory.retrieval]`:
 | Key | Default | Range |
 | --- | --- | --- |
 | `max_items` | 6 | 1–50 |
-| `min_score` | 0.05 | 0–1 |
+| `min_score` | 0 (off; G2 shipped 0.05) | 0–1 |
 | `holdout_rate` | 0.05 | 0–1 |
 | `holdout_seed` | 0 | u64 |
 
