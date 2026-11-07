@@ -35,6 +35,10 @@ export interface AppShellProps {
   readonly onRecentsChange?: (recents: readonly string[]) => void;
   /** The header of each route with no nav entry, by route path. */
   readonly titles?: Readonly<Record<string, string>>;
+  /** What the overview at `#/` shows; a plain hint to pick a screen when absent. */
+  readonly home?: ReactNode;
+  /** A notice above the routed screen, such as a fix the current screen needs. */
+  readonly banner?: ReactNode;
 }
 
 type RouteComponent = ComponentType<RouteProps>;
@@ -103,7 +107,8 @@ export function AppShell(props: AppShellProps) {
             </div>
           </header>
           <main className="ui-shell-main" id="ui-main" tabIndex={-1}>
-            <RouteView match={props.match} hash={hash} capabilities={capabilities} hasRoutes={sections.length > 0} />
+            {props.banner ? <div className="ui-shell-banner">{props.banner}</div> : null}
+            <RouteView match={props.match} hash={hash} capabilities={capabilities} hasRoutes={sections.length > 0} home={props.home} />
           </main>
         </div>
         <ToastRegion toasts={props.notices ?? []} onDismiss={props.onDismissNotice ?? (() => undefined)} />
@@ -153,11 +158,12 @@ function useScreenFocus(hash: string, title: string): void {
   }, [hash]);
 }
 
-function RouteView(props: { readonly match: ShellMatch | null; readonly hash: string; readonly capabilities: Capabilities; readonly hasRoutes: boolean }) {
+function RouteView(props: { readonly match: ShellMatch | null; readonly hash: string; readonly capabilities: Capabilities; readonly hasRoutes: boolean; readonly home: ReactNode }) {
   const { match } = props;
   if (match === null) {
     const home = props.hash === "" || props.hash === "#" || props.hash === "#/";
     if (!home) return <EmptyState title="No screen here" action={<a className="ui-link" href="#/">Back to the overview</a>}>Nothing is registered at {props.hash}.</EmptyState>;
+    if (props.home !== undefined && props.home !== null) return <>{props.home}</>;
     return props.hasRoutes
       ? <EmptyState title="Pick a screen">Choose one from the navigation, or press Ctrl K to jump anywhere.</EmptyState>
       : <EmptyState title="No screens yet">The feature packages have not registered any screens in this build.</EmptyState>;
