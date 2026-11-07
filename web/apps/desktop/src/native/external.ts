@@ -1,6 +1,6 @@
-// Where a link the app window asks to open goes (`desktop.openExternal`). GitHub and the user's
-// own remote origins open in the browser; any other https: origin asks first; a report page on
-// this machine's loopback opens in a report window. Every other scheme is refused.
+// Where a link the app window asks to open goes (`desktop.openExternal`). GitHub's own origins
+// open in the browser; any other https: origin asks natively first, as nothing the renderer can
+// write (remote.origins included) may vouch for a site; a loopback report opens in a report window.
 
 import { BridgeRefusal } from "../security/validate.ts";
 
@@ -8,8 +8,8 @@ export type ExternalTarget =
   | { readonly kind: "browser"; readonly url: string; readonly origin: string; readonly trusted: boolean }
   | { readonly kind: "report"; readonly url: string; readonly origin: string };
 
-/** Hosts whose links open without asking: the GitHub pages the app links to. */
-export const TRUSTED_HOSTS: ReadonlySet<string> = new Set(["github.com", "www.github.com", "gist.github.com"]);
+/** Exact origins whose links open without asking: the GitHub pages the app links to. */
+export const TRUSTED_ORIGINS: ReadonlySet<string> = new Set(["https://github.com", "https://www.github.com", "https://gist.github.com"]);
 /** The hosts a local report server listens on, as the URL parser spells them. */
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "localhost", "[::1]"]);
 export const MAX_EXTERNAL_URL = 2048;
@@ -32,13 +32,13 @@ function reportTarget(url: URL): ExternalTarget {
   return { kind: "report", url: url.href, origin: url.origin };
 }
 
-/** The target of `value`; `remoteOrigins` is the user's own `remote.origins` list, already normalized. */
-export function externalTarget(value: string, remoteOrigins: readonly string[]): ExternalTarget {
+/** The target of `value`; only main's own constant list makes a site trusted. */
+export function externalTarget(value: string): ExternalTarget {
   const url = parse(value);
   if (url.protocol === "http:") return reportTarget(url);
   if (url.protocol !== "https:") throw new BridgeRefusal(`The app opens https: links only, not ${url.protocol}`);
   if (url.hostname === "") throw new BridgeRefusal("This link names no host");
-  const trusted = TRUSTED_HOSTS.has(url.hostname) || remoteOrigins.includes(url.origin);
+  const trusted = TRUSTED_ORIGINS.has(url.origin);
   const target: ExternalTarget = { kind: "browser", url: url.href, origin: url.origin, trusted };
   if (!target.url.startsWith(`${target.origin}/`)) throw new Error(`${target.url} lies under its own origin`);
   return target;

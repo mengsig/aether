@@ -1,5 +1,5 @@
 // Report windows: a report page a local server shows (an Archon proposal, a run report) opens in
-// a plain window of its own, navigation pinned to that origin, and no popups.
+// a plain window of its own, navigation pinned to that origin, no popups and no notifications.
 
 import { BrowserWindow, session, type WebPreferences } from "electron";
 import { guardSession, originOf, pinContents } from "../security/navigation.ts";
@@ -32,7 +32,7 @@ export class ReportWindows {
     const window = new BrowserWindow({ ...options, webPreferences: { ...options.webPreferences, ...this.extra } });
     const contents = window.webContents;
     if (contents.session !== session.fromPartition(reportPartition(origin))) throw new Error("a report window uses its origin's partition");
-    guardSession(contents.session);
+    guardSession(contents.session, { notifications: false });
     pinContents(contents, origin);
     window.on("closed", () => this.windows.delete(url));
     this.windows.set(url, window);

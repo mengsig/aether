@@ -50,22 +50,22 @@ test("openRemote opens only an origin listed in remote.origins", async () => {
   await assert.rejects(unset.handle(APP_SENDER, 1, "openRemote", ["https://box.example.ts.net"]), /remote.origins/);
 });
 
-test("a link's target: https: to the browser, trusted only for GitHub and remote.origins; loopback http: to a report", () => {
-  const listed = ["https://box.example.ts.net"];
-  assert.deepEqual(externalTarget("https://github.com/octocat/hello/pull/1", listed),
+test("a link's target: https: to the browser, trusted only for GitHub's exact origins; loopback http: to a report", () => {
+  assert.deepEqual(externalTarget("https://github.com/octocat/hello/pull/1"),
     { kind: "browser", url: "https://github.com/octocat/hello/pull/1", origin: "https://github.com", trusted: true });
-  const own = externalTarget("https://box.example.ts.net/x", listed);
-  assert.ok(own.kind === "browser" && own.trusted);
-  const other = externalTarget("https://docs.example/page?q=1", listed);
+  assert.ok((externalTarget("https://GIST.github.com:443/x") as { trusted: boolean }).trusted, "the default port is the same origin");
+  const other = externalTarget("https://docs.example/page?q=1");
   assert.ok(other.kind === "browser" && !other.trusted && other.url === "https://docs.example/page?q=1");
-  assert.ok(!(externalTarget("https://github.com.evil.example/", listed) as { trusted: boolean }).trusted);
-  assert.deepEqual(externalTarget("http://127.0.0.1:4387/session/abc", listed),
+  for (const untrusted of ["https://github.com.evil.example/", "https://github.com:8443/x", "https://api.github.com/x", "https://box.example.ts.net/x"]) {
+    assert.ok(!(externalTarget(untrusted) as { trusted: boolean }).trusted, untrusted);
+  }
+  assert.deepEqual(externalTarget("http://127.0.0.1:4387/session/abc"),
     { kind: "report", url: "http://127.0.0.1:4387/session/abc", origin: "http://127.0.0.1:4387" });
-  assert.equal(externalTarget("http://[::1]:9000/r", listed).kind, "report");
+  assert.equal(externalTarget("http://[::1]:9000/r").kind, "report");
   for (const bad of ["http://docs.example", "http://127.0.0.1/no-port", "file:///etc/passwd", "javascript:alert(1)",
     "https://u:p@docs.example", "http://u@127.0.0.1:4387/", "smb://share", "mailto:octocat@example.com", "not a url", "",
     `https://github.com/${"a".repeat(2100)}`]) {
-    assert.throws(() => externalTarget(bad, listed), Error, bad);
+    assert.throws(() => externalTarget(bad), Error, bad);
   }
 });
 
@@ -85,4 +85,13 @@ test("openExternal opens GitHub at once, asks for another site, and opens a loca
   assert.equal(opened.at(-1), "external https://docs.example/page");
   await assert.rejects(agreeing.handle(APP_SENDER, 1, "openExternal", ["file:///etc/passwd"]), /https: links only/);
   assert.equal(opened.length, 3);
+});
+
+test("a renderer-written remote.origins entry never skips the question for a link", async () => {
+  const opened: string[] = [];
+  const asked: Confirmation[] = [];
+  const bridge = new Bridge(VALIDATOR, hostWith(["https://box.example.ts.net"], opened, asked, false));
+  await assert.rejects(bridge.handle(APP_SENDER, 1, "openExternal", ["https://box.example.ts.net/x"]), /Cancelled/);
+  assert.equal(asked.length, 1, "the listed origin was asked about like any other site");
+  assert.deepEqual(opened, []);
 });

@@ -136,23 +136,15 @@ export class Bridge {
     return helloFrame(kind, this.host.protocolVersions[kind], this.host.versions.app ?? "0.0.0");
   }
 
-  /** GitHub and remote.origins open at once, another https: site after a native question, a local report in its window. */
+  /** GitHub opens at once, another https: site after a native question, a local report in its window. */
   private async openExternal(owner: number, value: string): Promise<void> {
-    const target = externalTarget(value, this.remoteOrigins());
+    const target = externalTarget(value);
     if (target.kind === "report") return this.host.openReport(target.url);
     if (!target.trusted) {
       const asked = confirmation(TEMPLATES["external.open"], { origin: valueSlot(target.origin), url: labelSlot(target.url) });
       if (!(await this.host.confirm(owner, asked))) throw new BridgeRefusal("Cancelled");
     }
     await this.host.openExternal(target.url);
-  }
-
-  private remoteOrigins(): string[] {
-    const origins = this.host.getPreference("remote.origins");
-    if (!Array.isArray(origins) || !origins.every((origin) => typeof origin === "string")) {
-      throw new Error("remote.origins holds a list of origins");
-    }
-    return origins;
   }
 
   private async openRemote(value: string): Promise<void> {

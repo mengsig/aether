@@ -30,10 +30,14 @@ export function pinContents(contents: WebContents, origin: string): void {
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
 }
 
-/** Deny-by-default permission handlers on `session`, notifications excepted; no spellchecker. */
-export function guardSession(session: Session): void {
+/**
+ * Deny-by-default permission handlers on `session`, notifications excepted unless `notifications`
+ * is false (a report page's own Notification API would skip main's rate limit); no spellchecker.
+ */
+export function guardSession(session: Session, { notifications }: { readonly notifications: boolean } = { notifications: true }): void {
+  const allowed = (permission: string) => notifications && allowOnlyNotifications(permission);
   session.setSpellCheckerEnabled(false);
   session.setSpellCheckerLanguages([]);
-  session.setPermissionRequestHandler((_contents, permission, callback) => callback(allowOnlyNotifications(permission)));
-  session.setPermissionCheckHandler((_contents, permission) => allowOnlyNotifications(permission));
+  session.setPermissionRequestHandler((_contents, permission, callback) => callback(allowed(permission)));
+  session.setPermissionCheckHandler((_contents, permission) => allowed(permission));
 }

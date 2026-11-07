@@ -112,3 +112,22 @@ test("a guarded session allows notifications and nothing else, and never spellch
   assert.equal(notifications, true);
   assert.equal(check(null, "notifications"), true);
 });
+
+test("a report window's session holds no permission at all, notifications included", () => {
+  let request: ((contents: unknown, permission: string, callback: (granted: boolean) => void) => void) | undefined;
+  let check: ((contents: unknown, permission: string) => boolean) | undefined;
+  const fake = {
+    setSpellCheckerEnabled: () => {},
+    setSpellCheckerLanguages: () => {},
+    setPermissionRequestHandler: (handler: typeof request) => { request = handler; },
+    setPermissionCheckHandler: (handler: typeof check) => { check = handler; },
+  };
+  guardSession(fake as unknown as Session, { notifications: false });
+  assert.ok(request !== undefined && check !== undefined);
+  for (const permission of ["notifications", "geolocation", "media", "clipboard-read"]) {
+    let granted: boolean | undefined;
+    request(null, permission, (value) => { granted = value; });
+    assert.equal(granted, false, permission);
+    assert.equal(check(null, permission), false, permission);
+  }
+});
