@@ -867,6 +867,32 @@ In the Learn screen's settings:
 When the day's teaching budget is spent, a lesson pauses and says how much of
 it was used, with a link to these settings.
 
+### Learning from your work in the web client
+
+With `engineering_context = true` the web client's Learn area offers
+**Learn from this** on items, runs, agents and pull requests, and **Catch me
+up** on the Learn home. Both read only what the client can already read,
+show every fact with its status (verified: a passing check or a merge
+established it; reviewed: a review or an operator gate passed it;
+preliminary: everything else) and send nothing until you start a session.
+
+**Catch me up** takes a registered Archon repository and a range chosen from
+lists: since your last visit (kept per repository in the browser or desktop
+app's own storage; the first time it is the last 7 days), the last 7 days or
+the last 30 days. A range starts at the beginning of a UTC day. The bundle
+holds the pull requests archond cached as merged, the repository's items
+updated in the range and its Aether memory under its GitHub scope; a pull
+request counts as verified only with its merge record, and an item stays
+preliminary unless its pull request merged, passed its checks or was
+approved. A catch-up over the 32 KiB or 50 fact limit keeps the newest and
+most important facts and says how many it left out. There is no release
+preset, because the client cannot read a repository's releases or tags.
+
+Choosing **Learn from this** or **Catch me up** again for the same source,
+a pull request or a repository and first day, offers **Continue where you
+left off**, which opens the session the client started from it (or the
+newest one with the same goal), and **Start fresh** for a new session.
+
 ## Signed webhook door
 
 `aether serve` reads `[[serve.webhook]]` routes from `config.toml`. Each

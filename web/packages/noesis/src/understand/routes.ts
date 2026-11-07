@@ -10,7 +10,7 @@ const routes: RouteDef[] = [];
 /** Core sets this only while Noesis is on and engineering context is effective. */
 export const engineeringContextOn = (caps: Capabilities): boolean => caps["noesis.engineering_context"] === true;
 
-function learnFromThis(kind: UnderstandKind): EntityAction {
+function learnFromThis(kind: Exclude<UnderstandKind, "repository">): EntityAction {
   return {
     id: `f6.learn-from-${kind}`,
     kind,

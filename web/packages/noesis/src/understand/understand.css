@@ -38,4 +38,9 @@
     position: sticky; inset-block-end: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-3);
     padding-block: var(--space-3); background: var(--color-surface-1);
   }
+
+  /* Catch me up: two labelled lists and one action. */
+  .catchup-form { display: grid; gap: var(--space-5); animation: ui-rise var(--motion-base) var(--ease-standard); }
+  .catchup-field { display: grid; gap: var(--space-2); }
+  .catchup-field .ui-field-input { inline-size: 100%; color: var(--color-text); font: inherit; }
 }

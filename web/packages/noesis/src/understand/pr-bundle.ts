@@ -42,14 +42,19 @@ function checksEvidence(ref: aether.EvidenceRef, checks: archon.ChecksSummary): 
   return attested(ref, standing, words);
 }
 
+/** How a PR is named as evidence: `<host>/<repo>#<number>`, linked when the host is a plain hostname. */
+export function prEvidenceRef(ref: archon.GithubRef): aether.EvidenceRef {
+  invariant(ref.kind === "pull_request", "a PR reference names a pull request");
+  const url = /^[a-z0-9.-]+$/i.test(ref.host) ? `https://${ref.host}/${ref.repo}/pull/${ref.number}` : null;
+  return { kind: "pr", id: `${ref.host}/${ref.repo}#${ref.number}`, url };
+}
+
 /** The PR's state and review, and its checks as a separate fact a check run established. */
 export function prBundle(object: archon.GithubObject): aether.EvidenceBundle {
   const { ref } = object;
   invariant(ref.kind === "pull_request", "a PR bundle reads a pull request");
   invariant(Number.isSafeInteger(ref.number) && ref.number > 0, "a pull request has a number");
-  const id = `${ref.host}/${ref.repo}#${ref.number}`;
-  const url = /^[a-z0-9.-]+$/i.test(ref.host) ? `https://${ref.host}/${ref.repo}/pull/${ref.number}` : null;
-  const evidenceRef = { kind: "pr", id, url } as const;
+  const evidenceRef = prEvidenceRef(ref);
   const state = object.state === "open" && object.draft ? "draft" : object.state;
   const facts = [
     `Pull request #${ref.number} in ${ref.repo}: ${object.title}`,

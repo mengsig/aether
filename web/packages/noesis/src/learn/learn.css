@@ -53,6 +53,7 @@
   /* Sessions list. */
   .learn-columns { display: grid; gap: var(--space-8); grid-template-columns: minmax(0, 1fr); }
   @media (min-width: 60rem) { .learn-columns { grid-template-columns: minmax(0, 3fr) minmax(16rem, 2fr); align-items: start; } }
+  .learn-start { display: grid; gap: var(--space-4); }
   .learn-list { display: grid; gap: var(--space-4); }
   .learn-cards { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
   .learn-card {
