@@ -150,9 +150,9 @@ export const TEMPLATES = {
   "engine.login": { title: "Sign in", message: "Open a terminal to sign in?", confirm: "Open terminal",
     detail: `A terminal runs {command} to sign in to {engine}. Your sign-in stays with that tool.${ON}` },
   "setup.connect": { title: "Connect Archon's tools", message: "Connect Archon's tools to Aether?", confirm: "Connect",
-    detail: "Archon's settings are saved so it shares this computer's Aether, and Aether's settings list Archon's tools. Agents can then use them." },
+    detail: "Archon adds its tools to Aether's settings so agents can use them. If Archon has no settings yet, they are created to share this computer's Aether; existing settings are kept as they are." },
   "setup.connect_restart": { title: "Connect Archon's tools", message: "Connect Archon's tools and restart Aether?", confirm: "Connect and restart",
-    detail: "Archon's settings are saved so it shares this computer's Aether, and Aether's settings list Archon's tools. Aether restarts if it needs to load them; working agents pause for a moment and pick up where they left off." },
+    detail: "Archon adds its tools to Aether's settings so agents can use them. If Archon has no settings yet, they are created to share this computer's Aether; existing settings are kept as they are. Aether restarts if it needs to load the tools; working agents pause for a moment and pick up where they left off." },
 } as const satisfies Readonly<Record<string, Template>>;
 
 export type TemplateName = keyof typeof TEMPLATES;

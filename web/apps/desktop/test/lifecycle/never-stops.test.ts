@@ -61,11 +61,12 @@ test("setup's one stop command is aether stop, run only after a connect confirme
   assert.equal(setup.match(/["'`]stop["'`]/g)?.length, 1, "setup names the stop command once");
   assert.equal(setup.match(/AETHER_STOP_ARGS/g)?.length, 2, "declared once and run once");
   const confirmAt = setup.indexOf("this.deps.confirm(owner, confirmation(template");
-  const consentAt = setup.indexOf("this.reloadOwed = running &&");
+  const consentAt = setup.indexOf("this.reloadOwed = unloaded");
   const guardAt = setup.indexOf("if (!this.reloadOwed) throw");
   const stopAt = setup.indexOf('run("aether", AETHER_STOP_ARGS');
   assert.ok(confirmAt !== -1 && consentAt > confirmAt, "the restart consent is recorded only after the confirmation");
   assert.match(setup.slice(confirmAt, consentAt), /throw new BridgeRefusal\("Cancelled"\)/, "a cancel records nothing");
+  assert.match(setup.slice(confirmAt, consentAt), /if \(unloaded && !running\) throw new BridgeRefusal/, "no consent is recorded for a restart the dialog did not name");
   assert.ok(guardAt !== -1 && stopAt > guardAt, "the stop runs only on recorded consent");
 });
 

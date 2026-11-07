@@ -156,7 +156,9 @@ The app's setup runs in three steps, each one when you click it:
    `~/Library/Application Support/archon/config.toml`), the app writes one
    with `[aether] mode = "shared"`, so Archon uses this computer's Aether.
    It never changes a config file that exists. Then it runs
-   `archon setup --json`, which registers Archon's tools with Aether.
+   `archon setup --json`, which registers Archon's tools with Aether. If
+   Aether started on its own while you answered and has not loaded the
+   tools, setup stops there; trying again asks with the restart named.
 3. **Start.** Clicking "Set up" turns managed start on. Aether reads its
    tools only when it starts. If Aether was running without Archon's tools
    and you agreed to the restart in step 2, the app runs `aether stop`,

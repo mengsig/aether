@@ -45,6 +45,8 @@ interface HarnessOptions {
   /** Probes Aether still answers after `aether stop`. */
   stopProbes?: number;
   stopDeadlineMs?: number;
+  /** Aether starts on its own while the confirmation is open. */
+  startsDuringConfirm?: boolean;
 }
 
 function harness(options: HarnessOptions): Harness {
@@ -73,6 +75,7 @@ function harness(options: HarnessOptions): Harness {
     enableManagedStart: async () => { events.push("enable managed start"); },
     confirm: async (_owner, confirmation) => {
       events.push("confirm");
+      if (options.startsDuringConfirm) state.up = true;
       shown.push(confirmation);
       return options.confirm ?? false;
     },
@@ -148,6 +151,22 @@ test("a failed archon setup is a refusal with the first line Archon wrote", asyn
     const garbled = harness({ answers: { "archon setup --json": ran("{\"mode\":") }, confirm: true });
     await assert.rejects(garbled.setup.run(1, "connect"), /does not understand/);
     garbled.cleanup();
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("an Aether that starts during an unrestarting connect is a refusal, and the retry names the restart", async () => {
+  const h = harness({ answers: { "archon setup --json": sharedAnswer("fail") }, up: false, confirm: true, startsDuringConfirm: true });
+  try {
+    await assert.rejects(h.setup.run(1, "connect"), (error: unknown) => error instanceof BridgeRefusal && /Aether started while setup was connecting/.test(error.message));
+    assert.equal(h.shown[0]?.message, "Connect Archon's tools to Aether?");
+    const retried = await h.setup.run(1, "connect");
+    assert.equal(retried.step === "connect" && retried.reload_owed, true);
+    assert.equal(h.shown[1]?.message, "Connect Archon's tools and restart Aether?");
+    h.events.length = 0;
+    assert.equal((await h.setup.run(1, "start")).step, "start");
+    assert.deepEqual(h.events, ["enable managed start", "run aether stop", "start aether", "start archon"]);
   } finally {
     h.cleanup();
   }

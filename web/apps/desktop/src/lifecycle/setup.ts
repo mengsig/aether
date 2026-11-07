@@ -36,6 +36,8 @@ export const AETHER_STOP_ARGS: readonly string[] = ["stop"];
 const START_ORDER: readonly DaemonKind[] = ["aether", "archon"];
 const NAMES: Readonly<Record<ToolName, string>> = { aether: "Aether", archon: "Archon" };
 
+/** Aether came up after the dialog that did not name a restart; a retry asks with the restart named. */
+const STARTED_MEANWHILE = "Aether started while setup was connecting Archon's tools, so it has not loaded them yet. Try again to restart it.";
 const SETUP_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 30_000;
 const STOP_DEADLINE_MS = 30_000;
@@ -91,7 +93,9 @@ export class Setup {
     }
     const answer = parseArchonSetup(result.stdout);
     // Aether reads its tool servers only when it starts, so a running one that lacks Archon's must restart.
-    this.reloadOwed = running && answer.mode === "shared" && answer.health === "fail" && await this.deps.isReachable("aether");
+    const unloaded = answer.mode === "shared" && answer.health === "fail" && await this.deps.isReachable("aether");
+    if (unloaded && !running) throw new BridgeRefusal(STARTED_MEANWHILE);
+    this.reloadOwed = unloaded;
     return { step: "connect", mode: answer.mode, registration: answer.registration, reload_owed: this.reloadOwed };
   }
 
