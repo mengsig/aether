@@ -17,7 +17,7 @@ const SHOTS = [
   { name: "sessions", query: "", hash: "#/learn", ready: "h1" },
   { name: "lesson-graded", query: "graded", hash: "#/learn/sessions/ns_raft", ready: ".learn-q[data-state=correct], .learn-q[data-state=incorrect]" },
   { name: "lesson-question-open", query: "pose=vote", hash: "#/learn/sessions/ns_raft", ready: ".learn-q[data-state=open]" },
-  { name: "settings", query: "", hash: "#/learn?panel=settings", ready: "[role=dialog], dialog[open]" },
+  { name: "settings", query: "", hash: "#/learn?panel=settings", ready: ".learn-settings" },
   { name: "knowledge", query: "", hash: "#/learn/graph", ready: "h1" },
 ] as const;
 

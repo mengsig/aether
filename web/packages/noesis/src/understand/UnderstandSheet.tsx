@@ -184,7 +184,7 @@ function BundlePreview({ conn, request, bundle, goal: offered, notice }: Preview
   );
 }
 
-type UnderstandRefusal = { readonly kind: "engineering" | "noesis" } | { readonly kind: "model" | "other"; readonly message: string };
+type UnderstandRefusal = { readonly kind: "engineering" | "noesis" } | { readonly kind: "model" | "budget" | "other"; readonly message: string };
 
 /** The daemon answers `unavailable` with a reason when Noesis or engineering context was turned off meanwhile. */
 export function classifyUnderstandRefusal(message: string): UnderstandRefusal {
@@ -194,7 +194,7 @@ export function classifyUnderstandRefusal(message: string): UnderstandRefusal {
 }
 
 function RefusalView({ refusal }: { readonly refusal: UnderstandRefusal }) {
-  if (refusal.kind === "model" || refusal.kind === "other") return <RefusalNote refusal={refusal} />;
+  if (refusal.kind !== "engineering" && refusal.kind !== "noesis") return <RefusalNote refusal={refusal} />;
   const what = refusal.kind === "engineering" ? "Learning from your work was turned off" : "Noesis was turned off";
   return (
     <div className="learn-callout" role="status" data-kind={refusal.kind}>

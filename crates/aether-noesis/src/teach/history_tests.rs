@@ -13,7 +13,7 @@ use crate::prompts::Agent;
 use crate::settings::NoesisSettings;
 
 /// The input the faux engine recorded at `seq`, with the agent it went to.
-fn input_at(t: &Teaching<'_, FauxEngine>, seq: u64) -> &(String, Input) {
+fn input_at<'a>(t: &'a Teaching<'_, FauxEngine>, seq: u64) -> &'a (String, Input) {
     let index = usize::try_from(seq - 1).unwrap();
     &t.engine().inputs[index]
 }

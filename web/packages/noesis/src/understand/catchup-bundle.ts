@@ -3,7 +3,7 @@
 
 import type { aether, archon } from "@aether-ui/protocol";
 import { invariant } from "../learn/model.ts";
-import { prStatus } from "./archon-bundles.ts";
+import { prStanding } from "./archon-bundles.ts";
 import { sinceInstant } from "./catchup-range.ts";
 import { BUNDLE_LIMIT_BYTES, BUNDLE_MAX_ITEMS, bundleOf, evidence, utf8Bytes } from "./bundle.ts";
 import { prEvidenceRef } from "./pr-bundle.ts";
@@ -45,7 +45,7 @@ function mergedPrEvidence(object: archon.GithubObject): aether.EvidenceItem {
     `Last updated ${day(object.updated_at)}${object.author ? ` · author ${object.author}` : ""}`,
     object.labels.length > 0 ? `Labels: ${object.labels.join(", ")}` : null,
   ];
-  return evidence(prEvidenceRef(object.ref), prStatus(object.state, object.review_decision), lines.filter(Boolean).join("\n"), PR_BYTES);
+  return evidence(prEvidenceRef(object.ref), prStanding(object.state, object.review_decision).status, lines.filter(Boolean).join("\n"), PR_BYTES);
 }
 
 function stateLine(state: archon.QueueState): string {
@@ -62,7 +62,7 @@ export function changedItemStatus(summary: archon.ItemSummary): aether.EvidenceS
   const pr = summary.pr;
   if (!pr) return "preliminary";
   const checked = pr.checks !== null && pr.checks !== undefined && pr.checks.total > 0 && pr.checks.failed === 0 && pr.checks.state === "success";
-  return checked ? "verified" : prStatus(pr.state, pr.review_decision);
+  return checked ? "verified" : prStanding(pr.state, pr.review_decision).status;
 }
 
 function itemEvidence(summary: archon.ItemSummary): aether.EvidenceItem {

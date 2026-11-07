@@ -101,12 +101,14 @@ const tokensOf = (usage: aether.Usage): number => usage.input_tokens + usage.out
  * What paid for some model use, in words: subscription use is covered by the plan (its dollars are a
  * list-price estimate), API use is billed per request. Subscription use never reads as a charge.
  */
-export function billingWords(usage: { readonly subscription: aether.Usage; readonly api: aether.Usage } | null | undefined): string {
+export function billingWords(usage: { readonly subscription?: aether.Usage; readonly api?: aether.Usage } | null | undefined): string {
   if (usage == null) return "No model use recorded yet.";
+  // A daemon from before the billing split reports neither half: say so rather than claim no use.
+  if (usage.api === undefined && usage.subscription === undefined) return "This daemon does not report what paid for its model use.";
   const billed = spentUsd(usage.api);
   const listPrice = spentUsd(usage.subscription);
-  const api = tokensOf(usage.api) > 0 || billed > 0;
-  const subscription = tokensOf(usage.subscription) > 0 || listPrice > 0;
+  const api = (usage.api !== undefined && tokensOf(usage.api) > 0) || billed > 0;
+  const subscription = (usage.subscription !== undefined && tokensOf(usage.subscription) > 0) || listPrice > 0;
   const covered = `no per-request charge (≈${usd(listPrice)} at API list price)`;
   if (api && subscription) return `${usd(billed)} billed to your API key; the rest ran on your subscription — ${covered}.`;
   if (api) return `${usd(billed)} billed to your API key.`;

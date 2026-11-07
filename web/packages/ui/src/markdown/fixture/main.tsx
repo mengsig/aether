@@ -1,6 +1,9 @@
 import { createRoot } from "react-dom/client";
 import { Markdown, InlineMarkdown, ThemeProvider, Button, useTheme } from "../../index.ts";
 import { invariant } from "../../classes.ts";
+import "../../tokens.css";
+import "../../base.css";
+import "../../primitives.css";
 import "./fixture.css";
 
 const lesson = `# Conservation of energy

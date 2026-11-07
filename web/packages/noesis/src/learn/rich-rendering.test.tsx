@@ -28,11 +28,11 @@ test("teacher and learner bubbles use shared block rendering", async () => {
 test("question prompts, option labels, answer keys and explanations render at the right level", () => {
   const question = { ...VOTE_QUESTION.question, prompt: "# Choose\n\n**Think** first.", options: [{ value: "a", label: "**One**" }, { value: "b", label: "`Two`" }] };
   const root = document.createElement("div");
-  root.innerHTML = renderToStaticMarkup(<QuestionCard question={question} result={undefined} open />);
+  root.innerHTML = renderToStaticMarkup(<QuestionCard question={question} answer={undefined} result={undefined} open />);
   expect(root.querySelector(".learn-q-prompt .md h3")?.textContent).toBe("Choose");
   expect(root.querySelector(".learn-option .md-inline strong")?.textContent).toBe("One");
   expect(root.querySelector(".learn-option p,.learn-option div")).toBeNull();
-  root.innerHTML = renderToStaticMarkup(<QuestionCard question={question} open={false}
+  root.innerHTML = renderToStaticMarkup(<QuestionCard question={question} answer={undefined} open={false}
     result={{ question: question.id, correct: true, answer_key: ["a"], explanation: "## Why\n\n- **Reason**" }} />);
   expect(root.querySelector(".learn-reveal .md-inline strong")?.textContent).toBe("One");
   expect(root.querySelector(".learn-reveal-why .md li strong")?.textContent).toBe("Reason");
@@ -42,7 +42,7 @@ test("problem statements and concluded solutions use block rendering", () => {
   const root = document.createElement("div");
   root.innerHTML = renderToStaticMarkup(<ProblemCard active={false}
     problem={{ id: "p", mode: "recall", posed_at: "", targets: [], statement: "# Explain\n\n**Energy**" }}
-    conclusion={{ type: "noesis.practice_concluded", session: "s", problem: "p", outcome: "solved", retest: false, solution: "## Solution\n\n- First\n- Second" }} />);
+    conclusion={{ outcome: "solved", rung: 0, miss_class: null, retest: false, solution: "## Solution\n\n- First\n- Second" }} />);
   expect(root.querySelector(".learn-q-prompt .md h3")?.textContent).toBe("Explain");
   expect(root.querySelector(".learn-reveal .md h4")?.textContent).toBe("Solution");
   expect(root.querySelectorAll(".learn-reveal .md li")).toHaveLength(2);
