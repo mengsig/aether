@@ -60,6 +60,7 @@
   .ui-palette-trigger { justify-content: space-between; gap: var(--space-4); min-inline-size: 12rem; color: var(--color-text-faint); font-weight: var(--weight-regular); }
   .ui-palette-trigger:hover { color: var(--color-text); }
   .ui-shell-main { flex: 1; padding: var(--space-4) var(--space-8) var(--space-12); outline: none; }
+  .ui-shell-banner { margin-block-end: var(--space-4); }
   .ui-screen-skeleton { display: grid; gap: var(--space-4); max-inline-size: 48rem; }
 
   .ui-palette { inline-size: min(36rem, calc(100% - var(--space-8))); margin-block-start: 12vh; }
