@@ -61,7 +61,10 @@ export class ConnectionTable implements Connections {
   async request(owner: number, conn: string, frame: Frame, text: string): Promise<Frame> {
     const entry = this.entry(owner, conn);
     const reply = await entry.link.request(text, frame.req as number);
-    if (frame.cmd === "hello") entry.protocol = welcomeProtocol(reply);
+    if (frame.cmd !== "hello") return reply;
+    const protocol = welcomeProtocol(reply);
+    if (protocol === undefined) delete entry.protocol;
+    else entry.protocol = protocol;
     return reply;
   }
 
