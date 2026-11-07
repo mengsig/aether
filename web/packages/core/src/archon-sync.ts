@@ -20,7 +20,9 @@ const FEED_KEEP = 200;
 export const GRAPH_LIMIT = 2000;
 
 function graphSnapshot(graph: Json): ArchonGraph {
-  const nodes = Object.fromEntries(array(graph.nodes, "task_graph.nodes").map((node) => [string(object(node, "node").id, "node.id"), node as Json]));
+  const entries = array(graph.nodes, "task_graph.nodes");
+  const nodes = Object.fromEntries(entries.map((node) => [string(object(node, "node").id, "node.id"), node as Json]));
+  invariant(Object.keys(nodes).length === entries.length, "task_graph node ids are unique");
   invariant(Object.keys(nodes).length <= GRAPH_LIMIT, `task_graph sent more than ${GRAPH_LIMIT} nodes`);
   return { nodes, edges: array(graph.edges, "task_graph.edges") as Json[], initiatives: array(graph.initiatives ?? [], "initiatives") as Json[],
     asOf: seq(graph.as_of, "task_graph.as_of"), truncated: graph.truncated === true };
