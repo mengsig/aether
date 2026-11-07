@@ -9,6 +9,7 @@ import path from "node:path";
 import { chromium, expect, type Browser, type Page } from "@playwright/test";
 import { tempBase } from "../../../harness/env.ts";
 import { record, spawnLogged, stopGroup, type Spawned } from "../../../harness/process.ts";
+import { failLaunch, runAll } from "../../../harness/teardown.ts";
 
 const READY_MS = 60_000;
 const POLL_MS = 200;
@@ -66,13 +67,6 @@ async function waylandSocket(runtime: string, sway: Spawned): Promise<string> {
   return path.join(runtime, socket);
 }
 
-/** Runs every step, then reports each one that failed. */
-async function runAll(steps: ReadonlyArray<() => Promise<unknown>>): Promise<void> {
-  const failures: unknown[] = [];
-  for (const step of steps) await step().catch((error: unknown) => failures.push(error));
-  if (failures.length > 0) throw new AggregateError(failures, "the packaged app's teardown failed");
-}
-
 async function devtoolsPort(profile: string, app: Spawned): Promise<number> {
   const file = path.join(profile, "DevToolsActivePort");
   await until(() => (existsSync(file) ? true : undefined), "the packaged app's DevTools port", app);
@@ -128,7 +122,6 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
     return { window: await appWindow(browser), close };
   } catch (error) {
     const tails = `${logTail(log)}\n-- sway:\n${logTail(path.join(root, "sway.log"))}`;
-    await close().catch((teardown: unknown) => { throw new AggregateError([error, teardown], "the packaged app neither started nor tore down"); });
-    throw new Error(`The packaged app did not start; its logs ended:\n${tails}`, { cause: error });
+    return failLaunch(error, `The packaged app did not start; its logs ended:\n${tails}`, close);
   }
 }
