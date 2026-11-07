@@ -24,8 +24,8 @@ interface Card {
 
 const CARD_KINDS: ReadonlySet<RowKind> = new Set<RowKind>(["spawned", "sent", "waiting", "question", "user_message", "user_task", "child_finished", "child_failed", "approval", "notice_status"]);
 
-/** Whether a part draws as a card; a task's attached image draws as itself beside the task card. */
-export const isCard = (view: ViewPart): boolean => CARD_KINDS.has(view.kind) && view.part.kind !== "attachment";
+/** Whether a part draws as a card: every inbox delivery does; a task's attached image draws as itself. */
+export const isCard = (view: ViewPart): boolean => view.part.kind === "inbox" || (CARD_KINDS.has(view.kind) && view.part.kind !== "attachment");
 
 const AGENT_ID = /\bagt_[0-9A-Za-z]+\b/;
 
@@ -81,6 +81,7 @@ function cardOf(view: ViewPart, directory: Directory, parent: string | null): Ca
     case "failed": return { icon: "!", title: `${name(segment.subject)} failed`, text: segment.text, agent: AGENT_ID.test(segment.subject) ? segment.subject : owner(segment.subject), tone: "danger" };
     case "approval": return { icon: "✓", title: "Approval", text: segment.text, agent: null, tone: "neutral" };
     case "notice": return { icon: "•", title: segment.text.split("\n", 1)[0] ?? "", text: segment.text.split("\n").slice(1).join("\n"), agent: null, tone: "neutral" };
+    case "verbatim": return { icon: "≡", title: "Inbox, as delivered", text: segment.text, agent: null, tone: "neutral" };
   }
 }
 

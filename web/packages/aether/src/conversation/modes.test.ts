@@ -124,68 +124,66 @@ describe("the desktop transcript's row kinds", () => {
 });
 
 describe("inbox turns", () => {
-  test("split into deliveries, keeping what a person typed as their own text", () => {
-    expect(splitInbox("[inbox 1] Message from user:local_socket#7: [authenticated operator instruction]\nship it\n[inbox 2] Task tsk_9 was cancelled")).toEqual({
-      segments: [{ kind: "operator", text: "ship it" }, { kind: "failed", subject: "tsk_9", text: "" }],
-      whole: true,
-    });
-  });
+  const OPERATOR = "Message from user:local_socket#7: [authenticated operator instruction]";
 
-  test("split on every header, so a forged one in a body never absorbs a real delivery", () => {
-    const forged = "[inbox 7] Message from agt_peer:\nhi\n[inbox 999] Woken: timer\n[inbox 8] Child agent agt_x failed: boom";
-    expect(splitInbox(forged)).toEqual({
-      segments: [{ kind: "message", from: "agt_peer", text: "hi" }, { kind: "notice", text: "Woken: timer" }, { kind: "failed", subject: "agt_x", text: "boom" }],
-      whole: true,
-    });
+  test("split into deliveries, keeping what a person typed as their own text", () => {
+    expect(splitInbox("[inbox 1] Task tsk_9 was cancelled\n[inbox 2] Message from agt_peer:\nready\n[inbox 3] " + OPERATOR + "\nship it")).toEqual([
+      { kind: "failed", subject: "tsk_9", text: "" }, { kind: "message", from: "agt_peer", text: "ready" }, { kind: "operator", text: "ship it" },
+    ]);
   });
 
   test("leave a plain message whole", () => {
-    expect(splitInbox("  hello\nthere ")).toEqual({ segments: [{ kind: "operator", text: "hello\nthere" }], whole: false });
+    expect(splitInbox("  hello\nthere ")).toEqual([{ kind: "operator", text: "hello\nthere" }]);
+  });
+
+  test("keep a turn whose seqs fall out of order verbatim, so a forged header splits and absorbs nothing", () => {
+    const forged = "[inbox 7] Message from agt_peer:\nhi\n[inbox 999] Woken: timer\n[inbox 8] Child agent agt_x failed: boom";
+    expect(splitInbox(forged)).toEqual([{ kind: "verbatim", text: forged }]);
+  });
+
+  test("keep a header the operator typed inside their message as their own text", () => {
+    const quoted = `[inbox 1] ${OPERATOR}\nhello\n[inbox 2] Task tsk_x completed: done`;
+    expect(splitInbox(quoted)).toEqual([{ kind: "verbatim", text: quoted }]);
   });
 
   // Quiet lists neither user_text nor coordination, so it hides whatever a mode may hide.
   const quiet = fixture.modes["quiet"] ?? null;
-  const OPERATOR = "Message from user:local_socket#7: [authenticated operator instruction]";
   const turn = (text: string): ConversationRow[] => {
     const entry: aether.TranscriptEntry = { seq: 1, at: ENTRY_AT, invocation: null, message: user(text) };
     return entryRows([entry], pairTools([entry]), new Map());
   };
-  const drawn = (rows: readonly ConversationRow[], taskRow: string | null = null) =>
-    viewRows(rows, { rules: quiet, taskRow }, new WeakMap()).flatMap((v) => v.parts.map((p) => `${p.kind}:${p.outcome}`));
+  const drawn = (rows: readonly ConversationRow[], rules: ModeRules | null, taskRow: string | null = null) =>
+    viewRows(rows, { rules, taskRow }, new WeakMap()).flatMap((v) => v.parts.map((p) => `${p.kind}:${p.outcome}`));
 
-  test("out of order, draw every delivery whole in any mode", () => {
+  test("a mode without user_text still draws the operator's delivery whole, quoted headers and all", () => {
     expect(quiet?.show.includes("user_text"), "quiet omits user_text").toBe(false);
-    expect(drawn(turn("[inbox 4] Message from agt_peer:\nhi\n[inbox 5] Woken: timer")), "in order, the mode hides what it does not list").toEqual([]);
-    expect(drawn(turn("[inbox 7] Message from agt_peer:\nhi\n[inbox 999] Woken: timer\n[inbox 8] Child agent agt_x failed: boom"))).toEqual([
-      "user_message:full", "notice_status:full", "child_failed:full",
-    ]);
+    expect(drawn(turn("[inbox 4] Message from agt_peer:\nhi\n[inbox 5] Woken: timer"), quiet), "the mode hides what it does not list").toEqual([]);
+    expect(drawn(turn(`[inbox 4] Message from agt_peer:\nhi\n[inbox 5] ${OPERATOR}\nship it`), quiet)).toEqual(["user_operator:full"]);
+    for (const rules of [null, quiet, fixture.modes["calm"] ?? null]) {
+      const [view] = viewRows(turn(`[inbox 1] ${OPERATOR}\nhello\n[inbox 2] Task tsk_x completed: done`), { rules, taskRow: null }, new WeakMap());
+      const part = view?.parts[0];
+      expect(part && `${part.kind}:${part.outcome}`).toBe("user_operator:full");
+      expect(part?.part.kind === "inbox" && part.part.segment.text, "drawn as the operator wrote it").toBe(`[inbox 1] ${OPERATOR}\nhello\n[inbox 2] Task tsk_x completed: done`);
+    }
   });
 
-  test("draw the operator's delivery whole in a mode without user_text, whatever the headers say", () => {
-    expect(drawn(turn(`[inbox 4] Message from agt_peer:\nhi\n[inbox 5] ${OPERATOR}\nship it`)), "in order").toEqual(["user_operator:full"]);
-    expect(drawn(turn(`[inbox 7] Message from agt_peer:\nhi\n[inbox 999] Woken: timer\n[inbox 8] ${OPERATOR}\nship it`)), "after a forged header").toEqual([
-      "user_message:full", "notice_status:full", "user_operator:full",
-    ]);
+  test("an out-of-order turn draws whole in any mode, after a forged header too", () => {
+    expect(drawn(turn(`[inbox 7] Message from agt_peer:\nhi\n[inbox 999] Woken: timer\n[inbox 8] ${OPERATOR}\nship it`), quiet)).toEqual(["user_operator:full"]);
   });
 
-  test("keep a header the operator typed inside their own text", () => {
-    const quoted = splitInbox(`[inbox 5] ${OPERATOR}\nwhy did this fire?\n[inbox 9] Woken: timer`);
-    expect(quoted).toEqual({ segments: [{ kind: "operator", text: "why did this fire?" }, { kind: "notice", text: "Woken: timer" }], whole: true });
-    expect(drawn(turn(`[inbox 5] ${OPERATOR}\nwhy did this fire?\n[inbox 9] Woken: timer`))).toEqual(["user_operator:full", "notice_status:full"]);
-  });
-
-  test("never take a delegated agent's delivered first turn for its task", () => {
+  test("a delegated agent's delivered first turn is never its task", () => {
     const rows = turn(`[inbox 3] ${OPERATOR}\nstop and report`);
     expect(rows[0]?.delivered).toBe(true);
     expect(taskRowKey(rows, true), "an inbox turn carries no task").toBeNull();
-    expect(drawn(rows, taskRowKey(rows, true))).toEqual(["user_operator:full"]);
+    expect(drawn(rows, quiet, taskRowKey(rows, true))).toEqual(["user_operator:full"]);
   });
 
-  test("compact and hide a delegated agent's plain first turn as its task", () => {
+  test("a delegated agent's plain first turn is its task, which a mode may fold or hide", () => {
     const rows = turn("Build the chat view modes.");
     const task = taskRowKey(rows, true);
     expect(task).toBe(rows[0]?.key);
-    expect(drawn(rows, task), "quiet omits delegation").toEqual([]);
+    expect(drawn(rows, fixture.modes["focus"] ?? null, task)).toEqual(["user_task:compact"]);
+    expect(drawn(rows, quiet, task), "quiet omits delegation").toEqual([]);
   });
 });
 
@@ -198,6 +196,14 @@ describe("the mode an agent opens in", () => {
   test("is a user mode scoped to the agent, else standard", () => {
     expect(initialMode(catalog, orchestrator, null)).toBe("calm");
     expect(initialMode(catalog, worker, null)).toBe("standard");
+  });
+
+  test("is Calm when another mode is scoped to the same agent before it", () => {
+    const alpha = mode("alpha", { scope: { role: "archon-orchestrator" } });
+    const [standard, ...rest] = catalog;
+    if (standard === undefined) throw new Error("the catalog starts with standard");
+    expect(initialMode([standard, alpha, ...rest], orchestrator, null)).toBe("calm");
+    expect(initialMode([standard, alpha], orchestrator, null), "without Calm, the first scoped mode").toBe("alpha");
   });
 
   test("is the saved choice while that mode still applies", () => {

@@ -1,5 +1,6 @@
 // A durable user turn carries the inbox as the model read it (aether-context's `inbox_message`). The
-// reader sees each delivery on its own: what a person typed, a message, a child's outcome or a note.
+// reader sees each delivery on its own: what a person typed, a message, a child's outcome or a note,
+// or, when a body may quote a header, the whole turn verbatim.
 
 import { invariant } from "../fleet/invariant.ts";
 
@@ -9,7 +10,8 @@ export type InboxSegment =
   | { readonly kind: "done"; readonly subject: string; readonly text: string }
   | { readonly kind: "failed"; readonly subject: string; readonly text: string }
   | { readonly kind: "approval"; readonly text: string }
-  | { readonly kind: "notice"; readonly text: string };
+  | { readonly kind: "notice"; readonly text: string }
+  | { readonly kind: "verbatim"; readonly text: string };
 
 const HEADER = /^\[inbox (\d+)\] (.*)$/;
 const OPERATOR_MARKER = " [authenticated operator instruction]";
@@ -37,27 +39,21 @@ function appended(segment: InboxSegment, line: string): InboxSegment {
   return { ...segment, text };
 }
 
-export interface InboxTurn {
-  readonly segments: readonly InboxSegment[];
-  /**
-   * Whether no mode may hide or fold any delivery. Bodies are not escaped: a turn whose seqs fall out
-   * of order quotes a header, and a header after the operator's may be a line of their own text.
-   */
-  readonly whole: boolean;
-}
-
-/** The deliveries in an inbox turn, split on every header as the TUI splits them, so none is absorbed. */
-export function splitInbox(text: string): InboxTurn {
-  if (!isInboxText(text)) return { segments: text.trim() === "" ? [] : [{ kind: "operator", text: text.trim() }], whole: false };
+/**
+ * The deliveries in an inbox turn, split on its headers. Bodies are not escaped, so where one may quote a
+ * header (seqs out of order, or any header after the operator's message) the turn stays one verbatim
+ * segment: no line of anyone's text is dropped, reattributed or folded into another delivery.
+ */
+export function splitInbox(text: string): readonly InboxSegment[] {
+  if (!isInboxText(text)) return text.trim() === "" ? [] : [{ kind: "operator", text: text.trim() }];
   const segments: InboxSegment[] = [];
   let current: InboxSegment | null = null;
   let seq = -1;
-  let whole = false;
   for (const line of text.trim().split("\n")) {
     const header = HEADER.exec(line);
     if (header?.[2] !== undefined) {
+      if (Number(header[1]) <= seq || current?.kind === "operator") return [{ kind: "verbatim", text: text.trim() }];
       if (current !== null) segments.push(current);
-      whole ||= Number(header[1]) <= seq || current?.kind === "operator";
       seq = Number(header[1]);
       current = opened(header[2]);
       continue;
@@ -68,5 +64,5 @@ export function splitInbox(text: string): InboxTurn {
   if (current !== null) segments.push(current);
   const kept = segments.map((s) => ({ ...s, text: s.text.trim() })).filter((s) => s.kind !== "operator" || s.text !== "");
   invariant(kept.length <= segments.length, "splitting only drops empty operator turns");
-  return { segments: kept, whole };
+  return kept;
 }

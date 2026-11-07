@@ -265,20 +265,21 @@ describe("the slash menu", () => {
     expect(sentMessages(h), "view commands never reach the agent").toEqual([]);
   });
 
-  test("without the daemon's catalog /mode and /focus refuse here instead of reaching the agent", async () => {
-    const choose = vi.fn();
-    const extra = modeCommands([], choose, choose, "View modes are still loading");
-    const { h, root, input } = await open(running, {}, extra);
-    for (const line of ["/mode focus", "/focus"]) {
-      await write(h, input, line);
-      await press(h, input, "Escape");
-      await press(h, input, "Enter");
-      expect(root.querySelector('[role="alert"]')?.textContent).toBe("View modes are still loading");
-      expect(input.value, "the line stays to run again").toBe(line);
-    }
-    expect(choose).not.toHaveBeenCalled();
-    expect(sentMessages(h)).toEqual([]);
-  });
+  test.each(["View modes are still loading", "View modes unavailable: connection lost"])(
+    "without the daemon's catalog /mode, /focus and /calm refuse here instead of reaching the agent (%s)", async (reason) => {
+      const choose = vi.fn();
+      const extra = modeCommands([], choose, choose, reason);
+      const { h, root, input } = await open(running, {}, extra);
+      for (const line of ["/mode focus", "/focus", "/calm"]) {
+        await write(h, input, line);
+        await press(h, input, "Escape");
+        await press(h, input, "Enter");
+        expect(root.querySelector('[role="alert"]')?.textContent).toBe(reason);
+        expect(input.value, "the line stays to run again").toBe(line);
+      }
+      expect(choose).not.toHaveBeenCalled();
+      expect(sentMessages(h)).toEqual([]);
+    });
 
   test("a menu pick waits like Send: never twice while a send is pending, never to an ended agent", async () => {
     const orchestrator = fauxAgent(undefined, { role: "archon-orchestrator" });

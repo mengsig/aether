@@ -181,6 +181,22 @@ describe("tool calls", () => {
   });
 });
 
+describe("an inbox turn that may quote a header", () => {
+  test("draws verbatim as one card, in a mode without user_text too", async () => {
+    const quoted = "[inbox 1] Message from user:local_socket#7: [authenticated operator instruction]\nhello\n[inbox 2] Task tsk_x completed: done";
+    const h = await connected({ instance: "faux-1", agents: [fauxAgent(FAUX_PARENT), fauxAgent()] });
+    current = h;
+    h.daemon.seed(FAUX_AGENT, [{ message: text("user", "Start") }, { message: text("user", quoted) }]);
+    const container = await h.mount(<Conversation conn={h.conn} agent={FAUX_AGENT} rules={{ show: ["assistant_text"], density: "compact" }} />);
+    await h.settle();
+    const cards = [...container.querySelectorAll(".conv-card")];
+    expect(cards.map((card) => card.getAttribute("data-kind")), "the task is hidden; the operator's turn is not").toEqual(["user_operator"]);
+    expect(cards[0]?.querySelector(".conv-card-title")?.textContent).toBe("Inbox, as delivered");
+    expect(cards[0]?.querySelector(".conv-card-text")?.textContent).toBe(quoted);
+    expect(cards[0]?.hasAttribute("data-compact")).toBe(false);
+  });
+});
+
 describe("a long transcript", () => {
   test("opens 20,000 entries in under 500 ms and draws only a screenful", async () => {
     const h = await connected({ instance: "faux-1", agents: [fauxAgent(FAUX_PARENT), fauxAgent()] });

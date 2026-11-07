@@ -5,6 +5,7 @@ import { navigate, routeHref } from "@aether-ui/core";
 import type { aether, ConnId } from "@aether-ui/protocol";
 import { DraftError } from "../controls/commands.ts";
 import { invariant } from "../fleet/invariant.ts";
+import { CALM } from "../conversation/modes.ts";
 
 export interface SlashChoice { readonly value: string; readonly label: string; readonly about?: string }
 
@@ -138,8 +139,8 @@ export interface ModeInfo { readonly name: string; readonly label: string; reado
 const TAKEN = new Set(["mode", "new", "model", "stop", "cancel", "pause", "resume", "wake", "restart", "compact", "clear", "quit",
   ...ARCHON_COMMANDS.map(([name]) => name), "settings", "usage", "notifications", "memory", "report", "artifacts", "schedules", "approvals", "doctor", "activity", "help"]);
 
-/** The built-in mode a toggle names before the daemon's catalog has arrived. */
-const BUILTIN_TOGGLES = ["focus"];
+/** Toggles known before the daemon's catalog arrives: the built-in focus and Archon's Calm. */
+const KNOWN_TOGGLES = ["focus", CALM];
 
 /**
  * `/mode <name>` sets a view mode; `/<name>` toggles a non-standard one with the standard view. Without
@@ -153,7 +154,7 @@ export function modeCommands(modes: readonly ModeInfo[], choose: (name: string) 
     const refuse = () => { throw new DraftError(unavailable); };
     return [
       { name: "mode", args: "<name>", about: "choose a transcript view mode", group, run: refuse },
-      ...BUILTIN_TOGGLES.map((name) => ({ name, args: "", about: unavailable, group, run: refuse })),
+      ...KNOWN_TOGGLES.map((name) => ({ name, args: "", about: unavailable, group, run: refuse })),
     ];
   }
   const pick = (args: string) => {

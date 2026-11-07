@@ -41,7 +41,8 @@ function toolKind(part: Extract<Part, { kind: "tool" }>): RowKind {
   return EDITS.has(tool) ? "edit_failed" : "tool_failed";
 }
 
-const INBOX_KIND = { message: "user_message", done: "child_finished", failed: "child_failed", approval: "approval", notice: "notice_status" } as const;
+/** A verbatim turn may hold the operator's text, so it is drawn as theirs is: whole in every mode. */
+const INBOX_KIND = { message: "user_message", done: "child_finished", failed: "child_failed", approval: "approval", notice: "notice_status", verbatim: "user_operator" } as const;
 
 /** A part's row kind; `task` marks the row that carried the agent's task from its parent. */
 export function partKind(part: Part, row: ConversationRow, task: boolean): RowKind {
@@ -60,12 +61,8 @@ export function partKind(part: Part, row: ConversationRow, task: boolean): RowKi
 
 const RANK: Readonly<Record<Outcome, number>> = { hidden: 0, line: 1, compact: 2, full: 3 };
 
-/**
- * The TUI draws a failed edit as two cells, its named call and the edit; one part here stands for both.
- * An inbox turn that may hold a quoted header (inbox.ts `whole`) keeps every delivery whole.
- */
-function partOutcome(rules: ModeRules | null, part: Part, kind: RowKind): Outcome {
-  if (part.kind === "inbox" && part.whole) return "full";
+/** The TUI draws a failed edit as two cells, its named call and the edit; one part here stands for both. */
+function partOutcome(rules: ModeRules | null, kind: RowKind): Outcome {
   const drawn = outcome(rules, kind);
   if (kind !== "edit_failed") return drawn;
   const call = outcome(rules, "tool_failed");
@@ -85,7 +82,7 @@ export function viewRow(row: ConversationRow, options: ViewOptions): ViewRow | n
   const parts: ViewPart[] = [];
   for (const part of row.parts) {
     const kind = partKind(part, row, task);
-    const drawn = partOutcome(options.rules, part, kind);
+    const drawn = partOutcome(options.rules, kind);
     if (drawn !== "hidden") parts.push({ part, kind, outcome: drawn });
   }
   const usage = row.meta !== null && row.meta.error === null && outcome(options.rules, "usage") !== "hidden";

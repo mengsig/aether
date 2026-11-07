@@ -5,6 +5,7 @@ import { navigate, routeHref, selectAgents, selectRead, useApp, usePermission, u
 import { aether } from "@aether-ui/protocol";
 import { Button, EmptyState, Field, Sheet, Tabs } from "@aether-ui/ui";
 import { useState } from "react";
+import { draftKey, writeDraft } from "../composer/drafts.ts";
 import { Action, RunNote, StandingNotice, useRun, type Run } from "../controls/kit.tsx";
 import { EFFORTS } from "../controls/commands.ts";
 import { invariant } from "../fleet/invariant.ts";
@@ -39,17 +40,22 @@ export function createCommand(draft: NewAgentDraft, objective: string): aether.C
   return aether.createAgent({ ...common, name: draft.name.trim() || "assistant", role: "assistant", config: { effort: draft.effort, interactive: true } });
 }
 
-/** A chat gets its first message once it exists, then opens; a reply that never came leaves it to the recovery review. */
+/**
+ * A chat gets its first message once it exists, then opens. The message waits as the chat's draft until
+ * it is delivered, so a refused or unconfirmed send is retried from the chat, never by a second create.
+ */
 async function startChat(run: Run, conn: string, command: aether.CreateAgentCommand, message: string, close: () => void): Promise<void> {
   invariant(command.objective === undefined, "a chat is started without a task");
+  invariant(message.trim() !== "", "a chat starts with a message");
   const reply = await run.send(command, "Started");
   if (reply === null) return;
   const agent = reply.data as { id?: unknown } | null;
   invariant(reply.reply === "agent" && typeof agent?.id === "string", "create_agent answers with the agent it made");
-  if (await run.send(aether.sendMessage({ to: agent.id, content: message.trim() }), "Sent")) {
-    close();
-    navigate(routeHref("#/agents/:conn/:agent", { conn, agent: agent.id }));
-  }
+  const draft = draftKey(conn, agent.id, "message");
+  writeDraft(draft, message.trim());
+  if (await run.send(aether.sendMessage({ to: agent.id, content: message.trim() }), "Sent")) writeDraft(draft, "");
+  close();
+  navigate(routeHref("#/agents/:conn/:agent", { conn, agent: agent.id }));
 }
 
 function useStartData(conn: string, path: string) {

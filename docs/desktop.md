@@ -194,7 +194,9 @@ it, and a manual run, which can name any branch, build unsigned.
 **Start an agent** on the Activity screen starts a **Chat** by default: a
 task-less assistant, started the way the TUI starts one, that gets your first
 message and then waits for the next one after every reply. It stays open until
-you cancel it. A **Task agent** instead works on an objective and ends once it
+you cancel it. The chat opens once it exists; if the first message was refused
+or its reply never came, it waits there as the composer's draft, so trying again
+never starts a second chat. A **Task agent** instead works on an objective and ends once it
 is done; an ended agent takes no more messages, and its composer says why and
 offers to wake it (after a failure), start a new chat or open its controls.
 
@@ -232,11 +234,11 @@ modes in the daemon's `<config dir>/modes/*.toml` whose scope fits the agent,
 read over `list_view_modes` (see [the TUI's view modes](tui.md#view-modes)); a
 mode scoped to another agent is not offered. Arrow keys move the choice, and
 `/mode <name>` or `/<name>` (again for standard) choose one from the composer
-and run in the app. While the daemon's list is loading or unavailable, `/mode`
-and `/focus` say so rather than reach the agent; a user mode's `/<name>` is
-known only once the list arrives. The choice is remembered per daemon and agent. Without one, an agent opens in
-the first user mode scoped to it, so Archon's orchestrator opens in Calm when
-its `calm.toml` exists, and any other agent in standard.
+and run in the app. While the daemon's list is loading or unavailable, `/mode`,
+`/focus` and Archon's `/calm` say so rather than reach the agent; any other user
+mode's `/<name>` is known only once the list arrives. The choice is remembered per daemon and agent. Without one, an agent opens in
+Calm when a `calm.toml` scoped to it exists, else in the first other user mode
+scoped to it, so Archon's orchestrator opens in Calm and any other agent in standard.
 
 The rules are the TUI's, pinned row for row by one shared fixture
 (`crates/aether-tui/tests/fixtures/view_mode_parity.json`) that both test
@@ -246,10 +248,11 @@ draws delegations, messages, completions and status as one-line cards.
 What the operator typed, questions, approvals, errors, failed children and
 calls that were denied or cancelled stay whole in every mode. **Details** (Ctrl+T)
 reveals everything the mode hides without leaving it. Switching keeps the draft
-and the row at the top of the view. Message bodies are not escaped, so every mode
-draws all of an inbox turn that may quote a header: one whose headers are out of
-order, or one with a header after the operator's message. A delegated agent's
-first turn is its task only when the inbox did not deliver it.
+and the row at the top of the view. Message bodies are not escaped, so an inbox
+turn that may quote a header (its headers out of order, or one after the
+operator's message) is drawn verbatim as one card, whole in every mode, rather
+than split into deliveries. A delegated agent's first turn is its task only when
+the inbox did not deliver it.
 
 Delegations, messages between agents and a child's completion or failure are
 cards that open the other agent's chat and, for delegations and outcomes, the

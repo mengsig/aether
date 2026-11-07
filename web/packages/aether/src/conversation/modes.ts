@@ -62,12 +62,17 @@ export function applies(mode: Pick<aether.ViewMode, "scope">, agent: Pick<aether
   return (scope.name == null || scope.name === agent.name) && (scope.role == null || scope.role === agent.role);
 }
 
-/** The mode an agent opens in: a still-valid saved choice, else a user mode scoped to it, else standard. */
+/** The user mode Archon installs for its orchestrator; it wins over any other mode scoped to the agent. */
+export const CALM = "calm";
+
+/** The mode an agent opens in: a still-valid saved choice, else Calm or another user mode scoped to it, else standard. */
 export function initialMode(modes: readonly aether.ViewMode[], agent: Pick<aether.Agent, "name" | "role">, saved: string | null): string {
   invariant(modes.some((m) => m.name === "standard"), "the catalog always has the standard mode");
   const usable = modes.filter((m) => applies(m, agent));
   if (saved !== null && usable.some((m) => m.name === saved)) return saved;
-  return usable.find((m) => !m.builtin && m.scope != null)?.name ?? "standard";
+  const scoped = usable.filter((m) => !m.builtin && m.scope != null);
+  invariant(scoped.every((m) => m.name !== "standard"), "a user mode never replaces standard");
+  return (scoped.find((m) => m.name === CALM) ?? scoped[0])?.name ?? "standard";
 }
 
 export const modeLabel = (mode: Pick<aether.ViewMode, "name" | "label">): string =>
