@@ -23,6 +23,9 @@ export function AgentsTile({ view }: { readonly view: HomeView }) {
   );
 }
 
+const ARCHON_QUEUE = "#/archon/queue";
+
+/** The Inbox shows only Aether's needs; Archon's questions live on its Queue, so the tile points there when they are all that waits. */
 export function NeedsTile({ view }: { readonly view: HomeView }) {
   const { facts, needs, questions } = view;
   if (facts.aether === "connecting" && facts.archon !== "ready") return <LoadingTile label="Needs you" />;
@@ -31,10 +34,13 @@ export function NeedsTile({ view }: { readonly view: HomeView }) {
     [needs.questions, plural(needs.questions, "question")], [needs.approvals, plural(needs.approvals, "approval")],
     [needs.stopped, plural(needs.stopped, "stopped agent")], [needs.archon, plural(needs.archon, "Archon question")],
   ], "Nothing waits on you");
+  const onlyArchon = needs.archon > 0 && needs.archon === needs.total;
+  const archonStep = needs.archon > 0 && !onlyArchon ? { label: `${plural(needs.archon, "Archon question")} on the Queue`, href: ARCHON_QUEUE } : null;
   return (
     <StatTile label="Needs you" value={step ? presenceValue(facts.aether) : String(needs.total)}
-      hint={step ? "Questions, approvals and stopped agents" : hint} tone={needs.total > 0 ? "warning" : "success"} href="#/inbox">
+      hint={step ? "Questions, approvals and stopped agents" : hint} tone={needs.total > 0 ? "warning" : "success"} href={onlyArchon ? ARCHON_QUEUE : "#/inbox"}>
       {step ? <NextStep step={step} /> : null}
+      {archonStep ? <NextStep step={archonStep} /> : null}
       {questions.state === "problem" ? <p className="home-problem">Archon's questions could not be read: {questions.problem}</p> : null}
     </StatTile>
   );

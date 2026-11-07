@@ -89,7 +89,8 @@ describe("with seeded data", () => {
     const { container } = await open([aetherInfo(), archonInfo()], true);
     const links = [...container.querySelectorAll<HTMLAnchorElement>(".ui-chart-tile-link")].map((a) => a.getAttribute("href"));
     expect(links).toEqual(["#/inbox", "#/fleet", "#/activity", "#/activity", "#/archon/queue", "#/learn", "#/github"]);
-    expect(container.querySelectorAll(".home-step")).toHaveLength(0);
+    expect(step(container, "needs"), "the Inbox shows only Aether's needs, so the Archon question gets its own way to the Queue").toEqual(["1 Archon question on the Queue →", "#/archon/queue"]);
+    expect(container.querySelectorAll(".home-step")).toHaveLength(1);
     expect(text(container, "agents", ".ui-chart-tile-value")).toBe("2");
     expect(text(container, "agents", ".ui-chart-tile-hint")).toBe("running · 2 waiting · 2 need attention");
     expect(tile(container, "agents")?.querySelectorAll("tbody tr")).toHaveLength(12);
@@ -99,6 +100,16 @@ describe("with seeded data", () => {
     expect(text(container, "spend", ".ui-chart-tile-hint")).toBe("1.4M tokens");
     expect([...(tile(container, "spend")?.querySelectorAll(".ui-chart-legend li") ?? [])].map((li) => li.textContent))
       .toEqual(["claude-code/opus67%", "claude-code/sonnet27%", "codex/gpt-6-astra7%"]);
+  });
+
+  test("with only Archon's questions waiting, Needs you leads to the Queue, where they are answered", async () => {
+    const { container } = await open([aetherInfo(), archonInfo()], true, { ...EMPTY_REPLIES, list_questions: QUESTIONS });
+    h?.app.store.updateAether(AETHER_CONN, (s) => ({ ...s, attention: { last_seq: 0, questions: [], approvals: [], agents: [] } }));
+    await h?.frame();
+    expect(text(container, "needs", ".ui-chart-tile-value")).toBe("1");
+    expect(text(container, "needs", ".ui-chart-tile-hint")).toBe("1 Archon question");
+    expect(tile(container, "needs")?.querySelector(".ui-chart-tile-link")?.getAttribute("href")).toBe("#/archon/queue");
+    expect(step(container, "needs")).toBeNull();
   });
 
   test("the queue, activity, learning and GitHub tiles list what is newest", async () => {

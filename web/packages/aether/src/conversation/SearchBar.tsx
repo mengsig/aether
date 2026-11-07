@@ -39,6 +39,8 @@ function usePaint(stage: RefObject<HTMLElement | null>, result: SearchResult, cu
   const nth = at?.nth ?? 0;
   useLayoutEffect(() => {
     const root = stage.current?.querySelector<HTMLElement>(".conv-list");
+    // A cleared search forgets what it scrolled to, so the same term found again scrolls again.
+    if (current < 0) scrolled.current = "";
     if (!root || result.query === "") return undefined;
     const paint = () => {
       const target = paintMatches(root, result.query, rowKey === null ? null : { rowKey, nth });
@@ -64,7 +66,11 @@ function useReveal({ rows, list, toggles }: SearchDeps, result: SearchResult, cu
   useLayoutEffect(() => {
     const mark = `${result.query}#${current}`;
     const target = rows[row];
-    if (target === undefined || revealed.current === mark) return;
+    if (target === undefined) {
+      revealed.current = "";
+      return;
+    }
+    if (revealed.current === mark) return;
     revealed.current = mark;
     for (const key of foldsToOpen(target, result.query)) toggles.set(key, true);
     list.current?.scrollToIndex(row);

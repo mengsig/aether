@@ -163,6 +163,31 @@ describe("find", () => {
     expect(container.querySelector(".conv-msg[data-current=true]")).toBeNull();
   });
 
+  test("finds the same term again after Find was closed: the match scrolls into view afresh", async () => {
+    const { h, container } = await open([{ message: text("user", "A haystack.") }, { message: text("assistant", "Nothing else.") }]);
+    const scrolls = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { value: scrolls, configurable: true, writable: true });
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    const find = async () => {
+      await act(async () => container.querySelector<HTMLButtonElement>(".conv-find")?.click());
+      const input = byTestId<HTMLInputElement>(container, "conv-search");
+      if (!input) throw new Error("Find opens its field");
+      await act(async () => {
+        setter?.call(input, "haystack");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await h.settle();
+      expect(byTestId(container, "conv-search-count")?.textContent).toBe("1 of 1");
+      return input;
+    };
+    const input = await find();
+    expect(scrolls).toHaveBeenCalledTimes(1);
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    expect(byTestId(container, "conv-search")).toBeNull();
+    await find();
+    expect(scrolls, "the second find scrolls to the match again").toHaveBeenCalledTimes(2);
+  });
+
   test("says when nothing matches", async () => {
     const { h, container } = await open([{ message: text("user", "Hello") }]);
     await act(async () => container.querySelector<HTMLButtonElement>(".conv-find")?.click());
