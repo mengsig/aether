@@ -895,7 +895,9 @@ In the Learn screen's settings:
   the daemon no longer offers shows as unknown until you pick another.
 - **Billing.** "Spent today" and each lesson say what paid. Subscription use
   is covered by your plan; its dollars are a list-price estimate, never a
-  charge. API use is billed to your key.
+  charge. API use is billed to your key. Each usage record keeps what paid
+  for it when it is written; use recorded before that shows as unknown,
+  never as API.
 - **"Learn from my work".** This is `engineering_context`, an operate-level
   key. It lets a lesson start from your own items, runs and pull requests.
   The "Learn from this" sheet offers to turn it on when it is off.

@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use aether_core::agent::Agent;
 use aether_core::event::EventKind;
 use aether_core::id::AgentId;
-use aether_core::model::{ModelRef, Usage};
+use aether_core::model::{Billing, ModelRef, Usage};
 use aether_core::noesis::SessionUsage;
 use aether_model::Models;
 use aether_noesis::budget::{
@@ -48,32 +48,111 @@ fn lane(lane: NoesisLane) -> Lane {
 /// Events read per page when rebuilding the day.
 const PAGE: usize = 2_000;
 
+const USAGE_RECORD: &str = "agent.usage_updated";
+
+/// One agent's use under one billing class; `None` where its records kept
+/// none (written before the class was kept, or on a provider then unknown).
+#[derive(Debug, Clone)]
+pub(crate) struct Used {
+    pub(crate) agent: Agent,
+    pub(crate) billing: Option<Billing>,
+    pub(crate) usage: Usage,
+}
+
+/// The use the records read added, by agent and billing, and each agent's
+/// last absolute total read.
+#[derive(Debug, Default)]
+struct Recorded {
+    used: HashMap<(AgentId, Option<Billing>), Usage>,
+    last_total: HashMap<AgentId, Usage>,
+}
+
 /// Each Noesis agent with its usage today, rebuilt from the
 /// `agent.usage_updated` records of `noesis.*` agents since UTC midnight.
 /// Each record's absolute total is turned into a charge by the same
 /// [`usage_spent`] a turn settles with, so completed and failed invocations
 /// and compaction attempts count here exactly as they were charged.
-pub(crate) fn usage_today(
-    store: &dyn Store,
-    day: NaiveDate,
-) -> aether_store::Result<Vec<(Agent, Usage)>> {
+pub(crate) fn usage_today(store: &dyn Store, day: NaiveDate) -> aether_store::Result<Vec<Used>> {
     let midnight = day.and_hms_opt(0, 0, 0).map(|time| time.and_utc());
     debug_assert!(midnight.is_some(), "midnight exists on every day");
-    let mut agents = noesis_agents(store)?;
+    let agents = noesis_agents(store)?;
     let filter = EventFilter {
-        types: vec!["agent.usage_updated".into()],
+        types: vec![USAGE_RECORD.into()],
         ..EventFilter::default()
     };
-    let mut last_total: HashMap<AgentId, Usage> = HashMap::new();
-    let mut today: HashMap<AgentId, Usage> = HashMap::new();
+    let recorded = recorded_use(store, &filter, &agents, midnight)?;
+    let used: Vec<Used> = recorded
+        .used
+        .into_iter()
+        .filter_map(|((id, billing), usage)| {
+            let agent = agents.get(&id)?.clone();
+            Some(Used {
+                agent,
+                billing,
+                usage,
+            })
+        })
+        .collect();
+    debug_assert!(
+        used.iter()
+            .all(|used| used.agent.role.as_str().starts_with(ROLE_PREFIX))
+    );
+    Ok(used)
+}
+
+/// What `agents` used over their lives, by the billing each of their usage
+/// records kept. Use on a row that no record holds, as after a purge, is unknown.
+pub(crate) fn session_usage(
+    store: &dyn Store,
+    agents: Vec<Agent>,
+) -> aether_store::Result<SessionUsage> {
+    let rows: HashMap<AgentId, Agent> = agents.into_iter().map(|agent| (agent.id, agent)).collect();
+    let mut used = Vec::new();
+    let mut unrecorded = Usage::default();
+    for (id, agent) in &rows {
+        let filter = EventFilter {
+            agent: Some(*id),
+            exclude_children: true,
+            types: vec![USAGE_RECORD.into()],
+            ..EventFilter::default()
+        };
+        let recorded = recorded_use(store, &filter, &rows, None)?;
+        let last = recorded.last_total.get(id).copied().unwrap_or_default();
+        let missing = usage_spent(&last, &agent.stats.usage);
+        if missing.total_tokens() > 0 || missing.cost_usd > 0.0 {
+            unrecorded += missing;
+        }
+        used.extend(
+            recorded
+                .used
+                .into_iter()
+                .map(|((_, billing), usage)| (billing, usage)),
+        );
+    }
+    let mut split = by_billing(used.iter().map(|(billing, usage)| (*billing, usage)));
+    split.unknown += unrecorded;
+    debug_assert!(split.unknown.input_tokens >= unrecorded.input_tokens);
+    Ok(split)
+}
+
+/// The use the `agent.usage_updated` records `filter` picks added for
+/// `agents`, counting only records written at or after `since`.
+fn recorded_use(
+    store: &dyn Store,
+    filter: &EventFilter,
+    agents: &HashMap<AgentId, Agent>,
+    since: Option<chrono::DateTime<Utc>>,
+) -> aether_store::Result<Recorded> {
+    debug_assert_eq!(filter.types, [USAGE_RECORD], "only usage records are read");
+    let mut recorded = Recorded::default();
     let mut after = 0u64;
     loop {
-        let page = store.events(after, PAGE, &filter)?;
+        let page = store.events(after, PAGE, filter)?;
         let Some(last) = page.last() else { break };
         assert!(last.seq > after, "the log pages forwards");
         after = last.seq;
         for event in &page {
-            let (Some(agent), EventKind::AgentUsageUpdated { total, .. }) =
+            let (Some(agent), EventKind::AgentUsageUpdated { total, billing, .. }) =
                 (event.agent_id, &event.kind)
             else {
                 continue;
@@ -81,25 +160,20 @@ pub(crate) fn usage_today(
             if !agents.contains_key(&agent) {
                 continue;
             }
-            let before = last_total.insert(agent, *total).unwrap_or_default();
-            if midnight.is_some_and(|midnight| event.at < midnight) {
+            let before = recorded
+                .last_total
+                .insert(agent, *total)
+                .unwrap_or_default();
+            if since.is_some_and(|since| event.at < since) {
                 continue;
             }
-            *today.entry(agent).or_default() += usage_spent(&before, total);
+            *recorded.used.entry((agent, *billing)).or_default() += usage_spent(&before, total);
         }
         if page.len() < PAGE {
             break;
         }
     }
-    let used: Vec<(Agent, Usage)> = today
-        .into_iter()
-        .filter_map(|(id, usage)| agents.remove(&id).map(|agent| (agent, usage)))
-        .collect();
-    debug_assert!(
-        used.iter()
-            .all(|(agent, _)| agent.role.as_str().starts_with(ROLE_PREFIX))
-    );
-    Ok(used)
+    Ok(recorded)
 }
 
 /// Every Noesis agent, by its role.
@@ -124,31 +198,29 @@ pub(crate) fn runs_on_engine(models: &Models, model: &ModelRef) -> bool {
 }
 
 /// Agents' usage summed per lane: (interactive, background).
-pub(crate) fn by_lane(used: &[(Agent, Usage)]) -> (Usage, Usage) {
+pub(crate) fn by_lane(used: &[Used]) -> (Usage, Usage) {
     let (mut interactive, mut background) = (Usage::default(), Usage::default());
-    for (agent, usage) in used {
-        match lane_of(agent.role.as_str()) {
-            NoesisLane::Interactive => interactive += *usage,
-            NoesisLane::Background => background += *usage,
+    for used in used {
+        match lane_of(used.agent.role.as_str()) {
+            NoesisLane::Interactive => interactive += used.usage,
+            NoesisLane::Background => background += used.usage,
         }
     }
     (interactive, background)
 }
 
-/// Usage on each model summed by billing. Only an API provider bills per
-/// request; an engine's use is covered by its plan. A provider no longer
-/// configured cannot say which it was, so its use is counted as unknown.
+/// Use summed by the billing its records kept when written. A record that
+/// kept none is counted as unknown, never as an API charge.
 pub(crate) fn by_billing<'a>(
-    models: &Models,
-    used: impl IntoIterator<Item = (&'a ModelRef, &'a Usage)>,
+    used: impl IntoIterator<Item = (Option<Billing>, &'a Usage)>,
 ) -> SessionUsage {
     let mut split = SessionUsage::default();
     let mut total_tokens = 0;
-    for (model, usage) in used {
+    for (billing, usage) in used {
         total_tokens += usage.input_tokens;
-        let bucket = match models.registry().provider(&model.provider) {
-            Some(provider) if provider.protocol.is_engine() => &mut split.subscription,
-            Some(_) => &mut split.api,
+        let bucket = match billing {
+            Some(Billing::Subscription) => &mut split.subscription,
+            Some(Billing::Api) => &mut split.api,
             None => &mut split.unknown,
         };
         *bucket += *usage;

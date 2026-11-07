@@ -491,7 +491,9 @@ new tokens as `UsageDelta` and leave `Assistant.usage` empty; `Done` carries the
 turn's totals, which reconcile what streamed. An engine turn's
 `invocation.completed` events therefore carry no usage (zero tokens, unpriced),
 and its spend arrives as `agent.usage_updated` with the agent's and the turn's
-totals.
+totals. Each such record also says what paid for the use it adds, `billing`:
+`subscription` on an engine, `api` on a provider billed per request. Records
+written before Aether kept it have none, and Noesis counts their use as unknown.
 
 Claude Code's [`result` fields have different scopes](https://code.claude.com/docs/en/agent-sdk/cost-tracking#track-costs-in-streaming-input-mode):
 `usage` covers one user turn, while `total_cost_usd` and `modelUsage` include

@@ -1871,6 +1871,14 @@
       ],
       "type": "string"
     },
+    "Billing": {
+      "description": "What paid for a usage record when it was written: an engine CLI on the\nuser's own subscription, or a provider billed per request.",
+      "enum": [
+        "subscription",
+        "api"
+      ],
+      "type": "string"
+    },
     "BillingPatch": {
       "properties": {
         "allow_api": {
@@ -7640,6 +7648,17 @@
         {
           "description": "Absolute billing totals, including corrections from a completed engine run.",
           "properties": {
+            "billing": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Billing"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "What paid for the use this record adds. Absent on records written\nbefore it was kept, and when the provider was unknown: read as unknown."
+            },
             "total": {
               "$ref": "#/$defs/Usage"
             },
@@ -13077,7 +13096,7 @@
               "type": "null"
             }
           ],
-          "description": "What the session's model calls used, split by how they were paid for."
+          "description": "What the session's model calls used, split by how they were paid for.\nBoxed so the session's event stays small; the wire form is the same."
         }
       },
       "required": [

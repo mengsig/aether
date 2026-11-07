@@ -98,10 +98,7 @@ impl PendingAccounting {
             taken.usage || taken.context_tokens.is_some()
         );
         if taken.usage {
-            commit.push_event(ctx.draft(EventKind::AgentUsageUpdated {
-                total: ctx.agent.stats.usage,
-                turn_usage: ctx.turn_usage,
-            }));
+            commit.push_event(ctx.usage_record(Some(aether_core::model::Billing::Subscription)));
         }
         if let Some(tokens) = taken.context_tokens {
             commit.push_event(ctx.draft(EventKind::Custom {

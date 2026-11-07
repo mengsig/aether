@@ -5,6 +5,7 @@ import type {
   AgentConfig,
   AgentId,
   AgentStatusKind,
+  Billing,
   CheckpointId,
   ContentBlock,
   InvocationId,
@@ -141,6 +142,7 @@ export interface EventKindAgentConfigUpdated {
  * Absolute billing totals, including corrections from a completed engine run.
  */
 export interface EventKindAgentUsageUpdated {
+  "billing"?: Billing | null;
   "total": Usage;
   "turn_usage": Usage;
   "type": "agent.usage_updated";

@@ -35,10 +35,7 @@ impl NoesisService {
             .map_err(|e| ErrorReply::internal(format!("the spend read did not finish: {e}")))?
             .map_err(crate::connection::store_err)?;
         let (interactive, background) = budget::by_lane(&used);
-        let billing = budget::by_billing(
-            &self.models,
-            used.iter().map(|(agent, usage)| (&agent.model, usage)),
-        );
+        let billing = budget::by_billing(used.iter().map(|used| (used.billing, &used.usage)));
         let jobs_running = runtime
             .noesis_turns_running()
             .iter()

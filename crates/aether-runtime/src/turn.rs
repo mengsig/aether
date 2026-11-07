@@ -18,8 +18,8 @@ use aether_core::inbox::InboxKind;
 use aether_core::lease::Lease;
 use aether_core::memory::MemoryScope;
 use aether_core::model::{
-    ContentBlock, Message, MessageRole, ModelError, ModelErrorClass, ModelRef, ModelResponse,
-    StopReason, StreamEvent, ToolResultBlock,
+    Billing, ContentBlock, Message, MessageRole, ModelError, ModelErrorClass, ModelRef,
+    ModelResponse, StopReason, StreamEvent, ToolResultBlock,
 };
 use aether_core::snapshot::Invocation;
 use aether_core::task::{Task, TaskResult, TaskStatus, TaskStatusKind};
@@ -264,12 +264,21 @@ impl TurnCtx {
     /// A Noesis turn's absolute usage as a durable record, written with every
     /// usage it adds (API invoke, failed invocation, compaction, engine), so
     /// the day's spend can be rebuilt from the log alone.
-    pub(crate) fn noesis_usage_record(&self) -> Option<aether_core::event::EventDraft> {
+    pub(crate) fn noesis_usage_record(
+        &self,
+        billing: Option<Billing>,
+    ) -> Option<aether_core::event::EventDraft> {
         self.noesis.as_ref()?;
-        Some(self.draft(EventKind::AgentUsageUpdated {
+        Some(self.usage_record(billing))
+    }
+
+    /// The agent's absolute usage now, with what paid for the use it adds.
+    pub(crate) fn usage_record(&self, billing: Option<Billing>) -> EventDraft {
+        self.draft(EventKind::AgentUsageUpdated {
             total: self.agent.stats.usage,
             turn_usage: self.turn_usage,
-        }))
+            billing,
+        })
     }
 
     pub(crate) fn add_usage(&mut self, usage: aether_core::model::Usage) {
@@ -483,6 +492,12 @@ fn turn_refused(runtime: &Runtime, agent: &Agent, turn: u32) -> Result<Option<St
         .copied()
         .unwrap_or_default();
     Ok(agent.budget_exceeded(&usage))
+}
+
+/// What pays for use on `model` now; `None` once its provider is gone.
+pub(crate) fn billing_of(models: &aether_model::Models, model: &ModelRef) -> Option<Billing> {
+    let provider = models.registry().provider(&model.provider)?;
+    Some(Billing::of(provider.protocol.is_engine()))
 }
 
 /// Preserve the task boundary, but pay for its checkpoint only when more work arrives.

@@ -133,6 +133,7 @@ export * from "./protocol/types/AttentionKind.ts";
 export * from "./protocol/types/AuthInfo.ts";
 export * from "./protocol/types/BackgroundDisable.ts";
 export * from "./protocol/types/BackgroundPriority.ts";
+export * from "./protocol/types/Billing.ts";
 export * from "./protocol/types/BillingPatch.ts";
 export * from "./protocol/types/BillingSettings.ts";
 export * from "./protocol/types/BlockReason.ts";

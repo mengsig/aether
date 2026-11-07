@@ -70,6 +70,7 @@ fn event(i: usize, agent: &Agent, started: Timestamp, span_ms: i64) -> ImportedE
         EventKind::AgentUsageUpdated {
             total: usage(total),
             turn_usage: usage(0.01),
+            billing: None,
         }
     } else if i.is_multiple_of(2) {
         EventKind::AgentStarted {

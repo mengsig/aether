@@ -674,10 +674,7 @@ pub(super) fn record_compaction_usage(
     let hold = runtime.hold();
     let row = agent_row_with_session(runtime, ctx, &hold)?;
     let mut commit = Commit::new()
-        .event(ctx.draft(EventKind::AgentUsageUpdated {
-            total: ctx.agent.stats.usage,
-            turn_usage: ctx.turn_usage,
-        }))
+        .event(ctx.usage_record(Some(Billing::of(resolved.provider.protocol.is_engine()))))
         .mutate(Mutation::UpsertAgent(row));
     if let Some(error) = &attempt.error {
         crate::exhaustion::record_incident(

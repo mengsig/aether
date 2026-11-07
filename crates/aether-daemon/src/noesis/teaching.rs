@@ -12,7 +12,6 @@ use std::sync::atomic::Ordering;
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::idempotency::Submission;
 use aether_core::noesis::{ConceptId, NoesisSession, SessionMode};
-use aether_model::Models;
 use aether_noesis::Noesis;
 use aether_noesis::budget::INTERACTIVE_BUDGET_SETTING;
 use aether_noesis::teach::records::{Answer, EvidenceDraft, Mode, NoesisEvent, SessionView};
@@ -115,7 +114,7 @@ impl NoesisService {
         let reply = done
             .reply
             .map_err(reply_error)
-            .and_then(|reply| with_usage(runtime, &self.models, reply));
+            .and_then(|reply| with_usage(runtime, reply));
         let receipt = reply.as_ref().ok().zip(submission);
         publish(&desk, runtime, output, &by, receipt)?;
         drop(desk);
@@ -458,7 +457,7 @@ fn delete_session(
 }
 
 /// A session read with its history also carries its agents' usage by billing.
-fn with_usage(runtime: &Runtime, models: &Models, reply: Reply) -> Result<Reply, ErrorReply> {
+fn with_usage(runtime: &Runtime, reply: Reply) -> Result<Reply, ErrorReply> {
     let Reply::NoesisSession(mut session) = reply else {
         return Ok(reply);
     };
@@ -476,10 +475,9 @@ fn with_usage(runtime: &Runtime, models: &Models, reply: Reply) -> Result<Reply,
             ran.push(agent);
         }
     }
-    session.usage = Some(Box::new(budget::by_billing(
-        models,
-        ran.iter().map(|agent| (&agent.model, &agent.stats.usage)),
-    )));
+    let usage = budget::session_usage(runtime.store().as_ref(), ran)
+        .map_err(crate::connection::store_err)?;
+    session.usage = Some(Box::new(usage));
     Ok(Reply::NoesisSession(session))
 }
 

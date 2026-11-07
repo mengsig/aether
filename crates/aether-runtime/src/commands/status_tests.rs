@@ -69,6 +69,7 @@ fn bill_in(
                 EventKind::AgentUsageUpdated {
                     total: billed(total),
                     turn_usage: billed(turn),
+                    billing: None,
                 },
             )
             .agent(agent.id)

@@ -20,6 +20,7 @@ fn billing_updates_refresh_totals_without_replacing_context() {
                 output_tokens: 500,
                 ..Default::default()
             },
+            billing: None,
         },
     )))));
     assert!(

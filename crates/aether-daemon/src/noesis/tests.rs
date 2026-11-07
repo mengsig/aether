@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::RunId;
-use aether_core::model::{ModelRef, Usage};
+use aether_core::model::{Billing, ModelRef, Usage};
 use aether_protocol::noesis::{BillingPatch, BudgetPatch, DisablePatch, NoesisSettingsPatch};
 use aether_protocol::{Command, ErrorCode, Reply};
 use aether_runtime::CreateAgentSpec;
@@ -293,11 +293,17 @@ async fn a_re_enable_during_the_grace_keeps_the_service() {
 }
 
 /// The record a Noesis turn writes with each usage it adds: the agent's
-/// absolute total after it.
-fn complete(store: &dyn Store, agent: aether_core::id::AgentId, total: Usage) {
+/// absolute total after it, and what paid for it.
+fn complete(
+    store: &dyn Store,
+    agent: aether_core::id::AgentId,
+    total: Usage,
+    billing: Option<Billing>,
+) {
     let kind = EventKind::AgentUsageUpdated {
         total,
         turn_usage: total,
+        billing,
     };
     let draft = EventDraft::new(Actor::System, kind)
         .agent(agent)
@@ -318,6 +324,48 @@ fn noesis_agent(harness: &Harness, role: &str, model: ModelRef) -> aether_core::
         .create_agent(spec, Actor::System)
         .expect("create")
         .0
+}
+
+#[tokio::test]
+async fn each_usage_record_keeps_what_paid_for_it_and_one_without_is_unknown() {
+    let harness = Harness::new().await;
+    harness.configure(enable(true)).await;
+    let tutor = noesis_agent(
+        &harness,
+        "noesis.tutor",
+        ModelRef::new("claude-code", "opus"),
+    );
+    let runtime = &harness.daemon.runtime;
+    let used = |tokens| Usage {
+        input_tokens: tokens,
+        ..Usage::default()
+    };
+    let row = runtime
+        .record_noesis_call(tutor.id, used(10), |_, _| {})
+        .expect("record the engine's call");
+    let store = runtime.store().clone();
+    complete(store.as_ref(), tutor.id, used(30), Some(Billing::Api));
+    complete(store.as_ref(), tutor.id, used(70), None);
+
+    let today = budget::usage_today(store.as_ref(), budget::today()).expect("spend");
+    let split = budget::by_billing(today.iter().map(|used| (used.billing, &used.usage)));
+    assert_eq!(
+        split.subscription.input_tokens, 10,
+        "as the runtime wrote it"
+    );
+    assert_eq!(split.api.input_tokens, 20);
+    assert_eq!(split.unknown.input_tokens, 40, "never counted as API");
+    let session = budget::session_usage(store.as_ref(), vec![row.clone()]).expect("session");
+    assert_eq!(session, split, "a session reads the same records");
+
+    let mut purged = row;
+    purged.stats.usage = used(100);
+    let session = budget::session_usage(store.as_ref(), vec![purged]).expect("session");
+    assert_eq!(
+        session.unknown.input_tokens, 70,
+        "use no record holds is unknown"
+    );
+    assert_eq!(session.api, split.api);
 }
 
 #[tokio::test]
@@ -352,9 +400,24 @@ async fn today_s_spend_is_read_back_per_lane_from_the_usage_records() {
         estimated_cost_usd: Some(estimate),
         ..Usage::default()
     };
-    complete(store.as_ref(), tutor.id, spent(0.25, 0.5));
-    complete(store.as_ref(), extractor.id, spent(0.0, 0.125));
-    complete(store.as_ref(), other.id, spent(8.0, 0.0));
+    complete(
+        store.as_ref(),
+        tutor.id,
+        spent(0.25, 0.5),
+        Some(Billing::Subscription),
+    );
+    complete(
+        store.as_ref(),
+        extractor.id,
+        spent(0.0, 0.125),
+        Some(Billing::Subscription),
+    );
+    complete(
+        store.as_ref(),
+        other.id,
+        spent(8.0, 0.0),
+        Some(Billing::Subscription),
+    );
     let seeded = budget::spent_today(store.as_ref(), budget::today()).expect("spend");
     assert_eq!(
         seeded.interactive.usd, 0.75,
@@ -696,8 +759,18 @@ async fn a_rebuild_counts_a_failed_invocation_and_a_compaction_as_settlement_did
     let after_failure = failed;
     let mut after_compaction = failed;
     after_compaction += compaction;
-    complete(store.as_ref(), tutor.id, after_failure);
-    complete(store.as_ref(), tutor.id, after_compaction);
+    complete(
+        store.as_ref(),
+        tutor.id,
+        after_failure,
+        Some(Billing::Subscription),
+    );
+    complete(
+        store.as_ref(),
+        tutor.id,
+        after_compaction,
+        Some(Billing::Subscription),
+    );
 
     let settled = budget::spend_of(&usage_spent(&Usage::default(), &after_compaction));
     let rebuilt = budget::spent_today(store.as_ref(), budget::today()).expect("spend");

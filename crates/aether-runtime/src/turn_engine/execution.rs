@@ -778,10 +778,7 @@ pub(super) fn settle_usage(
     let row = crate::turn::agent_row(runtime, ctx, &hold)?;
     let mut commit = Commit::new().mutate(Mutation::UpsertAgent(row));
     if reconciled {
-        commit.push_event(ctx.draft(EventKind::AgentUsageUpdated {
-            total: ctx.agent.stats.usage,
-            turn_usage: ctx.turn_usage,
-        }));
+        commit.push_event(ctx.usage_record(Some(aether_core::model::Billing::Subscription)));
     }
     runtime.apply_held_through_lock(hold, commit, ctx.agent.id, "the turn's closing usage")?;
 

@@ -710,7 +710,8 @@ pub(super) async fn run_link(
             duration_ms: (finished_at - started_at).num_milliseconds().max(0) as u64,
         }))
         .mutate(Mutation::PutInvocation(invocation));
-    if let Some(record) = ctx.noesis_usage_record() {
+    let billing = Billing::of(resolved.provider.protocol.is_engine());
+    if let Some(record) = ctx.noesis_usage_record(Some(billing)) {
         commit.push_event(record);
     }
     if !response.content.is_empty() {

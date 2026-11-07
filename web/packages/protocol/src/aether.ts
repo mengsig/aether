@@ -1,7 +1,7 @@
 // The Aether daemon protocol as TypeScript types and command builders.
 // Generated from clients/protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: c190aaa64b51ab8e1dbbf9fa96a976a3a00e8e2d414dc3fda3f1f940577d567e
+// Schema SHA-256: 2fa9ce5be23f9ca60ca04e1db43da8e28533897841563e0d09b8544be34b542f
 
 export const PROTOCOL_VERSION = 26;
 export const MIN_PROTOCOL_VERSION = 17;
@@ -521,6 +521,12 @@ export interface AuthInfo {
 export type BackgroundDisable = "cancel_at_model_boundary";
 
 export type BackgroundPriority = "low" | "normal";
+
+/**
+ * What paid for a usage record when it was written: an engine CLI on the
+ * user's own subscription, or a provider billed per request.
+ */
+export type Billing = "subscription" | "api";
 
 export interface BillingPatch {
   "allow_api"?: boolean | null;
@@ -1329,6 +1335,7 @@ export interface EventKindAgentConfigUpdated {
  * Absolute billing totals, including corrections from a completed engine run.
  */
 export interface EventKindAgentUsageUpdated {
+  "billing"?: Billing | null;
   "total": Usage;
   "turn_usage": Usage;
   "type": "agent.usage_updated";
