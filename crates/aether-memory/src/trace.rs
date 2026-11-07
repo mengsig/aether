@@ -137,7 +137,10 @@ mod tests {
             &ranking,
             &[ranked[0].memory, ranked[1].memory],
             &split,
-            &RetrievalPolicy::default(),
+            &RetrievalPolicy {
+                min_score: 0.05,
+                ..RetrievalPolicy::default()
+            },
         );
         let outcomes: Vec<TraceOutcome> = trace.candidates.iter().map(|c| c.outcome).collect();
         assert_eq!(

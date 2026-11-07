@@ -4,6 +4,7 @@ use aether_core::id::TaskId;
 mod compaction;
 mod heartbeat;
 mod lifecycle;
+mod prose_structured;
 mod resources;
 mod stale_completion;
 mod subtree_reads;
