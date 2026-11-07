@@ -26,6 +26,7 @@ function indexModule(modules: readonly ModuleName[]): string {
     `// Generated ${GENERATED_MARK}: regenerate with \`npm run generate\` in web/.`,
     "",
     'export * from "./app.ts";',
+    'export * from "./setup.ts";',
     ...modules.map((name) => `export * as ${name} from "./${name}.ts";`),
   ];
   return lines.join("\n") + "\n";
