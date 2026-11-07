@@ -120,9 +120,12 @@ export interface PackagedApp {
   close(): Promise<void>;
 }
 
-/** Only these reach the app: its own home and XDG dirs, one display and the two sockets. */
+/** Only these reach the app: its own home and XDG dirs, one display, no session bus and the two sockets. */
 function appEnv(dir: string, launch: PackagedLaunch): NodeJS.ProcessEnv {
   const { sway } = launch;
+  // A session bus address that connects to nothing: on X11 an unset one makes libdbus autolaunch a
+  // bus through the display, which the app's main thread waits on while its DevTools port stays silent.
+  const noBus = `unix:path=${path.join(dir, "no-session-bus")}`;
   // On X11, GTK's default input method is IBus (its immodule claims every locale); its class
   // initialisation deadlocks GLib's worker thread on a fresh config dir, so the built-in one is pinned.
   const display: NodeJS.ProcessEnv = sway.x11Display === undefined
@@ -131,7 +134,7 @@ function appEnv(dir: string, launch: PackagedLaunch): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     PATH: SYSTEM_PATH, HOME: path.join(dir, "home"),
     XDG_CONFIG_HOME: path.join(dir, "config"), XDG_CACHE_HOME: path.join(dir, "cache"), XDG_DATA_HOME: path.join(dir, "data"),
-    XDG_RUNTIME_DIR: sway.runtime, ...display,
+    XDG_RUNTIME_DIR: sway.runtime, DBUS_SESSION_BUS_ADDRESS: noBus, ...display,
     AETHER_SOCKET: launch.aetherSocket, ARCHON_SOCKET: launch.archonSocket,
   };
   for (const name of ["LANG", "LC_ALL", "TZ"]) if (process.env[name] !== undefined) env[name] = process.env[name];

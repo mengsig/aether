@@ -63,17 +63,28 @@ export async function newAgentId(stack: Stack, before: readonly string[]): Promi
   return added[0] as string;
 }
 
+/** The agent's own route: Controls lives at `#/controls/<conn>/<id>`, so the id alone does not tell them apart. */
+function agentRoute(id: string): RegExp {
+  assert.match(id, /^\S+$/, "an agent id has no spaces");
+  return new RegExp(`#/agents/[^/]+/${id}$`);
+}
+
 /** Starting lands on the agent's page. */
 export async function landOnAgent(page: Page, id: string): Promise<void> {
-  assert.match(id, /^\S+$/, "an agent id has no spaces");
-  await page.waitForURL(new RegExp(`#/agents/[^/]+/${id}$`), { timeout: LAND_MS });
+  await page.waitForURL(agentRoute(id), { timeout: LAND_MS });
   await expect(agentPage(page), "the agent's page shows").toBeVisible();
+}
+
+/** Opens the agent's own page (its conversation) from wherever the window is. */
+export async function openConversation(page: Page, stack: Stack, id: string): Promise<void> {
+  if (!agentRoute(id).test(page.url())) await route(page, `#/agents/${encodeURIComponent(await aetherConn(stack))}/${id}`);
+  await landOnAgent(page, id);
 }
 
 /** The agent's Controls tab `tab`, through its page's Actions menu › Open controls. */
 export async function openControls(page: Page, stack: Stack, id: string, tab: string): Promise<Locator> {
   const view = await agent(stack, id);
-  if (!page.url().endsWith(`/${id}`)) await route(page, `#/agents/${encodeURIComponent(await aetherConn(stack))}/${id}`);
+  await openConversation(page, stack, id);
   const actions = agentPage(page).getByRole("button", { name: "Actions", exact: true });
   await expect(actions, "the agent's page has an entity action menu").toBeVisible();
   await actions.click();

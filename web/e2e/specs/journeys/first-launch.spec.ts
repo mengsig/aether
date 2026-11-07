@@ -11,7 +11,7 @@ import { agent, agentIds, cancelLive, capAgent, toolCallInputs } from "./daemon.
 import { connectionsReady, pairIfAsked, journeyHooks, type Journey } from "./journey.ts";
 import { FAUX_COMMANDS, LISTED_REPLY, OBJECTIVES, REAL_COMMANDS, REAL_OBJECTIVES, RELEASE_FILE } from "./scripts.ts";
 import { shootWindow } from "./capture.ts";
-import { chooseWorkspace, expectDefaultModel, landOnAgent, newAgentId, objectiveField, openStart, stopAndResume, submitStart, agentPage } from "./steps.ts";
+import { chooseWorkspace, expectDefaultModel, landOnAgent, newAgentId, objectiveField, openConversation, openStart, stopAndResume, submitStart, agentPage } from "./steps.ts";
 import { need, note, open, textField } from "./ui.ts";
 
 const journey = journeyHooks();
@@ -81,8 +81,9 @@ async function sendFromComposer(window: Page): Promise<void> {
   await shootWindow(window, "agent", "message-sent");
 }
 
-/** The released agent's next turn carried the message: the transcript shows it as the operator's. */
-async function expectMessageDelivered(run: Journey): Promise<void> {
+/** Back on the agent's page after the controls: the released agent's turn carried the message as the operator's row. */
+async function expectMessageDelivered(run: Journey, id: string): Promise<void> {
+  await openConversation(run.window, run.stack, id);
   const page = agentPage(run.window);
   const delivered = page.locator('.conv-msg[data-speaker="user"]').filter({ hasText: MESSAGE }).first();
   await expect(delivered, "the sent message shows in the conversation once the agent read it").toBeVisible({ timeout: REPLY_MS[run.variant] });
@@ -116,7 +117,7 @@ test("first-launch journey: start an agent, see it work, message, stop and resum
     await sendFromComposer(run.window);
     await stopAndResume(run.window, run.stack, id);
     await releaseAndFinish(run, id);
-    await expectMessageDelivered(run);
+    await expectMessageDelivered(run, id);
     if (run.variant === "real") await recordCost(run, id);
   } finally {
     await run.window.screencast.stop();
