@@ -40,6 +40,8 @@ export interface ConversationRows {
   /** How many rows are committed messages; the rest are live tails at the end. */
   readonly committed: number;
   readonly activity: ReadonlyMap<string, ToolActivity>;
+  /** The connection's recent durable events, which also tell when a queued message was consumed. */
+  readonly events: readonly aether.Event[];
 }
 
 /** Every row the screen shows, derived from the store: committed entries, then uncommitted live tails. */
@@ -55,7 +57,7 @@ export function useConversationRows(conn: ConnId, agent: string): ConversationRo
   const live = useMemo(() => liveRows(streams, agent, pairing.committed), [streams, agent, pairing]);
   const rows = useMemo(() => (live.length === 0 ? committed : [...committed, ...live]), [committed, live]);
   invariant(rows.length >= committed.length, "live tails only add rows");
-  return { rows, loaded: transcript !== undefined, committed: committed.length, activity };
+  return { rows, loaded: transcript !== undefined, committed: committed.length, activity, events };
 }
 
 /** Messages sent from the composer and not yet delivered, per agent; kept while the app is open so a visit back still shows them. */
@@ -66,10 +68,10 @@ const queuedMemory = new Map<string, readonly QueuedMessage[]>();
  * watermark when a send starts, so a delivery that lands before the daemon's reply is not shown as
  * queued again; the message joins the list once the daemon accepted it.
  */
-function useQueuedMessages(conn: ConnId, agent: string, rows: readonly ConversationRow[]): { queued: readonly QueuedMessage[]; begin: OnSend } {
+function useQueuedMessages(conn: ConnId, agent: string, rows: readonly ConversationRow[], events: readonly aether.Event[]): { queued: readonly QueuedMessage[]; begin: OnSend } {
   const memoryKey = `${conn}/${agent}`;
   const [sent, setSent] = useState<readonly QueuedMessage[]>(() => queuedMemory.get(memoryKey) ?? []);
-  const queued = useMemo(() => sent.filter((message) => !isDelivered(rows, message)), [sent, rows]);
+  const queued = useMemo(() => sent.filter((message) => !isDelivered(rows, events, agent, message)), [sent, rows, events, agent]);
   const newestSeq = useRef(0);
   useEffect(() => {
     newestSeq.current = rows.reduce((top, row) => Math.max(top, row.seq ?? 0), 0);
@@ -119,11 +121,11 @@ export function Conversation({ conn, agent }: { readonly conn: ConnId; readonly 
   const info = useSelector(useMemo(() => selectConnection(conn), [conn]));
   const row = useSelector(useMemo(() => selectAgent(conn, agent), [conn, agent]));
   const name = row?.name ?? "Agent";
-  const { rows, loaded, committed, activity } = useConversationRows(conn, agent);
+  const { rows, loaded, committed, activity, events } = useConversationRows(conn, agent);
   const [toggles] = useState(() => new ToggleSet());
   const list = useRef<ListHandle>(null);
   const stage = useRef<HTMLDivElement>(null);
-  const sent = useQueuedMessages(conn, agent, rows);
+  const sent = useQueuedMessages(conn, agent, rows, events);
   const shown = useMemo(() => (sent.queued.length === 0 ? rows : [...rows, ...queuedRows(sent.queued)]), [rows, sent.queued]);
   const search = useTranscriptSearch({ rows: shown, list, stage, toggles });
   const [focusFind, setFocusFind] = useState(0);

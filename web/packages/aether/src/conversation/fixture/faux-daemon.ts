@@ -74,6 +74,19 @@ export class FauxDaemon {
     return entry;
   }
 
+  /** The daemon took an operator's message into the agent's inbox, as `send_message` has it do. */
+  delivered(agent: string, seq: number, text: string): void {
+    invariant(this.agents.has(agent), `the faux daemon knows agent ${agent}`);
+    const item = { agent_id: agent, delivered_at: stamp(seq), id: `ibx_${seq}`, seq, kind: { kind: "message", from: { actor: "user" }, content: [{ type: "text", text }], message_id: `msg_${seq}` } };
+    this.event(agent, { type: "inbox.delivered", item }, false);
+  }
+
+  /** The agent's turn read its inbox up to `upTo`, as the daemon commits with the user turn it rendered. */
+  consumed(agent: string, upTo: number): void {
+    invariant(upTo > 0, "inbox seqs start at one");
+    this.event(agent, { type: "inbox.consumed", up_to: upTo, items: [`ibx_${upTo}`] }, false);
+  }
+
   completed(agent: string, invocation: string, usage: aether.Usage, model: aether.ModelRef): void {
     this.event(agent, { type: "invocation.completed", invocation, usage, model, duration_ms: 4200, snapshot: "snap_faux" }, false);
   }

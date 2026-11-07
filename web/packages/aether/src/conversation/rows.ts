@@ -117,7 +117,6 @@ function blockPart(block: aether.ContentBlock, pairing: Pairing): Part | null {
 }
 
 const INBOX_LINE = /^\[inbox \d+\] /;
-const INBOX_ITEM_START = /^(?=\[inbox \d+\] )/m;
 const MESSAGE_FROM = /^\[inbox \d+\] Message from (.+):(?: \[authenticated operator instruction\])?$/;
 const ASSISTANT: Speaker = { kind: "assistant", from: null };
 const OPERATOR: Speaker = { kind: "user", from: null };
@@ -212,30 +211,37 @@ export function queuedRows(queued: readonly QueuedMessage[]): ConversationRow[] 
   });
 }
 
-/**
- * What the operator said in a user row: its text when the row is theirs alone, or the bodies of the
- * operator's items when several inbox items share the turn, agents' and notices' texts left out.
- */
-function operatorTexts(row: ConversationRow): string[] {
-  invariant(row.role === "user", "only user turns carry operator text");
-  const texts: string[] = [];
-  for (const part of row.parts) {
-    if (part.kind !== "text") continue;
-    for (const segment of part.text.split(INBOX_ITEM_START)) {
-      if (segment === "") continue;
-      if (!INBOX_LINE.test(segment)) { if (row.speaker.kind === "user") texts.push(segment); continue; }
-      const item = inboxItem(segment);
-      if (item.from !== null && isOperator(item.from)) texts.push(item.body);
-    }
+const textOf = (content: readonly aether.ContentBlock[]): string =>
+  content.filter((block): block is aether.ContentBlockText => block.type === "text").map((block) => block.text).join("\n").trim();
+
+/** The inbox seq the daemon gave the operator's message after the send, or null without that event. */
+function inboxSeqOf(events: readonly aether.Event[], agent: string, message: QueuedMessage): number | null {
+  for (const event of events) {
+    if (event.agent_id !== agent || event.seq <= message.afterSeq || event.kind.type !== "inbox.delivered") continue;
+    const item = event.kind.item;
+    if (item.kind.kind === "message" && item.kind.from.actor === "user" && textOf(item.kind.content) === message.text) return item.seq;
   }
-  return texts;
+  return null;
 }
 
-/** Whether the operator's message is in a user row committed after the send: the daemon delivered it. */
-export function isDelivered(rows: readonly ConversationRow[], message: QueuedMessage): boolean {
+/** Whether the agent's turn read its inbox up to `seq`: the daemon commits that with the user turn. */
+function isConsumed(events: readonly aether.Event[], agent: string, seq: number): boolean {
+  invariant(seq > 0, "inbox seqs start at one");
+  return events.some((event) => event.agent_id === agent && event.kind.type === "inbox.consumed" && event.kind.up_to >= seq);
+}
+
+/**
+ * Whether the daemon delivered the queued message: its inbox item was consumed, by the events. Without
+ * the delivery event (an older daemon, or a long turn pushed it out of the recent events), the
+ * operator's own user row committed after the send carries the text.
+ */
+export function isDelivered(rows: readonly ConversationRow[], events: readonly aether.Event[], agent: string, message: QueuedMessage): boolean {
   invariant(message.text !== "", "a queued message has text");
-  return rows.some((row) => row.role === "user" && row.seq !== null && row.seq > message.afterSeq
-    && operatorTexts(row).some((text) => text.includes(message.text)));
+  invariant(agent !== "", "a queued message names its agent");
+  const seq = inboxSeqOf(events, agent, message);
+  if (seq !== null) return isConsumed(events, agent, seq);
+  return rows.some((row) => row.seq !== null && row.seq > message.afterSeq && row.speaker.kind === "user"
+    && row.parts.some((part) => part.kind === "text" && part.text.includes(message.text)));
 }
 
 const modelOf = (ref: aether.ModelRef): string => `${ref.provider}/${ref.model}`;
