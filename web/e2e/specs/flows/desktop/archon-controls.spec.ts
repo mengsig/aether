@@ -74,7 +74,7 @@ test("Message Archon from the app window lands in archond's feed as the operator
   await route(page, "#/archon/queue");
   await page.getByRole("button", { name: "Message Archon" }).click();
   const dialog = page.getByRole("dialog", { name: "Message Archon" });
-  await dialog.getByLabel("Message").fill(MESSAGE);
+  await dialog.getByRole("textbox", { name: "Message", exact: true }).fill(MESSAGE);
   await dialog.getByRole("button", { name: "Send" }).click();
   const outcome = dialog.getByRole("status").or(dialog.getByRole("alert"));
   await expect(outcome).toBeVisible();

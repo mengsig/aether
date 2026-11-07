@@ -1,9 +1,10 @@
 // The packaged desktop app, for a flow that must prove the shipped build: E2E_DESKTOP_PACKAGED
 // names its binary. Its fuses close the Node inspector, so Playwright drives it over CDP.
+// The shipped main shows a real window, so it runs on a private headless sway, never the desktop.
 
 import assert from "node:assert/strict";
-import { accessSync, constants, existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { accessSync, constants, existsSync, readdirSync, readFileSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium, expect, type Browser, type Page } from "@playwright/test";
 import { tempBase } from "../../../harness/env.ts";
@@ -11,6 +12,9 @@ import { record, spawnLogged, stopGroup, type Spawned } from "../../../harness/p
 
 const READY_MS = 60_000;
 const POLL_MS = 200;
+/** sway's IPC socket, `sway-ipc.<uid>.<pid>.sock`, must fit in a socket address (108 bytes). */
+const MAX_RUNTIME_DIR = 70;
+const SWAY_CONFIG = "output HEADLESS-1 resolution 1600x1000\nxwayland disable\n";
 
 export interface PackagedApp {
   readonly window: Page;
@@ -26,14 +30,42 @@ export function packagedBinary(): string | undefined {
   return binary;
 }
 
-async function devtoolsPort(profile: string, app: Spawned): Promise<number> {
-  const file = path.join(profile, "DevToolsActivePort");
+/** `name` on PATH, as spawnLogged wants it: absolute. */
+function onPath(name: string): string {
+  const dirs = (process.env.PATH ?? "").split(path.delimiter).filter((entry) => path.isAbsolute(entry));
+  const at = dirs.map((dir) => path.join(dir, name)).find((candidate) => existsSync(candidate));
+  if (at === undefined) throw new Error(`the packaged flow runs the app on a headless ${name}, which is not on PATH`);
+  accessSync(at, constants.X_OK);
+  return at;
+}
+
+async function until<T>(read: () => T | undefined, what: string, alive: Spawned): Promise<T> {
   const deadline = Date.now() + READY_MS;
-  while (!existsSync(file)) {
-    assert.ok(app.child.exitCode === null, "the packaged app exited early");
-    assert.ok(Date.now() < deadline, "the packaged app opened no DevTools port");
+  for (;;) {
+    const value = read();
+    if (value !== undefined) return value;
+    assert.ok(alive.child.exitCode === null && alive.child.signalCode === null, `${path.basename(alive.log)}: it exited before ${what}`);
+    assert.ok(Date.now() < deadline, `timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
   }
+}
+
+/** Starts a headless sway whose Wayland socket lives in `runtime`; resolves to that socket's path. */
+async function startCompositor(root: string, runtime: string, env: NodeJS.ProcessEnv): Promise<{ sway: Spawned; display: string }> {
+  assert.ok(runtime.length <= MAX_RUNTIME_DIR, `the compositor's runtime dir is short enough for its sockets: ${runtime}`);
+  await mkdir(runtime, { mode: 0o700 });
+  const config = path.join(root, "sway.conf");
+  await writeFile(config, SWAY_CONFIG);
+  const swayEnv: NodeJS.ProcessEnv = { ...env, XDG_RUNTIME_DIR: runtime, WLR_BACKENDS: "headless", WLR_RENDERER: "pixman", WLR_LIBINPUT_NO_DEVICES: "1" };
+  delete swayEnv.SWAYSOCK;
+  const sway = spawnLogged(onPath("sway"), ["-c", config], { env: swayEnv, cwd: root, log: path.join(root, "sway.log") });
+  const socket = await until(() => readdirSync(runtime).find((name) => /^wayland-\d+$/.test(name)), "sway's Wayland socket", sway);
+  return { sway, display: path.join(runtime, socket) };
+}
+
+async function devtoolsPort(profile: string, app: Spawned): Promise<number> {
+  const file = path.join(profile, "DevToolsActivePort");
+  await until(() => (existsSync(file) ? true : undefined), "the packaged app's DevTools port", app);
   const port = Number(readFileSync(file, "utf8").split("\n")[0]);
   assert.ok(Number.isInteger(port) && port > 0, `DevToolsActivePort names a port: ${port}`);
   return port;
@@ -49,13 +81,13 @@ async function appWindow(browser: Browser): Promise<Page> {
   return found;
 }
 
-/** The end of the app's log, for a failed launch's message; the root that holds it is then removed. */
+/** The end of a log, for a failed launch's message; the root that holds it is then removed. */
 function logTail(log: string): string {
   if (!existsSync(log)) return "(no log was written)";
   return readFileSync(log, "utf8").split("\n").slice(-40).join("\n");
 }
 
-/** Starts the packaged app on `sockets`, its profile and logs in a fresh root under the run's temp dir. */
+/** Starts the packaged app on `sockets`, its profile, compositor and logs in a fresh root under the run's temp dir. */
 export async function launchPackaged(binary: string, sockets: { aether: string; archon: string }): Promise<PackagedApp> {
   assert.ok(path.isAbsolute(sockets.aether) && path.isAbsolute(sockets.archon), "the app gets absolute socket paths");
   const root = await mkdtemp(path.join(tempBase(), "pk-"));
@@ -65,21 +97,25 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
   const env: NodeJS.ProcessEnv = { ...process.env, AETHER_SOCKET: sockets.aether, ARCHON_SOCKET: sockets.archon };
   delete env.DISPLAY;
   delete env.WAYLAND_DISPLAY;
+  let compositor: { sway: Spawned; display: string } | undefined;
   let app: Spawned | undefined;
   let browser: Browser | undefined;
   const close = async () => {
     await browser?.close().catch(() => undefined);
     if (app !== undefined) await stopGroup(app);
+    if (compositor !== undefined) await stopGroup(compositor.sway);
     await rm(root, { recursive: true, force: true, maxRetries: 3 });
   };
   try {
-    app = spawnLogged(binary, [`--user-data-dir=${profile}`, "--ozone-platform=headless", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0"],
-      { env, cwd: root, log });
+    compositor = await startCompositor(root, path.join(root, "run"), env);
+    const appEnv = { ...env, XDG_RUNTIME_DIR: path.dirname(compositor.display), WAYLAND_DISPLAY: compositor.display };
+    app = spawnLogged(binary, [`--user-data-dir=${profile}`, "--ozone-platform=wayland", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0"],
+      { env: appEnv, cwd: root, log });
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${await devtoolsPort(profile, app)}`);
     return { window: await appWindow(browser), close };
   } catch (error) {
-    const tail = logTail(log);
+    const tails = `${logTail(log)}\n-- sway:\n${logTail(path.join(root, "sway.log"))}`;
     await close();
-    throw new Error(`The packaged app did not start; its log ended:\n${tail}`, { cause: error });
+    throw new Error(`The packaged app did not start; its logs ended:\n${tails}`, { cause: error });
   }
 }
