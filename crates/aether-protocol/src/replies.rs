@@ -476,6 +476,7 @@ pub enum Reply {
     RunImported(ImportSummary),
     McpServers(Vec<McpServerHealth>),
     Models(Vec<ModelInfo>),
+    ViewModes(crate::ViewModes),
     Providers(Vec<ProviderInfo>),
     ProviderUsage(serde_json::Value),
     Auth(Vec<AuthInfo>),

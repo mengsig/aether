@@ -208,6 +208,19 @@ headless agent, such as one an orchestrator or `aether run` started, resumes
 on its own on Linux and is told to check the state before repeating those calls. These
 are deliberately different actions.
 
+## Jumping around the web app
+
+In the web app and the desktop app, Ctrl+K (Cmd+K on macOS) or the "Jump to…"
+button opens the palette, which switches context from anywhere. It finds
+screens and theme commands, and also Aether agents on every connection (by
+name, role or id), Archon queue items, initiatives and pull requests, and
+Learn sessions. Each result shows its kind, a status line (an agent's role and
+state, an item's state and stage, a pull request's state) and opens that
+entity's own screen. Type several words to narrow the list; a name that
+starts with what you typed comes first. With nothing typed, the destinations
+you opened last come first, and they are kept between visits in the browser.
+The list shows the first 50 matches and says how many more there are.
+
 ## Work that starts from events
 
 ### GitHub

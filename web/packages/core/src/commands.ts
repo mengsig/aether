@@ -13,7 +13,7 @@ const words = (text: string): ReadonlySet<string> => new Set(text.split(/\s+/).f
 export const AETHER_OBSERVE = words(`hello status preview_retention storage_status ping get_agent list_agents get_tree
   get_github_watcher get_schedule list_schedules schedule_history get_task list_tasks list_approvals list_approval_rules
   subscribe unsubscribe get_events get_transcript get_inbox get_snapshot get_invocation list_invocations get_checkpoint
-  latest_checkpoint get_artifact list_artifacts read_artifact memories list_runs get_run_report replay list_models
+  latest_checkpoint get_artifact list_artifacts read_artifact memories list_runs get_run_report replay list_models list_view_modes
   auth_status providers get_attention list_workspaces get_push_config list_repository_aliases list_notifications
   get_notification mcp_servers list_agents_page get_transcript_page usage_breakdown noesis_status
   noesis_get_session noesis_list_sessions noesis_graph noesis_jobs noesis_learner noesis_learner_evidence

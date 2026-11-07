@@ -839,6 +839,7 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `export_run` | host_only | Writes a host path. |
 | `import_run` | host_only | Reads a host path. |
 | `list_models` | observe | |
+| `list_view_modes` | observe | Built-in and user transcript presentation modes. |
 | `auth_status` | observe | |
 | `providers` | observe | |
 | `mcp_servers` | observe | `operate` when `refresh` is `true`. |
