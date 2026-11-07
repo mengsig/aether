@@ -72,13 +72,25 @@ async function expectReplyAndToolCall(run: Journey, id: string): Promise<void> {
   assert.ok(!["completed", "failed", "cancelled"].includes(held.state), `the held agent still works: ${held.state}`);
 }
 
-/** The facts card and the transcript have rows of their own on the page: neither draws over the other. */
+/** The agent page stacks in order with nothing drawn over its neighbour: every fact, then the transcript
+ * toolbar, the transcript, the composer. The facts are measured one by one: the card's own box ends above
+ * content that overflows it. */
 async function expectFactsAboveTranscript(page: Locator): Promise<void> {
-  const facts = await page.locator(".agent-facts").boundingBox();
+  const facts = await page.locator(".agent-fact").all();
+  assert.ok(facts.length > 0, "the agent page shows its facts");
+  let factsEnd = 0;
+  for (const fact of facts) {
+    const box = await fact.boundingBox();
+    assert.ok(box !== null, "every fact is laid out");
+    factsEnd = Math.max(factsEnd, box.y + box.height);
+  }
   const toolbar = await page.locator(".conv-toolbar").boundingBox();
-  assert.ok(facts !== null && toolbar !== null, "the facts card and the transcript toolbar are laid out");
-  const factsEnd = facts.y + facts.height;
-  assert.ok(factsEnd <= toolbar.y, `the transcript starts below the facts card (facts end at ${factsEnd}, the toolbar at ${toolbar.y})`);
+  const transcript = await page.locator(".conv-list").boundingBox();
+  const composer = await page.locator(".cmp").boundingBox();
+  assert.ok(toolbar !== null && transcript !== null && composer !== null, "the transcript toolbar, the transcript and the composer are laid out");
+  assert.ok(factsEnd <= toolbar.y, `the transcript toolbar starts below the facts (facts end at ${factsEnd}, the toolbar at ${toolbar.y})`);
+  assert.ok(toolbar.y + toolbar.height <= transcript.y, `the transcript starts below its toolbar (toolbar ends at ${toolbar.y + toolbar.height}, the transcript at ${transcript.y})`);
+  assert.ok(transcript.y + transcript.height <= composer.y, `the composer starts below the transcript (transcript ends at ${transcript.y + transcript.height}, the composer at ${composer.y})`);
 }
 
 /** Sends while the agent holds in its shell call: the daemon keeps the message for its next turn. */
