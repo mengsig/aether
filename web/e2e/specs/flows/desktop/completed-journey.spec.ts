@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "../../../harness/fixtures.ts";
 import { connection } from "../../../harness/pair.ts";
@@ -15,6 +16,8 @@ const CONTRACT = "Both members share the same outcome.";
 let running: PrivateStack | undefined;
 let app: { readonly window: Page; close(): Promise<void> } | undefined;
 const errors: string[] = [];
+let priorTemp: string | undefined;
+let stackTemp: string | undefined;
 
 async function shots(page: Page, name: string): Promise<void> {
   const dir = process.env.E2E_SHOTS;
@@ -28,6 +31,9 @@ async function shots(page: Page, name: string): Promise<void> {
 
 test.beforeAll(async () => {
   test.setTimeout(180_000);
+  priorTemp = process.env.E2E_TMP;
+  stackTemp = await mkdtemp("/var/tmp/archon-completed-");
+  process.env.E2E_TMP = stackTemp;
   running = await startPrivateStack();
   const { aether, archon } = running.stack.layout;
   const binary = packagedBinary();
@@ -39,7 +45,13 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  try { await app?.close(); } finally { await stopPrivateStack(running); }
+  try { await app?.close(); } finally {
+    try { await stopPrivateStack(running); } finally {
+      if (priorTemp === undefined) delete process.env.E2E_TMP;
+      else process.env.E2E_TMP = priorTemp;
+      if (stackTemp !== undefined) await rm(stackTemp, { recursive: true, force: true });
+    }
+  }
 });
 
 test("completed ask run and a two-member initiative render from daemon state", async () => {
