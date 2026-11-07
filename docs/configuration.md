@@ -879,12 +879,15 @@ engine receipts settle usage without repeating text already streamed.
 Because text is shown as it streams, the seal holds before a step's tool
 calls are known. A question whose key or explanation, or a problem whose
 solution, appears in anything its turn has shown or kept is refused,
-however often the model retries it: an earlier step's text or call input,
-or text an attempt streamed before it failed and was retried. A step that
-runs while an answer is unrevealed (an active problem's solution) streams
-no text. Each reply is kept sealed against that answer and the ones its own
-calls carry: text that gives one away, even split across blocks, is kept as
-`<withheld: …>`, and a call input that names one as `<sealed>`.
+however often the model retries it: an earlier step's text, or its call
+ids, inputs (every key and literal) and names no tool has, or text an
+attempt streamed before it failed and was retried. A step that runs while
+an answer is unrevealed (an active problem's solution) streams no text.
+Each reply is kept sealed against that answer and the ones its own calls
+carry: text that gives one away, even split across blocks, is kept as
+`<withheld: …>`; a call input that names one, in any key or value, as
+`<sealed>`; a call id that holds one under a digest of it, which its result
+follows; and a name no tool has as `sealed_tool`.
 
 In the Learn screen's settings:
 

@@ -16,7 +16,7 @@ use super::service::{
 };
 use super::{TeachError, question, role_of};
 use crate::budget::{INTERACTIVE_BUDGET_SETTING, Lane, Refusal};
-use crate::tools::{self, SEALED};
+use crate::tools::{self, SEALED, ToolName};
 
 impl<E: Engine> Teaching<'_, E> {
     /// Run the session's agent until it waits, and on a hand-off run the new
@@ -386,14 +386,19 @@ impl Turn {
         }
     }
 
-    /// Every text the turn has shown or kept: its earlier steps' text and
-    /// call inputs as the transcript keeps them, what failed attempts
-    /// streamed, and `current`, one per line so no phrase spans two.
+    /// Every text the turn has shown or kept: its earlier steps' text, call
+    /// ids, unknown tool names and inputs as the transcript keeps them, what
+    /// failed attempts streamed, and `current`, one per line so no phrase spans two.
     fn shown_with(&self, current: &str) -> String {
         let mut shown: Vec<String> = Vec::new();
         for step in &self.steps {
             shown.push(step.text.clone());
             for call in &step.calls {
+                shown.push(self.engine_id(&call.id).to_string());
+                // A known tool's name is the engine's own, so it shows nothing the model chose.
+                if ToolName::parse(&call.name).is_none() {
+                    shown.push(call.name.clone());
+                }
                 shown.extend(tools::visible_texts(&call.name, &call.input));
             }
         }

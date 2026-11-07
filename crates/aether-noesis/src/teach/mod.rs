@@ -33,6 +33,7 @@ mod testkit;
 pub use engine::{
     AgentSpec, Engine, EngineError, Input, NOESIS_RUN, SUBSYSTEM, Step, ToolCall, ToolResult,
 };
+pub(crate) use seal::embedded_json;
 pub use seal::{REFUSAL_WITHHELD, Sealer, WITHHELD};
 pub use service::{CallRecord, Caller, StepRecord, Teaching, TurnEnd, TurnReport};
 pub use sessions::{SessionPage, Undelivered};

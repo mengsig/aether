@@ -201,7 +201,7 @@ impl Sealer {
     /// Whether any scalar or key in `value` holds a secret; the parser reads a
     /// number, boolean or null as its text and text holding JSON as that JSON,
     /// so this does too.
-    fn reveals(&self, value: &Value) -> bool {
+    pub fn reveals(&self, value: &Value) -> bool {
         match value {
             Value::String(text) => {
                 self.holds(text) || embedded_json(text).is_some_and(|v| self.reveals(&v))
@@ -275,7 +275,7 @@ fn contains_phrase(haystack: &str, phrase: &str) -> bool {
 /// The JSON object or array `text` holds, as the argument healer parses it;
 /// its escapes (`\u03c0`) decode, so a secret can hide in them. Each nested
 /// level is strictly shorter text, so the recursion ends.
-fn embedded_json(text: &str) -> Option<Value> {
+pub(crate) fn embedded_json(text: &str) -> Option<Value> {
     let trimmed = text.trim();
     if !(trimmed.starts_with('[') || trimmed.starts_with('{')) {
         return None;

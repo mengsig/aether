@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::Noesis;
 use crate::prompts::Agent;
-use crate::teach::agent_for_role;
+use crate::teach::{agent_for_role, embedded_json};
 
 pub mod args;
 mod heal;
@@ -104,7 +104,7 @@ pub fn seal_input(tool: &str, input: &Value) -> Value {
 }
 
 /// Every text a call's input leaves on the record once the transcript seals
-/// it: each key, string and number, but a sealing tool's sealed fields. A
+/// it: each key and scalar, but a sealing tool's sealed fields. A
 /// sealing tool's input that is no object is sealed whole and shows nothing.
 pub fn visible_texts(tool: &str, input: &Value) -> Vec<String> {
     let sealed = ToolName::parse(tool).map_or(&[][..], ToolName::sealed_fields);
@@ -125,11 +125,16 @@ pub fn visible_texts(tool: &str, input: &Value) -> Vec<String> {
     texts
 }
 
-/// Every key, string and number in `value`, as a reader of the record sees them.
+/// Every key and scalar in `value` as the sealer reads them: a number,
+/// boolean or null as its text, and text holding JSON as that JSON too.
 fn collect_shown(value: &Value, texts: &mut Vec<String>) {
     match value {
-        Value::String(text) => texts.push(text.clone()),
-        Value::Number(number) => texts.push(number.to_string()),
+        Value::String(text) => {
+            texts.push(text.clone());
+            if let Some(embedded) = embedded_json(text) {
+                collect_shown(&embedded, texts);
+            }
+        }
         Value::Array(items) => items.iter().for_each(|item| collect_shown(item, texts)),
         Value::Object(map) => {
             for (key, item) in map {
@@ -137,7 +142,7 @@ fn collect_shown(value: &Value, texts: &mut Vec<String>) {
                 collect_shown(item, texts);
             }
         }
-        Value::Bool(_) | Value::Null => {}
+        scalar => texts.push(scalar.to_string()),
     }
 }
 

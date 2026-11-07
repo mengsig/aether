@@ -265,6 +265,10 @@ impl AetherEngine<'_> {
             }
             Input::ToolResults(results) => results
                 .into_iter()
+                .map(|result| ToolResult {
+                    call: recorded_id(&calls, result.call),
+                    ..result
+                })
                 .filter(|result| !answered.contains(&result.call))
                 .map(result_block)
                 .collect(),
@@ -725,11 +729,9 @@ fn transcript_content(response: &ModelResponse, sealer: Option<&Sealer>) -> Vec<
                     withheld = true;
                 }
             }
-            ContentBlock::ToolUse { id, name, input } => content.push(ContentBlock::ToolUse {
-                id: id.clone(),
-                name: name.clone(),
-                input: kept_input(name, input, sealer),
-            }),
+            ContentBlock::ToolUse { id, name, input } => {
+                content.push(kept_call(id, name, input, sealer));
+            }
             other => content.push(other.clone()),
         }
     }
@@ -760,24 +762,91 @@ fn text_reveals(response: &ModelResponse, sealer: &Sealer) -> bool {
     sealer.holds(&blocks.concat()) || sealer.holds(&blocks.join("\n"))
 }
 
+/// A call as the transcript keeps it. An id holding a secret becomes
+/// [`sealed_id`], which its result is mapped to; a name holding one is
+/// replaced unless it is a Noesis tool's own. `None` seals all three.
+fn kept_call(id: &str, wire: &str, input: &Value, sealer: Option<&Sealer>) -> ContentBlock {
+    let reveals = |text: &str| sealer.is_none_or(|sealer| sealer.holds(text));
+    let known = ToolName::parse(&tool_name(wire)).is_some();
+    let name = if known || !reveals(wire) {
+        wire.to_string()
+    } else {
+        SEALED_TOOL.to_string()
+    };
+    let id = if reveals(id) {
+        sealed_id(id)
+    } else {
+        id.to_string()
+    };
+    debug_assert!(known || name == SEALED_TOOL || !reveals(&name));
+    debug_assert!(
+        !id.is_empty(),
+        "a kept call keeps an id its result can name"
+    );
+    ContentBlock::ToolUse {
+        id,
+        name,
+        input: kept_input(wire, input, sealer),
+    }
+}
+
 /// A call's input as the transcript keeps it: sealed whole where it holds a
-/// secret, or field by field for a sealing tool, whose sealed fields the
-/// runtime seals itself. Without a sealer every input is sealed whole.
+/// secret, or for a sealing tool field by field, its sealed fields left for
+/// the runtime; a field whose own name holds one seals that input whole.
 fn kept_input(wire: &str, input: &Value, sealer: Option<&Sealer>) -> Value {
+    let sealed = Value::String(tools::SEALED.to_string());
     let Some(sealer) = sealer else {
-        return Value::String(tools::SEALED.to_string());
+        return sealed;
     };
     let sealed_fields = ToolName::parse(&tool_name(wire)).map_or(&[][..], ToolName::sealed_fields);
     let mut kept = input.clone();
-    match kept.as_object_mut() {
-        Some(fields) if !sealed_fields.is_empty() => fields
-            .iter_mut()
-            .filter(|(field, _)| !sealed_fields.contains(&field.as_str()))
-            .for_each(|(_, value)| sealer.value(value)),
-        _ => sealer.value(&mut kept),
+    let Some(fields) = kept.as_object_mut().filter(|_| !sealed_fields.is_empty()) else {
+        sealer.value(&mut kept);
+        return kept;
+    };
+    let named = fields
+        .keys()
+        .any(|field| !sealed_fields.contains(&field.as_str()) && sealer.holds(field));
+    if named {
+        return sealed;
     }
-    debug_assert!(sealed_fields.is_empty() || kept.is_object() == input.is_object());
+    fields
+        .iter_mut()
+        .filter(|(field, _)| !sealed_fields.contains(&field.as_str()))
+        .for_each(|(_, value)| sealer.value(value));
+    debug_assert!(kept.is_object(), "a sealing tool's object input stays one");
+    debug_assert!(
+        sealed_fields
+            .iter()
+            .all(|field| kept.get(*field) == input.get(*field)),
+        "the runtime, not this, seals a pose's sealed fields"
+    );
     kept
+}
+
+/// The name a call whose own name holds a secret is kept under.
+const SEALED_TOOL: &str = "sealed_tool";
+
+/// The id a call whose own id holds a secret is kept under: a stable FNV-1a
+/// digest of it, so its result, which names the original, can be mapped.
+fn sealed_id(id: &str) -> String {
+    let digest = id.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    format!("sealed_{digest:016x}")
+}
+
+/// The id the transcript keeps for the engine's call id `call`: it, or its
+/// [`sealed_id`] when the last reply kept that instead.
+fn recorded_id(calls: &[(String, String)], call: String) -> String {
+    if calls.iter().any(|(id, _)| *id == call) {
+        return call;
+    }
+    let sealed = sealed_id(&call);
+    if calls.iter().any(|(id, _)| *id == sealed) {
+        return sealed;
+    }
+    call
 }
 
 /// The step's turn number for live deltas: one more than the replies so far.

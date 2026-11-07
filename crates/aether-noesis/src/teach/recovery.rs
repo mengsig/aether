@@ -1,7 +1,7 @@
 //! Sealing of raw engine values and recovery from failed deliveries: the
 //! read paths and retry paths around the T1–T12 suite.
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::faux::FauxEngine;
 use super::records::*;
@@ -144,6 +144,64 @@ fn a_key_a_retried_attempt_streamed_is_never_posed() {
     assert_eq!(report.steps[0].text, "One question:");
     assert!(session(&t, &id).open_question.is_none());
     assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
+}
+
+/// The turn's first step is `preface`; its second poses `key`, which that
+/// step left on the record, so the pose is refused and the third one runs.
+fn pose_after(preface: Step, key: &str) {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Learn cells", Mode::Teach, &[])
+        .unwrap()
+        .id;
+    let engine = t.engine_mut();
+    engine.script_step(Agent::Prober, preface);
+    let question = recall("Name the powerhouse of the cell", key);
+    engine.script(Agent::Prober, "One question:", vec![(ASK, question)]);
+    engine.script(Agent::Prober, "Then:", vec![(ASK, capital_question())]);
+    let report = t.advance(&id).unwrap().remove(0);
+    let refused: Vec<bool> = report.steps[1..]
+        .iter()
+        .map(|s| s.calls[0].is_error)
+        .collect();
+    assert_eq!(refused, [true, false], "{key}: {report:?}");
+    let open = session(&t, &id).open_question.expect("the fresh question");
+    assert_eq!(open.prompt, "Capital of France?");
+}
+
+fn search_step(id: &str, name: &str, input: Value) -> Step {
+    Step {
+        calls: vec![ToolCall {
+            id: id.into(),
+            name: name.into(),
+            input,
+        }],
+        ..Step::default()
+    }
+}
+
+/// The transcript keeps an earlier call's id, a name no tool has, and every
+/// literal of its input, so a key any of them carries is never posed.
+#[test]
+fn a_key_an_earlier_calls_id_name_or_literal_carries_is_never_posed() {
+    let search = json!({"query": "cells"});
+    pose_after(
+        search_step(
+            &format!("call_{SECRET}"),
+            "noesis.graph_search",
+            search.clone(),
+        ),
+        SECRET,
+    );
+    pose_after(search_step("call_a", SECRET, search), SECRET);
+    let flagged = json!({"query": "cells", "extra": true});
+    pose_after(
+        search_step("call_a", "noesis.graph_search", flagged),
+        "true",
+    );
+    let nested = json!({"query": "cells", "extra": [null]});
+    pose_after(search_step("call_a", "noesis.graph_search", nested), "null");
 }
 
 #[test]

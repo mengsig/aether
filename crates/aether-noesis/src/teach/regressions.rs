@@ -334,7 +334,9 @@ fn a_call_id_holding_a_key_committed_later_never_leaves_the_crate() {
         vec![(ASK, recall("Which organelle makes ATP?", SECRET))],
     );
     let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.end, TurnEnd::AwaitingAnswer);
+    // The transcript kept the earlier id as the engine gave it, so the pose is refused.
+    assert_eq!(report.end, TurnEnd::AwaitingLearner, "{report:?}");
+    assert!(report.steps[1].calls[0].is_error, "{report:?}");
     let public = &report.steps[0].calls[0].id;
     assert!(
         public.starts_with("call_") && !public.contains(SECRET),
