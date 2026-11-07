@@ -5,7 +5,7 @@ import { connectionDraftKey, routeHref, useDraft } from "@aether-ui/core";
 import type { archon } from "@aether-ui/protocol";
 import { Button } from "@aether-ui/ui";
 import { useState, type FormEvent } from "react";
-import { useChange, type ArchonAccess } from "./archon.ts";
+import { ARCHON_SPEAK_HINT, useChange, type ArchonAccess } from "./archon.ts";
 import { invariant } from "./model.ts";
 
 function QuestionCard({ access, question, title, onAnswered }: {
@@ -31,7 +31,7 @@ function QuestionCard({ access, question, title, onAnswered }: {
     if (text.trim()) void answer(text.trim());
     else setError("Write an answer first, or pick an option.");
   };
-  const disabled = busy || access.refusal !== null;
+  const disabled = busy || access.speakRefusal !== null;
   const label = `Q${question.number ?? ""}`;
   return (
     <li className="queue-question" aria-busy={busy}>
@@ -40,14 +40,15 @@ function QuestionCard({ access, question, title, onAnswered }: {
       {question.options.length > 0 ? (
         <div className="queue-options" role="group" aria-label={`Options for ${label}`}>
           {question.options.map((option) => (
-            <Button key={option} size="sm" disabled={disabled} title={access.refusal ?? undefined} onClick={() => void answer(option)}>{option}</Button>
+            <Button key={option} size="sm" disabled={disabled} title={access.speakRefusal ?? undefined} onClick={() => void answer(option)}>{option}</Button>
           ))}
         </div>
       ) : null}
       <form className="queue-answer" onSubmit={submit} noValidate>
         <input className="ui-field-input" aria-label={`Answer ${label}`} value={text} disabled={disabled} placeholder="Write an answer" onChange={(event) => update({ text: event.target.value })} />
-        <Button type="submit" variant="primary" size="sm" disabled={disabled} title={access.refusal ?? undefined}>Send</Button>
+        <Button type="submit" variant="primary" size="sm" disabled={disabled} title={access.speakRefusal ?? undefined}>Send</Button>
       </form>
+      {access.speakRefusal === ARCHON_SPEAK_HINT ? <p className="queue-muted">{ARCHON_SPEAK_HINT}</p> : null}
       {error ? <p role="alert" className="queue-error">{error}</p> : null}
     </li>
   );

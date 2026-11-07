@@ -52,18 +52,26 @@ export const AETHER_BY_FIELD: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The archond requests that are `Read` or `Change` for the web app's standing (archon-core
- * `Request::class`). `answer` and `say` are `OperatorChange`, so they stay out; `repo_add` is
- * `Change` only without `auto_merge` or `github_watch`, which `archonRefusal` checks.
+ * What Archon lets an operator device send (archon-remote `allow.rs`, Archon 9a8d63d1), and
+ * `get_initiative`, a `Read`. The app's connections greet as the web app, so archond marks its
+ * `say` and `answer` as a device's and refuses it authority confirmations: no CLI standing.
+ * `repo_add` is `Change` only without `auto_merge` or `github_watch`, which `archonRefusal` checks.
+ * The web packages' `archonAccess` must agree, which test/security/ui-parity.test.ts checks.
+ * That standing exists from Archon 1.5.0 (protocol 24) on: `ARCHON_NEEDS_STANDING` commands pass
+ * only on a connection whose welcome reported at least that protocol.
  */
 export const ARCHON_PASS: ReadonlySet<string> = new Set([
   "hello", "status", "repo_list", "repo_add", "list_items", "list_item_summaries", "get_item", "get_stage",
   "resolve_item", "list_pipelines", "list_questions", "feed_history", "subscribe_feed", "list_reports",
   "orchestrator_status", "cost_report", "list_artifacts", "read_artifact", "item_diff", "settings",
   "autonomy", "github_watcher", "subscribe_changes", "changes_page", "item_history", "task_graph", "run_plan",
-  "item_links", "issue_items", "list_github_objects", "enqueue", "cancel_item", "retry_item", "pause", "resume",
-  "link_issue", "unlink_issue", "import_issue",
+  "item_links", "issue_items", "list_github_objects", "get_initiative", "enqueue", "cancel_item", "retry_item",
+  "pause", "resume", "answer", "say", "link_issue", "unlink_issue", "import_issue",
 ]);
+
+/** First Archon protocol (Archon 1.5.0) whose archon-web connections have a device's standing. */
+export const ARCHON_STANDING_PROTOCOL = 24;
+export const ARCHON_NEEDS_STANDING: ReadonlySet<string> = new Set(["say", "answer"]);
 
 /** The only client the app window's own connections may declare to archond. */
 export const ARCHON_APP_CLIENT = "archon-web";
@@ -130,11 +138,11 @@ export function aetherClass(frame: Frame, depth = 0): AetherClass | undefined {
 }
 
 /** Why `frame` may not pass through `request`, or undefined when it may. */
-export function passThroughRefusal(kind: DaemonKind, frame: Frame): string | undefined {
+export function passThroughRefusal(kind: DaemonKind, frame: Frame, archonProtocol?: number): string | undefined {
   const cmd = frame.cmd;
   if (typeof cmd !== "string") return "A frame names its command in cmd";
   if (cmd === "shutdown") return "shutdown is never sent from the desktop app";
-  if (kind === "archon") return archonRefusal(cmd, frame);
+  if (kind === "archon") return archonRefusal(cmd, frame, archonProtocol);
   const access = aetherClass(frame);
   if (access === undefined) return `Unknown command ${cmd}`;
   if (access !== "observe" && access !== "operate") return `${cmd} is ${access} and needs a privileged action`;
@@ -167,16 +175,24 @@ export function revokedRule(kind: DaemonKind, frame: Frame): string | undefined 
   return run.id;
 }
 
-function archonRefusal(cmd: string, frame: Frame): string | undefined {
+function archonRefusal(cmd: string, frame: Frame, protocol: number | undefined): string | undefined {
   if (!ARCHON_PASS.has(cmd)) return `${cmd} is not open to the desktop app's requests`;
+  if (ARCHON_NEEDS_STANDING.has(cmd) && (protocol === undefined || protocol < ARCHON_STANDING_PROTOCOL)) {
+    return `Message Archon and answers need Archon 1.5.0 or newer; this archond reports protocol ${String(protocol ?? "unknown")}`;
+  }
   // archond takes a connection's standing from the client its hello declares, so the app's own
   // connections greet only as the web app; CLI standing stays with main's confirmed actions.
   if (cmd === "hello" && frame.client !== ARCHON_APP_CLIENT) {
     return `the desktop app greets archond as ${ARCHON_APP_CLIENT}, not ${String(frame.client).slice(0, 32)}`;
   }
+  // Who sends is the hello's to say: no other frame names a client, and Aether alone names a caller.
+  if (cmd !== "hello" && "client" in frame) return `${cmd} names no client; the connection's hello did`;
+  if ("caller" in frame) return `${cmd} names no caller; only Aether names an agent caller`;
   if ((cmd === "pause" || cmd === "resume") && frame.hard === true) return `${cmd} with hard is for the archon CLI`;
   if (cmd === "repo_add" && (frame.auto_merge === true || frame.github_watch === true)) {
     return "repo_add with auto_merge or github_watch is for the archon CLI";
   }
+  // `chat` records an answer as given in archon chat; the app's answers are its own.
+  if (cmd === "answer" && frame.chat === true) return "answer with chat is for archon chat; the app answers as itself";
   return undefined;
 }

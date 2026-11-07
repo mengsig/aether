@@ -22,6 +22,8 @@ interface Entry {
   readonly owner: number;
   readonly daemon: LocalDaemonRecord;
   readonly link: DaemonLink;
+  /** Taken from the daemon's welcome only, never from a frame the renderer sent. */
+  protocol?: number | undefined;
 }
 
 export class ConnectionTable implements Connections {
@@ -34,6 +36,10 @@ export class ConnectionTable implements Connections {
 
   kindOf(conn: string): DaemonKind | undefined {
     return this.entries.get(conn)?.daemon.kind;
+  }
+
+  protocolOf(conn: string): number | undefined {
+    return this.entries.get(conn)?.protocol;
   }
 
   async connect(owner: number, daemon: LocalDaemonRecord): Promise<string> {
@@ -52,9 +58,11 @@ export class ConnectionTable implements Connections {
     return this.entry(owner, conn).daemon;
   }
 
-  request(owner: number, conn: string, frame: Frame, text: string): Promise<Frame> {
-    const { link } = this.entry(owner, conn);
-    return link.request(text, frame.req as number);
+  async request(owner: number, conn: string, frame: Frame, text: string): Promise<Frame> {
+    const entry = this.entry(owner, conn);
+    const reply = await entry.link.request(text, frame.req as number);
+    if (frame.cmd === "hello") entry.protocol = welcomeProtocol(reply);
+    return reply;
   }
 
   /** Sends the frame; its reply and every frame after it arrive through `push`. */
@@ -88,4 +96,11 @@ export class ConnectionTable implements Connections {
     if (!entry.link.isOpen) throw new BridgeRefusal(`${conn} is closed`);
     return entry;
   }
+}
+
+/** The protocol an `Ok` welcome reports, or undefined for a refusal or a malformed reply. */
+function welcomeProtocol(reply: Frame): number | undefined {
+  const data = (reply.result as { Ok?: { data?: { protocol_version?: unknown } | null } } | undefined)?.Ok?.data;
+  const version = data?.protocol_version;
+  return typeof version === "number" && Number.isSafeInteger(version) && version >= 1 ? version : undefined;
 }
