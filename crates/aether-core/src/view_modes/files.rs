@@ -1,4 +1,4 @@
-use super::{Catalog, Definition, Diagnostic, Mode, valid_name};
+use super::{Catalog, Definition, Diagnostic, Mode, RESERVED_NAMES, valid_name};
 use std::io::Read;
 use std::path::Path;
 
@@ -60,8 +60,7 @@ fn load(path: &Path) -> Result<Mode, String> {
     if !valid_name(name) {
         return Err("name must match [a-z][a-z0-9_-]{0,47}".into());
     }
-    if matches!(name, "standard" | "focus" | "reload") || crate::commands::spec_for(name).is_some()
-    {
+    if RESERVED_NAMES.contains(&name) {
         return Err("name is reserved by a built-in mode or command".into());
     }
     if !std::fs::symlink_metadata(path)
@@ -75,7 +74,9 @@ fn load(path: &Path) -> Result<Mode, String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK);
+        options.custom_flags(
+            (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
+        );
     }
     let file = options.open(path).map_err(|e| e.to_string())?;
     if !file.metadata().map_err(|e| e.to_string())?.is_file() {

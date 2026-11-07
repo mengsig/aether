@@ -85,6 +85,7 @@ from ._ReplyTranscript import ReplyTranscript
 from ._ReplyTranscriptPage import ReplyTranscriptPage
 from ._ReplyTree import ReplyTree
 from ._ReplyUsageBreakdown import ReplyUsageBreakdown
+from ._ReplyViewModes import ReplyViewModes
 from ._ReplyWelcome import ReplyWelcome
 from ._ReplyWorkspaceDiff import ReplyWorkspaceDiff
 from ._ReplyWorkspaceDiscarded import ReplyWorkspaceDiscarded
@@ -153,6 +154,7 @@ Reply = (
     ReplyRunImported |
     ReplyMcpServers |
     ReplyModels |
+    ReplyViewModes |
     ReplyProviders |
     ReplyProviderUsage |
     ReplyAuth |

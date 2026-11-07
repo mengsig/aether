@@ -293,6 +293,36 @@ request itself.
 only a client that lists it in `Hello.features` receives `invocation_seq`
 and `tool_use_id` on its deltas (see [delta order](#delta-order)).
 
+## View-mode catalog
+
+`list_view_modes` is a read available to any authenticated connection, including
+observer devices. Check the `view_modes` feature in `Welcome` before sending it.
+It takes no arguments and returns `Reply::ViewModes`:
+
+```json
+{"cmd":"list_view_modes"}
+```
+
+```json
+{"reply":"view_modes","data":{"modes":[{"name":"standard","label":"Standard","description":"Complete stock transcript","density":"comfortable","show":["user_text","assistant_text","delegation","agent_message","completion","status","question","approval","error","tool","reasoning","memory","compaction","usage"],"scope":null,"builtin":true},{"name":"focus","label":"Focus","description":"Coordination without tool detail","density":"compact","show":["user_text","assistant_text","delegation","agent_message","completion","status","question","approval","error"],"scope":null,"builtin":true}],"diagnostics":[]}}
+```
+
+The daemon reads its own `<config dir>/modes/*.toml` on every call, using the
+same parser and discovery rules as the TUI, with no cache or watcher. Modes are
+ordered `standard`, `focus`, then valid user modes by name. `standard` lists all
+14 categories in enum order. Each mode always carries `name`, nullable `label`
+and `description`, `density` (`comfortable` or `compact`), `show`, nullable
+`scope`, and `builtin`. A non-null scope is `{"name":null,"role":"archon-orchestrator"}`
+for a role-only mode; both keys are nullable and every specified value must match
+exactly. Scoped modes stay in the catalog even when the selected agent does not
+match; the client applies the scope to that agent.
+
+Invalid files are omitted and reported as `{"source":"bad.toml","reason":"..."}`
+in `diagnostics`. Sources are file names only, never absolute paths; directory
+errors use `modes`. Discovery accepts at most 128 TOML files, each at most 64 KiB,
+and refuses symlinks and names reserved by built-in modes or TUI commands. A
+missing directory returns the built-ins with no diagnostics.
+
 ## Read models
 
 These reads answer from the store, run beside a connection's other reads,

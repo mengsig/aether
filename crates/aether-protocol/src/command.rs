@@ -571,6 +571,8 @@ pub enum Command {
     },
 
     ListModels,
+    /// Built-in and user transcript modes from the daemon's configuration.
+    ListViewModes,
     AuthStatus,
     /// Every provider the registry knows, with its live health.
     Providers,

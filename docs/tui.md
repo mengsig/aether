@@ -850,6 +850,8 @@ Tools, thinking, memory, compaction and accounting remain available with Ctrl+T.
 Questions, approvals, failures and actionable health notices always stay visible.
 A failed tool call is tool detail: a mode without `tool` keeps one line for it.
 Modes do not alter agent execution, event ingestion, approval controls or the board.
+The desktop reads the same catalog from the daemon over `list_view_modes`;
+the daemon reloads its configuration directory's mode files on each request.
 
 Embedders can supply `<config dir>/modes/brief.toml` alongside `ui.toml`:
 

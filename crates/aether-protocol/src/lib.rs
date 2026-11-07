@@ -25,6 +25,8 @@ pub mod paths;
 pub mod read_models;
 pub mod remote;
 pub mod schema;
+pub mod view_modes;
+pub use view_modes::{ViewMode, ViewModes};
 
 use std::collections::BTreeMap;
 
@@ -184,6 +186,8 @@ pub const PROTOCOL_VERSION: u32 = 26;
 
 /// Optional features a peer may advertise. Unknown ones are ignored.
 pub mod features {
+    /// The daemon serves the shared transcript catalog with `list_view_modes`.
+    pub const VIEW_MODES: &str = "view_modes";
     /// The daemon serves bounded stale provider usage refreshes.
     pub const PROVIDER_USAGE_REFRESH: &str = "provider_usage_refresh";
     pub const DELTAS: &str = "deltas";

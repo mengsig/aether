@@ -62,6 +62,7 @@ import type {
   ListRunsCommand,
   ListSchedulesCommand,
   ListTasksCommand,
+  ListViewModesCommand,
   ListWorkspacesCommand,
   MarkNotificationReadCommand,
   McpServersCommand,
@@ -199,6 +200,7 @@ export type Command =
   | ListRunsCommand
   | ListSchedulesCommand
   | ListTasksCommand
+  | ListViewModesCommand
   | ListWorkspacesCommand
   | MarkNotificationReadCommand
   | McpServersCommand

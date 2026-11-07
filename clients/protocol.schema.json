@@ -4374,6 +4374,19 @@
           "type": "object"
         },
         {
+          "description": "Built-in and user transcript modes from the daemon's configuration.",
+          "properties": {
+            "cmd": {
+              "const": "list_view_modes",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "cmd": {
               "const": "auth_status",
@@ -16469,6 +16482,22 @@
         {
           "properties": {
             "data": {
+              "$ref": "#/$defs/ViewModes"
+            },
+            "reply": {
+              "const": "view_modes",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
               "items": {
                 "$ref": "#/$defs/ProviderInfo"
               },
@@ -20150,6 +20179,134 @@
           "type": "string"
         }
       ]
+    },
+    "ViewMode": {
+      "properties": {
+        "builtin": {
+          "type": "boolean"
+        },
+        "density": {
+          "$ref": "#/$defs/ViewModeDensity"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ViewModeScope"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "show": {
+          "items": {
+            "$ref": "#/$defs/ViewModeCategory"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "density",
+        "show",
+        "builtin"
+      ],
+      "type": "object"
+    },
+    "ViewModeCategory": {
+      "enum": [
+        "user_text",
+        "assistant_text",
+        "delegation",
+        "agent_message",
+        "completion",
+        "status",
+        "question",
+        "approval",
+        "error",
+        "tool",
+        "reasoning",
+        "memory",
+        "compaction",
+        "usage"
+      ],
+      "type": "string"
+    },
+    "ViewModeDensity": {
+      "enum": [
+        "comfortable",
+        "compact"
+      ],
+      "type": "string"
+    },
+    "ViewModeDiagnostic": {
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ViewModeScope": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ViewModes": {
+      "properties": {
+        "diagnostics": {
+          "items": {
+            "$ref": "#/$defs/ViewModeDiagnostic"
+          },
+          "type": "array"
+        },
+        "modes": {
+          "items": {
+            "$ref": "#/$defs/ViewMode"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "modes",
+        "diagnostics"
+      ],
+      "type": "object"
     },
     "WaitCondition": {
       "description": "What a waiting agent is waiting for. A typed expression the scheduler\nevaluates; the model never polls. Leaves are single facts, and `Any`,\n`All` and `AtLeast` combine them, so \"wait for two of these five workers\nor a deadline\" is a value, not a prompt.",

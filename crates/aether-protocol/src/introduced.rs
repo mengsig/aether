@@ -23,6 +23,7 @@ impl Command {
     #[rustfmt::skip]
     pub fn introduced(&self) -> Introduced {
         match self {
+            Self::ListViewModes => Introduced::Feature(features::VIEW_MODES),
             Self::RefreshProviderUsage { .. } => Introduced::Feature(features::PROVIDER_USAGE_REFRESH),
             Self::AcceptMemory { .. } | Self::RejectMemory { .. } => {
                 Introduced::Feature(features::MEMORY_PROPOSALS)
@@ -150,6 +151,7 @@ mod tests {
                 features::REPOSITORY_ALIASES,
             ),
             (json!({"cmd": "storage_status"}), features::STORAGE),
+            (json!({"cmd": "list_view_modes"}), features::VIEW_MODES),
             (
                 json!({"cmd": "memory_feedback", "memory": memory}),
                 features::MEMORY_FEEDBACK,

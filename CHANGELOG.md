@@ -4,6 +4,14 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## Unreleased
+
+### Added
+
+- `list_view_modes` serves the shared TUI and desktop transcript-mode catalog,
+  including scoped user modes and file diagnostics, to any authenticated reader.
+  The `view_modes` handshake feature announces it.
+
 ## 1.3.0
 
 Released with Archon 1.5.0. One web app now serves every screen, from

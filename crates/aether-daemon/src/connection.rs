@@ -427,6 +427,7 @@ where
                                                     features::TRANSCRIPT_PAGING.into(),
                                                     features::DELTA_ORDER.into(),
                                                     features::USAGE_BREAKDOWN.into(),
+                                                    features::VIEW_MODES.into(),
                                                     features::REMOTE_MOUNTS.into(),
                                                     features::NOESIS.into(),
                                                 ],

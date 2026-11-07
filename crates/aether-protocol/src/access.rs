@@ -100,7 +100,7 @@ impl Command {
             | Self::LatestCheckpoint { .. } | Self::GetArtifact { .. }
             | Self::ListArtifacts { .. } | Self::ReadArtifact { .. } | Self::Memories { .. }
             | Self::ListRuns { .. } | Self::GetRunReport { .. } | Self::Replay { .. }
-            | Self::ListModels | Self::AuthStatus | Self::Providers | Self::GetAttention
+            | Self::ListModels | Self::ListViewModes | Self::AuthStatus | Self::Providers | Self::GetAttention
             | Self::ListWorkspaces { .. } | Self::GetPushConfig
             | Self::ListRepositoryAliases | Self::ListNotifications { .. }
             | Self::GetNotification { .. } | Self::ListAgentsPage { .. }

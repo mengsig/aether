@@ -6,6 +6,9 @@ use aether_tui::app::transcript::{
 use aether_tui::app::{App, AppEvent, Effect};
 use aether_tui::testing::{app_with_transcript, render_to};
 use aether_tui::view_modes::{self, Catalog, Category, Definition, Density, Mode, Policy};
+#[path = "view_modes/parity.rs"]
+mod parity;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 const BRIEF: &str = r#"version = 1

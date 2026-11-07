@@ -27,6 +27,7 @@ pub(super) fn owns(command: &Command) -> bool {
             | Command::McpServers { .. }
             | Command::GetGithubWatcher
             | Command::ConfigureGithubWatcher { .. }
+            | Command::ListViewModes
             | Command::ListModels
             | Command::AuthStatus
             | Command::Providers
@@ -81,6 +82,7 @@ pub(super) async fn dispatch(
             config,
             expected_revision,
         } => configure_github_watcher(daemon, config, expected_revision, by),
+        Command::ListViewModes => super::view_modes::list(daemon.models.config_dir().clone()).await,
         Command::ListModels => providers::list_models(daemon).await,
         Command::AuthStatus => providers::auth_status(daemon).await,
 
