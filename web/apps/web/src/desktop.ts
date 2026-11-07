@@ -17,8 +17,13 @@ export function outsideHref(target: EventTarget | null, base: string): string | 
   if (href === "" || href.startsWith("#")) return null;
   const url = URL.parse(href, base);
   if (url === null) return href;
-  const page = new URL(base);
-  return url.protocol === page.protocol && url.host === page.host ? null : url.href;
+  return inApp(url, new URL(base)) ? null : url.href;
+}
+
+/** A link to the page's own scheme and host, or a blob: (a download the app made) under them. */
+function inApp(url: URL, page: URL): boolean {
+  const inner = url.protocol === "blob:" ? URL.parse(url.pathname) : url;
+  return inner !== null && inner.protocol === page.protocol && inner.host === page.host;
 }
 
 /** What a person reads once a link opened, or failed to: a cancel in the native question says nothing. */

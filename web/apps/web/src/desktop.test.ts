@@ -34,6 +34,13 @@ describe("outsideHref", () => {
     expect(outsideHref(document.body, BASE)).toBeNull();
     expect(outsideHref(null, BASE)).toBeNull();
   });
+
+  test("a download the app made itself stays with the app; another origin's blob does not", () => {
+    const download = anchor("blob:app://aether/5f0c6a1e-0d3c-4b1a-9a57-4f1e3c2b7d10");
+    download.download = "memory.json";
+    expect(outsideHref(download, BASE)).toBeNull();
+    expect(outsideHref(anchor("blob:https://evil.example/5f0c"), BASE)).toBe("blob:https://evil.example/5f0c");
+  });
 });
 
 describe("openOutside", () => {
