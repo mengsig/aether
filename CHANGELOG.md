@@ -6,6 +6,11 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Fixed
+
+- Delegated children inherit their parent's current deadline and cost budget,
+  including extensions made while a turn is in flight.
+
 ### Added
 
 - `list_view_modes` serves the shared TUI and desktop transcript-mode catalog,
