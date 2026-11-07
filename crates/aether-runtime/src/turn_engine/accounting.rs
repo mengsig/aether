@@ -379,7 +379,9 @@ pub(super) fn budget_crossed(
     // Bound: a native engine may finish the ONE model request already in
     // flight when the budget runs out or a disable starts; the next usage
     // report or bridge request reaches this hook and interrupts it.
-    crate::noesis_guard::interrupt_at_boundary(runtime, ctx);
+    if ctx.noesis.is_some() {
+        crate::noesis_guard::interrupt_at_boundary(runtime, ctx);
+    }
     if ctx.agent.config.token_budget.is_none() && ctx.agent.config.cost_budget.is_none() {
         return Ok(None);
     }
