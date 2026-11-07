@@ -91,7 +91,6 @@ impl FauxCli {
     }
 }
 
-#[async_trait::async_trait]
 /// `reply` as the text deltas an engine streams it in, a few characters each.
 fn streamed(reply: &str) -> Vec<EngineEvent> {
     let chars: Vec<char> = reply.chars().collect();
@@ -108,6 +107,7 @@ fn streamed(reply: &str) -> Vec<EngineEvent> {
     deltas
 }
 
+#[async_trait::async_trait]
 impl aether_engine::Engine for FauxCli {
     fn kind(&self) -> EngineKind {
         EngineKind::CLAUDE_CODE
