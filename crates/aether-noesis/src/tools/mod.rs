@@ -104,23 +104,26 @@ pub fn seal_input(tool: &str, input: &Value) -> Value {
 }
 
 /// Every text a call's input leaves on the record once the transcript seals
-/// it: each key and scalar, but a sealing tool's sealed fields. A
-/// sealing tool's input that is no object is sealed whole and shows nothing.
+/// it: each key and scalar, but a sealing tool's sealed fields. A sealing
+/// tool's input is read healed, as its question is parsed and published; one
+/// that is still no object is sealed whole and shows nothing.
 pub fn visible_texts(tool: &str, input: &Value) -> Vec<String> {
-    let sealed = ToolName::parse(tool).map_or(&[][..], ToolName::sealed_fields);
     let mut texts = Vec::new();
-    match input {
-        Value::Object(map) => {
-            for (key, value) in map
-                .iter()
-                .filter(|(key, _)| !sealed.contains(&key.as_str()))
-            {
-                texts.push(key.clone());
-                collect_shown(value, &mut texts);
-            }
-        }
-        other if sealed.is_empty() => collect_shown(other, &mut texts),
-        _ => {}
+    let pose = ToolName::parse(tool).filter(|tool| !tool.sealed_fields().is_empty());
+    let Some(pose) = pose else {
+        collect_shown(input, &mut texts);
+        return texts;
+    };
+    let sealed = pose.sealed_fields();
+    let Value::Object(map) = heal::heal_object(input.clone(), args::fields(pose)) else {
+        return texts;
+    };
+    for (key, value) in map
+        .iter()
+        .filter(|(key, _)| !sealed.contains(&key.as_str()))
+    {
+        texts.push(key.clone());
+        collect_shown(value, &mut texts);
     }
     texts
 }

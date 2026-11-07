@@ -876,7 +876,9 @@ The answer seal is a teaching guarantee: an honest learner does not see an
 exercise's answer before trying it. It is not a security boundary against an
 adversarial model. Before anything of a reply is shown or kept, Aether checks
 it once, whole: its text, joined and block by block; every key and value of
-every call's input; and the name of any call to a tool that does not exist. It
+every call's input, a text holding a question read as the question it parses
+to; and the name of any call to a tool that does not exist. Aether's own tool
+names are fixed text and say nothing of an answer, so they are not checked. It
 checks them against the answers still unrevealed (an open question's key and
 explanation, the active problem's solution) and those the reply's own calls
 would pose. A reply that gives one away is discarded unseen, and its spend
@@ -896,8 +898,8 @@ In the Learn screen's settings:
 - **Billing.** "Spent today" and each lesson say what paid. Subscription use
   is covered by your plan; its dollars are a list-price estimate, never a
   charge. API use is billed to your key. Each usage record keeps what paid
-  for it when it is written; use recorded before that shows as unknown,
-  never as API.
+  for it when it is written, by the model the call ran on; use recorded
+  before that shows as unknown, never as API.
 - **"Learn from my work".** This is `engineering_context`, an operate-level
   key. It lets a lesson start from your own items, runs and pull requests.
   The "Learn from this" sheet offers to turn it on when it is off.

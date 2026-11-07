@@ -167,9 +167,11 @@ fn is_pose(tool: &str) -> bool {
 /// Whether `step`, a model reply, would give a sealed answer away if it were
 /// kept. This is the one seal check. It reads all the reply keeps: its text,
 /// run together and block by block, each call's name unless it is a Noesis
-/// tool's own, and every key and scalar of each input but a pose's sealed
-/// fields. It checks them against `live` and every sealed text the reply's
-/// own calls carry. Call ids are the engine's own, never the model's text.
+/// tool's own (the crate's fixed text, which says nothing of a key), and
+/// every key and scalar of each input but a pose's sealed fields, a pose's
+/// input read healed as it is parsed. It checks them against `live` and
+/// every sealed text the reply's own calls carry. Call ids are the engine's
+/// own, never the model's text.
 ///
 /// A pose's own view necessarily shows its options, which name its key, so
 /// it is checked without its own secrets: posing refuses a view that gives
@@ -495,10 +497,42 @@ mod tests {
             )],
         );
         assert!(!reply_leaks(&live, &kept), "ids are the engine's own");
+        // A Noesis tool's name is the crate's text, the same whatever the key.
         assert!(!reply_leaks(
             &sealer(&["ask"]),
             &reply("", vec![ask("Capital?", "Paris")])
         ));
+        let graph = call("c", "noesis.graph_search", json!({"query": "cells"}));
+        assert!(!reply_leaks(
+            &sealer(&["graph", "search"]),
+            &reply("", vec![graph])
+        ));
+    }
+
+    #[test]
+    fn a_stringified_pose_is_read_healed_against_live_and_sibling_secrets() {
+        let stringified = |prompt: &str, key: &str| {
+            let input = json!({"kind": "recall", "prompt": prompt, "answer_key": key});
+            call("call_s", "noesis.ask", Value::String(input.to_string()))
+        };
+        let shows_paris = stringified("Is it Paris?", "Rome");
+        let sibling = reply(
+            "",
+            vec![shows_paris.clone(), ask("Capital of France?", "Paris")],
+        );
+        assert!(
+            reply_leaks(&Sealer::default(), &sibling),
+            "another call's key"
+        );
+        let alone = reply("", vec![shows_paris]);
+        assert!(reply_leaks(&sealer(&["Paris"]), &alone), "a live key");
+        assert!(
+            !reply_leaks(&Sealer::default(), &alone),
+            "its own key stays sealed"
+        );
+        let shown = tools::visible_texts("noesis.ask", &stringified("Is it Paris?", "Rome").input);
+        assert!(shown.iter().any(|text| text == "Is it Paris?"), "{shown:?}");
+        assert!(!shown.iter().any(|text| text == "Rome"), "{shown:?}");
     }
 
     #[test]

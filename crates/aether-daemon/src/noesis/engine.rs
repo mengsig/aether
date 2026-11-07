@@ -336,27 +336,27 @@ impl AetherEngine<'_> {
                     }
                     return Ok(response);
                 }
-                CallEnd::AgentEnded(spent) => return Err(self.record_cut_short(row.id, spent)),
+                CallEnd::AgentEnded(spent) => return Err(self.record_cut_short(row, spent)),
                 CallEnd::Broke(spent, error)
                     if attempt < engine_step::ATTEMPTS && engine_step::is_malformed(&error) =>
                 {
-                    self.charge_spent(row.id, spent).map_err(failed)?;
+                    self.charge_spent(row, spent).map_err(failed)?;
                     with_note(&mut request.messages, engine_step::RETRY_NOTE);
                 }
                 CallEnd::Broke(spent, error) => {
-                    return Err(self.record_broken(row.id, spent, error.to_string()));
+                    return Err(self.record_broken(row, spent, error.to_string()));
                 }
             }
         }
         unreachable!("the last attempt returns whatever it got")
     }
 
-    /// Record the kept reply's `content` and the `usage` of the step, so the
-    /// day's spend survives a restart. Only the agent's stats are written,
-    /// over the row as it is now; the runtime seals a pose's sealed fields.
+    /// Record the kept reply's `content` and the `usage` of the step `called`
+    /// made, so the day's spend survives a restart. Only the agent's stats are
+    /// written, over the row as it is now; the runtime seals a pose's sealed fields.
     fn record_reply(
         &self,
-        agent: AgentId,
+        called: &Agent,
         usage: Usage,
         content: Vec<ContentBlock>,
     ) -> Result<(), EngineError> {
@@ -366,10 +366,11 @@ impl AetherEngine<'_> {
                 .all(|block| !matches!(block, ContentBlock::Thinking { .. })),
             "thinking is never kept"
         );
+        let agent = called.id;
         let row = self
             .host
             .runtime
-            .record_noesis_call(agent, usage, |row, commit| {
+            .record_noesis_call(agent, &called.model, usage, |row, commit| {
                 // An agent ended meanwhile acts on no reply: only the spend lands.
                 if !content.is_empty() && !row.status.is_terminal() {
                     commit.push_event(message_draft(row, MessageRole::Assistant, content));
@@ -384,7 +385,8 @@ impl AetherEngine<'_> {
 
     /// The agent ended mid-call: what the provider reported spending so far
     /// is charged and recorded, as the runtime records a cancelled call.
-    fn record_cut_short(&mut self, agent: AgentId, mut spent: Usage) -> EngineError {
+    fn record_cut_short(&mut self, called: &Agent, mut spent: Usage) -> EngineError {
+        let agent = called.id;
         spent.mark_cost_gap(CostGap::Interrupted);
         if let Some(open) = self.charge.as_mut() {
             debug_assert_eq!(open.agent, agent, "the call ran under its own admission");
@@ -393,7 +395,7 @@ impl AetherEngine<'_> {
         match self
             .host
             .runtime
-            .record_noesis_call(agent, spent, |_, _| {})
+            .record_noesis_call(agent, &called.model, spent, |_, _| {})
         {
             Ok(row) => failed(format!(
                 "agent {agent} became {} during its model call",
@@ -407,10 +409,10 @@ impl AetherEngine<'_> {
 
     /// The reply failed mid-stream: what the provider reported spending is
     /// charged and recorded, so a failed step still counts against the budget.
-    fn record_broken(&mut self, agent: AgentId, mut spent: Usage, error: String) -> EngineError {
+    fn record_broken(&mut self, called: &Agent, mut spent: Usage, error: String) -> EngineError {
         debug_assert!(!error.is_empty(), "a broken reply says why");
         spent.mark_cost_gap(CostGap::Interrupted);
-        match self.charge_spent(agent, spent) {
+        match self.charge_spent(called, spent) {
             Ok(()) => failed(error),
             Err(record) => failed(format!(
                 "{error}; and the call's spend was not recorded: {record}"
@@ -419,26 +421,27 @@ impl AetherEngine<'_> {
     }
 
     /// Charge a call that produced no reply to keep, and record its usage.
-    fn charge_spent(&mut self, agent: AgentId, spent: Usage) -> Result<(), String> {
+    fn charge_spent(&mut self, called: &Agent, spent: Usage) -> Result<(), String> {
         let open = self.charge.as_mut();
         assert!(
-            open.as_ref().is_some_and(|open| open.agent == agent),
+            open.as_ref().is_some_and(|open| open.agent == called.id),
             "the call ran under its own admission"
         );
         if let Some(open) = open {
             open.spent += spent;
         }
-        self.record_spend(agent, spent)
+        self.record_spend(called, spent)
             .map_err(|error| error.to_string())
     }
 
-    /// Record what a call already charged spent, with nothing of its reply.
-    fn record_spend(&self, agent: AgentId, spent: Usage) -> Result<(), EngineError> {
+    /// Record what a call `called` made and already charged spent, with
+    /// nothing of its reply.
+    fn record_spend(&self, called: &Agent, spent: Usage) -> Result<(), EngineError> {
         debug_assert!(spent.cost_usd >= 0.0, "a call never refunds");
-        let recorded = self
-            .host
-            .runtime
-            .record_noesis_call(agent, spent, |_, _| {});
+        let recorded =
+            self.host
+                .runtime
+                .record_noesis_call(called.id, &called.model, spent, |_, _| {});
         recorded.map(|_| ()).map_err(failed)
     }
 
@@ -570,7 +573,7 @@ impl Engine for AetherEngine<'_> {
             if let Some(reminder) = reminder {
                 // The last reply was discarded: its spend lands before the next is made.
                 if let Some(spent) = unrecorded.take() {
-                    self.record_spend(row.id, spent)?;
+                    self.record_spend(&row, spent)?;
                 }
                 with_note(&mut request.messages, reminder);
             }
@@ -583,7 +586,7 @@ impl Engine for AetherEngine<'_> {
             (None, Some(last)) => (last.usage, text_content(&replies.step.text)),
             (None, None) => unreachable!("a step without a kept reply discarded two"),
         };
-        self.record_reply(row.id, usage, content)?;
+        self.record_reply(&row, usage, content)?;
         Ok(replies.step)
     }
 }

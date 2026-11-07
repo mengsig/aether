@@ -341,7 +341,7 @@ async fn each_usage_record_keeps_what_paid_for_it_and_one_without_is_unknown() {
         ..Usage::default()
     };
     let row = runtime
-        .record_noesis_call(tutor.id, used(10), |_, _| {})
+        .record_noesis_call(tutor.id, &tutor.model, used(10), |_, _| {})
         .expect("record the engine's call");
     let store = runtime.store().clone();
     complete(store.as_ref(), tutor.id, used(30), Some(Billing::Api));
@@ -366,6 +366,47 @@ async fn each_usage_record_keeps_what_paid_for_it_and_one_without_is_unknown() {
         "use no record holds is unknown"
     );
     assert_eq!(session.api, split.api);
+}
+
+#[tokio::test]
+async fn a_call_is_billed_by_the_model_it_ran_on_when_the_agent_moves_meanwhile() {
+    let harness = Harness::new().await;
+    harness.configure(enable(true)).await;
+    let subscription = ModelRef::new("claude-code", "opus");
+    let api = ModelRef::new("anthropic", "claude-sonnet-5-5");
+    let tutor = noesis_agent(&harness, "noesis.tutor", subscription.clone());
+    let runtime = &harness.daemon.runtime;
+    let store = runtime.store().clone();
+    let move_to = |model: &ModelRef| {
+        let mut row = store.agent(tutor.id).expect("read").expect("the tutor");
+        row.model = model.clone();
+        let mut commit = Commit::new();
+        commit.push_mutation(aether_store::Mutation::UpsertAgent(row));
+        store.commit(commit).expect("move the agent");
+    };
+    let used = |tokens| Usage {
+        input_tokens: tokens,
+        ..Usage::default()
+    };
+
+    move_to(&api);
+    runtime
+        .record_noesis_call(tutor.id, &subscription, used(10), |_, _| {})
+        .expect("record the subscription call");
+    move_to(&subscription);
+    let row = runtime
+        .record_noesis_call(tutor.id, &api, used(5), |_, _| {})
+        .expect("record the API call");
+    assert_eq!(row.model, subscription, "only the stats were written");
+
+    let today = budget::usage_today(store.as_ref(), budget::today()).expect("spend");
+    let split = budget::by_billing(today.iter().map(|used| (used.billing, &used.usage)));
+    assert_eq!(
+        split.subscription.input_tokens, 10,
+        "the call ran on the engine"
+    );
+    assert_eq!(split.api.input_tokens, 5, "the call ran on the API");
+    assert_eq!(split.unknown, Usage::default());
 }
 
 #[tokio::test]
