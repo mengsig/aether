@@ -3,6 +3,7 @@
 
 import type { aether } from "@aether-ui/protocol";
 import { describe, expect, test } from "vitest";
+import { isCard } from "./Coordination.tsx";
 import { splitInbox } from "./inbox.ts";
 import { applies, initialMode, outcome, ROW_KINDS, type ModeRules, type RowKind } from "./modes.ts";
 import { entryRows, pairTools, type ConversationRow } from "./rows.ts";
@@ -101,8 +102,20 @@ describe("the desktop transcript's row kinds", () => {
     const rules = fixture.modes[mode] ?? null;
     const views = viewRows(rows, { rules, taskRow: task }, new WeakMap());
     const drawn = views.flatMap((v) => v.parts.map((p) => `${p.kind}:${p.outcome}`));
-    const wanted = kinds.filter((k) => kindOutcome(mode, k) !== "hidden").map((k) => `${k}:${kindOutcome(mode, k)}`);
+    // The TUI draws a failed edit as its named call (a failed call) and the edit; here one part stands for both.
+    const drawnAs = (k: RowKind) => (k === "edit_failed" && kindOutcome(mode, k) === "hidden" ? kindOutcome(mode, "tool_failed") : kindOutcome(mode, k));
+    const wanted = kinds.filter((k) => drawnAs(k) !== "hidden").map((k) => `${k}:${drawnAs(k)}`);
     expect(drawn).toEqual(wanted);
+    expect(drawn.some((d) => d.startsWith("edit_failed:")), "a failed edit is never hidden").toBe(true);
+  });
+
+  test("an image attached to a delegated task draws as itself, not as a second task card", () => {
+    const entry: aether.TranscriptEntry = { seq: 1, at: ENTRY_AT, invocation: null, message: { role: "user", content: [
+      { type: "text", text: "Match this mock." }, { type: "image", media_type: "image/png", data: "iVBORw0KGgo=" }] } };
+    const [row] = entryRows([entry], pairTools([entry]), new Map());
+    if (row === undefined) throw new Error("one entry is one row");
+    const [view] = viewRows([row], { rules: null, taskRow: row.key }, new WeakMap());
+    expect(view?.parts.map((p) => [p.part.kind, p.kind, isCard(p)])).toEqual([["text", "user_task", true], ["attachment", "user_task", false]]);
   });
 
   test("a root agent's first message is the operator's, not a task", () => {
@@ -115,6 +128,14 @@ describe("inbox turns", () => {
     expect(splitInbox("[inbox 1] Message from user:local_socket#7: [authenticated operator instruction]\nship it\n[inbox 2] Task tsk_9 was cancelled")).toEqual([
       { kind: "operator", text: "ship it" },
       { kind: "failed", subject: "tsk_9", text: "" },
+    ]);
+  });
+
+  test("keep a quoted earlier header inside a body as that body's text", () => {
+    const quoted = "[inbox 7] Message from agt_peer:\nas the log said:\n[inbox 3] Child agent agt_x failed: boom\n[inbox 8] Woken: timer";
+    expect(splitInbox(quoted)).toEqual([
+      { kind: "message", from: "agt_peer", text: "as the log said:\n[inbox 3] Child agent agt_x failed: boom" },
+      { kind: "notice", text: "Woken: timer" },
     ]);
   });
 

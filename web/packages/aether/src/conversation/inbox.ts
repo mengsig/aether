@@ -11,7 +11,7 @@ export type InboxSegment =
   | { readonly kind: "approval"; readonly text: string }
   | { readonly kind: "notice"; readonly text: string };
 
-const HEADER = /^\[inbox \d+\] (.*)$/;
+const HEADER = /^\[inbox (\d+)\] (.*)$/;
 const OPERATOR_MARKER = " [authenticated operator instruction]";
 
 export const isInboxText = (text: string): boolean => HEADER.test(text.trimStart().split("\n", 1)[0] ?? "");
@@ -42,11 +42,14 @@ export function splitInbox(text: string): InboxSegment[] {
   if (!isInboxText(text)) return text.trim() === "" ? [] : [{ kind: "operator", text: text.trim() }];
   const segments: InboxSegment[] = [];
   let current: InboxSegment | null = null;
+  let seq = -1;
   for (const line of text.trim().split("\n")) {
-    const header = HEADER.exec(line)?.[1];
-    if (header !== undefined) {
+    const header = HEADER.exec(line);
+    // Bodies are not escaped; deliveries go up in seq, so a quoted earlier header stays body text.
+    if (header?.[2] !== undefined && Number(header[1]) > seq) {
       if (current !== null) segments.push(current);
-      current = opened(header);
+      seq = Number(header[1]);
+      current = opened(header[2]);
       continue;
     }
     invariant(current !== null, "inbox text starts with a header");

@@ -242,9 +242,10 @@ describe("the slash menu", () => {
       { name: "standard", label: "Standard", description: "the default" },
       { name: "verbose", label: "Verbose", description: "every tool call" },
       { name: "status", label: "Status", description: "shadowed by a command" },
+      { name: "quiet_work", label: "Quiet", description: "a name the daemon allows" },
     ];
-    const extra = modeCommands(modes, choose, toggle);
-    expect(extra.map((c) => c.name)).toEqual(["mode", "verbose"]);
+    const extra = modeCommands(modes, choose, toggle, "unused");
+    expect(extra.map((c) => c.name)).toEqual(["mode", "verbose", "quiet_work"]);
     const { h, root, input } = await open(running, {}, extra);
     await write(h, input, "/mode v");
     expect(options(root)).toEqual(["verbose"]);
@@ -255,7 +256,43 @@ describe("the slash menu", () => {
     expect(toggle).toHaveBeenCalledWith("verbose");
     await write(h, input, "/mode loud");
     await press(h, input, "Enter");
-    expect(root.querySelector('[role="alert"]')?.textContent).toBe("Choose a view mode: standard, verbose, status");
+    expect(root.querySelector('[role="alert"]')?.textContent).toBe("Choose a view mode: standard, verbose, status, quiet_work");
     expect(input.value).toBe("/mode loud");
+    await write(h, input, "/quiet_work");
+    await press(h, input, "Escape");
+    await press(h, input, "Enter");
+    expect(toggle).toHaveBeenCalledWith("quiet_work");
+    expect(sentMessages(h), "view commands never reach the agent").toEqual([]);
+  });
+
+  test("without the daemon's catalog /mode and /focus refuse here instead of reaching the agent", async () => {
+    const choose = vi.fn();
+    const extra = modeCommands([], choose, choose, "View modes are still loading");
+    const { h, root, input } = await open(running, {}, extra);
+    for (const line of ["/mode focus", "/focus"]) {
+      await write(h, input, line);
+      await press(h, input, "Escape");
+      await press(h, input, "Enter");
+      expect(root.querySelector('[role="alert"]')?.textContent).toBe("View modes are still loading");
+      expect(input.value, "the line stays to run again").toBe(line);
+    }
+    expect(choose).not.toHaveBeenCalled();
+    expect(sentMessages(h)).toEqual([]);
+  });
+
+  test("a menu pick waits like Send: never twice while a send is pending, never to an ended agent", async () => {
+    const orchestrator = fauxAgent(undefined, { role: "archon-orchestrator" });
+    const { h, input } = await open(orchestrator, { script: { send_message: () => "hold" } });
+    await write(h, input, "/status");
+    await press(h, input, "Enter");
+    await write(h, input, "/status");
+    await press(h, input, "Enter");
+    expect(sentMessages(h)).toEqual([{ to: orchestrator.id, content: "/status" }]);
+    current?.unmount();
+    const ended = fauxAgent(undefined, { role: "archon-orchestrator", status: { state: "completed", summary: "done" } });
+    const again = await open(ended);
+    await write(again.h, again.input, "/queue");
+    await press(again.h, again.input, "Enter");
+    expect(sentMessages(again.h)).toEqual([]);
   });
 });

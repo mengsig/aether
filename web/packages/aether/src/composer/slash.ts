@@ -59,12 +59,15 @@ export function parseLine(line: string, commands: readonly SlashCommand[]): { re
 /** A command whose argument must be given is completed by Enter, not run bare. */
 export const needsArgument = (command: SlashCommand): boolean => command.args.startsWith("<");
 
+/** The daemon's view mode names (aether-core `valid_name`) fit this too. */
+const COMMAND_NAME = /^[a-z][a-z0-9_-]*$/;
+
 /** First-wins by name, so a later list never shadows an earlier one. */
 export function mergeCommands(...lists: readonly (readonly SlashCommand[])[]): readonly SlashCommand[] {
   const byName = new Map<string, SlashCommand>();
   for (const command of lists.flat()) if (!byName.has(command.name)) byName.set(command.name, command);
   const merged = [...byName.values()];
-  invariant(merged.every((c) => /^[a-z][a-z0-9-]*$/.test(c.name)), "command names are lower-case words");
+  invariant(merged.every((c) => COMMAND_NAME.test(c.name)), "command names are lower-case words");
   return merged;
 }
 
@@ -135,18 +138,31 @@ export interface ModeInfo { readonly name: string; readonly label: string; reado
 const TAKEN = new Set(["mode", "new", "model", "stop", "cancel", "pause", "resume", "wake", "restart", "compact", "clear", "quit",
   ...ARCHON_COMMANDS.map(([name]) => name), "settings", "usage", "notifications", "memory", "report", "artifacts", "schedules", "approvals", "doctor", "activity", "help"]);
 
-/** `/mode <name>` sets a view mode; `/<name>` toggles a non-standard one with the standard view. */
-export function modeCommands(modes: readonly ModeInfo[], choose: (name: string) => void, toggle: (name: string) => void): readonly SlashCommand[] {
+/** The built-in mode a toggle names before the daemon's catalog has arrived. */
+const BUILTIN_TOGGLES = ["focus"];
+
+/**
+ * `/mode <name>` sets a view mode; `/<name>` toggles a non-standard one with the standard view. Without
+ * a catalog (`unavailable` says why) both still run here and refuse, so a view command never reaches the agent.
+ */
+export function modeCommands(modes: readonly ModeInfo[], choose: (name: string) => void, toggle: (name: string) => void, unavailable: string): readonly SlashCommand[] {
   invariant(new Set(modes.map((m) => m.name)).size === modes.length, "view mode names are unique");
-  if (modes.length === 0) return [];
+  invariant(unavailable !== "", "a missing catalog has a reason");
   const group = "View";
+  if (modes.length === 0) {
+    const refuse = () => { throw new DraftError(unavailable); };
+    return [
+      { name: "mode", args: "<name>", about: "choose a transcript view mode", group, run: refuse },
+      ...BUILTIN_TOGGLES.map((name) => ({ name, args: "", about: unavailable, group, run: refuse })),
+    ];
+  }
   const pick = (args: string) => {
     const name = args.trim();
     if (!modes.some((m) => m.name === name)) throw new DraftError(`Choose a view mode: ${modes.map((m) => m.name).join(", ")}`);
     choose(name);
   };
   const choices = modes.map((m) => ({ value: m.name, label: m.label, about: m.description }));
-  const toggles = modes.filter((m) => m.name !== "standard" && !TAKEN.has(m.name) && /^[a-z][a-z0-9-]*$/.test(m.name));
+  const toggles = modes.filter((m) => m.name !== "standard" && !TAKEN.has(m.name) && COMMAND_NAME.test(m.name));
   return [
     { name: "mode", args: "<name>", about: "choose a transcript view mode", group, choices, run: pick },
     ...toggles.map((m) => ({ name: m.name, args: "", about: `${m.label}: ${m.description} (again for standard)`, group, run: () => toggle(m.name) })),

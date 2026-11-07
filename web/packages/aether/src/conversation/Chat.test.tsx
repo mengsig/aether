@@ -150,6 +150,19 @@ describe("Chat view modes", () => {
     expect(root.querySelector(".conv-activity")?.textContent).toBe("Waiting on inbox");
   });
 
+  test("a failed edit in Calm is one named line, never hidden with the other tool detail", async () => {
+    const failed: aether.TranscriptEntry[] = [
+      ...ENTRIES,
+      { seq: 5, at: "2026-11-07T09:00:04Z", invocation: "inv_3", message: { role: "assistant", content: [{ type: "tool_use", id: "t2", name: "edit_file", input: { path: "a.rs" } }] } },
+      { seq: 6, at: "2026-11-07T09:00:05Z", invocation: null, message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t2", content: [{ type: "text", text: "no match for the old text\nat line 4" }], is_error: true }] } },
+    ];
+    const withEdit = (): Answer => ({ tag: "transcript_page", data: { entries: failed, has_before: false, has_after: false, last_seq: 6 } });
+    const { root } = await open(orchestrator, { script: { get_transcript_page: withEdit } });
+    expect(checked(root)).toBe("Calm");
+    expect(toolShown(root)).toBe(false);
+    expect([...root.querySelectorAll(".conv-line")].map((l) => l.textContent)).toEqual(["!edit_file failedno match for the old text"]);
+  });
+
   test("a daemon without view modes keeps the standard view and says why", async () => {
     const refuse = (): Answer => ({ code: "invalid_argument", message: "unknown command list_view_modes" });
     const { root } = await open(orchestrator, { script: { list_view_modes: refuse } });

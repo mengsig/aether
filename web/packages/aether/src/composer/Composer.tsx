@@ -73,23 +73,33 @@ export function Composer({ conn, agent, commands }: ComposerProps) {
   const stopRefusal = usePermission(conn, aether.interrupt({ agent: agent.id })).refusal;
   const ended = endedReason(agent);
   const busy = run.status.state === "busy";
-  const local = parseLine(draft.text, commands)?.command.run != null;
-  const blocked = local ? null : ended === null ? refusal : "This agent takes no more messages";
+  /** Why `line` cannot go now, or null; an app command runs even where the agent takes nothing. */
+  const blockedFor = (line: string): string | null => {
+    if (parseLine(line, commands)?.command.run != null) return null;
+    return ended === null ? refusal : "This agent takes no more messages";
+  };
+  const blocked = blockedFor(draft.text);
   const canSend = draft.text.trim() !== "" && blocked === null && !busy;
+  /** Every send, typed or picked from the menu, passes the same gate as the Send button. */
+  const send = (line: string) => {
+    invariant(line.trim() !== "", "only a non-empty line is sent");
+    if (busy || blockedFor(line) !== null) return;
+    void submit(line, draft.text);
+  };
   const choose = (option: MenuOption) => {
     const chosen = pick(option);
     if (chosen.kind === "complete") draft.set(chosen.text);
-    else void submit(chosen.line, draft.text);
+    else send(chosen.line);
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.nativeEvent.isComposing) return;
     const handled = menu.open ? menuKey(event, menu, choose, (option) => draft.set(completion(option))) : event.key === "Enter" && !event.shiftKey;
     if (!handled) return;
     event.preventDefault();
-    if (!menu.open && canSend) void submit(draft.text);
+    if (!menu.open && canSend) send(draft.text);
   };
   return (
-    <form className="cmp" aria-label={`Message ${agent.name}`} onSubmit={(event) => { event.preventDefault(); if (canSend) void submit(draft.text); }}>
+    <form className="cmp" aria-label={`Message ${agent.name}`} onSubmit={(event) => { event.preventDefault(); if (canSend) send(draft.text); }}>
       {ended === null ? null : <EndedNotice conn={conn} agent={agent} />}
       <div className="cmp-box" data-busy={busy || undefined}>
         {menu.open ? <SlashMenu id={listbox} menu={menu} onPick={choose} /> : null}

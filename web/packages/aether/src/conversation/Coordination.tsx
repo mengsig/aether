@@ -22,7 +22,10 @@ interface Card {
   readonly tone: "accent" | "success" | "danger" | "info" | "neutral";
 }
 
-export const CARD_KINDS: ReadonlySet<RowKind> = new Set<RowKind>(["spawned", "sent", "waiting", "question", "user_message", "user_task", "child_finished", "child_failed", "approval", "notice_status"]);
+const CARD_KINDS: ReadonlySet<RowKind> = new Set<RowKind>(["spawned", "sent", "waiting", "question", "user_message", "user_task", "child_finished", "child_failed", "approval", "notice_status"]);
+
+/** Whether a part draws as a card; a task's attached image draws as itself beside the task card. */
+export const isCard = (view: ViewPart): boolean => CARD_KINDS.has(view.kind) && view.part.kind !== "attachment";
 
 const AGENT_ID = /\bagt_[0-9A-Za-z]+\b/;
 
@@ -82,7 +85,7 @@ function cardOf(view: ViewPart, directory: Directory, parent: string | null): Ca
 }
 
 export function CoordinationCard({ view, directory, parent }: { readonly view: ViewPart; readonly directory: Directory; readonly parent: string | null }) {
-  invariant(CARD_KINDS.has(view.kind), `${view.kind} is drawn as a card`);
+  invariant(isCard(view), `${view.kind} ${view.part.kind} is drawn as a card`);
   const card = cardOf(view, directory, parent);
   const compact = view.outcome === "compact";
   return (

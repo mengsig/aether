@@ -53,9 +53,10 @@ function Pinned({ conn, agent }: { readonly conn: ConnId; readonly agent: aether
 
 function useChatCommands(conn: ConnId, agent: aether.Agent, view: ViewModeState) {
   const modes = useMemo(() => view.modes.map((m) => ({ name: m.name, label: modeLabel(m), description: m.description ?? "" })), [view.modes]);
+  const unavailable = view.problem === null ? "View modes are still loading" : `View modes unavailable: ${view.problem}`;
   return useMemo(
-    () => mergeCommands(modeCommands(modes, view.choose, view.toggle), hostCommands(agent), clientCommands(conn, agent)),
-    [modes, view.choose, view.toggle, agent, conn],
+    () => mergeCommands(modeCommands(modes, view.choose, view.toggle, unavailable), hostCommands(agent), clientCommands(conn, agent)),
+    [modes, view.choose, view.toggle, unavailable, agent, conn],
   );
 }
 

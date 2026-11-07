@@ -4,7 +4,7 @@
 import { Badge } from "@aether-ui/ui";
 import { memo, type ReactNode } from "react";
 import { invariant } from "../fleet/invariant.ts";
-import { CARD_KINDS, CoordinationCard, FailedLine, type Directory } from "./Coordination.tsx";
+import { CoordinationCard, FailedLine, isCard, type Directory } from "./Coordination.tsx";
 import { formatBytes, formatCost, formatDuration, formatTime, formatTokens } from "./format.ts";
 import { Markdown } from "./markdown.tsx";
 import type { ConversationRow, InvocationMeta, Part, ToolResultView } from "./rows.ts";
@@ -90,7 +90,7 @@ export interface MessageContext {
 
 function ViewPartView({ view, live, context }: { readonly view: ViewPart; readonly live: boolean; readonly context: MessageContext }): ReactNode {
   if (view.outcome === "line") return <FailedLine part={view.part} />;
-  if (CARD_KINDS.has(view.kind)) return <CoordinationCard view={view} directory={context.directory} parent={context.parent} />;
+  if (isCard(view)) return <CoordinationCard view={view} directory={context.directory} parent={context.parent} />;
   return <PartView part={view.part} live={live} />;
 }
 
