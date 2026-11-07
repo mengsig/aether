@@ -461,6 +461,7 @@ async fn invalid_configuration_does_not_change_an_older_store() {
     for (contents, key) in [
         ("bad_startup_key = true\n", "bad_startup_key"),
         ("[remote]\npush_hosts = ['not a host']\n", "push_hosts"),
+        ("[noesis]\nenabled = 'yes'\n", "noesis.enabled"),
         (
             "[scheduler]\nrun_hard_stop_tokens = 0\n",
             "run_hard_stop_tokens",

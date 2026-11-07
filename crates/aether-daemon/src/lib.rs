@@ -229,6 +229,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         ),
     }
     let models = Arc::new(Models::load(config.config_dir.clone())?);
+    aether_noesis::settings::NoesisSettings::from_table(&models.config().noesis)?;
     // Resolved before anything is opened, so a listener the operator asked
     // for and cannot have fails the start rather than the first connection.
     let tcp = match config.tcp.clone() {
