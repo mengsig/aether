@@ -36,10 +36,10 @@ already_held() {
 queue_lock() { exec 8>"$dir/queue.lock"; flock 8; }
 queue_unlock() { flock -u 8; exec 8>&-; }
 prune_queue() {
-    for ticket in "$dir"/queue/*; do
-        [ -f "$ticket" ] || continue
-        IFS=' ' read -r pid start < "$ticket" || continue
-        if ! process_alive "$pid" "$start"; then rm -f "$ticket"; fi
+    for prune_file in "$dir"/queue/*; do
+        [ -f "$prune_file" ] || continue
+        IFS=' ' read -r pid start since < "$prune_file" || continue
+        if ! process_alive "$pid" "$start"; then rm -f "$prune_file"; fi
     done
 }
 
@@ -72,7 +72,7 @@ show_status() {
         file="$dir/slot-$i.lock"
         exec 9>>"$file"
         if flock -n 9; then printf 'slot %s: free\n' "$i"; flock -u 9
-        else printf 'slot %s: ' "$i"; holder_description "$file"; printf '\n'; fi
+        else printf 'slot %s holder: ' "$i"; holder_description "$file"; printf '\n'; fi
         exec 9>&-
         i=$((i + 1))
     done
