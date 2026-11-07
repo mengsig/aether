@@ -117,7 +117,9 @@ export function Gates({ gates }: { readonly gates: readonly archon.OperatorGate[
         const look = GATE_LOOK[decision] ?? { tone: "neutral", label: decision };
         return (
           <li key={`${gate.run}-${gate.stage_id}-${gate.attempt}`} className="item-gate">
-            <span><strong>{gate.subject === "proposal" ? "Proposal" : "Report"} · {gate.stage_id}</strong> {gate.summary}</span>
+            <div className="item-gate-content"><strong>{gate.subject === "proposal" ? "Proposal" : "Report"} · {gate.stage_id}</strong>
+              {gate.summary.length > 180 ? <details><summary>{gate.summary.slice(0, 180)}…</summary><p>{gate.summary}</p></details> : <p>{gate.summary}</p>}
+            </div>
             <Badge tone={look.tone}>{look.label}</Badge>
           </li>
         );
