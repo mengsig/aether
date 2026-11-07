@@ -276,6 +276,14 @@ looks like a boundary and is not one.
   leading `text` JSON protocol; a nonstandard prefix or field order falls
   back to complete-reply validation. Engines that only report completed
   messages cannot provide token-by-token updates.
+- A Noesis lesson started before the session history was kept (store N3)
+  lists only its current agent. A lesson handed off to the Teacher before the
+  upgrade therefore no longer shows the Prober's conversation. The client
+  still hides each such agent's first input (the opening or the hand-off) from
+  the learner's side.
+- "Learn from this" finds the session a source started by the id the client
+  remembered. With nothing remembered, it falls back to a matching goal among
+  the sessions in the first page of the list, 200 sessions.
 
 ## Platforms
 

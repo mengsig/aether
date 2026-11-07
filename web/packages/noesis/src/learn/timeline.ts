@@ -31,8 +31,18 @@ export function sessionAgents(session: aether.NoesisSession): readonly aether.Se
   return [...agents, { agent: session.agent, role: session.mode === "practice" ? "practitioner" : "teacher" }];
 }
 
+/**
+ * The seqs Noesis wrote to an agent. A session from before the history was kept names none; its
+ * agent's first input, before any reply, is still Noesis's own (the opening or the hand-off).
+ */
+export function internalSeqs(agent: aether.SessionAgent, entries: readonly aether.TranscriptEntry[]): ReadonlySet<number> {
+  if (agent.internal !== undefined && agent.internal.length > 0) return new Set(agent.internal);
+  const first = entries.reduce<aether.TranscriptEntry | undefined>((low, entry) => (low === undefined || entry.seq < low.seq ? entry : low), undefined);
+  return first?.message.role === "user" ? new Set([first.seq]) : new Set();
+}
+
 function messageItems({ agent, entries }: AgentTranscript): TimelineItem[] {
-  const internal = new Set(agent.internal ?? []);
+  const internal = internalSeqs(agent, entries);
   const items: TimelineItem[] = [];
   for (const entry of entries) {
     const role = entry.message.role === "assistant" ? "teacher" : entry.message.role === "user" ? "learner" : null;

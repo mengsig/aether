@@ -156,6 +156,20 @@ describe("learning again from the same evidence", () => {
     expect(byText($(document, "dialog[open]"), "button", "Continue where you left off")).toBeDefined();
   });
 
+  test("a remembered session past the first page of the list is still found and resumed", async () => {
+    const filler = Array.from({ length: 200 }, (_, index) => earlier(`ns_old_${index}`, `An older goal ${index}`));
+    const h0 = await open("#/learn", [...filler, earlier("ns_late", "A goal on a later page")]);
+    expect(h0.h.app.store.get().aether[CONN]?.learn.sessions.ns_late, "the list read stops at its page").toBeUndefined();
+    await h0.h.app.host.storage.set(SESSIONS_KEY, { [sourceKey(PR)]: "ns_late" });
+    location.hash = understandHref(PR);
+    dispatchEvent(new HashChangeEvent("hashchange"));
+    await h0.h.settle();
+    const sheet = $(document, "dialog[open]");
+    expect($(sheet, "[data-testid=understand-resume]").textContent).toContain("A goal on a later page");
+    await click(h0.h, byText(sheet, "button", "Continue where you left off"));
+    expect(location.hash).toBe("#/learn/sessions/ns_late");
+  });
+
   test("a remembered session that no longer exists is not offered", async () => {
     const { h } = await open("#/learn");
     await h.app.host.storage.set(SESSIONS_KEY, { [sourceKey(PR)]: "ns_deleted" });

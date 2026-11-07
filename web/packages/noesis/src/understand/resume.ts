@@ -53,11 +53,15 @@ export function useResumable(conn: string, request: UnderstandRequest, goal: str
     );
     return () => { live = false; };
   }, [app, key]);
+  // The remembered session is read by id: the list holds only a page and may not include it.
+  const byId = useNoesisRead(conn, remembered.id === undefined ? null : { kind: "session", id: remembered.id });
   const listed = learn.reads.sessions !== undefined;
   const sessions = useMemo(() => Object.values(learn.sessions), [learn.sessions]);
   if (remembered.error !== null) return { state: "unknown", reason: remembered.error };
   if (read.error !== null && !listed) return { state: "unknown", reason: read.error };
   if (!listed || !remembered.loaded) return { state: "checking" };
+  // A failed id read means the session is gone (or unreadable), so the goal match decides.
+  if (remembered.id !== undefined && learn.sessions[remembered.id] === undefined && byId.error === null) return { state: "checking" };
   const session = findResumable(sessions, remembered.id, goal);
   return session === null ? { state: "none" } : { state: "found", session };
 }

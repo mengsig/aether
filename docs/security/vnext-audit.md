@@ -322,7 +322,11 @@ headless security check"), from `make web`.
   ("the model can still restate an answer in its visible text; the prompts
   forbid it and parity test T5 checks it"). *Follow-up for the seal owner:*
   apply the turn's `Sealer` to `Text` blocks in `AetherEngine::record_reply`
-  before commit. The loop already knows the secrets there.
+  before commit. The loop already knows the secrets there. Text deltas, on the
+  direct API path and now on subscription engines too, stream that same visible
+  text before the turn's `Sealer` runs. Since the transcript holds the text
+  verbatim either way, streaming exposes nothing the transcript does not; the
+  follow-up must seal both.
 - **H3-L8 (Noesis).** An approval's `argument` is computed from the raw input,
   so a sealed-named MCP tool with a remembered rule would record it unsealed
   (`crates/aether-runtime/src/turn/tools.rs`). This is contrived, because

@@ -255,7 +255,7 @@ export class FauxNoesis {
     switch (cmd) {
       case "noesis_status": return OK("noesis_status", this.status);
       case "noesis_configure": return this.configure(command.patch as aether.NoesisSettingsPatch);
-      case "noesis_list_sessions": return OK("noesis_sessions", { sessions: [...this.sessions.values()] });
+      case "noesis_list_sessions": return OK("noesis_sessions", { sessions: [...this.sessions.values()].slice(0, typeof command.limit === "number" ? command.limit : undefined) });
       case "noesis_get_session": {
         const session = this.sessions.get(String(command.session));
         return session ? OK("noesis_session", this.history.read(session)) : ERR("not_found", `session \`${String(command.session)}\``);
