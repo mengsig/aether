@@ -40,7 +40,7 @@ function useSubmit(conn: ConnId, agent: aether.Agent, commands: readonly SlashCo
       }
       const held = heldUnknown(line, commands, unknownHeld);
       if (held !== null) throw new DraftError(held);
-      const command = sendCommand(agent.id, line, false);
+      const command = sendCommand(agent.id, line, false, line.trimStart().startsWith("/"));
       setProblem(null);
       if (await run.send(command, "Sent")) draft.delivered(typed);
     } catch (error) {

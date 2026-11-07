@@ -291,6 +291,16 @@ describe("the slash menu", () => {
       expect(sentMessages(h), "a path is not a command").toEqual([{ to: running.id, content: "/home/me/notes.md is ready" }]);
     });
 
+  test("a / line reaches the agent byte for byte, while a message is trimmed", async () => {
+    const { h, input } = await open(running, {}, modeCommands([{ name: "standard", label: "Standard", description: "" }], vi.fn(), vi.fn(), "unused"), null);
+    await write(h, input, "/custom  two  spaces \n  ");
+    await press(h, input, "Escape");
+    await press(h, input, "Enter");
+    await write(h, input, "  plain words \n");
+    await press(h, input, "Enter");
+    expect(sentMessages(h)).toEqual([{ to: running.id, content: "/custom  two  spaces \n  " }, { to: running.id, content: "plain words" }]);
+  });
+
   test("with the catalog read, an unknown /name goes to the agent as typed", async () => {
     const { h, input } = await open(running, {}, modeCommands([{ name: "standard", label: "Standard", description: "" }], vi.fn(), vi.fn(), "unused"), null);
     await write(h, input, "/brief");
