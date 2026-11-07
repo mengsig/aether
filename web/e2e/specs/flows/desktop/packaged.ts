@@ -55,7 +55,6 @@ async function until<T>(read: () => T | undefined, what: string, alive: Spawned)
 /** Starts a headless sway whose Wayland socket will appear in `runtime`. */
 async function spawnCompositor(root: string, runtime: string, env: NodeJS.ProcessEnv): Promise<Spawned> {
   assert.ok(runtime.length <= MAX_RUNTIME_DIR, `the compositor's runtime dir is short enough for its sockets: ${runtime}`);
-  await mkdir(runtime, { mode: 0o700 });
   const config = path.join(root, "sway.conf");
   await writeFile(config, SWAY_CONFIG);
   const swayEnv: NodeJS.ProcessEnv = { ...env, XDG_RUNTIME_DIR: runtime, WLR_BACKENDS: "headless", WLR_RENDERER: "pixman", WLR_LIBINPUT_NO_DEVICES: "1" };
@@ -104,16 +103,25 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
   delete env.WAYLAND_DISPLAY;
   delete env.SWAYSOCK;
   let sway: Spawned | undefined;
+  let bus: Spawned | undefined;
   let app: Spawned | undefined;
   let browser: Browser | undefined;
   const close = () => runAll([
     async () => browser?.close(),
     async () => app !== undefined && stopGroup(app),
     async () => sway !== undefined && stopGroup(sway),
+    async () => bus !== undefined && stopGroup(bus),
     () => rm(root, { recursive: true, force: true, maxRetries: 3 }),
   ]);
   try {
     const runtime = path.join(root, "run");
+    await mkdir(runtime, { mode: 0o700 });
+    const socket = path.join(runtime, "bus");
+    const config = path.join(root, "dbus.conf");
+    await writeFile(config, `<busconfig><type>session</type><listen>unix:path=${socket}</listen><policy context="default"><allow send_destination="*"/><allow eavesdrop="true"/><allow own="*"/></policy></busconfig>`);
+    bus = spawnLogged(onPath("dbus-daemon"), ["--nofork", `--config-file=${config}`], { env, cwd: root, log: path.join(root, "dbus.log") });
+    await until(() => existsSync(socket) ? true : undefined, "the private D-Bus socket", bus);
+    env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${socket}`;
     sway = await spawnCompositor(root, runtime, env);
     const display = await waylandSocket(runtime, sway);
     const appEnv = { ...env, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display };
