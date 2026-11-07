@@ -11,6 +11,7 @@ import { aetherConn, route } from "./state.ts";
 let running: PrivateStack | undefined;
 let app: { window: Page; waylandDisplay: string; close(): Promise<void> } | undefined;
 let conn = "";
+let agent = "";
 
 function page(): Page {
   assert.ok(app, "the packaged desktop is running");
@@ -33,7 +34,9 @@ test.beforeAll(async () => {
   assert.ok(binary, "E2E_DESKTOP_PACKAGED names the built application");
   running = await startPrivateStack();
   const stack = running.stack;
-  await stack.aether.request({ cmd: "create_agent", name: "Memory workspace", role: "worker", model: { provider: "mock", model: "mock-1" }, scope: { workspace_root: stack.layout.aether.work } });
+  const created = await stack.aether.request({ cmd: "create_agent", name: "Memory workspace", role: "worker", model: { provider: "mock", model: "mock-1" }, scope: { workspace_root: stack.layout.aether.work } });
+  agent = String(created.data.id);
+  assert.match(agent, /^agt_/);
   conn = await aetherConn(stack);
   app = await launchPackaged(binary, { aether: stack.layout.aether.socket, archon: stack.layout.archon.socket });
   await page().setViewportSize({ width: 1440, height: 900 });
@@ -77,6 +80,16 @@ test("repository creation, filtering and store counts agree", async () => {
   await expect(page().getByText("The private repository keeps its release notes here.")).toBeVisible();
   await expect(connection(page(), "aether")).toHaveAttribute("data-state", "ready");
   await screenshot("ux-018-021-repository");
+  await route(page(), "#/inbox");
+  await route(page(), `#/memory/${encodeURIComponent(conn)}`);
+  await page().getByRole("button", { name: "Create memory" }).click();
+  await sheet.getByLabel("Memory text").fill("The agent keeps this separate fact.");
+  await sheet.getByRole("tab", { name: "Agent" }).click();
+  await sheet.getByLabel("Agent", { exact: true }).selectOption(agent);
+  await sheet.getByRole("button", { name: "Save memory" }).click();
+  await expect(sheet).toHaveCount(0);
+  await expect(count).toHaveText("2");
+  await screenshot("ux-021-counts");
 });
 
 test("a refused memory shows its reason and can be corrected or discarded", async () => {
