@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
 import path from "node:path";
-import { enqueueItem } from "../../../harness/agents.ts";
-import { DEFAULT_REPLY } from "../../../harness/engine.ts";
 import { expect, test, type Page } from "../../../harness/fixtures.ts";
 import { connection } from "../../../harness/pair.ts";
 import { fixtureRepository } from "../gh-stub.ts";
@@ -49,10 +47,12 @@ test("completed ask run and a two-member initiative render from daemon state", a
   assert.ok(running && app, "the private stack and desktop are running");
   const { stack } = running;
   const page = app.window;
-  stack.engine.setScript((request) => request.lastUserText.includes(TITLE)
-    ? { name: "complete_task", arguments: { summary: SUMMARY, structured: { answer: "Ready", evidence: ["First", "Second"] } } }
-    : DEFAULT_REPLY);
-  const item = await enqueueItem(stack, TITLE);
+  stack.engine.setScript(() => ({ name: "complete_task", arguments: { summary: SUMMARY, structured: { answer: "Ready", evidence: ["First", "Second"] } } }));
+  const plan = { answer: [{ model: "mock/mock-1", effort: "low" }] };
+  const queued = await stack.archon.request({ cmd: "enqueue", title: TITLE, brief: "Answer the request.", pipeline: "ask", model_plan: plan });
+  assert.equal(queued.reply, "item");
+  const item = String(queued.data.id);
+  assert.match(item, /^qi_/);
   await expect.poll(() => itemState(stack, item), { timeout: 120_000, message: "the ask item succeeds" }).toBe("succeeded");
   const detail = await stack.archon.request({ cmd: "get_item", item });
   assert.equal(detail.reply, "item_detail");
@@ -71,7 +71,8 @@ test("completed ask run and a two-member initiative render from daemon state", a
   await setPaused(stack, true);
   const added = await stack.archon.request({ cmd: "repo_add", path: await fixtureRepository(stack.layout), name: "journey-repo" });
   assert.notEqual(added.reply, "error");
-  const members = ["First", "Second"].map((name) => ({ repo: "journey-repo", title: `${name} member`, brief: `${name} member work.` }));
+  const members = ["First", "Second"].map((name, index) => ({ repo: "journey-repo", title: `${name} member`, brief: `${name} member work.`,
+    pipeline: "ask", model_plan: plan, after: index === 0 ? [] : [0] }));
   const made = await stack.archon.request({ cmd: "enqueue_initiative", title: INITIATIVE, contract: CONTRACT, members });
   assert.equal(made.reply, "initiative");
   const id = String((made.data.initiative as { id?: unknown } | undefined)?.id ?? made.data.id);
@@ -81,5 +82,15 @@ test("completed ask run and a two-member initiative render from daemon state", a
   await expect(page.getByRole("region", { name: "Contract" })).toContainText(CONTRACT);
   await expect(page.getByRole("region", { name: "Members" }).locator(".dag-count")).toHaveText("2");
   await shots(page, "two-member-initiative");
+  await setPaused(stack, false);
+  await expect.poll(async () => {
+    const result = await stack.archon.request({ cmd: "get_initiative", initiative: id });
+    const rows = result.data.members as Array<{ state: { state: string } }>;
+    return rows.filter((row) => row.state.state === "succeeded").length;
+  }, { timeout: 120_000, message: "both initiative members succeed" }).toBe(2);
+  await route(page, "#/archon/graph");
+  await expect(page.getByRole("link", { name: new RegExp(`${INITIATIVE}.*2 of 2 done`) })).toBeVisible();
+  await page.getByRole("button", { name: "Show completed" }).click();
+  await shots(page, "completed-initiative-graph");
   expect(errors, "the desktop threw no page errors").toEqual([]);
 });
