@@ -10,7 +10,7 @@ export { Store, dropConnection, INITIAL_STATE, replaces } from "./store.ts";
 export type { State, AetherConnState, ArchonConnState, ArchonItem, ArchonGraph, ArchonPlan, Stamped, StreamState, StreamTool, TranscriptState, Submission, Report, ReportTone, FrameScheduler } from "./store.ts";
 export { applyRead, failRead, markRequested, readInFlight, readReplaces, settleSubmission, stampOf, type ReadEntry } from "./reads.ts";
 export { computeCapabilities } from "./capabilities.ts";
-export { aetherAccess, archonAccess, checkAllowed, isKeyed, withIdempotencyKey, type Access } from "./commands.ts";
+export { AETHER_HOST_READS, aetherAccess, archonAccess, checkAllowed, isKeyed, withIdempotencyKey, type Access } from "./commands.ts";
 export { DaemonError, RefusedError, codeOf } from "./errors.ts";
 export { registerRoutes, registerEntityAction, registry, Registry } from "./registry.ts";
 export { matchRoute, matchPattern, routeHref, navigate, currentHash, type RouteMatch } from "./router.ts";

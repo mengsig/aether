@@ -34,6 +34,9 @@ export const AETHER_HOST_ONLY = words(`storage_gc shutdown engine_tool engine_to
   get_remote configure_remote start_pairing get_pairing confirm_pairing cancel_pairing revoke_device update_device
   memory_retrieval_explain consolidate_memories memory_export memory_import`);
 
+/** Host-only reads the desktop bridge accepts through request on a local Aether connection. */
+export const AETHER_HOST_READS: ReadonlySet<string> = new Set(["get_remote"]);
+
 export const AETHER_DEVICE_SELF = words("subscribe_push unsubscribe_push test_push");
 
 /** Aether commands that accept an `idempotency_key` (generated from the schema; checked by a test). */

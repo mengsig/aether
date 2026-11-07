@@ -1,6 +1,7 @@
-// The class allowlist of ARCHITECTURE.md §c: which commands `request` and `subscribe` pass
-// through. Aether `observe` and `operate` pass; Archon `Read` and `Change` pass where the
-// remote allowlist lets a device send them. Everything else, `shutdown` first, is refused.
+// The local bridge passes observe/operate commands and explicitly listed request-only host reads.
+// Other host commands need privileged actions; shutdown never passes.
+
+import assert from "node:assert/strict";
 
 export type DaemonKind = "aether" | "archon";
 
@@ -41,6 +42,9 @@ export const AETHER_REMOTE_ADMIN: ReadonlySet<string> = new Set([
   "cancel_pairing", "configure_remote", "confirm_pairing", "get_pairing", "get_remote", "revoke_device",
   "start_pairing", "update_device",
 ]);
+
+/** Host status reads allowed only as requests on the local Aether connection. */
+export const AETHER_HOST_READS: ReadonlySet<string> = new Set(["get_remote"]);
 
 /** A paired device acting on its own record: never the desktop's to send. */
 export const AETHER_DEVICE_SELF: ReadonlySet<string> = new Set(["subscribe_push", "test_push", "unsubscribe_push"]);
@@ -136,12 +140,13 @@ export function aetherClass(frame: Frame, depth = 0): AetherClass | undefined {
   return undefined;
 }
 
-/** Why `frame` may not pass through `request`, or undefined when it may. */
-export function passThroughRefusal(kind: DaemonKind, frame: Frame, archonProtocol?: number): string | undefined {
+/** Why a local frame may not pass through request/subscribe, or undefined when it may. */
+export function passThroughRefusal(kind: DaemonKind, frame: Frame, archonProtocol?: number, method: "request" | "subscribe" = "request"): string | undefined {
   const cmd = frame.cmd;
   if (typeof cmd !== "string") return "A frame names its command in cmd";
   if (cmd === "shutdown") return "shutdown is never sent from the desktop app";
   if (kind === "archon") return archonRefusal(cmd, frame, archonProtocol);
+  if (AETHER_HOST_READS.has(cmd)) return hostReadRefusal(frame, method);
   const access = aetherClass(frame);
   if (access === undefined) return `Unknown command ${cmd}`;
   if (access !== "observe" && access !== "operate") return `${cmd} is ${access} and needs a privileged action`;
@@ -153,6 +158,17 @@ export function passThroughRefusal(kind: DaemonKind, frame: Frame, archonProtoco
   // The schema does not check a replayed command, and main must look its rule up.
   if (run.cmd === "revoke_approval_rule" && (typeof run.id !== "string" || run.id === "")) {
     return "revoke_approval_rule names its rule in id";
+  }
+  return undefined;
+}
+
+function hostReadRefusal(frame: Frame, method: "request" | "subscribe"): string | undefined {
+  assert.equal(frame.cmd, "get_remote", "every host read needs an explicit argument check");
+  assert.equal(aetherClass(frame), "remote_admin", "the host read retains its daemon access class");
+  if (method !== "request") return "get_remote is a host read allowed only through request";
+  if (!Number.isSafeInteger(frame.req) || (frame.req as number) < 1) return "get_remote requires a positive integer req";
+  if (Object.keys(frame).length !== 2 || !Object.hasOwn(frame, "cmd") || !Object.hasOwn(frame, "req")) {
+    return "get_remote accepts only cmd and req";
   }
   return undefined;
 }

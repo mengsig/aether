@@ -1,5 +1,6 @@
 import type { ConnectionInfo } from "@aether-ui/protocol";
 import { describe, expect, it } from "vitest";
+import { AETHER_HOST_READS } from "./commands.ts";
 import { permissionFor, readPermissionFor } from "./react.ts";
 import { INITIAL_STATE, type State } from "./store.ts";
 
@@ -27,10 +28,25 @@ describe("permissionFor", () => {
 });
 
 describe("readPermissionFor", () => {
-  it("refuses a host-only read even on the host, since the desktop bridge does not pass it through", () => {
-    const host = withConn(info("local"));
-    expect(readPermissionFor(host, "aether:a", { cmd: "get_remote" })).toEqual({ access: "host_only", refusal: "The desktop does not pass this host-only read to the daemon yet" });
-    expect(readPermissionFor(host, "aether:a", { cmd: "list_devices", include_revoked: true }).refusal).not.toBeNull();
+  it("allows exactly the desktop's host read on a local Aether connection", () => {
+    const host = { ...withConn(info("local")), capabilities: { "host.electron": true } };
+    expect([...AETHER_HOST_READS]).toEqual(["get_remote"]);
+    expect(readPermissionFor(host, "aether:a", { cmd: "get_remote" })).toEqual({ access: "host_only", refusal: null });
+    for (const command of [{ cmd: "list_devices", include_revoked: true }, { cmd: "configure_remote" }, { cmd: "get_pairing" }, { cmd: "start_pairing" }]) {
+      expect(readPermissionFor(host, "aether:a", command).refusal).not.toBeNull();
+    }
+  });
+
+  it("refuses the host read without desktop capabilities, local standing or a ready connection", () => {
+    expect(readPermissionFor(withConn(info("local")), "aether:a", { cmd: "get_remote" }).refusal).not.toBeNull();
+    for (const standing of ["operator", "observer", undefined] as const) {
+      const state = { ...withConn(info(standing)), capabilities: { "host.electron": true } };
+      expect(readPermissionFor(state, "aether:a", { cmd: "get_remote" }).refusal).not.toBeNull();
+    }
+    const offline = { ...withConn(info("local", "backoff")), capabilities: { "host.electron": true } };
+    expect(readPermissionFor(offline, "aether:a", { cmd: "get_remote" }).refusal).toBe("studio is not connected");
+    const archon = { ...withConn({ ...info("local"), daemon: "archon" as const }), capabilities: { "host.electron": true } };
+    expect(readPermissionFor(archon, "aether:a", { cmd: "get_remote" }).refusal).not.toBeNull();
   });
 
   it("leaves ordinary reads and earlier refusals as they were", () => {

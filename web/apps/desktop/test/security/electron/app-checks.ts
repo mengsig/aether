@@ -10,6 +10,7 @@ import { senderOf } from "../../../src/main/host.ts";
 import { WEB_DIST } from "../../../src/main/paths.ts";
 import { bundleFiles } from "../bundle-files.ts";
 import { effectivePreferences, type Context } from "./context.ts";
+import { REMOTE_VIEW } from "./fixtures.ts";
 
 const MEMORY = "mem_01JAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -108,14 +109,21 @@ export async function bridgeChecks(ctx: Context): Promise<void> {
       `return desktop.subscribe(testConn, { cmd: "shutdown", req: 9003 }, () => {});`,
       `return desktop.privileged({ kind: "shutdown", conn: testConn });`,
       `return desktop.request(testConn, { cmd: "accept_memory", id: "${MEMORY}", req: 9004 });`,
-      `return desktop.request(testConn, { cmd: "get_remote", req: 9005 });`,
+      `return desktop.subscribe(testConn, { cmd: "get_remote", req: 9005 }, () => {});`,
+      `return desktop.request(testConn, { cmd: "configure_remote", expected_revision: 7, settings: { enabled: true }, req: 9008 });`,
+      `return desktop.request(testConn, { cmd: "start_pairing", role: "operator", req: 9009 });`,
       `return desktop.request(testConn, { cmd: "no_such_command", req: 9006 });`,
       `return desktop.request(testConn, { cmd: "send_message", id: "x", text: "a".repeat(1024 * 1024), req: 9007 });`,
     ]) {
       const result = await call(body);
       assert.ok(result.error !== undefined, `refused: ${body.slice(0, 80)}`);
     }
-    assert.ok(!ctx.daemon.lines.some((line) => /"req":900[2-7]\b/.test(line)), "nothing refused reached the daemon");
+    assert.ok(!ctx.daemon.lines.some((line) => /"req":900[2-9]\b/.test(line)), "nothing refused reached the daemon");
+  });
+  await ctx.check("bridge passes the local remote status read", async () => {
+    const result = await call(`return desktop.request(testConn, { cmd: "get_remote", req: 9010 });`);
+    assert.deepEqual(result.ok, { frame: "reply", id: 9010, result: { Ok: { reply: "remote", data: REMOTE_VIEW } } });
+    assert.ok(ctx.daemon.lines.some((line) => line.includes('"req":9010')));
   });
   await ctx.check("a refused link reads as main's own sentence", async () => {
     const result = await call(`return desktop.openExternal("file:///etc/passwd");`);

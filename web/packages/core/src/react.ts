@@ -5,7 +5,7 @@ import { createContext, createElement, useCallback, useContext, useEffect, useMe
 import type { App } from "./app.ts";
 import type { Json } from "./guards.ts";
 import { currentHash, matchRoute, onHashChange, type RouteMatch } from "./router.ts";
-import { aetherAccess, archonAccess, checkAllowed, type Access } from "./commands.ts";
+import { AETHER_HOST_READS, aetherAccess, archonAccess, checkAllowed, type Access } from "./commands.ts";
 import { errorText } from "./guards.ts";
 import type { ReadEntry } from "./reads.ts";
 import type { State, Store } from "./store.ts";
@@ -115,11 +115,13 @@ export function usePermission(conn: ConnId, command: CommandInput): Permission {
   return useSelector(select, samePermission);
 }
 
-/** Host-only reads cannot be sent as plain requests: a remote device is refused, and the desktop bridge passes only
- * observe and operate requests (host-only work goes through its privileged actions, which have no reads yet). */
+/** Only explicitly passed host reads may use the local desktop connection. */
 export function readPermissionFor(state: State, conn: ConnId, command: CommandInput): Permission {
   const permission = permissionFor(state, conn, command);
   if (permission.refusal !== null || permission.access !== "host_only") return permission;
+  const info = state.connections[conn];
+  if (info?.daemon === "aether" && info.standing === "local" && state.capabilities["host.electron"] === true
+    && AETHER_HOST_READS.has(String((command as Json).cmd))) return permission;
   return { ...permission, refusal: "The desktop does not pass this host-only read to the daemon yet" };
 }
 

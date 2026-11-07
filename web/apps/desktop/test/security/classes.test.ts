@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { REPO_ROOT } from "../../src/main/paths.ts";
-import { AETHER_BY_FIELD, ARCHON_PASS, aetherClass, passThroughRefusal } from "../../src/security/classes.ts";
+import { AETHER_BY_FIELD, AETHER_HOST_READS, AETHER_REMOTE_ADMIN, AETHER_HOST_ONLY, ARCHON_PASS, aetherClass, passThroughRefusal } from "../../src/security/classes.ts";
 import { SCHEMAS } from "./support.ts";
 
 const RUST_CLASSES: Readonly<Record<string, string>> = {
@@ -94,4 +94,28 @@ test("say and answer pass only on a welcome of protocol 24 or newer; the rest ke
   assert.equal(passThroughRefusal("archon", { cmd: "get_initiative", initiative: "in_1" }, 23), undefined);
   assert.equal(passThroughRefusal("archon", { cmd: "pause", scope: "global" }, 23), undefined);
   assert.equal(passThroughRefusal("archon", { cmd: "hello", client: "archon-web" }), undefined);
+});
+
+
+test("only the explicit host read passes a request, never a subscription or remote admin change", () => {
+  assert.deepEqual([...AETHER_HOST_READS], ["get_remote"]);
+  const frame = { cmd: "get_remote", req: 1 };
+  assert.equal(passThroughRefusal("aether", frame), undefined);
+  assert.match(passThroughRefusal("aether", frame, undefined, "subscribe") ?? "", /only through request/);
+  for (const cmd of [...AETHER_REMOTE_ADMIN, ...AETHER_HOST_ONLY]) {
+    if (cmd === "get_remote") continue;
+    assert.notEqual(passThroughRefusal("aether", { cmd, req: 1 }), undefined, cmd);
+    assert.notEqual(passThroughRefusal("aether", { cmd, req: 1 }, undefined, "subscribe"), undefined, cmd);
+  }
+  assert.notEqual(passThroughRefusal("archon", frame), undefined);
+});
+
+test("host reads accept only cmd and a positive safe request id", () => {
+  for (const req of [undefined, null, "1", 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.match(passThroughRefusal("aether", { cmd: "get_remote", req }) ?? "", /positive integer req/);
+  }
+  for (const extra of [{ settings: { enabled: true } }, { caller: "agt_1" }, { command: { cmd: "configure_remote" } }, { extra: null }]) {
+    assert.match(passThroughRefusal("aether", { cmd: "get_remote", req: 1, ...extra }) ?? "", /only cmd and req/);
+  }
+  assert.notEqual(passThroughRefusal("aether", { cmd: "resolve_submission", command: { cmd: "get_remote", req: 1 } }), undefined);
 });

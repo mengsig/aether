@@ -38,10 +38,10 @@ test("oversize frames and strings are refused", () => {
   refused("setPreference", ["layout.panels", { deep: "b".repeat(4097) }], /4 KiB/);
 });
 
-test("host-only, remote-admin and device-self commands never pass through request", () => {
+test("host-only changes, remote-admin changes and device-self commands never pass through request", () => {
   for (const frame of [
     { cmd: "accept_memory", id: MEMORY }, { cmd: "reject_memory", id: MEMORY, reason: "x" },
-    { cmd: "storage_gc" }, { cmd: "get_remote" }, { cmd: "start_pairing", role: "operator" },
+    { cmd: "storage_gc" }, { cmd: "configure_remote", expected_revision: 1, settings: { enabled: true } }, { cmd: "start_pairing", role: "operator" },
     { cmd: "revoke_device", id: "dev_x" }, { cmd: "test_push" },
     { cmd: "add_approval_rule", scope: { scope: "everywhere" }, tool: "bash", decision: "allow" },
     { cmd: "list_devices", include_revoked: true },
@@ -104,4 +104,20 @@ test("values JSON would change are refused, so what is confirmed is what is sent
   let deep: unknown = 1;
   for (let i = 0; i < 300; i += 1) deep = [deep];
   refused("request", [AETHER_CONN, { cmd: "status", req: 3, deep }], /nests too deeply/);
+});
+
+
+test("get_remote passes only as an exact request on an open local Aether connection", () => {
+  const frame = { cmd: "get_remote", req: 8 };
+  assert.deepEqual(check("request", [AETHER_CONN, frame]), { method: "request", conn: AETHER_CONN, frame, text: JSON.stringify(frame) });
+  refused("subscribe", [AETHER_CONN, frame], /only through request/);
+  refused("request", [ARCHON_CONN, frame], /get_remote|cmd/);
+  refused("request", ["remote:dev_1", frame], /request/);
+  refused("request", ["local:00000000-0000-4000-8000-00000000000f", frame], /not an open local/);
+  for (const req of [undefined, null, "8", 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    refused("request", [AETHER_CONN, { cmd: "get_remote", req }], /req/);
+  }
+  for (const extra of [{ settings: { enabled: true } }, { caller: "agt_1" }, { extra: null }]) {
+    refused("request", [AETHER_CONN, { ...frame, ...extra }], /only cmd and req|additional/);
+  }
 });

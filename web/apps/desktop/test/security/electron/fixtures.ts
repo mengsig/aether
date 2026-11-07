@@ -15,7 +15,7 @@ export interface FakeDaemon {
   close(): Promise<void>;
 }
 
-const REMOTE_VIEW = { revision: 7, settings: { enabled: false, pairing: true, public_origins: [], push: false } };
+export const REMOTE_VIEW = { address: "127.0.0.1:9843", revision: 7, settings: { enabled: false, pairing: true, public_origins: [], push: false } };
 
 function answer(frame: Record<string, unknown>): unknown {
   switch (frame.cmd) {

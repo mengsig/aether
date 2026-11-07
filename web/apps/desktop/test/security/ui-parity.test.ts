@@ -5,9 +5,9 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { archonAccess, checkAllowed } from "../../../../packages/core/src/commands.ts";
+import { AETHER_HOST_READS as UI_HOST_READS, aetherAccess, archonAccess, checkAllowed } from "../../../../packages/core/src/commands.ts";
 import { WEB_ROOT } from "../../src/main/paths.ts";
-import { ARCHON_APP_CLIENT, passThroughRefusal } from "../../src/security/classes.ts";
+import { AETHER_HOST_READS, ARCHON_APP_CLIENT, passThroughRefusal } from "../../src/security/classes.ts";
 import { SCHEMAS } from "./support.ts";
 
 const PACKAGES = path.join(WEB_ROOT, "packages");
@@ -109,5 +109,16 @@ test("every Archon command the web packages send passes the bridge", () => {
   }
   for (const [cmd, where] of sent) {
     assert.ok(bridgePasses(bare(cmd)), `${where} sends ${cmd}, which the desktop bridge refuses`);
+  }
+});
+
+
+test("the core host-read allowlist matches the bridge without widening the daemon class", () => {
+  assert.deepEqual([...UI_HOST_READS], [...AETHER_HOST_READS]);
+  assert.deepEqual([...AETHER_HOST_READS], ["get_remote"]);
+  for (const cmd of UI_HOST_READS) {
+    assert.equal(aetherAccess({ cmd }), "host_only");
+    assert.equal(passThroughRefusal("aether", { cmd, req: 1 }), undefined);
+    assert.notEqual(passThroughRefusal("aether", { cmd, req: 1 }, undefined, "subscribe"), undefined);
   }
 });

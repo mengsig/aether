@@ -129,7 +129,7 @@ export class Validator {
     }
     const invalid = this.schemas.frames[kind].check(frame);
     if (invalid !== undefined) throw new BridgeRefusal(invalid);
-    const refusal = passThroughRefusal(kind, frame, connections.protocolOf(conn));
+    const refusal = passThroughRefusal(kind, frame, connections.protocolOf(conn), method);
     if (refusal !== undefined) throw new BridgeRefusal(refusal);
     return { method, conn, frame, text };
   }
