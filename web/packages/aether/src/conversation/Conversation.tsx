@@ -2,16 +2,16 @@
 // through a measured virtual list. Opening it asks core to watch the agent, which subscribes to its
 // deltas and pages its transcript in with `get_transcript_page`; a delta gap rereads from the last entry.
 
-import { selectAgent, selectAgents, selectConnection, selectEvents, selectStreams, selectTranscript, useApp, useReread, useSelector, type State } from "@aether-ui/core";
+import { selectAgent, selectAgents, selectConnection, selectEvents, selectStreams, selectTranscript, useApp, useSelector, type State } from "@aether-ui/core";
 import { aether, type ConnId } from "@aether-ui/protocol";
 import { EmptyState, Skeleton } from "@aether-ui/ui";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import "./conversation.css";
 import { MeasuredList } from "./MeasuredList.tsx";
 import { estimateRow, MessageView, type MessageContext } from "./Message.tsx";
 import type { ModeRules } from "./modes.ts";
-import { deliveries, highestSeq, type Deliveries } from "./inbox.ts";
+import { seqRange, withDeliveries, type Deliveries } from "./inbox.ts";
 import { entryRows, invocationMeta, liveRows, pairTools, type ConversationRow } from "./rows.ts";
 import { taskRowKey, viewRows, type ViewRow } from "./view.ts";
 
@@ -44,23 +44,52 @@ function useWatchAgent(conn: ConnId, agent: string): void {
   }, [app, conn, agent, known]);
 }
 
-/** The highest inbox seq the loaded user turns name; a new delivery raises it. */
-function deliveredUpTo(entries: readonly aether.TranscriptEntry[]): number {
-  let highest = 0;
+/** The lowest and highest inbox seq the loaded user turns name, or null when they name none. */
+function deliveredSpan(entries: readonly aether.TranscriptEntry[]): readonly [low: number, high: number] | null {
+  let span: [number, number] | null = null;
   for (const entry of entries) {
     if (entry.message.role !== "user") continue;
-    for (const block of entry.message.content) if (block.type === "text") highest = Math.max(highest, highestSeq(block.text));
+    for (const block of entry.message.content) {
+      const range = block.type === "text" ? seqRange(block.text) : null;
+      if (range !== null) span = span === null ? [range[0], range[1]] : [Math.min(span[0], range[0]), Math.max(span[1], range[1])];
+    }
   }
-  return highest;
+  return span;
 }
 
-/** The agent's inbox records, reread once a turn names a delivery newer than the last read; null until read. */
+/** Records read for one agent from seq `from` on; a turn below `from` needs a fresh read. */
+interface InboxRead { readonly agent: string; readonly from: number; readonly records: Deliveries }
+
+/** The next `get_inbox` the loaded turns need: only seqs above what is read, or all from their lowest. */
+function nextRead(read: InboxRead | null, agent: string, span: readonly [number, number]) {
+  const kept = read !== null && read.agent === agent && read.from <= span[0] ? read : null;
+  if (kept !== null && kept.records.last >= span[1]) return null;
+  return { from: kept?.from ?? span[0], after: kept === null ? span[0] - 1 : kept.records.last, through: span[1], base: kept?.records ?? null };
+}
+
+/**
+ * The agent's inbox records for the deliveries its loaded turns name, null until read. Each read asks
+ * only for seqs it lacks, so a long chat never rereads its history; a failed read is reported, and the
+ * turns it would check stay verbatim.
+ */
 function useDeliveries(conn: ConnId, agent: string, entries: readonly aether.TranscriptEntry[]): Deliveries | null {
-  const upTo = useMemo(() => deliveredUpTo(entries), [entries]);
-  const read = useReread(conn, `conversation:inbox:${agent}`, aether.getInbox({ agent, after: 0 }), ["inbox"], upTo);
-  const items = read?.value;
-  invariant(items === undefined || items === null || Array.isArray(items), "get_inbox answers with a list of items");
-  return useMemo(() => deliveries((items ?? null) as readonly aether.InboxItem[] | null, agent), [items, agent]);
+  const app = useApp();
+  const ready = useSelector(useCallback((state: State) => state.connections[conn]?.state === "ready", [conn]));
+  const span = useMemo(() => deliveredSpan(entries), [entries]);
+  const [read, setRead] = useState<InboxRead | null>(null);
+  const need = useMemo(() => (span === null || !ready ? null : nextRead(read, agent, span)), [read, agent, span, ready]);
+  useEffect(() => {
+    if (need === null) return undefined;
+    let live = true;
+    app.send(conn, aether.getInbox({ agent, after: need.after }) as unknown as Record<string, unknown>).then((reply) => {
+      invariant(reply.reply === "inbox" && Array.isArray(reply.data), "get_inbox answers with a list of items");
+      if (live) setRead({ agent, from: need.from, records: withDeliveries(need.base, reply.data as aether.InboxItem[], agent, need.through) });
+    }).catch((error: unknown) => {
+      if (live) app.store.report(`Could not read ${agent}'s inbox, so its inbox turns are drawn as delivered: ${error instanceof Error ? error.message : String(error)}`, conn);
+    });
+    return () => { live = false; };
+  }, [app, conn, agent, need]);
+  return read !== null && read.agent === agent ? read.records : null;
 }
 
 /** Every row the screen shows, derived from the store: committed entries, then uncommitted live tails. */

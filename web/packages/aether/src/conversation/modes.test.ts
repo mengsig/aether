@@ -4,7 +4,8 @@
 import type { aether } from "@aether-ui/protocol";
 import { describe, expect, test } from "vitest";
 import { isCard } from "./Coordination.tsx";
-import { splitInbox } from "./inbox.ts";
+import { splitInbox, type Deliveries } from "./inbox.ts";
+import { approved, cancelled, childFailed, done, operator, peer, records, wake } from "./inbox.test-util.ts";
 import { applies, initialMode, outcome, ROW_KINDS, type ModeRules, type RowKind } from "./modes.ts";
 import { entryRows, pairTools, type ConversationRow } from "./rows.ts";
 import { partKind, taskRowKey, viewRows } from "./view.ts";
@@ -75,7 +76,8 @@ function transcript(): ConversationRow[] {
     { role: "assistant", content: [{ type: "compaction", content: "earlier" }] },
   ];
   const entries = messages.map((message, i): aether.TranscriptEntry => ({ seq: i + 1, at: ENTRY_AT, invocation: message.role === "assistant" ? `inv_${i}` : null, message }));
-  return entryRows(entries, pairTools(entries), new Map());
+  const read = records({ 4: peer("ready"), 5: done("tsk_1", "shipped"), 6: childFailed("agt_child"), 7: approved("apr_1"), 8: wake });
+  return entryRows(entries, pairTools(entries), new Map(), read);
 }
 
 describe("the desktop transcript's row kinds", () => {
@@ -127,7 +129,8 @@ describe("inbox turns", () => {
   const OPERATOR = "Message from user:local_socket#7: [authenticated operator instruction]";
 
   test("split into deliveries, keeping what a person typed as their own text", () => {
-    expect(splitInbox("[inbox 1] Task tsk_9 was cancelled\n[inbox 2] Message from agt_peer:\nready\n[inbox 3] " + OPERATOR + "\nship it")).toEqual([
+    const read = records({ 1: cancelled("tsk_9"), 2: peer("ready"), 3: operator("ship it") });
+    expect(splitInbox("[inbox 1] Task tsk_9 was cancelled\n[inbox 2] Message from agt_peer:\nready\n[inbox 3] " + OPERATOR + "\nship it", read)).toEqual([
       { kind: "failed", subject: "tsk_9", text: "" }, { kind: "message", from: "agt_peer", text: "ready" }, { kind: "operator", text: "ship it" },
     ]);
   });
@@ -148,17 +151,18 @@ describe("inbox turns", () => {
 
   // Quiet lists neither user_text nor coordination, so it hides whatever a mode may hide.
   const quiet = fixture.modes["quiet"] ?? null;
-  const turn = (text: string): ConversationRow[] => {
+  const turn = (text: string, read: Deliveries | null = null): ConversationRow[] => {
     const entry: aether.TranscriptEntry = { seq: 1, at: ENTRY_AT, invocation: null, message: user(text) };
-    return entryRows([entry], pairTools([entry]), new Map());
+    return entryRows([entry], pairTools([entry]), new Map(), read);
   };
   const drawn = (rows: readonly ConversationRow[], rules: ModeRules | null, taskRow: string | null = null) =>
     viewRows(rows, { rules, taskRow }, new WeakMap()).flatMap((v) => v.parts.map((p) => `${p.kind}:${p.outcome}`));
 
   test("a mode without user_text still draws the operator's delivery whole, quoted headers and all", () => {
     expect(quiet?.show.includes("user_text"), "quiet omits user_text").toBe(false);
-    expect(drawn(turn("[inbox 4] Message from agt_peer:\nhi\n[inbox 5] Woken: timer"), quiet), "the mode hides what it does not list").toEqual([]);
-    expect(drawn(turn(`[inbox 4] Message from agt_peer:\nhi\n[inbox 5] ${OPERATOR}\nship it`), quiet)).toEqual(["user_operator:full"]);
+    expect(drawn(turn("[inbox 4] Message from agt_peer:\nhi\n[inbox 5] Woken: timer", records({ 4: peer("hi"), 5: wake })), quiet), "the mode hides what it does not list").toEqual([]);
+    expect(drawn(turn(`[inbox 4] Message from agt_peer:\nhi\n[inbox 5] ${OPERATOR}\nship it`, records({ 4: peer("hi"), 5: operator("ship it") })), quiet)).toEqual(["user_operator:full"]);
+    expect(drawn(turn("[inbox 4] Message from agt_peer:\nhi\n[inbox 5] Woken: timer"), quiet), "unverified, the turn is drawn whole").toEqual(["user_operator:full"]);
     for (const rules of [null, quiet, fixture.modes["calm"] ?? null]) {
       const [view] = viewRows(turn(`[inbox 1] ${OPERATOR}\nhello\n[inbox 2] Task tsk_x completed: done`), { rules, taskRow: null }, new WeakMap());
       const part = view?.parts[0];

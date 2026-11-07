@@ -17,7 +17,7 @@ export type InboxSegment =
 /** The agent's inbox records (`get_inbox`) by seq: what each `[inbox n]` header really delivered. */
 export interface Deliveries {
   readonly bySeq: ReadonlyMap<number, aether.InboxKind>;
-  /** The highest seq read; a turn naming a higher one arrived after the read, so it cannot be checked. */
+  /** The highest seq the reads cover; a turn naming a higher one came after them, so it cannot be checked. */
   readonly last: number;
 }
 
@@ -44,8 +44,9 @@ function opened(header: string): InboxSegment {
   return { kind: "notice", text: line };
 }
 
-/** Whether `record` is what a header that opened `segment` (its whole line `line`) says it is. */
+/** Whether `record` is what a header that opened `segment` says it is; `line` is the header after `[inbox n] `. */
 function matches(segment: InboxSegment, line: string, record: aether.InboxKind): boolean {
+  invariant(!HEADER.test(line), "a header is matched by its text after the seq");
   switch (segment.kind) {
     case "operator": return record.kind === "message" && record.from.actor === "user" && line.endsWith(OPERATOR_MARKER);
     case "message": return record.kind === "message" && record.from.actor !== "user" && !line.endsWith(OPERATOR_MARKER);
@@ -76,41 +77,22 @@ interface Opened {
 /**
  * The deliveries in an inbox turn. With the agent's records, a header line opens a delivery only when
  * a record of that seq and kind exists and seqs ascend; any other header line is quoted text of the
- * delivery it sits in, and an operator's text must equal its record. Without records, or when any
- * boundary is in doubt, the turn stays one verbatim segment: no line of anyone's text is lost.
+ * delivery it sits in, and an operator's text must equal its record. Without records that cover the
+ * turn, or when any boundary is in doubt, it stays one verbatim segment: no line of anyone's text is lost.
  */
 export function splitInbox(text: string, records: Deliveries | null = null): readonly InboxSegment[] {
   const trimmed = text.trim();
   if (!isInboxText(text)) return trimmed === "" ? [] : [{ kind: "operator", text: trimmed }];
   const verbatim: readonly InboxSegment[] = [{ kind: "verbatim", text: trimmed }];
-  const known = records !== null && highestSeq(trimmed) <= records.last ? records.bySeq : null;
-  const parts = known === null ? splitByText(trimmed) : splitByRecords(trimmed, known);
-  if (parts === null) return verbatim;
-  if (known !== null && !parts.every((part) => operatorIntact(part.segment, known.get(part.seq)))) return verbatim;
+  if (records === null || (seqRange(trimmed)?.[1] ?? 0) > records.last) return verbatim;
+  const parts = splitByRecords(trimmed, records.bySeq);
+  if (parts === null || !parts.every((part) => operatorIntact(part.segment, records.bySeq.get(part.seq)))) return verbatim;
   const kept = parts.map((part) => ({ ...part.segment, text: part.segment.text.trim() })).filter((s) => s.kind !== "operator" || s.text !== "");
   invariant(kept.length <= parts.length, "splitting only drops empty operator turns");
   return kept;
 }
 
 const appended = (segment: InboxSegment, line: string): InboxSegment => ({ ...segment, text: segment.text === "" ? line : `${segment.text}\n${line}` });
-
-/** Without records: seqs must ascend and nothing may follow the operator's text, or it is in doubt. */
-function splitByText(text: string): Opened[] | null {
-  const segments: Opened[] = [];
-  for (const line of text.split("\n")) {
-    const header = HEADER.exec(line);
-    const last = segments.at(-1);
-    if (header?.[2] === undefined) {
-      invariant(last !== undefined, "inbox text starts with a header");
-      segments[segments.length - 1] = { seq: last.seq, segment: appended(last.segment, line) };
-      continue;
-    }
-    const seq = Number(header[1]);
-    if (last !== undefined && (seq <= last.seq || last.segment.kind === "operator")) return null;
-    segments.push({ seq, segment: opened(header[2]) });
-  }
-  return segments;
-}
 
 /** With records: only a header its record confirms opens a delivery; the first must be confirmed. */
 function splitByRecords(text: string, records: Deliveries["bySeq"]): Opened[] | null {
@@ -120,8 +102,9 @@ function splitByRecords(text: string, records: Deliveries["bySeq"]): Opened[] | 
     const last = segments.at(-1);
     const seq = Number(header?.[1]);
     const record = records.get(seq);
-    const segment = header?.[2] === undefined ? null : opened(header[2]);
-    if (segment !== null && record !== undefined && (last === undefined || seq > last.seq) && matches(segment, line, record)) {
+    const said = header?.[2];
+    const segment = said === undefined ? null : opened(said);
+    if (segment !== null && said !== undefined && record !== undefined && (last === undefined || seq > last.seq) && matches(segment, said, record)) {
       segments.push({ seq, segment });
       continue;
     }
@@ -132,11 +115,14 @@ function splitByRecords(text: string, records: Deliveries["bySeq"]): Opened[] | 
   return segments;
 }
 
-/** The records by seq, from a `get_inbox` reply; null when there is none to trust. */
-export function deliveries(items: readonly aether.InboxItem[] | null, agent: string): Deliveries | null {
-  if (items === null) return null;
-  const bySeq = new Map<number, aether.InboxKind>();
-  let last = 0;
+/**
+ * `base` with a later `get_inbox` read added. The read was made once every turn up to seq `through`
+ * was written, so a seq up to it with no record was never delivered: those headers are quoted text.
+ */
+export function withDeliveries(base: Deliveries | null, items: readonly aether.InboxItem[], agent: string, through: number): Deliveries {
+  invariant(Number.isSafeInteger(through) && through >= 0, "a read covers seqs up to a whole number");
+  const bySeq = new Map(base?.bySeq);
+  let last = Math.max(base?.last ?? 0, through);
   for (const item of items) {
     invariant(item.agent_id === agent, "get_inbox answers with the agent's own items");
     invariant(!bySeq.has(item.seq), "an inbox seq names one item");
@@ -146,12 +132,15 @@ export function deliveries(items: readonly aether.InboxItem[] | null, agent: str
   return { bySeq, last };
 }
 
-/** The highest `[inbox n]` seq in a turn's text, or 0; a seq above every record means they are stale. */
-export function highestSeq(text: string): number {
-  let highest = 0;
+/** The lowest and highest `[inbox n]` seq in a turn's text, or null for none. */
+export function seqRange(text: string): readonly [low: number, high: number] | null {
+  let range: [number, number] | null = null;
   for (const line of text.split("\n")) {
-    const seq = Number(HEADER.exec(line)?.[1] ?? 0);
-    if (seq > highest) highest = seq;
+    const seq = HEADER.exec(line)?.[1];
+    if (seq === undefined) continue;
+    const n = Number(seq);
+    range = range === null ? [n, n] : [Math.min(range[0], n), Math.max(range[1], n)];
   }
-  return highest;
+  invariant(range === null || range[0] <= range[1], "a seq range is ordered");
+  return range;
 }

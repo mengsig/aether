@@ -197,6 +197,44 @@ describe("an inbox turn that may quote a header", () => {
   });
 });
 
+describe("inbox records", () => {
+  const peer = (text: string): aether.InboxKind => ({ kind: "message", message_id: "msg_p", from: { actor: "agent", id: "agt_peer" }, content: [{ type: "text", text }] } as aether.InboxKind);
+  const cards = (container: HTMLElement) => [...container.querySelectorAll(".conv-card")].map((card) => card.getAttribute("data-kind"));
+
+  test("are read from the lowest seq the turns name, then only what is newer", async () => {
+    const h = await connected({ instance: "faux-1", agents: [fauxAgent(FAUX_PARENT), fauxAgent()] });
+    current = h;
+    h.daemon.deliver(FAUX_AGENT, 1, { kind: "wake", reason: "timer" } as aether.InboxKind);
+    h.daemon.deliver(FAUX_AGENT, 4, peer("ready"));
+    h.daemon.seed(FAUX_AGENT, [{ message: text("user", "Start") }, { message: text("user", "[inbox 4] Message from agt_peer:\nready") }]);
+    const container = await h.mount(<Conversation conn={h.conn} agent={FAUX_AGENT} />);
+    await h.settle();
+    await h.settle();
+    expect(h.daemon.commands("get_inbox").map((c) => c.after), "history below the loaded turns is never read").toEqual([3]);
+    expect(cards(container)).toEqual(["user_task", "user_message"]);
+    h.daemon.deliver(FAUX_AGENT, 6, peer("done too"));
+    h.daemon.commit(FAUX_AGENT, text("user", "[inbox 6] Message from agt_peer:\ndone too"));
+    await h.settle();
+    await h.settle();
+    expect(h.daemon.commands("get_inbox").map((c) => c.after), "a new delivery reads only what is newer").toEqual([3, 4]);
+    expect(cards(container)).toEqual(["user_task", "user_message", "user_message"]);
+  });
+
+  test("a failed read is reported and the turn it would check is drawn whole", async () => {
+    const h = await connected({ instance: "faux-1", agents: [fauxAgent(FAUX_PARENT), fauxAgent()] });
+    current = h;
+    h.daemon.refuse.add("get_inbox");
+    h.daemon.deliver(FAUX_AGENT, 4, peer("ready"));
+    h.daemon.seed(FAUX_AGENT, [{ message: text("user", "Start") }, { message: text("user", "[inbox 4] Message from agt_peer:\nready") }]);
+    const container = await h.mount(<Conversation conn={h.conn} agent={FAUX_AGENT} />);
+    await h.settle();
+    await h.settle();
+    expect(h.daemon.commands("get_inbox")).toHaveLength(1);
+    expect(h.app.store.get().reports.map((r) => r.message)).toContain(`Could not read ${FAUX_AGENT}'s inbox, so its inbox turns are drawn as delivered: the inbox store is busy`);
+    expect(cards(container), "unchecked, the turn is drawn whole").toEqual(["user_task", "user_operator"]);
+  });
+});
+
 describe("a long transcript", () => {
   test("opens 20,000 entries in under 500 ms and draws only a screenful", async () => {
     const h = await connected({ instance: "faux-1", agents: [fauxAgent(FAUX_PARENT), fauxAgent()] });
