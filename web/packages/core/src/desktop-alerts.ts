@@ -81,21 +81,15 @@ export function alertsOf(conn: ConnId, attention: aether.Attention): Alert[] {
 
 type Note = Parameters<DesktopBridge["notify"]>[0];
 
-/**
- * Shows `note` and settles with main's answer. The frozen bridge types `notify` as void, but the
- * desktop preload returns main's reply, so a refusal (rate limit, no notifier) is not hidden.
- */
-export async function notifyDesktop(desktop: Pick<DesktopBridge, "notify">, note: Note): Promise<void> {
+/** Shows `note` and returns whether main sent it to the system. */
+export async function notifyDesktop(desktop: Pick<DesktopBridge, "notify">, note: Note): Promise<boolean> {
   invariant(note.title !== "", "a notification has a title");
-  const reply: unknown = desktop.notify(note);
-  if (typeof (reply as { then?: unknown } | undefined)?.then === "function") await (reply as PromiseLike<unknown>);
+  return (await desktop.notify(note)) !== false;
 }
 
 export interface AlertHost {
   readonly desktop: Pick<DesktopBridge, "notify">;
   settings(): Promise<AlertSettings>;
-  /** Whether an Aether window has the focus now. */
-  isFocused(): boolean;
 }
 
 /** What a burst of alerts becomes: one notification that opens the inbox. */
@@ -152,18 +146,17 @@ export class DesktopAlerts {
   async deliver(alerts: readonly Alert[]): Promise<number> {
     if (alerts.length === 0) return 0;
     const settings = await this.host.settings();
-    if (!settings.enabled || (!settings.whileFocused && this.host.isFocused())) return 0;
+    if (!settings.enabled) return 0;
     const wanted = alerts.filter((alert) => (alert.kind === "question" ? settings.questions : settings.approvals));
     if (wanted.length === 0) return 0;
     if (wanted.length > ALERT_BURST) {
-      await notifyDesktop(this.host.desktop, summary(wanted.length));
-      return 1;
+      return Number(await notifyDesktop(this.host.desktop, { ...summary(wanted.length), backgroundOnly: !settings.whileFocused }));
     }
     const sent = await Promise.allSettled(wanted.map((alert) =>
-      notifyDesktop(this.host.desktop, { title: alert.title, body: alert.body, route: this.routeOf(alert) })));
+      notifyDesktop(this.host.desktop, { title: alert.title, body: alert.body, route: this.routeOf(alert), backgroundOnly: !settings.whileFocused })));
     const refused = sent.filter((result) => result.status === "rejected");
     invariant(sent.length === wanted.length, "every wanted alert was handed to the system");
-    if (refused.length === 0) return wanted.length;
+    if (refused.length === 0) return sent.filter((result) => result.status === "fulfilled" && result.value).length;
     const reason: unknown = refused[0]?.reason;
     const message = reason instanceof Error ? reason.message : String(reason);
     throw new Error(refused.length === 1 ? message : `${refused.length} of ${wanted.length}: ${message}`, { cause: reason });

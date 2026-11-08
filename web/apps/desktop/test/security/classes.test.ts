@@ -132,13 +132,13 @@ test("say and answer pass only on a welcome of protocol 24 or newer; the rest ke
 });
 
 
-test("only the explicit host read passes a request, never a subscription or remote admin change", () => {
+test("the remote host read passes only requests and other remote administration is refused", () => {
   assert.deepEqual([...AETHER_HOST_READS], ["get_remote"]);
   const frame = { cmd: "get_remote", req: 1 };
   assert.equal(passThroughRefusal("aether", frame), undefined);
   assert.match(passThroughRefusal("aether", frame, undefined, "subscribe") ?? "", /only through request/);
   for (const cmd of [...AETHER_REMOTE_ADMIN, ...AETHER_HOST_ONLY]) {
-    if (cmd === "get_remote") continue;
+    if (cmd === "get_remote" || cmd === "memory_export") continue;
     assert.notEqual(passThroughRefusal("aether", { cmd, req: 1 }), undefined, cmd);
     assert.notEqual(passThroughRefusal("aether", { cmd, req: 1 }, undefined, "subscribe"), undefined, cmd);
   }

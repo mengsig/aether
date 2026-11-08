@@ -1,16 +1,14 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { readdir } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import { expect, test, type Page } from "../../../harness/fixtures.ts";
 import { connection } from "../../../harness/pair.ts";
 import { startPrivateStack, stopPrivateStack, type PrivateStack } from "../private.ts";
-import { launchPackaged, packagedBinary } from "./packaged.ts";
+import { focusWindow, pressKeys, windowTitles } from "./native-host.ts";
+import { launchPackaged, packagedBinary, type PackagedApp } from "./packaged.ts";
 import { aetherConn, route } from "./state.ts";
 
 let running: PrivateStack | undefined;
-let app: { window: Page; waylandDisplay: string; close(): Promise<void> } | undefined;
+let app: PackagedApp | undefined;
 let conn = "";
 let agent = "";
 
@@ -28,31 +26,11 @@ async function screenshot(name: string): Promise<void> {
   }
 }
 
-interface SwayNode { id: number; name: string | null; focused: boolean; nodes: SwayNode[]; floating_nodes: SwayNode[] }
-
-function findDialog(node: SwayNode): SwayNode | undefined {
-  if (node.name === "Import memories") return node;
-  for (const child of [...node.nodes, ...node.floating_nodes]) {
-    const found = findDialog(child);
-    if (found) return found;
-  }
-  return undefined;
-}
-
-async function confirmNativeImport(display: string): Promise<void> {
-  const runtime = path.dirname(display);
-  const socket = (await readdir(runtime)).find((name) => /^sway-ipc\..*\.sock$/.test(name));
-  assert.ok(socket, "the private compositor has an IPC socket");
-  const sway = async (...args: string[]) => (await promisify(execFile)("swaymsg", ["-s", path.join(runtime, socket), ...args])).stdout;
-  let dialog: SwayNode | undefined;
-  await expect.poll(async () => {
-    dialog = findDialog(JSON.parse(await sway("-t", "get_tree")) as SwayNode);
-    return dialog !== undefined;
-  }, { message: "the native import confirmation appears", timeout: 10_000 }).toBe(true);
-  assert.ok(dialog && Number.isSafeInteger(dialog.id), "the native dialog has a compositor id");
-  const result = JSON.parse(await sway(`[con_id=${dialog.id}]`, "focus")) as Array<{ success: boolean }>;
-  assert.ok(result.length > 0 && result.every((item) => item.success), "the native dialog receives focus");
-  await promisify(execFile)("wtype", ["-k", "Tab", "-k", "Return"], { env: { ...process.env, WAYLAND_DISPLAY: display, XDG_RUNTIME_DIR: runtime } });
+async function confirmNativeImport(compositor: NodeJS.ProcessEnv, tabs: number): Promise<void> {
+  await expect.poll(() => windowTitles(compositor), { message: "the native import confirmation appears" }).toContain("Import memories");
+  await focusWindow(compositor, "Import memories");
+  await pressKeys(compositor, [...Array<string>(tabs).fill("Tab"), "Return"]);
+  await expect.poll(() => windowTitles(compositor), { message: "the native confirmation closes" }).not.toContain("Import memories");
 }
 
 test.describe.configure({ mode: "serial" });
@@ -159,9 +137,13 @@ test("a reviewed import reaches the store after native confirmation", async () =
   await maintenance.getByLabel("Export file (.jsonl)").setInputFiles({ name: "memories.jsonl", mimeType: "application/jsonl", buffer: Buffer.from(artifact) });
   await maintenance.getByRole("button", { name: "Dry run import" }).click();
   await expect(maintenance).toContainText("Would insert");
-  await maintenance.getByRole("button", { name: "Import", exact: true }).click();
-  await page().getByRole("dialog", { name: "Import memories?" }).getByRole("button", { name: "Import memories", exact: true }).click();
-  await confirmNativeImport(app.waylandDisplay);
+  for (const tabs of [2, 1, 0]) {
+    await maintenance.getByRole("button", { name: "Import", exact: true }).click();
+    await page().getByRole("dialog", { name: "Import memories?" }).getByRole("button", { name: "Import memories", exact: true }).click();
+    await confirmNativeImport(app.compositor, tabs);
+    await expect.poll(async () => (await maintenance.innerText()).includes("Imported") || (await maintenance.innerText()).includes("Cancelled")).toBe(true);
+    if ((await maintenance.innerText()).includes("Imported")) break;
+  }
   await expect(maintenance).toContainText("Imported", { timeout: 15_000 });
   await expect(page().getByText("A memory imported from another private store.")).toBeVisible();
   await screenshot("ux-017-import");

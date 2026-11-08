@@ -23,6 +23,12 @@ test("a status request passes with its exact text", () => {
   assert.equal(check("subscribe", [ARCHON_CONN, { cmd: "subscribe_changes", req: 5 }]).method, "subscribe");
 });
 
+test("notifications accept only a boolean background-only preference", () => {
+  assert.equal(check("notify", [{ title: "Question", body: "Ready?", backgroundOnly: true }]).method, "notify");
+  refused("notify", [{ title: "Question", body: "Ready?", backgroundOnly: "true" }], /boolean/);
+  refused("notify", [{ title: "Question", body: "Ready?", backgroundOnly: null }], /boolean/);
+});
+
 test("unknown methods and commands are refused", () => {
   refused("eval", [], /Unknown bridge method/);
   refused("request", [AETHER_CONN, { cmd: "no_such_command", req: 1 }], /no_such_command|cmd/);

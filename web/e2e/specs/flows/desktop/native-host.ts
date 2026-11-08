@@ -28,7 +28,6 @@ export interface NativeHost {
   click(id: number): Promise<void>;
   close(): Promise<void>;
 }
-
 function lines(file: string): string[] {
   return existsSync(file) ? readFileSync(file, "utf8").split("\n").filter((line) => line !== "") : [];
 }
@@ -96,7 +95,8 @@ export async function startNativeHost(root: string, env: NodeJS.ProcessEnv): Pro
 export async function pressKeys(compositor: NodeJS.ProcessEnv, keys: readonly string[]): Promise<void> {
   assert.ok(keys.length > 0 && keys.every((key) => /^[A-Za-z]+$/.test(key)), "keys are key names");
   assert.ok(String(compositor.WAYLAND_DISPLAY ?? "").startsWith("/"), "the keyboard is the private compositor's");
-  await exec("/usr/bin/wtype", keys.flatMap((key) => ["-k", key]), { env: compositor, timeout: 10_000 });
+  assert.match(String(compositor.DISPLAY ?? ""), /^:\d+$/, "the keyboard uses the private Xwayland display");
+  await exec("/usr/bin/xdotool", ["key", "--delay", "150", ...keys], { env: { ...process.env, ...compositor }, timeout: 10_000 });
 }
 
 /** The titles of every window on the run's own compositor. */
@@ -118,7 +118,13 @@ export async function focusWindow(compositor: NodeJS.ProcessEnv, title: string):
   const ipc = String(compositor.SWAYSOCK ?? "");
   assert.ok(ipc.startsWith("/"), "the private compositor's IPC socket is known");
   assert.ok(/^[A-Za-z0-9: ]+$/.test(title), "the window title is a safe exact match");
-  assert.ok((await windowTitles(compositor)).includes(title), "the target window exists");
-  const { stdout } = await exec("/usr/bin/swaymsg", ["-s", ipc, `[title="^${title}$"] focus`], { timeout: 10_000 });
-  assert.ok((JSON.parse(stdout) as Array<{ success: boolean }>).every((result) => result.success), "the compositor focused the window");
+  const tree = await exec("/usr/bin/swaymsg", ["-s", ipc, "-t", "get_tree"], { timeout: 10_000 });
+  type Node = { id: number; name?: string; nodes?: Node[]; floating_nodes?: Node[] };
+  const find = (node: Node): Node | undefined => node.name === title ? node
+    : [...(node.nodes ?? []), ...(node.floating_nodes ?? [])].map(find).find((entry) => entry !== undefined);
+  const window = find(JSON.parse(tree.stdout) as Node);
+  assert.ok(window !== undefined && Number.isSafeInteger(window.id), "the target window has a compositor id");
+  const { stdout } = await exec("/usr/bin/swaymsg", ["-s", ipc, `[con_id=${window.id}]`, "focus"], { timeout: 10_000 });
+  const results = JSON.parse(stdout) as Array<{ success: boolean }>;
+  assert.ok(results.length > 0 && results.every((result) => result.success), "the compositor focused the window");
 }

@@ -109,7 +109,7 @@ describe("deep links and alert clicks", () => {
 
   test("a route from main navigates the app", () => {
     let deliver: (route: string) => void = () => {};
-    const alerts = new DesktopAlerts({ desktop: { notify: vi.fn() }, settings: async () => DEFAULT_ALERT_SETTINGS, isFocused: () => false });
+    const alerts = new DesktopAlerts({ desktop: { notify: vi.fn() }, settings: async () => DEFAULT_ALERT_SETTINGS });
     followDeepLinks({ onDeepLink: (callback) => { deliver = callback; return () => {}; } }, alerts, document);
     deliver("/archon/queue");
     expect(location.hash).toBe("#/archon/queue");
@@ -118,8 +118,8 @@ describe("deep links and alert clicks", () => {
 
   test("a click on a question alert opens the inbox on that alert's own question", async () => {
     let deliver: (route: string) => void = () => {};
-    const notify = vi.fn<(note: { title: string; body: string; route?: string }) => Promise<void>>(async () => {});
-    const alerts = new DesktopAlerts({ desktop: { notify }, settings: async () => DEFAULT_ALERT_SETTINGS, isFocused: () => false });
+    const notify = vi.fn<(note: { title: string; body: string; route?: string }) => Promise<boolean>>(async () => true);
+    const alerts = new DesktopAlerts({ desktop: { notify }, settings: async () => DEFAULT_ALERT_SETTINGS });
     followDeepLinks({ onDeepLink: (callback) => { deliver = callback; return () => {}; } }, alerts, document);
     const asked = (conn: string) => ({ key: `q:${conn}/a1:1`, kind: "question" as const, title: "A asks", body: "Which?", anchor: `${conn}/a1:1` });
     expect(await alerts.deliver([asked("c1"), asked("c2")])).toBe(2);

@@ -25,11 +25,10 @@ const stateOf = (byConn: Record<string, aether.Attention | null>): State =>
   ({ aether: Object.fromEntries(Object.entries(byConn).map(([conn, value]) => [conn, { attention: value }])) } as unknown as State);
 
 function alerter(settings: Partial<AlertSettings> = {}, focused = false) {
-  const notify = vi.fn<(note: { title: string; body: string; route?: string }) => Promise<void>>(async () => {});
+  const notify = vi.fn(async (note: { title: string; body: string; route?: string; backgroundOnly?: boolean }) => !(focused && note.backgroundOnly));
   const alerts = new DesktopAlerts({
     desktop: { notify },
     settings: async () => ({ ...DEFAULT_ALERT_SETTINGS, ...settings }),
-    isFocused: () => focused,
   });
   return { alerts, notify };
 }
@@ -66,7 +65,7 @@ describe("alerts of an attention", () => {
 
 describe("notifyDesktop", () => {
   test("settles with main's answer, or at once when the bridge returns none", async () => {
-    await expect(notifyDesktop({ notify: () => {} }, { title: "t", body: "" })).resolves.toBeUndefined();
+    await expect(notifyDesktop({ notify: () => {} }, { title: "t", body: "" })).resolves.toBe(true);
     await expect(notifyDesktop({ notify: async () => { throw new Error("Too many notifications"); } }, { title: "t", body: "" }))
       .rejects.toThrow("Too many notifications");
     await expect(notifyDesktop({ notify: () => {} }, { title: "", body: "" })).rejects.toThrow(/title/);
@@ -84,7 +83,7 @@ describe("DesktopAlerts", () => {
     expect(fresh.map((alert) => alert.key)).toEqual(["q:aether:local/a1:2"]);
     expect(await alerts.deliver(fresh)).toBe(1);
     const route = notify.mock.calls[0]?.[0].route ?? "";
-    expect(notify).toHaveBeenCalledWith({ title: "Agent a1 asks", body: "Ship it?", route });
+    expect(notify).toHaveBeenCalledWith({ title: "Agent a1 asks", body: "Ship it?", route, backgroundOnly: true });
     expect(route).toMatch(/^\/inbox\/[0-9a-f-]{36}\.1$/);
     expect(alerts.fresh(stateOf({ "aether:local": attention([question("a1", 2, "Ship it?")]) }))).toEqual([]);
     expect(alerts.landing(route)).toEqual({ hash: "#/inbox", anchor: "aether:local/a1:2" });
@@ -103,7 +102,7 @@ describe("DesktopAlerts", () => {
     expect(old).not.toBe(fresh);
     expect(after.alerts.landing(old), "the old click opens the inbox only").toEqual({ hash: "#/inbox" });
     expect(after.alerts.landing(fresh)).toEqual({ hash: "#/inbox", anchor: "c/a1:2" });
-    expect(() => new DesktopAlerts({ desktop: { notify: () => {} }, settings: async () => DEFAULT_ALERT_SETTINGS, isFocused: () => false }, "x/y"))
+    expect(() => new DesktopAlerts({ desktop: { notify: () => {} }, settings: async () => DEFAULT_ALERT_SETTINGS }, "x/y"))
       .toThrow(/lifetime/);
   });
 
@@ -138,8 +137,8 @@ describe("DesktopAlerts", () => {
   });
 
   test("a notification main refuses fails the delivery with main's reason", async () => {
-    const notify = vi.fn(async (note: { title: string }) => { if (note.title === "Agent a2 asks") throw new Error("Too many notifications; try again in a minute"); });
-    const alerts = new DesktopAlerts({ desktop: { notify }, settings: async () => DEFAULT_ALERT_SETTINGS, isFocused: () => false });
+    const notify = vi.fn(async (note: { title: string }) => { if (note.title === "Agent a2 asks") throw new Error("Too many notifications; try again in a minute"); return true; });
+    const alerts = new DesktopAlerts({ desktop: { notify }, settings: async () => DEFAULT_ALERT_SETTINGS });
     const found = alertsOf("c", attention([question("a1", 1), question("a2", 1)]));
     await expect(alerts.deliver(found)).rejects.toThrow(/^Too many notifications; try again in a minute$/);
     expect(notify, "the other alert was still shown").toHaveBeenCalledTimes(2);
@@ -159,18 +158,21 @@ describe("DesktopAlerts", () => {
     const burst = alerts.fresh(stateOf({ c: attention([1, 2, 3, 4].map((seq) => question("a1", seq))) }));
     expect(await alerts.deliver(burst)).toBe(1);
     expect(notify).toHaveBeenCalledExactlyOnceWith({
-      title: "4 things need you in Aether", body: "Agents are waiting for answers and approvals.", route: "/inbox",
+      title: "4 things need you in Aether", body: "Agents are waiting for answers and approvals.", route: "/inbox", backgroundOnly: true,
     });
     expect(alerts.landing("/inbox")).toEqual({ hash: "#/inbox" });
   });
 
   test("settings decide: off, focused, or the kind turned off alerts nothing", async () => {
     const found = alertsOf("c", attention([question("a1", 1)], [approval("ap1")]));
-    for (const [settings, focused] of [[{ enabled: false }, false], [{}, true], [{ questions: false, approvals: false }, false]] as const) {
+    for (const [settings, focused] of [[{ enabled: false }, false], [{ questions: false, approvals: false }, false]] as const) {
       const { alerts, notify } = alerter(settings, focused);
       expect(await alerts.deliver(found)).toBe(0);
       expect(notify).not.toHaveBeenCalled();
     }
+    const focused = alerter({}, true);
+    expect(await focused.alerts.deliver(found)).toBe(0);
+    expect(focused.notify).toHaveBeenCalledWith(expect.objectContaining({ backgroundOnly: true }));
     const focusedToo = alerter({ whileFocused: true, approvals: false }, true);
     expect(await focusedToo.alerts.deliver(found)).toBe(1);
     expect(focusedToo.notify).toHaveBeenCalledWith(expect.objectContaining({ title: "Agent a1 asks" }));
@@ -182,7 +184,7 @@ describe("DesktopAlerts", () => {
     const store = { getSnapshot: () => snapshot, subscribe: (listener: () => void) => { listeners.push(listener); return () => {}; } };
     const report = vi.fn();
     const notify = vi.fn(async () => { throw new Error("This system shows no notifications"); });
-    new DesktopAlerts({ desktop: { notify }, settings: async () => DEFAULT_ALERT_SETTINGS, isFocused: () => false }).watch(store, report);
+    new DesktopAlerts({ desktop: { notify }, settings: async () => DEFAULT_ALERT_SETTINGS }).watch(store, report);
     snapshot = stateOf({ c: attention([question("a1", 1)]) });
     for (const listener of listeners) listener();
     await vi.waitFor(() => expect(report).toHaveBeenCalledWith("A desktop alert was not shown: This system shows no notifications"));
@@ -193,7 +195,7 @@ describe("DesktopAlerts", () => {
     const listeners: Array<() => void> = [];
     const store = { getSnapshot: () => snapshot, subscribe: (listener: () => void) => { listeners.push(listener); return () => {}; } };
     const report = vi.fn();
-    const alerts = new DesktopAlerts({ desktop: { notify: vi.fn() }, settings: async () => { throw new Error("storage is gone"); }, isFocused: () => false });
+    const alerts = new DesktopAlerts({ desktop: { notify: vi.fn() }, settings: async () => { throw new Error("storage is gone"); } });
     alerts.watch(store, report);
     snapshot = stateOf({ c: attention([question("a1", 1)]) });
     for (const listener of listeners) listener();

@@ -88,7 +88,6 @@ export function connectDesktop(app: App, desktop: DesktopBridge, doc: Document):
   const alerts = new DesktopAlerts({
     desktop,
     settings: () => readAlertSettings(app.host.storage),
-    isFocused: () => doc.visibilityState === "visible" && doc.hasFocus(),
   });
   const undo = [
     followDeepLinks(desktop, alerts, doc),

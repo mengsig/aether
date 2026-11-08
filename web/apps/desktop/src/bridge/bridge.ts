@@ -20,7 +20,7 @@ export interface BridgeHost {
   push(owner: number, conn: string, frame: Frame): void;
   confirm(owner: number, confirmation: Confirmation): Promise<boolean>;
   openTerminal(argv: readonly string[]): Promise<void>;
-  notify(note: { title: string; body: string; route?: string }): void | Promise<void>;
+  notify(owner: number, note: { title: string; body: string; route?: string; backgroundOnly?: boolean }): undefined | Promise<boolean>;
   /** Managed start: refused unless desktop.managed_start is on. */
   startDaemon(kind: DaemonKind): Promise<void>;
   /** The native folder picker; an opaque single-use grant for the choice, or null. */
@@ -88,7 +88,7 @@ export class Bridge {
       case "privileged": return this.privileged(owner, call.action);
       case "startDaemon": return this.host.startDaemon(call.kind);
       case "pickDirectory": return this.host.pickDirectory(owner, call.purpose);
-      case "notify": return this.host.notify(call.note);
+      case "notify": return this.host.notify(owner, call.note);
       case "openExternal": return this.openExternal(owner, call.url);
       case "openRemote": return this.openRemote(call.origin);
       case "diagnostics": return this.diagnostics();

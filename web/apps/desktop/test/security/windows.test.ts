@@ -22,7 +22,7 @@ const HARDENED = {
 test("the app window has exactly the hardened options and the one preload", () => {
   assert.deepEqual(appWindowOptions(PRELOAD), {
     title: "Aether", width: 1280, height: 820, minWidth: 720, minHeight: 480, show: false, backgroundColor: "#0a1311",
-    webPreferences: { preload: PRELOAD, ...HARDENED },
+    webPreferences: { preload: PRELOAD, backgroundThrottling: false, ...HARDENED },
   });
   assert.throws(() => appWindowOptions("/tmp/other.js"));
 });

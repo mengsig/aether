@@ -18,6 +18,7 @@ export function appWindowOptions(preload: string): BrowserWindowConstructorOptio
     backgroundColor: BACKGROUND,
     webPreferences: {
       preload,
+      backgroundThrottling: false,
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,

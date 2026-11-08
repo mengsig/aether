@@ -9,6 +9,12 @@ export interface Note {
   readonly title: string;
   readonly body: string;
   readonly route?: string;
+  readonly backgroundOnly?: boolean;
+}
+
+/** The main window's actual native state, independent of renderer focus emulation. */
+export function windowInFront(window: { isVisible(): boolean; isMinimized(): boolean; isFocused(): boolean }): boolean {
+  return window.isVisible() && !window.isMinimized() && window.isFocused();
 }
 
 export interface NotificationSink {
@@ -75,4 +81,11 @@ export class Notifier {
     const route = note.route;
     return this.sink.show({ title, body: plainLine(note.body, MAX_BODY) }, () => this.openRoute(route));
   }
+}
+
+/** Applies the native window's focus state before handing an alert to the system. */
+export async function notifyWindow(notifier: Notifier, window: Parameters<typeof windowInFront>[0], note: Note): Promise<boolean> {
+  if (note.backgroundOnly === true && windowInFront(window)) return false;
+  await notifier.notify(note);
+  return true;
 }

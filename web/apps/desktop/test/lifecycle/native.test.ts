@@ -9,8 +9,29 @@ import path from "node:path";
 import { test } from "node:test";
 import { DeepLinkRouter, isAllowedRoute, linksInArgv, parseDeepLink, type RouteTarget } from "../../src/native/deep-links.ts";
 import { FolderTokens, TOKEN_TTL_MS } from "../../src/native/folder-tokens.ts";
-import { NOTES_PER_MINUTE, Notifier, plainLine, settleShown } from "../../src/native/notifications.ts";
+import { NOTES_PER_MINUTE, Notifier, notifyWindow, plainLine, settleShown, windowInFront } from "../../src/native/notifications.ts";
 import { BridgeRefusal } from "../../src/security/validate.ts";
+
+test("native focus accounts for hidden and minimized windows", () => {
+  const state = (visible: boolean, minimized: boolean, focused: boolean) => ({ isVisible: () => visible, isMinimized: () => minimized, isFocused: () => focused });
+  assert.equal(windowInFront(state(true, false, true)), true);
+  assert.equal(windowInFront(state(false, false, true)), false);
+  assert.equal(windowInFront(state(true, true, true)), false);
+  assert.equal(windowInFront(state(true, false, false)), false);
+});
+
+test("background-only alerts use native window state and test alerts always send", async () => {
+  const shown: string[] = [];
+  const notifier = new Notifier({ show: (note) => { shown.push(note.title); } }, () => {});
+  let focused = true;
+  const window = { isVisible: () => true, isMinimized: () => false, isFocused: () => focused };
+  assert.equal(await notifyWindow(notifier, window, { title: "Question", body: "", backgroundOnly: true }), false);
+  assert.deepEqual(shown, []);
+  assert.equal(await notifyWindow(notifier, window, { title: "Test", body: "" }), true);
+  focused = false;
+  assert.equal(await notifyWindow(notifier, window, { title: "Question", body: "", backgroundOnly: true }), true);
+  assert.deepEqual(shown, ["Test", "Question"]);
+});
 
 test("a deep link opens only an allowlisted route", () => {
   const good: ReadonlyArray<readonly [string, string]> = [

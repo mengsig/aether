@@ -12,7 +12,7 @@ export interface DesktopBridge {
   privileged(action: PrivilegedAction): Promise<unknown>;   // main builds frame and confirmation text
   startDaemon(kind: "aether" | "archon"): Promise<void>;     // only if desktop.managed_start
   pickDirectory(purpose: string): Promise<string | null>;
-  notify(n: {title: string; body: string; route?: string}): void;
+  notify(n: {title: string; body: string; route?: string; backgroundOnly?: boolean}): undefined | Promise<boolean>;
   openExternal(url: string): Promise<void>;      // https: only
   openRemote(origin: string): Promise<void>;     // an entry of remote.origins; opens a remote window (ARCHITECTURE.md §c)
   onDeepLink(cb: (route: string) => void): () => void;       // aether-app://open?route=…

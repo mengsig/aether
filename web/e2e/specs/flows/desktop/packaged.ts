@@ -19,7 +19,7 @@ const POLL_MS = 200;
 const KEYBOARD_MS = 6 * 60 * 60 * 1000;
 /** sway's IPC socket, `sway-ipc.<uid>.<pid>.sock`, must fit in a socket address (108 bytes). */
 const MAX_RUNTIME_DIR = 70;
-const SWAY_CONFIG = "output HEADLESS-1 resolution 1600x1000\nxwayland disable\n";
+const SWAY_CONFIG = "output HEADLESS-1 resolution 1600x1000\nxwayland force\n";
 /** How long a second instance may take to hand its link over and exit. */
 const AGAIN_MS = 30_000;
 
@@ -74,10 +74,17 @@ async function until<T>(read: () => T | undefined, what: string, alive: Spawned)
 /** Starts a headless sway whose Wayland socket will appear in `runtime`. */
 async function spawnCompositor(root: string, runtime: string, env: NodeJS.ProcessEnv): Promise<Spawned> {
   assert.ok(runtime.length <= MAX_RUNTIME_DIR, `the compositor's runtime dir is short enough for its sockets: ${runtime}`);
+  await mkdir(runtime, { mode: 0o700 });
   const config = path.join(root, "sway.conf");
   await writeFile(config, SWAY_CONFIG);
   const swayEnv: NodeJS.ProcessEnv = { ...env, XDG_RUNTIME_DIR: runtime, WLR_BACKENDS: "headless", WLR_RENDERER: "pixman", WLR_LIBINPUT_NO_DEVICES: "1" };
-  return spawnLogged(onPath("sway"), ["-c", config], { env: swayEnv, cwd: root, log: path.join(root, "sway.log") });
+  return spawnLogged(onPath("sway"), ["-d", "-c", config], { env: swayEnv, cwd: root, log: path.join(root, "sway.log") });
+}
+
+async function xwaylandDisplay(sway: Spawned): Promise<string> {
+  const display = await until(() => /Starting Xwayland on (:\d+)/.exec(readFileSync(sway.log, "utf8"))?.[1], "the private Xwayland display", sway);
+  assert.match(display, /^:\d+$/, "Xwayland names a local display");
+  return display;
 }
 
 /** The absolute path of the Wayland socket `sway` opens in `runtime`. */
@@ -186,13 +193,15 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
   ]);
   try {
     const runtime = path.join(root, "run");
-    sway = await spawnCompositor(root, runtime, env);
-    const display = await waylandSocket(runtime, sway);
-    keyboard = spawnLogged(onPath("wtype"), ["-s", String(KEYBOARD_MS)],
-      { env: { ...env, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display }, cwd: root, log: path.join(root, "keyboard.log") });
     native = await startNativeHost(root, env);
-    const appEnv = { ...env, ...native.env, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display };
-    const shared = [`--user-data-dir=${profile}`, "--ozone-platform=wayland"];
+    const nativeEnv = { ...env, ...native.env };
+    sway = await spawnCompositor(root, runtime, nativeEnv);
+    const display = await waylandSocket(runtime, sway);
+    const xDisplay = await xwaylandDisplay(sway);
+    keyboard = spawnLogged(onPath("wtype"), ["-s", String(KEYBOARD_MS)],
+      { env: { ...nativeEnv, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display }, cwd: root, log: path.join(root, "keyboard.log") });
+    const appEnv = { ...nativeEnv, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display, DISPLAY: xDisplay, GTK_IM_MODULE: "gtk-im-context-simple" };
+    const shared = [`--user-data-dir=${profile}`, "--ozone-platform=x11"];
     app = spawnLogged(binary, [...shared, "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", ...(options.args ?? [])],
       { env: appEnv, cwd: root, log });
     const port = await devtoolsPort(profile, app);
@@ -201,7 +210,7 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
     browser = await chromium.connectOverCDP(proxy.endpoint, { noDefaults: true });
     assert.ok(keyboard.child.exitCode === null && keyboard.child.signalCode === null, "the private compositor has a virtual keyboard");
     const ipc = await until(() => swaySocket(runtime), "sway's IPC socket", sway);
-    const compositor = { PATH: env.PATH, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display, SWAYSOCK: ipc };
+    const compositor = { PATH: env.PATH, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display, SWAYSOCK: ipc, DISPLAY: xDisplay };
     let runs = 0;
     const again = (args: readonly string[]) => {
       assert.ok(args.every((arg) => !arg.startsWith("--user-data-dir")), "a second instance shares the first one's profile");

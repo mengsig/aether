@@ -3,7 +3,7 @@
 
 import os from "node:os";
 import path from "node:path";
-import { app, BrowserWindow, ipcMain, protocol, session } from "electron";
+import { app, BrowserWindow, ipcMain, protocol, session, webContents } from "electron";
 import { Bridge, helloFrame, type BridgeHost } from "../bridge/bridge.ts";
 import { DaemonLink, type Frame } from "../bridge/daemon-link.ts";
 import { findDaemons } from "../discovery/daemons.ts";
@@ -16,7 +16,7 @@ import { Setup } from "../lifecycle/setup.ts";
 import { DeepLinkRouter } from "../native/deep-links.ts";
 import { notificationSink, pickFolder, windowTarget } from "../native/electron.ts";
 import { FolderTokens } from "../native/folder-tokens.ts";
-import { Notifier } from "../native/notifications.ts";
+import { Notifier, notifyWindow } from "../native/notifications.ts";
 import { ReportWindows } from "../native/report-windows.ts";
 import { RemoteWindows } from "../remote/remote-windows.ts";
 import type { BuildInfo } from "../update/updates.ts";
@@ -114,7 +114,12 @@ function host(options: DesktopOptions, parts: HostParts): BridgeHost {
     push,
     confirm,
     openTerminal,
-    notify: (note) => notifier.notify(note),
+    notify: async (owner, note) => {
+      const contents = webContents.fromId(owner);
+      const window = contents === undefined ? null : BrowserWindow.fromWebContents(contents);
+      if (window === null || window.isDestroyed()) throw new Error("The app window is no longer available");
+      return notifyWindow(notifier, window, note);
+    },
     startDaemon: daemons.start,
     pickDirectory: (owner, purpose) => pickFolder(owner, purpose, folders),
     openExternal: openExternalLink,

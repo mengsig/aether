@@ -33,7 +33,7 @@ function savedStorage(failing = false) {
 }
 
 async function mountOnDesktop(storage: ReturnType<typeof savedStorage>["storage"], refusal?: string) {
-  const notify = vi.fn(async () => { if (refusal !== undefined) throw new Error(refusal); });
+  const notify = vi.fn(async () => { if (refusal !== undefined) throw new Error(refusal); return true; });
   const bridge = { ...fakeDesktop().bridge, notify } as DesktopBridge;
   current = await connected({ desktop: bridge, storage });
   const root = await current.mount(<NotificationsPage conn={current.conn} />);

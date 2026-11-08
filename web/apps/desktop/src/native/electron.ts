@@ -29,6 +29,7 @@ export function windowTarget(window: BrowserWindow): RouteTarget {
   const focus = () => {
     if (window.isDestroyed()) throw new Error("the app window is gone");
     if (window.isMinimized()) window.restore();
+    if (!window.isVisible()) window.show();
     window.focus();
   };
   return {
