@@ -1,10 +1,10 @@
 // `#/agents/:conn/:agent`: one agent's identity, state, model, cost and budget, above its
 // chat. Everything shown is derived from core's store; this screen keeps no daemon data.
 
-import { routeHref, selectAgent, selectAttention, selectConnection, useReread, useSelector } from "@aether-ui/core";
+import { routeHref, selectAgent, selectAttention, selectConnection, useApp, useReread, useSelector } from "@aether-ui/core";
 import { aether, type ConnId, type RouteProps } from "@aether-ui/protocol";
 import { Badge, EmptyState, EntityActionMenu, ErrorState, Skeleton, StatusPill } from "@aether-ui/ui";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Chat } from "../conversation/Chat.tsx";
 import { agentStatus } from "../fleet/rows.ts";
 import { roleLabel } from "../fleet/roles.ts";
@@ -58,10 +58,18 @@ function AgentFacts({ agent }: { readonly agent: aether.Agent }) {
 
 export function AgentScreen({ conn, id }: { readonly conn: ConnId; readonly id: string }) {
   invariant(conn !== "" && id !== "", "the agent route names a connection and an agent");
+  const app = useApp();
   const info = useSelector(useMemo(() => selectConnection(conn), [conn]));
   const cached = useSelector(useMemo(() => selectAgent(conn, id), [conn, id]));
   const [refresh, setRefresh] = useState(0);
   const read = useReread(conn, `agent:${id}`, cached ? null : aether.getAgent({ id }), ["agent"], refresh);
+  useEffect(() => {
+    const value = read?.value;
+    if (cached || value == null) return;
+    invariant(typeof value === "object" && !Array.isArray(value), "the agent read returns an object");
+    invariant((value as aether.Agent).id === id, "the agent read returns the requested agent");
+    app.store.updateAether(conn, (state) => state.agents[id] ? state : { ...state, agents: { ...state.agents, [id]: value as aether.Agent } });
+  }, [app, cached, conn, id, read?.value]);
   if (!info) {
     return <EmptyState title="Not connected">No connection {conn} is open. <a className="ui-link" href="#/fleet">Back to the fleet</a></EmptyState>;
   }
@@ -69,7 +77,7 @@ export function AgentScreen({ conn, id }: { readonly conn: ConnId; readonly id: 
     return <section className="ui-page agent" aria-busy="true" aria-label="Loading the agent"><Skeleton height="3rem" /><Skeleton height="8rem" /></section>;
   }
   if (!cached && read?.error) {
-    return <ErrorState title="Agent unavailable" message={read.error} onRetry={() => setRefresh((n) => n + 1)} />;
+    return <ErrorState title="Agent unavailable" message={`This agent may no longer be available. ${read.error}`} onRetry={() => setRefresh((n) => n + 1)} />;
   }
   const value = cached ?? read?.value;
   if (value == null && read && read.issued > 0) {
