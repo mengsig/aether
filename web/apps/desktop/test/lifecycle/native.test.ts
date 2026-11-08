@@ -171,11 +171,14 @@ test("a folder token is opaque, single use, bound to its purpose and short lived
 test("notification clicks restore and show the app before opening the question route", () => {
   const calls: string[] = [];
   let minimized = true;
+  let visible = false;
   const window = {
     isDestroyed: () => false,
     isMinimized: () => minimized,
+    isVisible: () => visible,
     restore: () => { calls.push("restore"); minimized = false; },
-    show: () => { calls.push("show"); },
+    hide: () => { calls.push("hide"); visible = false; },
+    show: () => { calls.push("show"); visible = true; },
     focus: () => { calls.push("focus"); },
     webContents: {
       isCrashed: () => false,
@@ -193,5 +196,5 @@ test("notification clicks restore and show the app before opening the question r
   calls.length = 0;
   notifier.notify({ title: "Alert", body: "" });
   click();
-  assert.deepEqual(calls, ["show", "focus"]);
+  assert.deepEqual(calls, ["hide", "show", "focus"]);
 });
