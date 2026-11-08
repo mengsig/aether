@@ -152,7 +152,10 @@ export class FauxDaemon {
       case "unsubscribe": return ok("ok", null);
       case "get_attention": return ok("attention", { agents: [], approvals: [], questions: [], last_seq: this.lastSeq });
       case "list_agents_page": return ok("agents_page", { agents: [...this.agents.values()] });
-      case "get_agent": return ok("agent", this.agents.get(String(command.id)));
+      case "get_agent": {
+        const agent = this.agents.get(String(command.id));
+        return agent ? ok("agent", agent) : { reply: { Err: { code: "not_found", message: "Agent not found" } }, then: [] };
+      }
       case "get_transcript_page": return ok("transcript_page", this.page(command));
       default: return { reply: { Err: { code: "invalid_argument", message: `the faux daemon has no ${String(command.cmd)}` } }, then: [] };
     }

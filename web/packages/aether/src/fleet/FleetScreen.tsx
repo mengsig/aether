@@ -2,6 +2,7 @@
 // role, state and model. core pages the agents in (`list_agents_page`); the list draws only what is on screen.
 
 import { routeHref, selectConnections, useApp, useSelector } from "@aether-ui/core";
+import type { ConnectionInfo } from "@aether-ui/protocol";
 import { Badge, Button, EmptyState, StatusPill, VirtualList } from "@aether-ui/ui";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import "./fleet.css";
@@ -15,6 +16,18 @@ import {
 } from "./rows.ts";
 
 export const ROW_HEIGHT = 44;
+
+function sameArchiveConnections(a: readonly ConnectionInfo[], b: readonly ConnectionInfo[]): boolean {
+  return a.length === b.length && a.every((info, i) => info.id === b[i]?.id
+    && info.features.includes("agents_paging") === b[i]?.features.includes("agents_paging"));
+}
+
+function sameReadyConnections(a: ReturnType<typeof selectConnections>, b: ReturnType<typeof selectConnections>): boolean {
+  return sameArchiveConnections(
+    Object.values(a).filter(info => info.daemon === "aether" && info.state === "ready"),
+    Object.values(b).filter(info => info.daemon === "aether" && info.state === "ready"),
+  );
+}
 
 export function RoleTag({ role }: { readonly role: string }) {
   const label = roleLabel(role);
@@ -61,21 +74,28 @@ function FleetList({ rows, names }: { readonly rows: readonly FleetRow[]; readon
 
 export function FleetScreen() {
   const sources = useSelector(selectFleetSources, sameSources);
-  const connections = useSelector(selectConnections);
+  const connections = useSelector(selectConnections, sameReadyConnections);
   const app = useApp();
   const rows = useMemo(() => fleetRows(sources), [sources]);
   const [archive, setArchive] = useState("active");
-  const [archiveError, setArchiveError] = useState<string>();
+  const [attempt, setAttempt] = useState(0);
+  const [archiveResult, setArchiveResult] = useState<{ connections: typeof connections; attempt: number; error?: string }>();
   useEffect(() => {
     if (archive !== "archived") return;
     let live = true;
     const ready = Object.values(connections).filter((info) => info.daemon === "aether" && info.state === "ready");
+    if (ready.length === 0) return;
     Promise.all(ready.map((info) => loadArchived(app, info, () => live))).then(
-      () => { if (live) setArchiveError(undefined); },
-      (error: unknown) => { if (live) setArchiveError(error instanceof Error ? error.message : String(error)); },
+      () => { if (live) setArchiveResult({ connections, attempt }); },
+      (error: unknown) => {
+        if (live) setArchiveResult({ connections, attempt, error: error instanceof Error ? error.message : String(error) });
+        live = false;
+      },
     );
     return () => { live = false; };
-  }, [app, archive, connections, sources]);
+  }, [app, archive, connections, attempt]);
+  const archiveLoading = archive === "archived" && (archiveResult?.connections !== connections || archiveResult.attempt !== attempt);
+  const archiveError = archive === "archived" && !archiveLoading ? archiveResult?.error : undefined;
   const visible = useMemo(() => rows.filter(row => archive === "archived" ? row.agent.archived : !row.agent.archived), [rows, archive]);
   const names = useMemo(() => runNames(visible), [visible]);
   const facets = useMemo(() => fleetFacets(visible, names), [visible, names]);
@@ -90,7 +110,7 @@ export function FleetScreen() {
     <section className="fleet" aria-label="Fleet">
       <div className="fleet-bar">
         <label className="ui-field fleet-filter"><span className="ui-field-label">Archive</span>
-          <select className="ui-field-input" value={archive} onChange={event => { setArchive(event.currentTarget.value); setFilter(NO_FILTER); }}>
+          <select className="ui-field-input" value={archive} onChange={event => { setArchive(event.currentTarget.value); setAttempt(value => value + 1); setFilter(NO_FILTER); }}>
             <option value="active">Active fleet</option><option value="archived">Archived</option>
           </select>
         </label>
@@ -98,8 +118,8 @@ export function FleetScreen() {
         <p className="fleet-count" aria-live="polite">{shown.length.toLocaleString("en")} of {visible.length.toLocaleString("en")} agents</p>
         <a className="ui-link" href="#/fleet/topology">Delegation topology</a>
       </div>
-      {archiveError ? <p role="alert">Could not load archived agents: {archiveError}</p> : null}
-      {shown.length > 0 ? <FleetList rows={shown} names={names} />
+      {archiveError ? <div role="alert">Could not load archived agents: {archiveError} <Button onClick={() => setAttempt(value => value + 1)}>Retry</Button></div> : null}
+      {archiveLoading ? <p role="status">Loading archived agents…</p> : archiveError ? null : shown.length > 0 ? <FleetList rows={shown} names={names} />
         : visible.length === 0 ? <EmptyState title={archive === "archived" ? "No archived agents" : "No agents yet"}>Agents appear here when they belong to this view.</EmptyState>
           : <EmptyState title="No agent matches" action={<Button onClick={clear}>Clear filters</Button>}>Every filter must match.</EmptyState>}
     </section>

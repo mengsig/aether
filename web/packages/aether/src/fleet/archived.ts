@@ -16,6 +16,7 @@ export async function loadArchived(app: App, info: ConnectionInfo, isCurrent: ()
   const agents: aether.Agent[] = [];
   if (!info.features.includes("agents_paging")) {
     const reply = await app.send(info.id, { cmd: "get_tree", include_archived: true });
+    if (!isCurrent()) return;
     invariant(reply.reply === "tree" && reply.data !== null && typeof reply.data === "object", "get_tree returns a tree");
     const nodes = (reply.data as { nodes?: Record<string, { agent: unknown }> }).nodes;
     invariant(nodes !== undefined && typeof nodes === "object", "tree has nodes");
@@ -24,6 +25,7 @@ export async function loadArchived(app: App, info: ConnectionInfo, isCurrent: ()
     let after: string | undefined;
     for (let page = 0; page < 10000; page += 1) {
       const reply = await app.send(info.id, { cmd: "list_agents_page", query: { include_archived: true }, limit: 500, ...(after ? { after } : {}) });
+      if (!isCurrent()) return;
       invariant(reply.reply === "agents_page" && reply.data !== null && typeof reply.data === "object", "list_agents_page returns a page");
       const data = reply.data as { agents?: unknown; next_after?: unknown };
       agents.push(...archivedAgents(data.agents));

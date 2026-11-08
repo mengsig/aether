@@ -126,14 +126,70 @@ describe("the fleet list", () => {
     await h.frame();
     expect(send.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(container.querySelector('[data-agent="agt_00000"]')).not.toBeNull();
-    h.app.store.updateAether(info.id, (state) => ({ ...state, agents: {} }));
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  test("shows loading and retries a failed archive request", async () => {
+    const h = harness();
+    seedFleet(h.app.store, fixtureConnection(), {});
+    let rejectRequest: (error: Error) => void = () => { throw new Error("request not started"); };
+    const send = vi.spyOn(h.app, "send").mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRequest = reject; }))
+      .mockResolvedValueOnce({ reply: "agents_page", data: { agents: [] } });
+    const container = await h.mount(<FleetScreen />);
+    const select = container.querySelector<HTMLSelectElement>(".fleet-bar > label select");
+    if (!select) throw new Error("Archive filter missing");
+    await act(async () => { select.value = "archived"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect(container.textContent).toContain("Loading archived agents");
+    expect(container.textContent).not.toContain("No archived agents");
+    await act(async () => rejectRequest(new Error("offline")));
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("offline");
+    expect(container.textContent).not.toContain("No archived agents");
+    const retry = must([...container.querySelectorAll("button")].find(button => button.textContent === "Retry"), "retry button");
+    await act(async () => retry.click());
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("No archived agents");
+  });
+
+  test("live agent updates do not restart an in-flight archive load", async () => {
+    const h = harness();
+    const info = fixtureConnection();
+    seedFleet(h.app.store, info, fixtureAgents(1));
+    const archived = { ...must(fixtureAgents(2).agt_00001, "agent"), archived: true };
+    let resolveRequest: (reply: { reply: string; data: { agents: typeof archived[] } }) => void = () => { throw new Error("request not started"); };
+    const send = vi.spyOn(h.app, "send").mockImplementation(() => new Promise(resolve => { resolveRequest = resolve; }));
+    const container = await h.mount(<FleetScreen />);
+    const select = container.querySelector<HTMLSelectElement>(".fleet-bar > label select");
+    if (!select) throw new Error("Archive filter missing");
+    await act(async () => { select.value = "archived"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    h.app.store.updateAether(info.id, state => ({ ...state, agents: { ...state.agents, agt_00000: { ...must(state.agents.agt_00000, "agent"), name: "updated" } } }));
     await h.frame();
+    expect(send).toHaveBeenCalledTimes(1);
+    await act(async () => resolveRequest({ reply: "agents_page", data: { agents: [archived] } }));
     await h.frame();
-    expect(container.querySelector('[data-agent="agt_00000"]')).not.toBeNull();
+    expect(container.querySelector('[data-agent="agt_00001"]')).not.toBeNull();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  test("ignores an archive response after leaving the view", async () => {
+    const h = harness();
+    const info = fixtureConnection();
+    seedFleet(h.app.store, info, {});
+    const archived = { ...must(fixtureAgents(1).agt_00000, "agent"), archived: true };
+    let resolveRequest: (reply: { reply: string; data: { agents: typeof archived[] } }) => void = () => { throw new Error("request not started"); };
+    vi.spyOn(h.app, "send").mockImplementation(() => new Promise(resolve => { resolveRequest = resolve; }));
+    const container = await h.mount(<FleetScreen />);
+    const select = container.querySelector<HTMLSelectElement>(".fleet-bar > label select");
+    if (!select) throw new Error("Archive filter missing");
+    await act(async () => { select.value = "archived"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => { select.value = "active"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => resolveRequest({ reply: "agents_page", data: { agents: [archived] } }));
+    expect(h.app.store.get().aether[info.id]?.agents[archived.id]).toBeUndefined();
+    expect(container.textContent).not.toContain("Loading archived agents");
   });
 
   test("moves archived agents out of the default fleet and back on restore", async () => {
     const { h, container } = await fleet(2);
+    vi.spyOn(h.app, "send").mockResolvedValue({ reply: "agents_page", data: { agents: [] } });
     h.app.store.updateAether("aether:fixture", state => ({ ...state, agents: { ...state.agents, agt_00000: { ...must(state.agents.agt_00000, "agent"), archived: true } } }));
     await h.frame();
     expect(count(container)).toBe("1 of 1 agents");
