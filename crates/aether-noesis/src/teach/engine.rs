@@ -75,8 +75,8 @@ impl std::fmt::Debug for ToolResult {
     }
 }
 
-/// What a Noesis agent is given. Inputs are persisted before inference, so
-/// an input whose turn failed is still there for the retry.
+/// What a Noesis agent is given. Guidance is transient; all other inputs
+/// are persisted before inference and survive a failed turn.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
     /// The learner's own message.
@@ -136,8 +136,8 @@ pub trait Engine {
     fn models(&self) -> Vec<ModelInfo>;
     /// Create an agent; returns its Aether agent id.
     fn spawn(&mut self, spec: AgentSpec) -> Result<String, EngineError>;
-    /// Persist an input for the agent's next step; the transcript seq it was
-    /// recorded at, or `None` when it added nothing. A failed delivery may be
+    /// Deliver an input for the agent's next step; return its transcript seq,
+    /// or `None` for transient guidance or when it added nothing. A failed delivery may be
     /// repeated, so a tool result or answer seen twice (same id) is ignored.
     /// Inputs are the agent's private context, sealed only against what is
     /// committed when they go: a host publishes turn reports, never them.
