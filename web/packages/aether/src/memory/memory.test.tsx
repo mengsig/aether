@@ -220,8 +220,10 @@ test("repository suggestions combine agent roots, recent workspaces and recorded
   await click(h, root, "Repository");
   await pick(h, root, "Repository filter", "/recent");
   expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "repository", id: "/recent" } } });
-  await pick(h, root, "Repository filter", "All");
-  expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: null } });
+  const beforeClear = h.daemon.commands("memories").length;
+  await pick(h, root, "Repository filter", "Choose a repository");
+  expect(h.daemon.commands("memories")).toHaveLength(beforeClear);
+  expect(root.textContent).toContain("Choose a scope to filter memories.");
   await click(h, root, "Create memory");
   await click(h, document.querySelector('[aria-label="Memory scope"]') as HTMLElement, "Repository");
   await type(h, document.body, "Memory text", "Repository lesson");
