@@ -24,7 +24,7 @@ export const AETHER_OPERATE: ReadonlySet<string> = new Set([
   "configure_github_watcher", "create_agent", "create_memory", "create_schedule", "create_task",
   "forget_memory", "get_git_summary", "interrupt", "mark_notification_read", "noesis_answer",
   "noesis_cancel_job", "noesis_correct_learner", "noesis_create_session", "noesis_delete_proposition",
-  "noesis_delete_session", "noesis_delete_source", "noesis_extract", "noesis_import_source", "noesis_send",
+  "noesis_delete_session", "noesis_delete_source", "noesis_extract", "noesis_import_source", "noesis_send", "noesis_retry_turn",
   "pause", "pin_memory", "post_notification", "publish_artifact", "refresh_provider_usage",
   "reply_to_question", "resolve_notification", "restart", "restore_memory", "resume", "revoke_approval_rule",
   "send_message", "set_approvals", "sync_repository_knowledge", "trigger", "update_schedule",

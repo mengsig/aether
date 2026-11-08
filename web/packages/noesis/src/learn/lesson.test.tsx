@@ -186,6 +186,18 @@ describe("budget", () => {
     const note = $(root, ".learn-callout[data-kind=budget]");
     expect(note.textContent).toContain("Today's teaching budget is spent");
     expect(byText(note, "a", "Open settings").getAttribute("href")).toContain("settings");
+    expect(note.querySelector("button")).toBeNull();
+  });
+
+  test("a persisted stall can resume after reopening when the daemon supports retry", async () => {
+    const stalled = { reason: "budget_exhausted" as const, message: "today's Noesis interactive budget is spent", at: LESSON.updated_at };
+    const h = await start({ sessions: [{ ...LESSON, stalled }], retryTurn: true });
+    const root = await open(h);
+    await click(h, byText($(root, ".learn-callout[data-kind=budget]"), "button", "Try again"));
+    await h.settle(SETTLE_MS);
+    expect(h.daemon.sent.filter((command) => command.cmd === "noesis_retry_turn")).toMatchObject([{ session: LESSON.id, idempotency_key: expect.any(String) }]);
+    expect(root.querySelector(".learn-callout[data-kind=budget]")).toBeNull();
+    expect(root.querySelector(".learn-working")).not.toBeNull();
   });
 });
 

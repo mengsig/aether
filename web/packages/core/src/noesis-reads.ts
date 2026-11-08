@@ -67,7 +67,7 @@ export function installNoesisChange(state: AetherConnState, command: Json, reply
   if (cmd === "noesis_delete_proposition" || cmd === "noesis_delete_source") return withLearn(state, stale(state.learn, noesisKey.graph));
   object(reply, "reply");
   // An answer is recorded and graded before the reply, and a message is queued: the session's reread shows both.
-  if (cmd === "noesis_answer" || cmd === "noesis_send") return withLearn(state, stale(state.learn, noesisKey.session(string(command.session, `${cmd}.session`))));
+  if (cmd === "noesis_answer" || cmd === "noesis_send" || cmd === "noesis_retry_turn") return withLearn(state, stale(state.learn, noesisKey.session(string(command.session, `${cmd}.session`))));
   if (cmd === "noesis_extract") return withLearn(state, stale(state.learn, noesisKey.jobs));
   return state;
 }

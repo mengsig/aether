@@ -32,6 +32,7 @@ export interface FauxNoesisOptions {
   /** What `list_models` and `providers` answer; none by default. */
   readonly models?: readonly aether.ModelInfo[];
   readonly providers?: readonly aether.ProviderInfo[];
+  readonly retryTurn?: boolean;
 }
 
 const OK = (tag: string, data: unknown): Result => ({ reply: { Ok: { reply: tag, data } }, then: [] });
@@ -53,6 +54,7 @@ export class FauxNoesis {
   jobs: aether.Job[] = [];
   models: readonly aether.ModelInfo[];
   providers: readonly aether.ProviderInfo[];
+  readonly retryTurn: boolean;
   readonly sessions = new Map<string, aether.NoesisSession>();
   readonly held = new Map<string, HeldQuestion>();
   graph: { nodes: aether.Proposition[]; chains: aether.Chain[] };
@@ -70,6 +72,7 @@ export class FauxNoesis {
     this.refuse = options.refuse;
     this.models = options.models ?? [];
     this.providers = options.providers ?? [];
+    this.retryTurn = options.retryTurn ?? false;
     this.graph = { nodes: [...(options.graph?.nodes ?? [])], chains: [...(options.graph?.chains ?? [])] };
     this.concepts = [...(options.concepts ?? [])];
     for (const session of options.sessions ?? []) this.addSession(session, options.contexts?.[session.id]);
@@ -235,7 +238,7 @@ export class FauxNoesis {
     switch (cmd) {
       case "hello": return OK("welcome", {
         protocol_version: 26, daemon_version: "1.3.0-faux", pid: 1, schema_version: 29, instance_id: "faux-noesis", min_protocol_version: 17,
-        features: ["deltas", "delta_order", "transcript_paging", "agents_paging", "noesis"], device: { id: "dev_faux", name: "faux", role: "operator" }, idle_timeout_secs: null,
+        features: ["deltas", "delta_order", "transcript_paging", "agents_paging", "noesis", ...(this.retryTurn ? ["noesis_retry_turn"] : [])], device: { id: "dev_faux", name: "faux", role: "operator" }, idle_timeout_secs: null,
       });
       case "subscribe": return this.subscribe(command);
       case "unsubscribe":
@@ -277,6 +280,7 @@ export class FauxNoesis {
       }
       case "noesis_create_session": return this.create(command);
       case "noesis_send": return this.refuseTurns === undefined ? OK("ok", null) : ERR("invalid_argument", this.refuseTurns);
+      case "noesis_retry_turn": return this.retryTurn ? this.retry(command) : ERR("invalid_argument", "unsupported");
       case "noesis_answer": return this.refuseTurns === undefined ? this.answer(command) : ERR("invalid_argument", this.refuseTurns);
       case "noesis_delete_session": this.sessions.delete(String(command.session)); this.history.forget(String(command.session)); return OK("ok", null);
       case "noesis_extract": return this.extract(String(command.session));
@@ -287,6 +291,14 @@ export class FauxNoesis {
       case "noesis_delete_source": return OK("ok", null);
       default: return ERR("invalid_argument", `the faux daemon has no ${cmd}`);
     }
+  }
+
+  private retry(command: Json): Result {
+    const session = this.session(String(command.session));
+    invariant(this.retryTurn, "retry is advertised");
+    if (this.refuseTurns !== undefined) return ERR("invalid_argument", this.refuseTurns);
+    this.update(session.id, { stalled: null });
+    return OK("ok", null);
   }
 
   /** Holds every privileged action until the returned function is called, to finish a save late. */

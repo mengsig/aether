@@ -25,7 +25,7 @@ export const AETHER_OPERATE = words(`create_agent reply_to_question send_message
   sync_repository_knowledge complete_path validate_workspace get_git_summary workspace_diff workspace_integrate
   workspace_discard refresh_provider_usage post_notification mark_notification_read resolve_notification
   answer_notification list_devices update_agent resolve_approval add_approval_rule resolve_submission
-  noesis_configure noesis_create_session noesis_send noesis_answer noesis_delete_session noesis_delete_proposition
+  noesis_configure noesis_create_session noesis_send noesis_answer noesis_retry_turn noesis_delete_session noesis_delete_proposition
   noesis_delete_source noesis_extract noesis_import_source noesis_cancel_job noesis_correct_learner`);
 
 /** Host-only and remote-admin alike: only a `local` connection may send them. */
@@ -44,7 +44,7 @@ export const AETHER_KEYED = words(`add_approval_rule archive cancel create_agent
   interrupt pause record_memory_feedback reply_to_question resolve_approval restart resume send_message set_approvals
   trigger update_agent update_schedule noesis_answer noesis_cancel_job noesis_configure noesis_correct_learner
   noesis_create_session noesis_delete_proposition noesis_delete_session noesis_delete_source noesis_extract
-  noesis_import_source noesis_send`);
+  noesis_import_source noesis_send noesis_retry_turn`);
 
 /**
  * The Archon requests an app may send: what archon-remote allow.rs lets an operator device send,

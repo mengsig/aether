@@ -150,6 +150,7 @@ async fn a_reply_naming_a_live_solution_is_discarded() {
     let created = harness.create(json!({"mode": "practice"})).await;
     harness.settled().await;
     let practitioner = agent_of(&created);
+    let mut bus = harness.daemon.runtime.subscribe();
     let search = json!({"query": SOLUTION_SECRET});
     cli.queue(
         "practitioner",
@@ -164,10 +165,49 @@ async fn a_reply_naming_a_live_solution_is_discarded() {
         "idempotency_key": "hint"});
     harness.send_json(sent).await.expect("sent");
     harness.settled().await;
+    assert!(!live_text(&mut bus, practitioner).contains(SOLUTION_SECRET));
     assert_never_kept(&harness, practitioner, SOLUTION_SECRET);
     let transcript = serde_json::to_string(&harness.transcript(practitioner)).expect("json");
     assert!(transcript.contains("Over to you."), "{transcript}");
     assert!(!transcript.contains("Let me look."), "{transcript}");
+    assert_eq!(reminded(&cli), 1);
+    harness.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn prose_naming_a_live_solution_never_reaches_a_subscriber() {
+    let home = Home::new();
+    let cli = Arc::new(FauxCli::default());
+    let problem = json!({"statement": "What is 2 + 3?", "mode": "recall", "targets": [],
+        "solution": SOLUTION_SECRET});
+    cli.queue(
+        "practitioner",
+        json!({"text": "Try this one.", "tool_calls": [tool_call("noesis_problem", problem)]}),
+    );
+    let harness = engine_harness(&home, cli.clone()).await;
+    let created = harness.create(json!({"mode": "practice"})).await;
+    harness.settled().await;
+    let practitioner = agent_of(&created);
+    let mut bus = harness.daemon.runtime.subscribe();
+    cli.queue(
+        "practitioner",
+        json!({"text": format!("It is {SOLUTION_SECRET}."), "tool_calls": []}),
+    );
+    cli.queue(
+        "practitioner",
+        json!({"text": "Think it through.", "tool_calls": []}),
+    );
+
+    let sent = json!({"cmd": "noesis_send", "session": created.id, "text": "A hint?", "idempotency_key": "prose-hint"});
+    harness.send_json(sent).await.expect("sent");
+    harness.settled().await;
+    assert!(!live_text(&mut bus, practitioner).contains(SOLUTION_SECRET));
+    assert_never_kept(&harness, practitioner, SOLUTION_SECRET);
+    assert!(
+        serde_json::to_string(&harness.transcript(practitioner))
+            .unwrap()
+            .contains("Think it through.")
+    );
     assert_eq!(reminded(&cli), 1);
     harness.close().await;
 }

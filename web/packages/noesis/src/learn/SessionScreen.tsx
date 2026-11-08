@@ -2,8 +2,9 @@
 // problems), the plan beside it and the way to answer. The teacher's reply streams in as it is written.
 
 import type { aether, RouteProps } from "@aether-ui/protocol";
+import { useSelector } from "@aether-ui/core";
 import { Button, EmptyState, ErrorState, Markdown } from "@aether-ui/ui";
-import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLearn, useNoesisRead, useOperateRefusal } from "./data.ts";
 import { LearnFrame, type OpenGate } from "./LearnFrame.tsx";
 import { Composer } from "./Composer.tsx";
@@ -36,7 +37,7 @@ export function SessionScreen({ conn, status, id }: OpenGate & { id: string }) {
 function SessionView({ conn, status, session, reload }: OpenGate & { session: aether.NoesisSession; reload: () => void }) {
   const learn = useLearn(conn);
   const operate = useOperateRefusal(conn);
-  const statusRead = useNoesisRead(conn, { kind: "status" });
+  const canRetryTurn = useSelector(useCallback((state) => state.connections[conn]?.features.includes("noesis_retry_turn") === true, [conn]));
   const transcripts = useLessonTranscripts(conn, session);
   const live = useLiveText(conn, session.agent);
   const items = useMemo(() => buildTimeline(session, transcripts, learn), [session, transcripts, learn]);
@@ -44,6 +45,8 @@ function SessionView({ conn, status, session, reload }: OpenGate & { session: ae
   const turn = useLessonTurn(conn, session, items, streamed);
   const budget = exhaustedBudget(status);
   const refusal = turn.refusal ?? spentRefusal(session, budget);
+  const retry = operate !== null || turn.pending !== null ? undefined : turn.retry
+    ?? (session.stalled && canRetryTurn ? () => void turn.act({ cmd: "noesis_retry_turn", session: session.id }) : undefined);
   const answer = (question: string, input: AnswerInput) => turn.act({ cmd: "noesis_answer", session: session.id, question, answer: input });
   const checkAgain = () => {
     reload();
@@ -59,7 +62,7 @@ function SessionView({ conn, status, session, reload }: OpenGate & { session: ae
         <Transcript items={[...items, ...live]} live={live.length > 0} pending={turn.pending} onAnswer={operate === null ? answer : undefined} onCheck={checkAgain}>
           {session.context && session.context.items.length > 0 && <SourcesCard bundle={session.context} />}
           {planComplete(session.plan) && <CompletionCard conn={conn} session={session} />}
-          {refusal !== null && <RefusalNote refusal={refusal} budget={refusal.kind === "budget" ? budget : null} onRetry={turn.retry ?? (refusal.kind === "budget" ? statusRead.reload : undefined)} />}
+          {refusal !== null && <RefusalNote refusal={refusal} budget={refusal.kind === "budget" ? budget : null} onRetry={retry} />}
         </Transcript>
         <Composer sessionId={session.id} waiting={session.open_question != null} problem={session.active_problem != null} reason={pausedBy(budget)}
           disabled={operate !== null || turn.pending !== null || budget !== null} onSend={(text) => turn.act({ cmd: "noesis_send", session: session.id, text })} />
