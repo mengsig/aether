@@ -12,6 +12,7 @@ import { tempBase } from "../../../harness/env.ts";
 import { record, spawnLogged, stopGroup, type Spawned } from "../../../harness/process.ts";
 import { failLaunch, runAll } from "../../../harness/teardown.ts";
 import { startNativeHost, type NativeHost } from "./native-host.ts";
+import { cdpProxy } from "./cdp-proxy.ts";
 
 const READY_MS = 60_000;
 const POLL_MS = 200;
@@ -170,9 +171,11 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
   let sway: Spawned | undefined;
   let app: Spawned | undefined;
   let browser: Browser | undefined;
+  let proxy: Awaited<ReturnType<typeof cdpProxy>> | undefined;
   let native: NativeHost | undefined;
   const close = () => runAll([
     async () => browser?.close(),
+    async () => proxy?.close(),
     async () => app !== undefined && stopGroup(app),
     async () => native?.close(),
     async () => sway !== undefined && stopGroup(sway),
@@ -189,7 +192,8 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
       { env: appEnv, cwd: root, log });
     const port = await devtoolsPort(profile, app);
     await appDocument(port, app);
-    browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { noDefaults: true });
+    proxy = await cdpProxy(port);
+    browser = await chromium.connectOverCDP(proxy.endpoint, { noDefaults: true });
     const ipc = await until(() => swaySocket(runtime), "sway's IPC socket", sway);
     const compositor = { PATH: env.PATH, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display, SWAYSOCK: ipc };
     let runs = 0;
