@@ -16,6 +16,7 @@ import { cdpProxy } from "./cdp-proxy.ts";
 
 const READY_MS = 60_000;
 const POLL_MS = 200;
+const KEYBOARD_MS = 6 * 60 * 60 * 1000;
 /** sway's IPC socket, `sway-ipc.<uid>.<pid>.sock`, must fit in a socket address (108 bytes). */
 const MAX_RUNTIME_DIR = 70;
 const SWAY_CONFIG = "output HEADLESS-1 resolution 1600x1000\nxwayland disable\n";
@@ -187,7 +188,7 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
     const runtime = path.join(root, "run");
     sway = await spawnCompositor(root, runtime, env);
     const display = await waylandSocket(runtime, sway);
-    keyboard = spawnLogged(onPath("wtype"), ["-P", "Shift", "-p", "Shift", "-s", "300000", "-k", "Shift"],
+    keyboard = spawnLogged(onPath("wtype"), ["-s", String(KEYBOARD_MS)],
       { env: { ...env, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display }, cwd: root, log: path.join(root, "keyboard.log") });
     native = await startNativeHost(root, env);
     const appEnv = { ...env, ...native.env, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display };
@@ -209,7 +210,7 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
     };
     return { window: await appWindow(browser), browser, native, compositor, again, close };
   } catch (error) {
-    const tails = `${logTail(log)}\n-- sway:\n${logTail(path.join(root, "sway.log"))}`;
+    const tails = `${logTail(log)}\n-- sway:\n${logTail(path.join(root, "sway.log"))}\n-- keyboard:\n${logTail(path.join(root, "keyboard.log"))}`;
     return failLaunch(error, `The packaged app did not start; its logs ended:\n${tails}`, close);
   }
 }

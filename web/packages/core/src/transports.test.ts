@@ -200,7 +200,7 @@ describe("ipc", () => {
   });
 
   it("settles a refused request without closing the connection and permits a retry", async () => {
-    const request = vi.fn().mockRejectedValueOnce(new Error("Error invoking remote method: BridgeRefusal: denied"))
+    const request = vi.fn().mockRejectedValueOnce(new Error("BridgeRefusal: denied"))
       .mockResolvedValueOnce({ frame: "reply", id: 2, result: { Ok: {} } });
     const { desktop } = bridge({ request });
     const frames: unknown[] = [];

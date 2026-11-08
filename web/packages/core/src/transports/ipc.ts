@@ -29,11 +29,11 @@ export function ipcTransport(bridge: DesktopBridge, report: (message: string) =>
       const deliver = (frame: unknown) => { if (open) onFrame(frame); };
       const rejected = (command: Json, error: unknown) => {
         const message = errorText(error);
-        if (!(error instanceof Error && error.name === "BridgeRefusal") && !/\bBridgeRefusal:/.test(message)) return lost(error);
+        if (!message.startsWith("BridgeRefusal: ")) return lost(error);
         if (/\b(?:is closed|is not an open local connection)\b/.test(message)) return lost(error);
         const id = seq(command.req, "command.req");
         invariant(id > 0, "a refused request has a positive id");
-        deliver({ frame: "reply", id, result: { Err: { code: "forbidden", message: message.replace(/^.*?\bBridgeRefusal:\s*/, "") } } });
+        deliver({ frame: "reply", id, result: { Err: { code: "forbidden", message: message.slice("BridgeRefusal: ".length) } } });
       };
       return {
         send(frame: unknown) {
