@@ -11,7 +11,7 @@ import type { Stack } from "../../../harness/stack.ts";
 import { expect, test, type Page } from "../../../harness/fixtures.ts";
 import { fixtureRepository, installGhStub, OWNER_REPO } from "../gh-stub.ts";
 import { startPrivateStack, stopPrivateStack, type PrivateStack } from "../private.ts";
-import { focusWindow, minimizeWindow, pressKeys, windowTitles } from "./native-host.ts";
+import { focusWindow, hideWindow, pressKeys, windowTitles } from "./native-host.ts";
 import { askingScript, installLavishStub, publishReport, shoot, shootScreen, startReportServer, VIEWPORT, type ReportServer } from "./native-fixtures.ts";
 import { launchPackaged, packagedBinary, type PackagedApp } from "./packaged.ts";
 import { route, setPaused } from "./state.ts";
@@ -190,7 +190,7 @@ test("UX-045: a real agent's notification restores the packaged app and focuses 
   await route(page, "#/inbox");
   await expect(page.getByText(/^Nothing on .* needs you$/)).toBeVisible();
   await route(page, "#/fleet");
-  await minimizeWindow(desktop().compositor, await page.title());
+  await hideWindow(desktop().compositor, await page.title());
   await shootScreen(desktop().compositor, "notification-before-click");
   stack().engine.setScript(askingScript(MARKER, QUESTIONS));
   const agent = await createAgent(stack(), "Native asker", `Ask the operator two things (${MARKER}).`);

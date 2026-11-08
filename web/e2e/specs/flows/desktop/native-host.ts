@@ -107,14 +107,19 @@ export async function enterSavePath(compositor: NodeJS.ProcessEnv, file: string)
   const env = { ...process.env, ...compositor };
   await exec("/usr/bin/xdotool", ["key", "ctrl+a"], { env, timeout: 10_000 });
   await exec("/usr/bin/xdotool", ["type", "--clearmodifiers", "--", path.basename(file)], { env, timeout: 10_000 });
-  await exec("/usr/bin/xdotool", ["key", "Return"], { env, timeout: 10_000 });
+  const { stdout } = await exec("/usr/bin/xdotool", ["getactivewindow", "getwindowgeometry", "--shell"], { env, timeout: 10_000 });
+  const geometry = Object.fromEntries([...stdout.matchAll(/^(X|Y|WIDTH|HEIGHT)=(\d+)$/gm)].map((match) => [match[1], Number(match[2])]));
+  const { X: x, Y: y, WIDTH: width, HEIGHT: height } = geometry;
+  assert.ok(x !== undefined && y !== undefined && width !== undefined && height !== undefined, "the chooser reports its geometry");
+  assert.ok(width > 100 && height > 50, "the chooser has room for its save button");
+  await exec("/usr/bin/xdotool", ["mousemove", "--sync", String(x + width - 54), String(y + height - 25), "click", "1"], { env, timeout: 10_000 });
 }
 
-/** Requests minimization of the app window on the private Xwayland display. */
-export async function minimizeWindow(compositor: NodeJS.ProcessEnv, title: string): Promise<void> {
+/** Hides the app window on the private Xwayland display. */
+export async function hideWindow(compositor: NodeJS.ProcessEnv, title: string): Promise<void> {
   assert.match(String(compositor.DISPLAY ?? ""), /^:\d+$/, "the display is the private Xwayland");
   await focusWindow(compositor, title);
-  await exec("/usr/bin/xdotool", ["getactivewindow", "windowminimize"], { env: { ...process.env, ...compositor }, timeout: 10_000 });
+  await exec("/usr/bin/xdotool", ["getactivewindow", "windowunmap"], { env: { ...process.env, ...compositor }, timeout: 10_000 });
 }
 
 /** The titles of every window on the run's own compositor. */
