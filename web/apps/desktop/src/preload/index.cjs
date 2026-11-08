@@ -38,7 +38,7 @@ ipcRenderer.on("desktop:deep-link", (_event, route) => {
  */
 function call(method, ...args) {
   return ipcRenderer.invoke(`desktop:${method}`, ...args).catch((/** @type {unknown} */ error) => {
-    throw plainRefusal(error);
+    throw plainRefusal(error, method);
   });
 }
 
@@ -48,13 +48,16 @@ const IPC_PREFIX = /^Error invoking remote method '[^']*': (?:(\w+): )?/;
 /**
  * Main's own error, so the page can show and compare its message as main wrote it.
  * @param {unknown} error
+ * @param {string} method
  * @returns {Error}
  */
-function plainRefusal(error) {
+function plainRefusal(error, method) {
   const text = error instanceof Error ? error.message : String(error);
   const match = IPC_PREFIX.exec(text);
   if (match === null) return error instanceof Error ? error : new Error(text);
-  const plain = new Error(text.slice(match[0].length).trim() || "The desktop app refused without giving a reason");
+  const reason = text.slice(match[0].length).trim() || "The desktop app refused without giving a reason";
+  const marker = match[1] === "BridgeRefusal" && (method === "request" || method === "subscribe") ? "BridgeRefusal: " : "";
+  const plain = new Error(marker + reason);
   plain.name = match[1] ?? "Error";
   return plain;
 }

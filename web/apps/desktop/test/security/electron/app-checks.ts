@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { net, session, type IpcMainInvokeEvent } from "electron";
+import { buildSync } from "esbuild";
 import { APP_CSP } from "../../../src/security/csp.ts";
 import { senderOf } from "../../../src/main/host.ts";
 import { WEB_DIST } from "../../../src/main/paths.ts";
@@ -124,6 +125,27 @@ export async function bridgeChecks(ctx: Context): Promise<void> {
     const result = await call(`return desktop.request(testConn, { cmd: "get_remote", req: 9010 });`);
     assert.deepEqual(result.ok, { frame: "reply", id: 9010, result: { Ok: { reply: "remote", data: REMOTE_VIEW } } });
     assert.ok(ctx.daemon.lines.some((line) => line.includes('"req":9010')));
+  });
+  await ctx.check("refused requests preserve the renderer transport", async () => {
+    const bundle = buildSync({ entryPoints: [new URL("../../../../../packages/core/src/transports/ipc.ts", import.meta.url).pathname],
+      bundle: true, write: false, format: "iife", globalName: "transportTest", platform: "browser" }).outputFiles[0];
+    assert.ok(bundle !== undefined, "the transport bundle exists");
+    const result = await ctx.js(contents, `(async () => {
+      ${bundle.text}
+      const frames = []; let closed = false;
+      const link = await transportTest.ipcTransport(desktop, () => {}).open("aether:local", f => frames.push(f), () => { closed = true; });
+      link.send({ cmd: "shutdown", req: 9101 });
+      link.send({ cmd: "subscribe", req: 9102, extra: true });
+      link.send({ cmd: "status", req: 9103 });
+      const end = Date.now() + 5000;
+      while (frames.length < 3 && !closed && Date.now() < end) await new Promise(r => setTimeout(r, 20));
+      link.close();
+      return { frames, closed };
+    })()` ) as { frames: Array<{ id: number; result: { Err?: { code: string } } }>; closed: boolean };
+    assert.equal(result.closed, false, "refusals leave the link open");
+    assert.equal(result.frames.length, 3, "both refusals and the subsequent status reply arrive");
+    for (const id of [9101, 9102]) assert.equal(result.frames.find((frame) => frame.id === id)?.result.Err?.code, "forbidden");
+    assert.ok(result.frames.some((frame) => frame.id === 9103 && frame.result.Err === undefined), "status succeeds afterward");
   });
   await ctx.check("a refused link reads as main's own sentence", async () => {
     const result = await call(`return desktop.openExternal("file:///etc/passwd");`);

@@ -19,7 +19,7 @@ const EXPECTED = [
   "app:// refuses paths outside the bundle", "app window navigation is pinned", "app window opens no windows",
   "app CSP blocks the remote origin", "subframes get no bridge", "app window has no seen request at the remote origin",
   "bridge passes a status request", "bridge refuses shutdown, host-only and remote-admin commands",
-  "bridge passes the local remote status read", "a refused link reads as main's own sentence",
+  "bridge passes the local remote status read", "refused requests preserve the renderer transport", "a refused link reads as main's own sentence",
   "a refused notification reaches the page with main's reason",
   "privileged action sends the confirmed frame", "privileged action refused when cancelled",
   "openRemote refuses http, paths, userinfo and unlisted origins", "openRemote opens a listed origin",

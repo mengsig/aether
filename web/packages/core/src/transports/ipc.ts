@@ -33,7 +33,7 @@ export function ipcTransport(bridge: DesktopBridge, report: (message: string) =>
         if (/\b(?:is closed|is not an open local connection)\b/.test(message)) return lost(error);
         const id = seq(command.req, "command.req");
         invariant(id > 0, "a refused request has a positive id");
-        deliver({ frame: "reply", id, result: { Err: { code: "forbidden", message } } });
+        deliver({ frame: "reply", id, result: { Err: { code: "forbidden", message: message.replace(/^.*?\bBridgeRefusal:\s*/, "") } } });
       };
       return {
         send(frame: unknown) {
