@@ -229,6 +229,19 @@ export function noesisListSessions(args: Omit<NoesisListSessionsCommand, "cmd">)
 }
 
 /**
+ * Retry a stalled teaching turn after changing its budget.
+ */
+export interface NoesisRetryTurnCommand {
+  "cmd": "noesis_retry_turn";
+  "idempotency_key"?: string | null;
+  "session": string;
+}
+
+export function noesisRetryTurn(args: Omit<NoesisRetryTurnCommand, "cmd">): NoesisRetryTurnCommand {
+  return { cmd: "noesis_retry_turn", ...args };
+}
+
+/**
  * Say something to the session's teacher. 1 to 20000 characters.
  */
 export interface NoesisSendCommand {

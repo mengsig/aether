@@ -113,8 +113,15 @@ fn an_n3_store_upgrades_keeping_each_session_s_agent_and_inferring_each_step() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("noesis.db");
     n3_store(&path);
+    let old = Connection::open(&path).unwrap();
+    old.execute(
+        "UPDATE questions SET answer = '{\"delivered\":false}' WHERE id = 'q_probe'",
+        [],
+    )
+    .unwrap();
+    drop(old);
     let store = NoesisStore::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 4);
+    assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
     let conn = store.connection();
     let mut statement = conn
         .prepare("SELECT session, ord, agent, role, internal FROM session_agents ORDER BY session")
@@ -166,6 +173,14 @@ fn an_n3_store_upgrades_keeping_each_session_s_agent_and_inferring_each_step() {
         )
         .unwrap();
     assert_eq!(stalled, None, "no session starts stalled");
+    let pending: bool = conn
+        .query_row(
+            "SELECT turn_pending FROM sessions WHERE id = 'ns_t'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(pending, "undelivered legacy answers remain recoverable");
 }
 
 #[test]
@@ -480,7 +495,7 @@ fn an_n2_store_upgrades_to_n3_keeping_every_row() {
     drop(conn);
 
     let store = NoesisStore::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 4);
+    assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
     let after = dump(store.connection());
     // N4 then adds columns to sessions and questions and a session_agents table; the N3 to N4
     // test checks those rows survive.

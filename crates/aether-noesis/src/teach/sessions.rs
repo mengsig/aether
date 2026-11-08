@@ -93,12 +93,10 @@ impl<E: Engine> Teaching<'_, E> {
         Ok(row.agent)
     }
 
-    /// Every session with an answer committed but not yet delivered.
-    pub fn sessions_owing_answers(&self) -> Result<Vec<String>, TeachError> {
+    /// Sessions with an interrupted turn that has not stalled.
+    pub fn sessions_pending_turns(&self) -> Result<Vec<String>, TeachError> {
         let mut statement = self.conn().prepare_cached(
-            "SELECT DISTINCT session FROM questions
-             WHERE answered_at IS NOT NULL AND json_extract(answer, '$.delivered') = 0
-             ORDER BY session",
+            "SELECT id FROM sessions WHERE turn_pending = 1 AND stalled IS NULL ORDER BY id",
         )?;
         let sessions = statement
             .query_map([], |row| row.get::<_, String>(0))?
@@ -106,4 +104,41 @@ impl<E: Engine> Teaching<'_, E> {
         debug_assert!(sessions.windows(2).all(|pair| pair[0] < pair[1]));
         Ok(sessions)
     }
+
+    /// Retry a stalled turn without recording another learner input.
+    pub fn retry_turn(&self, session: &str) -> Result<(), TeachError> {
+        db::session(self.conn(), session)?;
+        let changed = self.conn().execute(
+            "UPDATE sessions SET turn_pending = 1, stalled = NULL WHERE id = ?1 AND stalled IS NOT NULL",
+            [session],
+        )?;
+        if changed == 0 {
+            return Err(TeachError::Conflict("the session is not stalled".into()));
+        }
+        debug_assert_eq!(changed, 1);
+        Ok(())
+    }
+
+    /// Whether a queued turn may run automatically.
+    pub fn turn_pending(&self, session: &str) -> Result<bool, TeachError> {
+        db::session(self.conn(), session)?;
+        Ok(self.conn().query_row(
+            "SELECT turn_pending = 1 AND stalled IS NULL FROM sessions WHERE id = ?1",
+            [session],
+            |row| row.get(0),
+        )?)
+    }
+}
+
+pub(super) fn set_turn_pending(
+    conn: &rusqlite::Connection,
+    session: &str,
+    pending: bool,
+) -> Result<(), TeachError> {
+    let changed = conn.execute(
+        "UPDATE sessions SET turn_pending = ?2 WHERE id = ?1",
+        params![session, pending],
+    )?;
+    debug_assert_eq!(changed, 1, "the session exists");
+    Ok(())
 }

@@ -76,6 +76,9 @@ fn key_slot(command: &mut Command) -> Option<&mut Option<String>> {
         | Command::NoesisAnswer {
             idempotency_key, ..
         }
+        | Command::NoesisRetryTurn {
+            idempotency_key, ..
+        }
         | Command::NoesisDeleteSession {
             idempotency_key, ..
         }

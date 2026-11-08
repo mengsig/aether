@@ -89,6 +89,7 @@ import type {
   NoesisLearnerCommand,
   NoesisLearnerEvidenceCommand,
   NoesisListSessionsCommand,
+  NoesisRetryTurnCommand,
   NoesisSendCommand,
   NoesisStatusCommand,
   PauseCommand,
@@ -227,6 +228,7 @@ export type Command =
   | NoesisLearnerCommand
   | NoesisLearnerEvidenceCommand
   | NoesisListSessionsCommand
+  | NoesisRetryTurnCommand
   | NoesisSendCommand
   | NoesisStatusCommand
   | PauseCommand

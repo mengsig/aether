@@ -878,6 +878,7 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `noesis_create_session` | operate | |
 | `noesis_send` | operate | |
 | `noesis_answer` | operate | |
+| `noesis_retry_turn` | operate | Retries a stalled turn. |
 | `noesis_get_session` | observe | Never carries an open question's key or an active problem's solution; its history reveals them once answered or concluded. |
 | `noesis_list_sessions` | observe | Never carries a sealed answer key or solution. |
 | `noesis_delete_session` | operate | |

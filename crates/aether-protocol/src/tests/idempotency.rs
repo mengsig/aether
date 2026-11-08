@@ -83,6 +83,10 @@ fn noesis_keyed_commands(key: &str) -> Vec<Command> {
             },
             idempotency_key: key(),
         },
+        Command::NoesisRetryTurn {
+            session: "ns_1".into(),
+            idempotency_key: key(),
+        },
         Command::NoesisDeleteSession {
             session: "ns_1".into(),
             graph: DeleteSessionGraph::Preserve,

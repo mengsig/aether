@@ -29,6 +29,9 @@ impl<E: Engine> Teaching<'_, E> {
                 history::clear_stall(self.conn(), session)?;
             }
         }
+        if ran.is_ok() {
+            super::sessions::set_turn_pending(self.conn(), session, false)?;
+        }
         ran
     }
 

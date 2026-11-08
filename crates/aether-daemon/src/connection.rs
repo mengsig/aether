@@ -431,6 +431,7 @@ where
                                                     features::VIEW_MODES.into(),
                                                     features::REMOTE_MOUNTS.into(),
                                                     features::NOESIS.into(),
+                                                    features::NOESIS_RETRY_TURN.into(),
                                                 ],
                                                 daemon_protocol_version: Some(
                                                     aether_protocol::PROTOCOL_VERSION,

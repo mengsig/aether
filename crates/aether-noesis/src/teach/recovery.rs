@@ -23,6 +23,22 @@ fn posed_session(t: &mut Teaching<'_, FauxEngine>) -> String {
 }
 
 #[test]
+fn delivered_answer_keeps_its_turn_pending_across_reload() {
+    let (_dir, noesis) = fixture();
+    let mut teaching = Teaching::new(&noesis, FauxEngine::new());
+    let id = posed_session(&mut teaching);
+    assert!(teaching.sessions_pending_turns().unwrap().is_empty());
+    answer_choice(&mut teaching, &id, &["Paris"]);
+    assert!(db::owed_answers(teaching.conn(), &id).unwrap().is_empty());
+    let engine = std::mem::take(teaching.engine_mut());
+    drop(teaching);
+    let mut reloaded = Teaching::new(&noesis, engine);
+    assert_eq!(reloaded.sessions_pending_turns().unwrap(), [id.clone()]);
+    reloaded.advance(&id).unwrap();
+    assert!(reloaded.sessions_pending_turns().unwrap().is_empty());
+}
+
+#[test]
 fn raw_tool_calls_and_steps_debug_only_the_sealed_projection() {
     let ask = ToolCall {
         id: "call_1".into(),

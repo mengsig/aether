@@ -257,6 +257,8 @@ pub mod features {
     /// The daemon serves the `noesis_*` commands and sends `noesis.*` events.
     /// A client without it reads those events as `custom`.
     pub const NOESIS: &str = "noesis";
+    /// Explicit retry of a stalled Noesis turn.
+    pub const NOESIS_RETRY_TURN: &str = "noesis_retry_turn";
 }
 
 mod handshake;

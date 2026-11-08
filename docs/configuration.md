@@ -816,13 +816,16 @@ endpoint silently. `noesis_status` splits today's spend both by lane
 estimate, `spend_today.api`, charged per request, and
 `spend_today.unknown`, use on a provider no longer configured).
 
-Once today's interactive budget is spent, `noesis_create_session` and
-`noesis_send` are refused before anything is stored with `unavailable`
+Once today's interactive budget is spent, `noesis_create_session`,
+`noesis_send` and `noesis_retry_turn` are refused before anything is stored with `unavailable`
 (reason `noesis_budget_exhausted`); the message names what was spent, the
 limit and `noesis.budget.interactive_usd_daily`. A turn already under way
 that the budget stops records why on the session as `stalled`
 (`reason: "budget_exhausted"`, `message`, `at`) and publishes
-`noesis.session_stalled`; the next turn that runs clears it.
+`noesis.session_stalled`. After raising the budget, send `noesis_retry_turn`
+with `session` and an optional `idempotency_key` to resume that turn without
+adding a message. Check for the `noesis_retry_turn` feature before sending it.
+Stalled turns do not automatically retry when the service restarts.
 
 `noesis_get_session` returns the session's whole history: `agents` (each
 agent that ran it, in order, with its `role` and, as `internal`, the

@@ -591,6 +591,7 @@ mod tests {
             ("noesis_learner", &[]),
             ("noesis_learner_evidence", &["concept"]),
             ("noesis_list_sessions", &[]),
+            ("noesis_retry_turn", &["session"]),
             ("noesis_send", &["session", "text"]),
             ("noesis_status", &[]),
             ("pause", &["agent"]),

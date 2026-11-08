@@ -210,6 +210,11 @@ impl NoesisService {
         if desk.noesis.is_none() {
             return Ok(());
         }
+        let (pending, _) =
+            self.with_teaching(&ticket, &mut desk, runtime, |t, _| t.turn_pending(session))?;
+        if !pending.map_err(reply_error)? {
+            return Ok(());
+        }
         let (ran, output) =
             self.with_teaching(&ticket, &mut desk, runtime, |t, _| t.advance(session))?;
         publish(&desk, runtime, output, &Actor::System, None)?;
@@ -222,20 +227,20 @@ impl NoesisService {
         queued.map(|_| ())
     }
 
-    /// Start the turn of every session owed an answer, as after a restart.
+    /// Start each pending, non-stalled turn after a restart.
     /// Only the turns count as calls in flight; the short scan does not, so
     /// a settings change right after an enable is not refused for it.
     pub(crate) fn resume_teaching(self: &Arc<Self>, runtime: &Arc<Runtime>) {
         let service = self.clone();
         let runtime = runtime.clone();
         tokio::spawn(async move {
-            if let Err(error) = service.resume_owed(&runtime).await {
-                tracing::error!(%error.message, "resuming Noesis sessions owed an answer failed");
+            if let Err(error) = service.resume_pending(&runtime).await {
+                tracing::error!(%error.message, "resuming pending Noesis turns failed");
             }
         });
     }
 
-    async fn resume_owed(self: &Arc<Self>, runtime: &Arc<Runtime>) -> Result<(), ErrorReply> {
+    async fn resume_pending(self: &Arc<Self>, runtime: &Arc<Runtime>) -> Result<(), ErrorReply> {
         let Some(ticket) = self.ticket().await else {
             return Ok(());
         };
@@ -245,7 +250,7 @@ impl NoesisService {
                 return Ok(());
             }
             let (owed, _) = self.with_teaching(&ticket, &mut desk, runtime, |t, _| {
-                t.sessions_owing_answers()
+                t.sessions_pending_turns()
             })?;
             owed.map_err(reply_error)?
         };
@@ -337,6 +342,14 @@ fn run_command(t: &mut Teaching<'_, AetherEngine<'_>>, command: Command) -> Done
                 bundled: false,
             }
         }
+        Command::NoesisRetryTurn { session, .. } => {
+            let retry = t.retry_turn(&session);
+            Done {
+                advance: retry.is_ok().then_some(session),
+                bundled: false,
+                reply: retry.map(|()| Reply::Ok),
+            }
+        }
         Command::NoesisGetSession { session } => replied(
             t.get_session(&session)
                 .and_then(|view| session_reply(&view)),
@@ -405,7 +418,9 @@ fn refuse_context_while_off(command: &Command, noesis: &Noesis) -> Result<(), Er
 fn refuse_turn_while_spent(command: &Command, budget: &ServiceBudget) -> Result<(), ErrorReply> {
     if !matches!(
         command,
-        Command::NoesisCreateSession { .. } | Command::NoesisSend { .. }
+        Command::NoesisCreateSession { .. }
+            | Command::NoesisSend { .. }
+            | Command::NoesisRetryTurn { .. }
     ) {
         return Ok(());
     }

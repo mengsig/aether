@@ -1,6 +1,6 @@
 //! The `noesis.db` schema. Migration numbers are pre-assigned by CONTRACTS.md
 //! §1.4: N1 (F1), N2 learner tables (F4), N3 evidence bundles (F6), N4 a
-//! session's history.
+//! session's history, and N5 pending teaching turns.
 //! Each later task appends exactly its own entry.
 
 use rusqlite::{Connection, OptionalExtension};
@@ -302,10 +302,17 @@ END;
 ALTER TABLE sessions ADD COLUMN stalled TEXT CHECK (stalled IS NULL OR json_valid(stalled));
 "#;
 
-pub(crate) const MIGRATIONS: &[&str] = &[N1, N2, N3, N4];
+const N5: &str = r#"
+ALTER TABLE sessions ADD COLUMN turn_pending INTEGER NOT NULL DEFAULT 0 CHECK (turn_pending IN (0, 1));
+UPDATE sessions SET turn_pending = 1 WHERE id IN (
+    SELECT session FROM questions WHERE answered_at IS NOT NULL AND json_extract(answer, '$.delivered') = 0
+);
+"#;
+
+pub(crate) const MIGRATIONS: &[&str] = &[N1, N2, N3, N4, N5];
 
 /// The schema version this binary writes and reads.
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 const _: () = assert!(MIGRATIONS.len() == SCHEMA_VERSION as usize);
 

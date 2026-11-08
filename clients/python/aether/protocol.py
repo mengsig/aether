@@ -182,6 +182,7 @@ from ._protocol_commands.noesis import (
     noesis_learner,
     noesis_learner_evidence,
     noesis_list_sessions,
+    noesis_retry_turn,
     noesis_send,
     noesis_status,
 )

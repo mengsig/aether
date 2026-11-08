@@ -553,6 +553,7 @@ fn teaching_samples() -> Vec<Value> {
         json!({"cmd": "noesis_send", "session": "ns_1", "text": "hi", "idempotency_key": "k2"}),
         json!({"cmd": "noesis_answer", "session": "ns_1", "question": "q_1",
                "answer": {"dont_know": true}, "idempotency_key": "k3"}),
+        json!({"cmd": "noesis_retry_turn", "session": "ns_1", "idempotency_key": "k5"}),
         json!({"cmd": "noesis_get_session", "session": "ns_1"}),
         json!({"cmd": "noesis_list_sessions"}),
         json!({"cmd": "noesis_delete_session", "session": "ns_1", "graph": "preserve",
@@ -793,6 +794,54 @@ async fn every_invocation_is_charged_and_a_spent_budget_refuses_before_the_call(
     );
     assert_stalled_and_refused(&harness, &created.id).await;
     harness.close().await;
+
+    let client = Arc::new(ScriptedClient::new());
+    client.push(ScriptedClient::text("Let's continue."));
+    let reopened = Harness::open(&home, client).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    reopened.settled().await;
+    assert!(
+        reopened.client.requests().is_empty(),
+        "a stalled turn does not loop on restart"
+    );
+    assert_stalled_and_refused_after_restart(&reopened, &created.id).await;
+    reopened
+        .configure(teaching_on(|patch| {
+            patch.budget = Some(BudgetPatch {
+                interactive_usd_daily: Some(1.0),
+                ..Default::default()
+            });
+        }))
+        .await;
+    let retry = json!({"cmd": "noesis_retry_turn", "session": created.id, "idempotency_key": "retry-raised"});
+    reopened
+        .send_json(retry.clone())
+        .await
+        .expect("retry accepted");
+    reopened.send_json(retry).await.expect("retry replayed");
+    reopened.settled().await;
+    assert_eq!(reopened.client.requests().len(), 1, "retry is deduplicated");
+    assert!(
+        reopened
+            .session(&created.id)
+            .await
+            .unwrap()
+            .stalled
+            .is_none()
+    );
+    reopened.close().await;
+}
+
+async fn assert_stalled_and_refused_after_restart(harness: &Harness, id: &str) {
+    assert!(harness.session(id).await.unwrap().stalled.is_some());
+    let error = harness
+        .send_json(json!({"cmd": "noesis_retry_turn", "session": id}))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.reason.as_deref(),
+        Some(aether_protocol::NOESIS_BUDGET_EXHAUSTED)
+    );
 }
 
 /// A turn the budget stopped is recorded on the session and announced; a new
@@ -818,7 +867,9 @@ async fn assert_stalled_and_refused(harness: &Harness, id: &str) {
                       "idempotency_key": "send-spent"});
     let create = json!({"cmd": "noesis_create_session", "goal": "Learn more",
                         "mode": "teach", "idempotency_key": "create-spent"});
-    for command in [send, create] {
+    let retry =
+        json!({"cmd": "noesis_retry_turn", "session": id, "idempotency_key": "retry-spent"});
+    for command in [send, create, retry] {
         let refused = harness
             .send_json(command)
             .await

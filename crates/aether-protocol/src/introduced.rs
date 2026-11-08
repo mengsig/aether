@@ -50,6 +50,7 @@ impl Command {
             }
             Self::GetTranscriptPage { .. } => Introduced::Feature(features::TRANSCRIPT_PAGING),
             Self::UsageBreakdown { .. } => Introduced::Feature(features::USAGE_BREAKDOWN),
+            Self::NoesisRetryTurn { .. } => Introduced::Feature(features::NOESIS_RETRY_TURN),
             Self::NoesisStatus | Self::NoesisConfigure { .. } | Self::NoesisCreateSession { .. }
             | Self::NoesisSend { .. } | Self::NoesisAnswer { .. } | Self::NoesisGetSession { .. }
             | Self::NoesisListSessions { .. } | Self::NoesisDeleteSession { .. }

@@ -28,6 +28,7 @@ pub(crate) fn group_of(command: &Command) -> Group {
         Command::NoesisCreateSession { .. }
         | Command::NoesisSend { .. }
         | Command::NoesisAnswer { .. }
+        | Command::NoesisRetryTurn { .. }
         | Command::NoesisGetSession { .. }
         | Command::NoesisListSessions { .. }
         | Command::NoesisDeleteSession { .. } => Group::Teaching,

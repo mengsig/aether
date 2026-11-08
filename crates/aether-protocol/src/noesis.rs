@@ -326,9 +326,9 @@ pub fn validate(command: &Command) -> Result<(), String> {
             id("question", question)?;
             validate_answer(answer)
         }
-        Command::NoesisGetSession { session } | Command::NoesisDeleteSession { session, .. } => {
-            id("session", session)
-        }
+        Command::NoesisGetSession { session }
+        | Command::NoesisDeleteSession { session, .. }
+        | Command::NoesisRetryTurn { session, .. } => id("session", session),
         Command::NoesisListSessions { after, limit } => {
             if let Some(after) = after {
                 id("after", after)?;

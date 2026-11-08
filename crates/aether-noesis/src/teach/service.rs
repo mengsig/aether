@@ -205,6 +205,7 @@ impl<'a, E: Engine> Teaching<'a, E> {
         };
         let tx = self.conn().unchecked_transaction()?;
         db::insert_session(&tx, row)?;
+        super::sessions::set_turn_pending(&tx, &row.id, true)?;
         history::add_agent(&tx, &row.id, &row.agent, role, opened_at)?;
         if let Some(bundle) = context {
             evidence::store::save(&tx, &row.id, bundle, &row.created_at).map_err(evidence_error)?;
@@ -338,6 +339,11 @@ impl<'a, E: Engine> Teaching<'a, E> {
             )));
         }
         let row = db::session(self.conn(), session)?;
+        if history::stall(self.conn(), session)?.is_some() {
+            return Err(TeachError::Conflict(
+                "the session is stalled; retry its turn first".into(),
+            ));
+        }
         if db::open_question(self.conn(), session)?.is_some() {
             return Err(TeachError::Conflict(
                 "a question is open; answer it first".into(),
@@ -346,6 +352,7 @@ impl<'a, E: Engine> Teaching<'a, E> {
         self.deliver_queued(session, &row.agent, None)?;
         self.engine
             .deliver(&row.agent, Input::Learner(text.to_string()))?;
+        super::sessions::set_turn_pending(self.conn(), session, true)?;
         db::touch(self.conn(), session)?;
         Ok(())
     }
@@ -417,6 +424,7 @@ impl<'a, E: Engine> Teaching<'a, E> {
             )));
         }
         db::touch(&tx, &row.id)?;
+        super::sessions::set_turn_pending(&tx, &row.id, true)?;
         tx.commit()?;
         debug_assert!(db::open_question(self.conn(), &row.id)?.is_none());
         Ok(())

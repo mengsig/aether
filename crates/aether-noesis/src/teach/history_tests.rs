@@ -142,6 +142,7 @@ fn a_spent_budget_stalls_the_session_until_a_turn_runs() {
         .id;
     t.take_events();
     assert!(t.advance(&id).is_err());
+    assert!(t.sessions_pending_turns().unwrap().is_empty());
     let stall = session(&t, &id).stalled.expect("stalled");
     assert_eq!(stall.reason, StallReason::BudgetExhausted);
     assert!(
@@ -154,6 +155,10 @@ fn a_spent_budget_stalls_the_session_until_a_turn_runs() {
         matches!(&events[..], [NoesisEvent::SessionStalled { stall: announced, .. }] if *announced == stall),
         "{events:?}"
     );
+    t.retry_turn(&id).unwrap();
+    assert!(t.advance(&id).is_err(), "unchanged budget refuses again");
+    assert!(session(&t, &id).stalled.is_some());
+    assert!(t.sessions_pending_turns().unwrap().is_empty());
 
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
@@ -170,8 +175,29 @@ fn a_spent_budget_stalls_the_session_until_a_turn_runs() {
         session(&t, &id).stalled.map(|stall| stall.message),
         Some(spent)
     );
+    t.retry_turn(&id).unwrap();
+    assert_eq!(t.sessions_pending_turns().unwrap(), [id.clone()]);
     t.advance(&id).unwrap();
     assert_eq!(session(&t, &id).stalled, None, "a turn that ran clears it");
+    assert!(t.sessions_pending_turns().unwrap().is_empty());
+    assert!(t.retry_turn(&id).is_err());
+}
+
+#[test]
+fn pending_turn_survives_a_new_teaching_loop_and_clears_after_completion() {
+    let (_dir, noesis) = fixture();
+    let mut first = Teaching::new(&noesis, FauxEngine::new());
+    let id = first
+        .create_session("Learn derivatives", Mode::Teach, &[])
+        .unwrap()
+        .id;
+    assert_eq!(first.sessions_pending_turns().unwrap(), [id.clone()]);
+    let engine = std::mem::take(first.engine_mut());
+    drop(first);
+    let mut reloaded = Teaching::new(&noesis, engine);
+    assert_eq!(reloaded.sessions_pending_turns().unwrap(), [id.clone()]);
+    reloaded.advance(&id).unwrap();
+    assert!(reloaded.sessions_pending_turns().unwrap().is_empty());
 }
 
 #[test]

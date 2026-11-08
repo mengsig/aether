@@ -1,7 +1,7 @@
 // The Aether daemon protocol as TypeScript types and command builders.
 // Generated from clients/protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: 13b7ef07f48b72c7425a0d8494ba9971bfd263aed4c733a4502cbf654b6522e6
+// Schema SHA-256: 742852e7aecdf1e02b6baa3db70a7658a4a7ff763523df134708d27b6c531a0d
 
 export const PROTOCOL_VERSION = 26;
 export const MIN_PROTOCOL_VERSION = 17;
@@ -6721,6 +6721,19 @@ export function noesisListSessions(args: Omit<NoesisListSessionsCommand, "cmd">)
 }
 
 /**
+ * Retry a stalled teaching turn after changing its budget.
+ */
+export interface NoesisRetryTurnCommand {
+  "cmd": "noesis_retry_turn";
+  "idempotency_key"?: string | null;
+  "session": string;
+}
+
+export function noesisRetryTurn(args: Omit<NoesisRetryTurnCommand, "cmd">): NoesisRetryTurnCommand {
+  return { cmd: "noesis_retry_turn", ...args };
+}
+
+/**
  * Say something to the session's teacher. 1 to 20000 characters.
  */
 export interface NoesisSendCommand {
@@ -7441,6 +7454,7 @@ export type Command =
   | NoesisLearnerCommand
   | NoesisLearnerEvidenceCommand
   | NoesisListSessionsCommand
+  | NoesisRetryTurnCommand
   | NoesisSendCommand
   | NoesisStatusCommand
   | PauseCommand

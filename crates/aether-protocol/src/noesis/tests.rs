@@ -37,6 +37,10 @@ fn commands() -> Vec<(Value, Access)> {
             Access::Operate,
         ),
         (
+            json!({"cmd": "noesis_retry_turn", "session": "ns_1"}),
+            Access::Operate,
+        ),
+        (
             json!({"cmd": "noesis_get_session", "session": "ns_1"}),
             Access::Observe,
         ),
@@ -96,7 +100,7 @@ fn commands() -> Vec<(Value, Access)> {
 #[test]
 fn every_command_round_trips_from_its_wire_json() {
     let all = commands();
-    assert_eq!(all.len(), 18, "one entry per Noesis command");
+    assert_eq!(all.len(), 19, "one entry per Noesis command");
     for (wire, _) in all {
         let decoded = command(wire.clone());
         assert_eq!(serde_json::to_value(&decoded).unwrap(), wire);
@@ -109,9 +113,14 @@ fn every_command_is_classed_and_introduced_by_the_feature() {
     for (wire, access) in commands() {
         let decoded = command(wire);
         assert_eq!(decoded.access(), access, "{}", decoded.name());
+        let feature = if matches!(decoded, Command::NoesisRetryTurn { .. }) {
+            features::NOESIS_RETRY_TURN
+        } else {
+            features::NOESIS
+        };
         assert_eq!(
             decoded.introduced(),
-            Introduced::Feature(features::NOESIS),
+            Introduced::Feature(feature),
             "{}",
             decoded.name()
         );

@@ -125,7 +125,7 @@ impl Command {
             | Self::PostNotification { .. } | Self::MarkNotificationRead { .. }
             | Self::ResolveNotification { .. } | Self::AnswerNotification { .. }
             | Self::NoesisCreateSession { .. } | Self::NoesisSend { .. }
-            | Self::NoesisAnswer { .. } | Self::NoesisDeleteSession { .. }
+            | Self::NoesisAnswer { .. } | Self::NoesisRetryTurn { .. } | Self::NoesisDeleteSession { .. }
             | Self::NoesisDeleteProposition { .. } | Self::NoesisDeleteSource { .. }
             | Self::NoesisExtract { .. } | Self::NoesisImportSource { .. }
             | Self::NoesisCancelJob { .. } | Self::NoesisCorrectLearner { .. } => Access::Operate,

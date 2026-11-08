@@ -15,6 +15,7 @@ impl Command {
                 | Self::NoesisCreateSession { .. }
                 | Self::NoesisSend { .. }
                 | Self::NoesisAnswer { .. }
+                | Self::NoesisRetryTurn { .. }
                 | Self::NoesisGetSession { .. }
                 | Self::NoesisListSessions { .. }
                 | Self::NoesisDeleteSession { .. }
@@ -76,6 +77,13 @@ impl Command {
                 idempotency_key.as_deref()?,
                 json!({"cmd": "noesis_answer", "session": session, "question": question,
                     "answer": answer}),
+            ),
+            Self::NoesisRetryTurn {
+                session,
+                idempotency_key,
+            } => (
+                idempotency_key.as_deref()?,
+                json!({"cmd": "noesis_retry_turn", "session": session}),
             ),
             _ => return self.noesis_keyed_deletion(),
         };

@@ -5089,6 +5089,29 @@
           "type": "object"
         },
         {
+          "description": "Retry a stalled teaching turn after changing its budget.",
+          "properties": {
+            "cmd": {
+              "const": "noesis_retry_turn",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "session": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "session"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "cmd": {
               "const": "noesis_get_session",
