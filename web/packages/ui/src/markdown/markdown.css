@@ -23,8 +23,4 @@
   .md [data-align="right"] { text-align: end; }
   .md-math { overflow-wrap: normal; }
   .md-math-display { display: block; overflow-x: auto; padding-block: var(--space-2); }
-  .md-diagram { display: grid; gap: var(--space-2); margin: 0; }
-  .md-diagram-image { max-inline-size: 100%; block-size: auto; justify-self: start; }
-  .md-diagram-measure { position: absolute; visibility: hidden; pointer-events: none; inset: 0; overflow: hidden; }
-  .md-diagram-note { color: var(--color-text-muted); font-size: var(--text-sm); }
 }

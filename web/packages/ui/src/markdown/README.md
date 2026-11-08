@@ -21,11 +21,13 @@ Mermaid loads only when an allowed fence mounts. It uses `securityLevel:"strict"
 `htmlLabels:false`, a 20,000-character/200-edge limit, no binding of interactions, and
 serialized rendering so global configuration cannot race across themes. Configuration,
 HTML labels, click/callback commands, external resources and custom styles are refused
-before parsing. App token colors supply its theme. A temporary hidden container is
-removed even if parsing fails. The final SVG becomes a local `data:image/svg+xml` image:
+before parsing. App token colors supply its theme. Mermaid measures in a same-origin sandboxed
+frame with its own restricted CSP; only that frame permits inline styles. Its script can reach the
+parent, so source checks and Mermaid's strict sanitization remain essential. The frame returns a sanitized SVG
+as a local `data:image/svg+xml` image:
 [SVG image documents](https://developer.mozilla.org/en-US/docs/Web/SVG/Guides/SVG_as_an_image)
 disable scripts and external resources, with no SVG inserted in
-the application DOM. Both web and desktop CSP already permit `img-src data:`. Source
+the application DOM. The main page keeps its strict script and style policies. Source
 remains available under every successful image; refusals, parse errors and lazy-load
 failures visibly retain source instead. This intentionally excludes interactive diagrams.
 

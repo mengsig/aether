@@ -5,6 +5,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { Markdown, safeHref } from "./markdown.tsx";
 
+vi.mock("@aether-ui/ui", async () => {
+  const { createElement } = await import("react");
+  return { MermaidDiagram: ({ source }: { source: string }) => createElement("figure", { "data-diagram-source": source }) };
+});
+
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 afterEach(() => { document.body.innerHTML = ""; });
@@ -247,6 +252,13 @@ describe("hostile size", () => {
 });
 
 describe("code blocks, tables and math", () => {
+  test("renders Mermaid fences as diagrams while retaining source copying", async () => {
+    const root = await render("```mermaid\ngraph LR\nA --> B\n```");
+    expect(root.querySelector("[data-diagram-source]")?.getAttribute("data-diagram-source")).toBe("graph LR\nA --> B");
+    expect(root.querySelector(".conv-copy")?.getAttribute("aria-label")).toBe("Copy the mermaid code");
+    expect(root.querySelector(".md-codeblock")).toBeNull();
+  });
+
   test("a fenced block names its language and copies its code", async () => {
     const writeText = vi.fn((text: string) => Promise.resolve(text).then(() => undefined));
     const had = Object.getOwnPropertyDescriptor(navigator, "clipboard");

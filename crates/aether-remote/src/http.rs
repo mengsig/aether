@@ -241,12 +241,17 @@ impl OriginPolicy {
     }
 }
 
-/// The `Content-Security-Policy` of every response. `'self'` covers the socket's `ws:`/`wss:`
+/// The default `Content-Security-Policy`. `'self'` covers the socket's `ws:`/`wss:`
 /// forms, so no host is spelled out (an IPv6 literal is not a valid source).
 pub const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; \
     style-src 'self'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; \
-    worker-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; \
+    worker-src 'self'; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'none'; \
     frame-ancestors 'none'";
+
+pub const MERMAID_FRAME_PATH: &str = "/mermaid-frame.html";
+pub const MERMAID_FRAME_CSP: &str = "default-src 'none'; script-src 'self'; \
+    style-src 'self' 'unsafe-inline'; connect-src 'none'; img-src data:; font-src 'self'; \
+    object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 
 /// Headers on every response besides the CSP.
 pub const SECURITY_HEADERS: &[(&str, &str)] = &[
@@ -440,6 +445,7 @@ mod tests {
             .collect();
         assert_eq!(directives[0], ["default-src", "'none'"], "{csp}");
         assert!(directives.contains(&vec!["connect-src", "'self'"]), "{csp}");
+        assert!(directives.contains(&vec!["frame-src", "'self'"]), "{csp}");
         // Keywords and one scheme: a host, above all `[::1]`, is never a source.
         for directive in &directives {
             let (name, sources) = directive.split_first().expect("a directive has a name");
