@@ -462,13 +462,13 @@
       "reason": "All JavaScript chunks. Includes 15,430 bytes for the in-flight Archon views change and 3,455,829 bytes for Learn's rich rendering, most of them Mermaid's lazy diagram engines. Current build: 4,226,874 bytes."
     },
     "bundle.css_bytes": {
-      "budget": 101615,
+      "budget": 139106,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 101615,
+      "measured": 139106,
       "noise": 0,
-      "reason": "All stylesheets. Includes 1,364 bytes for the in-flight Archon views change and 4,970 bytes for Learn's and the rich renderer's styles. Current build: 100,251 bytes."
+      "reason": "All stylesheets: the UX overhaul's 134,136-byte baseline (which includes 1,364 bytes for the in-flight Archon views change) plus 4,970 bytes for Learn's and the rich renderer's styles. Current build: 140,033 bytes."
     },
     "bundle.initial_bytes": {
       "budget": 359381,
