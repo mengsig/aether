@@ -171,6 +171,7 @@ test("the disconnected conversation stays ordered in a narrow, short window", as
   assert.ok(full.width > 320 && full.height > SMALLEST_WINDOW.height, "the initial window is larger than the constrained viewport");
   await stack.aether.stop();
   try {
+    // Follow-up: the desktop bridge detects an idle link's closure only on the next request.
     await open(window, "Activity", "#/activity");
     await window.goBack();
     await window.setViewportSize({ width: 320, height: SMALLEST_WINDOW.height });
