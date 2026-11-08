@@ -13,6 +13,29 @@ use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::{TcpStream, UnixStream};
 use tokio_util::sync::CancellationToken;
 
+struct LogWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        std::io::Write::write(&mut *self.0.lock().expect("log lock"), bytes)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+pub fn capture_logs() -> std::sync::Arc<std::sync::Mutex<Vec<u8>>> {
+    let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writer = output.clone();
+    tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer(move || LogWriter(writer.clone()))
+        .try_init()
+        .expect("the test binary has no other tracing subscriber");
+    output
+}
+
 /// How long a fresh daemon may take to answer. Startup sweeps Docker, bounded at
 /// ten seconds alone, so a loaded host needs far more than an idle one.
 const STARTUP_WAIT: Duration = Duration::from_secs(120);
@@ -104,16 +127,21 @@ impl TestDaemon {
         (daemon, started.elapsed())
     }
 
-    async fn stop_cleanly(self) -> tempfile::TempDir {
+    pub async fn stop_cleanly(self) -> tempfile::TempDir {
         let (store, socket) = (self.store_path(), self.socket.clone());
+        let dir = self.stop_serving().await;
+        await_lock_free(&store.with_extension("db.lock")).await;
+        await_lock_free(&socket.with_extension("sock.lock")).await;
+        dir
+    }
+
+    pub async fn stop_serving(self) -> tempfile::TempDir {
         self.shutdown.cancel();
         let stopped = tokio::time::timeout(Duration::from_secs(10), self.serving).await;
         stopped
             .expect("the daemon stops in time")
             .expect("the daemon task joins")
             .expect("the daemon stops cleanly");
-        await_lock_free(&store.with_extension("db.lock")).await;
-        await_lock_free(&socket.with_extension("sock.lock")).await;
         self._dir
     }
 
@@ -213,7 +241,7 @@ impl TestDaemon {
 
 /// Wait until no one holds the daemon lock at `path`. In one test process a
 /// child forked by another test's daemon can hold it until that child execs.
-async fn await_lock_free(path: &std::path::Path) {
+pub async fn await_lock_free(path: &std::path::Path) {
     let file = std::fs::File::open(path).expect("a stopped daemon leaves its lock file");
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
