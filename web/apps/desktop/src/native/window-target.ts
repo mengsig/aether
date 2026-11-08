@@ -3,7 +3,6 @@ import { DEEP_LINK_CHANNEL, type RouteTarget } from "./deep-links.ts";
 interface AppWindow {
   isDestroyed(): boolean;
   isMinimized(): boolean;
-  isVisible(): boolean;
   restore(): void;
   show(): void;
   focus(): void;
@@ -15,7 +14,7 @@ export function windowTarget(window: AppWindow): RouteTarget {
   const focus = () => {
     if (window.isDestroyed()) throw new Error("the app window is gone");
     if (window.isMinimized()) window.restore();
-    if (!window.isVisible()) window.show();
+    window.show();
     window.focus();
   };
   return {
