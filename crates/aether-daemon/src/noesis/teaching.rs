@@ -317,29 +317,27 @@ async fn run_segments<'a>(
     loop {
         let segment = run_segment(&mut desk, engine, buffer, &mut state, result.take(), first)?;
         first = false;
-        match segment {
-            Segment::Call {
-                engine: next,
-                buffer: pending,
-                call,
-            } => {
-                engine = next;
-                buffer = pending;
+        match segment.outcome {
+            SegmentOutcome::Call(call) => {
+                engine = segment.engine;
+                buffer = segment.buffer;
                 drop(desk);
                 result = Some(call.run(&mut engine));
                 desk = ticket.desk.lock().await;
             }
-            Segment::Done { result, output } => return Ok((desk, result, output)),
+            SegmentOutcome::Done { result, output } => return Ok((desk, result, output)),
         }
     }
 }
 
-enum Segment<'a> {
-    Call {
-        engine: AetherEngine<'a>,
-        buffer: TeachingBuffer,
-        call: ModelCall,
-    },
+struct Segment<'a> {
+    engine: AetherEngine<'a>,
+    buffer: TeachingBuffer,
+    outcome: SegmentOutcome,
+}
+
+enum SegmentOutcome {
+    Call(ModelCall),
     Done {
         result: Result<(), TeachError>,
         output: Output,
@@ -366,29 +364,30 @@ fn run_segment<'a>(
     if let Some(undelivered) = undelivered {
         teaching.restore_undelivered(undelivered);
     }
-    match teaching.advance_until_call(state, result) {
-        Ok(Some(call)) => {
-            let (engine, buffer) = teaching.into_parts();
-            Ok(Segment::Call {
-                engine,
-                buffer,
-                call,
-            })
-        }
+    let mut undelivered = None;
+    let outcome = match teaching.advance_until_call(state, result) {
+        Ok(Some(call)) => SegmentOutcome::Call(call),
         done => {
             let output = Output {
                 events: teaching.take_events(),
                 evidence: teaching.take_evidence(),
             };
-            let undelivered = teaching.take_undelivered();
-            drop(teaching);
-            desk.undelivered = undelivered;
-            Ok(Segment::Done {
+            undelivered = Some(teaching.take_undelivered());
+            SegmentOutcome::Done {
                 result: done.map(|_| ()),
                 output,
-            })
+            }
         }
+    };
+    let (engine, buffer) = teaching.into_parts();
+    if let Some(undelivered) = undelivered {
+        desk.undelivered = undelivered;
     }
+    Ok(Segment {
+        engine,
+        buffer,
+        outcome,
+    })
 }
 
 /// Append the evidence and record the events (and a receipt) in one
