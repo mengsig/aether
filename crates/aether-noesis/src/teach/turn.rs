@@ -9,6 +9,7 @@ use super::engine::{Engine, EngineError, Input, Step, ToolResult};
 use super::history;
 use super::records::{NoesisEvent, SessionStall, StallReason};
 use super::seal::{self, Sealer};
+use super::segmented::Advance;
 use super::service::{
     CallRecord, Caller, MAX_STEPS, StepRecord, Teaching, TurnEnd, TurnReport, driving_agent,
 };
@@ -21,33 +22,20 @@ impl<E: Engine> Teaching<'_, E> {
     /// Teacher's first turn too. A failed turn leaves its inputs persisted,
     /// so calling this again recovers; one the budget refused stalls the session.
     pub fn advance(&mut self, session: &str) -> Result<Vec<TurnReport>, TeachError> {
-        let ran = self.run_turns(session);
-        // A store failure here outranks the turn's own error, which recurs.
-        match ran.as_ref().err().and_then(budget_stall) {
-            Some(message) => self.stall_session(session, message)?,
-            None => {
-                history::clear_stall(self.conn(), session)?;
-            }
+        let mut advance = Advance::new(session);
+        let mut result = None;
+        while let Some(call) = self.advance_until_call(&mut advance, result)? {
+            result = Some(call.run(&mut self.engine));
         }
-        if ran.is_ok() {
-            super::sessions::set_turn_pending(self.conn(), session, false)?;
-        }
-        ran
-    }
-
-    fn run_turns(&mut self, session: &str) -> Result<Vec<TurnReport>, TeachError> {
-        let first = self.run_turn(session)?;
-        let handed_off = first.end == TurnEnd::HandedOff;
-        let mut reports = vec![first];
-        if handed_off {
-            reports.push(self.run_turn(session)?);
-        }
-        debug_assert!(reports.iter().skip(1).all(|r| r.end != TurnEnd::HandedOff));
-        Ok(reports)
+        Ok(advance.reports())
     }
 
     /// Record why the session's turn could not run, and announce it.
-    fn stall_session(&mut self, session: &str, message: String) -> Result<(), TeachError> {
+    pub(super) fn stall_session(
+        &mut self,
+        session: &str,
+        message: String,
+    ) -> Result<(), TeachError> {
         debug_assert!(
             message.contains(INTERACTIVE_BUDGET_SETTING),
             "it names the setting"
@@ -125,7 +113,7 @@ impl<E: Engine> Teaching<'_, E> {
 
     /// Run a step's calls and buffer the step raw; return how the turn ends,
     /// if it does, and the results owed to the engine.
-    fn run_calls(
+    pub(super) fn run_calls(
         &mut self,
         session: &str,
         caller: &Caller,
@@ -201,7 +189,7 @@ impl<E: Engine> Teaching<'_, E> {
 
     /// The secrets a turn's tool results are sealed against: what is still
     /// sealed at its end and every sealed text a call of the turn carried.
-    fn turn_sealer(&self, session: &str, turn: &Turn) -> Result<Sealer, TeachError> {
+    pub(super) fn turn_sealer(&self, session: &str, turn: &Turn) -> Result<Sealer, TeachError> {
         let live = self.live_secrets(session)?;
         let sealer = Sealer::new(live.iter().chain(&turn.own));
         debug_assert!(
@@ -316,7 +304,7 @@ impl<E: Engine> Teaching<'_, E> {
 }
 
 /// What the learner is told when the teaching budget refused a turn's call.
-fn budget_stall(error: &TeachError) -> Option<String> {
+pub(super) fn budget_stall(error: &TeachError) -> Option<String> {
     match error {
         TeachError::Budget(
             refusal @ (Refusal::BudgetZero { .. }
@@ -340,18 +328,18 @@ struct PendingCall {
     is_error: bool,
 }
 
-struct PendingStep {
+pub(super) struct PendingStep {
     text: String,
     calls: Vec<PendingCall>,
 }
 
 /// What one turn produced, unpublished until [`Turn::seal`].
-struct Turn {
-    steps: Vec<PendingStep>,
+pub(super) struct Turn {
+    pub(super) steps: Vec<PendingStep>,
     /// Every sealed text the turn's calls carried.
     own: Vec<String>,
     /// Where the turn's events start in the pending event list.
-    events_from: usize,
+    pub(super) events_from: usize,
 }
 
 /// Debug shows only counts: the buffer holds raw tool results.
@@ -366,7 +354,7 @@ impl std::fmt::Debug for Turn {
 }
 
 impl Turn {
-    fn new(events_from: usize) -> Self {
+    pub(super) fn new(events_from: usize) -> Self {
         Self {
             steps: Vec::new(),
             own: Vec::new(),
@@ -395,7 +383,7 @@ impl Turn {
 
     /// The turn's steps as they may be published, each call as
     /// [`sealed_call`] gives it.
-    fn seal(self, sealer: &Sealer) -> Vec<StepRecord> {
+    pub(super) fn seal(self, sealer: &Sealer) -> Vec<StepRecord> {
         let count = self.steps.len();
         let steps: Vec<StepRecord> = self
             .steps

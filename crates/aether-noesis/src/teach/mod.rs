@@ -11,6 +11,7 @@ pub mod plan;
 pub mod question;
 pub mod records;
 mod seal;
+mod segmented;
 mod service;
 mod sessions;
 mod turn;
@@ -38,7 +39,8 @@ pub use seal::{
     NEUTRAL_REPLY, REFUSAL_WITHHELD, Replies, SEAL_REMINDER, Sealer, kept_reply, neutral_step,
     reply_leaks,
 };
-pub use service::{CallRecord, Caller, StepRecord, Teaching, TurnEnd, TurnReport};
+pub use segmented::{Advance, ModelCall};
+pub use service::{CallRecord, Caller, StepRecord, Teaching, TeachingBuffer, TurnEnd, TurnReport};
 pub use sessions::{SessionPage, Undelivered};
 
 use crate::budget::{ModelRefusal, Refusal};

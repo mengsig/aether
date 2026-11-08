@@ -80,6 +80,24 @@ pub struct Teaching<'a, E: Engine> {
     pub(super) undelivered: HashMap<String, VecDeque<Input>>,
 }
 
+/// Pending outputs and deliveries carried between database-scoped teaching calls.
+#[derive(Default)]
+pub struct TeachingBuffer {
+    events: Vec<NoesisEvent>,
+    evidence: Vec<EvidenceDraft>,
+    undelivered: HashMap<String, VecDeque<Input>>,
+}
+
+impl std::fmt::Debug for TeachingBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TeachingBuffer")
+            .field("events", &self.events.len())
+            .field("evidence", &self.evidence.len())
+            .field("undelivered_agents", &self.undelivered.len())
+            .finish()
+    }
+}
+
 impl<E: Engine> std::fmt::Debug for Teaching<'_, E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Teaching")
@@ -116,6 +134,25 @@ impl<'a, E: Engine> Teaching<'a, E> {
 
     pub fn engine_mut(&mut self) -> &mut E {
         &mut self.engine
+    }
+
+    /// Resume a teaching call with the outputs and deliveries of its predecessor.
+    pub fn restore_buffer(&mut self, buffer: TeachingBuffer) {
+        debug_assert!(self.events.is_empty() && self.evidence.is_empty());
+        debug_assert!(self.undelivered.is_empty());
+        self.events = buffer.events;
+        self.evidence = buffer.evidence;
+        self.undelivered = buffer.undelivered;
+    }
+
+    /// Release the store borrow while retaining the engine and pending outputs.
+    pub fn into_parts(self) -> (E, TeachingBuffer) {
+        let buffer = TeachingBuffer {
+            events: self.events,
+            evidence: self.evidence,
+            undelivered: self.undelivered,
+        };
+        (self.engine, buffer)
     }
 
     /// The events emitted since the last call, in order, for F3 to publish.

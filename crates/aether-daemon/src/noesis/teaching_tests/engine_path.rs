@@ -508,6 +508,20 @@ struct HoldingCli {
     started: CancellationToken,
 }
 
+async fn holding_harness(home: &Home, cli: HoldingCli) -> Harness {
+    std::fs::write(home.config.path().join("providers.toml"), PROVIDERS).expect("providers");
+    let mut engines: HashMap<EngineKind, Arc<dyn aether_engine::Engine>> = HashMap::new();
+    engines.insert(EngineKind::CLAUDE_CODE, Arc::new(cli));
+    let harness = Harness::open_on_engines(home, engines).await;
+    harness
+        .configure(NoesisSettingsPatch {
+            enabled: Some(true),
+            ..Default::default()
+        })
+        .await;
+    harness
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn session_and_learner_reads_finish_while_a_model_step_is_running() {
     let home = Home::new();
@@ -516,16 +530,7 @@ async fn session_and_learner_reads_finish_while_a_model_step_is_running() {
         spent: Usage::default(),
         started: started.clone(),
     };
-    std::fs::write(home.config.path().join("providers.toml"), PROVIDERS).expect("providers");
-    let mut engines: HashMap<EngineKind, Arc<dyn aether_engine::Engine>> = HashMap::new();
-    engines.insert(EngineKind::CLAUDE_CODE, Arc::new(cli));
-    let harness = Harness::open_on_engines(&home, engines).await;
-    harness
-        .configure(NoesisSettingsPatch {
-            enabled: Some(true),
-            ..Default::default()
-        })
-        .await;
+    let harness = holding_harness(&home, cli).await;
     let created = harness.create(json!({})).await;
     tokio::time::timeout(Duration::from_secs(2), started.cancelled())
         .await
@@ -536,7 +541,14 @@ async fn session_and_learner_reads_finish_while_a_model_step_is_running() {
         Duration::from_secs(1),
         harness.send_json(json!({"cmd": "noesis_learner"})),
     );
-    let (session, learner) = tokio::join!(session, learner);
+    let deletion = tokio::time::timeout(
+        Duration::from_millis(200),
+        harness.send_json(
+            json!({"cmd": "noesis_delete_session", "session": created.id,
+            "graph": "preserve", "idempotency_key": "delete-while-running"}),
+        ),
+    );
+    let (session, learner, deletion) = tokio::join!(session, learner, deletion);
     harness
         .daemon
         .runtime
@@ -544,6 +556,12 @@ async fn session_and_learner_reads_finish_while_a_model_step_is_running() {
         .expect("cancelled");
     harness.close().await;
 
+    assert!(
+        session.is_ok() && learner.is_ok(),
+        "reads timed out: session={}, learner={}",
+        session.is_err(),
+        learner.is_err()
+    );
     assert_eq!(
         session
             .expect("session read timed out")
@@ -555,6 +573,7 @@ async fn session_and_learner_reads_finish_while_a_model_step_is_running() {
         learner.expect("learner read timed out"),
         Ok(Reply::NoesisLearner { .. })
     ));
+    assert!(deletion.is_err(), "deletion must wait for the turn");
 }
 
 #[async_trait::async_trait]
@@ -607,16 +626,7 @@ async fn a_step_cancelled_mid_run_records_what_the_engine_reported() {
         spent,
         started: started.clone(),
     };
-    std::fs::write(home.config.path().join("providers.toml"), PROVIDERS).expect("providers");
-    let mut engines: HashMap<EngineKind, Arc<dyn aether_engine::Engine>> = HashMap::new();
-    engines.insert(EngineKind::CLAUDE_CODE, Arc::new(cli));
-    let harness = Harness::open_on_engines(&home, engines).await;
-    harness
-        .configure(NoesisSettingsPatch {
-            enabled: Some(true),
-            ..Default::default()
-        })
-        .await;
+    let harness = holding_harness(&home, cli).await;
     let created = harness.create(json!({})).await;
     tokio::time::timeout(Duration::from_secs(10), started.cancelled())
         .await

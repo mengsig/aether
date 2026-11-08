@@ -52,8 +52,7 @@ enum State {
 /// A started service, the budget its gate admits through, what its
 /// teaching loop keeps between calls, and its extraction jobs.
 struct Live {
-    /// Locked by one teaching or learner call at a time, outside the state
-    /// lock, so a disable never waits for a teaching turn to end.
+    /// Locked for store operations, but released during model calls.
     desk: Arc<tokio::sync::Mutex<Desk>>,
     settings: NoesisSettings,
     budget: Arc<ServiceBudget>,
@@ -70,6 +69,56 @@ struct Desk {
     undelivered: aether_noesis::teach::Undelivered,
     /// The run every Noesis agent is created in, found on first use.
     run: Option<aether_core::id::RunId>,
+    turn: Arc<TurnReservation>,
+}
+
+/// Reserves write ordering while a turn is between its store operations.
+#[derive(Default)]
+struct TurnReservation {
+    active: std::sync::atomic::AtomicBool,
+    changed: tokio::sync::Notify,
+}
+
+struct ReservedTurn(Arc<TurnReservation>);
+
+impl Drop for ReservedTurn {
+    fn drop(&mut self) {
+        let was_active = self
+            .0
+            .active
+            .swap(false, std::sync::atomic::Ordering::SeqCst);
+        debug_assert!(was_active);
+        self.0.changed.notify_waiters();
+    }
+}
+
+impl Desk {
+    fn reserve_turn(&self) -> ReservedTurn {
+        let was_active = self
+            .turn
+            .active
+            .swap(true, std::sync::atomic::Ordering::SeqCst);
+        debug_assert!(!was_active);
+        ReservedTurn(self.turn.clone())
+    }
+}
+
+/// Wait for the current turn to finish without delaying independent reads.
+async fn writable_desk(desk: &tokio::sync::Mutex<Desk>) -> tokio::sync::MutexGuard<'_, Desk> {
+    loop {
+        let guard = desk.lock().await;
+        if !guard.turn.active.load(std::sync::atomic::Ordering::SeqCst) {
+            return guard;
+        }
+        let turn = guard.turn.clone();
+        let notified = turn.changed.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        drop(guard);
+        if turn.active.load(std::sync::atomic::Ordering::SeqCst) {
+            notified.await;
+        }
+    }
 }
 
 impl Live {
@@ -80,7 +129,7 @@ impl Live {
         self.extraction.stop();
         self.cancel.cancel();
         self.budget.retire();
-        let noesis = self.desk.lock().await.noesis.take();
+        let noesis = writable_desk(&self.desk).await.noesis.take();
         debug_assert!(noesis.is_some(), "a service stops once");
         noesis.map_or(Ok(()), Noesis::stop)
     }
@@ -212,6 +261,7 @@ impl NoesisService {
             noesis: Some(noesis),
             undelivered: Default::default(),
             run: None,
+            turn: Arc::new(TurnReservation::default()),
         };
         Ok(Live {
             desk: Arc::new(tokio::sync::Mutex::new(desk)),

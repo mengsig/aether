@@ -45,7 +45,14 @@ impl NoesisService {
             .graph_parts()
             .await
             .ok_or_else(ErrorReply::noesis_disabled)?;
-        let desk = desk.lock().await;
+        let desk = if matches!(
+            &command,
+            Command::NoesisGraph { .. } | Command::NoesisJobs { .. }
+        ) {
+            desk.lock().await
+        } else {
+            super::writable_desk(&desk).await
+        };
         let Some(noesis) = &desk.noesis else {
             return Err(ErrorReply::noesis_disabled());
         };
@@ -98,7 +105,7 @@ impl NoesisService {
         let Some((desk, extraction)) = self.graph_parts().await else {
             return Ok(None);
         };
-        let desk = desk.lock().await;
+        let desk = super::writable_desk(&desk).await;
         let Some(noesis) = &desk.noesis else {
             return Ok(None);
         };
@@ -128,7 +135,7 @@ impl NoesisService {
         let Some((desk, extraction)) = self.graph_parts().await else {
             return Ok(None);
         };
-        let desk = desk.lock().await;
+        let desk = super::writable_desk(&desk).await;
         let Some(noesis) = &desk.noesis else {
             return Ok(None);
         };

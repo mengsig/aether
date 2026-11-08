@@ -3,7 +3,7 @@
 //! `runtime.apply`, so the runtime's seal sees them; its learner evidence is
 //! appended to the learner model and announced as `noesis.learner_updated`.
 //! A command answers at once; the turn it starts runs in its own task.
-//! Calls hold the service's desk, never its state lock, across a turn.
+//! A turn releases the service's desk while its model call runs.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,7 +15,7 @@ use aether_core::noesis::{ConceptId, NoesisSession, SessionMode};
 use aether_noesis::Noesis;
 use aether_noesis::budget::INTERACTIVE_BUDGET_SETTING;
 use aether_noesis::teach::records::{Answer, EvidenceDraft, Mode, NoesisEvent, SessionView};
-use aether_noesis::teach::{EngineError, TeachError, Teaching};
+use aether_noesis::teach::{Advance, EngineError, TeachError, Teaching, TeachingBuffer};
 use aether_protocol::noesis::{AnswerInput, DeleteSessionGraph, EvidenceBundle};
 use aether_protocol::{Command, ErrorReply, NOESIS_BUDGET_EXHAUSTED, Reply};
 use aether_runtime::Runtime;
@@ -99,7 +99,14 @@ impl NoesisService {
             .ticket()
             .await
             .ok_or_else(ErrorReply::noesis_disabled)?;
-        let mut desk = ticket.desk.lock().await;
+        let mut desk = if matches!(
+            &command,
+            Command::NoesisGetSession { .. } | Command::NoesisListSessions { .. }
+        ) {
+            ticket.desk.lock().await
+        } else {
+            super::writable_desk(&ticket.desk).await
+        };
         let Some(noesis) = &desk.noesis else {
             return Err(ErrorReply::noesis_disabled());
         };
@@ -206,7 +213,7 @@ impl NoesisService {
         let Some(ticket) = self.ticket().await else {
             return Ok(());
         };
-        let mut desk = ticket.desk.lock().await;
+        let mut desk = super::writable_desk(&ticket.desk).await;
         if desk.noesis.is_none() {
             return Ok(());
         }
@@ -215,16 +222,42 @@ impl NoesisService {
         if !pending.map_err(reply_error)? {
             return Ok(());
         }
-        let (ran, output) =
-            self.with_teaching(&ticket, &mut desk, runtime, |t, _| t.advance(session))?;
+        let host = self.turn_host(&ticket, &mut desk, runtime)?;
+        let reservation = desk.reserve_turn();
+        let (desk, ran, output) = run_segments(&ticket, desk, &host, session).await?;
         publish(&desk, runtime, output, &Actor::System, None)?;
-        // The hook takes the desk itself; holding it here would deadlock
-        // against a stop, which holds the state lock while it waits for the desk.
         drop(desk);
-        // Whatever prose the turn committed, even one that failed later.
+        drop(reservation);
         let queued = self.after_teaching_turn(runtime, session).await;
         ran.map_err(reply_error)?;
         queued.map(|_| ())
+    }
+
+    fn turn_host(
+        &self,
+        ticket: &Ticket,
+        desk: &mut Desk,
+        runtime: &Arc<Runtime>,
+    ) -> Result<EngineHost, ErrorReply> {
+        let run = match desk.run {
+            Some(run) => run,
+            None => *desk
+                .run
+                .insert(noesis_run(runtime).map_err(ErrorReply::internal)?),
+        };
+        let noesis = desk
+            .noesis
+            .as_ref()
+            .ok_or_else(ErrorReply::noesis_disabled)?;
+        Ok(EngineHost {
+            runtime: runtime.clone(),
+            models: self.models.clone(),
+            budget: ticket.budget.clone(),
+            client: self.model_client.clone(),
+            cancel: ticket.cancel.clone(),
+            prompt_overrides: prompt_overrides(noesis),
+            run,
+        })
     }
 
     /// Start each pending, non-stalled turn after a restart.
@@ -245,7 +278,7 @@ impl NoesisService {
             return Ok(());
         };
         let sessions = {
-            let mut desk = ticket.desk.lock().await;
+            let mut desk = super::writable_desk(&ticket.desk).await;
             if desk.noesis.is_none() {
                 return Ok(());
             }
@@ -258,6 +291,56 @@ impl NoesisService {
             self.spawn_advance(runtime, session);
         }
         Ok(())
+    }
+}
+
+async fn run_segments<'a>(
+    ticket: &'a Ticket,
+    mut desk: tokio::sync::MutexGuard<'a, Desk>,
+    host: &EngineHost,
+    session: &str,
+) -> Result<
+    (
+        tokio::sync::MutexGuard<'a, Desk>,
+        Result<(), TeachError>,
+        Output,
+    ),
+    ErrorReply,
+> {
+    let mut engine = AetherEngine::new(host);
+    let mut buffer = TeachingBuffer::default();
+    let mut state = Advance::new(session);
+    let mut result = None;
+    let mut first = true;
+    loop {
+        let undelivered = first.then(|| std::mem::take(&mut desk.undelivered));
+        let Some(noesis) = &desk.noesis else {
+            return Err(ErrorReply::internal("teaching store stopped during a turn"));
+        };
+        let mut teaching = Teaching::new(noesis, engine);
+        teaching.restore_buffer(buffer);
+        if let Some(undelivered) = undelivered {
+            teaching.restore_undelivered(undelivered);
+            first = false;
+        }
+        match teaching.advance_until_call(&mut state, result.take()) {
+            Ok(Some(call)) => {
+                (engine, buffer) = teaching.into_parts();
+                drop(desk);
+                result = Some(call.run(&mut engine));
+                desk = ticket.desk.lock().await;
+            }
+            done => {
+                let output = Output {
+                    events: teaching.take_events(),
+                    evidence: teaching.take_evidence(),
+                };
+                let undelivered = teaching.take_undelivered();
+                drop(teaching);
+                desk.undelivered = undelivered;
+                return Ok((desk, done.map(|_| ()), output));
+            }
+        }
     }
 }
 
