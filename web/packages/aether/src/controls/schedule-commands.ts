@@ -85,6 +85,7 @@ function spawnOf(draft: ScheduleDraft): aether.SpawnSpec {
   need(draft.effort === "" || effort !== undefined, "Choose a valid effort");
   return {
     role: "worker",
+    name: draft.name.trim(),
     objective,
     model: modelRef(draft.model),
     scope: { workspace_root: workspace },

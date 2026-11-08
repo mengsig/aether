@@ -1,7 +1,7 @@
 // `#/agents/:conn/:agent`: one agent's identity, state, model, cost and budget, above its
 // chat. Everything shown is derived from core's store; this screen keeps no daemon data.
 
-import { routeHref, selectAgent, selectConnection, useSelector } from "@aether-ui/core";
+import { routeHref, selectAgent, selectAttention, selectConnection, useSelector } from "@aether-ui/core";
 import type { aether, ConnId, RouteProps } from "@aether-ui/protocol";
 import { Badge, EmptyState, EntityActionMenu, Skeleton, StatusPill } from "@aether-ui/ui";
 import { useMemo } from "react";
@@ -18,6 +18,8 @@ function AgentLink({ conn, id, children }: { readonly conn: ConnId; readonly id:
 
 function AgentHeader({ conn, agent }: { readonly conn: ConnId; readonly agent: aether.Agent }) {
   const status = agentStatus(agent);
+  const attention = useSelector(useMemo(() => selectAttention(conn), [conn]));
+  const waitingApproval = attention?.approvals.some(request => request.agent_id === agent.id && request.status.state === "pending") ?? false;
   const role = roleLabel(agent.role);
   const parent = useSelector(useMemo(() => selectAgent(conn, agent.parent ?? ""), [conn, agent.parent]));
   const detail = statusDetail(agent.status);
@@ -25,7 +27,7 @@ function AgentHeader({ conn, agent }: { readonly conn: ConnId; readonly agent: a
     <header className="agent-head">
       <div className="agent-title">
         <h2 className="ui-page-title agent-name">{agent.name}</h2>
-        <StatusPill status={status.status} label={status.label} />
+        <StatusPill status={waitingApproval ? "blocked" : status.status} label={waitingApproval ? "Waiting for your approval" : status.label} />
         {agent.paused ? <Badge tone="warning">Paused</Badge> : null}
         {agent.archived ? <Badge>Archived</Badge> : null}
         <EntityActionMenu entity={{ kind: "agent", conn, id: agent.id }} />
@@ -35,7 +37,7 @@ function AgentHeader({ conn, agent }: { readonly conn: ConnId; readonly agent: a
         <code className="agent-id">{agent.id}</code>
         {agent.parent ? <span>Delegated by <AgentLink conn={conn} id={agent.parent}>{parent?.name ?? agent.parent}</AgentLink></span> : null}
       </p>
-      {detail ? <p className="agent-detail" data-state={status.state}>{detail}</p> : null}
+      {waitingApproval ? <p className="agent-detail"><a className="ui-link" href="#/inbox">Review approval in Inbox</a></p> : detail ? <p className="agent-detail" data-state={status.state}>{detail}</p> : null}
     </header>
   );
 }

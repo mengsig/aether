@@ -12,7 +12,7 @@ import { ApprovalsPanel } from "./approvals.tsx";
 import { DraftError, sendCommand } from "./commands.ts";
 import { ConfigurePanel } from "./configure.tsx";
 import { Action, RunNote, Section, StandingNotice, useRun } from "./kit.tsx";
-import { LifecyclePanel } from "./lifecycle.tsx";
+import { LifecyclePanel, terminalReason } from "./lifecycle.tsx";
 import { RecordsPanel } from "./records.tsx";
 import { SchedulesPanel } from "./schedules.tsx";
 
@@ -44,7 +44,7 @@ function SteerPanel({ conn, agent }: { readonly conn: ConnId; readonly agent: ae
           <input type="checkbox" checked={subtree} onChange={(event) => setSubtree(event.target.checked)} />
           <span>Also send to the agents it delegated to</span>
         </label>
-        <Action conn={conn} command={{ cmd: "send_message", to: agent.id }} label="Send" variant="primary" busy={run.status.state === "busy"} onRun={send} />
+        <Action conn={conn} command={{ cmd: "send_message", to: agent.id }} label="Send" variant="primary" busy={run.status.state === "busy"} blocked={terminalReason(agent)} onRun={send} />
       </div>
       {problem ? <p className="b3-note" role="alert" data-state="failed">{problem}</p> : null}
       {draft.problem ? <p className="b3-note" data-state="failed">{draft.problem}</p> : null}
