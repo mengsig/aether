@@ -32,6 +32,7 @@ pub struct ModelCall {
 }
 
 impl ModelCall {
+    /// Execute without a store borrow; return the result to the same advance.
     pub fn run<E: Engine>(self, engine: &mut E) -> Result<Step, TeachError> {
         debug_assert!(!self.agent.is_empty());
         debug_assert_eq!(self.admission.is_none(), engine.charges_own_calls());
@@ -54,6 +55,7 @@ impl ModelCall {
 }
 
 impl Advance {
+    /// Start a session advance that can be resumed between model calls.
     pub fn new(session: &str) -> Self {
         Self {
             session: session.to_string(),
@@ -62,6 +64,7 @@ impl Advance {
         }
     }
 
+    /// Take the sealed reports after the advance completes.
     pub fn reports(self) -> Vec<TurnReport> {
         debug_assert!(self.current.is_none());
         debug_assert!(self.reports.len() <= 2);
@@ -70,7 +73,8 @@ impl Advance {
 }
 
 impl<E: Engine> Teaching<'_, E> {
-    /// Resume an advance until its next model call or completion.
+    /// Resume until the next call or completion; pass `None` only at the start.
+    /// Keep the same engine and teaching buffer between calls.
     pub fn advance_until_call(
         &mut self,
         advance: &mut Advance,
