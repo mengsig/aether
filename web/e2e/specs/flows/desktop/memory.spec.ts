@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { expect, test, type Page } from "../../../harness/fixtures.ts";
@@ -25,6 +26,33 @@ async function screenshot(name: string): Promise<void> {
     await page().emulateMedia({ colorScheme: theme });
     await page().screenshot({ path: path.join(shots, `${name}-${theme}.png`) });
   }
+}
+
+interface SwayNode { id: number; name: string | null; focused: boolean; nodes: SwayNode[]; floating_nodes: SwayNode[] }
+
+function findDialog(node: SwayNode): SwayNode | undefined {
+  if (node.name === "Import memories") return node;
+  for (const child of [...node.nodes, ...node.floating_nodes]) {
+    const found = findDialog(child);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+async function confirmNativeImport(display: string): Promise<void> {
+  const runtime = path.dirname(display);
+  const socket = (await readdir(runtime)).find((name) => /^sway-ipc\..*\.sock$/.test(name));
+  assert.ok(socket, "the private compositor has an IPC socket");
+  const sway = async (...args: string[]) => (await promisify(execFile)("swaymsg", ["-s", path.join(runtime, socket), ...args])).stdout;
+  let dialog: SwayNode | undefined;
+  await expect.poll(async () => {
+    dialog = findDialog(JSON.parse(await sway("-t", "get_tree")) as SwayNode);
+    return dialog !== undefined;
+  }, { message: "the native import confirmation appears", timeout: 10_000 }).toBe(true);
+  assert.ok(dialog && Number.isSafeInteger(dialog.id), "the native dialog has a compositor id");
+  const result = JSON.parse(await sway(`[con_id=${dialog.id}]`, "focus")) as Array<{ success: boolean }>;
+  assert.ok(result.length > 0 && result.every((item) => item.success), "the native dialog receives focus");
+  await promisify(execFile)("wtype", ["-k", "Tab", "-k", "Return"], { env: { ...process.env, WAYLAND_DISPLAY: display, XDG_RUNTIME_DIR: runtime } });
 }
 
 test.describe.configure({ mode: "serial" });
@@ -130,8 +158,7 @@ test("a reviewed import reaches the store after native confirmation", async () =
   await expect(maintenance).toContainText("Would insert");
   await maintenance.getByRole("button", { name: "Import", exact: true }).click();
   await page().getByRole("dialog", { name: "Import memories?" }).getByRole("button", { name: "Import memories", exact: true }).click();
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  await promisify(execFile)("wtype", ["-k", "Tab", "-k", "Return"], { env: { ...process.env, WAYLAND_DISPLAY: app.waylandDisplay, XDG_RUNTIME_DIR: path.dirname(app.waylandDisplay) } });
+  await confirmNativeImport(app.waylandDisplay);
   await expect(maintenance).toContainText("Imported", { timeout: 15_000 });
   await expect(page().getByText("A memory imported from another private store.")).toBeVisible();
   await screenshot("ux-017-import");
