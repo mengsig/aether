@@ -209,8 +209,8 @@ test("an agent-scoped memory is created, filtered and shown by its agent", async
   expect(h.daemon.commands("create_memory")[0]).toMatchObject({ spec: { text: "Agent note", scope: { scope: "agent", id: AGENT_ID } } });
 });
 
-test("repository suggestions combine agent roots, recent workspaces and recorded scopes", async () => {
-  const scoped = { ...memory, scope: { scope: "repository", id: "/recorded" } } as aether.MemoryRecord;
+test("repository filter suggests identities and creation suggests workspace roots", async () => {
+  const scoped = { ...memory, scope: { scope: "repository", id: "github.com/acme/project" } } as aether.MemoryRecord;
   h = await connected({ agents: demoAgents().map(a => ({ ...a, scope: { workspace_root: "/agent-root" } })), script: {
     memories: () => ({ tag: "memories", data: [scoped] }),
     list_workspaces: () => ({ tag: "workspaces", data: [{ path: "/recent", exists: true }] }),
@@ -218,8 +218,13 @@ test("repository suggestions combine agent roots, recent workspaces and recorded
   } });
   const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
   await click(h, root, "Repository");
-  await pick(h, root, "Repository filter", "/recent");
-  expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "repository", id: "/recent" } } });
+  const filter = root.querySelector<HTMLButtonElement>('[role="combobox"][aria-labelledby*="label"]');
+  expect(filter).not.toBeNull();
+  await import("react").then(({ act }) => act(async () => filter?.click()));
+  expect([...root.querySelectorAll<HTMLElement>('[role="option"]')].map(option => option.textContent)).not.toContain("/recent");
+  await import("react").then(({ act }) => act(async () => filter?.click()));
+  await pick(h, root, "Repository filter", "github.com/acme/project");
+  expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "repository", id: "github.com/acme/project" } } });
   const beforeClear = h.daemon.commands("memories").length;
   await pick(h, root, "Repository filter", "Choose a repository");
   expect(h.daemon.commands("memories")).toHaveLength(beforeClear);
@@ -228,6 +233,10 @@ test("repository suggestions combine agent roots, recent workspaces and recorded
   await click(h, document.querySelector('[aria-label="Memory scope"]') as HTMLElement, "Repository");
   await type(h, document.body, "Memory text", "Repository lesson");
   await click(h, document.querySelector('[aria-label="Memory kind"]') as HTMLElement, "lesson");
+  const repositoryRoot = document.querySelector<HTMLInputElement>('[data-testid="memory-create-repository"]');
+  expect(repositoryRoot).not.toBeNull();
+  await import("react").then(({ act }) => act(async () => repositoryRoot?.focus()));
+  expect([...document.querySelectorAll<HTMLElement>('[role="option"]')].map(option => option.textContent)).not.toContain("github.com/acme/project");
   await type(h, document.body, "Repository root", "/agent");
   const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(o => o.textContent === "/agent-root");
   expect(option).toBeDefined();
