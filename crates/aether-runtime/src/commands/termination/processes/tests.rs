@@ -211,7 +211,7 @@ async fn a_late_hand_up_settles_with_the_live_owner_it_would_have_reached() {
     assert_eq!(runtime.settle_owner(middle), None, "a stop took it");
 }
 
-/// A daemon stop or start sweeps an ended agent no live agent holds; a live
+/// A start after a crash sweeps an ended agent no live agent holds; a live
 /// one keeps its own, a completed one's stay with its nearest live ancestor,
 /// recorded as holding them, and an agent this store never ran is left alone.
 #[tokio::test]
@@ -287,6 +287,76 @@ fn tagged_leftover(agent: AgentId) -> std::process::Child {
         .stdin(std::process::Stdio::null())
         .spawn()
         .unwrap()
+}
+
+#[cfg(target_os = "linux")]
+async fn processes_visible(agents: &[AgentId], processes: &[std::process::Child]) -> bool {
+    for _ in 0..100 {
+        let found = aether_engine::reap::live_processes(agents).await;
+        if processes
+            .iter()
+            .all(|child| found.iter().any(|p| p.pid == child.id()))
+        {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    false
+}
+
+#[cfg(target_os = "linux")]
+fn collect_alive(processes: &mut [std::process::Child]) -> Vec<bool> {
+    processes
+        .iter_mut()
+        .map(|child| {
+            let alive = child.try_wait().unwrap().is_none();
+            if alive {
+                child.kill().unwrap();
+            }
+            child.wait().unwrap();
+            alive
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn shutdown_reaps_live_and_handed_up_processes_but_spares_foreign_and_kept() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    let (foreign_runtime, _foreign_config) = crate::test_runtime(|_| {}).await;
+    let live = idle_agent(&runtime, None).await;
+    let child = idle_agent(&runtime, Some(live)).await;
+    let imported = idle_agent(&runtime, None).await;
+    let foreign = idle_agent(&foreign_runtime, None).await;
+    end(&runtime, child, completed());
+    let mut row = runtime.store.agent(imported).unwrap().unwrap();
+    row.status = AgentStatus::Imported {
+        was: aether_core::agent::AgentStatusKind::Completed,
+    };
+    runtime
+        .apply(Commit::new().mutate(Mutation::UpsertAgent(row)))
+        .unwrap();
+
+    let mut processes = vec![
+        tagged_leftover(live),
+        tagged_leftover(child),
+        tagged_leftover(imported),
+        tagged_leftover(foreign),
+        std::process::Command::new("setsid")
+            .args(["sleep", "30"])
+            .env(aether_core::agent::PROCESS_AGENT_ENV, live.to_string())
+            .env("AETHER_KEEP_PROCESS", "1")
+            .spawn()
+            .unwrap(),
+    ];
+    let ready = processes_visible(&[live, child, imported, foreign], &processes[..4]).await;
+    let outcome =
+        tokio::time::timeout(std::time::Duration::from_secs(10), runtime.shutdown()).await;
+    let alive = collect_alive(&mut processes);
+    let outcome = outcome.expect("shutdown finishes after reaping the agents");
+    assert!(ready, "the tagged processes became visible before shutdown");
+    assert_eq!(alive, [false, false, true, true, true]);
+    assert!(outcome.surviving_agent_processes.is_empty());
 }
 
 /// Hold a spawn in the engine gate for a second, then wake `agent` from it:
