@@ -109,9 +109,14 @@ test("an interrupted tool is no longer shown as running after reconnect", async 
     await expect(connection(page, "aether")).toHaveAttribute("data-state", "ready", { timeout: 30_000 });
     const interrupted = page.locator('.conv-tool[data-state="interrupted"]').first();
     await expect(interrupted).toBeVisible({ timeout: 30_000 });
+    const dismissAll = page.getByRole("button", { name: "Dismiss all" });
+    if (await dismissAll.count()) await dismissAll.click();
+    const dismiss = page.getByRole("button", { name: /^Dismiss:/ });
+    if (await dismiss.count()) await dismiss.first().click();
+    await interrupted.scrollIntoViewIfNeeded();
     for (const scheme of ["light", "dark"] as const) {
       await page.emulateMedia({ colorScheme: scheme });
-      await page.screenshot({ path: info.outputPath(`tool-interrupted-${scheme}.png`) });
+      await interrupted.screenshot({ path: info.outputPath(`tool-interrupted-${scheme}.png`) });
     }
   } finally {
     stack.engine.setScript(() => DEFAULT_REPLY);
