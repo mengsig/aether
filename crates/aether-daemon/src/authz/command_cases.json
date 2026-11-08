@@ -859,6 +859,13 @@
     }
   },
   {
+    "access": "operate",
+    "command": {
+      "cmd": "noesis_retry_turn",
+      "session": "ns_fixture"
+    }
+  },
+  {
     "access": "observe",
     "command": {
       "cmd": "noesis_get_session",
