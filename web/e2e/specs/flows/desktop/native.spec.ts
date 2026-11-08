@@ -192,7 +192,7 @@ test("UX-045: a real agent's notification restores the packaged app and focuses 
   await route(page, "#/fleet");
   const title = await page.title();
   await minimizeWindow(desktop().compositor, title);
-  await expect.poll(() => page.evaluate(() => document.visibilityState)).toBe("hidden");
+  await expect.poll(() => page.evaluate(() => document.hasFocus()), { message: "the minimized app is in the background" }).toBe(false);
   stack().engine.setScript(askingScript(MARKER, QUESTIONS));
   const agent = await createAgent(stack(), "Native asker", `Ask the operator two things (${MARKER}).`);
   const alerted = await until(async () => desktop().native.notes(), (notes) => notes.some((note) => note.body === QUESTIONS[0]), "the first question's alert", 60_000);
@@ -201,7 +201,7 @@ test("UX-045: a real agent's notification restores the packaged app and focuses 
   expect(first.title).toBe("Native asker asks");
   expect(first.actions).toContain("default");
   await desktop().native.click(first.id);
-  await expect.poll(() => page.evaluate(() => document.visibilityState), { message: "the click shows the packaged app" }).toBe("visible");
+  await expect.poll(() => page.evaluate(() => document.hasFocus()), { message: "the click focuses the packaged app" }).toBe(true);
   await expect.poll(() => page.evaluate(() => location.hash), { message: "the click opens the inbox" }).toBe("#/inbox");
   const card = page.locator(`[data-question*="/${agent}:"]`).filter({ hasText: QUESTIONS[0] });
   await expect(card.getByRole("textbox", { name: "Answer Native asker" })).toBeFocused();

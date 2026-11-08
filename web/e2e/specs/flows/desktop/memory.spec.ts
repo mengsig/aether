@@ -155,6 +155,7 @@ test("a reviewed import reaches the store after native confirmation", async () =
 
 test("memory export opens a native save dialog and writes the daemon artifact", async () => {
   assert.ok(running && app, "the private stack and packaged desktop are running");
+  const compositor = app.compositor;
   const exported = await running.stack.aether.request({ cmd: "memory_export" });
   assert.equal(exported.reply, "memory_export");
   const artifact = exported.data.artifact;
@@ -164,7 +165,7 @@ test("memory export opens a native save dialog and writes the daemon artifact", 
   const maintenance = page().getByRole("region", { name: "Maintenance" });
   for (const tabs of [2, 1, 0]) {
     await maintenance.getByRole("button", { name: "Export memories" }).click();
-    await expect.poll(() => windowTitles(app!.compositor)).toContain("Export memories");
+    await expect.poll(() => windowTitles(compositor)).toContain("Export memories");
     await focusWindow(app.compositor, "Export memories");
     await pressKeys(app.compositor, [...Array<string>(tabs).fill("Tab"), "Return"]);
     await expect.poll(async () => (await maintenance.innerText()).includes("exported") || (await maintenance.innerText()).includes("Cancelled")).toBe(true);
@@ -172,12 +173,12 @@ test("memory export opens a native save dialog and writes the daemon artifact", 
   }
   const download = maintenance.getByRole("button", { name: /^Download aether-memories-/ });
   await expect(download).toBeVisible();
-  const digest = await maintenance.locator(".mem-digest").innerText();
+  const digest = await maintenance.locator('[data-kind="export"] .mem-digest').innerText();
   assert.match(digest, /^[a-f0-9]{64}$/, "the export shows its SHA-256 digest");
   await download.click();
   let title = "";
   await expect.poll(async () => {
-    title = (await windowTitles(app!.compositor)).find((entry) => /^Save (As|File)$/i.test(entry)) ?? "";
+    title = (await windowTitles(compositor)).find((entry) => /^Save (As|File)$/i.test(entry)) ?? "";
     return title;
   }, { message: "the native save dialog opens" }).not.toBe("");
   await shootScreen(app.compositor, "memory-export-save-dialog");
