@@ -124,5 +124,7 @@ describe("tool activity", () => {
     ]);
     const failed = toolActivity([...events, event(7, { type: "tool.failed", call: "call_2", duration_ms: 9 })], "agt_1");
     expect(failed.get("toolu_2")).toEqual({ state: "error", durationMs: 9 });
+    const interrupted = toolActivity([...events, event(7, { type: "custom", name: "tool.interrupted", payload: { call: "call_2" } }), event(8, { type: "tool.cancelled", call: "call_2" })], "agt_1");
+    expect(interrupted.get("toolu_2")).toEqual({ state: "interrupted", durationMs: null });
   });
 });

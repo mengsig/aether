@@ -138,6 +138,7 @@ describe("ControlsScreen", () => {
     await click(h, root, "Restore");
     expect(sent(h, "resume")).toEqual([{ cmd: "resume", agent: AGENT_ID, subtree: true }]);
     expect(sent(h, "archive")).toEqual([{ cmd: "archive", target: { agent: AGENT_ID }, archived: false }]);
+    expect(h.app.store.get().reports.at(-1)).toMatchObject({ message: "Restored", tone: "success" });
   });
 
   test("an observer sees every control disabled with the reason, and the standing notice once", async () => {

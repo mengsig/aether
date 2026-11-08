@@ -76,6 +76,7 @@ function MetaLine({ meta, usage }: { readonly meta: InvocationMeta; readonly usa
   const bits: string[] = [];
   if (meta.model && usage) bits.push(meta.model);
   if (meta.usage && usage) bits.push(formatCost(meta.usage), `${formatTokens(meta.usage.input_tokens)} in · ${formatTokens(meta.usage.output_tokens)} out`);
+  if (!meta.usage && meta.model && usage) bits.push("Usage not reported");
   if (meta.durationMs !== null && usage) bits.push(formatDuration(meta.durationMs));
   return (
     <span className="conv-meta">

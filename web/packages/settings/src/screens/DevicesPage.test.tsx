@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { connected, click, buttonNamed, type Harness } from "../kit/fixture/harness.test-util.tsx";
 import { fakeDesktop } from "../kit/fixture/desktop.test-util.ts";
 import { DevicesPage } from "./DevicesPage.tsx";
+import { act } from "react";
 
 let current: Harness | null = null;
 afterEach(() => { current?.unmount(); current = null; });
@@ -84,5 +85,20 @@ describe("DevicesPage", () => {
     fail = false;
     await click(h, root, "Retry");
     expect(root.textContent).toContain("Kitchen tablet");
+  });
+
+  test("refreshes external pairing and revocation when the window regains focus", async () => {
+    let devices = [] as typeof tablet[];
+    const h = current = await connected({ role: "operator", script: { list_devices: () => ({ tag: "devices", data: devices }) } });
+    const root = await h.mount(<DevicesPage conn={h.conn} />);
+    expect(root.textContent).toContain("No devices paired");
+    devices = [tablet];
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    await h.settle();
+    expect(root.textContent).toContain("Kitchen tablet");
+    devices = [];
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    await h.settle();
+    expect(root.textContent).toContain("No devices paired");
   });
 });

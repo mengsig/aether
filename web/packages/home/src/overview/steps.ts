@@ -53,7 +53,7 @@ const PAIR_AETHER: Step = { label: "Connect to Aether", href: "#/pair/aether" };
 const PAIR_ARCHON: Step = { label: "Connect to Archon", href: "#/pair/archon" };
 const RECONNECT: Step = { label: "Check connections", href: "#/settings/connections" };
 const START_AGENT: Step = { label: "Start an agent", href: "#/activity" };
-const REGISTER_REPO: Step = { label: "Register a repository", href: "#/archon/queue" };
+const REGISTER_REPO: Step = { label: "Open the queue", href: "#/archon/queue" };
 const WATCH_REPO: Step = { label: "Watch a repository", href: "#/github" };
 
 /** The step a daemon's tiles offer until it is ready; null while it is still connecting. */

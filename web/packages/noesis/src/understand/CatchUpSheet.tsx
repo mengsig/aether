@@ -69,7 +69,7 @@ function RangeForm({ conn, repos, onChoose }: { readonly conn: string; readonly 
         <select id={ids.range} className="ui-field-input" value={preset} onChange={(event) => setPreset(event.target.value as RangePresetId)}>
           {RANGE_PRESETS.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
         </select>
-        <p className="learn-muted" data-testid="catchup-since">From the start of {since} (UTC){preset === "visit" && visit.state === "ready" && visit.at === null ? " — your first catch-up, so the last 7 days" : ""}</p>
+        <p className="learn-muted" data-testid="catchup-since">From the start of {since} (UTC){preset === "visit" && visit.state === "ready" && visit.at === null ? " — no last visit recorded, so the last 7 days" : ""}</p>
       </div>
       {visit.state === "error" && <p className="learn-callout" role="alert">Could not read your last visit, so “Since my last visit” uses the last 7 days: {visit.message}</p>}
       <div className="learn-actions">

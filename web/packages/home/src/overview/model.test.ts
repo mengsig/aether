@@ -89,6 +89,21 @@ describe("spend today", () => {
     expect("value" in truncated && truncated.value.complete).toBe(false);
   });
 
+  test("recorded tokens include cached reads and writes", () => {
+    const usage = { ...BREAKDOWN.total, input_tokens: 2, output_tokens: 3, cache_read_tokens: 100, cache_write_tokens: 20 };
+    const parsed = spendFromBreakdowns([{ ...BREAKDOWN, total: usage }]);
+    expect("value" in parsed && parsed.value.tokens).toBe(125);
+    expect(spendFromBreakdowns([{ ...BREAKDOWN, total: { ...usage, cache_read_tokens: -1 } }])).toHaveProperty("problem");
+  });
+
+  test("keeps subscription estimates separate from charges and rejects invalid estimates", () => {
+    const usage = { ...BREAKDOWN.total, cost_usd: 0.2, estimated_cost_usd: 3, cost_complete: false, cost_basis: "mixed" as const };
+    const parsed = spendFromBreakdowns([{ ...BREAKDOWN, total: usage }]);
+    expect("value" in parsed && parsed.value).toMatchObject({ usd: 0.2, estimatedUsd: 3, listPrice: true, complete: false });
+    expect(spendFromBreakdowns([{ ...BREAKDOWN, total: { ...usage, estimated_cost_usd: -1 } }])).toHaveProperty("problem");
+    expect(spendFromBreakdowns([{ ...BREAKDOWN, rows: [null] }])).toHaveProperty("problem");
+  });
+
   test("without a breakdown, counts only agents active since midnight", () => {
     const agents = Object.values(fixtureAgents());
     const stale = { ...fixtureAgents().agt_lead as aether.Agent, id: "agt_old", last_event_at: new Date(startOfDay(NOW) - 60_000).toISOString() };
@@ -172,7 +187,7 @@ describe("states and the next-step rule", () => {
 
   test("an empty tile offers the step that fills it", () => {
     expect(nextStep("agents", facts)).toEqual({ label: "Start an agent", href: "#/activity" });
-    expect(nextStep("queue", facts)).toEqual({ label: "Register a repository", href: "#/archon/queue" });
+    expect(nextStep("queue", facts)).toEqual({ label: "Open the queue", href: "#/archon/queue" });
     expect(nextStep("learn", facts)).toEqual({ label: "Turn on Noesis", href: "#/learn" });
     expect(nextStep("learn", { ...facts, noesis: "on" })).toEqual({ label: "Start a session", href: "#/learn" });
     expect(nextStep("github", facts)).toEqual({ label: "Watch a repository", href: "#/github" });
