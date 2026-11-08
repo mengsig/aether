@@ -412,7 +412,15 @@ async fn h1_an_open_question_s_key_is_hidden_from_every_reader_until_answered() 
     let question_id = posed["open_question"]["id"].clone();
     let answer = json!({"cmd": "noesis_answer", "session": id, "question": question_id,
         "answer": {"text": "Lutetia", "dont_know": false}, "idempotency_key": "answer-1"});
+    home.model.tool(
+        "",
+        "noesis_judge_recall",
+        json!({"question": question_id, "correct": true}),
+    );
+    home.model.text("Noted.");
+    let asked = home.model.requests().len();
     home.ok(answer).await;
+    home.requests_reach(asked + 2).await;
     let recorded = noesis_events(&mut home, "noesis.answer_recorded").await;
     assert_eq!(recorded.len(), 1, "one answer recorded: {recorded:?}");
     let revealed = recorded[0].to_string();
@@ -430,9 +438,11 @@ async fn h1_an_open_question_s_key_is_hidden_from_every_reader_until_answered() 
     let transcript = home
         .ok(json!({"cmd": "get_transcript_page", "agent": posed["agent"]}))
         .await;
+    let transcript = transcript.to_string();
+    assert!(transcript.contains(&key), "the answered key is delivered");
     assert!(
-        !transcript.to_string().contains(&key),
-        "the transcript stays sealed after the answer"
+        !transcript.contains(&explanation),
+        "the explanation is not delivered to the teacher"
     );
 }
 
