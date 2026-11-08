@@ -168,9 +168,9 @@ test("memory export opens a native save dialog and writes the daemon artifact", 
     await focusWindow(app.compositor, "Export memories");
     await pressKeys(app.compositor, [...Array<string>(tabs).fill("Tab"), "Return"]);
     await expect.poll(async () => (await maintenance.innerText()).includes("exported") || (await maintenance.innerText()).includes("Cancelled")).toBe(true);
-    if (await maintenance.getByRole("link", { name: /^Download aether-memories-/ }).isVisible()) break;
+    if (await maintenance.getByRole("button", { name: /^Download aether-memories-/ }).isVisible()) break;
   }
-  const download = maintenance.getByRole("link", { name: /^Download aether-memories-/ });
+  const download = maintenance.getByRole("button", { name: /^Download aether-memories-/ });
   await expect(download).toBeVisible();
   const digest = await maintenance.locator(".mem-digest").innerText();
   assert.match(digest, /^[a-f0-9]{64}$/, "the export shows its SHA-256 digest");
