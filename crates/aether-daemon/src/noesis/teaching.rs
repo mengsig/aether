@@ -354,6 +354,8 @@ fn run_segment<'a>(
     result: Option<Result<Step, TeachError>>,
     first: bool,
 ) -> Result<Segment<'a>, ErrorReply> {
+    debug_assert!(desk.turn.active.load(Ordering::SeqCst));
+    debug_assert!(!first || result.is_none());
     let undelivered = first.then(|| std::mem::take(&mut desk.undelivered));
     let noesis = desk
         .noesis

@@ -34,6 +34,7 @@ pub struct ModelCall {
 impl ModelCall {
     pub fn run<E: Engine>(self, engine: &mut E) -> Result<Step, TeachError> {
         debug_assert!(!self.agent.is_empty());
+        debug_assert_eq!(self.admission.is_none(), engine.charges_own_calls());
         let result = engine.step(&self.agent, &self.live);
         match (self.admission, result) {
             (Some(admission), Ok(step)) => {
@@ -63,6 +64,7 @@ impl Advance {
 
     pub fn reports(self) -> Vec<TurnReport> {
         debug_assert!(self.current.is_none());
+        debug_assert!(self.reports.len() <= 2);
         self.reports
     }
 }
@@ -205,6 +207,7 @@ impl<E: Engine> Teaching<'_, E> {
         let Some(current) = advance.current.as_mut() else {
             return Err(TeachError::Corrupt("model result without a turn".into()));
         };
+        debug_assert!(current.turn.steps.len() < MAX_STEPS);
         let ran = result.and_then(|step| {
             let (end, results) =
                 self.run_calls(&advance.session, &current.caller, step, &mut current.turn)?;
