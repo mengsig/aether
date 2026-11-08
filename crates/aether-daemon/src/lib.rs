@@ -17,6 +17,7 @@ mod projections;
 pub mod push;
 pub mod remote;
 mod secrets;
+mod shutdown;
 mod startup;
 mod status_reads;
 mod usage_breakdown;
@@ -201,8 +202,8 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     // returns. The socket lock covers the probe, the unlink and the bind
     // below, which the store lock cannot: a daemon for another store
     // configured with this socket passes that one.
-    let instance = instance_lock::InstanceLock::for_store(&config.store_path)?;
-    let socket_lock = instance_lock::InstanceLock::for_socket(&config.socket)?;
+    let instance = Arc::new(instance_lock::InstanceLock::for_store(&config.store_path)?);
+    let socket_lock = Arc::new(instance_lock::InstanceLock::for_socket(&config.socket)?);
     // Pin the same target as the lock: a configured directory alias can change later.
     let socket = socket_lock.target();
     let (socket_address, _socket_alias) = pinned_socket_address(socket)?;
@@ -560,39 +561,26 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     }.await;
     tracing::info!("aetherd shutting down");
     shutdown.cancel();
-    shutdown_connections(&runtime, &mut connections).await;
-    noesis.shutdown().await;
-    let store_sync = match store.sync() {
-        Ok(true) => Ok(()),
-        // A reader on an older snapshot keeps frames in the WAL; the next open still reads them.
-        Ok(false) => {
-            tracing::warn!("final WAL sync left frames for a reader; they stay in the WAL");
-            Ok(())
-        }
-        Err(error) => Err(anyhow::Error::new(error).context("final store sync")),
+    let locks = shutdown::Locks::new(instance.clone(), socket_lock.clone());
+    let stopped = shutdown::runtime(runtime.clone(), locks.clone()).await;
+    let drained = shutdown::connections(connections, locks.clone()).await;
+    let noesis_stopped = shutdown::noesis(noesis.clone(), locks.clone()).await;
+    drop(runtime);
+    drop(noesis);
+    drop(store_dyn);
+    let store_sync =
+        shutdown::store(store, stopped && drained && noesis_stopped, locks.clone()).await;
+    let cleanup = shutdown::Cleanup {
+        socket: socket.to_path_buf(),
+        socket_published,
+        pid_path,
+        pid_published,
+        bridge,
+        store_path,
+        clear_crash_marker: result.is_ok() && matches!(store_sync, Ok(true)),
     };
-    let socket_cleanup = if let Some(identity) = socket_published {
-        remove_daemon_file(socket, &identity)
-    } else {
-        Ok(())
-    };
-    // A rejected PID entry must be left intact, including a foreign symlink or hard link.
-    let pid_cleanup = if let Some(file) = pid_published {
-        file.metadata()
-            .map_err(anyhow::Error::new)
-            .and_then(|identity| remove_daemon_file(&pid_path, &identity))
-    } else {
-        Ok(())
-    };
-    let bridge_cleanup = bridge.map_or(Ok(()), bridge::Bridge::remove);
-    if result.is_ok() && store_sync.is_ok() {
-        crash::end_run(&store_path);
-    }
-    result
-        .and(store_sync)
-        .and(socket_cleanup)
-        .and(pid_cleanup)
-        .and(bridge_cleanup)
+    let cleanup_result = shutdown::cleanup(cleanup, locks).await;
+    result.and(store_sync.map(|_| ())).and(cleanup_result)
 }
 
 /// A valid configured alias can resolve to a target longer than `sun_path`.
@@ -639,16 +627,6 @@ fn remove_daemon_file(path: &Path, identity: &std::fs::Metadata) -> anyhow::Resu
         Err(error) => {
             tracing::warn!(path = %path.display(), %error, "could not remove daemon file");
             Err(anyhow::Error::new(error).context(format!("removing {}", path.display())))
-        }
-    }
-}
-
-async fn shutdown_connections(runtime: &Runtime, connections: &mut tokio::task::JoinSet<()>) {
-    // Pending engine approvals need runtime cancellation before their connections can finish.
-    runtime.shutdown().await;
-    while let Some(result) = connections.join_next().await {
-        if let Err(error) = result {
-            tracing::error!(%error, "connection task failed");
         }
     }
 }

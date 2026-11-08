@@ -104,7 +104,7 @@ impl TestDaemon {
         (daemon, started.elapsed())
     }
 
-    async fn stop_cleanly(self) -> tempfile::TempDir {
+    pub async fn stop_cleanly(self) -> tempfile::TempDir {
         let (store, socket) = (self.store_path(), self.socket.clone());
         self.shutdown.cancel();
         let stopped = tokio::time::timeout(Duration::from_secs(10), self.serving).await;
