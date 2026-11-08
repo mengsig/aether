@@ -15,14 +15,19 @@ test("the faux engine streams text and scripted tool calls", async () => {
     };
     const text = await request();
     assert.equal(text.at(-1).choices[0].finish_reason, "stop");
-    engine.setScript(() => ({ name: "complete_task", arguments: { summary: "done", structured: { answer: 42 } } }));
-    const tool = await request();
-    const call = tool.find((frame) => frame.choices[0].delta.tool_calls)?.choices[0].delta.tool_calls[0];
-    assert.match(call.id, /^call_/);
-    assert.equal(call.function.name, "complete_task");
-    assert.deepEqual(JSON.parse(call.function.arguments), { summary: "done", structured: { answer: 42 } });
-    assert.equal(tool.at(-1).choices[0].finish_reason, "tool_calls");
-    assert.deepEqual(engine.requests.map((seen) => seen.lastUserText), ["hello", "hello"]);
+    const scripted = { name: "complete_task", arguments: { summary: "done", structured: { answer: 42 } }, text: "Working on it." };
+    for (const reply of [scripted, { toolCall: scripted }]) {
+      engine.setScript(() => reply);
+      const tool = await request();
+      const deltas = tool.flatMap((frame) => frame.choices[0].delta.tool_calls ?? []);
+      assert.ok(deltas.length > 1, "the call is streamed in chunks");
+      assert.match(deltas[0].id, /^call_/);
+      assert.equal(deltas[0].function.name, "complete_task");
+      assert.deepEqual(JSON.parse(deltas.map((delta) => delta.function.arguments).join("")), scripted.arguments);
+      assert.equal(tool.map((frame) => frame.choices[0].delta.content ?? "").join(""), scripted.text);
+      assert.equal(tool.at(-1).choices[0].finish_reason, "tool_calls");
+    }
+    assert.deepEqual(engine.requests.map((seen) => seen.lastUserText), ["hello", "hello", "hello"]);
   } finally {
     await engine.close();
   }
