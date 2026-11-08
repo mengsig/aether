@@ -3,7 +3,7 @@
 
 import type { ConnId } from "@aether-ui/protocol";
 import { aether } from "@aether-ui/protocol";
-import { useDraft } from "@aether-ui/core";
+import { useApp, useDraft } from "@aether-ui/core";
 import { Switch } from "@aether-ui/ui";
 import { invariant } from "../fleet/invariant.ts";
 import { Action, RunNote, Section, useRun } from "./kit.tsx";
@@ -20,6 +20,7 @@ export function terminalReason(agent: aether.Agent): string | null {
 export function LifecyclePanel({ conn, agent }: { readonly conn: ConnId; readonly agent: aether.Agent }) {
   invariant(agent.id !== "", "lifecycle controls name their agent");
   const run = useRun(conn);
+  const app = useApp();
   const draft = useDraft(`controls/${agent.id}/lifecycle`, { subtree: false });
   const { subtree } = draft.value;
   const id = agent.id;
@@ -57,7 +58,7 @@ export function LifecyclePanel({ conn, agent }: { readonly conn: ConnId; readonl
             onRun={() => run.send(aether.restart({ agent: id }), "Restarted")} />
           <Action conn={conn} command={shelf} label={archived ? "Restore" : "Archive"} busy={busy} blocked={!archived && ended === null ? "Only finished agents can be archived." : null}
             confirm={archived ? undefined : { title: `Archive ${agent.name}?`, body: "It leaves the fleet view. You can restore it later.", confirmLabel: "Archive" }}
-            onRun={() => run.send(shelf, archived ? "Restored" : "Archived")} />
+            onRun={async () => { const message = archived ? "Restored" : "Archived"; if (await run.send(shelf, message)) app.store.report(message, conn, undefined, "success"); }} />
           <Action conn={conn} command={aether.cancel({ agent: id })} label="Cancel agent" variant="danger" busy={busy}
             confirm={{ title: `Cancel ${agent.name}?`, body: ended === null ? "This agent and its live delegated agents stop, and their open work is abandoned. This cannot be undone." : "Any live delegated agents stop, and their open work is abandoned. This cannot be undone.", confirmLabel: "Cancel agent", reason: "optional" }}
             onRun={(reason) => run.send(aether.cancel({ agent: id, ...(reason ? { reason } : {}) }), "Cancelled")} />

@@ -26,7 +26,7 @@ function Rows({ transitions }: { readonly transitions: readonly Transition[] }) 
           </div>
           {row.reason === null ? null : <p className="history-reason">{row.reason}</p>}
           <p className="dag-muted history-meta">
-            <time dateTime={row.at}>{dateTime(row.at)}</time> · by {row.by} · {index === rows.length - 1 ? `${duration(row.heldMs)} so far` : `held ${duration(row.heldMs)}`}
+            <time dateTime={row.at}>{dateTime(row.at)}</time> · by {row.by}{index === rows.length - 1 && ["succeeded", "failed", "cancelled"].includes(transitions[index]?.to ?? "") ? null : ` · ${index === rows.length - 1 ? `${duration(row.heldMs)} so far` : `held ${duration(row.heldMs)}`}`}
           </p>
         </li>
       ))}

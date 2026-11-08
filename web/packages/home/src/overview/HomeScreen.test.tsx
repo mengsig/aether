@@ -64,7 +64,7 @@ describe("connected with nothing yet", () => {
     expect(step(container, "agents")).toEqual(["Start an agent →", "#/activity"]);
     expect(step(container, "spend")).toEqual(["Start an agent →", "#/activity"]);
     expect(step(container, "activity")).toEqual(["Start an agent →", "#/activity"]);
-    expect(step(container, "queue")).toEqual(["Register a repository →", "#/archon/queue"]);
+    expect(step(container, "queue")).toEqual(["Open the queue →", "#/archon/queue"]);
     expect(step(container, "learn")).toEqual(["Turn on Noesis →", "#/learn"]);
     expect(step(container, "github")).toEqual(["Watch a repository →", "#/github"]);
     expect(text(container, "needs", ".ui-chart-tile-value")).toBe("0");
@@ -178,5 +178,14 @@ describe("with seeded data", () => {
     expect(container.querySelector('[data-tile="github"] .home-problem')).toBeNull();
     expect(step(container, "github")).toEqual(["See the cached issues and pull requests →", "#/github"]);
     expect(text(container, "spend", ".ui-chart-tile-value")).toBe("$2.25");
+  });
+
+  test("explains why the GitHub watcher is unavailable in shared mode", async () => {
+    const replies = { ...REPLIES, github_watcher: new Error("invalid argument: the GitHub watcher needs Archon's own Aether; [aether] mode is shared") };
+    const { container } = await open([aetherInfo(), archonInfo()], true, replies);
+    await h?.frame();
+    expect(text(container, "github", ".ui-chart-tile-value")).toBe("Unavailable");
+    expect(text(container, "github", ".ui-chart-tile-hint")).toContain("Archon's own Aether");
+    expect(container.querySelector('[data-tile="github"] .home-problem')).toBeNull();
   });
 });

@@ -134,6 +134,7 @@ function Queue({ info }: { readonly info: ConnectionInfo }) {
   const pipelines = useMemo(() => [...new Set([...(catalog.data?.pipelines ?? []).map((pipeline) => pipeline.name), ...rows.map((row) => row.pipeline)])].sort(), [rows, catalog.data]);
   return (
     <section className="queue" aria-label="Queue">
+      {!access.ready ? <p role="status" className="queue-note">Archon is disconnected. Queue data is stale until it reconnects.</p> : null}
       <QueueStatus access={access} items={items} names={names} settled={settled} onDialog={setDialog} />
       <QueueFilters query={query} onChange={setQuery} counts={counts} repos={[...names.entries()]} pipelines={pipelines} />
       <p className="queue-total" aria-live="polite">{shown.length} of {rows.length} items{access.live ? "" : " · refreshed after each feed event (protocol 23)"}</p>

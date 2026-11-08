@@ -208,7 +208,7 @@ export function invocationMeta(events: readonly aether.Event[], agent: string): 
 
 /** How one tool call went, from its `tool.*` events: keyed by the call's tool_use_id. */
 export interface ToolActivity {
-  readonly state: "running" | "ok" | "error";
+  readonly state: "running" | "ok" | "error" | "interrupted";
   readonly durationMs: number | null;
 }
 
@@ -227,6 +227,10 @@ export function toolActivity(events: readonly aether.Event[], agent: string): Re
     else if (kind.type === "tool.started") set(kind.call, { state: "running", durationMs: null });
     else if (kind.type === "tool.succeeded") set(kind.call, { state: kind.outcome.is_error === true ? "error" : "ok", durationMs: kind.outcome.duration_ms ?? null });
     else if (kind.type === "tool.failed") set(kind.call, { state: "error", durationMs: kind.duration_ms ?? null });
+    else if (kind.type === "tool.cancelled") set(kind.call, { state: "interrupted", durationMs: null });
+    else if (kind.type === "custom" && kind.name === "tool.interrupted" && kind.payload !== null && typeof kind.payload === "object" && "call" in kind.payload && typeof kind.payload.call === "string") {
+      set(kind.payload.call, { state: "interrupted", durationMs: null });
+    }
   }
   invariant(activity.size <= providerIds.size, "activity is only kept for requested calls");
   return activity;

@@ -6,6 +6,7 @@ import { byText, pick } from "../queue/test/harness.tsx";
 import RECORDED from "./fixture/item-history.json";
 import HistoryScreen from "./HistoryScreen.tsx";
 import { actorLabel } from "./model.ts";
+import { demoGraphWorld } from "../dag/fixture/graph-world.ts";
 
 const LABELS: Record<string, string> = { queued: "Queued", dispatching: "Starting", running: "Running", blocked: "Blocked", succeeded: "Succeeded" };
 
@@ -43,6 +44,16 @@ describe("the history explorer", () => {
     expect(root.querySelector(".history-step[data-seq='15'] .history-meta")?.textContent).toContain("held 11 min");
     expect(root.querySelector(".history-step[data-seq='35'] .history-meta")?.textContent).toContain("21 min so far");
     expect(Object.keys(h.app.store.get().archon[CONN]?.histories ?? {})).toEqual(["qi_dark_mode"]);
+  });
+
+  it("does not describe a terminal transition as still running", async () => {
+    const world = demoGraphWorld();
+    world.histories.get("qi_dark_mode")?.push({ seq: 36, at: "2026-11-04T09:40:00Z", from: "running", to: "succeeded", reason: null, by: "daemon" });
+    h = await graphHarness(world);
+    const root = await h.mount(<HistoryScreen />);
+    await openHistory(h, root, "Ship dark mode for the docs");
+    expect(root.querySelector(".history-step[data-seq='36'] .history-meta")?.textContent).not.toContain("so far");
+    expect(root.querySelector(".history-step[data-seq='35'] .history-meta")?.textContent).toContain("held 1 min");
   });
 
   it("searches by text and range with the list_items filters", async () => {

@@ -105,10 +105,10 @@ export class Bridge {
     const daemon = daemonSlot(this.connections.daemonOf(owner, conn));
     const importing = frame.cmd === "memory_import";
     if (importing && typeof frame.artifact !== "string") throw new BridgeRefusal("Import needs an artifact");
-    const scope = JSON.stringify(frame.scope ?? "all");
-    if (scope.length > 1024) throw new BridgeRefusal("The memory scope is too long to confirm");
+    const scope = frame.scope == null ? null : JSON.stringify(frame.scope);
+    if (scope !== null && scope.length > 1024) throw new BridgeRefusal("The memory scope is too long to confirm");
     const target = importing ? `SHA-256 ${createHash("sha256").update(frame.artifact as string).digest("hex")}`
-      : `Scope ${valueSlot(scope)}`;
+      : `Scope ${scope === null ? "all" : valueSlot(scope)}`;
     const action = importing ? "Import memories" : exporting ? "Export memories" : "Consolidate memories";
     if (!(await this.host.confirm(owner, { title: action, message: `${action}?`, detail: `${target}\nDaemon ${daemon}`, confirm: action }))) {
       throw new BridgeRefusal("Cancelled");

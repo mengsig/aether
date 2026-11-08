@@ -26,6 +26,17 @@ async function queue(options: Parameters<typeof archonHarness>[0] = { protocol: 
 }
 
 describe("the queue list", () => {
+  test("marks retained queue data stale while Archon is disconnected", async () => {
+    const { h, container } = await queue();
+    await act(async () => h.app.store.update(state => {
+      const connection = state.connections[CONN];
+      if (!connection) throw new Error("the Archon connection exists");
+      return { ...state, connections: { ...state.connections, [CONN]: { ...connection, state: "backoff" } } };
+    }));
+    await h.tick();
+    expect(container.textContent).toContain("Queue data is stale until it reconnects");
+    expect(titles(container)).toContain("Ship dark mode for the docs");
+  });
   test("orders active work by who it waits on, then priority, with waiting reasons and spend", async () => {
     const { container } = await queue();
     expect(total(container)).toBe("4 of 7 items");

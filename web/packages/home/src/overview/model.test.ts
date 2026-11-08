@@ -172,7 +172,7 @@ describe("states and the next-step rule", () => {
 
   test("an empty tile offers the step that fills it", () => {
     expect(nextStep("agents", facts)).toEqual({ label: "Start an agent", href: "#/activity" });
-    expect(nextStep("queue", facts)).toEqual({ label: "Register a repository", href: "#/archon/queue" });
+    expect(nextStep("queue", facts)).toEqual({ label: "Open the queue", href: "#/archon/queue" });
     expect(nextStep("learn", facts)).toEqual({ label: "Turn on Noesis", href: "#/learn" });
     expect(nextStep("learn", { ...facts, noesis: "on" })).toEqual({ label: "Start a session", href: "#/learn" });
     expect(nextStep("github", facts)).toEqual({ label: "Watch a repository", href: "#/github" });
