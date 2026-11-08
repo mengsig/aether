@@ -18,13 +18,19 @@ const CLEANUP_DEADLINE: Duration = Duration::from_secs(2);
 pub(crate) struct Locks {
     _store: Arc<InstanceLock>,
     _socket: Arc<InstanceLock>,
+    _socket_alias: Option<Arc<tempfile::TempDir>>,
 }
 
 impl Locks {
-    pub(crate) fn new(store: Arc<InstanceLock>, socket: Arc<InstanceLock>) -> Self {
+    pub(crate) fn new(
+        store: Arc<InstanceLock>,
+        socket: Arc<InstanceLock>,
+        socket_alias: Option<tempfile::TempDir>,
+    ) -> Self {
         Self {
             _store: store,
             _socket: socket,
+            _socket_alias: socket_alias.map(Arc::new),
         }
     }
 }

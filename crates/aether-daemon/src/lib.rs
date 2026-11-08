@@ -206,7 +206,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     let socket_lock = Arc::new(instance_lock::InstanceLock::for_socket(&config.socket)?);
     // Pin the same target as the lock: a configured directory alias can change later.
     let socket = socket_lock.target();
-    let (socket_address, _socket_alias) = pinned_socket_address(socket)?;
+    let (socket_address, socket_alias) = pinned_socket_address(socket)?;
     remove_stale_socket(socket, &socket_address).await?;
     let pid_path = aether_protocol::paths::pid_path_for(socket);
     instance_lock::check_private_file_replacement(&pid_path)?;
@@ -561,7 +561,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     }.await;
     tracing::info!("aetherd shutting down");
     shutdown.cancel();
-    let locks = shutdown::Locks::new(instance.clone(), socket_lock.clone());
+    let locks = shutdown::Locks::new(instance.clone(), socket_lock.clone(), socket_alias);
     let stopped = shutdown::runtime(runtime.clone(), locks.clone()).await;
     let drained = shutdown::connections(connections, locks.clone()).await;
     let noesis_stopped = shutdown::noesis(noesis.clone(), locks.clone()).await;

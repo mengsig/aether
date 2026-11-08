@@ -350,8 +350,10 @@ async fn shutdown_reaps_live_and_handed_up_processes_but_spares_foreign_and_kept
             .unwrap(),
     ];
     let ready = processes_visible(&[live, child, imported, foreign], &processes[..4]).await;
-    let outcome = runtime.shutdown().await;
+    let outcome =
+        tokio::time::timeout(std::time::Duration::from_secs(10), runtime.shutdown()).await;
     let alive = collect_alive(&mut processes);
+    let outcome = outcome.expect("shutdown finishes after reaping the agents");
     assert!(ready, "the tagged processes became visible before shutdown");
     assert_eq!(alive, [false, false, true, true, true]);
     assert!(outcome.surviving_agent_processes.is_empty());
