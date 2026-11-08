@@ -83,8 +83,5 @@ export function stageTerms(stage: archon.StageSummary): string[] {
     stage.gate !== "none" ? `gate ${stage.gate.replace("_", " ")}` : null,
     stage.fan_out > 1 ? `${stage.fan_out} in parallel` : null,
     stage.loops_to ? `loops to ${stage.loops_to} (max ${stage.max_loops})` : null,
-    stage.effort ? `effort ${stage.effort}` : null,
-    stage.tier ? `tier ${stage.tier}` : null,
-    `${stage.timeout_minutes} min limit`,
   ].filter((term): term is string => term !== null);
 }

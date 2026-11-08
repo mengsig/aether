@@ -69,6 +69,7 @@ export function ImportAction(props: ImportProps) {
   const reasonId = useId();
   const confirm = async () => {
     invariant(refusal === null, "a refused import is never sent");
+    setOutcome(null);
     setBusy(true);
     try {
       const item = itemOf(await send({ ...archon.importIssue({ ref, priority }) }));
@@ -88,7 +89,6 @@ export function ImportAction(props: ImportProps) {
       </Button>
       {refusal ? <p id={reasonId} className="gh-muted gh-reason">{refusal}</p> : null}
       {outcome?.ok ? <p role="status" className="gh-muted">Imported as <a className="ui-link" href={routeHref("#/archon/items/:item", { item: outcome.id })}>{outcome.title}</a></p> : null}
-      {outcome && !outcome.ok ? <p role="alert" className="gh-error">The import failed: {outcome.text}</p> : null}
       <Dialog open={open} onClose={() => setOpen(false)} title={`Import #${page.number} as Archon work?`} description="Archon queues the issue as an item on its repository.">
         <Preview page={page} object={object} />
         <label className="ui-field">
@@ -97,6 +97,7 @@ export function ImportAction(props: ImportProps) {
             {PRIORITIES.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
         </label>
+        {outcome && !outcome.ok ? <p role="alert" className="gh-error">The import failed: {outcome.text}</p> : null}
         <div className="gh-confirm">
           <Button onClick={() => setOpen(false)}>Not now</Button>
           <Button variant="primary" data-autofocus disabled={busy || refusal !== null} onClick={() => void confirm()}>{busy ? "Importing…" : "Import"}</Button>

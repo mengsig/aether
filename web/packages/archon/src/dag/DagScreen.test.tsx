@@ -71,7 +71,7 @@ describe("the task DAG", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("repaints a status change without a relayout, and relayouts only when the structure changes", async () => {
+  it("relayouts when a completed item is hidden and when an edge changes", async () => {
     const canvas = stubCanvas();
     h = await graphHarness();
     const { calls, layout } = countingLayout();
@@ -82,23 +82,50 @@ describe("the task DAG", () => {
 
     h.faux.move("qi_sync_store", { state: "succeeded", run: "run_s2" });
     // The change patches the node in place; its moved prerequisite then makes core reread the whole graph.
-    await h.until(() => nodeList(root).includes("Store sync cursors, succeeded"), "the status change on screen");
+    await h.until(() => !nodeList(root).includes("Store sync cursors, running"), "the status change on screen");
     await h.until(() => h.app.store.get().archon[CONN]?.graph !== graphBefore && h.faux.inner.commands("task_graph").length === 2, "the graph reread");
     await h.tick(1_000);
-    expect(nodeList(root)).toContain("Store sync cursors, succeeded");
+    expect(nodeList(root)).not.toContain("Store sync cursors, succeeded");
     // Two chains of three open items remain; the tie goes to the chain ending at the smaller id.
     expect(pathTitles(root)).toEqual(["Shorten the pairing code", "Pairing screen copy", "Pairing end-to-end tests"]);
     expect(canvas.frames()).toBeGreaterThan(framesBefore);
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
 
     const metrics = h.faux.world.base.items.get("qi_sync_metrics");
     if (!metrics) throw new Error("the demo world has qi_sync_metrics");
     metrics.summary = { ...metrics.summary, dependencies: ["qi_sync_store", "qi_sync_docs"] };
     h.faux.inner.tell("qi_sync_metrics", { subject: "dependency", item: "qi_sync_metrics", depends_on: "qi_sync_docs", added: true });
-    await h.until(() => calls.length === 2, "the relayout of the new edge");
-    expect(calls[1]?.edges).toContainEqual({ from: "qi_sync_docs", to: "qi_sync_metrics", kind: "depends_on" });
+    await h.until(() => calls.length === 3, "the relayout of the new edge");
+    expect(calls[2]?.edges).toContainEqual({ from: "qi_sync_docs", to: "qi_sync_metrics", kind: "depends_on" });
     await h.tick(1_000);
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
+  });
+
+  it("keeps initiative totals when completed nodes are hidden and restores their edges", async () => {
+    stubCanvas();
+    h = await graphHarness();
+    const { calls, layout } = countingLayout();
+    const root = await h.mount(<DagScreen layout={layout} />);
+    await h.until(() => calls.length > 0 && root.querySelector(".dag-initiative") !== null, "the graph");
+    const meter = () => root.querySelector("meter[aria-label^='Offline sync:']");
+    expect(meter()?.getAttribute("aria-label")).toBe("Offline sync: 1 of 6 done");
+    expect(nodeList(root)).not.toContain("Design the sync schema, succeeded");
+    const toggle = [...root.querySelectorAll("button")].find((button) => button.textContent === "Show completed");
+    if (!toggle) throw new Error("the graph offers completed nodes");
+    await click(h, toggle);
+    await h.until(() => nodeList(root).includes("Design the sync schema, succeeded"), "the completed node");
+    expect(meter()?.getAttribute("aria-label")).toBe("Offline sync: 1 of 6 done");
+    expect(calls.at(-1)?.edges).toContainEqual({ from: "qi_sync_schema", to: "qi_sync_store", kind: "depends_on" });
+    expect(h.faux.inner.commands("task_graph")[0]).toMatchObject({ filter: { include_terminal_since: "1970-01-01T00:00:00Z" } });
+  });
+
+  it("counts members omitted from the queue summary page", async () => {
+    stubCanvas();
+    h = await graphHarness(undefined, "operator", 1);
+    const root = await h.mount(<DagScreen layout={countingLayout().layout} />);
+    await h.until(() => root.querySelector("meter[aria-label^='Offline sync:']") !== null, "complete initiative progress");
+    expect(root.querySelector("meter[aria-label^='Offline sync:']")?.getAttribute("aria-label")).toBe("Offline sync: 1 of 6 done");
+    expect(h.faux.inner.commands("get_initiative").length).toBeGreaterThan(0);
   });
 
   it("says when a new structure could not be laid out, keeps the last layout, and lays out again on retry", async () => {
