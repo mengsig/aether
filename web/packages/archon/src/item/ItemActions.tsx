@@ -4,9 +4,11 @@
 import type { archon } from "@aether-ui/protocol";
 import { Button, Dialog } from "@aether-ui/ui";
 import { useState } from "react";
-import { useChange, type ArchonAccess } from "../queue/archon.ts";
+import { useChange, useRead, type ArchonAccess } from "../queue/archon.ts";
 import { invariant, type StateKind } from "../queue/model.ts";
 import { canCancel, canRetry } from "./facts.ts";
+import { SteerItem } from "./SteerItem.tsx";
+import { ItemPriority } from "./ItemPriority.tsx";
 
 interface Confirm { readonly title: string; readonly message: string; readonly label: string; readonly command: Record<string, unknown> }
 
@@ -25,6 +27,7 @@ export function ItemActions({ access, item, kind, repoName, pause, onDone }: Ite
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const policy = useRead<archon.ModelPolicy>(access, canCancel(kind) ? { cmd: "model_policy", repo: item.repo ?? null } : null, ["model_policy"]);
   const run = async (command: Record<string, unknown>, done: string) => {
     invariant(command.cmd !== undefined, "an action sends a command");
     setBusy(true);
@@ -41,6 +44,12 @@ export function ItemActions({ access, item, kind, repoName, pause, onDone }: Ite
   const pauseCommand = (scope: "repo" | "pipeline", name: string, paused: boolean) => ({ cmd: paused ? "resume" : "pause", scope, name });
   return (
     <div className="item-actions" role="group" aria-label="Item actions">
+      <SteerItem access={access} item={item} active={canCancel(kind)} disabled={disabled || !access.live || !policy.data || kind === "dispatching"} policy={policy.data} onDone={onDone} />
+      {kind === "queued" ? <ItemPriority access={access} item={item} disabled={disabled || !access.live || !policy.data} onDone={onDone} /> : null}
+      {canCancel(kind) && policy.error ? <p className="item-muted">Steering is unavailable: {policy.error}</p> : null}
+      {kind === "dispatching" ? <p className="item-muted">Steering is available once the item has started.</p> : null}
+      {canCancel(kind) && !access.live ? <p className="item-muted">Steering and editing require protocol 24.</p> : null}
+      {canCancel(kind) && access.refusal ? <p className="item-muted">{access.refusal}</p> : null}
       {canCancel(kind) ? <Button variant="danger" disabled={disabled} title={title} onClick={() => setConfirm({
         title: "Cancel this item?", message: `Archon stops “${item.title}” and its agents. You can retry it later.`, label: "Cancel item",
         command: { cmd: "cancel_item", item: item.id, reason: null },
