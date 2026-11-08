@@ -15,6 +15,8 @@ export interface ComposerProps {
   readonly waiting: boolean;
   readonly problem: boolean;
   readonly disabled: boolean;
+  /** Why the learner cannot write now (for example a spent budget); shown in place of the hint. */
+  readonly reason?: string | null;
   /** Resolves to null when sent, else to why not. */
   readonly onSend: (text: string) => Promise<string | null>;
 }
@@ -25,8 +27,9 @@ export function sendsOnKey(event: Pick<KeyboardEvent, "key" | "shiftKey" | "altK
   return event.nativeEvent?.isComposing !== true;
 }
 
-export function Composer({ sessionId, waiting, problem, disabled, onSend }: ComposerProps) {
+export function Composer({ sessionId, waiting, problem, disabled, reason = null, onSend }: ComposerProps) {
   invariant(sessionId.length > 0, "a composer belongs to a session");
+  invariant(reason === null || reason.trim() !== "", "a paused composer says why");
   const draft = useDraft(draftKey(sessionId, "reply"), EMPTY_REPLY);
   const [sending, setSending] = useState(false);
   const trimmed = draft.value.text.trim();
@@ -48,7 +51,7 @@ export function Composer({ sessionId, waiting, problem, disabled, onSend }: Comp
     event.preventDefault();
     void send();
   };
-  const placeholder = waiting ? "Answer the question above to go on" : problem ? "Your answer, or ask for a hint" : "Ask, answer or say what is unclear";
+  const placeholder = reason ?? (waiting ? "Answer the question above to go on" : problem ? "Your answer, or ask for a hint" : "Ask, answer or say what is unclear");
   return (
     <form className="learn-composer" onSubmit={submit} aria-label="Reply">
       <TextArea label="Message your teacher" hideLabel data-testid="learn-reply" rows={2} maxLength={TEXT_MAX} disabled={blocked} placeholder={placeholder}

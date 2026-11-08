@@ -2,6 +2,7 @@
 
 import type { UnderstandKind } from "./bundle.ts";
 import { useAgentSource } from "./agent-source.ts";
+import { useRepositorySource } from "./catchup-source.ts";
 import { useItemSource, usePullRequestSource, useRunSource } from "./archon-sources.ts";
 import type { BundleSource } from "./read.ts";
 
@@ -10,4 +11,5 @@ export const SOURCES: Readonly<Record<UnderstandKind, BundleSource>> = {
   run: useRunSource,
   agent: useAgentSource,
   pull_request: usePullRequestSource,
+  repository: useRepositorySource,
 };

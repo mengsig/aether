@@ -10,9 +10,9 @@ use super::db::{self, SessionRow};
 use super::engine::{AgentSpec, Engine, EngineError, Input, NOESIS_RUN, SUBSYSTEM};
 use super::records::{
     Answer, EvidenceDraft, EvidenceOutcome, Mode, NoesisEvent, Phase, Question, QuestionKind,
-    QuestionResult, RevealedKey, SessionView,
+    QuestionResult, RevealedKey, SessionRole, SessionView,
 };
-use super::{TeachError, phase, plan, question, role_of};
+use super::{TeachError, history, phase, plan, question, role_of};
 use crate::Noesis;
 use crate::budget::{ModelOffer, choose_model};
 use crate::evidence;
@@ -173,7 +173,7 @@ impl<'a, E: Engine> Teaching<'a, E> {
         };
         let agent_id = self.spawn(agent)?;
         let opening = opening(goal, &targets, context)?;
-        self.engine.deliver(&agent_id, Input::Learner(opening))?;
+        let opened_at = self.engine.deliver(&agent_id, Input::Opening(opening))?;
         let at = db::now();
         let row = SessionRow {
             id: db::fresh_id("ns"),
@@ -184,7 +184,7 @@ impl<'a, E: Engine> Teaching<'a, E> {
             created_at: at.clone(),
             updated_at: at,
         };
-        self.insert_with_bundle(&row, context)?;
+        self.insert_with_bundle(&row, opened_at, context)?;
         let view = self.session_view(&row)?;
         self.events.push(NoesisEvent::SessionCreated {
             session: Box::new(view.clone()),
@@ -192,21 +192,22 @@ impl<'a, E: Engine> Teaching<'a, E> {
         Ok(view)
     }
 
-    /// The session row and its bundle in one transaction: both or neither.
+    /// The session row, its first agent and its bundle in one transaction.
     fn insert_with_bundle(
         &self,
         row: &SessionRow,
+        opened_at: Option<u64>,
         context: Option<&EvidenceBundle>,
     ) -> Result<(), TeachError> {
+        let role = match row.mode {
+            Mode::Teach => SessionRole::Prober,
+            Mode::Practice => SessionRole::Practitioner,
+        };
         let tx = self.conn().unchecked_transaction()?;
         db::insert_session(&tx, row)?;
+        history::add_agent(&tx, &row.id, &row.agent, role, opened_at)?;
         if let Some(bundle) = context {
-            evidence::store::save(&tx, &row.id, bundle, &row.created_at).map_err(|error| {
-                match error {
-                    evidence::EvidenceError::Sqlite(error) => TeachError::Sqlite(error),
-                    other => TeachError::Invalid(other.to_string()),
-                }
-            })?;
+            evidence::store::save(&tx, &row.id, bundle, &row.created_at).map_err(evidence_error)?;
         }
         tx.commit()?;
         Ok(())
@@ -266,29 +267,46 @@ impl<'a, E: Engine> Teaching<'a, E> {
         Ok(id)
     }
 
-    /// The session as every reader sees it, sealed values absent.
+    /// The session as every reader sees it with its whole history: sealed
+    /// values only in the reveals of answered questions and concluded problems.
     pub fn get_session(&self, session: &str) -> Result<SessionView, TeachError> {
-        let row = db::session(self.conn(), session)?;
-        self.session_view(&row)
+        let conn = self.conn();
+        let row = db::session(conn, session)?;
+        let view = SessionView {
+            agents: history::agents(conn, session)?,
+            questions: history::questions(conn, session)?,
+            problems: history::problems(conn, session)?,
+            context: evidence::store::load(conn, session).map_err(evidence_error)?,
+            ..self.session_view(&row)?
+        };
+        debug_assert!(
+            !view.agents.is_empty(),
+            "a session is created with its agent"
+        );
+        debug_assert!(
+            view.agents
+                .last()
+                .is_none_or(|last| last.agent == view.agent),
+            "the session's agent is its latest"
+        );
+        Ok(view)
     }
 
     pub(super) fn session_view(&self, row: &SessionRow) -> Result<SessionView, TeachError> {
         let conn = self.conn();
         let plan = match db::latest_plan(conn, &row.id)? {
-            Some((revision, dag)) => Some(plan::tree(
-                revision,
-                &dag,
-                &db::tagged_nodes(conn, &row.id)?,
-            )),
+            Some((revision, dag)) => {
+                Some(plan::tree(revision, &dag, &db::plan_marks(conn, &row.id)?))
+            }
             None => None,
         };
-        // An open question was posed in the session's current phase.
+        // A step is stored at the pose; without one, the open question is this phase's.
         let open_question = db::open_question(conn, &row.id)?.map(|open| Question {
-            step: Some(question::step(
+            step: open.question.step.or(Some(question::step(
                 row.phase,
                 open.question.kind,
                 open.question.collapsed,
-            )),
+            ))),
             ..open.question
         });
         let active_problem = db::active_problem(conn, &row.id)?.map(|active| active.problem);
@@ -303,6 +321,11 @@ impl<'a, E: Engine> Teaching<'a, E> {
             active_problem,
             created_at: row.created_at.clone(),
             updated_at: row.updated_at.clone(),
+            agents: Vec::new(),
+            questions: Vec::new(),
+            problems: Vec::new(),
+            context: None,
+            stalled: history::stall(conn, &row.id)?,
         })
     }
 
@@ -364,6 +387,10 @@ impl<'a, E: Engine> Teaching<'a, E> {
             session: session.to_string(),
             result: result.clone(),
         });
+        if open.question.plan_node.is_some() {
+            // A passed check moves the plan on; its statuses change now.
+            self.push_plan_event(session)?;
+        }
         self.record_answer_evidence(&row, &open.question, answer.dont_know, &graded);
         // Recorded and announced first. A failed delivery stays owed in the
         // store, so the next turn or a restart delivers it, and is returned.
@@ -436,6 +463,13 @@ impl<'a, E: Engine> Teaching<'a, E> {
     }
 }
 
+fn evidence_error(error: evidence::EvidenceError) -> TeachError {
+    match error {
+        evidence::EvidenceError::Sqlite(error) => TeachError::Sqlite(error),
+        other => TeachError::Invalid(other.to_string()),
+    }
+}
+
 /// The agent a session's phase belongs to.
 pub(super) fn driving_agent(row: &SessionRow) -> Agent {
     match row.phase {
@@ -445,7 +479,7 @@ pub(super) fn driving_agent(row: &SessionRow) -> Agent {
     }
 }
 
-fn reveal(open: &super::db::QuestionRow, correct: Option<bool>) -> QuestionResult {
+pub(super) fn reveal(open: &super::db::QuestionRow, correct: Option<bool>) -> QuestionResult {
     let answer_key = match open.question.kind {
         QuestionKind::Choice => Some(RevealedKey::Choices(open.answer_key.clone())),
         QuestionKind::Recall => open.answer_key.first().cloned().map(RevealedKey::Text),

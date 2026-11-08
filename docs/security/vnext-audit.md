@@ -314,15 +314,14 @@ headless security check"), from `make web`.
   weaker archond CSP would apply to a page on the origin that holds Aether's
   device key. *Follow-up:* send Aether's CSP as an additional header on
   mounted answers, so the browser enforces both.
-- **H3-L7 (Noesis, accepted residual risk).** A model's visible text that
-  restates an answer is stored verbatim in the transcript. The runtime seal
-  covers the named fields only, and the teaching loop's `Sealer`
-  (`step_text`, `step`, `event`) masks only the published turn report
-  (`crates/aether-noesis/src/teach/seal.rs`). §g accepts this residual risk
-  ("the model can still restate an answer in its visible text; the prompts
-  forbid it and parity test T5 checks it"). *Follow-up for the seal owner:*
-  apply the turn's `Sealer` to `Text` blocks in `AetherEngine::record_reply`
-  before commit. The loop already knows the secrets there.
+- **H3-L7 (Noesis, resolved).** A model's visible text that restated an answer
+  was stored verbatim in the transcript. Each reply is now checked whole by
+  `reply_leaks` before `AetherEngine::record_reply` commits anything of it
+  (`crates/aether-noesis/src/teach/seal.rs`). A leaking reply is discarded and
+  the step runs again once with a reminder, then falls back to a neutral step.
+  Tests `a_reply_giving_its_own_key_away_is_discarded_and_made_again` and
+  `a_second_leaking_reply_becomes_the_neutral_step` (`teach/recovery.rs` and
+  `crates/aether-daemon/src/noesis/teaching_tests/engine_path/live_seal.rs`).
 - **H3-L8 (Noesis).** An approval's `argument` is computed from the raw input,
   so a sealed-named MCP tool with a remembered rule would record it unsealed
   (`crates/aether-runtime/src/turn/tools.rs`). This is contrived, because

@@ -1,7 +1,7 @@
 //! Sealing of raw engine values and recovery from failed deliveries: the
 //! read paths and retry paths around the T1–T12 suite.
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::faux::FauxEngine;
 use super::records::*;
@@ -37,7 +37,7 @@ fn raw_tool_calls_and_steps_debug_only_the_sealed_projection() {
     let step = Step {
         text: format!("Hint: {SECRET}."),
         calls: vec![ask.clone(), problem],
-        usage: Default::default(),
+        ..Step::default()
     };
     let shown = format!("{ask:?} {step:?}");
     for secret in [SECRET, "the-why", "x-equals-4"] {
@@ -54,8 +54,10 @@ fn raw_tool_calls_and_steps_debug_only_the_sealed_projection() {
     );
 }
 
+/// A reply that gives its own key away is discarded unseen; the retry,
+/// told why, poses the question cleanly.
 #[test]
-fn a_pose_refused_for_giving_away_its_key_withholds_the_step_text() {
+fn a_reply_giving_its_own_key_away_is_discarded_and_made_again() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = t
@@ -64,17 +66,118 @@ fn a_pose_refused_for_giving_away_its_key_withholds_the_step_text() {
         .id;
     let leaky = format!("Hint: it is the {SECRET}.");
     let question = recall("Name the powerhouse of the cell", SECRET);
-    let malformed = json!({"kind": "riddle", "prompt": "?", "answer_key": [SECRET]});
     let prober = t.engine_mut();
     prober.script(Agent::Prober, &leaky, vec![(ASK, question.clone())]);
-    prober.script(Agent::Prober, &leaky, vec![(ASK, malformed)]);
     prober.script(Agent::Prober, "One question:", vec![(ASK, question)]);
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingAnswer);
     let texts: Vec<&str> = report.steps.iter().map(|s| s.text.as_str()).collect();
-    assert_eq!(texts, [WITHHELD, WITHHELD, "One question:"]);
-    assert!(report.steps[0].calls[0].is_error && report.steps[1].calls[0].is_error);
+    assert_eq!(texts, ["One question:"], "the leaking reply is never kept");
+    assert_eq!(t.engine().reminders, 1);
+    let open = session(&t, &id)
+        .open_question
+        .expect("the retry's question");
+    assert_eq!(open.prompt, "Name the powerhouse of the cell");
     assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
+}
+
+/// A second leaking reply becomes the neutral step: no question opens and
+/// the turn waits for the learner.
+#[test]
+fn a_second_leaking_reply_becomes_the_neutral_step() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Learn cells", Mode::Teach, &[])
+        .unwrap()
+        .id;
+    let leaky = format!("Hint: it is the {SECRET}.");
+    let question = recall("Name the powerhouse of the cell", SECRET);
+    let prober = t.engine_mut();
+    for _ in 0..2 {
+        prober.script(Agent::Prober, &leaky, vec![(ASK, question.clone())]);
+    }
+    prober.script(Agent::Prober, "Not reached.", vec![]);
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingLearner);
+    let texts: Vec<&str> = report.steps.iter().map(|s| s.text.as_str()).collect();
+    assert_eq!(texts, [NEUTRAL_REPLY]);
+    assert!(report.steps[0].calls.is_empty(), "no call of either ran");
+    assert!(session(&t, &id).open_question.is_none());
+    assert_eq!(t.engine().steps_run, 2, "one retry, no more");
+}
+
+/// Each step is kept as it ends, so a key an earlier call of the turn named
+/// is on the record before the pose: the pose is refused.
+#[test]
+fn a_key_an_earlier_call_of_the_turn_named_is_never_posed() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Learn cells", Mode::Teach, &[])
+        .unwrap()
+        .id;
+    let search = json!({"query": format!("what the {SECRET} does")});
+    let prober = t.engine_mut();
+    prober.script(Agent::Prober, "", vec![("noesis.graph_search", search)]);
+    let question = recall("Name the powerhouse of the cell", SECRET);
+    prober.script(Agent::Prober, "One question:", vec![(ASK, question)]);
+    prober.script(Agent::Prober, "Then:", vec![(ASK, capital_question())]);
+    let report = t.advance(&id).unwrap().remove(0);
+    let refused: Vec<bool> = report.steps.iter().map(|s| s.calls[0].is_error).collect();
+    assert_eq!(refused, [false, true, false], "{report:?}");
+    let open = session(&t, &id).open_question.expect("the fresh question");
+    assert_eq!(open.prompt, "Capital of France?");
+}
+
+/// The turn's first step is `preface`; its second poses `key`, which that
+/// step left on the record, so the pose is refused and the third one runs.
+fn pose_after(preface: Step, key: &str) {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Learn cells", Mode::Teach, &[])
+        .unwrap()
+        .id;
+    let engine = t.engine_mut();
+    engine.script_step(Agent::Prober, preface);
+    let question = recall("Name the powerhouse of the cell", key);
+    engine.script(Agent::Prober, "One question:", vec![(ASK, question)]);
+    engine.script(Agent::Prober, "Then:", vec![(ASK, capital_question())]);
+    let report = t.advance(&id).unwrap().remove(0);
+    let refused: Vec<bool> = report.steps[1..]
+        .iter()
+        .map(|s| s.calls[0].is_error)
+        .collect();
+    assert_eq!(refused, [true, false], "{key}: {report:?}");
+    let open = session(&t, &id).open_question.expect("the fresh question");
+    assert_eq!(open.prompt, "Capital of France?");
+}
+
+fn search_step(id: &str, name: &str, input: Value) -> Step {
+    Step {
+        calls: vec![ToolCall {
+            id: id.into(),
+            name: name.into(),
+            input,
+        }],
+        ..Step::default()
+    }
+}
+
+/// The transcript keeps a name no tool has and every literal of an
+/// earlier call's input, so a key any of them carries is never posed.
+#[test]
+fn a_key_an_earlier_calls_name_or_literal_carries_is_never_posed() {
+    let search = json!({"query": "cells"});
+    pose_after(search_step("call_a", SECRET, search), SECRET);
+    let flagged = json!({"query": "cells", "extra": true});
+    pose_after(
+        search_step("call_a", "noesis.graph_search", flagged),
+        "true",
+    );
+    let nested = json!({"query": "cells", "extra": [null]});
+    pose_after(search_step("call_a", "noesis.graph_search", nested), "null");
 }
 
 #[test]
@@ -173,35 +276,62 @@ fn results_kept_back_by_a_failed_delivery_arrive_before_the_answer() {
     assert!(matches!(tail[1], Input::Answer(a) if a["question"] == open.as_str()));
 }
 
+/// Whatever shape a pose's sealed text takes, a reply whose text shows it
+/// is discarded and the retry is kept.
 #[test]
-fn step_text_is_withheld_for_every_sealed_text_shape() {
+fn a_reply_showing_any_shape_of_its_own_sealed_text_is_discarded() {
+    let goal = json!({"kind": "goal", "prompt": "?", "answer_key": SECRET});
+    let stringified = json!({"kind": "riddle", "prompt": "?", "answer_key": [SECRET]}).to_string();
+    let explained = json!({"kind": "recall", "prompt": "Name it", "answer_key": "organelle", "explanation": SECRET});
+    for input in [goal, json!(stringified), explained] {
+        let (_dir, noesis) = fixture();
+        let mut t = Teaching::new(&noesis, FauxEngine::new());
+        let id = t
+            .create_session("Learn cells", Mode::Teach, &[])
+            .unwrap()
+            .id;
+        let prober = t.engine_mut();
+        prober.script(
+            Agent::Prober,
+            &format!("Hint: {SECRET}."),
+            vec![(ASK, input)],
+        );
+        prober.script(Agent::Prober, "Name it:", vec![(ASK, capital_question())]);
+        let report = t.advance(&id).unwrap().remove(0);
+        let texts: Vec<&str> = report.steps.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(texts, ["Name it:"]);
+        assert_eq!(t.engine().reminders, 1);
+        assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
+    }
+}
+
+/// A pose whose input is unreadable carries no secret the seal could know,
+/// so its reply is kept; the pose is refused, so nothing becomes live.
+#[test]
+fn an_unreadable_pose_is_refused_and_seals_nothing() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = t
         .create_session("Learn cells", Mode::Teach, &[])
         .unwrap()
         .id;
-    let leaky = format!("Hint: {SECRET}.");
-    let goal = json!({"kind": "goal", "prompt": "?", "answer_key": SECRET});
-    let stringified = json!({"kind": "riddle", "prompt": "?", "answer_key": [SECRET]}).to_string();
-    let explained = json!({"kind": "recall", "prompt": "Name it", "answer_key": "organelle", "explanation": SECRET});
-    let unreadable = json!("not an object");
     let prober = t.engine_mut();
-    // The refused shapes come first; the explained pose succeeds and parks.
-    for input in [goal, json!(stringified), unreadable, explained] {
-        prober.script(Agent::Prober, &leaky, vec![(ASK, input)]);
-    }
+    prober.script(Agent::Prober, "Hm.", vec![(ASK, json!("not an object"))]);
+    prober.script(Agent::Prober, "Then:", vec![(ASK, capital_question())]);
     let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.end, TurnEnd::AwaitingAnswer);
-    let texts: Vec<&str> = report.steps.iter().map(|s| s.text.as_str()).collect();
-    assert_eq!(texts, [WITHHELD; 4]);
     let refused: Vec<bool> = report.steps.iter().map(|s| s.calls[0].is_error).collect();
-    assert_eq!(refused, [true, true, true, false]);
-    assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
+    assert_eq!(refused, [true, false]);
+    assert_eq!(t.engine().reminders, 0);
+    assert_eq!(
+        session(&t, &id).open_question.expect("open").prompt,
+        "Capital of France?"
+    );
 }
 
+/// A reply that shows its own problem's solution is discarded; the retry
+/// poses the problem, and a second problem waits until it is concluded.
 #[test]
-fn a_practice_solution_in_the_step_text_is_withheld_until_conclude() {
+fn a_reply_showing_its_own_solution_is_discarded_and_the_retry_poses() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = t
@@ -214,15 +344,47 @@ fn a_practice_solution_in_the_step_text_is_withheld_until_conclude() {
     practitioner.script(
         Agent::Practitioner,
         "Try this: x = 4 by halving",
-        vec![(PROBLEM, problem)],
+        vec![(PROBLEM, problem.clone())],
     );
+    practitioner.script(Agent::Practitioner, "Try this.", vec![(PROBLEM, problem)]);
+    let other =
+        json!({"statement": "Solve 3y = 9", "mode": "recall", "solution": "y = 3 by thirds"});
+    practitioner.script(Agent::Practitioner, "Or this.", vec![(PROBLEM, other)]);
     let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.steps[0].text, WITHHELD);
-    assert!(
-        !report.steps[0].calls[0].is_error,
-        "the problem itself is posed"
-    );
+    let texts: Vec<&str> = report.steps.iter().map(|s| s.text.as_str()).collect();
+    // A problem does not end the turn; the unscripted step after it is empty.
+    assert_eq!(texts, ["Try this.", "Or this.", ""]);
+    let refused: Vec<bool> = report.steps[..2]
+        .iter()
+        .map(|s| s.calls[0].is_error)
+        .collect();
+    assert_eq!(refused, [false, true], "one problem is active at a time");
     assert!(!format!("{report:?}").contains("halving"));
+}
+
+/// A step that runs while a solution is unrevealed is checked against it,
+/// so the engine is handed the solution as the live seal.
+#[test]
+fn a_step_while_a_problem_is_active_is_sealed_against_its_solution() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Practise algebra", Mode::Practice, &[])
+        .unwrap()
+        .id;
+    let solution = "x = 4 by halving";
+    let problem = json!({"statement": "Solve 2x = 8", "mode": "recall", "solution": solution});
+    let practitioner = t.engine_mut();
+    practitioner.script(Agent::Practitioner, "Here it is.", vec![(PROBLEM, problem)]);
+    practitioner.script(Agent::Practitioner, "Take your time.", vec![]);
+    t.advance(&id).unwrap();
+    let seals = &t.engine().step_seals;
+    assert_eq!(seals.len(), 2, "one seal per step");
+    assert!(seals[0].is_empty(), "nothing is sealed before the problem");
+    assert!(
+        seals[1].holds(solution),
+        "the active solution seals the next step"
+    );
 }
 
 #[test]
@@ -241,7 +403,11 @@ fn a_later_step_cannot_show_the_active_solution_or_a_recall_key_dressed_as_an_op
     practitioner.script(Agent::Practitioner, solution, vec![]);
     let report = t.advance(&id).unwrap().remove(0);
     let texts: Vec<&str> = report.steps.iter().map(|s| s.text.as_str()).collect();
-    assert_eq!(texts, ["Here it is.", WITHHELD]);
+    assert_eq!(
+        texts,
+        ["Here it is.", ""],
+        "the reply showing it was discarded"
+    );
     t.engine_mut()
         .script(Agent::Practitioner, solution, vec![(CONCLUDE, conclude)]);
     let after = t.advance(&id).unwrap().remove(0);
@@ -257,7 +423,7 @@ fn a_later_step_cannot_show_the_active_solution_or_a_recall_key_dressed_as_an_op
 }
 
 #[test]
-fn tool_inputs_and_results_never_repeat_an_active_solution() {
+fn a_tool_input_repeating_the_active_solution_is_discarded() {
     let (_dir, noesis) = fixture();
     add_proposition(&noesis, "p_cell", "the organelle", "powerhouse");
     let mut t = Teaching::new(&noesis, FauxEngine::new());
@@ -276,6 +442,7 @@ fn tool_inputs_and_results_never_repeat_an_active_solution() {
         vec![("noesis.graph_search", search)],
     );
     let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(t.engine().reminders, 1, "{report:?}");
     assert!(
         !format!("{report:?}").contains("the organelle"),
         "{report:?}"
@@ -316,7 +483,7 @@ fn visible_fields_that_repeat_a_sealed_value_are_refused_before_anything_is_stor
 }
 
 #[test]
-fn unknown_field_names_and_option_values_cannot_carry_a_sealed_value() {
+fn unknown_field_names_and_option_values_cannot_carry_a_secret() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = t
@@ -333,10 +500,8 @@ fn unknown_field_names_and_option_values_cannot_carry_a_sealed_value() {
         vec![("noesis.graph_search", search)],
     );
     let report = t.advance(&id).unwrap().remove(0);
-    assert!(
-        report.steps[1].calls[0].is_error,
-        "an unknown field is refused"
-    );
+    assert_eq!(t.engine().reminders, 1, "a key naming it is read too");
+    assert!(report.steps[1].calls.is_empty(), "{report:?}");
     assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
     let agent = session(&t, &id).agent;
     assert!(!format!("{:?}", t.engine().inputs_of(&agent)).contains(SECRET));
@@ -365,12 +530,13 @@ fn a_numeric_argument_cannot_carry_a_numeric_solution() {
         vec![("noesis.graph_search", json!({"query": 9876543210_u64}))],
     );
     let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.steps[1].calls[0].input, json!(crate::tools::SEALED));
+    assert_eq!(t.engine().reminders, 1, "{report:?}");
+    assert!(report.steps[1].calls.is_empty(), "{report:?}");
     assert!(!format!("{report:?}").contains("9876543210"), "{report:?}");
 }
 
 #[test]
-fn a_refusal_in_the_batch_that_poses_a_question_cannot_quote_its_key() {
+fn a_plan_whose_ids_hold_the_key_its_reply_poses_is_discarded() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = teacher_session(&mut t);
@@ -385,10 +551,8 @@ fn a_refusal_in_the_batch_that_poses_a_question_cannot_quote_its_key() {
         ],
     );
     let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.end, TurnEnd::AwaitingAnswer);
-    let refused = &report.steps[0].calls[0];
-    assert!(refused.is_error, "the duplicate ids are refused");
-    assert_eq!(refused.result, json!({"error": seal::REFUSAL_WITHHELD}));
+    assert_eq!(report.end, TurnEnd::AwaitingLearner, "nothing was posed");
+    assert_eq!(t.engine().reminders, 1, "{report:?}");
     assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
     let agent = session(&t, &id).agent;
     assert!(!format!("{:?}", t.engine().inputs_of(&agent)).contains(SECRET));
@@ -412,12 +576,13 @@ fn a_null_argument_cannot_carry_a_null_solution() {
         vec![("noesis.learner_read", json!({"query": null}))],
     );
     let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.steps[1].calls[0].input, json!(crate::tools::SEALED));
+    assert_eq!(t.engine().reminders, 1, "a null is read as its text");
+    assert!(report.steps[1].calls.is_empty(), "{report:?}");
     assert!(!format!("{report:?}").contains("null"), "{report:?}");
 }
 
 #[test]
-fn an_overlapping_or_marker_like_solution_is_still_sealed() {
+fn an_overlapping_or_marker_like_solution_is_still_matched() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = t
@@ -430,7 +595,7 @@ fn an_overlapping_or_marker_like_solution_is_still_sealed() {
     practitioner.script(Agent::Practitioner, "", vec![(PROBLEM, doubled)]);
     practitioner.script(Agent::Practitioner, "Chad had had enough.", vec![]);
     let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.steps[1].text, WITHHELD);
+    assert_eq!(t.engine().reminders, 1, "{report:?}");
     assert!(!format!("{report:?}").contains("had had"), "{report:?}");
 
     let marked = t
@@ -448,10 +613,8 @@ fn an_overlapping_or_marker_like_solution_is_still_sealed() {
         vec![("noesis.graph_search", search)],
     );
     let report = t.advance(&marked).unwrap().remove(0);
-    assert!(
-        report.steps[1].calls[0].is_error,
-        "an unknown field is refused"
-    );
+    assert_eq!(t.engine().reminders, 2, "a key named like the marker");
+    assert!(report.steps[1].calls.is_empty(), "{report:?}");
 
     let authored = t
         .create_session("Practise tenses", Mode::Practice, &[])
@@ -500,11 +663,10 @@ fn the_record_of_a_choice_never_marks_which_options_are_correct() {
     let mut multi = choice("Which cities are capitals?", &options, &["opt1", "opt3"]);
     multi["multi"] = json!(true);
     t.engine_mut()
-        .script(Agent::Teacher, "", vec![(ASK, multi), (ASK, single)]);
+        .script(Agent::Teacher, "", vec![(ASK, multi)]);
     let second = t.advance(&id).unwrap().remove(0);
-    for call in &second.steps[0].calls {
-        assert_eq!(call.input, json!(crate::tools::SEALED), "{call:?}");
-    }
+    assert_eq!(second.end, TurnEnd::AwaitingAnswer, "{second:?}");
+    assert_eq!(second.steps[0].calls[0].input, json!(crate::tools::SEALED));
     assert!(!format!("{second:?}").contains("Paris"), "{second:?}");
 }
 

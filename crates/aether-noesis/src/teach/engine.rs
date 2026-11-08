@@ -5,6 +5,8 @@
 
 use serde_json::Value;
 
+use super::seal::Sealer;
+
 use crate::budget::{Billing, Spend};
 use crate::prompts::Agent;
 use crate::tools::ToolDef;
@@ -77,8 +79,10 @@ impl std::fmt::Debug for ToolResult {
 /// an input whose turn failed is still there for the retry.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
-    /// The learner's own message, or the session goal.
+    /// The learner's own message.
     Learner(String),
+    /// A session's first input: its goal, practice targets and any bundle.
+    Opening(String),
     /// The probe assessment handed to a new Teacher.
     Handoff(String),
     /// Results of tool calls the loop ran in the agent's last step.
@@ -90,7 +94,11 @@ pub enum Input {
 /// One model call's output: visible text and a batch of tool calls.
 #[derive(Clone, PartialEq, Default)]
 pub struct Step {
+    /// The reply's text blocks run together, as the step shows them.
     pub text: String,
+    /// The same text block by block, as a transcript keeps them; empty when
+    /// the engine keeps no blocks of its own.
+    pub text_blocks: Vec<String>,
     pub calls: Vec<ToolCall>,
     pub usage: Spend,
 }
@@ -100,6 +108,7 @@ impl std::fmt::Debug for Step {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Step")
             .field("text_chars", &self.text.chars().count())
+            .field("text_blocks", &self.text_blocks.len())
             .field("calls", &self.calls)
             .field("usage", &self.usage)
             .finish()
@@ -114,17 +123,21 @@ pub enum EngineError {
     /// The call may have reached a model; its estimate is charged.
     #[error("the engine failed: {0}")]
     Failed(String),
+    /// The Noesis budget refused the call, so nothing reached a model.
+    #[error("{0}")]
+    BudgetSpent(String),
 }
 
 pub trait Engine {
     fn models(&self) -> Vec<ModelInfo>;
     /// Create an agent; returns its Aether agent id.
     fn spawn(&mut self, spec: AgentSpec) -> Result<String, EngineError>;
-    /// Persist an input for the agent's next step. A failed delivery may be
+    /// Persist an input for the agent's next step; the transcript seq it was
+    /// recorded at, or `None` when it added nothing. A failed delivery may be
     /// repeated, so a tool result or answer seen twice (same id) is ignored.
     /// Inputs are the agent's private context, sealed only against what is
     /// committed when they go: a host publishes turn reports, never them.
-    fn deliver(&mut self, agent: &str, input: Input) -> Result<(), EngineError>;
+    fn deliver(&mut self, agent: &str, input: Input) -> Result<Option<u64>, EngineError>;
     /// The estimated spend of the agent's next step, admitted before it runs.
     fn estimate(&self, agent: &str) -> Spend;
     /// Whether [`Engine::step`] admits and settles each call against the
@@ -132,6 +145,9 @@ pub trait Engine {
     fn charges_own_calls(&self) -> bool {
         false
     }
-    /// Run one model call over the agent's pending inputs.
-    fn step(&mut self, agent: &str) -> Result<Step, EngineError>;
+    /// Run one model step over the agent's pending inputs. Its reply is
+    /// buffered whole, never streamed, and kept only as
+    /// [`super::seal::kept_reply`] decides against `live`, the secrets the
+    /// session holds unrevealed as the step starts.
+    fn step(&mut self, agent: &str, live: &Sealer) -> Result<Step, EngineError>;
 }

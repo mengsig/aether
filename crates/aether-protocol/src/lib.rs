@@ -271,8 +271,9 @@ pub use command::{Command, KeyedRequest};
 mod replies;
 pub use replies::{
     AgentTree, AuthInfo, DaemonStatus, ENGINES_STARTING, ErrorCode, ErrorReply, MessageDelivery,
-    ModelInfo, NOESIS_DISABLED, ProviderInfo, Reply, RunListing, StatusStale, SubmissionResolution,
-    TranscriptEntry, TreeNode, UnavailableSection, status_sections,
+    ModelInfo, NOESIS_BUDGET_EXHAUSTED, NOESIS_DISABLED, ProviderInfo, Reply, RunListing,
+    StatusStale, SubmissionResolution, TranscriptEntry, TreeNode, UnavailableSection,
+    status_sections,
 };
 mod frames;
 pub use frames::{ClientFrame, Delta, ServerFrame, decode, encode};

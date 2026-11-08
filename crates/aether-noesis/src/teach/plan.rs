@@ -136,19 +136,28 @@ fn nodes_on_cycles(edges: &[PlanEdge]) -> BTreeSet<String> {
     incoming.keys().map(|id| id.to_string()).collect()
 }
 
-/// The plan with each node's status derived from the plan nodes of the
-/// session's questions, oldest first: the latest is current, earlier ones
-/// visited, the rest upcoming.
-pub fn tree(revision: u32, dag: &PlanDag, tagged_in_order: &[String]) -> PlanTree {
-    let current = tagged_in_order.last();
-    let visited: HashSet<&String> = tagged_in_order.iter().collect();
+/// A question posed on a plan node, in pose order; `passed` when it was a
+/// check the learner answered correctly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mark {
+    pub node: String,
+    pub passed: bool,
+}
+
+/// The plan with each node's status derived from the session's marks. A node
+/// is visited once its check is passed or a later node is asked about; the
+/// current node is the one last asked about, else the next one ready.
+pub fn tree(revision: u32, dag: &PlanDag, marks: &[Mark]) -> PlanTree {
+    let visited = visited_nodes(marks);
+    let current = current_node(dag, marks, &visited);
+    debug_assert!(current.is_none_or(|id| dag.has_node(id) && !visited.contains(id)));
     let nodes: Vec<PlanNode> = dag
         .nodes
         .iter()
         .map(|node| {
-            let status = if Some(&node.id) == current {
+            let status = if Some(node.id.as_str()) == current {
                 NodeStatus::Current
-            } else if visited.contains(&node.id) {
+            } else if visited.contains(node.id.as_str()) {
                 NodeStatus::Visited
             } else {
                 NodeStatus::Upcoming
@@ -172,4 +181,40 @@ pub fn tree(revision: u32, dag: &PlanDag, tagged_in_order: &[String]) -> PlanTre
         nodes,
         edges: dag.edges.clone(),
     }
+}
+
+/// Nodes with a passed check, and every node asked about before the latest.
+fn visited_nodes(marks: &[Mark]) -> HashSet<&str> {
+    let latest = marks.last().map(|mark| mark.node.as_str());
+    marks
+        .iter()
+        .filter(|mark| mark.passed || Some(mark.node.as_str()) != latest)
+        .map(|mark| mark.node.as_str())
+        .collect()
+}
+
+/// The latest node asked about while it is not yet visited; after that, the
+/// first unvisited node in plan order whose prerequisites are all visited.
+/// None before any question and once every node is visited.
+fn current_node<'a>(dag: &'a PlanDag, marks: &[Mark], visited: &HashSet<&str>) -> Option<&'a str> {
+    let latest = marks.last()?;
+    let open = |id: &str| !visited.contains(id);
+    if let Some(node) = dag
+        .nodes
+        .iter()
+        .find(|node| node.id == latest.node && open(&node.id))
+    {
+        return Some(&node.id);
+    }
+    let ready = |id: &str| {
+        dag.edges
+            .iter()
+            .filter(|edge| edge.to == id)
+            .all(|edge| visited.contains(edge.from.as_str()))
+    };
+    let unvisited = || dag.nodes.iter().filter(|node| open(&node.id));
+    unvisited()
+        .find(|node| ready(&node.id))
+        .or_else(|| unvisited().next())
+        .map(|node| node.id.as_str())
 }

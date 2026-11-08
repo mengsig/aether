@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import { DraftStore, useDraft } from "./drafts.ts";
 
@@ -35,6 +36,12 @@ function setValue(input: HTMLInputElement, value: string) {
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
+
+test("a server render shows the initial value, even where a draft is stored", () => {
+  const store = new DraftStore();
+  store.set("test/form", { text: "kept", count: 3 });
+  expect(renderToStaticMarkup(<Form store={store} />)).toContain("clean:0");
+});
 
 describe("useDraft", () => {
   test("typed text survives an unmount and comes back on the next mount", async () => {

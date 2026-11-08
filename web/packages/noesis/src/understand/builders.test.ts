@@ -1,7 +1,7 @@
 import type { aether, archon } from "@aether-ui/protocol";
 import { describe, expect, test } from "vitest";
 import { agentBundle } from "./agent-bundle.ts";
-import { gateStatus, itemBundle, prStatus, runBundle, runStatus, stageStatus } from "./archon-bundles.ts";
+import { gateStanding, itemBundle, prStanding, runBundle, runStanding, stageStanding } from "./archon-bundles.ts";
 import { checkBundle } from "./bundle.ts";
 import { oversized, PR_OBJECTS, SHIPPED, SHIPPED_SUMMARY } from "./fixture/evidence.ts";
 import { findPr, parsePrId, prBundle } from "./pr-bundle.ts";
@@ -15,12 +15,26 @@ const GATE = present(SHIPPED.gates?.[0]);
 const statuses = (bundle: aether.EvidenceBundle) => bundle.items.map((item) => `${item.ref.kind}:${item.ref.id}=${item.status}`);
 const stage = (patch: Partial<archon.StageRun>): archon.StageRun => ({ ...SHIPPED.stages[0], ...patch } as archon.StageRun);
 const run = (state: archon.RunState): archon.PipelineRun => ({ ...SHIPPED.runs[0], shipped: false, state } as archon.PipelineRun);
+const runStatus = (value: archon.PipelineRun, stages: archon.StageRun[] = []) => runStanding(value, stages.map((s) => ({ ...s, run: value.id }))).status;
+const stageStatus = (value: archon.StageRun) => stageStanding(value).status;
+const gateStatus = (value: archon.OperatorGate) => gateStanding(value).status;
+const prStatus = (...args: Parameters<typeof prStanding>) => prStanding(...args).status;
 
 describe("status rules", () => {
   test("verified only for what a check or merge established", () => {
-    expect(runStatus(run({ state: "succeeded", summary: "done" }))).toBe("verified");
+    expect(runStatus(run({ state: "succeeded", summary: "done" }), [stage({ kind: "test", state: { state: "completed" }, verdict: "pass" })])).toBe("verified");
+    expect(runStatus({ ...run({ state: "succeeded", summary: "done" }), shipped: true })).toBe("verified");
     expect(stageStatus(stage({ kind: "test", state: { state: "completed" }, verdict: "pass" }))).toBe("verified");
     expect(prStatus("merged", null)).toBe("verified");
+  });
+
+  test("a run that succeeded without a check, review or merge stays preliminary, and says why", () => {
+    const readOnly = run({ state: "succeeded", summary: "Answered the question; the function was not run." });
+    const ask = stage({ kind: "work", state: { state: "completed" }, verdict: "unknown" });
+    expect(runStatus(readOnly, [ask])).toBe("preliminary");
+    expect(runStanding(readOnly, []).basis).toContain("no test, review or merge confirmed it");
+    expect(stageStatus(stage({ kind: "work", state: { state: "completed" }, verdict: "pass" }))).toBe("preliminary");
+    expect(runStatus(readOnly, [stage({ kind: "review", state: { state: "completed" }, verdict: "pass" })])).toBe("reviewed");
   });
 
   test("reviewed for a passed review or an approved gate", () => {
@@ -80,7 +94,7 @@ describe("the pull request bundle", () => {
   test("a merged PR is verified, its passing checks a separate verified fact", () => {
     const merged = present(findPr(PR_OBJECTS, { host: "github.com", repo: "acme/forge", number: 212 }));
     expect(statuses(prBundle(merged))).toEqual(["pr:github.com/acme/forge#212=verified", "pr:github.com/acme/forge#212=verified"]);
-    expect(prBundle(merged).items[1]?.excerpt).toBe("All 9 checks passed");
+    expect(prBundle(merged).items[1]?.excerpt).toBe("All 9 checks passed\nVerified: every check run passed.");
   });
 
   test("an open draft with pending checks stays preliminary; an approved one is reviewed", () => {

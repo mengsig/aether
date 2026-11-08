@@ -17,6 +17,7 @@ export type SettingsDraft = {
   readonly strong: string;
   readonly cheap: string;
   readonly extraction: "manual" | "auto";
+  readonly engineering: boolean;
 };
 
 export type BudgetField = "interactive_usd_daily" | "background_usd_daily" | "background_tokens_daily";
@@ -27,6 +28,7 @@ export function draftOf(settings: aether.NoesisSettingsView): SettingsDraft {
     interactiveUsd: String(settings.budget.interactive_usd_daily), backgroundUsd: String(settings.budget.background_usd_daily),
     backgroundTokens: String(settings.budget.background_tokens_daily),
     strong: settings.models.strong ?? "", cheap: settings.models.cheap ?? "", extraction: settings.extraction.sessions,
+    engineering: settings.engineering_context,
   };
 }
 
@@ -68,6 +70,7 @@ export function patchOf(settings: aether.NoesisSettingsView, draft: SettingsDraf
   if (draft.cheap.trim() !== (settings.models.cheap ?? "")) models.cheap = draft.cheap.trim() || null;
   if (Object.keys(models).length > 0) patch.models = models;
   if (draft.extraction !== settings.extraction.sessions) patch.extraction = { sessions: draft.extraction };
+  if (draft.engineering !== settings.engineering_context) patch.engineering_context = draft.engineering;
   invariant(Object.keys(errors).every((key) => key in settings.budget), "only budget fields are checked here");
   invariant(!("budget" in patch) || Object.values(budget).every((value) => value >= 0), "a budget patch carries nonnegative numbers");
   return { patch: patch as aether.NoesisSettingsPatch, errors };

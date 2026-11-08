@@ -70,6 +70,7 @@ from ._EventKindNoesisPracticeConcluded import EventKindNoesisPracticeConcluded
 from ._EventKindNoesisProblemPosed import EventKindNoesisProblemPosed
 from ._EventKindNoesisQuestionPosed import EventKindNoesisQuestionPosed
 from ._EventKindNoesisSessionCreated import EventKindNoesisSessionCreated
+from ._EventKindNoesisSessionStalled import EventKindNoesisSessionStalled
 from ._EventKindNoesisSettingsChanged import EventKindNoesisSettingsChanged
 from ._EventKindProviderBackoff import EventKindProviderBackoff
 from ._EventKindProviderFallback import EventKindProviderFallback
@@ -189,6 +190,7 @@ EventKind = (
     EventKindNoesisPlanUpdated |
     EventKindNoesisProblemPosed |
     EventKindNoesisPracticeConcluded |
+    EventKindNoesisSessionStalled |
     EventKindNoesisJobUpdated |
     EventKindNoesisGraphMerged |
     EventKindNoesisLearnerUpdated |

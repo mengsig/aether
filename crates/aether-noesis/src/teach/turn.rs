@@ -1,26 +1,38 @@
 //! The turn loop: model steps admitted against the budget, their tool calls
 //! run, results delivered in order even after a failed delivery, and the
-//! whole turn sealed once at its end.
-
-use std::collections::HashMap;
+//! turn's tool results sealed once at its end.
 
 use serde_json::Value;
 
 use super::db;
 use super::engine::{Engine, EngineError, Input, Step, ToolResult};
+use super::history;
+use super::records::{NoesisEvent, SessionStall, StallReason};
 use super::seal::{self, Sealer};
 use super::service::{
     CallRecord, Caller, MAX_STEPS, StepRecord, Teaching, TurnEnd, TurnReport, driving_agent,
 };
 use super::{TeachError, question, role_of};
-use crate::budget::Lane;
-use crate::tools::SEALED;
+use crate::budget::{INTERACTIVE_BUDGET_SETTING, Lane, Refusal};
+use crate::tools::{self, SEALED, ToolName};
 
 impl<E: Engine> Teaching<'_, E> {
     /// Run the session's agent until it waits, and on a hand-off run the new
     /// Teacher's first turn too. A failed turn leaves its inputs persisted,
-    /// so calling this again recovers.
+    /// so calling this again recovers; one the budget refused stalls the session.
     pub fn advance(&mut self, session: &str) -> Result<Vec<TurnReport>, TeachError> {
+        let ran = self.run_turns(session);
+        // A store failure here outranks the turn's own error, which recurs.
+        match ran.as_ref().err().and_then(budget_stall) {
+            Some(message) => self.stall_session(session, message)?,
+            None => {
+                history::clear_stall(self.conn(), session)?;
+            }
+        }
+        ran
+    }
+
+    fn run_turns(&mut self, session: &str) -> Result<Vec<TurnReport>, TeachError> {
         let first = self.run_turn(session)?;
         let handed_off = first.end == TurnEnd::HandedOff;
         let mut reports = vec![first];
@@ -31,12 +43,32 @@ impl<E: Engine> Teaching<'_, E> {
         Ok(reports)
     }
 
+    /// Record why the session's turn could not run, and announce it.
+    fn stall_session(&mut self, session: &str, message: String) -> Result<(), TeachError> {
+        debug_assert!(
+            message.contains(INTERACTIVE_BUDGET_SETTING),
+            "it names the setting"
+        );
+        let stall = SessionStall {
+            reason: StallReason::BudgetExhausted,
+            message,
+            at: db::now(),
+        };
+        history::set_stall(self.conn(), session, &stall)?;
+        self.events.push(NoesisEvent::SessionStalled {
+            session: session.to_string(),
+            stall,
+        });
+        Ok(())
+    }
+
     /// One turn of the session's current agent: model calls, each admitted
     /// against the interactive budget, until the agent waits. A session with
     /// an open question waits for the learner and makes no model call.
     ///
-    /// Nothing the turn produces is published before it ends: its steps and
-    /// events are sealed together against the secrets left at its end.
+    /// Every reply the engine keeps already passed the one seal check
+    /// ([`super::seal::reply_leaks`]). The turn's steps are published once it
+    /// ends, their tool results sealed against the secrets left then.
     pub fn run_turn(&mut self, session: &str) -> Result<TurnReport, TeachError> {
         let row = db::session(self.conn(), session)?;
         let caller = Caller {
@@ -53,9 +85,6 @@ impl<E: Engine> Teaching<'_, E> {
                 return Err(error);
             }
         };
-        for event in &mut self.events[turn.events_from..] {
-            sealer.event(event);
-        }
         let end = ran?;
         let steps = turn.seal(&sealer);
         debug_assert!(end != TurnEnd::StepLimit || steps.len() == MAX_STEPS);
@@ -77,7 +106,7 @@ impl<E: Engine> Teaching<'_, E> {
             return Ok(TurnEnd::AwaitingAnswer);
         }
         for _ in 0..MAX_STEPS {
-            let step = self.model_step(&caller.agent)?;
+            let step = self.model_step(session, &caller.agent)?;
             let (end, results) = self.run_calls(session, caller, step, turn)?;
             if !results.is_empty() {
                 let input = Input::ToolResults(results);
@@ -100,9 +129,8 @@ impl<E: Engine> Teaching<'_, E> {
         step: Step,
         turn: &mut Turn,
     ) -> Result<(Option<TurnEnd>, Vec<ToolResult>), TeachError> {
-        let (own, unreadable) = seal::step_secrets(&step);
+        let own: Vec<String> = step.calls.iter().flat_map(seal::call_secrets).collect();
         let mut pending = PendingStep {
-            fail_closed: unreadable,
             text: step.text,
             calls: Vec::with_capacity(step.calls.len()),
         };
@@ -111,37 +139,38 @@ impl<E: Engine> Teaching<'_, E> {
             turn.steps.push(pending);
             return Ok((Some(TurnEnd::AwaitingLearner), Vec::new()));
         }
+        // Each step is kept as it ends, so a pose is checked against all the
+        // turn has kept, not only its own step's text.
+        let shown = turn.shown_with(&pending.text);
         let mut end = None;
         let mut owed = Vec::new();
         for call in step.calls {
-            let outcome = self.call_tool(session, caller, &call, &pending.text)?;
-            let public = turn.public_id(call.id);
+            let outcome = self.call_tool(session, caller, &call, &shown)?;
             if outcome.ends.is_none() {
                 owed.push(pending.calls.len());
             }
             end = end.or(outcome.ends);
             pending.calls.push(PendingCall {
-                id: public,
+                id: call.id,
                 name: call.name,
                 input: call.input,
                 result: outcome.result.content,
                 is_error: outcome.result.is_error,
             });
         }
-        let results = self.engine_results(session, &own, &pending, &owed, turn)?;
+        let results = self.engine_results(session, &own, &pending, &owed)?;
         turn.steps.push(pending);
         Ok((end, results))
     }
 
-    /// The results the engine is owed for a step, keyed by its own call ids
-    /// and sealed against the secrets live after the step and its own.
+    /// The results the engine is owed for a step, sealed against the
+    /// secrets live after the step and its own.
     fn engine_results(
         &self,
         session: &str,
         own: &[String],
         step: &PendingStep,
         owed: &[usize],
-        turn: &Turn,
     ) -> Result<Vec<ToolResult>, TeachError> {
         let live = self.live_secrets(session)?;
         let committed = Sealer::new(&live);
@@ -158,7 +187,7 @@ impl<E: Engine> Teaching<'_, E> {
                 all.value(&mut content);
             }
             results.push(ToolResult {
-                call: turn.engine_id(&call.id).to_string(),
+                call: call.id.clone(),
                 content,
                 is_error: call.is_error,
             });
@@ -167,8 +196,8 @@ impl<E: Engine> Teaching<'_, E> {
         Ok(results)
     }
 
-    /// The final secret set of a turn: what is still sealed at its end and
-    /// every sealed text a call of the turn carried, posed or refused.
+    /// The secrets a turn's tool results are sealed against: what is still
+    /// sealed at its end and every sealed text a call of the turn carried.
     fn turn_sealer(&self, session: &str, turn: &Turn) -> Result<Sealer, TeachError> {
         let live = self.live_secrets(session)?;
         let sealer = Sealer::new(live.iter().chain(&turn.own));
@@ -250,10 +279,14 @@ impl<E: Engine> Teaching<'_, E> {
         Ok(())
     }
 
-    /// One model call, admitted before it is made and settled after.
-    fn model_step(&mut self, agent: &str) -> Result<Step, TeachError> {
+    /// One model step, admitted before it is made and settled after, and
+    /// checked against what `session` holds unrevealed as it starts, so no
+    /// reply holding a live secret is kept.
+    fn model_step(&mut self, session: &str, agent: &str) -> Result<Step, TeachError> {
+        let solution = db::active_problem(self.conn(), session)?.map(|row| row.solution);
+        let live = Sealer::live(self.live_secrets(session)?, solution.as_deref());
         if self.engine.charges_own_calls() {
-            return Ok(self.engine.step(agent)?);
+            return Ok(self.engine.step(agent, &live)?);
         }
         let today = chrono::Local::now().date_naive();
         let estimate = self.engine.estimate(agent);
@@ -261,14 +294,14 @@ impl<E: Engine> Teaching<'_, E> {
             .noesis
             .accountant()
             .admit(Lane::Interactive, estimate, today)?;
-        match self.engine.step(agent) {
+        match self.engine.step(agent, &live) {
             Ok(step) => {
                 admission.settle(step.usage);
                 Ok(step)
             }
-            Err(EngineError::NotSent(reason)) => {
+            Err(error @ (EngineError::NotSent(_) | EngineError::BudgetSpent(_))) => {
                 admission.abandon_unsent();
-                Err(EngineError::NotSent(reason).into())
+                Err(error.into())
             }
             // Dropping the admission charges the estimate: the call may have run.
             Err(error) => Err(error.into()),
@@ -276,9 +309,24 @@ impl<E: Engine> Teaching<'_, E> {
     }
 }
 
-/// A tool call as the turn ran it, held raw until the turn is sealed.
+/// What the learner is told when the teaching budget refused a turn's call.
+fn budget_stall(error: &TeachError) -> Option<String> {
+    match error {
+        TeachError::Budget(
+            refusal @ (Refusal::BudgetZero { .. }
+            | Refusal::BudgetExhausted { .. }
+            | Refusal::WouldExceed { .. }),
+        ) => Some(format!(
+            "{refusal}; raise {INTERACTIVE_BUDGET_SETTING} to continue today"
+        )),
+        TeachError::Engine(EngineError::BudgetSpent(message)) => Some(message.clone()),
+        _ => None,
+    }
+}
+
+/// A tool call as the turn ran it, its input and result raw until the
+/// turn's results are sealed.
 struct PendingCall {
-    /// The opaque public id; the engine's own id stays in [`Turn`].
     id: String,
     name: String,
     input: Value,
@@ -289,8 +337,6 @@ struct PendingCall {
 struct PendingStep {
     text: String,
     calls: Vec<PendingCall>,
-    /// A sealing call's input was unreadable, so its secrets are unknown.
-    fail_closed: bool,
 }
 
 /// What one turn produced, unpublished until [`Turn::seal`].
@@ -298,20 +344,18 @@ struct Turn {
     steps: Vec<PendingStep>,
     /// Every sealed text the turn's calls carried.
     own: Vec<String>,
-    /// Public call id to the engine's own id, for delivering results.
-    engine_ids: HashMap<String, String>,
     /// Where the turn's events start in the pending event list.
     events_from: usize,
 }
 
-/// Debug shows only counts: the buffer holds unsealed model text.
+/// Debug shows only counts: the buffer holds raw tool results.
 impl std::fmt::Debug for Turn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Turn")
             .field("steps", &self.steps.len())
             .field("secrets", &self.own.len())
             .field("events_from", &self.events_from)
-            .finish_non_exhaustive()
+            .finish()
     }
 }
 
@@ -320,63 +364,74 @@ impl Turn {
         Self {
             steps: Vec::new(),
             own: Vec::new(),
-            engine_ids: HashMap::new(),
             events_from,
         }
     }
 
-    /// A fresh opaque id for an engine call id; only [`Turn::engine_id`]
-    /// maps it back.
-    fn public_id(&mut self, engine_id: String) -> String {
-        let public = db::fresh_id("call");
-        let previous = self.engine_ids.insert(public.clone(), engine_id);
-        debug_assert!(previous.is_none(), "public ids are fresh");
-        public
-    }
-
-    fn engine_id(&self, public: &str) -> &str {
-        let engine_id = self.engine_ids.get(public);
-        assert!(engine_id.is_some(), "every buffered call has an engine id");
-        engine_id.map_or("", String::as_str)
-    }
-
-    /// The turn's steps as they may be published, sealed by `sealer`.
-    fn seal(self, sealer: &Sealer) -> Vec<StepRecord> {
-        let mut steps = Vec::with_capacity(self.steps.len());
-        for pending in self.steps {
-            let text = if pending.fail_closed {
-                seal::WITHHELD.to_string()
-            } else {
-                pending.text
-            };
-            let calls = pending.calls.into_iter().map(|call| CallRecord {
-                id: call.id,
-                name: call.name,
-                input: call.input,
-                result: call.result,
-                is_error: call.is_error,
-            });
-            let mut record = StepRecord {
-                text,
-                calls: calls.collect(),
-            };
-            if pending.fail_closed {
-                // An unreadable sealing input hides which secrets its step carried.
-                for call in &mut record.calls {
-                    call.input = Value::String(SEALED.into());
-                    if !call.is_error {
-                        call.result = Value::String(SEALED.into());
-                    }
+    /// Every text the turn has kept: its earlier steps' text, unknown tool
+    /// names and inputs as the transcript keeps them, and `current`, one per
+    /// line so no phrase spans two.
+    fn shown_with(&self, current: &str) -> String {
+        let mut shown: Vec<String> = Vec::new();
+        for step in &self.steps {
+            shown.push(step.text.clone());
+            for call in &step.calls {
+                // A known tool's name is the engine's own, so it shows nothing the model chose.
+                if ToolName::parse(&call.name).is_none() {
+                    shown.push(call.name.clone());
                 }
+                shown.extend(tools::visible_texts(&call.name, &call.input));
             }
-            sealer.step(&mut record);
-            steps.push(record);
         }
-        debug_assert!(
-            steps
-                .iter()
-                .all(|step| !sealer.holds(&step.text) || step.text == seal::WITHHELD)
-        );
+        shown.push(current.to_string());
+        shown.join("\n")
+    }
+
+    /// The turn's steps as they may be published, each call as
+    /// [`sealed_call`] gives it.
+    fn seal(self, sealer: &Sealer) -> Vec<StepRecord> {
+        let count = self.steps.len();
+        let steps: Vec<StepRecord> = self
+            .steps
+            .into_iter()
+            .map(|pending| StepRecord {
+                text: pending.text,
+                calls: pending
+                    .calls
+                    .into_iter()
+                    .map(|call| sealed_call(call, sealer))
+                    .collect(),
+            })
+            .collect();
+        debug_assert_eq!(steps.len(), count, "every step is published");
         steps
+    }
+}
+
+/// A call as it may be published: a pose's input withheld whole, since its
+/// event publishes the view, and its result sealed by `sealer`.
+fn sealed_call(call: PendingCall, sealer: &Sealer) -> CallRecord {
+    let mut result = call.result;
+    if call.is_error {
+        sealer.refusal(&mut result);
+    } else {
+        sealer.value(&mut result);
+    }
+    let input = tools::seal_input(&call.name, &call.input);
+    debug_assert!(
+        call.is_error || !sealer.reveals(&result),
+        "a result is sealed whole"
+    );
+    debug_assert!(
+        tools::sealed_texts(&call.name, &call.input).is_some_and(|own| own.is_empty())
+            || input.as_str() == Some(SEALED),
+        "a pose's input is never published"
+    );
+    CallRecord {
+        id: call.id,
+        name: call.name,
+        input,
+        result,
+        is_error: call.is_error,
     }
 }

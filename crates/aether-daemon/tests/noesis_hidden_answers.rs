@@ -420,6 +420,13 @@ async fn h1_an_open_question_s_key_is_hidden_from_every_reader_until_answered() 
         revealed.contains(&key) && revealed.contains(&explanation),
         "revealed once answered: {revealed}"
     );
+    let history = home.session(&id).await;
+    let result = &history["questions"][0]["result"];
+    assert_eq!(
+        (&result["answer_key"], &result["explanation"]),
+        (&json!(key), &json!(explanation)),
+        "the session's history reveals the answered question: {history}"
+    );
     let transcript = home
         .ok(json!({"cmd": "get_transcript_page", "agent": posed["agent"]}))
         .await;
@@ -492,6 +499,11 @@ async fn conclude_and_reveal(home: &mut Home, id: &str, active: &Value, solution
         concluded[0]["kind"]["payload"]["solution"], solution,
         "revealed at conclude: {}",
         concluded[0]
+    );
+    let history = home.session(id).await;
+    assert_eq!(
+        history["problems"][0]["conclusion"]["solution"], solution,
+        "the session's history reveals the concluded problem: {history}"
     );
     let transcript = home
         .ok(json!({"cmd": "get_transcript_page", "agent": active["agent"]}))

@@ -1,7 +1,7 @@
 // The knowledge graph as a GraphModel: propositions are nodes, each chain an edge from every premise
-// to its conclusion. A node's status is its mastery, so the canvas draws it with the `--mastery-*` token.
+// to its conclusion, titled for reading. A node's status is its mastery, drawn with the `--mastery-*` token.
 
-import type { aether, GEdge, GNode, GraphModel, Layout } from "@aether-ui/protocol";
+import type { aether, GEdge, GNode, GraphModel } from "@aether-ui/protocol";
 import { invariant, isMastery, type Mastery } from "./model.ts";
 
 export interface KnowledgeGraph {
@@ -28,10 +28,33 @@ export function masteryByProposition(concepts: readonly aether.ConceptState[]): 
   return map;
 }
 
+const TITLE_MAX = 60;
+
+/** `raft-leader_election` reads "Raft leader election". */
+function humanize(slug: string): string {
+  const words = slug.split(/[-_]+/).filter((word) => word !== "").join(" ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** The statement up to its first full stop, semicolon or colon, cut to a title's length. */
+function firstClause(statement: string): string {
+  const clause = statement.trim().split(/[.;:](?:\s|$)/, 1)[0]?.trim() ?? "";
+  return clause.length > TITLE_MAX ? `${clause.slice(0, TITLE_MAX - 1).trimEnd()}…` : clause;
+}
+
+/** A proposition as a person reads it: a slug name humanized, else its name, else its statement's first clause. */
+export function readableTitle(proposition: Pick<aether.Proposition, "name" | "statement">): string {
+  const name = proposition.name.trim();
+  const title = /[-_]/.test(name) && !/\s/.test(name) ? humanize(name) : name !== "" ? name : firstClause(proposition.statement);
+  invariant(title !== "", "a proposition has a name or a statement to title it");
+  invariant(title.length <= Math.max(TITLE_MAX, name.length), "a title is no longer than its source");
+  return title;
+}
+
 export function knowledgeModel(graph: KnowledgeGraph, mastery: ReadonlyMap<string, Mastery>): GraphModel {
   const ids = new Set(graph.nodes.map((node) => node.id));
   invariant(ids.size === graph.nodes.length, "proposition ids are unique");
-  const nodes: GNode[] = graph.nodes.map((node) => ({ id: node.id, label: node.name, status: `mastery-${mastery.get(node.id) ?? "unseen"}` }));
+  const nodes: GNode[] = graph.nodes.map((node) => ({ id: node.id, label: readableTitle(node), status: `mastery-${mastery.get(node.id) ?? "unseen"}` }));
   const seen = new Set<string>();
   const edges: GEdge[] = [];
   for (const chain of graph.chains) {
@@ -51,20 +74,4 @@ export function knowledgeModel(graph: KnowledgeGraph, mastery: ReadonlyMap<strin
 /** Changes only when propositions or chains come or go, so a mastery change never relayouts. */
 export function structureKey(model: GraphModel): string {
   return `${model.nodes.map((node) => node.id).join(",")}|${model.edges.map((edge) => `${edge.from}>${edge.to}`).join(",")}`;
-}
-
-/**
- * The force layout keeps 28px dots about 42px apart; labelled boxes are 168×44. Stretching x by 4.5 and
- * y by 2.3 keeps any two such boxes apart: |dx| ≥ 37.3 or |dy| ≥ 19.1 always holds at that distance.
- */
-const SPREAD = { x: 4.5, y: 2.3 } as const;
-
-export function spreadForLabels(layout: Layout): Layout {
-  const positions = new Map<string, { x: number; y: number }>();
-  for (const [id, at] of layout.positions) {
-    invariant(Number.isFinite(at.x) && Number.isFinite(at.y), `node ${id} has a finite position`);
-    positions.set(id, { x: at.x * SPREAD.x, y: at.y * SPREAD.y });
-  }
-  invariant(positions.size === layout.positions.size, "every placed node stays placed");
-  return { hash: `${layout.hash}:spread`, positions };
 }

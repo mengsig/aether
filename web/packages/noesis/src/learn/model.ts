@@ -1,7 +1,7 @@
-// Pure derivations the learning screens render: mastery labels, the chat timeline, the plan's
-// order, spend against budget and how a refusal reads. Nothing here holds daemon data.
+// Pure derivations the learning screens render: mastery labels, the plan's order, spend against
+// budget, what billing paid for it and how a refusal reads. Nothing here holds daemon data.
 
-import { compareStamps, type NoesisCache } from "@aether-ui/core";
+import { compareStamps } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
 
 import { invariant } from "./invariant.ts";
@@ -37,36 +37,9 @@ export const OUTCOME_LABEL: Readonly<Record<aether.PracticeOutcome, string>> = {
   solved: "Solved", solved_with_hints: "Solved with hints", moved_on: "Moved on", surrendered: "Shown the answer", dismissed: "Set aside",
 };
 
-export type TimelineItem =
-  | { readonly kind: "message"; readonly key: string; readonly at: string; readonly role: "learner" | "teacher"; readonly text: string }
-  | { readonly kind: "question"; readonly key: string; readonly at: string; readonly question: aether.Question; readonly result: aether.QuestionResult | undefined; readonly open: boolean }
-  | { readonly kind: "problem"; readonly key: string; readonly at: string; readonly problem: aether.Problem; readonly conclusion: aether.EventKindNoesisPracticeConcluded | undefined; readonly active: boolean };
-
 /** The prose of a message: its text blocks only; tool calls, results and (sealed) thinking are not prose. */
 export function messageText(message: aether.Message): string {
   return message.content.filter((block): block is aether.ContentBlockText => block.type === "text").map((block) => block.text).join("\n\n").trim();
-}
-
-/** The chat in time order: transcript prose with the session's questions and problems between it. */
-export function buildTimeline(session: aether.NoesisSession, entries: readonly aether.TranscriptEntry[], learn: NoesisCache): TimelineItem[] {
-  const items: TimelineItem[] = [];
-  for (const entry of entries) {
-    const role = entry.message.role === "assistant" ? "teacher" : entry.message.role === "user" ? "learner" : null;
-    const text = role === null ? "" : messageText(entry.message);
-    if (role !== null && text !== "") items.push({ kind: "message", key: `m${entry.seq}`, at: entry.at, role, text });
-  }
-  for (const { session: owner, question } of Object.values(learn.questions)) {
-    if (owner !== session.id) continue;
-    items.push({ kind: "question", key: question.id, at: question.posed_at, question, result: learn.results[question.id], open: session.open_question?.id === question.id });
-  }
-  for (const { session: owner, problem } of Object.values(learn.problems)) {
-    if (owner !== session.id) continue;
-    items.push({ kind: "problem", key: problem.id, at: problem.posed_at, problem, conclusion: learn.conclusions[problem.id], active: session.active_problem?.id === problem.id });
-  }
-  const order = new Map(items.map((item, index) => [item, index]));
-  items.sort((a, b) => compareStamps(a.at, b.at) || (order.get(a) ?? 0) - (order.get(b) ?? 0));
-  invariant(items.filter((item) => item.kind === "question" && item.open).length <= 1, "a session has at most one open question");
-  return items;
 }
 
 export interface PlanRow {
@@ -122,12 +95,67 @@ export function budgetShare(spent: number, budget: number): number {
 
 export const usd = (value: number): string => `$${value.toFixed(value >= 100 ? 0 : 2)}`;
 
-export type Refusal = { readonly kind: "model"; readonly message: string } | { readonly kind: "other"; readonly message: string };
+const tokensOf = (usage: aether.Usage): number => usage.input_tokens + usage.output_tokens + usage.cache_read_tokens + usage.cache_write_tokens;
 
-/** Teaching needs a usable model; the daemon refuses with `allow_api` or `no ready model` when it has none. */
+type BillingSplit = { readonly subscription?: aether.Usage; readonly api?: aether.Usage; readonly unknown?: aether.Usage };
+
+const used = (usage: aether.Usage | undefined): boolean => usage !== undefined && (tokensOf(usage) > 0 || spentUsd(usage) > 0);
+
+/**
+ * What paid for some model use, in words: subscription use is covered by the plan (its dollars are a
+ * list-price estimate), API use is billed per request. Subscription use never reads as a charge, and
+ * use on a provider no longer configured is named as unknown rather than guessed.
+ */
+export function billingWords(usage: BillingSplit | null | undefined): string {
+  if (usage == null) return "No model use recorded yet.";
+  // A daemon from before the billing split reports neither half: say so rather than claim no use.
+  if (usage.api === undefined && usage.subscription === undefined) return "This daemon does not report what paid for its model use.";
+  const covered = `no per-request charge (≈${usd(spentUsd(usage.subscription))} at API list price)`;
+  const parts: string[] = [];
+  if (used(usage.api)) parts.push(`${usd(spentUsd(usage.api))} billed to your API key`);
+  if (used(usage.subscription)) parts.push(`${subscriptionLead(parts.length > 0, used(usage.unknown))} on your subscription — ${covered}`);
+  const unknown = "ran on a provider no longer configured, so what paid for it is unknown";
+  if (used(usage.unknown)) parts.push(parts.length > 0 ? `some ${unknown}` : `Some ${unknown}`);
+  return parts.length === 0 ? "No model use recorded yet." : `${parts.join("; ")}.`;
+}
+
+/** How much of the use ran on the subscription: "the rest" only when API use alone shares it. */
+function subscriptionLead(afterApi: boolean, unknown: boolean): string {
+  if (unknown) return afterApi ? "some ran" : "Some ran";
+  return afterApi ? "the rest ran" : "Ran";
+}
+
+/** Every step of the plan is done: the lesson is complete. */
+export function planComplete(plan: aether.PlanTree | null | undefined): boolean {
+  if (plan == null || plan.nodes.length === 0) return false;
+  invariant(new Set(plan.nodes.map((node) => node.id)).size === plan.nodes.length, "plan node ids are unique");
+  return plan.nodes.every((node) => node.status === "visited");
+}
+
+export type Refusal = { readonly kind: "model" | "budget" | "other"; readonly message: string };
+
+/**
+ * Teaching needs a usable model (without one the daemon names `allow_api` or `no ready model`) and
+ * budget left (it names `noesis.budget.interactive_usd_daily`, or says the day's budget is spent).
+ */
 export function classifyRefusal(message: string): Refusal {
+  invariant(message.trim() !== "", "a refusal says why");
+  if (/noesis\.budget\.interactive_usd_daily|interactive budget of \$[\d.]+ is spent/i.test(message)) return { kind: "budget", message };
   const model = /noesis\.billing\.allow_api|no ready model for noesis|billed per request/i.test(message);
   return { kind: model ? "model" : "other", message };
+}
+
+export interface BudgetUse {
+  readonly spent: number;
+  readonly limit: number;
+}
+
+/** Today's teaching spend against its budget once it is used up: the daemon then refuses every turn. */
+export function exhaustedBudget(status: aether.NoesisStatus): BudgetUse | null {
+  const limit = status.settings.budget.interactive_usd_daily;
+  const spent = spentUsd(status.spend_today.interactive);
+  invariant(Number.isFinite(limit) && limit >= 0, "the teaching budget is a nonnegative amount");
+  return spent >= limit ? { spent, limit } : null;
 }
 
 /** Sessions, newest activity first. */

@@ -90,6 +90,7 @@ fn billing_corrections_replace_each_turn_without_recounting_prior_turns() {
                     output_tokens: u64::from(output),
                     ..Default::default()
                 },
+                billing: None,
             });
         }
     }

@@ -35,6 +35,25 @@ impl CostBasis {
     }
 }
 
+/// What paid for a usage record when it was written: an engine CLI on the
+/// user's own subscription, or a provider billed per request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Billing {
+    Subscription,
+    Api,
+}
+
+impl Billing {
+    pub fn of(runs_on_engine: bool) -> Self {
+        if runs_on_engine {
+            Self::Subscription
+        } else {
+            Self::Api
+        }
+    }
+}
+
 /// Why the dollar total may omit work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]

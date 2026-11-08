@@ -81,4 +81,13 @@ describe("the understand link", () => {
     expect(parseUnderstand("#/learn?understand=planet&conn=a&id=b")).toBeNull();
     expect(parseUnderstand("#/learn?understand=item&conn=&id=qi_x")).toBeNull();
   });
+
+  test("a repository catch-up carries its first day, and only a real one", () => {
+    const request = { kind: "repository", conn: "archon:local", id: "repo_forge", since: "2026-11-01" } as const;
+    expect(parseUnderstand(understandHref(request))).toEqual(request);
+    expect(parseUnderstand("#/learn?understand=repository&conn=a&id=repo_x")).toBeNull();
+    expect(parseUnderstand("#/learn?understand=repository&conn=a&id=repo_x&since=2026-02-31")).toBeNull();
+    expect(() => understandHref({ kind: "repository", conn: "a", id: "repo_x" })).toThrow("only a repository catch-up has a first day");
+    expect(() => understandHref({ kind: "item", conn: "a", id: "qi_x", since: "2026-11-01" })).toThrow("only a repository catch-up has a first day");
+  });
 });

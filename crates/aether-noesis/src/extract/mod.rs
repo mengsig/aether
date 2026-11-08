@@ -17,6 +17,7 @@ use crate::graph::store::GraphError;
 
 pub mod batch;
 mod candidates;
+mod endpoints;
 pub mod engineering;
 pub mod findings;
 pub mod jobs;
@@ -26,6 +27,8 @@ pub mod trigger;
 
 #[cfg(test)]
 mod faux;
+#[cfg(test)]
+mod findings_tests;
 #[cfg(test)]
 mod tests;
 

@@ -69,6 +69,7 @@ import type {
   EventKindNoesisProblemPosed,
   EventKindNoesisQuestionPosed,
   EventKindNoesisSessionCreated,
+  EventKindNoesisSessionStalled,
   EventKindNoesisSettingsChanged,
   EventKindProviderBackoff,
   EventKindProviderFallback,
@@ -189,6 +190,7 @@ export type EventKind =
     EventKindNoesisPlanUpdated |
     EventKindNoesisProblemPosed |
     EventKindNoesisPracticeConcluded |
+    EventKindNoesisSessionStalled |
     EventKindNoesisJobUpdated |
     EventKindNoesisGraphMerged |
     EventKindNoesisLearnerUpdated |

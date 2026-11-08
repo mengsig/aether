@@ -13,15 +13,16 @@ use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::idempotency::Submission;
 use aether_core::noesis::{ConceptId, NoesisSession, SessionMode};
 use aether_noesis::Noesis;
+use aether_noesis::budget::INTERACTIVE_BUDGET_SETTING;
 use aether_noesis::teach::records::{Answer, EvidenceDraft, Mode, NoesisEvent, SessionView};
-use aether_noesis::teach::{TeachError, Teaching};
+use aether_noesis::teach::{EngineError, TeachError, Teaching};
 use aether_protocol::noesis::{AnswerInput, DeleteSessionGraph, EvidenceBundle};
-use aether_protocol::{Command, ErrorReply, Reply};
+use aether_protocol::{Command, ErrorReply, NOESIS_BUDGET_EXHAUSTED, Reply};
 use aether_runtime::Runtime;
-use aether_runtime::noesis_guard::record_noesis_receipt;
+use aether_runtime::noesis_guard::{NoesisLane, record_noesis_receipt};
 use aether_store::Commit;
 
-use super::budget::ServiceBudget;
+use super::budget::{self, ServiceBudget};
 use super::engine::{AetherEngine, EngineHost, noesis_run};
 use super::routes::{Group, group_of};
 use super::{Desk, NoesisService, State};
@@ -107,9 +108,13 @@ impl NoesisService {
             return serde_json::from_value(receipt)
                 .map_err(|e| ErrorReply::internal(format!("decode the teaching receipt: {e}")));
         }
+        refuse_turn_while_spent(&command, &ticket.budget)?;
         let (done, output) =
             self.with_teaching(&ticket, &mut desk, runtime, |t, _| run_command(t, command))?;
-        let reply = done.reply.map_err(reply_error);
+        let reply = done
+            .reply
+            .map_err(reply_error)
+            .and_then(|reply| with_usage(runtime, reply));
         let receipt = reply.as_ref().ok().zip(submission);
         publish(&desk, runtime, output, &by, receipt)?;
         drop(desk);
@@ -395,6 +400,32 @@ fn refuse_context_while_off(command: &Command, noesis: &Noesis) -> Result<(), Er
     })
 }
 
+/// A new session or message starts a turn: refused before anything is stored
+/// while today's interactive budget is spent, since that turn cannot run.
+fn refuse_turn_while_spent(command: &Command, budget: &ServiceBudget) -> Result<(), ErrorReply> {
+    if !matches!(
+        command,
+        Command::NoesisCreateSession { .. } | Command::NoesisSend { .. }
+    ) {
+        return Ok(());
+    }
+    match budget.spent(NoesisLane::Interactive) {
+        Some(spent) => Err(budget_exhausted(spent)),
+        None => Ok(()),
+    }
+}
+
+fn budget_exhausted(message: String) -> ErrorReply {
+    debug_assert!(
+        message.contains(INTERACTIVE_BUDGET_SETTING),
+        "it names the setting"
+    );
+    ErrorReply {
+        reason: Some(NOESIS_BUDGET_EXHAUSTED.into()),
+        ..ErrorReply::new(aether_protocol::ErrorCode::Unavailable, message)
+    }
+}
+
 fn list_sessions(
     t: &Teaching<'_, AetherEngine<'_>>,
     after: Option<&str>,
@@ -423,6 +454,31 @@ fn delete_session(
     let agent = t.delete_session(session)?;
     debug_assert!(!agent.is_empty(), "a session names its agent");
     Ok(Reply::Ok)
+}
+
+/// A session read with its history also carries its agents' usage by billing.
+fn with_usage(runtime: &Runtime, reply: Reply) -> Result<Reply, ErrorReply> {
+    let Reply::NoesisSession(mut session) = reply else {
+        return Ok(reply);
+    };
+    if session.agents.is_empty() {
+        return Ok(Reply::NoesisSession(session));
+    }
+    let mut ran = Vec::with_capacity(session.agents.len());
+    for listed in &session.agents {
+        // An agent Aether's retention has purged has no usage left to count.
+        if let Some(agent) = runtime
+            .store()
+            .agent(listed.agent)
+            .map_err(crate::connection::store_err)?
+        {
+            ran.push(agent);
+        }
+    }
+    let usage = budget::session_usage(runtime.store().as_ref(), ran)
+        .map_err(crate::connection::store_err)?;
+    session.usage = Some(Box::new(usage));
+    Ok(Reply::NoesisSession(session))
 }
 
 fn session_reply(view: &SessionView) -> Result<Reply, TeachError> {
@@ -500,6 +556,7 @@ fn reply_error(error: TeachError) -> ErrorReply {
         TeachError::NotFound { what, id } => ErrorReply::not_found(format!("{what} `{id}`")),
         TeachError::Conflict(why) => ErrorReply::conflict(why),
         TeachError::Model(refusal) => ErrorReply::invalid(refusal.to_string()),
+        TeachError::Engine(EngineError::BudgetSpent(message)) => budget_exhausted(message),
         error @ (TeachError::Budget(_) | TeachError::Engine(_)) => {
             ErrorReply::new(aether_protocol::ErrorCode::Unavailable, error.to_string())
         }

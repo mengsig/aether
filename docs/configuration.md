@@ -810,7 +810,32 @@ background by its role, with subscription engines counted at their
 estimated cost. Today's spend is read back from Aether's usage records, so
 a restart does not reset it. A model chain with an API-billed link is
 refused unless `billing.allow_api = true`: a fallback never reaches a billed
-endpoint silently.
+endpoint silently. `noesis_status` splits today's spend both by lane
+(`spend_today.interactive`, `background`) and by billing
+(`spend_today.subscription`, covered by the plan and priced only as an
+estimate, `spend_today.api`, charged per request, and
+`spend_today.unknown`, use on a provider no longer configured).
+
+Once today's interactive budget is spent, `noesis_create_session` and
+`noesis_send` are refused before anything is stored with `unavailable`
+(reason `noesis_budget_exhausted`); the message names what was spent, the
+limit and `noesis.budget.interactive_usd_daily`. A turn already under way
+that the budget stops records why on the session as `stalled`
+(`reason: "budget_exhausted"`, `message`, `at`) and publishes
+`noesis.session_stalled`; the next turn that runs clears it.
+
+`noesis_get_session` returns the session's whole history: `agents` (each
+agent that ran it, in order, with its `role` and, as `internal`, the
+transcript seqs of the inputs Noesis wrote for it, so a client does not show
+them as the learner's), `questions` (every question, oldest first, with the
+learner's `answer` and its `result` once answered), `problems` (every
+problem with its `conclusion`, solution included, once concluded), `context`
+(the evidence bundle it started from) and `usage` (summed over its agents,
+as `subscription`, `api` and `unknown`, the last for use on a provider no
+longer configured, whose billing cannot be told). An open question's key and an active
+problem's solution never appear. `noesis_list_sessions` carries only the
+current view and `stalled`. A plan step is `visited` once its check is
+answered correctly, and the next ready step becomes `current`.
 
 Noesis runs on subscription engines (`claude-code`, `codex`) with
 `allow_api = false`. An engine model is ready when its CLI is detected,
@@ -822,11 +847,93 @@ ready is refused, never replaced. The refusal names the ready alternatives.
 `subscription` or `api`, `ready`) and the resolved teaching model or its
 refusal in `teaching_model`.
 
+Graph extraction asks for supported reasoning chains as well as standalone
+propositions, including the conditions needed for causal explanations and
+rule applications. Endpoints use local keys or existing proposition IDs;
+unambiguous names, aliases and statements (including object references) also
+resolve exactly after case/whitespace normalization. `links`, `premise_ids`
+and `conclusion_id` are accepted spellings; chains inside a proposition inherit
+its conclusion and anchor if omitted. Unknown or ambiguous endpoints, numeric
+indices without explicit string keys, and invalid anchors are rejected. A
+missing premise rejects the whole chain; extraction never invents an edge.
+Audited local endpoints follow their merged proposition IDs.
+
+The built-in `prober`, `teacher` and `practitioner` prompts use `03-tools` for
+tool schemas and `04-rules` for behavior and presentation. Learner-facing text
+supports Markdown headings, lists, emphasis, comparison tables, language-tagged
+code fences, KaTeX formulas (`$…$` / `$$…$$`) and small `mermaid` diagrams.
+Answer options use inline Markdown only; HTML and images are unsupported.
+
 On an engine, each Noesis step is one fresh session without tools of its
 own: Aether gives it the agent's tools and transcript, sealed values as
 `"<sealed>"`, and runs the tool calls it answers with, so asking, sealing
-and budgets behave as on an API model. The step's text reaches watchers as
-one delta when the step ends, not word by word.
+and budgets behave as on an API model. Tool calls validate at the end of the
+reply. A Noesis step's text is never streamed, on an engine or an API model:
+each reply is read whole before anything of it is shown or kept.
+
+The answer seal is a teaching guarantee: an honest learner does not see an
+exercise's answer before trying it. It is not a security boundary against an
+adversarial model. Before anything of a reply is shown or kept, Aether checks
+it once, whole: its text, joined and block by block; every key and value of
+every call's input, a text holding a question read as the question it parses
+to; and the name of any call to a tool that does not exist. Aether's own tool
+names are fixed text and say nothing of an answer, so they are not checked;
+nor are call ids, which Aether or the provider assigns, never the model. It checks them against the answers still unrevealed (an open
+question's key and explanation, the active problem's solution) and those the
+reply's own calls would pose. A question or problem the reply poses is held to
+the rule posing applies to its own fields: its prompt, statement or tags may
+not name its own key, explanation or solution, though a choice's options show
+its correct one. That holds for a pose whose form posing then refuses, too. A reply that gives one away is discarded unseen, and its
+spend still counts. The step runs again once with a reminder; if that reply
+gives one away too, the learner sees "Let's try that differently." A reply
+may state the active problem's solution only beside a conclusion the
+practitioner's tool would accept. A question whose key or explanation, or a problem whose
+solution, appears in anything its turn already kept is refused, however often
+the model retries it.
+
+In the Learn screen's settings:
+
+- **Model choosers.** The teaching and light models are picked from
+  `models`, grouped by billing. A model that is not ready, or an API model
+  while `allow_api` is off, is listed but cannot be picked. A stored model
+  the daemon no longer offers shows as unknown until you pick another.
+- **Billing.** "Spent today" and each lesson say what paid. Subscription use
+  is covered by your plan; its dollars are a list-price estimate, never a
+  charge. API use is billed to your key. Each usage record keeps what paid
+  for it when it is written, by the model the call ran on; use recorded
+  before that shows as unknown, never as API.
+- **"Learn from my work".** This is `engineering_context`, an operate-level
+  key. It lets a lesson start from your own items, runs and pull requests.
+  The "Learn from this" sheet offers to turn it on when it is off.
+
+When the day's teaching budget is spent, a lesson pauses and says how much of
+it was used, with a link to these settings.
+
+### Learning from your work in the web client
+
+With `engineering_context = true` the web client's Learn area offers
+**Learn from this** on items, runs, agents and pull requests, and **Catch me
+up** on the Learn home. Both read only what the client can already read,
+show every fact with its status (verified: a passing check or a merge
+established it; reviewed: a review or an operator gate passed it;
+preliminary: everything else) and send nothing until you start a session.
+
+**Catch me up** takes a registered Archon repository and a range chosen from
+lists: since your last visit (kept per repository in the browser or desktop
+app's own storage; the first time it is the last 7 days), the last 7 days or
+the last 30 days. A range starts at the beginning of a UTC day. The bundle
+holds the pull requests archond cached as merged, the repository's items
+updated in the range and its Aether memory under its GitHub scope; a pull
+request counts as verified only with its merge record, and an item stays
+preliminary unless its pull request merged, passed its checks or was
+approved. A catch-up over the 32 KiB or 50 fact limit keeps the newest and
+most important facts and says how many it left out. There is no release
+preset, because the client cannot read a repository's releases or tags.
+
+Choosing **Learn from this** or **Catch me up** again for the same source,
+a pull request or a repository and first day, offers **Continue where you
+left off**, which opens the session the client started from it (or the
+newest one with the same goal), and **Start fresh** for a new session.
 
 ## Signed webhook door
 

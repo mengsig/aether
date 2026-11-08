@@ -148,7 +148,7 @@ async fn a_malformed_reply_fails_closed_with_its_usage_and_never_quotes_itself()
         1,
         "the step, not the client, retries"
     );
-    let note = retry_note().text();
+    let note = RETRY_NOTE;
     assert!(!note.contains(secret) && note.contains("refused"), "{note}");
 }
 
@@ -175,7 +175,7 @@ async fn tool_like_prose_fails_closed_and_streams_nothing() {
     assert!(!failure.error.message.contains(secret));
     assert!(deltas.is_empty() && failure.partial.text().is_empty());
     assert!(failure.partial.usage.total_tokens() > 0, "usage is kept");
-    assert!(!retry_note().text().contains(secret));
+    assert!(!RETRY_NOTE.contains(secret));
 }
 
 #[tokio::test]
@@ -221,4 +221,81 @@ fn plain_prose_and_empty_objects_are_refused() {
     let embedded = parse_reply("Here: {\"text\": \"Hi\"}").expect("embedded");
     assert_eq!(embedded.text.as_deref(), Some("Hi"));
     assert!(parse_reply(r#"{"tool_calls": [{"name": "x", "input": 3}]}"#).is_err());
+}
+
+#[tokio::test]
+async fn malformed_streamed_text_keeps_final_usage_and_never_emits_tool_json() {
+    let inner = Arc::new(ScriptedClient::new());
+    inner.push(ScriptedClient::text(
+        r#"{"text":"Safe\xPRIVATE","tool_calls":[]}"#,
+    ));
+    let client = EngineStepClient::new(inner);
+    let stream = client
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let failure = collect_partial(stream, |_| {})
+        .await
+        .expect_err("invalid escape");
+    assert!(is_malformed(&failure.error));
+    assert!(
+        failure.partial.usage.total_tokens() > 0,
+        "read the final receipt even after malformed JSON"
+    );
+    assert!(!failure.error.message.contains("PRIVATE"));
+    assert!(!failure.partial.text().contains("PRIVATE"));
+}
+
+#[tokio::test]
+async fn a_noncanonical_field_order_keeps_private_text_out_of_deltas() {
+    let raw = r#"{"tool_calls":[{"name":"noesis_problem","input":{"solution":"PRIVATE","text":"NESTED"}}],"text":"Public"}"#;
+    let (_, reply) = step(&[raw]).await;
+    let reply = reply.expect("validated fallback");
+    assert_eq!(reply.text(), "Public");
+    let (_, name, input) = reply.tool_uses().next().expect("tool");
+    assert_eq!(name, "noesis_problem");
+    assert_eq!(input["solution"], "PRIVATE");
+}
+
+#[tokio::test]
+async fn malformed_native_blocks_fail_before_returning_the_json_reply() {
+    let inner = Arc::new(ScriptedClient::new());
+    inner.push(Ok(vec![
+        StreamEvent::BlockStart {
+            index: 0,
+            block: BlockStart::Text {
+                text: r#"{"text":"Public","tool_calls":[]}"#.into(),
+            },
+        },
+        StreamEvent::BlockStart {
+            index: 1,
+            block: BlockStart::ToolUse {
+                id: "unexpected".into(),
+                name: "PRIVATE-TOOL".into(),
+                input: None,
+            },
+        },
+        StreamEvent::ToolInputDelta {
+            index: 1,
+            partial_json: "{".into(),
+        },
+        StreamEvent::Usage {
+            usage: Usage {
+                input_tokens: 7,
+                ..Default::default()
+            },
+        },
+    ]));
+    let client = EngineStepClient::new(inner);
+    let stream = client
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let failure = collect_partial(stream, |_| {})
+        .await
+        .expect_err("malformed native block");
+    assert!(is_malformed(&failure.error));
+    assert_eq!(failure.partial.usage.input_tokens, 7);
+    assert_eq!(failure.partial.text(), "Public");
+    assert!(!failure.error.message.contains("PRIVATE-TOOL"));
 }

@@ -964,7 +964,7 @@ mod live_accounting_tests {
             panic!("durable usage")
         };
         assert!(
-            matches!(event.kind, EventKind::AgentUsageUpdated { total, turn_usage }
+            matches!(event.kind, EventKind::AgentUsageUpdated { total, turn_usage, .. }
             if total == ctx.agent.stats.usage && turn_usage == ctx.turn_usage)
         );
         let BusMessage::Event(event) = bus.try_recv().unwrap() else {

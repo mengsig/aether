@@ -474,6 +474,7 @@ mod tests {
                     aether_core::event::EventKind::AgentUsageUpdated {
                         total: usage,
                         turn_usage: usage,
+                        billing: None,
                     },
                 )
                 .agent(agent),

@@ -9,6 +9,8 @@ const session = (updated: string, goal = "Raft elections"): aether.NoesisSession
   id: "ns_1", agent: "agt_1", goal, mode: "teach", phase: "teach", created_at: "2026-11-04T08:00:00Z", updated_at: updated,
 });
 
+const usageOf = (cost: number): aether.Usage => ({ input_tokens: 10, output_tokens: 1, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: cost, cost_complete: true });
+
 function tickets(count: number): NoesisCache {
   let cache = EMPTY_NOESIS;
   for (let i = 0; i < count; i += 1) cache = nextTicket(cache);
@@ -48,6 +50,19 @@ describe("installSession", () => {
     expect(listed.versions.sessions).toBe(1);
   });
 
+  test("a list row or an event without history keeps the history a session read brought", () => {
+    const history = {
+      agents: [{ agent: "agt_1", role: "prober" as const, internal: [1] }],
+      questions: [{ question: { id: "q_1", kind: "recall" as const, multi: false, collapsed: false, concepts: [], posed_at: "2026-11-04T08:30:00Z", prompt: "Why?" } }],
+      usage: { subscription: usageOf(0.02), api: usageOf(0) },
+    };
+    const read = installSession(EMPTY_NOESIS, { ...session("2026-11-04T09:00:00Z"), ...history });
+    const listed = installSession(read, session("2026-11-04T09:00:00Z", "listed"));
+    expect(listed.sessions.ns_1).toMatchObject({ goal: "listed", ...history });
+    const reread = installSession(listed, { ...session("2026-11-04T09:01:00Z"), agents: history.agents });
+    expect(reread.sessions.ns_1?.questions).toBeUndefined();
+  });
+
   test("records the open question so it stays shown once answered", () => {
     const question: aether.Question = { id: "q_1", kind: "recall", multi: false, collapsed: false, concepts: [], posed_at: "2026-11-04T09:00:00Z", prompt: "Why?" };
     const cache = installSession(EMPTY_NOESIS, { ...session("2026-11-04T09:00:00Z"), open_question: question });
@@ -77,6 +92,13 @@ describe("applyNoesisEvent", () => {
     next = applyNoesisEvent(next, { type: "noesis.graph_merged", job: "j", stats: {} }, undefined);
     next = applyNoesisEvent(next, { type: "noesis.settings_changed" }, undefined);
     expect(next.versions).toMatchObject({ learner: 1, graph: 1, status: 1 });
+  });
+
+  test("a job that ends marks the graph stale with the jobs; one still running only the jobs", () => {
+    const job = (state: string) => ({ id: "job_1", kind: "extract_session", state, target: "ns_1" });
+    const running = applyNoesisEvent(held, { type: "noesis.job_updated", job: job("running") }, undefined);
+    expect(running.versions).toEqual({ jobs: 1 });
+    expect(applyNoesisEvent(running, { type: "noesis.job_updated", job: job("succeeded") }, undefined).versions).toEqual({ jobs: 2, graph: 1 });
   });
 
   test("a settings event outranks a status reply asked before it, not one asked after", () => {

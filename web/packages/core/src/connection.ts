@@ -30,7 +30,8 @@ export interface ConnectionHooks {
 
 /** Hello versions per daemon, newest first. archond 24 accepts archon-web 23..=24; 23 is exact. */
 export const ARCHON_VERSIONS = [24, 23] as const;
-export const AETHER_HELLO_FEATURES = ["deltas", "artifact_bytes", "delta_order", "memory_v2"];
+/** `noesis`: typed `noesis.*` events; without it the daemon sends them as `custom`, which the Noesis cache ignores. */
+export const AETHER_HELLO_FEATURES = ["deltas", "artifact_bytes", "delta_order", "memory_v2", "noesis"];
 const CLOSE_REVOKED = 4401;
 const CLOSE_BUSY = 4503;
 const CLOSE_LAGGED = 1013;

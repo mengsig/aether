@@ -381,10 +381,12 @@ impl Runtime {
     /// usage and one more turn, with what `with` adds from the fresh row, in
     /// one commit. The row is reread under the commit hold and only its
     /// `stats` change, so a pause, cancel, configuration or approval change
-    /// committed while the call ran stands. Returns the row as written.
+    /// committed while the call ran stands. The record says what paid for the
+    /// call by `model`, the one it ran on. Returns the row as written.
     pub fn record_noesis_call(
         &self,
         id: AgentId,
+        model: &ModelRef,
         usage: Usage,
         with: impl FnOnce(&Agent, &mut aether_store::Commit),
     ) -> Result<Agent> {
@@ -411,6 +413,7 @@ impl Runtime {
                 aether_core::event::EventKind::AgentUsageUpdated {
                     total: agent.stats.usage,
                     turn_usage: usage,
+                    billing: crate::turn::billing_of(&self.models, model),
                 },
             )
             .agent(agent.id)

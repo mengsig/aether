@@ -1,14 +1,16 @@
 //! Checking what the extractor and the auditor return (parity X3, X4). A
 //! reply that is not the JSON asked for fails the unit; an item that breaks
 //! a rule (an anchor outside the batch, an endpoint that is neither a local
-//! key nor an existing proposition) is dropped and counted.
+//! key nor an unambiguous existing or local proposition) is dropped and counted.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::graph::{Endpoint, Finding, FoundChain, Graph, Origin, ids};
+use crate::graph::{Finding, FoundChain, Graph, Origin, ids};
+
+use super::endpoints::Endpoints;
 
 pub const MAX_NAME_CHARS: usize = 200;
 pub const MAX_STATEMENT_CHARS: usize = 2_000;
@@ -29,8 +31,10 @@ struct RawProposition {
 
 #[derive(Debug, Deserialize)]
 struct RawChain {
-    premises: Vec<String>,
-    conclusion: String,
+    #[serde(alias = "premise_ids")]
+    premises: Vec<Value>,
+    #[serde(alias = "conclusion_id")]
+    conclusion: Value,
     anchor: String,
 }
 
@@ -39,6 +43,7 @@ struct RawSubmission {
     #[serde(default)]
     propositions: Vec<Value>,
     #[serde(default)]
+    #[serde(alias = "links")]
     chains: Vec<Value>,
 }
 
@@ -80,19 +85,23 @@ pub fn submission(
             "the extractor reply has more than {MAX_ITEMS} items"
         ));
     }
+    let mut chains = raw.chains;
     let mut out = Submission::default();
     let mut keys = BTreeSet::new();
     for value in raw.propositions {
+        let nested = value.get("chains").cloned();
         match proposition(value, source, refs, &keys) {
             Some(finding) => {
+                nested_chains(nested, &finding, &mut chains)?;
                 keys.insert(finding.key.clone());
                 out.findings.push(finding);
             }
             None => out.rejected += 1,
         }
     }
-    for value in raw.chains {
-        match chain(value, source, refs, &keys, graph) {
+    let endpoints = Endpoints::new(&out.findings, graph);
+    for value in chains {
+        match chain(value, source, refs, &endpoints) {
             Some(found) => out.chains.push(found),
             None => out.rejected += 1,
         }
@@ -137,30 +146,65 @@ fn proposition(
     })
 }
 
+fn nested_chains(
+    value: Option<Value>,
+    finding: &Finding,
+    chains: &mut Vec<Value>,
+) -> Result<(), String> {
+    debug_assert!(!finding.key.is_empty());
+    debug_assert!(chains.len() <= MAX_ITEMS);
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let Value::Array(nested) = value else {
+        return Err("a proposition's chains must be an array".into());
+    };
+    if chains.len() + nested.len() > MAX_ITEMS {
+        return Err(format!(
+            "the extractor reply has more than {MAX_ITEMS} chains"
+        ));
+    }
+    for mut value in nested {
+        if let Some(fields) = value.as_object_mut() {
+            if !fields.contains_key("conclusion_id") {
+                fields
+                    .entry("conclusion")
+                    .or_insert_with(|| Value::String(finding.key.clone()));
+            }
+            fields
+                .entry("anchor")
+                .or_insert_with(|| Value::String(finding.origin.message_ref.clone()));
+        }
+        chains.push(value);
+    }
+    Ok(())
+}
+
 fn chain(
     value: Value,
     source: &str,
     refs: &BTreeSet<String>,
-    keys: &BTreeSet<String>,
-    graph: &Graph,
+    endpoints: &Endpoints,
 ) -> Option<FoundChain> {
+    debug_assert!(!refs.is_empty());
     let raw: RawChain = serde_json::from_value(value).ok()?;
     if raw.premises.is_empty() || raw.premises.len() > MAX_PREMISES || !refs.contains(&raw.anchor) {
         return None;
     }
-    let endpoint = |name: &String| {
-        if keys.contains(name) {
-            Some(Endpoint::Local(name.clone()))
-        } else if graph.nodes.contains_key(name) {
-            Some(Endpoint::Existing(name.clone()))
-        } else {
-            None
-        }
-    };
-    let premises: Option<Vec<Endpoint>> = raw.premises.iter().map(endpoint).collect();
+    let premises: Option<Vec<_>> = raw
+        .premises
+        .iter()
+        .map(|value| endpoints.resolve(value))
+        .collect();
+    let premises = premises?;
+    debug_assert_eq!(
+        premises.len(),
+        raw.premises.len(),
+        "never weaken a chain by dropping a premise"
+    );
     Some(FoundChain {
-        premises: premises?,
-        conclusion: endpoint(&raw.conclusion)?,
+        premises,
+        conclusion: endpoints.resolve(&raw.conclusion)?,
         origin: Origin {
             source: source.to_string(),
             message_ref: raw.anchor,
