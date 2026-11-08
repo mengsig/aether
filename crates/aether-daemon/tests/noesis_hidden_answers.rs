@@ -247,23 +247,80 @@ async fn await_delta(home: &mut Home, readers: &mut Readers, agent: &str) {
     await_pushed(home, readers, "a text delta", streamed).await;
 }
 
-/// An ordinary agent whose streamed turns prove both subscriptions carry live
-/// deltas, and whose records prove the snapshot and invocation reads run.
-async fn start_control(home: &mut Home, readers: &mut Readers, name: &str) -> String {
-    let asked = home.model.requests().len();
+/// Create an ordinary agent whose records exercise the generic read paths.
+async fn create_control(home: &mut Home, name: &str) -> String {
     let created = home
         .ok(
             json!({"cmd": "create_agent", "role": "worker", "name": name, "objective": "Say hello.",
             "model": {"provider": "mock", "model": "mock-1"}, "start": true}),
         )
         .await;
-    let agent = created["id"]
-        .as_str()
-        .unwrap_or_else(|| panic!("an agent id: {created}"))
-        .to_owned();
+    let agent = created["id"].as_str().expect("an agent id");
+    assert!(agent.starts_with("agt_"), "an agent id: {created}");
+    agent.to_owned()
+}
+
+/// Wait until the control has streamed and can no longer consume scripted replies.
+async fn await_control(home: &mut Home, readers: &mut Readers, agent: &str, asked: usize) {
+    assert!(agent.starts_with("agt_"), "an agent id: {agent}");
     home.requests_reach(asked + 1).await;
-    await_delta(home, readers, &agent).await;
+    await_delta(home, readers, agent).await;
+    tokio::time::timeout(std::time::Duration::from_secs(120), async {
+        loop {
+            let detail = home.ok(json!({"cmd": "get_agent", "id": agent})).await;
+            let state = detail["status"]["state"].as_str().expect("an agent state");
+            match state {
+                "completed" => return,
+                "created" | "ready" | "running" | "waiting" => {}
+                _ => panic!("the control did not complete: {detail}"),
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("the control completes in time");
+}
+
+/// An ordinary agent whose streamed turns prove both subscriptions carry live
+/// deltas, and whose records prove the snapshot and invocation reads run.
+async fn start_control(home: &mut Home, readers: &mut Readers, name: &str) -> String {
+    let asked = home.model.requests().len();
+    let agent = create_control(home, name).await;
+    await_control(home, readers, &agent, asked).await;
     agent
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn control_waits_for_the_second_model_response() {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let mut home = Home::start("").await;
+        let mut readers = Readers::pair(&mut home).await;
+        subscribe(&mut home, &mut readers, None).await;
+        home.model.text("First reply.");
+        let gate = home
+            .model
+            .hold(noesis_support::faux::Reply::Text("Second reply.".into()));
+        let asked = home.model.requests().len();
+        let agent = create_control(&mut home, "held-control").await;
+        home.requests_reach(asked + 2).await;
+        await_delta(&mut home, &mut readers, &agent).await;
+        {
+            let wait = await_control(&mut home, &mut readers, &agent, asked);
+            tokio::pin!(wait);
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(200), &mut wait)
+                    .await
+                    .is_err(),
+                "the control cannot finish while its second model response is held"
+            );
+            gate.notify_one();
+            wait.await;
+        }
+        let detail = home.ok(json!({"cmd": "get_agent", "id": agent})).await;
+        assert_eq!(detail["status"]["state"], "completed", "{detail}");
+    })
+    .await
+    .expect("the held control test finishes in time");
 }
 
 /// A new streamed turn after a reconnect, from a second control agent.
