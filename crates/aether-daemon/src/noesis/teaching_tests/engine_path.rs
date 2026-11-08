@@ -508,6 +508,55 @@ struct HoldingCli {
     started: CancellationToken,
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn session_and_learner_reads_finish_while_a_model_step_is_running() {
+    let home = Home::new();
+    let started = CancellationToken::new();
+    let cli = HoldingCli {
+        spent: Usage::default(),
+        started: started.clone(),
+    };
+    std::fs::write(home.config.path().join("providers.toml"), PROVIDERS).expect("providers");
+    let mut engines: HashMap<EngineKind, Arc<dyn aether_engine::Engine>> = HashMap::new();
+    engines.insert(EngineKind::CLAUDE_CODE, Arc::new(cli));
+    let harness = Harness::open_on_engines(&home, engines).await;
+    harness
+        .configure(NoesisSettingsPatch {
+            enabled: Some(true),
+            ..Default::default()
+        })
+        .await;
+    let created = harness.create(json!({})).await;
+    tokio::time::timeout(Duration::from_secs(2), started.cancelled())
+        .await
+        .expect("the step reached the engine");
+
+    let session = tokio::time::timeout(Duration::from_secs(1), harness.session(&created.id));
+    let learner = tokio::time::timeout(
+        Duration::from_secs(1),
+        harness.send_json(json!({"cmd": "noesis_learner"})),
+    );
+    let (session, learner) = tokio::join!(session, learner);
+    harness
+        .daemon
+        .runtime
+        .cancel_agent(created.agent, Some("stop".into()), Actor::user())
+        .expect("cancelled");
+    harness.close().await;
+
+    assert_eq!(
+        session
+            .expect("session read timed out")
+            .expect("session")
+            .id,
+        created.id
+    );
+    assert!(matches!(
+        learner.expect("learner read timed out"),
+        Ok(Reply::NoesisLearner { .. })
+    ));
+}
+
 #[async_trait::async_trait]
 impl aether_engine::Engine for HoldingCli {
     fn kind(&self) -> EngineKind {
