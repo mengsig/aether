@@ -2,7 +2,7 @@
 // map to bridge.request, subscriptions to bridge.subscribe; both answer frames.
 
 import type { DesktopBridge, Transport } from "@aether-ui/protocol";
-import { errorText, invariant, object, string, type Json } from "../guards.ts";
+import { errorText, invariant, object, seq, string, type Json } from "../guards.ts";
 
 /** Commands whose reply is followed by pushed frames on the same subscription. */
 export const SUBSCRIPTIONS: ReadonlySet<string> = new Set(["subscribe", "subscribe_changes", "subscribe_feed"]);
@@ -27,6 +27,14 @@ export function ipcTransport(bridge: DesktopBridge, report: (message: string) =>
         onClose(CLOSE_BRIDGE_FAILED, `Desktop bridge call failed: ${errorText(error)}`);
       };
       const deliver = (frame: unknown) => { if (open) onFrame(frame); };
+      const rejected = (command: Json, error: unknown) => {
+        const message = errorText(error);
+        if (!(error instanceof Error && error.name === "BridgeRefusal") && !/\bBridgeRefusal:/.test(message)) return lost(error);
+        if (/\b(?:is closed|is not an open local connection)\b/.test(message)) return lost(error);
+        const id = seq(command.req, "command.req");
+        invariant(id > 0, "a refused request has a positive id");
+        deliver({ frame: "reply", id, result: { Err: { code: "forbidden", message } } });
+      };
       return {
         send(frame: unknown) {
           invariant(open, "the ipc link is open");
@@ -36,9 +44,9 @@ export function ipcTransport(bridge: DesktopBridge, report: (message: string) =>
             bridge.subscribe(conn, command, deliver).then((unsubscribe) => {
               if (open) unsubscribes.push(unsubscribe);
               else unsubscribe();
-            }, lost);
+            }, (error: unknown) => rejected(command, error));
           } else {
-            bridge.request(conn, command).then(deliver, lost);
+            bridge.request(conn, command).then(deliver, (error: unknown) => rejected(command, error));
           }
         },
         close() {

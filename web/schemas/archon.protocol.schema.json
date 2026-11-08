@@ -7817,6 +7817,21 @@
       ],
       "type": "object"
     },
+    "ModelSource": {
+      "description": "How a plan key's model is chosen.",
+      "oneOf": [
+        {
+          "const": "tier",
+          "description": "Resolved from a tier, and resolved again from Aether's catalog when\nthe stage dispatches; its choice's `tier` says which.",
+          "type": "string"
+        },
+        {
+          "const": "exact",
+          "description": "An exact model, which no tier replaces: one a plan, `update_item` or a\nsteer named, or the default model of a pipeline that names no tier.",
+          "type": "string"
+        }
+      ]
+    },
     "Notification": {
       "properties": {
         "at": {
@@ -13514,6 +13529,10 @@
           "description": "Whether a steer changed the plan the run was frozen with.",
           "type": "boolean"
         },
+        "finished": {
+          "description": "Set once the run finished: the plan is the one kept as it finished.",
+          "type": "boolean"
+        },
         "pipeline": {
           "type": "string"
         },
@@ -13523,7 +13542,15 @@
         "run": {
           "$ref": "#/$defs/PipelineRunId"
         },
+        "settings": {
+          "description": "What each plan key runs on: the stages in order, each stage's\nreviewers key after it. Empty from an older archond.",
+          "items": {
+            "$ref": "#/$defs/StageSettings"
+          },
+          "type": "array"
+        },
         "stages": {
+          "description": "The pipeline's stages; their `effort` and `timeout_minutes` are the\npipeline defaults, which `settings` resolves for this run.",
           "items": {
             "$ref": "#/$defs/StageSummary"
           },
@@ -13760,6 +13787,21 @@
         {
           "const": "repo_file",
           "description": "The repository's `.archon/config.toml`, which only lowers.",
+          "type": "string"
+        }
+      ]
+    },
+    "SettingSource2": {
+      "description": "Whether a run's per-stage setting is the pipeline's or set for the item.",
+      "oneOf": [
+        {
+          "const": "default",
+          "description": "The pipeline's own value for the stage.",
+          "type": "string"
+        },
+        {
+          "const": "override",
+          "description": "Set for this item: at enqueue, by `update_item` or by a steer.",
           "type": "string"
         }
       ]
@@ -14170,6 +14212,57 @@
         "choice",
         "state",
         "cost_usd"
+      ],
+      "type": "object"
+    },
+    "StageSettings": {
+      "description": "One plan key of a run as it resolves now: the model and effort of each\nagent its next attempt starts, and the time limit each gets.",
+      "properties": {
+        "choices": {
+          "description": "One choice per agent, in fan-out slot order.",
+          "items": {
+            "$ref": "#/$defs/ModelChoice"
+          },
+          "type": "array"
+        },
+        "effort": {
+          "$ref": "#/$defs/SettingSource2",
+          "description": "`override` when an effort differs from the stage's default effort."
+        },
+        "key": {
+          "description": "A stage id, or `<stage>.review` for the reviewers that stage delegates.",
+          "type": "string"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelSource",
+          "description": "`tier` when every choice came from a tier, else `exact`."
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SettingSource2"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where `timeout_minutes` comes from; absent with it."
+        },
+        "timeout_minutes": {
+          "description": "Minutes each new agent of the stage may run; absent for a reviewers\nkey, whose reviewers run within their stage's limit.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "choices",
+        "model",
+        "effort"
       ],
       "type": "object"
     },
