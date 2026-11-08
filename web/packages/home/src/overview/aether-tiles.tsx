@@ -50,20 +50,22 @@ export function SpendTile({ view }: { readonly view: HomeView }) {
   const { facts, spend } = view;
   if (facts.aether === "connecting" || spend.state === "loading") return <LoadingTile label="Spend today" />;
   const step = nextStep("spend", facts);
-  if (step) {
-    const value = facts.aether === "ready" ? formatUsd(0) : presenceValue(facts.aether);
+  if (step && facts.aether !== "ready") {
+    const value = presenceValue(facts.aether);
     return <StatTile label="Spend today" value={value} hint="Nothing spent yet" href="#/activity"><NextStep step={step} /></StatTile>;
   }
   if (spend.state === "problem") {
     return <StatTile label="Spend today" value="Unknown" hint="Today's spend could not be read" tone="danger" href="#/activity"><p className="home-problem">{spend.problem}</p></StatTile>;
   }
-  const { usd, tokens, complete, byModel, source } = spend.value;
+  const { usd, tokens, estimatedUsd, listPrice, complete, byModel, source } = spend.value;
   const slices = spendSlices(byModel);
   const amount = `${formatUsd(usd)}${complete ? "" : "+"}`;
-  const hint = `${formatTokens(tokens)} tokens${source === "agents" ? " · lifetime cost of agents active today" : ""}${complete ? "" : " · leaves out some work"}`;
+  const hint = `${formatTokens(tokens)} tokens${source === "agents" ? " · lifetime cost of agents active today" : ""}${listPrice ? " · includes list-price estimates" : ""}${complete ? "" : " · leaves out some work"}`;
   return (
     <StatTile label="Spend today" value={amount} hint={hint} href="#/activity">
-      {slices.length === 0 ? <p className="home-quiet">Nothing spent yet today</p> : <Donut label="Spend by model" slices={slices} center={amount} />}
+      {estimatedUsd > 0 ? <p className="home-quiet">{formatUsd(estimatedUsd)} at API list price for subscription use; not a per-request charge</p> : null}
+      {slices.length > 0 ? <Donut label="Spend by model" slices={slices} center={amount} /> : tokens === 0 && estimatedUsd === 0 && complete ? <p className="home-quiet">Nothing spent yet today</p> : null}
+      {step && tokens === 0 && usd === 0 && estimatedUsd === 0 ? <NextStep step={step} /> : null}
     </StatTile>
   );
 }

@@ -145,6 +145,8 @@ export function formatTokens(count: number): string {
 export interface Spend {
   readonly usd: number;
   readonly tokens: number;
+  readonly estimatedUsd: number;
+  readonly listPrice: boolean;
   /** False when some work was left out of the dollars (an engine reported no cost, a model has no price). */
   readonly complete: boolean;
   readonly byModel: readonly ChartPoint[];
@@ -155,7 +157,8 @@ export interface Spend {
 function checkUsage(usage: unknown, where: string): string | null {
   const record = usage as Partial<aether.Usage> | null;
   if (record === null || typeof record !== "object") return `${where} has no usage`;
-  const amounts = [record.cost_usd, record.input_tokens, record.output_tokens];
+  if (typeof record.cost_complete !== "boolean") return `${where} has no cost completeness flag`;
+  const amounts = [record.cost_usd, record.input_tokens, record.output_tokens, record.estimated_cost_usd ?? 0];
   return amounts.every((n) => typeof n === "number" && Number.isFinite(n) && n >= 0) ? null : `${where} has a cost or token count that is not an amount`;
 }
 
@@ -164,19 +167,29 @@ export function spendFromBreakdowns(replies: readonly unknown[]): Parsed<Spend> 
   const byModel = new Map<string, number>();
   let usd = 0;
   let tokens = 0;
+  let estimatedUsd = 0;
+  let listPrice = false;
   let complete = true;
   for (const reply of replies) {
     const breakdown = reply as Partial<aether.UsageBreakdown> | null;
     if (breakdown === null || typeof breakdown !== "object" || !Array.isArray(breakdown.rows)) return { problem: "usage_breakdown has no rows" };
-    const problem = checkUsage(breakdown.total, "usage_breakdown's total") ?? breakdown.rows.map((row) => checkUsage(row.usage, `row ${row.key}`)).find((p) => p !== null);
+    if (typeof breakdown.truncated !== "boolean") return { problem: "usage_breakdown has no truncation flag" };
+    const problem = checkUsage(breakdown.total, "usage_breakdown's total");
     if (problem) return { problem };
+    for (const row of breakdown.rows) {
+      if (row === null || typeof row !== "object" || typeof row.key !== "string" || row.key === "") return { problem: "usage_breakdown has a row without a key" };
+      const rowProblem = checkUsage(row.usage, `row ${row.key}`);
+      if (rowProblem) return { problem: rowProblem };
+    }
     const total = breakdown.total as aether.Usage;
     usd += total.cost_usd;
     tokens += tokensOf(total);
+    estimatedUsd += total.estimated_cost_usd ?? 0;
+    listPrice ||= total.cost_basis === "list_price" || total.cost_basis === "mixed";
     complete &&= total.cost_complete && !breakdown.truncated;
     for (const row of breakdown.rows) byModel.set(row.key, (byModel.get(row.key) ?? 0) + row.usage.cost_usd);
   }
-  return { value: { usd, tokens, complete, byModel: [...byModel].map(([label, value]) => ({ label, value })), source: "breakdown" } };
+  return { value: { usd, tokens, estimatedUsd, listPrice, complete, byModel: [...byModel].map(([label, value]) => ({ label, value })), source: "breakdown" } };
 }
 
 /** Without `usage_breakdown`: the lifetime cost of each agent that did something today, by model. */
@@ -184,6 +197,8 @@ export function spendFromAgents(agents: readonly aether.Agent[], dayStart: numbe
   const byModel = new Map<string, number>();
   let usd = 0;
   let tokens = 0;
+  let estimatedUsd = 0;
+  let listPrice = false;
   let complete = true;
   for (const agent of agents) {
     const usage = agent.stats?.usage;
@@ -193,10 +208,12 @@ export function spendFromAgents(agents: readonly aether.Agent[], dayStart: numbe
     const model = `${agent.model.provider}/${agent.model.model}`;
     usd += usage.cost_usd;
     tokens += tokensOf(usage);
+    estimatedUsd += usage.estimated_cost_usd ?? 0;
+    listPrice ||= usage.cost_basis === "list_price" || usage.cost_basis === "mixed";
     complete &&= usage.cost_complete;
     byModel.set(model, (byModel.get(model) ?? 0) + usage.cost_usd);
   }
-  return { usd, tokens, complete, byModel: [...byModel].map(([label, value]) => ({ label, value })), source: "agents" };
+  return { usd, tokens, estimatedUsd, listPrice, complete, byModel: [...byModel].map(([label, value]) => ({ label, value })), source: "agents" };
 }
 
 // Fixed order; accent and info sit apart because their hues are close.

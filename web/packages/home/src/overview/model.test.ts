@@ -89,6 +89,14 @@ describe("spend today", () => {
     expect("value" in truncated && truncated.value.complete).toBe(false);
   });
 
+  test("keeps subscription estimates separate from charges and rejects invalid estimates", () => {
+    const usage = { ...BREAKDOWN.total, cost_usd: 0.2, estimated_cost_usd: 3, cost_complete: false, cost_basis: "mixed" as const };
+    const parsed = spendFromBreakdowns([{ ...BREAKDOWN, total: usage }]);
+    expect("value" in parsed && parsed.value).toMatchObject({ usd: 0.2, estimatedUsd: 3, listPrice: true, complete: false });
+    expect(spendFromBreakdowns([{ ...BREAKDOWN, total: { ...usage, estimated_cost_usd: -1 } }])).toHaveProperty("problem");
+    expect(spendFromBreakdowns([{ ...BREAKDOWN, rows: [null] }])).toHaveProperty("problem");
+  });
+
   test("without a breakdown, counts only agents active since midnight", () => {
     const agents = Object.values(fixtureAgents());
     const stale = { ...fixtureAgents().agt_lead as aether.Agent, id: "agt_old", last_event_at: new Date(startOfDay(NOW) - 60_000).toISOString() };

@@ -153,6 +153,26 @@ describe("with seeded data", () => {
     expect(h.sent.sort()).toEqual([`${ARCHON_CONN} github_watcher`, `${ARCHON_CONN} list_questions`]);
   });
 
+  test("shows historical usage even when no agents remain", async () => {
+    const { container } = await open([aetherInfo()], false, REPLIES);
+    expect(text(container, "spend", ".ui-chart-tile-value")).toBe("$2.25");
+    expect(text(container, "spend", ".ui-chart-tile-hint")).toBe("1.4M tokens");
+  });
+
+  test("shows a breakdown failure even when no agents remain", async () => {
+    const { container } = await open([aetherInfo()], false, { ...REPLIES, usage_breakdown: new Error("history expired") });
+    expect(text(container, "spend", ".ui-chart-tile-value")).toBe("Unknown");
+    expect(text(container, "spend", ".home-problem")).toBe("history expired");
+  });
+
+  test("labels subscription estimates separately from charges", async () => {
+    const total = { ...BREAKDOWN.total, cost_usd: 0, estimated_cost_usd: 4.5, cost_complete: false, cost_basis: "list_price" as const };
+    const { container } = await open([aetherInfo()], true, { ...REPLIES, usage_breakdown: { rows: [], total, truncated: false } });
+    expect(text(container, "spend", ".ui-chart-tile-value")).toBe("$0.00+");
+    expect(tile(container, "spend")?.textContent).toContain("$4.50 at API list price for subscription use; not a per-request charge");
+    expect(tile(container, "spend")?.textContent).not.toContain("Nothing spent yet today");
+  });
+
   test("without usage_breakdown, spend today comes from the agents' cost fields and says so", async () => {
     const { h, container } = await open([aetherInfo("ready", ["noesis"]), archonInfo()], true);
     expect(h.sent.some((sent) => sent.endsWith("usage_breakdown"))).toBe(false);
