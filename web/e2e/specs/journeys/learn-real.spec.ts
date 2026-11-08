@@ -4,7 +4,8 @@ import { access, readFile } from "node:fs/promises";
 import { REAL_MODELS } from "../../harness/real-engine.ts";
 import { until } from "../../harness/process.ts";
 import { connectionsReady, journeyHooks } from "./journey.ts";
-import { assertModel, assertQueuedTurn, attachSlowRequests, capture, checkBinaries, configure, endStreamProbe, holdEngine, practiceTurnFinished, sampleReads, session, startSession, WAIT_MS } from "./learn-real-support.ts";
+import { assistantText } from "./daemon.ts";
+import { assertModel, assertQueuedTurn, attachSlowRequests, capture, checkBinaries, configure, endStreamProbe, holdEngine, practiceTurnFinished, sampleReads, session, startSession, warmBudget, WAIT_MS } from "./learn-real-support.ts";
 import { need, textField } from "./ui.ts";
 
 const real = process.env.JOURNEY_ENGINE === "real";
@@ -28,6 +29,7 @@ test("packaged Learn with Haiku and Luna", async () => {
     try {
       await connectionsReady(run, false);
       await configure(stack, name, 5);
+      await warmBudget(stack);
       const id = await startSession(window, "Learn something new", GOAL, true);
       stopReads = sampleReads(stack, id);
       await assertModel(stack, id, name);
@@ -48,7 +50,9 @@ test("packaged Learn with Haiku and Luna", async () => {
       await capture(window, `${model.model}-budget-stall`);
       await configure(stack, name, 5);
       await window.locator('[data-kind="budget"]').getByRole("button", { name: "Try again" }).click();
-      await until(() => session(stack, id), (value) => value.questions?.some((entry) => entry.result?.correct != null) === true, "the recall grade", WAIT_MS);
+      const graded = await until(() => session(stack, id), (value) => value.questions?.some((entry) => entry.result?.correct != null) === true, "the recall grade", WAIT_MS);
+      expect(graded.questions?.find((entry) => entry.answer?.thinking === "Divide both sides by 2.")?.result?.correct, "the teacher accepts the learner's reasoning").toBe(true);
+      expect(await assistantText(stack, saved.agent)).not.toMatch(/didn.t come from you/i);
       await expect(question.locator("[data-correct]")).toBeVisible({ timeout: WAIT_MS });
       await capture(window, `${model.model}-graded`);
       const finishReads = stopReads;

@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test, type Page } from "@playwright/test";
 import type { Stack } from "../../harness/stack.ts";
+import { until } from "../../harness/process.ts";
 import { agent } from "./daemon.ts";
 import { choose, need, open, textField } from "./ui.ts";
 
@@ -32,11 +33,42 @@ export async function checkBinaries(): Promise<void> {
 export async function configure(stack: Stack, model: string, budget: number): Promise<void> {
   assert.match(model, /^(claude-code\/claude-haiku-5-5|codex\/gpt-6-luna)$/);
   assert.ok(Number.isFinite(budget) && budget >= 0);
-  const reply = await stack.aether.request({ cmd: "noesis_configure", patch: {
-    enabled: true, billing: { allow_api: true }, models: { strong: model, cheap: model },
-    budget: { interactive_usd_daily: budget },
-  } });
+  await until(async () => {
+    try {
+      const reply = await stack.aether.request({ cmd: "noesis_configure", patch: {
+        enabled: true, billing: { allow_api: true }, models: { strong: model, cheap: model },
+        budget: { interactive_usd_daily: budget },
+      } });
+      assert.equal(reply.reply, "noesis_status");
+      return true;
+    } catch (error) {
+      if (error instanceof Error && /Noesis turn\(s\) are in flight/.test(error.message)) return false;
+      throw error;
+    }
+  }, Boolean, "Noesis settings to change after the turn settles", WAIT_MS);
+}
+
+async function interactiveSpend(stack: Stack): Promise<number> {
+  const reply = await stack.aether.request({ cmd: "noesis_status" });
   assert.equal(reply.reply, "noesis_status");
+  const usage = (reply.data as unknown as { spend_today: { interactive: { cost_usd: number; estimated_cost_usd?: number } } }).spend_today.interactive;
+  const spent = usage.cost_usd + (usage.estimated_cost_usd ?? 0);
+  assert.ok(Number.isFinite(spent) && spent >= 0, "interactive spend is nonnegative");
+  return spent;
+}
+
+/** Ensure a one-cent limit will actually be spent before testing recovery. */
+export async function warmBudget(stack: Stack): Promise<void> {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    if (await interactiveSpend(stack) >= 0.01) return;
+    const reply = await stack.aether.request({ cmd: "noesis_create_session", mode: "practice",
+      goal: "Practise a simple linear equation.", idempotency_key: `budget-warmup-${crypto.randomUUID()}` });
+    assert.equal(reply.reply, "noesis_session");
+    const id = String(reply.data.id);
+    assert.match(id, /^ns_/);
+    await until(async () => practiceTurnFinished(stack, id), Boolean, "the budget warm-up turn to finish", WAIT_MS);
+  }
+  assert.ok(await interactiveSpend(stack) >= 0.01, "warm-up spent at least one cent");
 }
 
 interface Session {
