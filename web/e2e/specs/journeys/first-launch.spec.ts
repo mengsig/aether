@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { connection } from "../../harness/pair.ts";
 import { until } from "../../harness/process.ts";
 import { AGENT_LIMITS, isRealModel } from "../../harness/real-engine.ts";
 import { agent, agentIds, cancelLive, capAgent, toolCallInputs } from "./daemon.ts";
@@ -173,6 +174,7 @@ test("the disconnected conversation stays ordered in a narrow, short window", as
   try {
     // Follow-up: the desktop bridge detects an idle link's closure only on the next request.
     await open(window, "Activity", "#/activity");
+    await expect(connection(window, "aether")).not.toHaveAttribute("data-state", "ready");
     await window.goBack();
     await window.setViewportSize({ width: 320, height: SMALLEST_WINDOW.height });
     const page = agentPage(window);
