@@ -252,3 +252,29 @@ test("export and consolidation suggestions send the selected scope unchanged", a
   expect(h.daemon.commands("consolidate_memories")[0]).toMatchObject({ scope: { scope: "global" }, dry_run: true });
   vi.restoreAllMocks();
 });
+
+
+test("maintenance scope suggestions use stored identities rather than workspace roots", async () => {
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:scope-export");
+  vi.spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
+  h = await connected({ features: V2_FEATURES, agents: demoAgents().map(agent => ({ ...agent, scope: { workspace_root: "/workspace/root" } })),
+    script: { ...memoryScript(), list_workspaces: () => ({ tag: "workspaces", data: [{ path: "/other/root", exists: true }] }) } });
+  const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
+  const maintenance = section(root, "Maintenance") as HTMLElement;
+  for (const label of ["Export scope", "Consolidation scope"]) {
+    await type(h, maintenance, label, "github.com/mengsig/aether");
+    const options = [...maintenance.querySelectorAll<HTMLElement>('[role="option"]')];
+    const labels = options.map(option => option.textContent);
+    expect(labels).toContain("Repository github.com/mengsig/aether");
+    expect(labels).toContain("github.com/mengsig/aether · agent");
+    expect(labels.join(" ")).not.toContain("/workspace/root");
+    expect(labels.join(" ")).not.toContain("/other/root");
+    const repository = options.find(option => option.textContent === "Repository github.com/mengsig/aether");
+    expect(repository).toBeDefined();
+    await act(async () => repository?.click());
+    await click(h, maintenance, label === "Export scope" ? "Export memories" : "Plan consolidation");
+  }
+  expect(h.daemon.commands("memory_export")[0]).toMatchObject({ scope: { scope: "repository", id: "github.com/mengsig/aether" } });
+  expect(h.daemon.commands("consolidate_memories")[0]).toMatchObject({ scope: { scope: "repository", id: "github.com/mengsig/aether" }, dry_run: true });
+  vi.restoreAllMocks();
+});

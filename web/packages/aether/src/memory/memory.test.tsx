@@ -190,6 +190,11 @@ test("a rejected memory can be discarded or corrected and retried", async () => 
   reject = false;
   await click(h, document.body, "Save memory");
   expect(h.daemon.commands("create_memory")).toHaveLength(2);
+  expect(document.querySelector('dialog[open]')).toBeNull();
+  await click(h, root, "Create memory");
+  const reopened = document.querySelector('dialog[open]') as HTMLDialogElement;
+  expect((reopened.querySelector("textarea") as HTMLTextAreaElement).value).toBe("");
+  expect(reopened.textContent).not.toContain("Done");
 });
 
 test("an agent-scoped memory is created, filtered and shown by its agent", async () => {
