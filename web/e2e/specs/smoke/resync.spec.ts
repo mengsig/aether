@@ -49,7 +49,7 @@ test("usage and paired devices remain visible in both themes", async ({ page, st
     await page.screenshot({ path: info.outputPath(`chat-usage-${scheme}.png`) });
   }
   await page.goto(`${stack.aether.origin}/#/`);
-  await expect(page.locator('[data-area="spend"]')).toBeVisible();
+  await expect(page.locator('[data-area="spend"] .ui-chart-tile-value')).toBeVisible();
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
     await page.screenshot({ path: info.outputPath(`overview-spend-${scheme}.png`) });
