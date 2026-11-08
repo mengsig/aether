@@ -382,6 +382,19 @@ test("lost start reply stays unconfirmed without resubmission", async () => {
   expect(h.daemon.commands("create_task")).toHaveLength(1);
 });
 
+test("task creation allows unassigned work and marks occupied owners unavailable", async () => {
+  h = await connected({ agents: [{ ...agent, current_task: "tsk_busy" }], script: startScript });
+  const root = await h.mount(<ActivityScreen />);
+  await click(h, root, "Start an agent");
+  await click(h, document.body, "Existing agent task");
+  await type(h, document.body, "What should the agent do?", "Queue work");
+  const option = [...document.body.querySelectorAll<HTMLOptionElement>("select option")].find(item => item.value === agent.id);
+  expect(option?.disabled).toBe(true);
+  expect(option?.textContent).toContain("already owns a task");
+  await click(h, document.body, "Create task");
+  expect(h.daemon.commands("create_task")[0]).toMatchObject({ owner: null, objective: "Queue work" });
+});
+
 test("large activity uses the core virtual list", async () => {
   h = await connected();
   const root = await h.mount(<ActivityScreen />);
