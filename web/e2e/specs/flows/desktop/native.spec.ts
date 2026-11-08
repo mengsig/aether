@@ -63,6 +63,9 @@ async function sendToBackground(electron: ElectronApplication): Promise<void> {
     }
     other.show();
     other.focus();
+    const app = BrowserWindow.getAllWindows().find((entry: { webContents: { getURL(): string } }) => entry.webContents.getURL().startsWith("app://"));
+    if (app === undefined) throw new Error("the app window is missing");
+    app.minimize();
   });
   await expect.poll(() => electron.evaluate(({ BrowserWindow }) => {
     const window = BrowserWindow.getAllWindows().find((entry: { webContents: { getURL(): string } }) => entry.webContents.getURL().startsWith("app://"));
