@@ -99,8 +99,8 @@ async function expectFactsAboveTranscript(page: Locator): Promise<void> {
 /** The order holds at the smallest window the app allows, where the page is shorter than the chat's own minimum
  * and scrolls instead of letting the transcript or the composer draw over a neighbour. */
 async function expectStackAtSmallestWindow(window: Page): Promise<void> {
-  const full = window.viewportSize();
-  assert.ok(full !== null && full.height > SMALLEST_WINDOW.height, "the journey runs in a window taller than the smallest allowed");
+  const full = await window.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  assert.ok(full.width > 0 && full.height > SMALLEST_WINDOW.height, "the journey runs in a window taller than the smallest allowed");
   await window.setViewportSize(SMALLEST_WINDOW);
   try {
     await expectFactsAboveTranscript(agentPage(window));
@@ -162,5 +162,34 @@ test("first-launch journey: start an agent, see it work, message, stop and resum
     await run.window.screencast.stop();
     await test.info().attach("first-launch video", { path: video, contentType: "video/webm" });
     if (id !== undefined) await cancelLive(run.stack, [id]);
+  }
+});
+
+test("the disconnected conversation stays ordered in a narrow, short window", async () => {
+  const { window, stack } = journey();
+  const full = await window.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  assert.ok(full.width > 320 && full.height > SMALLEST_WINDOW.height, "the initial window is larger than the constrained viewport");
+  await stack.aether.stop();
+  try {
+    await window.setViewportSize({ width: 320, height: SMALLEST_WINDOW.height });
+    const page = agentPage(window);
+    const banner = page.getByTestId("conv-connection");
+    await expect(banner).toBeVisible();
+    const lines = await banner.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      return range.getClientRects().length;
+    });
+    assert.ok(lines > 1, "the disconnected banner wraps");
+    const bannerBox = await banner.boundingBox();
+    const transcript = await page.locator(".conv-list").boundingBox();
+    const composer = await page.locator(".cmp").boundingBox();
+    assert.ok(bannerBox !== null && transcript !== null && composer !== null, "the conversation is laid out");
+    const floor = await window.evaluate(() => 8 * Number.parseFloat(getComputedStyle(document.documentElement).fontSize));
+    assert.ok(bannerBox.y + bannerBox.height <= transcript.y, "the banner ends above the transcript");
+    assert.ok(transcript.height >= floor, "the transcript retains its 8rem minimum");
+    assert.ok(transcript.y + transcript.height <= composer.y, "the composer starts below the transcript");
+  } finally {
+    await window.setViewportSize(full);
   }
 });
