@@ -2,6 +2,15 @@
   "tolerance": 0.1,
   "host": "Intel(R) Core(TM) 5 210H, 12 threads, Linux, Node v22.22.2; margins from six runs: wall and heap budgets (enforce: local) hold on this host only; GitHub runners check the ci measures",
   "measures": {
+    "markdown.prose.ms": {
+      "budget": 500,
+      "unit": "ms",
+      "enforce": "local",
+      "fixture": "200 KB prose Markdown",
+      "measured": 31.028,
+      "noise": 2.574,
+      "reason": "Retains the former unit-test throughput limit as a seven-sample median on the local host."
+    },
     "markdown.dense.ms": {
       "budget": 2000,
       "unit": "ms",
