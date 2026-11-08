@@ -129,7 +129,7 @@ test("a reviewed import reaches the store after native confirmation", async () =
   await maintenance.getByRole("button", { name: "Dry run import" }).click();
   await expect(maintenance).toContainText("Would insert");
   await maintenance.getByRole("button", { name: "Import", exact: true }).click();
-  await page().getByRole("dialog", { name: "Import memories?" }).getByRole("button", { name: "Import memories" }).click();
+  await page().getByRole("dialog", { name: "Import memories?" }).getByRole("button", { name: "Import memories", exact: true }).click();
   await new Promise(resolve => setTimeout(resolve, 1000));
   await promisify(execFile)("wtype", ["-k", "Tab", "-k", "Return"], { env: { ...process.env, WAYLAND_DISPLAY: app.waylandDisplay, XDG_RUNTIME_DIR: path.dirname(app.waylandDisplay) } });
   await expect(maintenance).toContainText("Imported", { timeout: 15_000 });
