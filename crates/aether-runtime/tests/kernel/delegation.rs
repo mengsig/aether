@@ -1,6 +1,132 @@
 //! delegation scenarios and fixtures.
 use super::*;
 
+fn delegation_response() -> aether_model::testing::ScriptedResponse {
+    ScriptedClient::tool_call(
+        "delegate",
+        json!({"role":"worker", "objective":"check", "model":"anthropic/claude-sonnet-5-5", "effort":"low", "wait":true}),
+    )
+}
+
+fn extend_delegation_limits(h: &Harness, parent: AgentId, extended: Timestamp, budget: f64) {
+    let updated = h
+        .runtime
+        .update_agent_keyed(
+            parent,
+            AgentUpdate {
+                deadline: Some(DeadlineUpdate::Set(extended)),
+                cost_budget: Some(budget),
+                ..Default::default()
+            },
+            true,
+            Actor::user(),
+            None,
+        )
+        .expect("extend parent limits");
+    assert_eq!(updated.id, parent);
+    assert_eq!(
+        (updated.config.deadline, updated.config.cost_budget),
+        (Some(extended), Some(budget))
+    );
+}
+
+async fn extend_during_resumed_turn(
+    h: &Harness,
+    parent: AgentId,
+    previous: Timestamp,
+) -> Timestamp {
+    h.wait_until(parent, |s| s.kind() == AgentStatusKind::Waiting)
+        .await;
+    let waiting = h.store.agent(parent).unwrap().unwrap();
+    assert!(waiting.stats.turns >= 1);
+    assert_eq!(waiting.config.deadline, Some(previous));
+    let release = h.client.hold_next_response();
+    let requests_before = h.client.requests().len();
+    h.runtime
+        .send_message(parent, vec![ContentBlock::text("continue")], Actor::user())
+        .unwrap();
+    h.wait_for("resumed model request", || {
+        h.client.requests().len() > requests_before
+    })
+    .await;
+    let extended = previous + chrono::Duration::hours(1);
+    extend_delegation_limits(h, parent, extended, 4.0);
+    release.cancel();
+    extended
+}
+
+async fn raised_limits_reach_delegation(after_old_deadline: bool, next_turn: bool) {
+    let mut responses = Vec::new();
+    if next_turn {
+        responses.push(ScriptedClient::tool_call(
+            "wait_for",
+            json!({"timeout_seconds": 3600}),
+        ));
+    }
+    responses.extend([
+        delegation_response(),
+        ScriptedClient::tool_call("complete_task", json!({"summary":"child done"})),
+        ScriptedClient::tool_call("complete_task", json!({"summary":"parent done"})),
+    ]);
+    let h = harness(responses).await;
+    let release = h.client.hold_next_response();
+    let old = now() + chrono::Duration::seconds(if after_old_deadline { 5 } else { 60 });
+    let mut extended = old + chrono::Duration::hours(1);
+    let mut parent_spec = spec("delegate");
+    let config = parent_spec.config.as_mut().unwrap();
+    config.deadline = Some(old);
+    config.cost_budget = Some(1.0);
+    let (parent, _) = h.runtime.create_agent(parent_spec, Actor::user()).unwrap();
+    h.wait_for("parent model request", || !h.client.requests().is_empty())
+        .await;
+    assert!(now() < old, "the original deadline must still be open");
+    extend_delegation_limits(&h, parent.id, extended, 3.0);
+    if after_old_deadline {
+        tokio::time::sleep((old - now()).to_std().unwrap_or_default() + Duration::from_millis(100))
+            .await;
+        assert!(now() > old);
+    }
+    release.cancel();
+    if next_turn {
+        extended = extend_during_resumed_turn(&h, parent.id, extended).await;
+    }
+    let status = h.wait_until(parent.id, |s| s.is_terminal()).await;
+    assert_eq!(status.kind(), AgentStatusKind::Completed);
+    let children = h
+        .store
+        .agents(&AgentFilter {
+            parent: Some(parent.id),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(children.len(), 1, "delegation should create one child");
+    assert_eq!(children[0].config.deadline, Some(extended));
+    assert_eq!(
+        children[0].config.cost_budget,
+        Some(if next_turn { 4.0 } else { 3.0 })
+    );
+    assert_eq!(children[0].status.kind(), AgentStatusKind::Completed);
+    if next_turn {
+        assert!(h.store.agent(parent.id).unwrap().unwrap().stats.turns >= 2);
+    }
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn delegation_in_flight_inherits_raised_limits() {
+    raised_limits_reach_delegation(false, false).await;
+}
+
+#[tokio::test]
+async fn delegation_after_original_deadline_inherits_raised_limits() {
+    raised_limits_reach_delegation(true, false).await;
+}
+
+#[tokio::test]
+async fn delegation_on_next_turn_inherits_raised_limits() {
+    raised_limits_reach_delegation(false, true).await;
+}
+
 #[tokio::test]
 async fn delegate_leaf_setting_reaches_the_child_config() {
     for leaf in [None, Some(false), Some(true)] {
