@@ -22,6 +22,13 @@ test("a local refusal is a definite error reply and other failures remain visibl
   await assert.rejects(requestWithRefusal(async () => { throw new Error("link lost"); }, { req: 7 }), /link lost/);
 });
 
+test("a closed connection remains a bridge failure instead of a forbidden reply", async () => {
+  const bridge = bridgeToArchond(24, []);
+  const conn = await open(bridge);
+  await bridge.handle(APP_SENDER, OWNER, "close", [conn]);
+  await assert.rejects(requestWithRefusal(() => send(bridge, conn, SAY), SAY), /not an open local connection/);
+});
+
 test("memory writes and export require native confirmation before the frame is sent", async () => {
   const sent: Frame[] = [];
   const shown: unknown[] = [];

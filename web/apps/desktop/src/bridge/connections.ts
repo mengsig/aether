@@ -4,7 +4,7 @@
 import { randomUUID } from "node:crypto";
 import type { DaemonKind } from "../security/classes.ts";
 import type { DaemonIdentity } from "../security/confirm.ts";
-import { BridgeRefusal, type Connections } from "../security/validate.ts";
+import { BridgeConnectionLost, BridgeRefusal, type Connections } from "../security/validate.ts";
 import type { DaemonLink, Frame } from "./daemon-link.ts";
 
 /** A daemon main found on this machine, with the socket the renderer never sees. */
@@ -91,9 +91,9 @@ export class ConnectionTable implements Connections {
 
   private entry(owner: number, conn: string): Entry {
     const entry = this.entries.get(conn);
-    if (entry === undefined) throw new BridgeRefusal(`${conn} is not an open local connection`);
-    if (entry.owner !== owner) throw new BridgeRefusal(`${conn} belongs to another window`);
-    if (!entry.link.isOpen) throw new BridgeRefusal(`${conn} is closed`);
+    if (entry === undefined) throw new BridgeConnectionLost(`${conn} is not an open local connection`);
+    if (entry.owner !== owner) throw new BridgeConnectionLost(`${conn} belongs to another window`);
+    if (!entry.link.isOpen) throw new BridgeConnectionLost(`${conn} is closed`);
     return entry;
   }
 }

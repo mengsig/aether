@@ -6,7 +6,7 @@ import type { LocalDaemon, PreferenceKey, PrivilegedAction, SetupResult, SetupSt
 import { revokedRule, type DaemonKind } from "../security/classes.ts";
 import { daemonSlot, valueSlot, type Confirmation } from "../security/confirm.ts";
 import { normalizeOrigin } from "../security/origins.ts";
-import { BridgeRefusal, Validator, type Sender, type ValidCall } from "../security/validate.ts";
+import { BridgeConnectionLost, BridgeRefusal, Validator, type Sender, type ValidCall } from "../security/validate.ts";
 import { ConnectionTable, type LocalDaemonRecord } from "./connections.ts";
 import { okData, type DaemonLink, type Frame } from "./daemon-link.ts";
 import { planAction, type Read } from "./privileged.ts";
@@ -46,7 +46,7 @@ export async function requestWithRefusal(handle: () => Promise<unknown>, frame: 
     return await handle();
   } catch (error) {
     const req = frame !== null && typeof frame === "object" ? (frame as Frame).req : undefined;
-    if (!(error instanceof BridgeRefusal) || !Number.isSafeInteger(req) || (req as number) < 1) throw error;
+    if (!(error instanceof BridgeRefusal) || error instanceof BridgeConnectionLost || !Number.isSafeInteger(req) || (req as number) < 1) throw error;
     return { frame: "reply", id: req, result: { Err: { code: "forbidden", message: error.message } } };
   }
 }
