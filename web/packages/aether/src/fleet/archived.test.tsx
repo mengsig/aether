@@ -141,7 +141,7 @@ test("a live removal does not restart archive pagination", async () => {
   h.app.store.updateAether(info.id, state => ({ ...state, agents: {} }));
   await h.frame();
   expect(send).toHaveBeenCalledTimes(1);
-  const newRoot = { ...must(fixtureAgents(2).agt_00001, "agent"), parent: undefined };
+  const newRoot = { ...must(fixtureAgents(2).agt_00001, "agent"), parent: null };
   h.app.store.updateAether(info.id, state => ({ ...state, roots: [newRoot.id], agents: { ...state.agents, [newRoot.id]: newRoot } }));
   await h.frame();
   expect(send).toHaveBeenCalledTimes(1);
