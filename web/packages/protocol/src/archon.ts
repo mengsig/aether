@@ -1,7 +1,7 @@
 // The Archon daemon protocol as TypeScript types and command builders.
 // Generated from web/schemas/archon.protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: 249cefb63f214b7a4d3c7129f81e0eb48345b37a73ff8db50a043891bb19d1c9
+// Schema SHA-256: 120193a4092990d352c8d24b1c4b63caa21ca33f231aa1d2e2793890a628bcc3
 
 export const PROTOCOL_VERSION = 24;
 
@@ -1516,6 +1516,11 @@ export interface ModelSegment {
   "delivery": string;
   "started_at": string;
 }
+
+/**
+ * How a plan key's model is chosen.
+ */
+export type ModelSource = "tier" | "exact";
 
 export interface Notification {
   "at": string;
@@ -3483,9 +3488,11 @@ export interface RouteContext {
  */
 export interface RunPlan {
   "edited": boolean;
+  "finished"?: boolean;
   "pipeline": string;
   "revision": string;
   "run": PipelineRunId;
+  "settings"?: Array<StageSettings>;
   "stages": Array<StageSummary>;
 }
 
@@ -3570,6 +3577,11 @@ export type ServerFrame = ServerFrameReply | ServerFrameFeed | ServerFrameChange
  * Which layer decided an effective value.
  */
 export type SettingSource = "builtin" | "config" | "global" | "registry" | "repo" | "repo_file";
+
+/**
+ * Whether a run's per-stage setting is the pipeline's or set for the item.
+ */
+export type SettingSource2 = "default" | "override";
 
 /**
  * Model and effort as `provider/model effort`.
@@ -3671,6 +3683,19 @@ export interface StageRunView {
   "stage_id": string;
   "state": StageState;
   "verdict"?: Verdict | null;
+}
+
+/**
+ * One plan key of a run as it resolves now: the model and effort of each
+ * agent its next attempt starts, and the time limit each gets.
+ */
+export interface StageSettings {
+  "choices": Array<ModelChoice>;
+  "effort": SettingSource2;
+  "key": string;
+  "model": ModelSource;
+  "timeout"?: SettingSource2 | null;
+  "timeout_minutes"?: number | null;
 }
 
 /**
