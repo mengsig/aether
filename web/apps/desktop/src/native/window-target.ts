@@ -11,13 +11,18 @@ interface AppWindow {
   webContents: { isCrashed(): boolean; send(channel: string, route: string): void };
 }
 
+export function x11Session(platform: string, ozone: string, session: string | undefined): boolean {
+  return platform === "linux" && (ozone === "x11" || ((ozone === "" || ozone === "auto") && session === "x11"));
+}
+
 /** Restores the app and delivers routes to its renderer. */
-export function windowTarget(window: AppWindow): RouteTarget {
+export function windowTarget(window: AppWindow, remapX11: boolean): RouteTarget {
   const focus = () => {
     if (window.isDestroyed()) throw new Error("the app window is gone");
-    if (window.isMinimized()) window.restore();
+    const minimized = window.isMinimized();
+    if (minimized) window.restore();
     // X11 can unmap a window while Electron still considers it visible.
-    if (window.isVisible()) window.hide();
+    else if (remapX11 && window.isVisible()) window.hide();
     window.show();
     window.focus();
   };

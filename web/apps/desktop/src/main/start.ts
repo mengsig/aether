@@ -18,7 +18,7 @@ import { DeepLinkRouter } from "../native/deep-links.ts";
 import { notificationSink, pickFolder } from "../native/electron.ts";
 import { FolderTokens } from "../native/folder-tokens.ts";
 import { Notifier, notifyWindow } from "../native/notifications.ts";
-import { windowTarget } from "../native/window-target.ts";
+import { windowTarget, x11Session } from "../native/window-target.ts";
 import { ReportWindows } from "../native/report-windows.ts";
 import { RemoteWindows } from "../remote/remote-windows.ts";
 import type { BuildInfo } from "../update/updates.ts";
@@ -183,6 +183,7 @@ export async function startDesktop(options: DesktopOptions): Promise<Desktop> {
   });
   await appWindow.loadURL(APP_ENTRY);
   if (!options.offscreen) appWindow.show();
-  deepLinks.attach(windowTarget(appWindow));
+  const remapX11 = x11Session(process.platform, app.commandLine.getSwitchValue("ozone-platform"), options.env.XDG_SESSION_TYPE);
+  deepLinks.attach(windowTarget(appWindow, remapX11));
   return { appWindow, bridge, remote, reports, preferences, appWindowIds, deepLinks, folders };
 }

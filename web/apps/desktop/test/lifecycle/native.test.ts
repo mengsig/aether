@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { DeepLinkRouter, isAllowedRoute, linksInArgv, parseDeepLink, type RouteTarget } from "../../src/native/deep-links.ts";
-import { windowTarget } from "../../src/native/window-target.ts";
+import { windowTarget, x11Session } from "../../src/native/window-target.ts";
 import { FolderTokens, TOKEN_TTL_MS } from "../../src/native/folder-tokens.ts";
 import { NOTES_PER_MINUTE, Notifier, notifyWindow, plainLine, settleShown, windowInFront } from "../../src/native/notifications.ts";
 import { BridgeRefusal } from "../../src/security/validate.ts";
@@ -176,7 +176,7 @@ test("notification clicks restore and show the app before opening the question r
     isDestroyed: () => false,
     isMinimized: () => minimized,
     isVisible: () => visible,
-    restore: () => { calls.push("restore"); minimized = false; },
+    restore: () => { calls.push("restore"); minimized = false; visible = true; },
     hide: () => { calls.push("hide"); visible = false; },
     show: () => { calls.push("show"); visible = true; },
     focus: () => { calls.push("focus"); },
@@ -186,7 +186,7 @@ test("notification clicks restore and show the app before opening the question r
     },
   };
   const router = new DeepLinkRouter();
-  router.attach(windowTarget(window));
+  router.attach(windowTarget(window, true));
   let click: () => void = () => { throw new Error("notification was not shown"); };
   const notifier = new Notifier({ show: (_content, onClick) => { click = onClick; } },
     (route) => { if (route === undefined) router.focus(); else router.open(route); });
@@ -197,4 +197,14 @@ test("notification clicks restore and show the app before opening the question r
   notifier.notify({ title: "Alert", body: "" });
   click();
   assert.deepEqual(calls, ["hide", "show", "focus"]);
+  calls.length = 0;
+  windowTarget(window, false).focus();
+  assert.deepEqual(calls, ["show", "focus"]);
+});
+
+test("only Linux X11 sessions remap a visible window", () => {
+  assert.equal(x11Session("linux", "x11", "wayland"), true);
+  assert.equal(x11Session("linux", "", "x11"), true);
+  assert.equal(x11Session("linux", "wayland", "x11"), false);
+  assert.equal(x11Session("darwin", "x11", "x11"), false);
 });
