@@ -11,7 +11,6 @@ import { applyTheme, isThemePreference, resolveTheme, systemPrefersDark, ThemePr
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./app.css";
-import { connectDesktop } from "./desktop.ts";
 import { detectHost } from "./host.ts";
 import { acceptPairLink } from "./pair-link.ts";
 import { ShellRoot } from "./root.tsx";
@@ -37,7 +36,10 @@ async function boot(): Promise<void> {
   acceptPairLink(window.location, window.history);
   registerRoutes(appRoutes);
   const app = createApp(host);
-  if (host.desktop !== undefined) connectDesktop(app, host.desktop, document);
+  if (host.desktop !== undefined) {
+    const { connectDesktop } = await import("./desktop.ts");
+    connectDesktop(app, host.desktop, document);
+  }
   const persist = (next: ThemePreference) => {
     host.storage.set(THEME_KEY, next).catch((error: unknown) => app.store.report(`The theme was not saved: ${String(error)}`));
   };

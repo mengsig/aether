@@ -4,6 +4,7 @@ import { Button, EmptyState, ErrorState, Field } from "@aether-ui/ui";
 import { useEffect, useMemo, useState, useSyncExternalStore, type FormEvent } from "react";
 import { DesktopConnect } from "./desktop-connect.tsx";
 import { forgetPairCode, offeredPairCode } from "./pair-link.ts";
+import "./pair-screen.css";
 
 type Daemon = "aether" | "archon";
 const NAMES: Readonly<Record<Daemon, string>> = { aether: "Aether", archon: "Archon" };
