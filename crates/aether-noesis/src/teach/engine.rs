@@ -89,6 +89,10 @@ pub enum Input {
     ToolResults(Vec<ToolResult>),
     /// A learner's answer: the result of the parked `noesis.ask` call.
     Answer(Value),
+    /// Service guidance for the next model call only; never a transcript entry.
+    Guidance(String),
+    /// A service failure shown as an assistant message.
+    Failure(String),
 }
 
 /// One model call's output: visible text and a batch of tool calls.

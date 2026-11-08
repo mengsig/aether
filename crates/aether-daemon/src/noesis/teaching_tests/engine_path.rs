@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 use super::*;
 
 mod live_seal;
+mod recall;
 
 const ENGINE_MODEL: &str = "faux-engine/tutor";
 const KEY_SECRET: &str = "Paris has been the capital since 987.";

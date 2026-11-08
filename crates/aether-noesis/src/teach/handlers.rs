@@ -100,6 +100,13 @@ impl<E: Engine> Teaching<'_, E> {
         if row.agent != caller.agent || driving_agent(&row) != agent {
             return refuse("this agent no longer drives the session");
         }
+        if matches!(tool, ToolName::Ask | ToolName::ProbeDone)
+            && let Some(question) = db::unjudged_recall(self.conn(), session)?
+        {
+            return refuse(format!(
+                "judge the answered recall question {question} with noesis.judge_recall before moving on"
+            ));
+        }
         let args = match tools::parse(tool, call.input.clone()) {
             Ok(args) => args,
             Err(error) => return refuse(error.to_string()),

@@ -17,6 +17,8 @@ use super::{TeachError, question, role_of};
 use crate::budget::{INTERACTIVE_BUDGET_SETTING, Lane, Refusal};
 use crate::tools::{self, SEALED, ToolName};
 
+const JUDGMENT_ATTEMPTS: usize = 3;
+
 impl<E: Engine> Teaching<'_, E> {
     /// Run the session's agent until it waits, and on a hand-off run the new
     /// Teacher's first turn too. A failed turn leaves its inputs persisted,
@@ -96,6 +98,7 @@ impl<E: Engine> Teaching<'_, E> {
         if db::open_question(self.conn(), session)?.is_some() {
             return Ok(TurnEnd::AwaitingAnswer);
         }
+        self.guide_recall_judgment(session, &caller.agent)?;
         for _ in 0..MAX_STEPS {
             let step = self.model_step(session, &caller.agent)?;
             let (end, results) = self.run_calls(session, caller, step, turn)?;
@@ -103,6 +106,7 @@ impl<E: Engine> Teaching<'_, E> {
                 let input = Input::ToolResults(results);
                 self.deliver_queued(session, &caller.agent, Some(input))?;
             }
+            self.require_recall_judgment(session, &caller.agent, turn)?;
             if let Some(end) = end {
                 return Ok(end);
             }
@@ -127,6 +131,10 @@ impl<E: Engine> Teaching<'_, E> {
         };
         turn.own.extend(own.iter().cloned());
         if step.calls.is_empty() {
+            if db::unjudged_recall(self.conn(), session)?.is_some() {
+                turn.steps.push(pending);
+                return Ok((None, Vec::new()));
+            }
             turn.steps.push(pending);
             return Ok((Some(TurnEnd::AwaitingLearner), Vec::new()));
         }
@@ -152,6 +160,45 @@ impl<E: Engine> Teaching<'_, E> {
         let results = self.engine_results(session, &own, &pending, &owed)?;
         turn.steps.push(pending);
         Ok((end, results))
+    }
+
+    pub(super) fn require_recall_judgment(
+        &mut self,
+        session: &str,
+        agent: &str,
+        turn: &mut Turn,
+    ) -> Result<(), TeachError> {
+        let Some(question) = db::unjudged_recall(self.conn(), session)? else {
+            turn.judgment_attempts = 0;
+            return Ok(());
+        };
+        turn.judgment_attempts += 1;
+        if turn.judgment_attempts >= JUDGMENT_ATTEMPTS {
+            let message = "I couldn't assess your recall answer. Please send a message to retry.";
+            self.engine.deliver(agent, Input::Failure(message.into()))?;
+            super::sessions::set_turn_pending(self.conn(), session, false)?;
+            return Err(EngineError::Failed(format!(
+                "the teaching agent did not judge answered recall question {question} after {JUDGMENT_ATTEMPTS} attempts"
+            )).into());
+        }
+        self.guide_recall_judgment(session, agent)?;
+        debug_assert!(turn.judgment_attempts < JUDGMENT_ATTEMPTS);
+        Ok(())
+    }
+
+    pub(super) fn guide_recall_judgment(
+        &mut self,
+        session: &str,
+        agent: &str,
+    ) -> Result<(), TeachError> {
+        let Some(question) = db::unjudged_recall(self.conn(), session)? else {
+            return Ok(());
+        };
+        let reminder = format!(
+            "System guidance, not a learner message: the answered recall question {question} still needs your judgment. Call noesis.judge_recall before moving on or waiting for the learner."
+        );
+        self.engine.deliver(agent, Input::Guidance(reminder))?;
+        Ok(())
     }
 
     /// The results the engine is owed for a step, sealed against the
@@ -338,6 +385,7 @@ pub(super) struct Turn {
     pub(super) steps: Vec<PendingStep>,
     /// Every sealed text the turn's calls carried.
     own: Vec<String>,
+    judgment_attempts: usize,
     /// Where the turn's events start in the pending event list.
     pub(super) events_from: usize,
 }
@@ -358,6 +406,7 @@ impl Turn {
         Self {
             steps: Vec::new(),
             own: Vec::new(),
+            judgment_attempts: 0,
             events_from,
         }
     }

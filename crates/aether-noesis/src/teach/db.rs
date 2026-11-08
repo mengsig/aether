@@ -298,6 +298,25 @@ pub(super) fn judge_recall(
     Ok(changed == 1)
 }
 
+/// The latest answered recall still requiring the agent's judgment.
+pub(super) fn unjudged_recall(
+    conn: &Connection,
+    session: &str,
+) -> Result<Option<String>, TeachError> {
+    let question = conn
+        .query_row(
+            "SELECT id FROM questions WHERE session = ?1 AND rowid =
+         (SELECT max(rowid) FROM questions WHERE session = ?1)
+         AND kind = 'recall' AND answered_at IS NOT NULL AND correct IS NULL
+         AND json_extract(answer, '$.dont_know') = 0",
+            [session],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    debug_assert!(question.as_ref().is_none_or(|id| !id.is_empty()));
+    Ok(question)
+}
+
 /// A committed answer whose delivery to the agent is still owed.
 #[derive(Clone, PartialEq)]
 pub(super) struct OwedAnswer {

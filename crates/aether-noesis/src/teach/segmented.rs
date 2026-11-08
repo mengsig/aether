@@ -167,6 +167,7 @@ impl<E: Engine> Teaching<'_, E> {
         if open.is_some() {
             return Ok(Some(TurnEnd::AwaitingAnswer));
         }
+        self.guide_recall_judgment(&advance.session, &current.caller.agent)?;
         Ok(None)
     }
 
@@ -222,6 +223,11 @@ impl<E: Engine> Teaching<'_, E> {
                     Some(Input::ToolResults(results)),
                 )?;
             }
+            self.require_recall_judgment(
+                &advance.session,
+                &current.caller.agent,
+                &mut current.turn,
+            )?;
             Ok(end
                 .or_else(|| (current.turn.steps.len() == MAX_STEPS).then_some(TurnEnd::StepLimit)))
         });

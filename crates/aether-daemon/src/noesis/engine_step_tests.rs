@@ -303,7 +303,7 @@ async fn malformed_native_blocks_fail_before_returning_the_json_reply() {
 #[test]
 fn answer_and_unrelated_tool_results_keep_their_origins_in_subscription_prompts() {
     let mut answer = json!({"question":"q1", "text":"42", "thinking":"I divided", "chosen":["forty two"], "answer_key":"42"});
-    let learner = super::super::learner_answer(&mut answer);
+    let learner = super::super::engine::learner_answer(&mut answer);
     let history = vec![
         Message::assistant_text("Question?"),
         Message {

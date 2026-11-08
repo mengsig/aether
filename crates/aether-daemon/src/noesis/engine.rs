@@ -122,6 +122,7 @@ impl EngineHost {
 pub(super) struct AetherEngine<'a> {
     host: &'a EngineHost,
     charge: Option<OpenCharge>,
+    guidance: Option<(String, String)>,
 }
 
 /// One agent's admission and what its steps have spent under it.
@@ -133,7 +134,11 @@ struct OpenCharge {
 
 impl<'a> AetherEngine<'a> {
     pub(super) fn new(host: &'a EngineHost) -> Self {
-        Self { host, charge: None }
+        Self {
+            host,
+            charge: None,
+            guidance: None,
+        }
     }
 
     /// The admission `agent` steps under: kept from its last step, else new.
@@ -293,6 +298,7 @@ impl AetherEngine<'_> {
                 blocks.push(ContentBlock::Text { text: learner });
                 blocks
             }
+            Input::Guidance(_) | Input::Failure(_) => Vec::new(),
         }
     }
 
@@ -561,7 +567,21 @@ impl Engine for AetherEngine<'_> {
     }
 
     fn deliver(&mut self, agent: &str, input: Input) -> Result<Option<u64>, EngineError> {
+        if let Input::Guidance(text) = input {
+            debug_assert!(!agent.is_empty() && !text.trim().is_empty());
+            self.guidance = Some((agent.to_string(), text));
+            return Ok(None);
+        }
         let row = self.agent(agent)?;
+        if let Input::Failure(text) = input {
+            return self
+                .record(
+                    &row,
+                    MessageRole::Assistant,
+                    vec![ContentBlock::Text { text }],
+                )
+                .map(Some);
+        }
         let history = self.transcript(row.id)?;
         let blocks = self.blocks_of(&history, input);
         if blocks.is_empty() {
@@ -587,6 +607,12 @@ impl Engine for AetherEngine<'_> {
             return Err(not_sent(format!("agent {agent} is {}", row.status.kind())));
         }
         let mut request = self.request(&row, self.transcript(row.id)?)?;
+        if let Some((for_agent, guidance)) = self.guidance.take() {
+            if for_agent != agent {
+                return Err(not_sent("guidance belongs to a different agent"));
+            }
+            with_note(&mut request.messages, &guidance);
+        }
         let mut unrecorded = None;
         let replies = kept_reply(live, |reminder| {
             if let Some(reminder) = reminder {
@@ -799,7 +825,7 @@ fn message_draft(agent: &Agent, role: MessageRole, content: Vec<ContentBlock>) -
 }
 
 /// Separate the learner's words from the tool's grading metadata.
-fn learner_answer(payload: &mut serde_json::Value) -> String {
+pub(super) fn learner_answer(payload: &mut serde_json::Value) -> String {
     let mut learner = serde_json::Map::new();
     if let Some(fields) = payload.as_object_mut() {
         for name in [

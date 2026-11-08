@@ -499,6 +499,14 @@ fn answered_recall_delivers_the_expected_answer_after_a_failed_delivery() {
         ..Answer::default()
     };
     assert!(t.answer(&id, &open, &answer).is_err());
+    t.engine_mut().script(
+        Agent::Prober,
+        "",
+        vec![(
+            "noesis.judge_recall",
+            json!({"question": open, "correct": true}),
+        )],
+    );
     t.engine_mut().script(Agent::Prober, "Correct.", vec![]);
     t.advance(&id).unwrap();
     let agent = session(&t, &id).agent;

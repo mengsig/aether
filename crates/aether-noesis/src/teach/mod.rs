@@ -25,6 +25,8 @@ mod history_tests;
 #[cfg(test)]
 mod parity;
 #[cfg(test)]
+mod recall_tests;
+#[cfg(test)]
 mod recovery;
 #[cfg(test)]
 mod regressions;
