@@ -187,6 +187,8 @@ test("memory export opens a native save dialog and writes the daemon artifact", 
   await expect.poll(async () => createHash("sha256").update(await readFile(file)).digest("hex")).toBe(digest);
   const saved = await readFile(file, "utf8");
   expect(saved.split("\n").slice(1), "the saved records match the daemon export").toEqual(artifact.split("\n").slice(1));
-  expect(JSON.parse(saved.split("\n")[0]).format).toBe("aether.memory-export");
+  const header = saved.split("\n")[0];
+  assert.ok(header !== undefined, "the saved export has a header");
+  expect(JSON.parse(header).format).toBe("aether.memory-export");
   await screenshot("memory-export-saved");
 });

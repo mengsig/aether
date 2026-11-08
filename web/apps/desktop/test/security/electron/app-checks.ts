@@ -33,7 +33,7 @@ export async function appWindowChecks(ctx: Context): Promise<void> {
     assert.deepEqual(seen, {
       type: "object", frozen: true, require: "undefined", process: "undefined",
       keys: ["close", "connect", "diagnostics", "discover", "getPreference", "notify", "onClose", "onDeepLink", "openExternal",
-        "openRemote", "pickDirectory", "privileged", "request", "setPreference", "setup", "startDaemon", "subscribe", "version"],
+        "openRemote", "pickDirectory", "privileged", "request", "saveMemoryExport", "setPreference", "setup", "startDaemon", "subscribe", "version"],
     });
   });
   await ctx.check("app:// serves web/dist byte for byte", async () => {
