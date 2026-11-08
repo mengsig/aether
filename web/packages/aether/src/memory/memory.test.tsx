@@ -30,6 +30,7 @@ test("lists stored memories, filters, creates, pins, confirms forget, and restor
   await click(h, document.body, "Save memory");
   expect(h.daemon.commands("create_memory")[0]).toMatchObject({ spec: { text: "New memory", kind: "fact", scope: { scope: "global" }, tags: ["one", "two"] } });
   await h.settle();
+  expect(h.app.store.get().reports.at(-1)).toMatchObject({ message: "Memory created", tone: "success" });
   expect(root.textContent).toContain("New memory");
   await click(h, root, "Pin");
   expect(h.daemon.commands("pin_memory")[0]).toMatchObject({ id: memory.id, pinned: true });

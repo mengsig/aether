@@ -229,6 +229,14 @@ describe("ipc", () => {
     expect(desktop.close).toHaveBeenCalledWith("c1");
   });
 
+  it("treats a missing local socket as a disconnected daemon, preserving other failures", async () => {
+    const missing = bridge({ connect: vi.fn().mockRejectedValue(new Error("connect ENOENT /private/r.sock")) });
+    await expect(ipcTransport(missing.desktop, () => {}).open("archon-local", () => {}, () => {}))
+      .rejects.toMatchObject({ code: "disconnected", message: "The local daemon is not connected" });
+    const denied = bridge({ connect: vi.fn().mockRejectedValue(new Error("access denied")) });
+    await expect(ipcTransport(denied.desktop, () => {}).open("archon-local", () => {}, () => {})).rejects.toThrow("access denied");
+  });
+
   it("moves to backoff and retries when main reports a closed link", async () => {
     vi.useFakeTimers();
     try {

@@ -1,6 +1,6 @@
 import type { aether } from "@aether-ui/protocol";
 import { Badge, Button, Field, Sheet, Segmented } from "@aether-ui/ui";
-import { connectionDraftKey, useDraft, usePermission } from "@aether-ui/core";
+import { connectionDraftKey, useApp, useDraft, usePermission } from "@aether-ui/core";
 import { Action, RunNote, useRun } from "../controls/kit.tsx";
 import { invariant } from "../fleet/invariant.ts";
 import { Repository } from "./Repository.tsx";
@@ -11,6 +11,7 @@ export function CreateMemory({ conn, open, close, discard, refresh }: { conn: st
   const draft = useDraft(connectionDraftKey("memory", conn, "create"), { text: "", kind: "fact", target: "global", repository: "", agent: "", tags: "" });
   const { text, kind, target, repository, agent, tags } = draft.value;
   const run = useRun(conn);
+  const app = useApp();
   const scope = createScope(target, repository.trim(), agent);
   const command = { cmd: "create_memory", spec: { text: text.trim(), kind, scope: scope ?? { scope: "global" }, tags: tags.split(",").map(t => t.trim()).filter(Boolean) } };
   const disabled = usePermission(conn, command).refusal !== null;
@@ -23,7 +24,7 @@ export function CreateMemory({ conn, open, close, discard, refresh }: { conn: st
     <Field label="Tags" hint="Comma separated" value={tags} onChange={e => draft.update({ tags: e.target.value })} disabled={disabled} />
     <div className="b3-row">{[...new Set(tags.split(",").map(t => t.trim()).filter(Boolean))].map(tag => <Badge key={tag}>{tag}</Badge>)}</div>
     <Action data-testid="memory-create-submit" variant="primary" conn={conn} command={command} label="Save memory" blocked={text.trim() === "" ? "Enter memory text" : scope === null ? SCOPE_BLOCK[target] ?? null : null} busy={run.status.state === "busy"}
-      onRun={async () => { if (await run.send(command)) { draft.clearIfUnchanged(); await refresh(); discard(); } }} />
+      onRun={async () => { if (await run.send(command)) { app.store.report("Memory created", conn, undefined, "success"); draft.clearIfUnchanged(); await refresh(); discard(); } }} />
     <RunNote status={run.status} />
     {run.status.state === "failed" && <Button variant="quiet" onClick={() => { draft.clear(); discard(); }}>Discard</Button>}
   </div></Sheet>;

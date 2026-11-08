@@ -198,7 +198,9 @@ export function invocationMeta(events: readonly aether.Event[], agent: string): 
     if (event.agent_id !== agent) continue;
     const kind = event.kind;
     if (kind.type === "invocation.completed") {
-      meta.set(kind.invocation, { model: modelOf(kind.model), usage: kind.usage, durationMs: kind.duration_ms, error: null });
+      const u = kind.usage;
+      const absent = !u.cost_complete && u.cost_usd === 0 && u.input_tokens === 0 && u.output_tokens === 0 && u.cache_read_tokens === 0 && u.cache_write_tokens === 0 && (u.reasoning_tokens ?? 0) === 0 && (u.estimated_cost_usd ?? 0) === 0;
+      meta.set(kind.invocation, { model: modelOf(kind.model), usage: absent ? null : u, durationMs: kind.duration_ms, error: null });
     } else if (kind.type === "invocation.failed") {
       meta.set(kind.invocation, { model: null, usage: null, durationMs: null, error: kind.error });
     }
@@ -208,7 +210,7 @@ export function invocationMeta(events: readonly aether.Event[], agent: string): 
 
 /** How one tool call went, from its `tool.*` events: keyed by the call's tool_use_id. */
 export interface ToolActivity {
-  readonly state: "running" | "ok" | "error";
+  readonly state: "running" | "ok" | "error" | "interrupted";
   readonly durationMs: number | null;
 }
 
@@ -227,6 +229,10 @@ export function toolActivity(events: readonly aether.Event[], agent: string): Re
     else if (kind.type === "tool.started") set(kind.call, { state: "running", durationMs: null });
     else if (kind.type === "tool.succeeded") set(kind.call, { state: kind.outcome.is_error === true ? "error" : "ok", durationMs: kind.outcome.duration_ms ?? null });
     else if (kind.type === "tool.failed") set(kind.call, { state: "error", durationMs: kind.duration_ms ?? null });
+    else if (kind.type === "tool.cancelled") set(kind.call, { state: "interrupted", durationMs: null });
+    else if (kind.type === "custom" && kind.name === "tool.interrupted" && kind.payload !== null && typeof kind.payload === "object" && "call" in kind.payload && typeof kind.payload.call === "string") {
+      set(kind.payload.call, { state: "interrupted", durationMs: null });
+    }
   }
   invariant(activity.size <= providerIds.size, "activity is only kept for requested calls");
   return activity;
