@@ -9,8 +9,11 @@ import { must } from "./fixture/must.ts";
 afterEach(() => { document.body.innerHTML = ""; });
 
 async function openArchive(container: HTMLElement) {
-  const select = must(container.querySelector<HTMLSelectElement>(".fleet-bar > label select") ?? undefined, "archive filter");
-  await act(async () => { select.value = "archived"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+  const field = must([...container.querySelectorAll(".ui-picker")].find(node => node.querySelector("label")?.textContent === "Archive"), "archive filter");
+  const trigger = must(field.querySelector<HTMLButtonElement>('[role="combobox"]') ?? undefined, "archive picker");
+  await act(async () => trigger.click());
+  const option = must([...field.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent?.trim() === "Archived"), "Archived option");
+  await act(async () => option.click());
 }
 
 async function click(container: HTMLElement, label: string) {

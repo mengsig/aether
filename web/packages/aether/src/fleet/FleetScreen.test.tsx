@@ -137,9 +137,7 @@ describe("the fleet list", () => {
     const send = vi.spyOn(h.app, "send").mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRequest = reject; }))
       .mockResolvedValueOnce({ reply: "agents_page", data: { agents: [] } });
     const container = await h.mount(<FleetScreen />);
-    const select = container.querySelector<HTMLSelectElement>(".fleet-bar > label select");
-    if (!select) throw new Error("Archive filter missing");
-    await act(async () => { select.value = "archived"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    await pick(container, "Archive", "Archived");
     expect(container.textContent).toContain("Loading archived agents");
     expect(container.textContent).not.toContain("No archived agents");
     await act(async () => rejectRequest(new Error("offline")));
@@ -159,9 +157,7 @@ describe("the fleet list", () => {
     let resolveRequest: (reply: { reply: string; data: { agents: typeof archived[] } }) => void = () => { throw new Error("request not started"); };
     const send = vi.spyOn(h.app, "send").mockImplementation(() => new Promise(resolve => { resolveRequest = resolve; }));
     const container = await h.mount(<FleetScreen />);
-    const select = container.querySelector<HTMLSelectElement>(".fleet-bar > label select");
-    if (!select) throw new Error("Archive filter missing");
-    await act(async () => { select.value = "archived"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    await pick(container, "Archive", "Archived");
     h.app.store.updateAether(info.id, state => ({ ...state, agents: { ...state.agents, agt_00000: { ...must(state.agents.agt_00000, "agent"), name: "updated" } } }));
     await h.frame();
     expect(send).toHaveBeenCalledTimes(1);
@@ -179,10 +175,8 @@ describe("the fleet list", () => {
     let resolveRequest: (reply: { reply: string; data: { agents: typeof archived[] } }) => void = () => { throw new Error("request not started"); };
     vi.spyOn(h.app, "send").mockImplementation(() => new Promise(resolve => { resolveRequest = resolve; }));
     const container = await h.mount(<FleetScreen />);
-    const select = container.querySelector<HTMLSelectElement>(".fleet-bar > label select");
-    if (!select) throw new Error("Archive filter missing");
-    await act(async () => { select.value = "archived"; select.dispatchEvent(new Event("change", { bubbles: true })); });
-    await act(async () => { select.value = "active"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    await pick(container, "Archive", "Archived");
+    await pick(container, "Archive", "Active fleet");
     await act(async () => resolveRequest({ reply: "agents_page", data: { agents: [archived] } }));
     expect(h.app.store.get().aether[info.id]?.agents[archived.id]).toBeUndefined();
     expect(container.textContent).not.toContain("Loading archived agents");
