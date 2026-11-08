@@ -29,6 +29,16 @@ test("a closed connection remains a bridge failure instead of a forbidden reply"
   await assert.rejects(requestWithRefusal(() => send(bridge, conn, SAY), SAY), /not an open local connection/);
 });
 
+test("an oversized import receives a definite refusal", async () => {
+  const host = { findDaemons: async () => [{ id: "aether:local", kind: "aether", label: "test", socket: "/private/aether.sock", reachable: true }],
+    openLink: async () => ({ isOpen: true, close: () => {} }) } as unknown as BridgeHost;
+  const bridge = new Bridge(VALIDATOR, host);
+  const conn = await bridge.handle(APP_SENDER, OWNER, "connect", ["aether:local"]) as string;
+  const frame = { cmd: "memory_import", artifact: "x".repeat(1024 * 1024), dry_run: true, req: 7 };
+  const reply = await requestWithRefusal(() => send(bridge, conn, frame), frame);
+  assert.deepEqual(reply, { frame: "reply", id: 7, result: { Err: { code: "forbidden", message: "The frame exceeds the 1 MiB limit" } } });
+});
+
 test("memory writes and export require native confirmation before the frame is sent", async () => {
   const sent: Frame[] = [];
   const shown: unknown[] = [];
