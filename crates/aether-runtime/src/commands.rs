@@ -162,6 +162,13 @@ pub(crate) struct Preflight<'a> {
     /// Hold the new agent's run to the daemon's `run_budget_usd`. Set by
     /// `delegate`; a person creating an agent is never refused for it.
     pub run_budget: bool,
+    /// Resolve delegated limits against the current parent under the hold.
+    pub inherit_limits: bool,
+    #[cfg(test)]
+    pub before_hold: Option<(
+        &'a std::sync::mpsc::Sender<()>,
+        &'a std::sync::mpsc::Receiver<()>,
+    )>,
     /// Only the delegation path can authorize a managed worktree outside its
     /// parent's physical root. Ordinary create requests never set this.
     pub isolated_workspace: Option<&'a std::path::Path>,
