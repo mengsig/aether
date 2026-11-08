@@ -15,7 +15,9 @@ use aether_core::noesis::{ConceptId, NoesisSession, SessionMode};
 use aether_noesis::Noesis;
 use aether_noesis::budget::INTERACTIVE_BUDGET_SETTING;
 use aether_noesis::teach::records::{Answer, EvidenceDraft, Mode, NoesisEvent, SessionView};
-use aether_noesis::teach::{Advance, EngineError, TeachError, Teaching, TeachingBuffer};
+use aether_noesis::teach::{
+    Advance, EngineError, ModelCall, Step, TeachError, Teaching, TeachingBuffer,
+};
 use aether_protocol::noesis::{AnswerInput, DeleteSessionGraph, EvidenceBundle};
 use aether_protocol::{Command, ErrorReply, NOESIS_BUDGET_EXHAUSTED, Reply};
 use aether_runtime::Runtime;
@@ -313,33 +315,76 @@ async fn run_segments<'a>(
     let mut result = None;
     let mut first = true;
     loop {
-        let undelivered = first.then(|| std::mem::take(&mut desk.undelivered));
-        let Some(noesis) = &desk.noesis else {
-            return Err(ErrorReply::internal("teaching store stopped during a turn"));
-        };
-        let mut teaching = Teaching::new(noesis, engine);
-        teaching.restore_buffer(buffer);
-        if let Some(undelivered) = undelivered {
-            teaching.restore_undelivered(undelivered);
-            first = false;
-        }
-        match teaching.advance_until_call(&mut state, result.take()) {
-            Ok(Some(call)) => {
-                (engine, buffer) = teaching.into_parts();
+        let segment = run_segment(&mut desk, engine, buffer, &mut state, result.take(), first)?;
+        first = false;
+        match segment {
+            Segment::Call {
+                engine: next,
+                buffer: pending,
+                call,
+            } => {
+                engine = next;
+                buffer = pending;
                 drop(desk);
                 result = Some(call.run(&mut engine));
                 desk = ticket.desk.lock().await;
             }
-            done => {
-                let output = Output {
-                    events: teaching.take_events(),
-                    evidence: teaching.take_evidence(),
-                };
-                let undelivered = teaching.take_undelivered();
-                drop(teaching);
-                desk.undelivered = undelivered;
-                return Ok((desk, done.map(|_| ()), output));
-            }
+            Segment::Done { result, output } => return Ok((desk, result, output)),
+        }
+    }
+}
+
+enum Segment<'a> {
+    Call {
+        engine: AetherEngine<'a>,
+        buffer: TeachingBuffer,
+        call: ModelCall,
+    },
+    Done {
+        result: Result<(), TeachError>,
+        output: Output,
+    },
+}
+
+fn run_segment<'a>(
+    desk: &mut Desk,
+    engine: AetherEngine<'a>,
+    buffer: TeachingBuffer,
+    state: &mut Advance,
+    result: Option<Result<Step, TeachError>>,
+    first: bool,
+) -> Result<Segment<'a>, ErrorReply> {
+    let undelivered = first.then(|| std::mem::take(&mut desk.undelivered));
+    let noesis = desk
+        .noesis
+        .as_ref()
+        .ok_or_else(|| ErrorReply::internal("teaching store stopped during a turn"))?;
+    let mut teaching = Teaching::new(noesis, engine);
+    teaching.restore_buffer(buffer);
+    if let Some(undelivered) = undelivered {
+        teaching.restore_undelivered(undelivered);
+    }
+    match teaching.advance_until_call(state, result) {
+        Ok(Some(call)) => {
+            let (engine, buffer) = teaching.into_parts();
+            Ok(Segment::Call {
+                engine,
+                buffer,
+                call,
+            })
+        }
+        done => {
+            let output = Output {
+                events: teaching.take_events(),
+                evidence: teaching.take_evidence(),
+            };
+            let undelivered = teaching.take_undelivered();
+            drop(teaching);
+            desk.undelivered = undelivered;
+            Ok(Segment::Done {
+                result: done.map(|_| ()),
+                output,
+            })
         }
     }
 }
