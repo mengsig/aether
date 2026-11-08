@@ -152,7 +152,7 @@ impl<E: Engine> Teaching<'_, E> {
         let open = match db::open_question(self.conn(), &advance.session) {
             Ok(open) => open,
             Err(error) => {
-                self.finish_current(advance, Err(error.into()))?;
+                self.finish_current(advance, Err(error))?;
                 return Err(TeachError::Corrupt(
                     "failed turn unexpectedly succeeded".into(),
                 ));
