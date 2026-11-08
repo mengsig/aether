@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { connectionDraftKey, useApp, useDraft, useReadPermission, useReread } from "@aether-ui/core";
+import { connectionDraftKey, useApp, useDraft, usePermission, useReread } from "@aether-ui/core";
 import type { aether, RouteProps } from "@aether-ui/protocol";
 import { Button, EmptyState, Field, Segmented, Switch } from "@aether-ui/ui";
 import { invariant } from "../fleet/invariant.ts";
@@ -28,7 +28,7 @@ export default function MemoryScreen({ params }: RouteProps) {
   const filterReady = scope === "all" || scope === "global" || (scope === "repository" ? repository.trim() !== "" : agent !== "");
   const entry = useReread(conn, "memory:list", filterReady ? command : null, ["memories"]);
   const repositoryChoices = useReread(conn, "memory:repositories", scope === "repository" ? { cmd: "memories", query: { limit: 100, include_forgotten: true, include_superseded: true } } : null, ["memories"]);
-  const permission = useReadPermission(conn, proposed);
+  const permission = usePermission(conn, proposed);
   const proposals = useReread(conn, "memory:proposals", permission.refusal === null ? proposed : null, ["memories"]);
   const refresh = async () => {
     if (filterReady) await app.reread(conn, "memory:list", command, ["memories"]);
