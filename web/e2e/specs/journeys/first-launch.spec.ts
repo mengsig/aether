@@ -104,6 +104,7 @@ async function expectStackAtSmallestWindow(window: Page): Promise<void> {
   assert.ok(full.width > 0 && full.height > SMALLEST_WINDOW.height, "the journey runs in a window taller than the smallest allowed");
   await window.setViewportSize(SMALLEST_WINDOW);
   try {
+    assert.deepEqual(await window.evaluate(() => ({ width: innerWidth, height: innerHeight })), SMALLEST_WINDOW);
     await expectFactsAboveTranscript(agentPage(window));
   } finally {
     await window.setViewportSize(full);
@@ -177,9 +178,14 @@ test("the disconnected conversation stays ordered in a narrow, short window", as
     await expect(connection(window, "aether")).not.toHaveAttribute("data-state", "ready");
     await window.goBack();
     await window.setViewportSize({ width: 320, height: SMALLEST_WINDOW.height });
+    assert.deepEqual(await window.evaluate(() => ({ width: innerWidth, height: innerHeight })), { width: 320, height: SMALLEST_WINDOW.height });
     const page = agentPage(window);
     const banner = page.getByTestId("conv-connection");
     await expect(banner).toBeVisible();
+    // Exercise the same layout with a long connection label.
+    await banner.evaluate((element) => {
+      element.textContent = "Connection to the Aether daemon for a long named workspace was lost. Reconnecting to restore messages and agent status…";
+    });
     const lines = await banner.evaluate((element) => {
       const range = document.createRange();
       range.selectNodeContents(element);
