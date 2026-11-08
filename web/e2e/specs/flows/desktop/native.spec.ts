@@ -50,10 +50,8 @@ function window(): Page {
 /** The toast that says how an outside link went. */
 const toast = (page: Page, text: string | RegExp) => page.locator(".ui-toast").filter({ hasText: text });
 
-/** Hands the focus to a report window and stops Playwright from faking it for the app window. */
+/** Hands the focus to a report window. */
 async function sendToBackground(page: Page): Promise<void> {
-  const session = await page.context().newCDPSession(page);
-  await session.send("Emulation.setFocusEmulationEnabled", { enabled: false });
   await route(page, `#/archon/items/${item}`);
   await page.locator(".item-link").filter({ hasText: REPORT_TITLE }).getByRole("link", { name: "Open" }).click();
   await expect.poll(() => windowTitles(desktop().compositor), { message: "the report window is on the compositor" }).toHaveLength(2);

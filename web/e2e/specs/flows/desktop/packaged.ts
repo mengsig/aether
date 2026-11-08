@@ -189,7 +189,7 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
       { env: appEnv, cwd: root, log });
     const port = await devtoolsPort(profile, app);
     await appDocument(port, app);
-    browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { noDefaults: true });
     const ipc = await until(() => swaySocket(runtime), "sway's IPC socket", sway);
     const compositor = { PATH: env.PATH, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display, SWAYSOCK: ipc };
     let runs = 0;
