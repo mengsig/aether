@@ -153,9 +153,42 @@ before updating.
   navigation rail on the page's own ground, and motion that runs only on the
   kit's duration tokens and stops under `prefers-reduced-motion`. See
   [the final pass report](https://github.com/mengsig/aether/blob/main/docs/design/vnext-final/index.html).
+- **Guided inputs, kept drafts and a home dashboard.** Every choice in the
+  web app is a picker fed by the daemon: models grouped by provider with
+  readiness and billing, workspaces with a folder dialog, agents, tools,
+  cron presets and time zones, repositories and pipelines; typing stays only
+  for prose. Forms keep their drafts across screens and reloads until they
+  submit. The sidebar reads as group labels over links, the landing screen
+  is an overview dashboard, the agent screen is a full-height chat with
+  folded tool calls, find and a composer, graphs get styled nodes, controls
+  and legends, and a GitHub overview joins the navigation. See
+  [the UX overhaul report](https://github.com/mengsig/aether/blob/main/docs/design/vnext-ux/index.html).
 
 ### Fixed
 
+- **The desktop app can register a repository, and the GitHub overview
+  reads without the watcher.** Its bridge refused `repo_add`, so
+  registration always failed, and every launch with archond raised watcher
+  toasts. Only `repo_add` with `auto_merge` or `github_watch` stays with the
+  archon CLI, as does the watcher view itself, which archond keeps from
+  every remote device: the overview now reads the cached issues and pull
+  requests of the repositories the items link to, and guides to importing
+  an issue when none does. A screen's background read that fails shows its
+  error in place instead of a toast that covered the composer; registration
+  offers "Keep it local" for a checkout without an origin remote. An
+  agent's page names the task it holds, which
+  the daemon had kept in the agent's context alone; the home's GitHub tile
+  reads the watcher's "kept for the CLI" answer as a neutral tile rather
+  than a failure; the chat's transcript, not its composer, takes the free
+  height; narrow pages no longer scroll sideways behind the rail; an empty
+  inbox and the New item sheet guide instead of a faint line or errors
+  before anything was typed; a missing item is told in place, without a
+  refresh toast over it. Repeated failures fold into one toast that counts
+  them, the newest few show at once, each goes after a while, and a
+  "Dismiss all" clears them; the controls' model form stacks at narrow
+  widths instead of overlapping, and no screen scrolls sideways at the
+  smallest window; Activity says each event in words, with its time as
+  "3 min ago" and the exact moment on hover.
 - **`status` and `get_tree` on a large, long-lived store.** The fleet's
   usage and each run's are one row each, kept by triggers as agents are
   written, which count exactly the agents the store can read, so a

@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { drafts } from "@aether-ui/core";
 
 import { aether } from "@aether-ui/protocol";
 import { act } from "react";
@@ -7,7 +8,7 @@ import { invariant } from "../fleet/invariant.ts";
 import { ControlsScreen } from "./ControlsScreen.tsx";
 import { AGENT_ID, controlsScript, demoAgents } from "./fixture/demo.ts";
 import type { ScriptOptions } from "./fixture/daemon.ts";
-import { buttonNamed, click, connected, type, type Harness } from "./fixture/harness.test-util.tsx";
+import { buttonNamed, click, connected, pick, type, type Harness } from "./fixture/harness.test-util.tsx";
 
 let current: Harness | null = null;
 beforeEach(() => {
@@ -68,7 +69,7 @@ describe("approval rule parity", () => {
 
   test("a rule can target the run from the store's agent record", async () => {
     const { h, root } = await open("Approvals");
-    await type(h, root, "Scope", "run");
+    await pick(h, root, "Scope", "This run");
     await type(h, root, "Tool", "shell");
     await click(h, root, "Add rule");
     await click(h, confirmDialog(), "Add rule");
@@ -84,8 +85,8 @@ describe("approval rule parity", () => {
     await type(h, root, "Tool", "   ");
     await type(h, root, "Resource prefix (optional)", "  /private/  ");
     await type(h, root, "Note (optional)", "  Keep credentials private  ");
-    await type(h, root, "Decision", "denied");
-    await type(h, root, "Scope", "subtree");
+    await pick(h, root, "Decision", "Deny without asking");
+    await pick(h, root, "Scope", "This agent and its delegates");
     await click(h, root, "Add rule");
     await click(h, confirmDialog(), "Add rule");
     expect(sent(h, "add_approval_rule")).toEqual([{
@@ -97,7 +98,7 @@ describe("approval rule parity", () => {
 
   test("a rule with every matcher blank covers any tool call", async () => {
     const { h, root } = await open("Approvals");
-    await type(h, root, "Decision", "denied");
+    await pick(h, root, "Decision", "Deny without asking");
     await click(h, root, "Add rule");
     await click(h, confirmDialog(), "Add rule");
     expect(sent(h, "add_approval_rule")).toEqual([{
@@ -108,9 +109,10 @@ describe("approval rule parity", () => {
 
   test("run scope is disabled with a reason when the agent has no run", async () => {
     const agents = demoAgents().map((agent) => ({ ...agent, run: "" }));
-    const { root } = await open("Approvals", { agents });
-    const option = root.querySelector<HTMLOptionElement>('option[value="run"]');
-    expect(option?.disabled).toBe(true);
+    const { h, root } = await open("Approvals", { agents });
+    await click(h, root, "This agent");
+    const option = [...root.querySelectorAll('[role="option"]')].find(o => o.textContent?.includes("This run"));
+    expect(option?.getAttribute("aria-disabled")).toBe("true");
     expect(option?.textContent).toContain("this agent has no run");
     expect(buttonNamed(root, "Add rule").disabled).toBe(false);
   });
@@ -255,9 +257,10 @@ describe("instructions parity", () => {
   test("replacing instructions still rejects a blank draft", async () => {
     const { h, root } = await open("Model & limits");
     await type(h, root, "New instructions", "   ");
-    await click(h, root, "Replace instructions");
-    await click(h, dialog(), "Replace");
+    expect(buttonNamed(root, "Replace instructions").disabled).toBe(true);
     expect(root.textContent).toContain("Write the new instructions first");
     expect(h.daemon.commands("update_agent")).toHaveLength(0);
   });
 });
+
+beforeEach(() => { for (const key of drafts.keys()) drafts.clear(key); });

@@ -3,7 +3,7 @@
 
 import { useApp, usePermission, useReadPermission, useReread } from "@aether-ui/core";
 import type { aether, ConnId } from "@aether-ui/protocol";
-import { Badge, EmptyState } from "@aether-ui/ui";
+import { Badge, Button, EmptyState, Switch } from "@aether-ui/ui";
 import { useState } from "react";
 import { invariant } from "../kit/invariant.ts";
 import { Action, RunNote, Section, StandingNotice, useRun, type Run } from "../kit/kit.tsx";
@@ -11,6 +11,7 @@ import { formatTime } from "./format.ts";
 import { listOf, ReadView, Unexpected } from "./read.tsx";
 
 const KEY = "settings.devices";
+const PAIR_SECTION_ID = "settings-pair-device";
 
 export const devicesCommand = (includeRevoked: boolean) => (includeRevoked ? { cmd: "list_devices", include_revoked: true } : { cmd: "list_devices" });
 
@@ -42,7 +43,7 @@ function DeviceRow({ conn, device, run, reread }: { readonly conn: ConnId; reado
 /** Pairing needs the code shown and the claimant's phrase compared on the host; the desktop has no such flow yet. */
 function PairSection() {
   return (
-    <Section title="Pair a new device" hint="Pairing is done on the daemon's host, where the code and the phrase to compare are shown.">
+    <Section title="Pair a new device" id={PAIR_SECTION_ID} hint="Pairing is done on the daemon's host, where the code and the phrase to compare are shown.">
       <p className="st-prose">Run this on the host, scan the code with the new device, then compare the phrase on both screens before confirming:</p>
       <p className="st-code">aether remote pair --role operator</p>
       <p className="st-meta">Use <span className="st-code">--role observer</span> for a device that may only watch.</p>
@@ -73,10 +74,7 @@ export function DevicesPage({ conn }: { readonly conn: ConnId }) {
           </ReadView>
         )}
         {revokedListing.refusal === null ? (
-          <label className="st-check">
-            <input type="checkbox" checked={showRevoked} onChange={(event) => setShowRevoked(event.target.checked)} />
-            Show revoked devices
-          </label>
+          <Switch className="st-switch" label="Show revoked devices" data-testid="settings-show-revoked" checked={showRevoked} onChange={setShowRevoked} />
         ) : null}
         <RunNote status={run.status} />
       </Section>
@@ -85,10 +83,23 @@ export function DevicesPage({ conn }: { readonly conn: ConnId }) {
   );
 }
 
+/** The hash is the route here, so the pairing steps are scrolled to rather than linked by fragment. */
+function showPairing(): void {
+  const section = document.getElementById(PAIR_SECTION_ID);
+  invariant(section !== null, "the pairing steps are on the page");
+  section.scrollIntoView({ block: "start" });
+}
+
 function DeviceList({ conn, value, run, reread }: { readonly conn: ConnId; readonly value: unknown; readonly run: Run; readonly reread: () => Promise<void> }) {
   const devices = listOf<aether.Device>(value);
   if (devices === null) return <Unexpected label="devices" />;
-  if (devices.length === 0) return <EmptyState title="No devices paired">Pair a phone or browser to reach this daemon remotely.</EmptyState>;
+  if (devices.length === 0) {
+    return (
+      <EmptyState title="No devices paired" action={<Button size="sm" variant="secondary" onClick={showPairing}>How to pair a device</Button>}>
+        Pair a phone or browser to reach this daemon remotely. Pairing starts on the daemon's host, as shown below.
+      </EmptyState>
+    );
+  }
   return (
     <ul className="st-list">
       {devices.map((device) => <DeviceRow key={device.id} conn={conn} device={device} run={run} reread={reread} />)}

@@ -40,6 +40,39 @@ function budgetFact(config: aether.AgentConfig): Fact | null {
   return parts.length === 0 ? null : { label: "Budget", value: parts.join(" · ") };
 }
 
+const ENDED = new Set<aether.TaskStatusKind>(["completed", "failed", "cancelled"]);
+
+/** The task the agent is on: the one it holds, else its newest unfinished one; null when it has none. */
+export function currentTask(agent: aether.Agent, tasks: readonly aether.Task[]): aether.Task | null {
+  invariant(tasks.every((task) => task.owner === agent.id), `every listed task belongs to ${agent.id}`);
+  const held = tasks.find((task) => task.id === agent.current_task);
+  if (held !== undefined) return held;
+  const open = tasks.filter((task) => !ENDED.has(task.status.state));
+  return open.reduce<aether.Task | null>((newest, task) => (newest === null || task.created_at > newest.created_at ? task : newest), null);
+}
+
+export function taskFact(task: aether.Task): Fact {
+  invariant(task.objective.trim() !== "", `task ${task.id} has an objective`);
+  return { label: "Task", value: task.objective, hint: task.status.state.replaceAll("_", " ") };
+}
+
+const HEADLINE: Readonly<Record<string, (value: string) => string>> = {
+  Model: (value) => value,
+  Cost: (value) => value,
+  Turns: (value) => `${value} turn${value === "1" ? "" : "s"}`,
+};
+
+/** The few facts the header shows inline, in this order: model, cost and turns. */
+export function headlineFacts(facts: readonly Fact[]): Fact[] {
+  invariant(facts.length > 0, "an agent always has facts to pick from");
+  const picked = Object.entries(HEADLINE).flatMap(([label, shown]) => {
+    const fact = facts.find((candidate) => candidate.label === label);
+    return fact === undefined ? [] : [{ label, value: shown(fact.value) }];
+  });
+  invariant(picked.length <= facts.length, "the headline only picks existing facts");
+  return picked;
+}
+
 /** The facts grid, in reading order; optional facts appear only when the agent has them. */
 export function agentFacts(agent: aether.Agent): Fact[] {
   invariant(agent.id !== "" && agent.model.model !== "", `agent ${agent.id} has an id and a model`);

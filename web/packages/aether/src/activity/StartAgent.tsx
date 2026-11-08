@@ -1,10 +1,10 @@
 // Starting work: a chat (the default) is a task-less interactive assistant that waits for the next
 // message after each reply, as the TUI starts one; a task agent finishes with its objective.
 
-import { navigate, routeHref, selectAgents, selectRead, useApp, usePermission, useReread, useSelector } from "@aether-ui/core";
+import { connectionDraftKey, drafts, navigate, routeHref, selectAgents, selectRead, useApp, useDraft, usePermission, useReread, useSelector, type DraftValue } from "@aether-ui/core";
 import { aether } from "@aether-ui/protocol";
 import { Button, EmptyState, Field, Sheet, Tabs } from "@aether-ui/ui";
-import { useReducer, useState } from "react";
+import { useReducer, useRef, useState } from "react";
 import { Action, RunNote, StandingNotice, useRun, type Run } from "../controls/kit.tsx";
 
 import { invariant } from "../fleet/invariant.ts";
@@ -128,6 +128,7 @@ function useStartData(conn: string, path: string | null) {
 }
 
 interface StartForm {
+  readonly [field: string]: unknown;
   readonly mode: Mode;
   readonly name: string;
   readonly objective: string;
@@ -165,17 +166,17 @@ function StartFormView({ conn, form, change, run, onStart, close }: {
   const disabled = usePermission(conn, command).refusal !== null;
   const label = form.mode === "task" ? "Create task" : form.mode === "chat" ? "Start chat" : "Start agent";
   const footer = <div className="start-footer"><RunNote status={run.status} />
-    <Action conn={conn} command={command} label={label} variant="primary" blocked={blocked} busy={run.status.state === "busy" || (form.mode !== "chat" && run.status.state === "done")} onRun={() => onStart(settings, command)} /></div>;
+    <Action conn={conn} command={command} label={label} variant="primary" data-testid="start-submit" blocked={blocked} busy={run.status.state === "busy" || (form.mode !== "chat" && run.status.state === "done")} onRun={() => onStart(settings, command)} /></div>;
   return <Sheet open onClose={close} title="Start an agent" footer={footer}><div className="start-form"><StandingNotice conn={conn} />
-    <Tabs label="Work type" selected={form.mode} onSelect={id => change({ mode: id as Mode })} tabs={[{ id: "chat", label: "Chat", panel: null }, { id: "agent", label: "Task agent", panel: null }, { id: "task", label: "Existing agent task", panel: null }]} />
+    <div data-testid="start-mode"><Tabs label="Work type" selected={form.mode} onSelect={id => change({ mode: id as Mode })} tabs={[{ id: "chat", label: "Chat", panel: null }, { id: "agent", label: "Task agent", panel: null }, { id: "task", label: "Existing agent task", panel: null }]} /></div>
     <p className="b3-section-hint">{MODE_HINTS[form.mode]}</p>
-    <TextAreaField label={form.mode === "chat" ? "First message" : "What should the agent do?"} value={form.objective} disabled={disabled} autoFocus onChange={objective => change({ objective })} />
-    {form.mode === "task" ? <SelectField label="Agent" value={form.owner} disabled={disabled} onChange={owner => change({ owner })}>
+    <TextAreaField label={form.mode === "chat" ? "First message" : "What should the agent do?"} testId="start-objective" value={form.objective} disabled={disabled} autoFocus onChange={objective => change({ objective })} />
+    {form.mode === "task" ? <SelectField label="Agent" testId="start-owner" value={form.owner} disabled={disabled} onChange={owner => change({ owner })}>
       <option value="">Unassigned</option>{data.live.map(a => <option key={a.id} value={a.id} disabled={!!a.current_task}>{a.name}{a.current_task ? " — already owns a task" : ""}</option>)}</SelectField> : <>
       <Workspace conn={conn} path={data.effectivePath} change={path => change({ path })} recent={data.recent} />
       <ReadNote entry={data.models} retry={data.retryModels} />
       {data.models?.issued && data.choices.length === 0 ? <EmptyState title="No model is ready yet" action={<a className="ui-link" href="#/settings/providers">Open providers</a>}>Sign in to a model provider to start agents.</EmptyState> :
-        <SelectField label="Model" value={selected ? modelKey(selected) : ""} disabled={disabled || data.choices.length === 0} onChange={model => change({ model })}>
+        <SelectField label="Model" testId="start-model" value={selected ? modelKey(selected) : ""} disabled={disabled || data.choices.length === 0} onChange={model => change({ model })}>
           {modelGroups(data.choices).map(g => <optgroup key={g.provider} label={g.provider}>{g.models.map(m => <option key={modelKey(m)} value={modelKey(m)}>{m.name}</option>)}</optgroup>)}</SelectField>}
       <SelectField label="Effort" value={form.effort} disabled={disabled} onChange={effort => change({ effort: effort as aether.Effort })}>
         {EFFORTS.map(e => <option key={e.value} value={e.value}>{e.label}</option>)}</SelectField>
@@ -188,13 +189,21 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
   const run = useRun(conn);
   const app = useApp();
   const agents = useSelector(selectAgents(conn));
-  const [form, setForm] = useState<StartForm>(BLANK);
-  const chat = useChatStart(conn, close);
-  const change = (patch: Partial<StartForm>) => setForm(current => ({ ...current, ...patch }));
+  const draftKey = connectionDraftKey("activity", conn, "start-agent");
+  const draft = useDraft(draftKey, BLANK);
+  const form = draft.value;
+  // The stored draft a chat start submitted: every edit stores a new object, so a newer draft is left alone.
+  const submitted = useRef<DraftValue | undefined>(undefined);
+  const chat = useChatStart(conn, () => {
+    if (drafts.get(draftKey) === submitted.current) drafts.clear(draftKey);
+    close();
+  });
+  const change = (patch: Partial<StartForm>) => draft.update(patch);
   const onStart = async (settings: ChatSettings | null, command: aether.CreateAgentCommand | aether.CreateTaskCommand) => {
     if (form.mode !== "chat") {
       const reply = await run.send(command, "Starting…");
       if (reply === null) return;
+      draft.clearIfUnchanged();
       if (form.mode === "task" && !form.owner) {
         close();
         app.store.report("Created unassigned task", conn, undefined, "success");
@@ -207,6 +216,7 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
       return;
     }
     invariant(settings !== null, "a chat starts from validated settings");
+    submitted.current = drafts.get(draftKey);
     return chat.begin(settings, form.objective.trim());
   };
   const busy = chat.create.status.state === "busy" || chat.first.run.status.state === "busy";
@@ -214,4 +224,13 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
   return <Sheet open onClose={close} title="Start an agent"><div className="start-form"><StandingNotice conn={conn} />
     <StartedChat conn={conn} state={chat.state} retry={() => void chat.retry()} restart={chat.restart} close={close} busy={busy} />
   </div></Sheet>;
+}
+
+/** Opens the Start sheet from a screen of its own, such as the fleet. */
+export function StartAgentButton({ conn, label = "Start an agent" }: { conn: string; label?: string }) {
+  const [open, setOpen] = useState(false);
+  return <>
+    <Button onClick={() => setOpen(true)}>{label}</Button>
+    {open && <StartAgent conn={conn} close={() => setOpen(false)} />}
+  </>;
 }

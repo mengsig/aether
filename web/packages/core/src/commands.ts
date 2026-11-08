@@ -45,15 +45,16 @@ export const AETHER_KEYED = words(`add_approval_rule archive cancel create_agent
 
 /**
  * The Archon requests an app may send: what archon-remote allow.rs lets an operator device send,
- * and `get_initiative`. The desktop bridge passes exactly these (apps/desktop security/classes.ts).
+ * `get_initiative`, the watcher view and a plain `repo_add`. The desktop bridge passes exactly these
+ * (apps/desktop security/classes.ts).
  */
 export const ARCHON_READ = words(`hello status repo_list list_items list_item_summaries get_item get_stage resolve_item
   list_pipelines list_questions feed_history subscribe_feed list_reports orchestrator_status cost_report list_artifacts
-  read_artifact item_diff settings autonomy subscribe_changes changes_page item_history task_graph run_plan item_links
-  issue_items list_github_objects get_initiative model_policy`);
+  read_artifact item_diff settings autonomy github_watcher subscribe_changes changes_page item_history task_graph
+  run_plan item_links issue_items list_github_objects get_initiative model_policy`);
 
-export const ARCHON_CHANGE = words(`enqueue cancel_item retry_item pause resume answer say link_issue unlink_issue
-  import_issue steer_item update_item`);
+export const ARCHON_CHANGE = words(`repo_add enqueue cancel_item retry_item pause resume answer say link_issue
+  unlink_issue import_issue steer_item update_item`);
 
 export function aetherAccess(command: Json): Access {
   const cmd = string(command.cmd, "command.cmd");

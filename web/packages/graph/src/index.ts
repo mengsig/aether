@@ -13,3 +13,5 @@ export { GraphModelError, structureHash, toggleCollapsed, visibleGraph,
 export { buildScene, hitTest, type Hit, type NodeShape, type Scene, type SceneGroup, type SceneNode } from "./scene.ts";
 export { edgeKey, GraphRenderer, type Emphasis, type FrameScheduler, type GraphTheme } from "./renderer.ts";
 export { describeNode, keyAction, nextFocus, type KeyAction } from "./focus.ts";
+
+export { defaultNodeStyle, type NodeStyle, type NodeStyler, type StyledShape, type GraphLegendEntry } from "./style.ts";

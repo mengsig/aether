@@ -87,6 +87,14 @@ test("the Archon pass list names only commands Archon's schema has, and never sh
   assert.equal(passThroughRefusal("archon", { cmd: "pause", scope: "global" }), undefined);
 });
 
+test("the app may register a plain repository and read the watcher, but not the operator-only forms", () => {
+  assert.equal(passThroughRefusal("archon", { cmd: "repo_add", path: "/work/site", name: "site" }), undefined);
+  assert.equal(passThroughRefusal("archon", { cmd: "github_watcher" }), undefined);
+  assert.match(passThroughRefusal("archon", { cmd: "repo_add", path: "/work/site", github_watch: true }) ?? "", /github_watch/);
+  assert.match(passThroughRefusal("archon", { cmd: "repo_add", path: "/work/site", auto_merge: true }) ?? "", /auto_merge/);
+  assert.match(passThroughRefusal("archon", { cmd: "configure_github_watcher" }) ?? "", /not open/);
+});
+
 test("the app says, answers and reads an initiative as the web app, never with the CLI's knobs", () => {
   assert.equal(passThroughRefusal("archon", { cmd: "say", text: "hi" }, 26), undefined);
   assert.equal(passThroughRefusal("archon", { cmd: "answer", question: "q_1", text: "yes" }, 26), undefined);

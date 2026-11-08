@@ -42,6 +42,7 @@ export interface Harness {
   until(check: () => boolean, what: string, limitMs?: number): Promise<void>;
   /** Mounts the page for `repo#number` (`owner/name`) and returns its container. */
   open(repo: string, number: number): Promise<HTMLElement>;
+  mount(node: ReactNode): Promise<HTMLElement>;
   stop(): void;
 }
 
@@ -69,27 +70,29 @@ export async function harness(options: HarnessOptions = {}): Promise<Harness> {
   await act(async () => { await app.start(); });
   await until(() => app.store.get().connections[ARCHON]?.state === "ready", "the faux archond to be ready");
   if (options.aether) await until(() => app.store.get().connections[AETHER]?.state === "ready", "the faux aetherd to be ready");
-  const open = async (repo: string, number: number) => {
-    const [owner, name] = repo.split("/");
-    invariant(owner && name, `${repo} is owner/name`);
+  const mount = async (node: ReactNode) => {
     document.documentElement.lang = "en";
     const container = document.createElement("main");
     document.body.append(container);
     const root = createRoot(container);
     roots.push(root);
-    const params = { host: "github.com", owner, repo: name, number: String(number) };
-    location.hash = `#/github/github.com/${owner}/${name}/${number}`;
-    const page = <Shell><GithubRoute params={params} /></Shell>;
-    await act(async () => root.render(<AppProvider app={app}><ThemeProvider initialPreference="light">{page}</ThemeProvider></AppProvider>));
+    await act(async () => root.render(<AppProvider app={app}><ThemeProvider initialPreference="light"><Shell>{node}</Shell></ThemeProvider></AppProvider>));
     await tick();
     return container;
+  };
+  const open = async (repo: string, number: number) => {
+    const [owner, name] = repo.split("/");
+    invariant(owner && name, `${repo} is owner/name`);
+    const params = { host: "github.com", owner, repo: name, number: String(number) };
+    location.hash = `#/github/github.com/${owner}/${name}/${number}`;
+    return mount(<GithubRoute params={params} />);
   };
   const stop = () => {
     for (const root of roots.splice(0)) act(() => root.unmount());
     app.stop();
     document.body.innerHTML = "";
   };
-  return { app, faux, tick, until, open, stop };
+  return { app, faux, tick, until, open, mount, stop };
 }
 
 /** The aria-labels of the state cards under `scope`, as a reader hears them. */

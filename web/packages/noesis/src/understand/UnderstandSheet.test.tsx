@@ -56,7 +56,7 @@ describe("learning from an item", () => {
     expect(sheet.textContent).toContain("Cache the dependency graph between builds");
     expect(pills()).toEqual(["Verified", "Preliminary", "Verified", "Verified", "Preliminary", "Preliminary", "Reviewed", "Verified", "Reviewed"]);
     expect($(sheet, ".understand-size-text").textContent).toMatch(/KiB of 32\.0 KiB$/);
-    expect(($(sheet, "#understand-goal") as HTMLTextAreaElement).value).toBe("Understand Cache the dependency graph between builds");
+    expect(($(sheet, "[data-testid=understand-goal]") as HTMLTextAreaElement).value).toBe("Understand Cache the dependency graph between builds");
   });
 
   test("sends the bundle with every status unchanged, then opens the new session", async () => {

@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
+import { drafts } from "@aether-ui/core";
 import { act } from "react";
-import { afterEach, expect, test, vi } from "vitest";
+import { beforeEach, afterEach, expect, test, vi } from "vitest";
 import type { DesktopBridge } from "@aether-ui/protocol";
 import { buttonNamed, click, connected, type, type Harness } from "../controls/fixture/harness.test-util.tsx";
 import { demoAgents } from "../controls/fixture/demo.ts";
@@ -229,4 +230,25 @@ test("the store panel shows the schema, migrations, counts, backups and last imp
   }
   expect(h.daemon.commands("memory_migration_status")).toHaveLength(1);
   expect(root.textContent).toContain("Inferred · unverified");
+});
+
+beforeEach(() => { for (const key of drafts.keys()) drafts.clear(key); });
+
+test("export and consolidation suggestions send the selected scope unchanged", async () => {
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:scope-export");
+  vi.spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
+  const root = await screen();
+  const maintenance = section(root, "Maintenance") as HTMLElement;
+  await type(h, maintenance, "Export scope", "global");
+  const global = [...maintenance.querySelectorAll<HTMLElement>('[role="option"]')].find(o => o.textContent === "Global");
+  expect(global).toBeDefined();
+  await act(async () => global?.click());
+  await click(h, maintenance, "Export memories");
+  expect(h.daemon.commands("memory_export")[0]).toMatchObject({ scope: { scope: "global" } });
+  await type(h, maintenance, "Consolidation scope", "global");
+  const choice = [...maintenance.querySelectorAll<HTMLElement>('[role="option"]')].find(o => o.textContent === "Global");
+  await act(async () => choice?.click());
+  await click(h, maintenance, "Plan consolidation");
+  expect(h.daemon.commands("consolidate_memories")[0]).toMatchObject({ scope: { scope: "global" }, dry_run: true });
+  vi.restoreAllMocks();
 });

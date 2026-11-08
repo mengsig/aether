@@ -1,17 +1,22 @@
 // An agent's transcript: committed entries and live tails, all read from core's store and drawn
-// through a measured virtual list. Opening it asks core to watch the agent, which subscribes to its
-// deltas and pages its transcript in with `get_transcript_page`; a delta gap rereads from the last entry.
+// through a measured virtual list as the view mode shapes them, with find over what is drawn.
+// Opening it asks core to watch the agent, which subscribes to its deltas and pages its transcript in
+// with `get_transcript_page`; a delta gap rereads from the last entry.
 
 import { selectAgent, selectConnection, selectEvents, selectStreams, selectTranscript, useApp, useSelector, type State } from "@aether-ui/core";
-import type { aether, ConnId } from "@aether-ui/protocol";
-import { EmptyState, Skeleton } from "@aether-ui/ui";
-import { useCallback, useEffect, useMemo } from "react";
+import type { aether, ConnId, ConnectionInfo } from "@aether-ui/protocol";
+import { Button, EmptyState, Skeleton } from "@aether-ui/ui";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import "./conversation.css";
-import { MeasuredList } from "./MeasuredList.tsx";
-import { estimateRow, MessageView, type MessageContext } from "./Message.tsx";
+import "./markdown.css";
+import { MeasuredList, type ListHandle } from "./MeasuredList.tsx";
+import { AgentNameContext, estimateRow, MessageView, type MessageContext } from "./Message.tsx";
 import type { ModeRules } from "./modes.ts";
-import { entryRows, invocationMeta, liveRows, pairTools, type ConversationRow } from "./rows.ts";
+import { entryRows, invocationMeta, liveRows, pairTools, toolActivity, type ConversationRow, type ToolActivity } from "./rows.ts";
+import { SearchBar, useTranscriptSearch } from "./SearchBar.tsx";
+import { ToggleContext, ToggleSet } from "./toggles.ts";
+import { ToolActivityContext } from "./ToolCall.tsx";
 import { taskRowKey, viewRows, type ViewRow } from "./view.ts";
 
 const NO_ENTRIES: readonly aether.TranscriptEntry[] = Object.freeze([]);
@@ -43,23 +48,31 @@ function useWatchAgent(conn: ConnId, agent: string): void {
   }, [app, conn, agent, known]);
 }
 
+export interface ConversationRows {
+  readonly rows: readonly ConversationRow[];
+  readonly loaded: boolean;
+  /** When each tool call ran, by tool_use_id, from the agent's events. */
+  readonly activity: ReadonlyMap<string, ToolActivity>;
+}
+
 /** Every row the screen shows, derived from the store: committed entries, then uncommitted live tails. */
-export function useConversationRows(conn: ConnId, agent: string): { rows: readonly ConversationRow[]; loaded: boolean } {
+export function useConversationRows(conn: ConnId, agent: string): ConversationRows {
   const transcript = useSelector(useMemo(() => selectTranscript(conn, agent), [conn, agent]));
   const streams = useSelector(useMemo(() => selectStreams(conn), [conn]));
   const events = useSelector(useMemo(() => selectEvents(conn), [conn]));
   const entries = transcript?.entries ?? NO_ENTRIES;
   const pairing = useMemo(() => pairTools(entries), [entries]);
   const meta = useMemo(() => invocationMeta(events, agent), [events, agent]);
+  const activity = useMemo(() => toolActivity(events, agent), [events, agent]);
   const committed = useMemo(() => entryRows(entries, pairing, meta), [entries, pairing, meta]);
   const live = useMemo(() => liveRows(streams, agent, pairing.committed), [streams, agent, pairing]);
   const rows = useMemo(() => (live.length === 0 ? committed : [...committed, ...live]), [committed, live]);
   invariant(rows.length >= committed.length, "live tails only add rows");
-  return { rows, loaded: transcript !== undefined };
+  return { rows, loaded: transcript !== undefined, activity };
 }
 
 /** The rows a mode draws, recomputed per row only when a row or the mode changes. */
-function useViewRows(conn: ConnId, agent: string, rows: readonly ConversationRow[], rules: ModeRules | null): { views: readonly ViewRow[]; context: MessageContext } {
+function useViewRows(conn: ConnId, agent: string, rows: readonly ConversationRow[], rules: ModeRules | null): { views: readonly ViewRow[]; context: MessageContext; name: string } {
   const self = useSelector(useMemo(() => selectAgent(conn, agent), [conn, agent]));
   const parent = self?.parent ?? null;
   const taskRow = taskRowKey(rows, parent !== null);
@@ -67,7 +80,38 @@ function useViewRows(conn: ConnId, agent: string, rows: readonly ConversationRow
   const mode = useMemo(() => ({ options: { rules, taskRow }, cache: new WeakMap<ConversationRow, ViewRow | null>() }), [rules, taskRow]);
   const views = useMemo(() => viewRows(rows, mode.options, mode.cache), [rows, mode]);
   const context = useMemo(() => ({ conn, parent }), [conn, parent]);
-  return { views, context };
+  return { views, context, name: self?.name ?? "Agent" };
+}
+
+/** A quiet line over the transcript while the connection is down; what arrived stays readable. */
+function ConnectionBanner({ info }: { readonly info: ConnectionInfo | undefined }) {
+  if (info?.state === "ready") return null;
+  const label = info?.label ?? "the daemon";
+  const text = info?.state === "pairing" ? `${label} asks to pair this device again.`
+    : info?.state === "closed" || info === undefined ? `Disconnected from ${label}. New messages appear once it is back.`
+      : `Connection to ${label} lost. Reconnecting…`;
+  return <p className="conv-banner" role="status" data-testid="conv-connection" data-state={info?.state ?? "closed"}>{text}</p>;
+}
+
+/** Find over the drawn rows: their keys are the list's, so a match is painted in and scrolled to its row. */
+function useFind(views: readonly ViewRow[], layout: string, list: React.RefObject<ListHandle | null>, stage: React.RefObject<HTMLDivElement | null>, toggles: ToggleSet) {
+  const rows = useMemo(() => views.map((view) => ({ ...view.row, key: `${layout}|${view.row.key}`, parts: view.parts.map((part) => part.part) })), [views, layout]);
+  const search = useTranscriptSearch({ rows, list, stage, toggles });
+  const [focusFind, setFocusFind] = useState(0);
+  const open = () => {
+    search.show();
+    setFocusFind((n) => n + 1);
+  };
+  const close = () => {
+    search.hide();
+    stage.current?.querySelector<HTMLElement>(".conv-list")?.focus();
+  };
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key.toLowerCase() !== "f" || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+    event.preventDefault();
+    open();
+  };
+  return { search, focusFind, open, close, onKeyDown };
 }
 
 export interface ConversationProps {
@@ -83,8 +127,13 @@ export function Conversation({ conn, agent, rules = null, layout = "standard" }:
   invariant(conn !== "" && agent !== "", "a conversation names its connection and agent");
   useWatchAgent(conn, agent);
   const info = useSelector(useMemo(() => selectConnection(conn), [conn]));
-  const { rows, loaded } = useConversationRows(conn, agent);
-  const { views, context } = useViewRows(conn, agent, rows, rules);
+  const { rows, loaded, activity } = useConversationRows(conn, agent);
+  const { views, context, name } = useViewRows(conn, agent, rows, rules);
+  const [toggles] = useState(() => new ToggleSet());
+  const list = useRef<ListHandle>(null);
+  const stage = useRef<HTMLDivElement>(null);
+  const find = useFind(views, layout, list, stage, toggles);
+  const currentRow = find.search.currentRow;
   const rowKey = useCallback((index: number) => `${layout}|${views[index]?.row.key ?? String(index)}`, [views, layout]);
   const position = useCallback((index: number) => positionOf(views[index]), [views]);
   const estimate = useCallback((index: number) => {
@@ -94,8 +143,8 @@ export function Conversation({ conn, agent, rules = null, layout = "standard" }:
   const renderRow = useCallback((index: number) => {
     const row = views[index];
     invariant(row !== undefined, `the list asked for row ${index} of ${views.length}`);
-    return <MessageView view={row} context={context} />;
-  }, [views, context]);
+    return <MessageView view={row} context={context} rowKey={`${layout}|${row.row.key}`} current={index === currentRow} />;
+  }, [views, context, layout, currentRow]);
 
   if (!loaded && info?.state !== "ready") {
     return <EmptyState title="Not connected">The conversation loads once {info?.label ?? conn} is connected.</EmptyState>;
@@ -107,15 +156,34 @@ export function Conversation({ conn, agent, rules = null, layout = "standard" }:
       </div>
     );
   }
-  if (rows.length === 0) return <EmptyState title="No messages yet">The conversation appears here as the agent works.</EmptyState>;
+  if (rows.length === 0) {
+    return (
+      <EmptyState className="conv-empty" title="No messages yet">
+        The agent's replies, its tool calls and the messages it receives appear here as it works. Write to it in the box below.
+      </EmptyState>
+    );
+  }
   const hidden = rows.length - views.length;
   return (
     <section className="conv" aria-label="Conversation" data-density={rules?.density ?? "comfortable"}>
-      <p className="conv-count">
-        {views.length.toLocaleString("en")} messages
-        {hidden > 0 ? <span className="conv-note"> · {hidden.toLocaleString("en")} hidden by this view</span> : null}
-      </p>
-      <MeasuredList label="Messages" count={views.length} rowKey={rowKey} estimate={estimate} renderRow={renderRow} follow layout={layout} position={position} />
+      <div className="conv-toolbar" onKeyDown={find.onKeyDown}>
+        <p className="conv-count">
+          {views.length.toLocaleString("en")} messages
+          {hidden > 0 ? <span className="conv-note"> · {hidden.toLocaleString("en")} hidden by this view</span> : null}
+        </p>
+        {find.search.open ? <SearchBar key={find.focusFind} search={find.search} onClose={find.close} />
+          : <Button variant="quiet" size="sm" className="conv-find" aria-keyshortcuts="Control+F Meta+F" title="Find in the transcript (Ctrl+F or ⌘F)" onClick={find.open}>Find</Button>}
+      </div>
+      <ConnectionBanner info={info} />
+      <div className="conv-stage" ref={stage} onKeyDown={find.onKeyDown}>
+        <ToggleContext.Provider value={toggles}>
+          <ToolActivityContext.Provider value={activity}>
+            <AgentNameContext.Provider value={name}>
+              <MeasuredList ref={list} label="Messages" count={views.length} rowKey={rowKey} estimate={estimate} renderRow={renderRow} follow layout={layout} position={position} />
+            </AgentNameContext.Provider>
+          </ToolActivityContext.Provider>
+        </ToggleContext.Provider>
+      </div>
     </section>
   );
 }

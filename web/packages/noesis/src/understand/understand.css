@@ -6,7 +6,6 @@
 
   .understand { display: grid; gap: var(--space-5); animation: ui-rise var(--motion-base) var(--ease-standard); }
   .understand-goal { display: grid; gap: var(--space-2); }
-  .understand-label { color: var(--color-text-muted); font: var(--weight-medium) var(--text-sm) / var(--leading-normal) var(--font-ui); }
 
   .understand-summary { display: grid; gap: var(--space-2); }
   .understand-title { margin: 0; font: var(--weight-medium) var(--text-lg) / var(--leading-tight) var(--font-ui); overflow-wrap: anywhere; }

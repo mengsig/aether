@@ -1,6 +1,7 @@
 // Reads the graph's colours from the design tokens on an element (CONTRACTS.md §4). A missing
 // token falls back to another token, and finally to the element's own text colour.
 
+import { toneToken } from "./style.ts";
 import { invariant } from "./invariant.ts";
 import type { GraphTheme } from "./renderer.ts";
 
@@ -38,7 +39,7 @@ export function readTheme(element: Element): GraphTheme {
       if (status === undefined) return muted;
       let colour = statuses.get(status);
       // `mastery-*` statuses take the learner tokens (§4); every other status a `--status-*` one.
-      const name = status.startsWith("mastery-") ? `--${status}` : `--status-${status}`;
+      const name = /^[a-z][a-z0-9-]*$/.test(status) ? toneToken(status) : "--color-text-muted";
       if (colour === undefined) statuses.set(status, (colour = token(name, "--color-text-muted")));
       return colour;
     },

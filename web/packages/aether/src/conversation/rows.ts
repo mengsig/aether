@@ -32,10 +32,20 @@ export interface LiveState {
   readonly recovering: boolean;
 }
 
+/** Who a row speaks for: the operator, the agent, another agent writing to it, or a system notice. */
+export type SpeakerKind = "user" | "assistant" | "agent" | "notice";
+
+export interface Speaker {
+  readonly kind: SpeakerKind;
+  /** The sender the inbox named (`user:…`, an agent id), or null when the message names none. */
+  readonly from: string | null;
+}
+
 export interface ConversationRow {
   /** `e:<seq>` for a committed entry, `s:<invocation>` for a live tail. */
   readonly key: string;
   readonly role: aether.MessageRole;
+  readonly speaker: Speaker;
   readonly seq: number | null;
   readonly at: string | null;
   readonly invocation: string | null;
@@ -96,6 +106,46 @@ function blockPart(block: aether.ContentBlock, pairing: Pairing): Part | null {
   }
 }
 
+const INBOX_LINE = /^\[inbox \d+\] /;
+const MESSAGE_FROM = /^\[inbox \d+\] Message from (.+):(?: \[authenticated operator instruction\])?$/;
+const ASSISTANT: Speaker = { kind: "assistant", from: null };
+const OPERATOR: Speaker = { kind: "user", from: null };
+const NOTICE: Speaker = { kind: "notice", from: null };
+
+/** One inbox item as the daemon wrote it: who sent it (null for a notice) and the text under its header. */
+interface InboxItem { readonly from: string | null; readonly body: string }
+
+const isOperator = (from: string): boolean => from === "user" || from.startsWith("user:");
+
+/** Splits an inbox item at its header line; the text must start with one. */
+function inboxItem(text: string): InboxItem {
+  invariant(INBOX_LINE.test(text), "an inbox item starts with its header");
+  const newline = text.indexOf("\n");
+  const header = newline < 0 ? text : text.slice(0, newline);
+  const from = MESSAGE_FROM.exec(header)?.[1] ?? null;
+  invariant(from !== "", "an inbox header names its sender");
+  return { from, body: newline < 0 ? "" : text.slice(newline + 1) };
+}
+
+/**
+ * The speaker of a user turn, read from the inbox header the daemon writes before a delivered message
+ * ("[inbox 3] Message from user:…:"); a single message's header moves into the row's head.
+ */
+export function speakerOf(role: aether.MessageRole, parts: readonly Part[]): { speaker: Speaker; parts: readonly Part[] } {
+  if (role === "assistant") return { speaker: ASSISTANT, parts };
+  const first = parts[0];
+  if (first === undefined || parts.every((part) => part.kind === "orphan-result")) return { speaker: NOTICE, parts };
+  if (first.kind !== "text" || !INBOX_LINE.test(first.text)) return { speaker: OPERATOR, parts };
+  const { from, body: rest } = inboxItem(first.text);
+  if (from === null) return { speaker: NOTICE, parts };
+  const speaker: Speaker = { kind: isOperator(from) ? "user" : "agent", from };
+  // Several inbox items in one turn keep their headers: each says what it is.
+  if (/^\[inbox \d+\] /m.test(rest)) return { speaker, parts };
+  const body = rest.trim();
+  const remaining = body === "" ? parts.slice(1) : [{ kind: "text", text: body } as const, ...parts.slice(1)];
+  return { speaker, parts: remaining.length === 0 ? parts : remaining };
+}
+
 /** Committed rows in seq order; a message left with nothing of its own to show has no row. */
 export function entryRows(entries: readonly aether.TranscriptEntry[], pairing: Pairing, meta: ReadonlyMap<string, InvocationMeta>): ConversationRow[] {
   const rows: ConversationRow[] = [];
@@ -110,8 +160,9 @@ export function entryRows(entries: readonly aether.TranscriptEntry[], pairing: P
     }
     if (parts.length === 0) continue;
     const invocation = entry.invocation ?? null;
+    const spoken = speakerOf(entry.message.role, parts);
     rows.push({
-      key: `e:${entry.seq}`, role: entry.message.role, seq: entry.seq, at: entry.at, invocation, parts, live: null,
+      key: `e:${entry.seq}`, role: entry.message.role, speaker: spoken.speaker, seq: entry.seq, at: entry.at, invocation, parts: spoken.parts, live: null,
       meta: invocation === null ? null : meta.get(invocation) ?? null,
     });
   }
@@ -129,7 +180,7 @@ export function liveRows(streams: Readonly<Record<string, StreamState>>, agent: 
     for (const tool of stream.tools) parts.push({ kind: "tool", id: tool.id, name: tool.name, input: tool.input, result: null });
     if (parts.length === 0 && !stream.recovering) continue;
     rows.push({
-      key: `s:${stream.invocation}`, role: "assistant", seq: null, at: null, invocation: stream.invocation, parts,
+      key: `s:${stream.invocation}`, role: "assistant", speaker: ASSISTANT, seq: null, at: null, invocation: stream.invocation, parts,
       live: { partial: stream.partial, recovering: stream.recovering }, meta: null,
     });
   }
@@ -153,4 +204,42 @@ export function invocationMeta(events: readonly aether.Event[], agent: string): 
     }
   }
   return meta;
+}
+
+/** How one tool call went, from its `tool.*` events: keyed by the call's tool_use_id. */
+export interface ToolActivity {
+  readonly state: "running" | "ok" | "error";
+  readonly durationMs: number | null;
+}
+
+/** Each of this agent's tool calls by its provider (tool_use) id, as its events last left it. */
+export function toolActivity(events: readonly aether.Event[], agent: string): ReadonlyMap<string, ToolActivity> {
+  const providerIds = new Map<string, string>();
+  const activity = new Map<string, ToolActivity>();
+  const set = (call: string, value: ToolActivity) => {
+    const id = providerIds.get(call);
+    if (id !== undefined) activity.set(id, value);
+  };
+  for (const event of events) {
+    if (event.agent_id !== agent) continue;
+    const kind = event.kind;
+    if (kind.type === "tool.requested") providerIds.set(kind.call.id, kind.call.provider_call_id);
+    else if (kind.type === "tool.started") set(kind.call, { state: "running", durationMs: null });
+    else if (kind.type === "tool.succeeded") set(kind.call, { state: kind.outcome.is_error === true ? "error" : "ok", durationMs: kind.outcome.duration_ms ?? null });
+    else if (kind.type === "tool.failed") set(kind.call, { state: "error", durationMs: kind.duration_ms ?? null });
+  }
+  invariant(activity.size <= providerIds.size, "activity is only kept for requested calls");
+  return activity;
+}
+
+/** Committed messages and tool calls, for the transcript's header. */
+export function rowCounts(rows: readonly ConversationRow[]): { messages: number; tools: number } {
+  let messages = 0;
+  let tools = 0;
+  for (const row of rows) {
+    if (row.live === null) messages += 1;
+    for (const part of row.parts) if (part.kind === "tool") tools += 1;
+  }
+  invariant(messages <= rows.length, "a row is at most one message");
+  return { messages, tools };
 }

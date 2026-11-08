@@ -1,9 +1,9 @@
 // Imports an issue as Archon work through `import_issue` (D2): a preview of what Archon will read, then a
 // confirm. Archon keys the import by the issue, so a repeat returns the first item rather than a second.
 
-import { routeHref, useCommand, usePermission } from "@aether-ui/core";
+import { connectionDraftKey, routeHref, useCommand, useDraft, usePermission } from "@aether-ui/core";
 import { archon } from "@aether-ui/protocol";
-import { Badge, Button, Dialog } from "@aether-ui/ui";
+import { Badge, Button, Dialog, Picker } from "@aether-ui/ui";
 import { useId, useState } from "react";
 import { githubRef, invariant, type PageRef } from "./ref.ts";
 
@@ -63,7 +63,8 @@ export function ImportAction(props: ImportProps) {
   const permission = usePermission(conn, archon.importIssue({ ref }));
   const refusal = importRefusal(permission.refusal, served, imported);
   const [open, setOpen] = useState(startOpen && refusal === null);
-  const [priority, setPriority] = useState<archon.Priority>("normal");
+  const { value: draft, update, clear } = useDraft(connectionDraftKey("github", conn, `import-${page.host}-${page.repo}-${page.number}`), { priority: "normal" as archon.Priority });
+  const priority = draft.priority;
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const reasonId = useId();
@@ -75,6 +76,7 @@ export function ImportAction(props: ImportProps) {
       const item = itemOf(await send({ ...archon.importIssue({ ref, priority }) }));
       setOutcome({ ok: true, ...item });
       setOpen(false);
+      clear();
     } catch (error) {
       setOutcome({ ok: false, text: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -91,12 +93,8 @@ export function ImportAction(props: ImportProps) {
       {outcome?.ok ? <p role="status" className="gh-muted">Imported as <a className="ui-link" href={routeHref("#/archon/items/:item", { item: outcome.id })}>{outcome.title}</a></p> : null}
       <Dialog open={open} onClose={() => setOpen(false)} title={`Import #${page.number} as Archon work?`} description="Archon queues the issue as an item on its repository.">
         <Preview page={page} object={object} />
-        <label className="ui-field">
-          <span className="ui-field-label">Priority</span>
-          <select className="ui-field-input" value={priority} onChange={(event) => setPriority(event.target.value as archon.Priority)}>
-            {PRIORITIES.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-        </label>
+        <Picker label="Priority" value={priority} data-testid="gh-import-priority" onChange={(priority) => update({ priority: priority as archon.Priority })}
+          options={PRIORITIES.map((id) => ({ id, label: id }))} />
         {outcome && !outcome.ok ? <p role="alert" className="gh-error">The import failed: {outcome.text}</p> : null}
         <div className="gh-confirm">
           <Button onClick={() => setOpen(false)}>Not now</Button>

@@ -54,7 +54,12 @@
   .b3-check input { accent-color: var(--color-accent); }
   .b3-quote { padding-inline-start: var(--space-3); border-inline-start: 2px solid var(--color-border-strong); color: var(--color-text-muted); font-size: var(--text-sm); }
   .b3-quote[data-verbatim] { margin: 0; max-block-size: 12rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-text); }
-  .b3-form { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); align-items: end; }
+  /* Fields share rows of equal columns; a wide control and the action take a row of their own. */
+  .b3-form { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr)); align-items: end; }
+  .b3-form > * { min-inline-size: 0; }
+  .b3-form > .ui-segmented { flex-wrap: wrap; inline-size: fit-content; max-inline-size: 100%; }
+  .b3-form > .b3-span, .b3-form > .b3-stack { grid-column: 1 / -1; }
+  .b3-form > .b3-action { grid-column: 1 / -1; justify-self: start; }
 }
 
 @layer app {

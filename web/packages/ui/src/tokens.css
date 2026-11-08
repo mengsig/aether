@@ -6,49 +6,49 @@
 [data-theme="light"] {
   color-scheme: light;
 
-  /* Bone paper and spruce ink, from the Aether mark: a cool neutral ground, white
-     surfaces, and one green that does the pointing. */
-  --color-bg: #f3f2ee;
+  /* Quiet paper and spruce ink: a cool neutral ground, white cards, wells and fills that
+     step toward the ink, and one green that does the pointing (focus included). */
+  --color-bg: #f1f2ef;
   --color-surface-1: #ffffff;
-  --color-surface-2: #f7f6f2;
-  --color-surface-3: #ebe9e4;
-  --color-border: #e3e1db;
-  --color-border-strong: #827f77;
-  --color-text: #171c1a;
-  --color-text-muted: #4b5450;
-  --color-text-faint: #5e6760;
+  --color-surface-2: #f8f9f7;
+  --color-surface-3: #e8eae6;
+  --color-border: #dfe2de;
+  --color-border-strong: #80867f;
+  --color-text: #141917;
+  --color-text-muted: #48504c;
+  --color-text-faint: #59615c;
   --color-accent: #0b6b52;
   --color-accent-contrast: #ffffff;
-  --color-focus: #2457c9;
+  --color-focus: #0b6b52;
   --color-danger: #b02434;
-  --color-warning: #855700;
-  --color-success: #1d7442;
+  --color-warning: #805300;
+  --color-success: #1b6e3f;
   --color-info: #1b5f94;
 
-  --status-queued: #5f6873;
+  --status-queued: #5a636e;
   --status-dispatching: #4d4fc4;
   --status-running: #0b6b52;
-  --status-waiting: #8a5c00;
-  --status-operator: #a2337f;
-  --status-blocked: #b23d0b;
-  --status-succeeded: #2c7331;
+  --status-waiting: #835700;
+  --status-operator: #9e317c;
+  --status-blocked: #aa3a0a;
+  --status-succeeded: #2a6e2f;
   --status-failed: #b02434;
-  --status-cancelled: #67635a;
-  --pr-open: #1d7442;
-  --pr-draft: #5f6873;
+  --status-cancelled: #625e56;
+  --pr-open: #1b6e3f;
+  --pr-draft: #5a636e;
   --pr-merged: #6b44b8;
   --pr-closed: #b02434;
-  --issue-open: #1d7442;
+  --issue-open: #1b6e3f;
   --issue-closed: #6b44b8;
-  --mastery-unseen: #66635a;
-  --mastery-exposed: #2f69ad;
-  --mastery-demonstrated: #18704b;
-  --mastery-fragile: #8a5900;
+  --mastery-unseen: #625f57;
+  --mastery-exposed: #2b64a6;
+  --mastery-demonstrated: #166b48;
+  --mastery-fragile: #835500;
   --mastery-misconception: #b02434;
 
-  --elevation-1: 0 1px 2px #171c1a14;
-  --elevation-2: 0 1px 2px #171c1a0f, 0 8px 24px #171c1a1a;
-  --elevation-3: 0 2px 6px #171c1a14, 0 24px 56px #171c1a2e;
+  --elevation-1: 0 1px 2px #1419170f, 0 1px 1px #1419170a;
+  --elevation-2: 0 2px 4px #1419170a, 0 12px 32px #1419171f;
+  --elevation-3: 0 4px 12px #14191714, 0 32px 64px #1419172e;
 
 }
 
@@ -93,9 +93,9 @@
   --blur-lg: 12px;
 
   --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
 
   /* A background-coloured gap, then the ring, so it shows on any fill. */
   --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-focus);
@@ -105,7 +105,7 @@
   --motion-base: 200ms;
   --motion-slow: 280ms;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --ease-emphasized: cubic-bezier(0.3, 0, 0, 1.15);
+  --ease-emphasized: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 }
 
@@ -113,19 +113,19 @@
 [data-theme="dark"] {
   color-scheme: dark;
 
-  /* Night spruce: a near-neutral dark with the mint of the mark's dot as the accent. */
-  --color-bg: #0e1211;
-  --color-surface-1: #161b19;
-  --color-surface-2: #1b211f;
+  /* Night spruce: each surface a clear step lighter than the ground, the mint of the mark as the accent. */
+  --color-bg: #0b0e0d;
+  --color-surface-1: #141917;
+  --color-surface-2: #1a201e;
   --color-surface-3: #232a27;
-  --color-border: #262d2a;
+  --color-border: #29302d;
   --color-border-strong: #6e7b75;
   --color-text: #eceeec;
   --color-text-muted: #a9b2ad;
   --color-text-faint: #8d9691;
   --color-accent: #5fd0ae;
   --color-accent-contrast: #06201a;
-  --color-focus: #9cb8ff;
+  --color-focus: #7fdcbf;
   --color-danger: #ff8d9a;
   --color-warning: #f2c56a;
   --color-success: #7fdc9c;
@@ -152,9 +152,9 @@
   --mastery-fragile: #f2c56a;
   --mastery-misconception: #ff8d9a;
 
-  --elevation-1: 0 1px 2px #00000059;
-  --elevation-2: 0 1px 2px #00000040, 0 8px 24px #00000073;
-  --elevation-3: 0 2px 6px #00000052, 0 24px 56px #0000008c;
+  --elevation-1: 0 1px 2px #00000066;
+  --elevation-2: 0 2px 6px #00000052, 0 12px 32px #00000080;
+  --elevation-3: 0 4px 12px #0000005c, 0 32px 64px #00000099;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,8 +1,9 @@
+import { connectionDraftKey, useDraft } from "@aether-ui/core";
 // Import an export artifact (MEMORY-V2.md §2.3): a dry run reports what would be inserted, what is
 // unchanged and what conflicts; only a confirm of that same file writes, and nothing is overwritten.
 
 import type { aether, ConnId } from "@aether-ui/protocol";
-import { useId, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useId, useRef, useState, type ChangeEvent } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import { Action, RunNote, useRun } from "../controls/kit.tsx";
 import { bytes, count, escapedBytes } from "./format.ts";
@@ -15,19 +16,17 @@ type Picked = { readonly name: string; readonly artifact: string };
 // A dry run's report with the exact file it ran on, so a confirm applies that file and no other.
 type Plan = { readonly picked: Picked; readonly result: aether.MemoryImport };
 
-export function ImportTool({ conn, refresh }: { conn: ConnId; refresh: () => Promise<unknown> }) {
-  const [picked, setPicked] = useState<Picked | null>(null);
+function useImportFile(conn: ConnId) {
+  const draft = useDraft(connectionDraftKey("memory", conn, "import"), { picked: null as Picked | null });
+  const { picked } = draft.value;
+  const setPicked = (picked: Picked | null) => draft.update({ picked });
   const [problem, setProblem] = useState<string | null>(null);
-  const [plan, setPlan] = useState<Plan | null>(null);
-  // Bumped on every choice: a file read or reply begun for an older choice is dropped.
   const selection = useRef(0);
-  const [done, setDone] = useState<aether.MemoryImport | null>(null);
-  const run = useRun(conn);
-  const inputId = useId();
+  useEffect(() => () => { selection.current += 1; }, []);
   const choose = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     const chosen = ++selection.current;
-    setPlan(null); setDone(null); setPicked(null);
+    setPicked(null);
     if (!file) return;
     // Escaping never shrinks text, so a file already past the bound is refused before it is read.
     const tooLarge = (size: number) => `${file.name} is ${bytes(size)} on the wire; export per scope to stay under ${bytes(MAX_ENCODED)}`;
@@ -36,7 +35,9 @@ export function ImportTool({ conn, refresh }: { conn: ConnId; refresh: () => Pro
       return;
     }
     setProblem(null);
-    const artifact = await file.text();
+    let artifact: string;
+    try { artifact = await file.text(); }
+    catch (error) { if (chosen === selection.current) setProblem(`Could not read ${file.name}: ${String(error)}`); return; }
     if (chosen !== selection.current) return;
     const encoded = escapedBytes(artifact);
     if (encoded > MAX_ENCODED) {
@@ -45,6 +46,16 @@ export function ImportTool({ conn, refresh }: { conn: ConnId; refresh: () => Pro
     }
     setPicked({ name: file.name, artifact });
   };
+  return { picked, problem, selection, choose, clearIfUnchanged: draft.clearIfUnchanged };
+}
+
+export function ImportTool({ conn, refresh }: { conn: ConnId; refresh: () => Promise<unknown> }) {
+  const file = useImportFile(conn);
+  const { picked, problem, selection } = file;
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [done, setDone] = useState<aether.MemoryImport | null>(null);
+  const run = useRun(conn);
+  const inputId = useId();
   const send = async (target: Picked | null, dryRun: boolean) => {
     invariant(target !== null && target.artifact !== "", "a file is chosen before it is sent");
     invariant(dryRun || plan?.picked === target, "only the file a dry run planned is imported");
@@ -57,6 +68,7 @@ export function ImportTool({ conn, refresh }: { conn: ConnId; refresh: () => Pro
       if (chosen === selection.current) setPlan({ picked: target, result });
       return;
     }
+    file.clearIfUnchanged();
     setPlan(null); setDone(result);
     await refresh();
   };
@@ -67,7 +79,8 @@ export function ImportTool({ conn, refresh }: { conn: ConnId; refresh: () => Pro
     <h4 className="mem-tool-title">Import</h4>
     <p className="b3-meta">Adds what an export holds and this store lacks. A differing memory is reported, never overwritten.</p>
     <label className="b3-field" htmlFor={inputId}><span className="ui-field-label">Export file (.jsonl)</span>
-      <input id={inputId} className="mem-file" type="file" accept=".jsonl,.ndjson,application/jsonl,application/x-ndjson,text/plain" disabled={busy} onChange={e => { void choose(e); }} /></label>
+      <input id={inputId} className="mem-file" type="file" accept=".jsonl,.ndjson,application/jsonl,application/x-ndjson,text/plain" disabled={busy} onChange={e => { setPlan(null); setDone(null); void file.choose(e); }} /></label>
+    {picked ? <p className="b3-meta">Selected: {picked.name}</p> : null}
     {problem ? <p className="b3-note" role="alert" data-state="failed">{problem}</p> : null}
     <div className="b3-row">
       <Action conn={conn} command={command} label="Dry run import" busy={busy} blocked={picked === null ? "Choose an export file" : empty} onRun={() => send(picked, true)} />

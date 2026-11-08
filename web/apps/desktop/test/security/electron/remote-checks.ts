@@ -57,7 +57,7 @@ export async function remoteWindowChecks(ctx: Context): Promise<void> {
     assert.match(remotePartition(origin), /^persist:remote:[0-9a-f]{64}$/);
   });
   await ctx.check("remote window authenticates with Origin and a SameSite=Strict cookie", async () => {
-    await ctx.until("the fixture to see an authenticated request", () => ctx.server.authenticated);
+    await ctx.until("the fixture to see an authenticated request and its report", () => ctx.server.authenticated && ctx.server.reports.length >= 2);
     assert.deepEqual(ctx.server.reports, [
       { desktop: "undefined", require: "undefined", process: "undefined" },
       { login: 204, me: 200 },

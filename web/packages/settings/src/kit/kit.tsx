@@ -4,7 +4,7 @@
 
 import { codeOf, isKeyed, usePermission, useApp, useCommand, type LocalAction } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
-import { Badge, Button, Dialog, type ButtonVariant } from "@aether-ui/ui";
+import { Badge, Button, Dialog, TextArea, type ButtonVariant } from "@aether-ui/ui";
 import { useCallback, useId, useState, type ReactNode } from "react";
 import { invariant } from "./invariant.ts";
 import "./kit.css";
@@ -133,10 +133,8 @@ export function Action({ conn, command, label, onRun, confirm, variant = "second
             </>
           )}>
           {confirm.reason ? (
-            <label className="st-field">
-              <span className="ui-field-label">{confirm.reason === "required" ? "Reason" : "Reason (optional)"}</span>
-              <textarea className="st-textarea" value={reason} rows={3} onChange={(event) => setReason(event.target.value)} />
-            </label>
+            <TextArea label={confirm.reason === "required" ? "Reason" : "Reason (optional)"} data-testid="settings-confirm-reason" value={reason} rows={3}
+              onChange={(event) => setReason(event.target.value)} />
           ) : null}
         </Dialog>
       ) : null}
@@ -145,10 +143,10 @@ export function Action({ conn, command, label, onRun, confirm, variant = "second
 }
 
 /** A titled group of controls on a calm surface. */
-export function Section({ title, hint, children }: { readonly title: string; readonly hint?: string; readonly children: ReactNode }) {
+export function Section({ title, hint, id, children }: { readonly title: string; readonly hint?: string; readonly id?: string; readonly children: ReactNode }) {
   invariant(title.trim() !== "", "a section has a title");
   return (
-    <section className="ui-card st-section" aria-label={title}>
+    <section className="ui-card st-section" aria-label={title} id={id}>
       <header className="st-section-head">
         <h3 className="ui-card-title st-section-title">{title}</h3>
         {hint === undefined ? null : <p className="st-section-hint">{hint}</p>}

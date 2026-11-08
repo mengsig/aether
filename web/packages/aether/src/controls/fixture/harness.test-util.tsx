@@ -87,3 +87,16 @@ export async function type(h: Harness, root: ParentNode, label: string, value: s
   });
   await h.settle();
 }
+
+/** Chooses a visible option through the select-only combobox. */
+export async function pick(h: Harness, root: ParentNode, label: string, option: string): Promise<void> {
+  const named = [...root.querySelectorAll("label")].find(l => l.textContent === label);
+  const trigger = named ? root.querySelector<HTMLButtonElement>(`[id="${named.htmlFor}"]`) : null;
+  invariant(trigger?.getAttribute("role") === "combobox", `${label} is a picker`);
+  invariant(!trigger.disabled, `${label} is enabled`);
+  await act(async () => trigger.click());
+  const item = [...root.querySelectorAll<HTMLElement>('[role="option"]')].find(o => o.querySelector(".ui-picker-option-label")?.textContent === option);
+  invariant(item && item.getAttribute("aria-disabled") !== "true", `${option} is an available option`);
+  await act(async () => item.click());
+  await h.settle();
+}

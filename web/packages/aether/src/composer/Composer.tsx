@@ -107,7 +107,7 @@ export function Composer({ conn, agent, commands, unknownHeld }: ComposerProps) 
       {ended === null ? null : <EndedNotice conn={conn} agent={agent} />}
       <div className="cmp-box" data-busy={busy || undefined}>
         {menu.open ? <SlashMenu id={listbox} menu={menu} onPick={choose} /> : null}
-        <textarea className="cmp-input" rows={1} maxLength={DRAFT_LIMIT} value={draft.text} placeholder={`Message ${agent.name}, or / for commands`}
+        <textarea className="cmp-input" data-testid="composer-input" rows={1} maxLength={DRAFT_LIMIT} value={draft.text} placeholder={`Message ${agent.name}, or / for commands`}
           aria-label={`Message ${agent.name}`} role="combobox" aria-autocomplete="list" aria-haspopup="listbox"
           aria-expanded={menu.open} aria-controls={menu.open ? listbox : undefined}
           aria-activedescendant={menu.open ? optionId(listbox, menu.active) : undefined}
@@ -118,7 +118,7 @@ export function Composer({ conn, agent, commands, unknownHeld }: ComposerProps) 
           {agent.status.state === "running" ? (
             <Button size="sm" variant="secondary" disabled={stopRefusal !== null} title={stopRefusal ?? "Stop the current turn; the agent keeps its context"} onClick={() => void stop()}>Stop</Button>
           ) : null}
-          <Button size="sm" variant="primary" type="submit" disabled={!canSend}>Send</Button>
+          <Button size="sm" variant="primary" type="submit" data-testid="composer-send" disabled={!canSend}>Send</Button>
         </div>
       </div>
       {problem ? <p className="b3-note" role="alert" data-state="failed">{problem}</p> : null}

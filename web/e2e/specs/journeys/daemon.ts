@@ -1,0 +1,233 @@
+// Daemon-side reads and setup for the journeys, over the host sockets, so each journey asserts
+// what the daemons hold and not only what the window draws. Every read checks its reply.
+
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { promisify } from "node:util";
+import type { Stack } from "../../harness/stack.ts";
+
+const run = promisify(execFile);
+
+export interface AgentView {
+  readonly id: string;
+  readonly name: string;
+  readonly paused: boolean;
+  readonly state: string;
+  readonly model: { readonly provider: string; readonly model: string };
+  readonly usage: { readonly cost_usd?: number | null; readonly estimated_cost_usd?: number | null; readonly input_tokens?: number; readonly output_tokens?: number } | null;
+}
+
+async function list(stack: Stack, cmd: Record<string, unknown> & { cmd: string }, reply: string): Promise<unknown[]> {
+  const answer = await stack.aether.request(cmd);
+  assert.equal(answer.reply, reply, `${cmd.cmd} answers ${reply}: ${answer.reply}`);
+  const rows = Array.isArray(answer.data) ? answer.data : (answer.data as Record<string, unknown>)[reply];
+  assert.ok(Array.isArray(rows), `${cmd.cmd} lists rows: ${JSON.stringify(answer.data).slice(0, 400)}`);
+  return rows;
+}
+
+export async function agent(stack: Stack, id: string): Promise<AgentView> {
+  assert.match(id, /^agt_/, `an agent id: ${id}`);
+  const { reply, data } = await stack.aether.request({ cmd: "get_agent", id });
+  assert.equal(reply, "agent", `get_agent answers agent: ${reply}`);
+  const raw = data as { id: string; name: string; paused?: boolean; status: { state: string }; model: AgentView["model"]; stats?: { usage?: AgentView["usage"] } };
+  assert.equal(raw.id, id, "the daemon answered for the agent asked about");
+  return { id, name: raw.name, paused: raw.paused === true, state: raw.status.state, model: raw.model, usage: raw.stats?.usage ?? null };
+}
+
+export async function agentIds(stack: Stack): Promise<string[]> {
+  const rows = await list(stack, { cmd: "list_agents", query: {} }, "agents") as Array<{ id: string }>;
+  return rows.map((row) => row.id);
+}
+
+export async function pendingApprovals(stack: Stack, agentId: string): Promise<Array<{ id: string; tool: string }>> {
+  const rows = await list(stack, { cmd: "list_approvals" }, "approvals") as Array<{ id: string; tool: string; agent_id: string; status: unknown }>;
+  return rows.filter((row) => row.agent_id === agentId && JSON.stringify(row.status).includes("pending")).map(({ id, tool }) => ({ id, tool }));
+}
+
+export async function approvalRuleTools(stack: Stack): Promise<string[]> {
+  const rows = await list(stack, { cmd: "list_approval_rules" }, "approval_rules") as Array<{ match?: { tool?: string | null } }>;
+  return rows.map((rule) => String(rule.match?.tool ?? ""));
+}
+
+/** Names of the schedules that will still fire: active or paused, not cancelled or ended. */
+export async function scheduleNames(stack: Stack): Promise<string[]> {
+  const rows = await list(stack, { cmd: "list_schedules" }, "schedules") as Array<{ name: string; status: { state: string } }>;
+  assert.ok(rows.every((row) => typeof row.name === "string" && typeof row.status?.state === "string"), "each schedule has a name and a status");
+  return rows.filter((row) => row.status.state === "active" || row.status.state === "paused").map((row) => row.name);
+}
+
+export interface SavedSpawn { readonly model?: unknown; readonly objective?: unknown; readonly scope?: { readonly workspace_root?: unknown } | null }
+export interface SavedSchedule { readonly name: string; readonly recurrence: unknown; readonly target?: unknown; readonly spawn?: SavedSpawn | null }
+
+/** The live schedule called `name` as the daemon holds it, or undefined. */
+export async function scheduleNamed(stack: Stack, name: string): Promise<SavedSchedule | undefined> {
+  assert.ok(name !== "", "a schedule has a name");
+  const rows = await list(stack, { cmd: "list_schedules" }, "schedules") as Array<SavedSchedule & { status: { state: string } }>;
+  const live = rows.filter((row) => row.name === name && (row.status.state === "active" || row.status.state === "paused"));
+  assert.ok(live.length <= 1, `one live schedule is called ${name}`);
+  return live[0];
+}
+
+export async function memoryTexts(stack: Stack, text: string): Promise<string[]> {
+  assert.ok(text.trim() !== "", "a memory search has text");
+  // Not `proposed`: that lists only proposals, and a memory the host creates is active at once.
+  const rows = await list(stack, { cmd: "memories", query: { text } }, "memories") as Array<{ text?: string; memory?: { text?: string } }>;
+  return rows.map((row) => String(row.text ?? row.memory?.text ?? ""));
+}
+
+export async function taskObjectives(stack: Stack, owner: string): Promise<string[]> {
+  const rows = await list(stack, { cmd: "list_tasks", query: { owner } }, "tasks") as Array<{ objective: string }>;
+  return rows.map((task) => task.objective);
+}
+
+export interface Spend {
+  readonly agents: number;
+  readonly usd: number;
+  /** Agents that ran but reported neither an actual nor an estimated cost. */
+  readonly unreported: number;
+}
+
+/** What every agent on the stack spent: actual cost where the engine reported it, else its estimate. */
+export async function stackSpend(stack: Stack): Promise<Spend> {
+  const views = await Promise.all((await agentIds(stack)).map((id) => agent(stack, id)));
+  let usd = 0;
+  let unreported = 0;
+  for (const view of views) {
+    const cost = view.usage?.cost_usd ?? view.usage?.estimated_cost_usd ?? null;
+    if (cost === null) unreported += view.usage === null ? 0 : 1;
+    else usd += cost;
+  }
+  assert.ok(Number.isFinite(usd) && usd >= 0, `spend is a non-negative amount: ${usd}`);
+  return { agents: views.length, usd, unreported };
+}
+
+/** Cancels each agent that is still live; the journeys' cheap cleanup before the stack stops. */
+export async function cancelLive(stack: Stack, ids: readonly string[]): Promise<void> {
+  for (const id of ids) {
+    const view = await agent(stack, id);
+    if (["completed", "failed", "cancelled"].includes(view.state)) continue;
+    await stack.aether.request({ cmd: "cancel", agent: id, reason: "journey cleanup" });
+  }
+}
+
+/** A scratch git repository with one commit and no remote, inside the stack root. */
+export async function scratchRepo(stack: Stack, name: string): Promise<string> {
+  assert.match(name, /^[a-z0-9-]+$/, `a scratch repository name is plain: ${name}`);
+  const repo = path.join(stack.layout.root, "repos", name);
+  await mkdir(repo, { recursive: true, mode: 0o700 });
+  const git = (...args: string[]) => run("git", ["-C", repo, ...args], { env: stack.layout.env, timeout: 15_000 });
+  await git("init", "-q", "-b", "main");
+  await writeFile(path.join(repo, "README.md"), `# ${name}\n\nA journey's scratch repository.\n`);
+  await git("add", "README.md");
+  await git("-c", "user.name=Journey", "-c", "user.email=journey@example.invalid", "commit", "-q", "-m", "init");
+  const { stdout } = await git("remote");
+  assert.equal(stdout.trim(), "", "the scratch repository has no remote");
+  assert.ok(repo.startsWith(`${stack.layout.root}/`), "the scratch repository is inside the stack root");
+  return repo;
+}
+
+export interface NewAgent {
+  readonly name: string;
+  /** Its first task; none leaves the agent free to take one (an agent carries one task at a time). */
+  readonly objective?: string;
+  readonly model: { readonly provider: string; readonly model: string };
+  readonly start?: boolean;
+  /** Side-effect classes that ask first; every class makes any tool call wait for approval. */
+  readonly requireFor?: readonly string[];
+  readonly limits?: { readonly cost_budget: number; readonly max_turns: number };
+}
+
+export async function createAgentOn(stack: Stack, spec: NewAgent): Promise<string> {
+  assert.ok(spec.name.trim() !== "", "an agent has a name");
+  assert.ok(spec.objective === undefined || spec.objective.trim() !== "", "an objective, when given, is not blank");
+  const { reply, data } = await stack.aether.request({
+    cmd: "create_agent", role: "journey-worker", name: spec.name, ...(spec.objective === undefined ? {} : { objective: spec.objective }),
+    model: spec.model, start: spec.start ?? true,
+    scope: { workspace_root: stack.layout.aether.work },
+    ...(spec.requireFor === undefined ? {} : { approval: { require_for: spec.requireFor } }),
+    ...(spec.limits === undefined ? {} : { config: { ...spec.limits } }),
+  });
+  assert.equal(reply, "agent", `create_agent answers with the agent: ${reply}`);
+  assert.match(String(data.id), /^agt_/);
+  return String(data.id);
+}
+
+interface Block {
+  readonly type: string; readonly id?: unknown; readonly name?: unknown; readonly text?: unknown; readonly input?: unknown;
+  readonly tool_use_id?: unknown; readonly content?: unknown; readonly is_error?: unknown;
+}
+interface Entry { readonly message: { readonly role: string; readonly content: Block[] } }
+
+/** The transcript's content blocks with their message's role, in order; the objective is the first user message. */
+async function transcriptBlocks(stack: Stack, id: string): Promise<Array<{ role: string; block: Block }>> {
+  const { reply, data } = await stack.aether.request({ cmd: "get_transcript", agent: id, after: 0 });
+  assert.equal(reply, "transcript", `get_transcript answers transcript: ${reply}`);
+  assert.ok(Array.isArray(data) && data.length > 0, "the transcript has entries");
+  return (data as Entry[]).flatMap((entry) => {
+    assert.ok(Array.isArray(entry.message?.content), "each entry's message carries content blocks");
+    return entry.message.content.map((block) => ({ role: entry.message.role, block }));
+  });
+}
+
+/** What the agent itself said: the text blocks of its assistant messages, joined. */
+export async function assistantText(stack: Stack, id: string): Promise<string> {
+  const blocks = await transcriptBlocks(stack, id);
+  return blocks.filter(({ role, block }) => role === "assistant" && block.type === "text").map(({ block }) => String(block.text ?? "")).join("\n");
+}
+
+/** The inputs of every tool call the agent made, as JSON; the objective's words are not among them. */
+export async function toolCallInputs(stack: Stack, id: string): Promise<string[]> {
+  const blocks = await transcriptBlocks(stack, id);
+  return blocks.filter(({ block }) => block.type === "tool_use").map(({ block }) => JSON.stringify(block.input ?? null));
+}
+
+/** Every tool result the daemon sent back: its text and whether the tool failed. */
+export async function toolResults(stack: Stack, id: string): Promise<Array<{ text: string; failed: boolean }>> {
+  const blocks = await transcriptBlocks(stack, id);
+  return blocks.filter(({ block }) => block.type === "tool_result").map(({ block }) => {
+    const parts = Array.isArray(block.content) ? (block.content as Block[]) : [];
+    return { text: parts.filter((part) => part.type === "text").map((part) => String(part.text ?? "")).join("\n"), failed: block.is_error === true };
+  });
+}
+
+export interface ToolCall { readonly name: string; readonly input: string; readonly result: { text: string; failed: boolean } | null }
+
+/** Every tool call the agent made with the result it got back, paired by the call's id; null while unanswered. */
+export async function toolCalls(stack: Stack, id: string): Promise<ToolCall[]> {
+  const blocks = (await transcriptBlocks(stack, id)).map(({ block }) => block);
+  const results = new Map<string, { text: string; failed: boolean }>();
+  for (const block of blocks.filter((block) => block.type === "tool_result")) {
+    const parts = Array.isArray(block.content) ? (block.content as Block[]) : [];
+    results.set(String(block.tool_use_id), { text: parts.filter((part) => part.type === "text").map((part) => String(part.text ?? "")).join("\n"), failed: block.is_error === true });
+  }
+  const calls = blocks.filter((block) => block.type === "tool_use").map((block) => ({
+    name: String(block.name ?? ""), input: JSON.stringify(block.input ?? null), result: results.get(String(block.id)) ?? null,
+  }));
+  assert.ok(results.size <= calls.length, "no tool result without its call");
+  return calls;
+}
+
+/** The decision the agent's approval was resolved with, from the daemon's persisted events; null while it is pending. */
+export async function approvalDecision(stack: Stack, agentId: string, approvalId: string): Promise<string | null> {
+  assert.match(approvalId, /^apr_/, "an approval id");
+  const events = await list(stack, { cmd: "get_events", after: 0, limit: 500, query: { agent: agentId, types: ["approval.resolved"] } }, "events") as Array<{ kind: { type: string; approval?: string; decision?: string } }>;
+  const resolved = events.filter((event) => event.kind.type === "approval.resolved" && event.kind.approval === approvalId);
+  assert.ok(resolved.length <= 1, `approval ${approvalId} is resolved once`);
+  return resolved[0] === undefined ? null : String(resolved[0].kind.decision);
+}
+
+/** A global memory created on the daemon directly, as a neighbour for what the screen creates. */
+export async function createMemory(stack: Stack, text: string): Promise<void> {
+  assert.ok(text.trim() !== "", "a memory has text");
+  const { reply } = await stack.aether.request({ cmd: "create_memory", spec: { text, kind: "fact", scope: { scope: "global" }, tags: [] } });
+  assert.equal(reply, "memory", `create_memory answers with the memory: ${reply}`);
+}
+
+/** Caps an agent the window started: the real variant's cost budget and turn limit. */
+export async function capAgent(stack: Stack, id: string, limits: { readonly cost_budget: number; readonly max_turns: number }): Promise<void> {
+  assert.ok(limits.cost_budget > 0 && limits.max_turns > 0, "the caps are positive");
+  const { reply } = await stack.aether.request({ cmd: "update_agent", id, patch: { ...limits } });
+  assert.equal(reply, "agent", `update_agent answers with the agent: ${reply}`);
+}

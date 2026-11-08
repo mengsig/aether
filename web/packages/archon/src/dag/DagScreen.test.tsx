@@ -155,6 +155,22 @@ describe("the task DAG", () => {
     expect(counting.calls[1]?.nodes.map((node) => node.id)).toContain("qi_new");
   });
 
+  it("keeps the panel and adds a legend and details with an item link", async () => {
+    stubCanvas();
+    h = await graphHarness();
+    const root = await h.mount(<DagScreen layout={countingLayout().layout} />);
+    await h.until(() => root.querySelector(".dag-placing") === null, "the first layout");
+    expect(root.querySelector("[data-testid=graph-legend]")?.textContent).toContain("Dependency");
+    const item = [...root.querySelectorAll<HTMLElement>("ul[aria-label^='Task graph'] button")].find((node) => node.textContent?.startsWith("Store sync cursors,"));
+    if (item === undefined) throw new Error("the graph lists its sync item");
+    await click(h, item);
+    const details = root.querySelector("[data-testid=graph-details]");
+    expect(details?.textContent).toContain("Pipeline:");
+    expect(details?.textContent).toContain("Stage:");
+    expect(details?.querySelector("a")?.getAttribute("href")).toBe("#/archon/items/qi_sync_store");
+    expect(root.querySelector(".dag-panel .dag-inspector[data-item=qi_sync_store]")).not.toBeNull();
+  });
+
   it("explains an empty graph instead of showing a blank canvas", async () => {
     stubCanvas();
     const world = (await import("./fixture/graph-world.ts")).demoGraphWorld();
@@ -162,5 +178,6 @@ describe("the task DAG", () => {
     h = await graphHarness(world);
     const root = await h.mount(<DagScreen layout={countingLayout().layout} />);
     expect(root.querySelector(".ui-state")?.textContent).toContain("Nothing in the graph");
+    expect(root.querySelector("a[data-variant=primary]")?.getAttribute("href")).toBe("#/archon/queue");
   });
 });

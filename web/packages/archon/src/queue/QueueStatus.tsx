@@ -3,11 +3,10 @@
 
 import type { ArchonItem } from "@aether-ui/core";
 import type { archon } from "@aether-ui/protocol";
-import { Badge, Button, ErrorState } from "@aether-ui/ui";
+import { Badge, Button, ErrorState, Menu } from "@aether-ui/ui";
 import { useMemo, useState } from "react";
 import { useChange, useRead, type ArchonAccess } from "./archon.ts";
 import { usd } from "./model.ts";
-import { NewItemDialog, SayDialog } from "./NewItemDialog.tsx";
 import { QuestionList } from "./Questions.tsx";
 
 const count = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? "" : "s"}`;
@@ -64,19 +63,19 @@ function Spend({ access, status, names, settled }: {
 }
 
 /** `settled` is archond's activity as of its last settle: status, counts and questions are reread when it moves. */
-export function QueueStatus({ access, items, names, settled }: {
-  readonly access: ArchonAccess; readonly items: Readonly<Record<string, ArchonItem>>; readonly names: ReadonlyMap<string, string>; readonly settled: string;
+export function QueueStatus({ access, items, names, settled, onDialog }: {
+  readonly access: ArchonAccess; readonly onDialog: (dialog: "item" | "say" | "repo") => void; readonly items: Readonly<Record<string, ArchonItem>>; readonly names: ReadonlyMap<string, string>; readonly settled: string;
 }) {
   const status = useRead<archon.DaemonStatus>(access, { cmd: "status" }, ["status"], settled);
   const questions = useRead<archon.Question[]>(access, { cmd: "list_questions", open_only: false }, ["questions"], settled);
-  const [dialog, setDialog] = useState<"item" | "say" | null>(null);
   const open = (questions.data ?? []).filter((question) => !question.answer);
   const titles = useMemo(() => new Map(Object.entries(items).map(([id, item]) => [id, String(item.summary.title)])), [items]);
   return (
     <div className="queue-status">
       <div className="queue-actions">
-        <Button variant="primary" disabled={access.refusal !== null} title={access.refusal ?? undefined} onClick={() => setDialog("item")}>New item</Button>
-        <Button disabled={access.speakRefusal !== null} title={access.speakRefusal ?? undefined} onClick={() => setDialog("say")}>Message Archon</Button>
+        <Button variant="primary" disabled={access.refusal !== null} title={access.refusal ?? undefined} onClick={() => onDialog("item")}>New item</Button>
+        <Button disabled={access.speakRefusal !== null} title={access.speakRefusal ?? undefined} onClick={() => onDialog("say")}>Message Archon</Button>
+        {access.refusal === null ? <Menu label="More" items={[{ id: "register-repository", label: "Register a repository", onSelect: () => onDialog("repo") }]} /> : null}
       </div>
       {status.error && !status.data ? <ErrorState title="Could not read Archon's status" message={status.error} onRetry={status.reload} /> : null}
       {status.data ? (
@@ -92,8 +91,6 @@ export function QueueStatus({ access, items, names, settled }: {
         </div>
       ) : null}
       {open.length > 0 ? <QuestionList access={access} questions={open} titles={titles} onAnswered={questions.reload} /> : null}
-      <NewItemDialog access={access} open={dialog === "item"} repos={names} onClose={() => setDialog(null)} />
-      <SayDialog access={access} open={dialog === "say"} onClose={() => setDialog(null)} />
     </div>
   );
 }

@@ -75,13 +75,13 @@
       "reason": "Rows rendered by one State filter change."
     },
     "fleet.filter.dom_mutations": {
-      "budget": 40,
+      "budget": 47,
       "unit": "mutations",
       "enforce": "ci",
       "fixture": "5,000 agents",
-      "measured": 40,
+      "measured": 47,
       "noise": 0,
-      "reason": "DOM mutations for one filter change: bounded by the rows on screen."
+      "reason": "Filtering through the State picker: its value, the count and the rows that change; the picker draws its value and badge beside the list."
     },
     "fleet.filter.ms": {
       "budget": 17.67,
@@ -174,13 +174,13 @@
       "reason": "Mount commits: the render and the viewport measure."
     },
     "conversation.mount.dom_elements": {
-      "budget": 135,
+      "budget": 201,
       "unit": "elements",
       "enforce": "ci",
       "fixture": "20,000 entries",
-      "measured": 135,
+      "measured": 201,
       "noise": 0,
-      "reason": "The transcript is virtualized (\u00a75.4): DOM holds the rows in view plus 800 px overscan."
+      "reason": "The full-height chat: speaker marks, folded tool rows with Copy, the find bar, jump to latest and the pinned composer (\u00a75.5)."
     },
     "conversation.mount.row_renders": {
       "budget": 21,
@@ -345,13 +345,13 @@
       "reason": "Selecting an item repaints once."
     },
     "dag.select.dom_mutations": {
-      "budget": 3,
+      "budget": 5,
       "unit": "mutations",
       "enforce": "ci",
       "fixture": "2,000 items",
-      "measured": 3,
+      "measured": 5,
       "noise": 0,
-      "reason": "Selecting swaps the overview panel for the inspector."
+      "reason": "Selecting a node also fills the detail card and raises the legend entry of its kind."
     },
     "dag.select.ms": {
       "budget": 37.45,
@@ -444,31 +444,31 @@
       "reason": "95th percentile frame: frames where a message commits or another agent's event rebuilds the rows."
     },
     "bundle.total_bytes": {
-      "budget": 889304,
+      "budget": 1066918,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 889304,
+      "measured": 1066918,
       "noise": 0,
-      "reason": "Everything web/dist ships, embedded in aether-remote. Includes 16,794 bytes for the in-flight Archon views change. Current build: 872,510 bytes."
+      "reason": "Everything web/dist ships, embedded in aether-remote. Includes 16,794 bytes for the in-flight Archon views change. Current build: 1,050,124 bytes."
     },
     "bundle.js_bytes": {
-      "budget": 786475,
+      "budget": 926598,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 786475,
+      "measured": 926598,
       "noise": 0,
-      "reason": "All JavaScript chunks. Includes 15,430 bytes for the in-flight Archon views change. Current build: 771,045 bytes."
+      "reason": "All JavaScript chunks. Includes 15,430 bytes for the in-flight Archon views change. Current build: 911,168 bytes."
     },
     "bundle.css_bytes": {
-      "budget": 96645,
+      "budget": 134136,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 96645,
+      "measured": 134136,
       "noise": 0,
-      "reason": "All stylesheets. Includes 1,364 bytes for the in-flight Archon views change. Current build: 95,281 bytes."
+      "reason": "All stylesheets. Includes 1,364 bytes for the in-flight Archon views change. Current build: 132,772 bytes."
     },
     "bundle.initial_bytes": {
       "budget": 359381,
@@ -489,13 +489,13 @@
       "reason": "The entry's transfer size at gzip -9: what a remote device downloads first."
     },
     "bundle.js_gzip_bytes": {
-      "budget": 273020,
+      "budget": 327590,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 273020,
+      "measured": 327590,
       "noise": 0,
-      "reason": "All JavaScript at gzip -9. Includes 5,419 bytes for the in-flight Archon views change. Current build: 267,601 bytes."
+      "reason": "All JavaScript at gzip -9. Includes 5,419 bytes for the in-flight Archon views change. Current build: 322,171 bytes."
     },
     "bundle.largest_js_bytes": {
       "budget": 337797,

@@ -106,7 +106,8 @@ describe("InboxScreen", () => {
 
   test("a clear daemon says nothing needs you", async () => {
     const { root } = await open({ attention: {} });
-    expect(root.textContent).toContain("Nothing on studio needs you.");
+    expect(root.textContent).toContain("Nothing on studio needs you");
+    expect(root.querySelector('a[href="#/fleet"]')?.textContent).toBe("See the fleet");
     expect(root.textContent).not.toContain("Recovery review");
   });
 });
