@@ -50,6 +50,8 @@ async fn answered_recall_is_judged_before_the_next_question() {
     assert_eq!(view.agents[0].internal.len(), 1);
     let transcript = serde_json::to_string(&harness.transcript(posed.agent)).unwrap();
     assert!(!transcript.contains("System guidance"));
+    let events = serde_json::to_string(&harness.events()).unwrap();
+    assert!(!events.contains("System guidance"));
     harness.close().await;
 }
 
