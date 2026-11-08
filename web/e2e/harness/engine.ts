@@ -151,7 +151,7 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
   const seen: EngineRequest = {
     model: String(body.model ?? ""), lastUserText: lastUserText(body.messages),
     userTexts: userTexts(body.messages), toolsCalled: toolsCalled(body.messages),
-    model: String(body.model ?? ""), lastUserText: lastUserText(body.messages), toolNames: toolNames(body.tools), toolResults: toolResults(body.messages),
+    toolNames: toolNames(body.tools), toolResults: toolResults(body.messages),
   };
   state.requests.push(seen);
   streamReply(response, seen.model, state.script(seen));
