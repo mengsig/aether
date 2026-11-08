@@ -22,6 +22,11 @@ release is also the text of its GitHub release.
   stay pinned until answered, and a composer with a `/` menu sends, stops and
   keeps unsent drafts.
 
+### Fixed
+
+- Delegated children inherit their parent's current deadline and cost budget,
+  including extensions made while a turn is in flight.
+
 ## 1.3.0
 
 Released with Archon 1.5.0. One web app now serves every screen, from
