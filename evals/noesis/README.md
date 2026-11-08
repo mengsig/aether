@@ -6,7 +6,8 @@ Three small tools. Only the first two checkers run in CI, and none of them calls
 
 `parity_cases.json` maps every behavioural parity row to the Rust tests that prove it:
 T1–T12 (teaching), S1–S4 (service), S5-G01…G15, S5-H1, S5-H2 and S5-SETTINGS (off by default and hidden answers), and X1–X10 (graph).
-Each row quotes its behaviour and Noesis form from NOESIS.md §6 (the S5 rows quote ARCHITECTURE.md §g) and splits the behaviour into `clauses`.
+The original rows quote NOESIS.md §6 (the S5 rows quote ARCHITECTURE.md §g); B rows describe tested examples from `docs/noesis/BEHAVIOUR-SPEC.md`.
+Each row splits its behaviour into `clauses`.
 A clause is quoted from the behaviour or the Noesis form, and has `tests` that assert it, a `gap` saying what is not proven, or both.
 An optional `noesis` note says how Noesis differs for that clause; a row whose form is not `same` needs one, or a clause quoted from the form.
 
