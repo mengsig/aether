@@ -49,7 +49,7 @@ test.afterAll(async () => {
 });
 
 test("memory review and maintenance remain available after navigation", async () => {
-  await expect(page().getByRole("region", { name: "Proposals" })).toContainText("No proposals to review");
+  await expect(page().getByRole("region", { name: "Proposals", exact: true })).toContainText("No proposals to review");
   await expect(page().getByRole("region", { name: "Retrieval explain" }).getByRole("button", { name: "Explain" })).toBeVisible();
   const maintenance = page().getByRole("region", { name: "Maintenance" });
   await maintenance.getByRole("button", { name: "Plan consolidation" }).click();
