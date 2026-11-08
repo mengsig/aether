@@ -16,8 +16,11 @@ function Rows({ transitions }: { readonly transitions: readonly Transition[] }) 
   if (rows.length === 0) return <p className="dag-muted">Archon recorded no transitions for this item. Open the item to inspect its current state.</p>;
   return (
     <ol className="history-timeline" aria-label="Transitions">
-      {rows.map((row, index) => (
-        <li key={row.seq} className="history-step" data-seq={row.seq}>
+      {rows.map((row, index) => {
+        const last = index === rows.length - 1;
+        const terminal = last && ["succeeded", "failed", "cancelled"].includes(transitions[index]?.to ?? "");
+        const held = terminal ? null : last ? `${duration(row.heldMs)} so far` : `held ${duration(row.heldMs)}`;
+        return <li key={row.seq} className="history-step" data-seq={row.seq}>
           <span className="history-dot" data-status={row.to.status} aria-hidden="true" />
           <div className="history-move">
             {row.from === null ? <span className="dag-muted">Created</span> : <StatusPill status={row.from.status} label={row.from.label} />}
@@ -26,10 +29,10 @@ function Rows({ transitions }: { readonly transitions: readonly Transition[] }) 
           </div>
           {row.reason === null ? null : <p className="history-reason">{row.reason}</p>}
           <p className="dag-muted history-meta">
-            <time dateTime={row.at}>{dateTime(row.at)}</time> · by {row.by}{index === rows.length - 1 && ["succeeded", "failed", "cancelled"].includes(transitions[index]?.to ?? "") ? null : ` · ${index === rows.length - 1 ? `${duration(row.heldMs)} so far` : `held ${duration(row.heldMs)}`}`}
+            <time dateTime={row.at}>{dateTime(row.at)}</time> · by {row.by}{held === null ? null : ` · ${held}`}
           </p>
-        </li>
-      ))}
+        </li>;
+      })}
     </ol>
   );
 }
