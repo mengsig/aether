@@ -991,6 +991,17 @@
     },
     "AgentTree": {
       "properties": {
+        "next_after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Older agents in scope were left out of this page: ask again with this\nas `after` for them, even when the page is short. Absent when the tree is whole."
+        },
         "nodes": {
           "additionalProperties": false,
           "patternProperties": {
@@ -1005,6 +1016,17 @@
             "$ref": "#/$defs/AgentId"
           },
           "type": "array"
+        },
+        "stale": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StatusStale"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set when no fresh read finished in the daemon's patience: this is the\nlast tree read for the same request, or empty if none finished yet."
         }
       },
       "required": [
@@ -2522,8 +2544,19 @@
           "type": "object"
         },
         {
-          "description": "The live graph: every agent in the run (or all runs) with relations.",
+          "description": "The live graph: the agents in the run (or all runs) with relations.\nOne page: the newest live agents, then the newest agents of any state,\nat most `limit` of each (1 to 500, 500 when absent); `AgentTree.next_after`\nsays older ones were left out.",
           "properties": {
+            "after": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The page of agents older than this one, from an earlier page's\n`next_after`; only the first page pins live agents. Needs `features::TREE_PAGES`."
+            },
             "cmd": {
               "const": "get_tree",
               "type": "string"
@@ -2532,6 +2565,15 @@
               "default": false,
               "description": "Include agents cleared from the view.",
               "type": "boolean"
+            },
+            "limit": {
+              "description": "At most this many agents walked, and live ones pinned on the first\npage. Needs `features::TREE_PAGES`.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "role_prefix": {
               "description": "Only agents whose role starts with this text. Needs\n`features::AGENTS_PAGING`.",
@@ -4365,6 +4407,19 @@
           "properties": {
             "cmd": {
               "const": "list_models",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Built-in and user transcript modes from the daemon's configuration.",
+          "properties": {
+            "cmd": {
+              "const": "list_view_modes",
               "type": "string"
             }
           },
@@ -6416,6 +6471,13 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "unavailable": {
+          "description": "Sections the daemon could not read before its status deadline. Their\nfields carry no figure, so a client shows each as unavailable, never\nas the zero it holds. Empty on a complete answer, and on older daemons.",
+          "items": {
+            "$ref": "#/$defs/UnavailableSection"
+          },
+          "type": "array"
         },
         "usage_total": {
           "$ref": "#/$defs/Usage"
@@ -16469,6 +16531,22 @@
         {
           "properties": {
             "data": {
+              "$ref": "#/$defs/ViewModes"
+            },
+            "reply": {
+              "const": "view_modes",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
               "items": {
                 "$ref": "#/$defs/ProviderInfo"
               },
@@ -17783,6 +17861,10 @@
           "description": "What it would have spent after another hour at that rate.",
           "format": "double",
           "type": "number"
+        },
+        "rate_approximate": {
+          "description": "The rate was read from only the newest receipts of a run that billed\nmore in the window than one read walks: it is a floor, not the rate.",
+          "type": "boolean"
         },
         "rate_usd_per_hour": {
           "description": "Dollars per hour over the last 15 minutes (`RATE_WINDOW_MINUTES`) of\nreceipts, zero for a run that billed nothing in them. Derived from\n`usage.cost_usd`, so it is a floor exactly when that is.",
@@ -19764,7 +19846,7 @@
               "type": "null"
             }
           ],
-          "description": "Usage of child subtrees omitted from this tree (for example archived children).\nKept separately so live clients can replace visible usage without losing it."
+          "description": "Usage of the descendants omitted from this tree (for example archived\nchildren), up to the next shown ones. Kept separately so live clients\ncan replace visible usage without losing it."
         },
         "lease": {
           "anyOf": [
@@ -19778,7 +19860,7 @@
         },
         "subtree_usage": {
           "$ref": "#/$defs/Usage",
-          "description": "Usage rolled up over this agent and its descendants."
+          "description": "Usage of this agent, its `hidden_usage` and its children's subtrees: a\ndescendant whose parent is not shown is a root, counted there instead."
         },
         "task": {
           "anyOf": [
@@ -19890,6 +19972,24 @@
           "type": "object"
         }
       ]
+    },
+    "UnavailableSection": {
+      "description": "A [`DaemonStatus`] section left out of a reply, and why.",
+      "properties": {
+        "reason": {
+          "description": "Why it is missing: [`status_sections::TIMED_OUT`], the read ran past\nthe deadline. A read that fails fails the whole `status` instead.",
+          "type": "string"
+        },
+        "section": {
+          "description": "The section as the daemon's log names it: one of [`status_sections`].",
+          "type": "string"
+        }
+      },
+      "required": [
+        "section",
+        "reason"
+      ],
+      "type": "object"
     },
     "UnprovenAbsence": {
       "description": "Why an absent receipt does not prove its key was never executed.",
@@ -20150,6 +20250,134 @@
           "type": "string"
         }
       ]
+    },
+    "ViewMode": {
+      "properties": {
+        "builtin": {
+          "type": "boolean"
+        },
+        "density": {
+          "$ref": "#/$defs/ViewModeDensity"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ViewModeScope"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "show": {
+          "items": {
+            "$ref": "#/$defs/ViewModeCategory"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "density",
+        "show",
+        "builtin"
+      ],
+      "type": "object"
+    },
+    "ViewModeCategory": {
+      "enum": [
+        "user_text",
+        "assistant_text",
+        "delegation",
+        "agent_message",
+        "completion",
+        "status",
+        "question",
+        "approval",
+        "error",
+        "tool",
+        "reasoning",
+        "memory",
+        "compaction",
+        "usage"
+      ],
+      "type": "string"
+    },
+    "ViewModeDensity": {
+      "enum": [
+        "comfortable",
+        "compact"
+      ],
+      "type": "string"
+    },
+    "ViewModeDiagnostic": {
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ViewModeScope": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ViewModes": {
+      "properties": {
+        "diagnostics": {
+          "items": {
+            "$ref": "#/$defs/ViewModeDiagnostic"
+          },
+          "type": "array"
+        },
+        "modes": {
+          "items": {
+            "$ref": "#/$defs/ViewMode"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "modes",
+        "diagnostics"
+      ],
+      "type": "object"
     },
     "WaitCondition": {
       "description": "What a waiting agent is waiting for. A typed expression the scheduler\nevaluates; the model never polls. Leaves are single facts, and `Any`,\n`All` and `AtLeast` combine them, so \"wait for two of these five workers\nor a deadline\" is a value, not a prompt.",

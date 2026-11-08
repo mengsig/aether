@@ -1,7 +1,7 @@
 // The Aether daemon protocol as TypeScript types and command builders.
 // Generated from clients/protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: 38f460e825949a7f257af77a44757b68b5a86c1ee9f482c32827890146c588ad
+// Schema SHA-256: 55f268054e55693b0194c13f29b1afccac5dad05d8fed990797afcef4972e551
 
 export const PROTOCOL_VERSION = 26;
 export const MIN_PROTOCOL_VERSION = 17;
@@ -265,8 +265,10 @@ export type AgentStatus =
 export type AgentStatusKind = "created" | "ready" | "running" | "waiting" | "blocked" | "completed" | "failed" | "cancelled" | "imported";
 
 export interface AgentTree {
+  "next_after"?: AgentId | null;
   "nodes": Record<string, unknown>;
   "roots": Array<AgentId>;
+  "stale"?: StatusStale | null;
 }
 
 /**
@@ -943,6 +945,7 @@ export interface DaemonStatus {
   "stale"?: StatusStale | null;
   "started_at": string;
   "tasks_active": number;
+  "unavailable"?: Array<UnavailableSection>;
   "usage_total": Usage;
   "version": string;
   "writes"?: WriteStats | null;
@@ -4044,6 +4047,11 @@ export interface ReplyModels {
   "reply": "models";
 }
 
+export interface ReplyViewModes {
+  "data": ViewModes;
+  "reply": "view_modes";
+}
+
 export interface ReplyProviders {
   "data": Array<ProviderInfo>;
   "reply": "providers";
@@ -4258,6 +4266,7 @@ export type Reply =
   | ReplyRunImported
   | ReplyMcpServers
   | ReplyModels
+  | ReplyViewModes
   | ReplyProviders
   | ReplyProviderUsage
   | ReplyAuth
@@ -4543,6 +4552,7 @@ export interface RunSummary {
   "agents": number;
   "agents_live": number;
   "forecast_usd_next_hour": number;
+  "rate_approximate"?: boolean;
   "rate_usd_per_hour": number;
   "run": RunId;
   "started_at": string;
@@ -5244,6 +5254,14 @@ export type TurnOutcome =
   | TurnOutcomeNotStarted;
 
 /**
+ * A [`DaemonStatus`] section left out of a reply, and why.
+ */
+export interface UnavailableSection {
+  "reason": string;
+  "section": string;
+}
+
+/**
  * Why an absent receipt does not prove its key was never executed.
  */
 export type UnprovenAbsence = "no_horizon" | "foreign_horizon" | "horizon_ahead" | "forgotten";
@@ -5320,6 +5338,35 @@ export interface UsageWindow {
  * Ordered weakest first, so the stronger of two is their maximum.
  */
 export type Verification = "inferred" | "observed" | "verified";
+
+export interface ViewMode {
+  "builtin": boolean;
+  "density": ViewModeDensity;
+  "description"?: string | null;
+  "label"?: string | null;
+  "name": string;
+  "scope"?: ViewModeScope | null;
+  "show": Array<ViewModeCategory>;
+}
+
+export type ViewModeCategory = "user_text" | "assistant_text" | "delegation" | "agent_message" | "completion" | "status" | "question" | "approval" | "error" | "tool" | "reasoning" | "memory" | "compaction" | "usage";
+
+export type ViewModeDensity = "comfortable" | "compact";
+
+export interface ViewModeDiagnostic {
+  "reason": string;
+  "source": string;
+}
+
+export interface ViewModeScope {
+  "name"?: string | null;
+  "role"?: string | null;
+}
+
+export interface ViewModes {
+  "diagnostics": Array<ViewModeDiagnostic>;
+  "modes": Array<ViewMode>;
+}
 
 /**
  * What a waiting agent is waiting for. A typed expression the scheduler
@@ -6015,11 +6062,16 @@ export function getTranscriptPage(args: Omit<GetTranscriptPageCommand, "cmd">): 
 }
 
 /**
- * The live graph: every agent in the run (or all runs) with relations.
+ * The live graph: the agents in the run (or all runs) with relations.
+ * One page: the newest live agents, then the newest agents of any state,
+ * at most `limit` of each (1 to 500, 500 when absent); `AgentTree.next_after`
+ * says older ones were left out.
  */
 export interface GetTreeCommand {
   "cmd": "get_tree";
+  "after"?: AgentId | null;
   "include_archived"?: boolean;
+  "limit"?: number | null;
   "role_prefix"?: string | null;
   "root"?: AgentId | null;
   "run"?: RunId | null;
@@ -6213,6 +6265,17 @@ export interface ListTasksCommand {
 
 export function listTasks(args: Omit<ListTasksCommand, "cmd">): ListTasksCommand {
   return { cmd: "list_tasks", ...args };
+}
+
+/**
+ * Built-in and user transcript modes from the daemon's configuration.
+ */
+export interface ListViewModesCommand {
+  "cmd": "list_view_modes";
+}
+
+export function listViewModes(): ListViewModesCommand {
+  return { cmd: "list_view_modes" };
 }
 
 /**
@@ -7249,6 +7312,7 @@ export type Command =
   | ListRunsCommand
   | ListSchedulesCommand
   | ListTasksCommand
+  | ListViewModesCommand
   | ListWorkspacesCommand
   | MarkNotificationReadCommand
   | McpServersCommand

@@ -9,7 +9,9 @@ pub(super) fn database_at(path: &std::path::Path, version: u32) -> Connection {
     assert!(version <= SCHEMA_VERSION);
     let conn = Connection::open(path).expect("database");
     conn.execute_batch("PRAGMA journal_mode=WAL;").expect("WAL");
-    for statement in &MIGRATIONS[..version as usize] {
+    crate::sqlite::usage_totals::register(&conn).expect("the V33 triggers' function");
+    for (at, statement) in MIGRATIONS[..version as usize].iter().enumerate() {
+        schema_migration(&conn, at as u32 + 1).expect("previous columns");
         conn.execute_batch(statement).expect("previous schema");
     }
     conn.execute(
@@ -1023,11 +1025,13 @@ fn a_v22_store_gains_the_creation_order_listing_indexes() {
     assert_eq!(
         indexes(&v22),
         [
+            "agents_archived_id",
             "agents_created",
             "agents_parent",
+            "agents_run_archived_id",
             "agents_run_created",
             "agents_run_id",
-            "agents_status",
+            "agents_status_id",
             "tasks_created",
             "tasks_owner",
             "tasks_parent",
@@ -1249,6 +1253,7 @@ fn v29_replays_over_the_upgrade_lanes_undo() {
     let path = directory.path().join("aether.db");
     drop(crate::SqliteStore::open(&path).expect("v29 store"));
     let conn = Connection::open(&path).expect("rewind");
+    crate::sqlite::usage_totals::register(&conn).expect("the usage triggers' function");
     conn.execute(
         "INSERT INTO agents(id, role, status, run, created_at, updated_at, body, subsystem)
          VALUES ('agt_named', 'lead', 'ready', 'run_x', 't', 't', '{}', 'archon')",

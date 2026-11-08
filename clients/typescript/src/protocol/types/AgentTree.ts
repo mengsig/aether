@@ -3,9 +3,12 @@
 
 import type {
   AgentId,
+  StatusStale,
 } from "../../protocol.ts";
 
 export interface AgentTree {
+  "next_after"?: AgentId | null;
   "nodes": Record<string, unknown>;
   "roots": Array<AgentId>;
+  "stale"?: StatusStale | null;
 }

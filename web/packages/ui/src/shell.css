@@ -60,6 +60,7 @@
   .ui-palette-trigger { justify-content: space-between; gap: var(--space-4); min-inline-size: 12rem; color: var(--color-text-faint); font-weight: var(--weight-regular); }
   .ui-palette-trigger:hover { color: var(--color-text); }
   .ui-shell-main { flex: 1; padding: var(--space-4) var(--space-8) var(--space-12); outline: none; }
+  .ui-shell-banner { margin-block-end: var(--space-4); }
   .ui-screen-skeleton { display: grid; gap: var(--space-4); max-inline-size: 48rem; }
 
   .ui-palette { inline-size: min(36rem, calc(100% - var(--space-8))); margin-block-start: 12vh; }
@@ -70,13 +71,15 @@
   }
   .ui-palette-list { display: grid; gap: var(--space-px); max-block-size: 50vh; margin: 0; padding: 0; overflow: auto; list-style: none; }
   .ui-palette-option {
-    display: flex; justify-content: space-between; gap: var(--space-4); padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-md); font-size: var(--text-sm); cursor: pointer;
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--space-4); align-items: baseline;
+    padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); font-size: var(--text-sm); cursor: pointer;
     transition: background-color var(--motion-instant) var(--ease-standard);
   }
   .ui-palette-option[aria-selected="true"] { background: var(--color-surface-3); }
-  .ui-palette-group { color: var(--color-text-faint); font-size: var(--text-xs); }
-  .ui-palette-empty { padding: var(--space-2) var(--space-3); color: var(--color-text-muted); font-size: var(--text-sm); }
+  .ui-palette-label, .ui-palette-subtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ui-palette-group { color: var(--color-text-faint); font-size: var(--text-xs); white-space: nowrap; }
+  .ui-palette-subtitle { grid-column: 1 / -1; color: var(--color-text-muted); font-size: var(--text-xs); }
+  .ui-palette-empty, .ui-palette-more { padding: var(--space-2) var(--space-3); color: var(--color-text-muted); font-size: var(--text-sm); }
 }
 
 @media (max-width: 48rem) {

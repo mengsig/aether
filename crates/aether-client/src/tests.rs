@@ -69,6 +69,7 @@ fn status(pid: u32) -> DaemonStatus {
         writes: None,
         bridge: None,
         stale: None,
+        unavailable: Vec::new(),
     }
 }
 

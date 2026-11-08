@@ -26,10 +26,11 @@ test("draws an edited run_plan with each stage's runs and the current stage", as
   const { h, container } = await pipeline("qi_dark_mode", "run_dark");
   expect(h.faux.commands("run_plan")).toEqual([expect.objectContaining({ run: "run_dark" })]);
   expect(steps(container)).toEqual(["plan: Completed", "build: Completed", "review: Running", "docs: Not started", "ship: Not started"]);
-  expect(container.querySelector(".pipeline-note")?.textContent).toBe("Plan revision r2 Edited after it started");
+  expect(container.querySelector(".pipeline-note")?.textContent).toContain("Plan revision r2 Edited after it started");
   const review = container.querySelector('.pipeline-step[aria-current="step"]');
   expect(review?.querySelector(".pipeline-name")?.textContent).toBe("review");
-  expect(review?.querySelector(".pipeline-terms")?.textContent).toBe("review · gate all pass · 2 in parallel · loops to build (max 2) · 60 min limit");
+  expect(review?.querySelector(".pipeline-terms")?.textContent).toBe("review · gate all pass · 2 in parallel · loops to build (max 2)");
+  expect(review?.textContent).toContain("Effective settings unavailable on this Archon version");
   expect(review?.querySelectorAll(".item-stage")).toHaveLength(2);
   expect(container.querySelector(".item-back")?.getAttribute("href")).toBe("#/archon/items/qi_dark_mode");
 });
@@ -77,7 +78,7 @@ test("reads the plan again when a change overtakes its first read", async () => 
   const container = await h.mount(<PipelineRoute params={{ item: "qi_dark_mode", run: "run_dark" }} />);
   await h.until(() => container.querySelector(".pipeline-note") !== null, "the plan after its overtaken read");
   expect(h.faux.commands("run_plan").length).toBeGreaterThanOrEqual(2);
-  expect(container.querySelector(".pipeline-note")?.textContent).toBe("Plan revision r2 Edited after it started");
+  expect(container.querySelector(".pipeline-note")?.textContent).toContain("Plan revision r2 Edited after it started");
   expect(steps(container).map((step) => step.split(":")[0])).toEqual(PLANNED);
 });
 
@@ -87,7 +88,49 @@ test("shows why the plan failed when its read again is refused", async () => {
   const container = await h.mount(<PipelineRoute params={{ item: "qi_dark_mode", run: "run_dark" }} />);
   await h.until(() => container.querySelector(".pipeline-note") !== null, "the refused plan's note", 5_000);
   expect(container.querySelector(".pipeline-header .ui-skeleton")).toBeNull();
-  expect(container.querySelector(".pipeline-note")?.textContent).toContain("run_plan failed");
+  expect(container.querySelector(".pipeline-note")?.textContent).toContain("Plan unavailable. Showing started stages.");
+  expect(container.querySelector(".pipeline-note details")?.textContent).toContain("plan store unreadable");
+});
+
+test("renders recorded settings and safe structured stage summaries", async () => {
+  h = await archonHarness({ protocol: 24 });
+  const entry = h.world.items.get("qi_dark_mode");
+  if (!entry) throw new Error("the demo world has qi_dark_mode");
+  const stages = entry.detail.stages as Record<string, unknown>[];
+  entry.detail = { ...entry.detail, item: { ...(entry.detail.item as object), stage_timeouts: { review: 5 } },
+    stages: stages.map((stage) => stage.stage_id === "review" ? { ...stage, choice: { model: { provider: "claude-code", model: "sonnet" }, effort: "low" }, verdict: "unknown", summary: "## Result\n\n- Done\n- [unsafe](javascript:alert(1))\n\n<script>alert(1)</script>" } : stage) };
+  const plan = h.world.plans.get("run_dark");
+  if (!plan) throw new Error("the demo world has run_dark plan");
+  h.world.plans.set("run_dark", { ...plan, settings: [{ key: "review", choices: [{ model: "example/model", effort: "low" }], model: "exact", effort: "override", timeout_minutes: 5, timeout: "override" }] });
+  const container = await h.mount(<PipelineRoute params={{ item: "qi_dark_mode", run: "run_dark" }} />);
+  await h.until(() => container.querySelector(".pipeline-summary h4") !== null && container.textContent?.includes("Limit: 5 min (override)") === true, "the formatted summary and resolved settings");
+  const review = container.querySelector('.pipeline-step[aria-current="step"]');
+  expect(review?.textContent).toContain("Limit: 5 min (override)");
+  expect(review?.querySelector("time")?.getAttribute("datetime")).toBe("2026-11-04T09:45:00.000Z");
+  expect(review?.textContent).toContain("claude-code / sonnet · low");
+  expect(review?.textContent).not.toContain("unknown");
+  expect(review?.querySelectorAll(".pipeline-summary li").length).toBeGreaterThan(0);
+  expect(review?.querySelector(".pipeline-summary script, .pipeline-summary a[href^='javascript:']")).toBeNull();
+});
+
+test("uses frozen settings for a finished run, not today's item overrides", async () => {
+  h = await archonHarness({ protocol: 24 });
+  const entry = h.world.items.get("qi_assets");
+  if (!entry) throw new Error("the demo world has qi_assets");
+  entry.detail = { ...entry.detail, item: { ...(entry.detail.item as object), stage_timeouts: { build: 5 } } };
+  const plan = h.world.plans.get("run_assets");
+  if (!plan) throw new Error("the demo world has run_assets plan");
+  h.world.plans.set("run_assets", { ...plan, finished: true, settings: [
+    { key: "build", choices: [{ model: { provider: "codex", model: "example" }, effort: "low" }], model: "exact", effort: "override", timeout_minutes: 12, timeout: "override" },
+    { key: "build.review", choices: [], model: "tier", effort: "default" },
+  ] });
+  const container = await h.mount(<PipelineRoute params={{ item: "qi_assets", run: "run_assets" }} />);
+  await h.until(() => container.querySelector(".pipeline-note") !== null, "the finished run plan");
+  expect(container.textContent).toContain("codex / example · effort low · model exact · effort override");
+  expect(container.textContent).toContain("Limit: 12 min (override)");
+  expect(container.textContent).toContain("Delegated reviewers:");
+  expect(container.textContent).toContain("Limit: not recorded");
+  expect(container.textContent).not.toContain("5 min");
 });
 
 test("shows the plan when changes keep overtaking its reads", async () => {

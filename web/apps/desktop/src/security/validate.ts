@@ -2,7 +2,7 @@
 // the sender (the top-level app:// document of an app window), the schema of each argument,
 // then the class allowlist. A handler only ever sees the ValidCall this returns.
 
-import type { PreferenceKey, PrivilegedAction } from "@aether-ui/protocol";
+import type { PreferenceKey, PrivilegedAction, SetupStep } from "@aether-ui/protocol";
 import type { ValidateFunction } from "ajv/dist/2020.js";
 import { passThroughRefusal, type DaemonKind } from "./classes.ts";
 import { APP_HOST, APP_SCHEME } from "./csp.ts";
@@ -39,7 +39,8 @@ export type ValidCall =
   | { method: "openExternal"; url: string }
   | { method: "openRemote"; origin: string }
   | { method: "getPreference"; key: PreferenceKey }
-  | { method: "setPreference"; key: PreferenceKey; value: unknown };
+  | { method: "setPreference"; key: PreferenceKey; value: unknown }
+  | { method: "setup"; step: SetupStep };
 
 export type BridgeMethod = ValidCall["method"];
 
@@ -62,6 +63,7 @@ const ARGUMENTS: Readonly<Record<BridgeMethod, readonly unknown[]>> = {
   openRemote: [TEXT],
   getPreference: [{ enum: PREFERENCE_KEYS }],
   setPreference: [{ enum: PREFERENCE_KEYS }, {}],
+  setup: [{ enum: ["tools", "connect", "start"] }],
 };
 
 export const BRIDGE_METHODS: readonly BridgeMethod[] = Object.keys(ARGUMENTS) as BridgeMethod[];
@@ -69,6 +71,8 @@ export const BRIDGE_METHODS: readonly BridgeMethod[] = Object.keys(ARGUMENTS) as
 /** What validation needs from the bridge's state: which connections exist and to what. */
 export interface Connections {
   kindOf(conn: string): DaemonKind | undefined;
+  /** The protocol the daemon's own welcome reported on `conn`, once it has greeted. */
+  protocolOf(conn: string): number | undefined;
 }
 
 export class Validator {
@@ -114,6 +118,7 @@ export class Validator {
       case "openRemote": return { method, origin: first as string };
       case "getPreference": return { method, key: first as PreferenceKey };
       case "setPreference": return { method, key: first as PreferenceKey, value: second };
+      case "setup": return { method, step: first as SetupStep };
     }
   }
 
@@ -127,7 +132,7 @@ export class Validator {
     }
     const invalid = this.schemas.frames[kind].check(frame);
     if (invalid !== undefined) throw new BridgeRefusal(invalid);
-    const refusal = passThroughRefusal(kind, frame);
+    const refusal = passThroughRefusal(kind, frame, connections.protocolOf(conn));
     if (refusal !== undefined) throw new BridgeRefusal(refusal);
     return { method, conn, frame, text };
   }

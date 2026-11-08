@@ -166,8 +166,9 @@ runs of an arm are disturbed.
 ```toml
 [memory.retrieval]
 max_items = 6        # 1..=50, memories injected per turn at most
-min_score = 0.05     # 0..=1, least relevance to inject; 0 turns the cutoff off
-holdout_rate = 0.05  # 0..=1, share of unpinned memories withheld and logged
+min_score = 0.0      # 0..=1, least relevance to inject; 0 (the default since
+                     # the 1.3.0 release check) turns the cutoff off
+holdout_rate = 0.05  # opt in; default 0, share of unpinned memories withheld and logged
 holdout_seed = 0     # changes which memories the draw withholds
 ```
 
@@ -232,3 +233,26 @@ Every deterministic metric equals the run above. The profile now times the
 stale-mark read as its own stage: 14 store reads per retrieval, the stale read
 8 us (0.4%) on the dataset store and 26 us (0.4%) on the scaled one, and
 `rank` 3.1% and 6.8%.
+
+## After the 1.3.0 release check: the cutoff is opt-in
+
+The release check ran `make bench-memory --check` against the unchanged
+`baseline.json` and it failed: recall@6 0.8913 → 0.7826 (none) and
+0.9783 → 0.8261 (local), MRR 0.7297 → 0.692 and 0.8333 → 0.7391. An
+absolute cutoff on word overlap cannot tell a relevant memory phrased in
+other words from an unrelated one, so it costs recall wherever the two
+overlap. `min_score` now defaults to 0 (no cutoff), which restores every
+retrieval and injection metric to `baseline.json`; the precision and token
+gains above are one setting away (`min_score = 0.05`) for a store whose
+memories share the task's vocabulary. Stale demotion and the holdout are
+unchanged.
+
+The same check found `garbled_every_8th_page` opening and then failing
+retrieval (`ok` / `error`), the page-layout effect of V30 noted above. A
+file store now runs SQLite's `quick_check` on its memory tables when it
+opens (`memories`, its full-text index, feedback, stale marks, admission,
+the holdout log and repository aliases: about 9 ms on the 5,048-memory
+scaled store) and refuses a damaged one with a `Corrupt` error naming the
+table, so the case is back to `error` / `skipped`: damage is reported at
+open rather than at every turn's retrieval. Damage elsewhere in the store
+(`garbled_middle_page`) still opens, as before.

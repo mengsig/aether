@@ -839,9 +839,11 @@ pub(super) async fn drive(
                         let reply = (engine.kind() == super::EngineKind::CLAUDE_CODE && stop.is_some())
                             .then(|| (req.name.clone(), req.input.clone()));
                         let (tool, tool_input) = (req.name.clone(), req.input.clone());
+                        let (arrived, serving) = (req.arrived, std::time::Instant::now());
                         let served =
                             handle_request(runtime, ctx, tool_ctx, req, effects, cancel, park.is_some(), !background.is_empty(), engine_left(&mut run.events, &mut kept))
                                 .await?;
+                        super::bridge::log_slow_call(ctx.agent.id, &tool, arrived, serving);
                         if let Served::Ran(Some(result)) = &served {
                             state.remember_bridge_reply(tool, tool_input, result.clone());
                         }

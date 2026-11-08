@@ -72,6 +72,8 @@ pub enum Hook {
     /// A repository id resolved through the aliases, fired after the
     /// resolution returns: an alias landing here makes that answer stale.
     RepositoryResolved,
+    /// The fleet's usage total, which only `status` reads.
+    FleetUsage,
 }
 
 /// A write a concurrent actor makes, run against the underlying store.
@@ -205,6 +207,7 @@ impl Store for CommitsMidPass {
         self.inner.is_descendant(root, id)
     }
     fn fleet_usage(&self) -> Result<aether_core::model::Usage> {
+        self.fire(Hook::FleetUsage)?;
         self.inner.fleet_usage()
     }
     fn subtree_ids(&self, root: AgentId) -> Result<std::collections::BTreeSet<AgentId>> {

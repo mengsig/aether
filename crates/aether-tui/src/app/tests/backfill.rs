@@ -650,6 +650,7 @@ fn older_page_failure_preserves_current_window_and_can_retry() {
         result: Err(ClientError::TimedOut {
             command: "GetEvents".into(),
             timeout: std::time::Duration::from_secs(30),
+            queries: None,
             host: None,
         }),
     });

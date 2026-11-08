@@ -59,6 +59,11 @@ export interface App {
   noteUnconfirmed(conn: string, command: Json, error: string): string;
   pairing(daemon: "aether" | "archon"): PairingFlow;
   start(): Promise<void>;
+  /**
+   * Desktop only: asks the bridge again which local daemons answer, connects any new one and
+   * retries the rest, for daemons started after the app (first-run setup). Returns how many were added.
+   */
+  rediscover(): Promise<number>;
   stop(): void;
 }
 
@@ -130,14 +135,49 @@ export function createApp(host: HostAdapter, options: AppOptions = {}): App {
       return new PairingFlow(aetherPairing(identities(), fetcher), retry);
     },
     async start() {
-      const endpoints = options.endpoints ?? (await discover(host, store, fetcher, identities()));
+      const endpoints = options.endpoints ?? (await discover(host, store, fetcher, identities));
       for (const endpoint of endpoints) manager.add(endpoint);
-      if (host.desktop) manager.setManagedStart((await host.desktop.getPreference("desktop.managed_start")) === true);
+      const managed = host.desktop !== undefined && (await host.desktop.getPreference("desktop.managed_start")) === true;
+      if (host.desktop) manager.setManagedStart(managed);
       manager.start();
+      if (managed && options.endpoints === undefined) void startMissing(app);
+    },
+    async rediscover() {
+      if (!host.desktop) throw new RefusedError("Only the desktop app finds daemons on this computer");
+      const found = await discover(host, store, fetcher, identities);
+      const known = (endpoint: Endpoint) => manager.all().some((c) => c.endpoint.daemon === endpoint.daemon && c.endpoint.target === endpoint.target);
+      const fresh = found.filter((endpoint) => !known(endpoint));
+      for (const connection of manager.all()) if (connection.current.state === "backoff") connection.retryNow();
+      for (const endpoint of fresh) manager.add(endpoint).start();
+      invariant(found.every(known), "every reachable daemon has a connection after rediscovery");
+      return fresh.length;
     },
     stop: () => manager.stop(),
   };
   return app;
+}
+
+/** With managed start on, starts each local daemon that did not answer at launch, then connects it. */
+async function startMissing(app: App): Promise<void> {
+  const desktop = app.host.desktop;
+  invariant(desktop !== undefined, "only the desktop app starts daemons");
+  const missing = (["aether", "archon"] as const).filter((kind) => !app.manager.all().some((c) => c.endpoint.daemon === kind));
+  if (missing.length === 0) return;
+  let started = false;
+  for (const kind of missing) {
+    try {
+      await desktop.startDaemon(kind);
+      started = true;
+    } catch (error) {
+      app.store.report(`Could not start ${kind === "aether" ? "Aether" : "Archon"} on this computer: ${errorText(error)}`);
+    }
+  }
+  if (!started) return;
+  try {
+    await app.rediscover();
+  } catch (error) {
+    app.store.report(`Could not reconnect after starting: ${errorText(error)}`);
+  }
 }
 
 async function runPrivileged(host: HostAdapter, manager: ConnectionManager, conn: string, action: LocalAction, report: (message: string) => void): Promise<unknown> {
@@ -158,7 +198,7 @@ async function runPrivileged(host: HostAdapter, manager: ConnectionManager, conn
   }
 }
 
-async function discover(host: HostAdapter, store: Store, fetcher: typeof fetch, identities: IdentityStore): Promise<Endpoint[]> {
+async function discover(host: HostAdapter, store: Store, fetcher: typeof fetch, identities: () => IdentityStore): Promise<Endpoint[]> {
   if (host.desktop) {
     const transport = ipcTransport(host.desktop, (message) => store.report(message));
     const daemons = await host.desktop.discover();
@@ -168,7 +208,7 @@ async function discover(host: HostAdapter, store: Store, fetcher: typeof fetch, 
   const socketOrigin = `${protocol === "https:" ? "wss:" : "ws:"}//${hostLabel}`;
   const endpoints: Endpoint[] = [{
     daemon: "aether", label: hostLabel, target: `${socketOrigin}/ws`,
-    transport: aetherSocketTransport({ identity: identities, origin }),
+    transport: aetherSocketTransport({ identity: identities(), origin }),
   }];
   if (await archonMounted(fetcher)) {
     endpoints.push({ daemon: "archon", label: hostLabel, target: `${socketOrigin}${ARCHON_MOUNT}/ws`, transport: archonSocketTransport({ fetch: fetcher }) });

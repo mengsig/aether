@@ -12,6 +12,7 @@ mod migration_backup;
 mod schedule_tests;
 mod schema;
 mod sqlite;
+mod tree_query;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -46,7 +47,11 @@ use aether_core::memory_feedback::{FeedbackTally, MemoryFeedback};
 
 pub use migration_backup::backup_database;
 pub use schema::SCHEMA_VERSION;
+pub use sqlite::usage_totals::register as register_sql_functions;
 pub use sqlite::{HistoryScreen, PushSubscriptionRow, RunExpiry, SqliteStore};
+pub use tree_query::{
+    TREE_PAGE_MAX, TreePage, TreeQuery, TreeUsage, UsageNode, tree_page_of, tree_usages_of,
+};
 
 /// The single write path, shared by everything that commits to one store.
 ///
@@ -771,9 +776,76 @@ pub trait Store: Send + Sync {
     /// The stored agents among `ids` plus every stored ancestor of them, in no
     /// particular order. Unknown ids and missing parents are skipped.
     fn ancestry(&self, ids: &[AgentId]) -> Result<Vec<Agent>>;
-    /// Usage summed over every agent that is not an imported archive, decoding
-    /// each row's usage alone rather than the whole agent.
+    /// Usage summed over every agent that is not an imported archive. The
+    /// SQLite store reads it from one row its triggers keep as agents are written.
     fn fleet_usage(&self) -> Result<aether_core::model::Usage>;
+    /// What `run`'s agents billed between them, how many there are and when
+    /// the first was created; `None` for a run with no agent. The SQLite
+    /// store reads its kept totals, never the agents' bodies.
+    fn run_totals(&self, run: RunId) -> Result<Option<aether_core::budget::RunTotals>> {
+        let agents = self.agents(&AgentFilter {
+            run: Some(run),
+            ..Default::default()
+        })?;
+        Ok(aether_core::budget::RunTotals::of(&agents))
+    }
+    /// The usage of each of `agents` the store holds, read by id; the SQLite
+    /// store reads `agent_usage`, not the bodies. Unknown ids are left out.
+    fn agent_usages(
+        &self,
+        agents: &[AgentId],
+    ) -> Result<BTreeMap<AgentId, aether_core::model::Usage>> {
+        let mut usages = BTreeMap::new();
+        for id in agents {
+            if let Some(agent) = self.agent(*id)? {
+                usages.insert(*id, agent.stats.usage);
+            }
+        }
+        Ok(usages)
+    }
+    /// One page of the agents a tree shows, filtered before any is decoded:
+    /// on the first page the newest live agents in scope and the root, and on
+    /// each page the newest agents older than `query.after`, `query.limit` of each.
+    fn tree_page(&self, query: &TreeQuery) -> Result<TreePage> {
+        tree_page_of(self.tree_scope(query)?, query)
+    }
+    /// The agents in `query`'s scope, unpaged: only for stores without
+    /// [`Store::tree_page`] of their own, such as test doubles.
+    fn tree_scope(&self, query: &TreeQuery) -> Result<Vec<Agent>> {
+        let mut agents = match query.root {
+            Some(root) => self.subtree_agents(root)?,
+            None => self.agents(&AgentFilter {
+                run: query.run,
+                ..Default::default()
+            })?,
+        };
+        agents.retain(|agent| query.selects(agent));
+        Ok(agents)
+    }
+    /// `roots` and every agent below them, across runs, as a usage roll-up
+    /// reads them; the SQLite store reads no body. Unknown roots are skipped.
+    fn subtree_usages(&self, roots: &[AgentId]) -> Result<Vec<UsageNode>> {
+        let mut nodes = Vec::new();
+        let mut seen = BTreeSet::new();
+        for root in roots {
+            for agent in self.subtree_agents(*root)? {
+                if seen.insert(agent.id) {
+                    nodes.push(UsageNode::of(&agent));
+                }
+            }
+        }
+        Ok(nodes)
+    }
+    /// [`TreeUsage`] for each of `shown`, counting every agent below it or
+    /// only those of `run`; the SQLite store reads its kept subtree totals by key.
+    fn tree_usages(
+        &self,
+        shown: &[Agent],
+        run: Option<RunId>,
+    ) -> Result<BTreeMap<AgentId, TreeUsage>> {
+        let ids: Vec<AgentId> = shown.iter().map(|agent| agent.id).collect();
+        Ok(tree_usages_of(self.subtree_usages(&ids)?, shown, run))
+    }
     /// Whether any agent, including archived and terminal agents, carries this repository scope.
     fn any_agent_in_repository(&self, repository: &str) -> Result<bool>;
 
@@ -798,6 +870,16 @@ pub trait Store: Send + Sync {
 
     fn task(&self, id: TaskId) -> Result<Option<Task>>;
     fn tasks(&self, filter: &TaskFilter) -> Result<Vec<Task>>;
+    /// How many tasks have one of `statuses`, which is not empty. The SQLite
+    /// store counts them by its status index, decoding none.
+    fn count_tasks(&self, statuses: &[TaskStatusKind]) -> Result<u64> {
+        assert!(!statuses.is_empty(), "a count names the statuses it counts");
+        let tasks = self.tasks(&TaskFilter {
+            statuses: statuses.to_vec(),
+            ..Default::default()
+        })?;
+        Ok(tasks.len() as u64)
+    }
 
     /// Inbox items with `seq > after`, ascending.
     fn inbox(&self, agent: AgentId, after: u64) -> Result<Vec<InboxItem>>;
@@ -841,6 +923,11 @@ pub trait Store: Send + Sync {
 
     fn approval(&self, id: ApprovalId) -> Result<Option<ApprovalRequest>>;
     fn pending_approvals(&self) -> Result<Vec<ApprovalRequest>>;
+    /// How many approvals wait on a decision; the SQLite store counts them by
+    /// its state index, decoding none.
+    fn count_pending_approvals(&self) -> Result<u64> {
+        Ok(self.pending_approvals()?.len() as u64)
+    }
 
     /// The outcome committed for `key` while driving `invocation`, if any.
     /// Scoped to the invocation and the call, so only a re-drive of that
@@ -1029,6 +1116,11 @@ pub trait Store: Send + Sync {
     fn transcript(&self, agent: AgentId, after: u64) -> Result<Vec<TranscriptEntry>>;
 
     fn meta(&self, key: &str) -> Result<Option<String>>;
+    /// The value of each of `keys`, in order. The SQLite store reads them
+    /// from one snapshot, so no commit lands between two of them.
+    fn metas(&self, keys: &[String]) -> Result<Vec<Option<String>>> {
+        keys.iter().map(|key| self.meta(key)).collect()
+    }
     /// Stable id of this store, minted on first open.
     fn instance_id(&self) -> Result<String>;
 }

@@ -10,8 +10,14 @@ export interface EngineRequest {
   readonly lastUserText: string;
 }
 
-/** The text an agent receives for a request; the default names the faux engine. */
-export type Script = (request: EngineRequest) => string;
+export interface ToolReply {
+  readonly name: string;
+  readonly arguments: Record<string, unknown>;
+  readonly text?: string;
+}
+
+/** A text reply or one tool call; the default names the faux engine. */
+export type Script = (request: EngineRequest) => string | ToolReply;
 
 export interface FauxEngine {
   /** `http://127.0.0.1:<port>/v1`, the provider's `base_url`. */
@@ -50,7 +56,10 @@ async function readJson(request: http.IncomingMessage): Promise<Record<string, u
   return parsed as Record<string, unknown>;
 }
 
-function streamReply(response: http.ServerResponse, model: string, text: string): void {
+function streamReply(response: http.ServerResponse, model: string, reply: string | ToolReply): void {
+  const text = typeof reply === "string" ? reply : reply.text ?? "";
+  assert.ok(model.length > 0, "a streamed reply names its model");
+  assert.ok(typeof reply === "string" || reply.name.trim().length > 0, "a tool call has a name");
   const id = `chatcmpl-faux-${Date.now()}`;
   const chunk = (delta: Record<string, unknown>, finish: string | null, usage?: Record<string, number>) =>
     `data: ${JSON.stringify({ id, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model,
@@ -58,8 +67,12 @@ function streamReply(response: http.ServerResponse, model: string, text: string)
   response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
   response.write(chunk({ role: "assistant", content: "" }, null));
   for (let at = 0; at < text.length; at += 8) response.write(chunk({ content: text.slice(at, at + 8) }, null));
+  if (typeof reply !== "string") {
+    response.write(chunk({ tool_calls: [{ index: 0, id: `call_${crypto.randomUUID()}`, type: "function",
+      function: { name: reply.name, arguments: JSON.stringify(reply.arguments) } }] }, null));
+  }
   const tokens = Math.max(1, Math.ceil(text.length / 4));
-  response.write(chunk({}, "stop", { prompt_tokens: 10, completion_tokens: tokens, total_tokens: 10 + tokens }));
+  response.write(chunk({}, typeof reply === "string" ? "stop" : "tool_calls", { prompt_tokens: 10, completion_tokens: tokens, total_tokens: 10 + tokens }));
   response.end("data: [DONE]\n\n");
 }
 

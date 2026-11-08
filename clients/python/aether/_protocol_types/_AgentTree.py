@@ -7,5 +7,7 @@ from .. import protocol as _protocol
 
 
 class AgentTree(TypedDict, total=False):
+    next_after: _protocol.AgentId | None  # optional
     nodes: dict[str, Any]
     roots: list[_protocol.AgentId]
+    stale: _protocol.StatusStale | None  # optional

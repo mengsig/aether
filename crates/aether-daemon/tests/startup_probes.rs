@@ -372,8 +372,10 @@ async fn hello_is_answered_while_engine_probes_run_and_engine_requests_wait() {
         "hello took {answered:?}, of which the host stalled {stalled:?}"
     );
     assert!(!probes.join("release").exists());
-    let status = client.status().await.unwrap();
-    assert_eq!(status.engines, [aether_protocol::ENGINES_STARTING]);
+    assert_eq!(
+        engines_read(&client).await,
+        [aether_protocol::ENGINES_STARTING]
+    );
 
     let creating = tokio::spawn(async move {
         client
@@ -407,7 +409,7 @@ async fn hello_is_answered_while_engine_probes_run_and_engine_requests_wait() {
     let client = aether_client::Client::connect(&config.socket)
         .await
         .unwrap();
-    let engines = client.status().await.unwrap().engines;
+    let engines = engines_read(&client).await;
     assert!(
         engines.iter().any(|label| label.starts_with("claude-code")),
         "{engines:?}"
@@ -423,4 +425,74 @@ async fn hello_is_answered_while_engine_probes_run_and_engine_requests_wait() {
         .unwrap()
         .unwrap()
         .unwrap();
+}
+
+/// The engines a fresh status read, waiting out one that missed its deadline.
+async fn engines_read(client: &aether_client::Client) -> Vec<String> {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let status = client.status().await.unwrap();
+            let unread = status.unavailable(aether_protocol::status_sections::ENGINES);
+            if status.stale.is_none() && unread.is_none() {
+                return status.engines;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("a status reads the engines")
+}
+
+#[tokio::test]
+async fn invalid_configuration_does_not_change_an_older_store() {
+    let root = tempfile::tempdir().unwrap();
+    let config = config(root.path());
+    drop(SqliteStore::open(&config.store_path).unwrap());
+    let conn = rusqlite::Connection::open(&config.store_path).unwrap();
+    conn.execute(
+        "UPDATE meta SET value = '32' WHERE key = 'schema_version'",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    let before = std::fs::read(&config.store_path).unwrap();
+    let config_dir = config.config_dir.as_ref().unwrap();
+    std::fs::create_dir_all(config_dir).unwrap();
+    for (contents, key) in [
+        ("bad_startup_key = true\n", "bad_startup_key"),
+        ("[remote]\npush_hosts = ['not a host']\n", "push_hosts"),
+        ("[noesis]\nenabled = 'yes'\n", "noesis.enabled"),
+        (
+            "[scheduler]\nrun_hard_stop_tokens = 0\n",
+            "run_hard_stop_tokens",
+        ),
+    ] {
+        std::fs::write(config_dir.join("config.toml"), contents).unwrap();
+        let error = tokio::time::timeout(
+            Duration::from_secs(5),
+            aether_daemon::run(config.clone(), CancellationToken::new()),
+        )
+        .await
+        .expect("invalid configuration must refuse startup")
+        .unwrap_err();
+        assert!(format!("{error:#}").contains(key), "{error:#}");
+        assert_eq!(std::fs::read(&config.store_path).unwrap(), before);
+        assert!(!config.socket.exists());
+        assert!(!config.store_path.with_extension("db-wal").exists());
+        assert!(!config.store_path.with_extension("db-shm").exists());
+        assert!(!root.path().join("migration-backups").exists());
+    }
+    let conn = rusqlite::Connection::open_with_flags(
+        &config.store_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let version: String = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(version, "32");
 }

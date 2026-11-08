@@ -17,20 +17,33 @@ interface SurfaceProps extends DialogProps {
   readonly kind: "dialog" | "sheet";
 }
 
-/** The native modal <dialog>: the browser traps focus and restores it on close; `data-autofocus` picks the first focus. */
+/** Moves focus back to the element that opened the surface, if it is still in the page. */
+function restoreFocus(origin: { current: HTMLElement | null }): void {
+  const target = origin.current;
+  origin.current = null;
+  if (target !== null && target.isConnected) target.focus();
+}
+
+/** The native modal <dialog>: the browser traps focus; focus returns to the opener on close or unmount; `data-autofocus` picks the first focus. */
 function ModalSurface({ kind, open, onClose, title, description, children, footer, className }: SurfaceProps) {
   invariant(title.trim().length > 0, `a ${kind} needs a title`);
   const ref = useRef<HTMLDialogElement>(null);
   const id = useId();
+  const opener = useRef<HTMLElement | null>(null);
   useEffect(() => {
     const dialog = ref.current;
     invariant(dialog !== null, `the ${kind} element is mounted`);
     if (open && !dialog.open) {
+      opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       dialog.showModal();
       dialog.querySelector<HTMLElement>("[data-autofocus]")?.focus();
     }
-    if (!open && dialog.open) dialog.close();
+    if (!open && dialog.open) {
+      dialog.close();
+      restoreFocus(opener);
+    }
   }, [open, kind]);
+  useEffect(() => () => restoreFocus(opener), []);
   return (
     <dialog ref={ref} className={classes("ui-dialog", className)} data-kind={kind} aria-labelledby={`${id}-title`}
       aria-describedby={description === undefined ? undefined : `${id}-description`}

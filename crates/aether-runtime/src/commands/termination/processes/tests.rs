@@ -525,10 +525,9 @@ async fn sweep_after_parent_row(sql: &str) -> (Vec<AgentId>, HashMap<AgentId, Ag
     let child = idle_agent(&runtime, Some(parent)).await;
     end(&runtime, child, completed());
     end(&runtime, parent, completed());
-    let changed = rusqlite::Connection::open(&path)
-        .unwrap()
-        .execute(sql, [parent.to_string()])
-        .unwrap();
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    aether_store::register_sql_functions(&conn).unwrap();
+    let changed = conn.execute(sql, [parent.to_string()]).unwrap();
     assert_eq!(changed, 1, "the parent's row changed");
 
     let unheld = runtime.unheld_agents(&[child]);

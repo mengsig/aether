@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::connection::dispatch::blocking;
 use crate::connection::{host_services, map_err, providers, push, remote_admin, store_err};
-use crate::status_reads::{Answer, Figures, PATIENCE};
+use crate::status_reads::{Answer, Figures, PATIENCE, READ_BUDGET};
 
 pub(super) fn owns(command: &Command) -> bool {
     matches!(
@@ -27,6 +27,7 @@ pub(super) fn owns(command: &Command) -> bool {
             | Command::McpServers { .. }
             | Command::GetGithubWatcher
             | Command::ConfigureGithubWatcher { .. }
+            | Command::ListViewModes
             | Command::ListModels
             | Command::AuthStatus
             | Command::Providers
@@ -58,7 +59,6 @@ pub(super) async fn dispatch(
     by: Actor,
     auth: &AuthContext,
 ) -> Result<Reply, ErrorReply> {
-    let rt = &daemon.runtime;
     match command {
         Command::Hello(_) => Err(ErrorReply::invalid("already greeted")),
         // Nothing but a frame in: the point is to hold a quiet connection
@@ -74,13 +74,12 @@ pub(super) async fn dispatch(
             "a resolution is answered before dispatch",
         )),
         Command::McpServers { refresh, server } => mcp_servers(daemon, refresh, server).await,
-        Command::GetGithubWatcher => Ok(Reply::GithubWatcher(
-            rt.github_watcher_status().map_err(map_err)?,
-        )),
+        Command::GetGithubWatcher => github_watcher(daemon).await,
         Command::ConfigureGithubWatcher {
             config,
             expected_revision,
         } => configure_github_watcher(daemon, config, expected_revision, by),
+        Command::ListViewModes => super::view_modes::list(daemon.models.config_dir().clone()).await,
         Command::ListModels => providers::list_models(daemon).await,
         Command::AuthStatus => providers::auth_status(daemon).await,
 
@@ -141,11 +140,14 @@ async fn status(daemon: &Daemon) -> Result<Reply, ErrorReply> {
     let (figures, stale) = resolve(answer);
     let (mut s, last_seq) = match figures {
         Some(figures) => (figures.runtime.clone(), figures.last_seq),
-        None => (rt.status_settings(), 0),
+        None => (rt.status_unread(), 0),
     };
     if let Some(stale) = &stale {
         s.problems
             .insert(0, stale_problem(stale, aether_core::time::now()));
+    }
+    if let Some(problem) = unavailable_problem(&s.unavailable) {
+        s.problems.insert(0, problem);
     }
     Ok(Reply::Status(DaemonStatus {
         problems: s.problems,
@@ -186,6 +188,7 @@ async fn status(daemon: &Daemon) -> Result<Reply, ErrorReply> {
             .as_ref()
             .map(|bridge| bridge.command.display().to_string()),
         stale,
+        unavailable: s.unavailable,
     }))
 }
 
@@ -217,7 +220,10 @@ fn resolve(answer: Answer<Figures>) -> (Option<Arc<Figures>>, Option<StatusStale
 /// One read for `status`: the runtime's figures, a crash left behind, and
 /// the log position.
 fn read_figures(reading: &aether_runtime::Runtime) -> Result<Figures, ErrorReply> {
-    let mut runtime = reading.status().map_err(map_err)?;
+    const { assert!(aether_runtime::STATUS_DEADLINE.as_millis() < PATIENCE.as_millis()) };
+    let mut runtime = reading
+        .status_within(aether_runtime::STATUS_DEADLINE)
+        .map_err(map_err)?;
     if let Some(paths) = &reading.config().storage_paths
         && let Some(problem) = aether_core::crash::problem(&paths.store)
     {
@@ -227,25 +233,63 @@ fn read_figures(reading: &aether_runtime::Runtime) -> Result<Figures, ErrorReply
     Ok(Figures { runtime, last_seq })
 }
 
+/// The line a status missing some sections leads its problems with, for
+/// older clients that do not know `unavailable` and show its zeros.
+fn unavailable_problem(unavailable: &[aether_protocol::UnavailableSection]) -> Option<String> {
+    if unavailable.is_empty() {
+        return None;
+    }
+    let names: Vec<&str> = unavailable.iter().map(|u| u.section.as_str()).collect();
+    debug_assert!(
+        names.iter().all(|name| !name.is_empty()),
+        "a section has a name"
+    );
+    Some(format!(
+        "status sections unavailable ({}): the daemon did not read them within {} ms, so their \
+         figures read zero because they were not read, not because they are zero",
+        names.join(", "),
+        aether_runtime::STATUS_DEADLINE.as_millis()
+    ))
+}
+
 /// The line a stale status leads its problems with, which older clients
 /// show too: they do not know `stale`.
 fn stale_problem(stale: &StatusStale, at: aether_core::time::Timestamp) -> String {
-    let waited = stale.waited_ms as f64 / 1000.0;
+    let waited = stale.waited_ms;
     match stale.read_at {
         Some(read_at) => {
             let age = (at - read_at).num_seconds().max(0);
             format!(
                 "status is {age}s old: reading the store and scheduler took longer than \
-                 {waited:.0}s, so these figures are from {}; a fresh read is still running",
+                 {waited} ms, so these figures are from {}; a fresh read is still running",
                 read_at.format("%Y-%m-%dT%H:%M:%SZ")
             )
         }
         None => format!(
             "status figures are unknown: the daemon's first read of the store and scheduler \
-             has taken longer than {waited:.0}s and is still running, so the counts are zero \
+             has taken longer than {waited} ms and is still running, so the counts are zero \
              because they are not known"
         ),
     }
+}
+
+/// The watcher's settings and state: a few meta rows read by key. The read is
+/// shared, so a stalled store holds one; past the patience the reply says so.
+async fn github_watcher(daemon: &Daemon) -> Result<Reply, ErrorReply> {
+    let reading = daemon.runtime.clone();
+    let read = move || reading.github_watcher_status().map_err(map_err);
+    let answer = daemon.watcher_reads.answer(READ_BUDGET, read).await?;
+    let Answer::Fresh(watcher) = answer else {
+        return Err(ErrorReply::new(
+            ErrorCode::Unavailable,
+            format!(
+                "the GitHub watcher's status is unavailable: timed out, the store did not \
+                 answer within {} ms",
+                READ_BUDGET.as_millis()
+            ),
+        ));
+    };
+    Ok(Reply::GithubWatcher((*watcher).clone()))
 }
 
 async fn mcp_servers(
@@ -314,4 +358,28 @@ async fn refresh_provider_usage(
             .await
             .map_err(map_err)?,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unavailable_problem;
+    use aether_protocol::{UnavailableSection, status_sections};
+
+    #[test]
+    fn a_status_missing_sections_says_its_zeros_were_not_read() {
+        assert_eq!(
+            unavailable_problem(&[]),
+            None,
+            "a whole status has no such line"
+        );
+        let missing = [status_sections::RUNS, status_sections::USAGE_TOTAL].map(|section| {
+            UnavailableSection {
+                section: section.to_owned(),
+                reason: status_sections::TIMED_OUT.to_owned(),
+            }
+        });
+        let line = unavailable_problem(&missing).expect("a line");
+        assert!(line.contains("(runs, usage_total)"), "{line}");
+        assert!(line.contains("not because they are zero"), "{line}");
+    }
 }

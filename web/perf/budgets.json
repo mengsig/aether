@@ -2,6 +2,24 @@
   "tolerance": 0.1,
   "host": "Intel(R) Core(TM) 5 210H, 12 threads, Linux, Node v22.22.2; margins from six runs: wall and heap budgets (enforce: local) hold on this host only; GitHub runners check the ci measures",
   "measures": {
+    "markdown.prose.ms": {
+      "budget": 500,
+      "unit": "ms",
+      "enforce": "local",
+      "fixture": "200 KB prose Markdown",
+      "measured": 31.028,
+      "noise": 2.574,
+      "reason": "Retains the former unit-test throughput limit as a seven-sample median on the local host."
+    },
+    "markdown.dense.ms": {
+      "budget": 2000,
+      "unit": "ms",
+      "enforce": "local",
+      "fixture": "200 KB dense Markdown",
+      "measured": 396.9,
+      "noise": 0.316,
+      "reason": "Dense Markdown render in happy-dom; budget retains the former unit-test limit, with one run's seven-sample median and spread."
+    },
     "fleet.mount.ms": {
       "budget": 82.5,
       "unit": "ms",
@@ -426,31 +444,31 @@
       "reason": "95th percentile frame: frames where a message commits or another agent's event rebuilds the rows."
     },
     "bundle.total_bytes": {
-      "budget": 779932,
+      "budget": 889304,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 779932,
+      "measured": 889304,
       "noise": 0,
-      "reason": "Everything web/dist ships, embedded in aether-remote."
+      "reason": "Everything web/dist ships, embedded in aether-remote. Includes 16,794 bytes for the in-flight Archon views change. Current build: 872,510 bytes."
     },
     "bundle.js_bytes": {
-      "budget": 692249,
+      "budget": 786475,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 692249,
+      "measured": 786475,
       "noise": 0,
-      "reason": "All JavaScript chunks."
+      "reason": "All JavaScript chunks. Includes 15,430 bytes for the in-flight Archon views change. Current build: 771,045 bytes."
     },
     "bundle.css_bytes": {
-      "budget": 81499,
+      "budget": 96645,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 81499,
+      "measured": 96645,
       "noise": 0,
-      "reason": "All stylesheets."
+      "reason": "All stylesheets. Includes 1,364 bytes for the in-flight Archon views change. Current build: 95,281 bytes."
     },
     "bundle.initial_bytes": {
       "budget": 359381,
@@ -471,13 +489,13 @@
       "reason": "The entry's transfer size at gzip -9: what a remote device downloads first."
     },
     "bundle.js_gzip_bytes": {
-      "budget": 237648,
+      "budget": 273020,
       "unit": "bytes",
       "enforce": "ci",
       "fixture": "web/dist",
-      "measured": 237648,
+      "measured": 273020,
       "noise": 0,
-      "reason": "All JavaScript at gzip -9."
+      "reason": "All JavaScript at gzip -9. Includes 5,419 bytes for the in-flight Archon views change. Current build: 267,601 bytes."
     },
     "bundle.largest_js_bytes": {
       "budget": 337797,

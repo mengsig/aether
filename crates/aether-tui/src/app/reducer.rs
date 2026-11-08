@@ -522,6 +522,8 @@ impl App {
                 root: None,
                 run: None,
                 include_archived: self.show_archived,
+                after: None,
+                limit: None,
             },
             then: Then::Tree,
         }

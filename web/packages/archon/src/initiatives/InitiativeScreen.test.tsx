@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import type { GraphModel, Layout } from "@aether-ui/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CONN, graphHarness, stubCanvas, type GraphHarness } from "../dag/test/harness.tsx";
+import { click, CONN, graphHarness, stubCanvas, type GraphHarness } from "../dag/test/harness.tsx";
 import InitiativeScreen from "./InitiativeScreen.tsx";
 
 const gridLayout = async (model: GraphModel): Promise<Layout> =>
@@ -81,5 +81,20 @@ describe("an initiative page", () => {
     const root = await h.mount(<InitiativeScreen params={{ id: "in_gone" }} layout={gridLayout} />);
     await h.until(() => root.textContent?.includes("No such initiative") === true, "the not-found state");
     expect(root.textContent).toContain("Archon has no initiative in_gone");
+    expect(root.querySelector('[role="alert"] button')?.textContent).toBe("Try again");
+  });
+
+  it("shows a failed read and retries without losing the connection", async () => {
+    h = await graphHarness();
+    const read = vi.spyOn(h.app.manager, "readInitiative");
+    read.mockRejectedValueOnce(new Error("Request refused"));
+    const root = await h.mount(<InitiativeScreen params={{ id: "in_sync" }} layout={gridLayout} />);
+    await h.until(() => root.textContent?.includes("Request refused") === true, "the read failure");
+    expect(h.app.store.get().connections[CONN]?.state).toBe("ready");
+    const retry = [...root.querySelectorAll("button")].find((button) => button.textContent === "Try again");
+    if (!retry) throw new Error("the failure offers a retry");
+    await click(h, retry);
+    await h.until(() => root.querySelector(".initiative-title") !== null, "the retried initiative");
+    expect(read).toHaveBeenCalledTimes(2);
   });
 });

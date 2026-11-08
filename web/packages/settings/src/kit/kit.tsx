@@ -126,7 +126,7 @@ export function Action({ conn, command, label, onRun, confirm, variant = "second
         <Dialog open={asking} onClose={() => setAsking(false)} title={confirm.title} description={confirm.body}
           footer={(
             <>
-              <Button variant="quiet" onClick={() => setAsking(false)}>Keep it</Button>
+              <Button variant="quiet" onClick={() => setAsking(false)}>{variant === "danger" ? "Keep it" : "Cancel"}</Button>
               <Button variant={variant === "danger" ? "danger" : "primary"} data-autofocus disabled={confirm.reason === "required" && reason.trim() === ""} onClick={confirmed}>
                 {confirm.confirmLabel}
               </Button>

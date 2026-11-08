@@ -72,6 +72,8 @@ async fn reads_behind_a_stalled_write_on_the_same_connection_answer_at_once() {
             include_archived: false,
             role_prefix: None,
             root: None,
+            after: None,
+            limit: None,
         }))
         .await;
     let answered = replies_within(&mut connection, &[status, tree], READ_BOUND).await;
@@ -267,6 +269,8 @@ async fn poll_like_the_tui(
             include_archived: false,
             role_prefix: None,
             root: None,
+            after: None,
+            limit: None,
         };
         tree.push(timed(&client, get_tree).await);
         tokio::time::sleep(Duration::from_millis(250)).await;

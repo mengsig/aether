@@ -5,14 +5,15 @@ import type { Standing } from "@aether-ui/protocol";
 import { RefusedError } from "./errors.ts";
 import { string, type Json } from "./guards.ts";
 
-export type Access = "observe" | "operate" | "host_only" | "device_self";
+/** `cli_only`: an Archon request no app may send, whatever its standing; the archon CLI does it. */
+export type Access = "observe" | "operate" | "host_only" | "device_self" | "cli_only";
 
 const words = (text: string): ReadonlySet<string> => new Set(text.split(/\s+/).filter(Boolean));
 
 export const AETHER_OBSERVE = words(`hello status preview_retention storage_status ping get_agent list_agents get_tree
   get_github_watcher get_schedule list_schedules schedule_history get_task list_tasks list_approvals list_approval_rules
   subscribe unsubscribe get_events get_transcript get_inbox get_snapshot get_invocation list_invocations get_checkpoint
-  latest_checkpoint get_artifact list_artifacts read_artifact memories list_runs get_run_report replay list_models
+  latest_checkpoint get_artifact list_artifacts read_artifact memories list_runs get_run_report replay list_models list_view_modes
   auth_status providers get_attention list_workspaces get_push_config list_repository_aliases list_notifications
   get_notification mcp_servers list_agents_page get_transcript_page usage_breakdown noesis_status
   noesis_get_session noesis_list_sessions noesis_graph noesis_jobs noesis_learner noesis_learner_evidence
@@ -42,19 +43,17 @@ export const AETHER_KEYED = words(`add_approval_rule archive cancel create_agent
   noesis_create_session noesis_delete_proposition noesis_delete_session noesis_delete_source noesis_extract
   noesis_import_source noesis_send`);
 
-/** Archon `Read` requests (archon-core Request::class) and the protocol 24 read models. */
-export const ARCHON_READ = words(`hello request_status status guide repo_list list_items list_item_summaries get_item
-  get_stage resolve_item list_pipelines model_policy list_questions subscribe_feed feed_history list_reports
-  orchestrator_status cost_report model_evidence autonomy settings github_watcher list_initiatives get_initiative lessons
-  lessons_why lesson_stats learning_why list_artifacts item_diff read_artifact subscribe_changes changes_page
-  item_history task_graph run_plan item_links issue_items list_github_objects`);
+/**
+ * The Archon requests an app may send: what archon-remote allow.rs lets an operator device send,
+ * and `get_initiative`. The desktop bridge passes exactly these (apps/desktop security/classes.ts).
+ */
+export const ARCHON_READ = words(`hello status repo_list list_items list_item_summaries get_item get_stage resolve_item
+  list_pipelines list_questions feed_history subscribe_feed list_reports orchestrator_status cost_report list_artifacts
+  read_artifact item_diff settings autonomy subscribe_changes changes_page item_history task_graph run_plan item_links
+  issue_items list_github_objects get_initiative model_policy`);
 
-/** Archon OperatorRead and OperatorChange requests a device may not send (archon-remote allow.rs). */
-// `answer` and `say` are OperatorChange, yet operator devices may send them.
-export const ARCHON_HOST_ONLY = words(`check_updates remote_status operator_command undo_authority shutdown repo_remove
-  repo_update set_caps set_settings reset_settings orchestrator_restart orchestrator_attach upgrade gc
-  configure_github_watcher update_lesson learning_correct learning_undo learning_restore_memory learning_retry_memory
-  merge_item configure_remote remote_pair remote_revoke`);
+export const ARCHON_CHANGE = words(`enqueue cancel_item retry_item pause resume answer say link_issue unlink_issue
+  import_issue steer_item update_item`);
 
 export function aetherAccess(command: Json): Access {
   const cmd = string(command.cmd, "command.cmd");
@@ -108,20 +107,20 @@ function isGlobalRule(command: Json): boolean {
   return scope !== null && typeof scope === "object" && (scope as Json).scope === "everywhere";
 }
 
+/** Every other Archon request, and the CLI's own knobs of an allowed one, are `cli_only`. */
 export function archonAccess(command: Json): Access {
   const cmd = string(command.cmd, "command.cmd");
-  if (cmd === "pause" || cmd === "resume") {
-    const target = command as Json;
-    if (target.scope === "global" && target.hard === true) return "host_only";
-  }
+  if ((cmd === "pause" || cmd === "resume") && command.hard === true) return "cli_only";
+  if (cmd === "answer" && command.chat === true) return "cli_only";
   if (ARCHON_READ.has(cmd)) return "observe";
-  if (ARCHON_HOST_ONLY.has(cmd)) return "host_only";
-  return "operate";
+  if (ARCHON_CHANGE.has(cmd)) return "operate";
+  return "cli_only";
 }
 
 /** Throws a RefusedError, with the reason a disabled control shows, when the standing does not allow it. */
 export function checkAllowed(access: Access, standing: Standing | undefined): void {
   if (standing === undefined) throw new RefusedError("The connection is not ready");
+  if (access === "cli_only") throw new RefusedError("The app does not send this to archond; use the archon CLI");
   if (access === "host_only" && standing !== "local") throw new RefusedError("Only the daemon's own host can do this");
   if (access === "operate" && standing === "observer") throw new RefusedError("Observer devices cannot change daemon state");
 }

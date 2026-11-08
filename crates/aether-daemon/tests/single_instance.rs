@@ -510,3 +510,52 @@ async fn starting_a_daemon_preserves_an_existing_socket_parent() {
         assert_eq!(file_modes, [0o600; 3]);
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn simultaneous_starts_leave_one_daemon_serving() {
+    let root = tempfile::tempdir().unwrap();
+    let config = aether_daemon::DaemonConfig {
+        socket: root.path().join("aether.sock"),
+        store_path: root.path().join("aether.db"),
+        config_dir: Some(root.path().join("config")),
+        workspace_root: Some(root.path().to_path_buf()),
+        max_concurrent_turns: None,
+        yolo: false,
+        tcp: None,
+        allow_remote: false,
+    };
+    let shutdown = CancellationToken::new();
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(3));
+    let start = |config: aether_daemon::DaemonConfig| {
+        let barrier = barrier.clone();
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            barrier.wait().await;
+            aether_daemon::run(config, shutdown).await
+        })
+    };
+    let mut first = start(config.clone());
+    let mut second = start(config.clone());
+    barrier.wait().await;
+    let (refused, serving) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::select! {
+            result = &mut first => (result, second),
+            result = &mut second => (result, first),
+        }
+    })
+    .await
+    .expect("one concurrent start must refuse");
+    let error = refused.unwrap().unwrap_err();
+    assert!(
+        error.to_string().contains("another aether daemon"),
+        "{error:#}"
+    );
+    let answered = serves(&config.socket, &serving).await;
+    shutdown.cancel();
+    let ended = tokio::time::timeout(Duration::from_secs(10), serving)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(answered, "the winning daemon must serve: {ended:?}");
+    ended.unwrap();
+}

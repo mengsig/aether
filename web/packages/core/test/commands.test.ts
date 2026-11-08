@@ -85,12 +85,23 @@ describe("command access", () => {
     expect(aetherAccess({ cmd: "noesis_configure", patch: { prompts: { overrides: false } } })).toBe("host_only");
   });
 
-  it("keeps archond's host commands and global hard pause off devices", () => {
+  it("keeps archond's host commands and the CLI's knobs off every app", () => {
     expect(archonAccess({ cmd: "task_graph" })).toBe("observe");
-    expect(archonAccess({ cmd: "merge_item" })).toBe("host_only");
+    expect(archonAccess({ cmd: "get_initiative", initiative: "in_1" })).toBe("observe");
+    expect(archonAccess({ cmd: "model_policy" })).toBe("observe");
+    for (const cmd of ["steer_item", "update_item"]) {
+      const access = archonAccess({ cmd });
+      expect(access).toBe("operate");
+      expect(() => checkAllowed(access, "observer")).toThrow(/Observer/);
+      expect(() => checkAllowed(access, "operator")).not.toThrow();
+    }
+    expect(archonAccess({ cmd: "merge_item" })).toBe("cli_only");
+    expect(archonAccess({ cmd: "list_initiatives" })).toBe("cli_only");
+    expect(archonAccess({ cmd: "not_a_command_yet" })).toBe("cli_only");
     expect(archonAccess({ cmd: "answer", question: "q_1", text: "yes" })).toBe("operate");
+    expect(archonAccess({ cmd: "answer", question: "q_1", text: "yes", chat: true })).toBe("cli_only");
     expect(archonAccess({ cmd: "say", text: "hello" })).toBe("operate");
-    expect(archonAccess({ cmd: "pause", scope: "global", hard: true })).toBe("host_only");
+    expect(archonAccess({ cmd: "pause", scope: "global", hard: true })).toBe("cli_only");
     expect(archonAccess({ cmd: "pause", scope: "global" })).toBe("operate");
   });
 
@@ -100,6 +111,7 @@ describe("command access", () => {
     expect(() => checkAllowed("observe", undefined)).toThrow(/not ready/);
     expect(() => checkAllowed("device_self", "observer")).not.toThrow();
     expect(() => checkAllowed("host_only", "local")).not.toThrow();
+    expect(() => checkAllowed("cli_only", "local")).toThrow(/archon CLI/);
   });
 
   it("adds one idempotency key to keyed commands and keeps a caller's own", () => {

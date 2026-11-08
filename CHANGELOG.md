@@ -4,38 +4,66 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## Unreleased
+
+### Added
+
+- `list_view_modes` serves the shared TUI and desktop transcript-mode catalog,
+  including scoped user modes and file diagnostics, to any authenticated reader.
+  The `view_modes` handshake feature announces it.
+- The web palette (Ctrl+K) now switches context: it finds agents on every
+  connection by name, role or id, Archon items, initiatives, pull requests and
+  Learn sessions, and lists recent destinations first when the query is empty.
+- The desktop chat has the TUI's view modes: a picker, `/mode`, `/calm` and
+  `/focus`, Details (Ctrl+T) and the choice remembered per agent; Archon's
+  orchestrator opens in its Calm mode. Both apply one set of rules, pinned by a
+  shared fixture. Delegations and messages to other agents are cards that link to
+  the other agent, inbox turns are drawn verbatim, open questions and approvals
+  stay pinned until answered, and a composer with a `/` menu sends, stops and
+  keeps unsent drafts.
+
+### Fixed
+
+- Delegated children inherit their parent's current deadline and cost budget,
+  including extensions made while a turn is in flight.
+
 ## 1.3.0
 
 Released with Archon 1.5.0. One web app now serves every screen, from
 Aether's remote listener and in a new desktop app, and replaces the phone
 app. Archon can be mounted on the same listener at `/archon`. Memory 2.0
-gives memories a standing, a relevance cutoff and export and import.
+gives memories a standing, an opt-in relevance cutoff and export and import.
 Noesis, a learning service, ships turned off. Protocol 26 (the daemon
-serves 17 to 26) and store schema 32. Read the
+serves 17 to 26) and store schema 33. Read the
 [upgrade notes](https://github.com/mengsig/aether/blob/main/docs/upgrading.md)
 before updating.
 
 ### Before updating
 
-- **Store schema 32.** Four migrations run when the daemon first opens the
+- **Store schema 33.** Five migrations run when the daemon first opens the
   store: V29 marks each agent's subsystem and adds the paging indexes, V30
   gives each memory a tier and a state (existing memories become active,
-  unchanged), V31 adds the stale marks and the retrieval holdout log, and
-  V32 moves only the version stamp. The migration is one way: Aether saves
+  unchanged), V31 adds the stale marks and the retrieval holdout log, V32
+  moves only the version stamp, and V33 keeps each agent's usage and the
+  fleet's and each run's totals beside the agents, and each agent's archived
+  flag in a column, for `status` and `get_tree`. From then on a program
+  other than Aether cannot write an agent into the store (reading is
+  unaffected). The migration is one way: Aether saves
   the schema 28 database first (see
   [migration backups](https://github.com/mengsig/aether/blob/main/docs/migration-backups.md)),
   and 1.2.11 refuses to start on the migrated store (`store schema version
-  32 is newer than supported 28`). To go back, stop the daemon and restore
+  33 is newer than supported 28`). To go back, stop the daemon and restore
   that backup with the older binary; changes made since are lost.
 - **Restart the daemon** after the update (`aether stop`, then `aether`).
 - **The phone app is gone.** The listener now serves the new web app at the
   same address. A browser that paired with 1.2.11 keeps its pairing; open
   the address again. The old app's paths (`/app.js`, `/ui/…`,
   `/asset-manifest.json`) answer 404.
-- **Memory retrieval injects less.** A memory needs a relevance of at least
-  `[memory.retrieval] min_score` (0.05) to reach a turn, pinned ones
-  excepted, and `holdout_rate` (0.05) withholds a seeded sample and logs
-  it. Set either to 0 to turn it off.
+- **Memory retrieval can inject less.** `[memory.retrieval] min_score`
+  (0, off, by default) is the relevance a memory needs to reach a turn,
+  pinned ones excepted. A value of 0.05 trades recall for fewer injected
+  tokens. `holdout_rate` defaults to 0; set it to 0.05 to withhold and log
+  a seeded sample. Stale-marked memories can still rank lower.
 - **Update the daemon before the clients.** The 1.3.0 Python and
   TypeScript clients ask for protocol 26, which a 1.2.11 daemon refuses as
   `incompatible`; give the Python client `protocol_version=25` to reach one.
@@ -125,10 +153,55 @@ before updating.
 
 ### Fixed
 
+- **`status` and `get_tree` on a large, long-lived store.** The fleet's
+  usage and each run's are one row each, kept by triggers as agents are
+  written, which count exactly the agents the store can read, so a
+  quarantined one stays out. A live run's summary reads only its live members
+  and those with a usage receipt in the last 15 minutes, through an index; past
+  eight pages of receipts its rate is a floor, marked `rate_approximate` and
+  shown as "at least". Each status section has 750 ms and the reply comes back
+  within a second; a section not read in time is listed in `unavailable` and
+  named in its problems, and the CLI, TUI and `aether doctor` show it as
+  unavailable instead of as zero. `get_tree` filters by run, root, role and
+  archived state before it reads an agent and answers one page: the newest
+  live agents and the root, then the newest agents of any state, 500 of each
+  at most, with `next_after` for the rest (`after` and `limit`, feature
+  `tree_pages`); the board says when older agents are left out. A filter no
+  index answers is checked on at most 4000 agents per page, and a page holds
+  at most `limit` ancestors. A rooted page walks a kept table of each agent's
+  ancestors, and each shown agent's roll-up is read from its subtree's kept
+  totals, so a page costs the same however many agents are below it. An agent
+  shown apart from its ancestors, its parent filtered out, is counted at its
+  own root only, so the roots' sums count each agent once. Within a run, a
+  roll-up counts that run's agents below, even under an agent of another run.
+  The tree reads leases by agent instead of every lease. It is shared like
+  `status`: past 750 ms it answers with the last tree read for the same
+  request, marked `stale`. The GitHub watcher's status shares one read and
+  answers `unavailable` past 750 ms. A timed-out client names the daemon's
+  slowest recent status section or the host's load, and a slow engine tool
+  call is logged with its tool, split into its wait for the turn and its own
+  run. On a synthetic store of 5 million events with a live run five days old,
+  `status` answers in 13 ms at p99 instead of 480 ms (`runs` 12 ms instead of
+  456, `usage_total` under 1 ms instead of 68), a 500-agent tree page with its
+  roll-ups reads in 11 ms, and the migration to schema 33 takes about a minute.
 - **A tool call that never returns (archon#393).** After 15 minutes
   outstanding with no sign of life from the engine, Aether stops the turn,
   records `agent.tool_call_overdue` and wakes the agent to read its inbox;
   Claude Code's shell cap is pinned at 10 minutes.
+- **Memory recall is back to 1.2.11's.** The relevance cutoff is off by
+  default (`min_score = 0`): at 0.05 it dropped relevant memories phrased
+  in other words than the task (recall@6 0.89 → 0.78 on the memory
+  benchmark).
+- **A store with damaged memory tables refuses to open.** The daemon checks
+  those tables when it opens the store and names the damaged one, instead
+  of starting and failing every turn's memory retrieval. A check that
+  meets a held lock or an I/O error reports that error, not damage.
+- **A result written out as text keeps its structured part.** An agent that
+  ends its task by writing `complete_task`'s input as its answer (a bare or
+  fenced JSON object, `complete_task {...}` or `{"complete_task": {...}}`)
+  now hands its parent that object as `structured`, not only as summary
+  text. Codex models do this often; Archon read such a review as missing
+  its verdict and repaired the stage.
 - **Noesis on subscription engines.** Teaching and extraction run on
   `claude-code` and `codex` with `billing.allow_api = false`, with the same
   tools, sealing and budgets; a step on a `default` engine model is priced
