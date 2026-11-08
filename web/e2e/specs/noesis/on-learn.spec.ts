@@ -53,11 +53,11 @@ test("the settings pick each model from the daemon's offers and say what today w
   await expect(sheet.getByRole("switch", { name: /Learn from my work/ })).not.toBeChecked();
 });
 
-test("the knowledge graph switches between the drawing and a list of the same propositions", async ({ page, stack }) => {
+test("a fresh knowledge graph says it is empty and how to fill it, with no drawing controls", async ({ page, stack }) => {
   await pairBoth(page, stack);
   await page.goto(`${stack.aether.origin}/#/learn/graph`);
-  const shown = page.getByRole("radiogroup", { name: "Show as" });
-  await expect(shown.getByRole("radio", { name: "Graph" })).toBeChecked();
-  await shown.getByRole("radio", { name: "List" }).click();
-  await expect(shown.getByRole("radio", { name: "List" })).toBeChecked();
+  const empty = page.getByTestId("learn-graph-empty");
+  await expect(empty).toContainText("Your knowledge graph is empty");
+  await expect(empty.getByRole("link", { name: "Start a session" })).toBeVisible();
+  await expect(page.getByRole("radiogroup", { name: "Show as" }), "the Graph and List switch needs statements").toHaveCount(0);
 });
