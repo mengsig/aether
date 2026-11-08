@@ -90,9 +90,37 @@ describe("the agent screen", () => {
     expect(container.querySelector(".agent-head .ui-pill")?.textContent).toBe("Running");
   });
 
-  test("says so for an unknown agent or connection", async () => {
+  test("reads an agent absent from the fleet and opens its conversation", async () => {
+    const h = current = await connected({ instance: "faux-1", agents: [] });
+    h.daemon.agents.set(FAUX_AGENT, fauxAgent());
+    h.daemon.seed(FAUX_AGENT, [{ message: text("user", "Your task:\nEarlier work") }]);
+    const container = await h.mount(<AgentRoute params={{ conn: h.conn, agent: FAUX_AGENT }} />);
+    await h.settle();
+    await h.settle();
+    expect(h.daemon.commands("get_agent")).toEqual([expect.objectContaining({ id: FAUX_AGENT })]);
+    expect(container.querySelector(".agent-name")?.textContent).toBe("builder");
+    expect(container.textContent).toContain("Earlier work");
+    expect(container.querySelector('.conv-card[data-kind="user_task"]')).not.toBeNull();
+  });
+
+  test("reports an unavailable agent and retries the lookup", async () => {
     const { container } = await screen(fauxAgent(), "agt_missing");
-    expect(container.textContent).toContain("No such agent");
+    expect(container.textContent).toContain("Agent unavailable");
+    expect(container.textContent).toContain("may no longer be available");
+    expect(container.textContent).toContain("Agent not found");
+    const h = current;
+    expect(h).not.toBeNull();
+    h?.daemon.agents.set("agt_missing", fauxAgent("agt_missing"));
+    const retry = [...container.querySelectorAll("button")].find((button) => button.textContent === "Try again");
+    expect(retry).toBeDefined();
+    retry?.click();
+    await h?.settle();
+    await h?.settle();
+    expect(container.querySelector(".agent-name")).not.toBeNull();
+  });
+
+  test("says so for an unknown connection", async () => {
+    await screen();
     current?.unmount();
     const h = await connected({ instance: "faux-2", agents: [] });
     current = h;

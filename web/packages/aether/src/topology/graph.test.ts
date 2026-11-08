@@ -13,6 +13,15 @@ function topologyOf(...fleets: Array<[string, number]>) {
 }
 
 describe("buildTopology", () => {
+  test("excludes archived agents and their delegation edges", () => {
+    const store = new Store(INITIAL_STATE, () => undefined);
+    const agents = fixtureAgents(3);
+    agents.agt_00000 = { ...must(agents.agt_00000, "agent"), archived: true };
+    seedFleet(store, fixtureConnection(), agents);
+    const topology = buildTopology(selectFleetSources(store.get()));
+    expect(topology.nodes.map((node) => node.id)).not.toContain("aether:fixture/agt_00000");
+    expect(topology.edges).toEqual([]);
+  });
   test("has a node per agent, an edge per delegation and a group per run", () => {
     const topology = topologyOf(["aether:a", 20]);
     expect(topology.nodes).toHaveLength(20);
