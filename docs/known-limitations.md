@@ -325,8 +325,8 @@ isolation depend on the installed engine version and the platform; see
   yet tells such a server from the command. The resumed agent is told to
   check state before it repeats anything, so it can start the server again;
   start it with `AETHER_KEEP_PROCESS=1` to keep it. A
-  descendant that cleared its environment and left the group is reaped only
-  when its agent ends. On macOS
+  descendant that cleared its environment and left the group is found only
+  through its agent's scope when the agent ends or the daemon stops. On macOS
   there is no parent-death signal, no group watchdog, and nothing is recorded
   or reaped, so the engines of a killed daemon keep running and must be
   stopped by hand. A graceful stop
