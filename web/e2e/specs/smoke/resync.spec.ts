@@ -50,7 +50,7 @@ test("usage and paired devices remain visible in both themes", async ({ page, st
   }
   await page.goto(`${stack.aether.origin}/#/`);
   await expect(page.locator('[data-area="spend"] .ui-chart-tile-value')).toBeVisible();
-  await expect(page.getByText("Lifetime status:", { exact: false })).toBeVisible();
+  await expect(page.getByText(/Lifetime status.*\d.* in ·/)).toBeVisible();
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
     await page.screenshot({ path: info.outputPath(`overview-spend-${scheme}.png`) });
