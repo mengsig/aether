@@ -127,7 +127,7 @@ export function recentOutcomes(items: readonly (readonly [string, ArchonItem])[]
   return done.slice(0, limit);
 }
 
-export const tokensOf = (usage: aether.Usage): number => usage.input_tokens + usage.output_tokens;
+export const tokensOf = (usage: aether.Usage): number => usage.input_tokens + usage.output_tokens + usage.cache_read_tokens + usage.cache_write_tokens;
 
 export function formatUsd(value: number): string {
   invariant(Number.isFinite(value) && value >= 0, `spend ${value} is a nonnegative amount`);
@@ -154,11 +154,11 @@ export interface Spend {
   readonly source: "breakdown" | "agents";
 }
 
-function checkUsage(usage: unknown, where: string): string | null {
+export function checkUsage(usage: unknown, where: string): string | null {
   const record = usage as Partial<aether.Usage> | null;
   if (record === null || typeof record !== "object") return `${where} has no usage`;
   if (typeof record.cost_complete !== "boolean") return `${where} has no cost completeness flag`;
-  const amounts = [record.cost_usd, record.input_tokens, record.output_tokens, record.estimated_cost_usd ?? 0];
+  const amounts = [record.cost_usd, record.input_tokens, record.output_tokens, record.cache_read_tokens, record.cache_write_tokens, record.estimated_cost_usd ?? 0];
   return amounts.every((n) => typeof n === "number" && Number.isFinite(n) && n >= 0) ? null : `${where} has a cost or token count that is not an amount`;
 }
 

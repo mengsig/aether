@@ -55,19 +55,31 @@ export function SpendTile({ view }: { readonly view: HomeView }) {
     return <StatTile label="Spend today" value={value} hint="Nothing spent yet" href="#/activity"><NextStep step={step} /></StatTile>;
   }
   if (spend.state === "problem") {
-    return <StatTile label="Spend today" value="Unknown" hint="Today's spend could not be read" tone="danger" href="#/activity"><p className="home-problem">{spend.problem}</p></StatTile>;
+    return <StatTile label="Spend today" value="Unknown" hint="Today's spend could not be read" tone="danger" href="#/activity"><p className="home-problem">{spend.problem}</p><LifetimeUsage lifetime={view.lifetime} /></StatTile>;
   }
   const { usd, tokens, estimatedUsd, listPrice, complete, byModel, source } = spend.value;
   const slices = spendSlices(byModel);
-  const amount = `${formatUsd(usd)}${complete ? "" : "+"}`;
-  const hint = `${formatTokens(tokens)} tokens${source === "agents" ? " · lifetime cost of agents active today" : ""}${listPrice ? " · includes list-price estimates" : ""}${complete ? "" : " · leaves out some work"}`;
+  const amount = !complete && usd === 0 ? "Unknown" : `${formatUsd(usd)}${complete ? "" : "+"}`;
+  const coverage = complete ? (source === "breakdown" && (tokens > 0 || usd > 0) ? " · partial if subscription turns lack per-message usage" : "")
+    : " · partial: subscription turns may lack per-message usage";
+  const hint = `${formatTokens(tokens)} recorded tokens including cache${source === "agents" ? " · lifetime cost of agents active today" : ""}${listPrice ? " · includes list-price estimates" : ""}${coverage}`;
   return (
-    <StatTile label="Spend today" value={amount} hint={hint} href="#/activity">
+    <StatTile label={source === "agents" ? "Lifetime spend of active agents" : "Spend today"} value={amount} hint={hint} href="#/activity">
+      <LifetimeUsage lifetime={view.lifetime} />
       {estimatedUsd > 0 ? <p className="home-quiet">{formatUsd(estimatedUsd)} at API list price for subscription use; not a per-request charge</p> : null}
       {slices.length > 0 ? <Donut label="Spend by model" slices={slices} center={amount} /> : tokens === 0 && estimatedUsd === 0 && complete ? <p className="home-quiet">Nothing spent yet today</p> : null}
       {step && tokens === 0 && usd === 0 && estimatedUsd === 0 ? <NextStep step={step} /> : null}
     </StatTile>
   );
+}
+
+function LifetimeUsage({ lifetime }: { readonly lifetime: HomeView["lifetime"] }) {
+  if (lifetime.state === "loading") return <p className="home-quiet">Lifetime status: loading</p>;
+  if (lifetime.state === "problem") return <p className="home-quiet">Lifetime status unavailable: {lifetime.problem}</p>;
+  const u = lifetime.value;
+  const cost = !u.complete && u.usd === 0 ? "cost not reported" : `$${u.usd.toFixed(4)}${u.complete ? "" : "+"}`;
+  const estimate = u.estimated === null ? "" : ` · $${u.estimated.toFixed(4)} subscription API-equivalent estimate`;
+  return <p className="home-quiet">Lifetime status{u.stale ? " (stale)" : ""}: {u.input.toLocaleString("en-US")} in · {u.cacheWrite.toLocaleString("en-US")} cache-write · {u.cacheRead.toLocaleString("en-US")} cached · {u.output.toLocaleString("en-US")} out · {cost}{u.listPrice ? " (includes list-price estimates)" : ""}{estimate}</p>;
 }
 
 export function ActivityTile({ view }: { readonly view: HomeView }) {

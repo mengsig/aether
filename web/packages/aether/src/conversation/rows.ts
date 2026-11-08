@@ -198,7 +198,9 @@ export function invocationMeta(events: readonly aether.Event[], agent: string): 
     if (event.agent_id !== agent) continue;
     const kind = event.kind;
     if (kind.type === "invocation.completed") {
-      meta.set(kind.invocation, { model: modelOf(kind.model), usage: kind.usage, durationMs: kind.duration_ms, error: null });
+      const u = kind.usage;
+      const absent = !u.cost_complete && u.cost_usd === 0 && u.input_tokens === 0 && u.output_tokens === 0 && u.cache_read_tokens === 0 && u.cache_write_tokens === 0 && (u.reasoning_tokens ?? 0) === 0 && (u.estimated_cost_usd ?? 0) === 0;
+      meta.set(kind.invocation, { model: modelOf(kind.model), usage: absent ? null : u, durationMs: kind.duration_ms, error: null });
     } else if (kind.type === "invocation.failed") {
       meta.set(kind.invocation, { model: null, usage: null, durationMs: null, error: kind.error });
     }

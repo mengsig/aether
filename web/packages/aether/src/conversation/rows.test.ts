@@ -59,3 +59,10 @@ describe("live tails", () => {
     expect(rows[2]).toMatchObject({ parts: [], live: { recovering: true, partial: true } });
   });
 });
+
+test("an unreported invocation is shown as missing usage, not zero spend", () => {
+  const usage = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: 0, cost_complete: false, cost_gap: "unreported" };
+  const events = [{ seq: 1, agent_id: AGENT, kind: { type: "invocation.completed", invocation: "inv_a", model: { provider: "p", model: "m" }, usage, duration_ms: 10, snapshot: "s" } }] as unknown as aether.Event[];
+  expect(invocationMeta(events, AGENT).get("inv_a")?.usage).toBeNull();
+  expect(invocationMeta(events, AGENT).get("inv_a")?.model).toBe("p/m");
+});

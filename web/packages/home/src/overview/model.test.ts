@@ -89,6 +89,13 @@ describe("spend today", () => {
     expect("value" in truncated && truncated.value.complete).toBe(false);
   });
 
+  test("recorded tokens include cached reads and writes", () => {
+    const usage = { ...BREAKDOWN.total, input_tokens: 2, output_tokens: 3, cache_read_tokens: 100, cache_write_tokens: 20 };
+    const parsed = spendFromBreakdowns([{ ...BREAKDOWN, total: usage }]);
+    expect("value" in parsed && parsed.value.tokens).toBe(125);
+    expect(spendFromBreakdowns([{ ...BREAKDOWN, total: { ...usage, cache_read_tokens: -1 } }])).toHaveProperty("problem");
+  });
+
   test("keeps subscription estimates separate from charges and rejects invalid estimates", () => {
     const usage = { ...BREAKDOWN.total, cost_usd: 0.2, estimated_cost_usd: 3, cost_complete: false, cost_basis: "mixed" as const };
     const parsed = spendFromBreakdowns([{ ...BREAKDOWN, total: usage }]);
