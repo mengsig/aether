@@ -129,6 +129,7 @@ async fn store_with(
         .name("final-store-sync".into())
         .spawn(move || {
             let _guard = guard;
+            // Store owners may still be reading or committing after their phase timed out.
             while Arc::strong_count(&store) > 1 {
                 std::thread::sleep(Duration::from_millis(50));
             }
