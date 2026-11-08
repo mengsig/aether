@@ -16,6 +16,29 @@ export interface NotificationSink {
   show(content: { title: string; body: string }, onClick: () => void): void | Promise<void>;
 }
 
+const SHOW_SETTLE_MS = 2_000;
+
+/** The part of an Electron `Notification` that tells whether the system showed it. */
+export interface ShownNote {
+  once(event: "show", listener: () => void): unknown;
+  once(event: "failed", listener: (event: unknown, error: string) => void): unknown;
+  show(): void;
+}
+
+/** Resolves on `show`, rejects on the system's `failed`; a system that reports neither counts as shown. */
+export function settleShown(note: ShownNote, settleMs: number = SHOW_SETTLE_MS): Promise<void> {
+  if (!(settleMs > 0)) throw new Error("a notification waits a positive time for the system");
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, settleMs);
+    note.once("show", () => { clearTimeout(timer); resolve(); });
+    note.once("failed", (_event, error) => {
+      clearTimeout(timer);
+      reject(new Error(`The system could not show the notification: ${error}`));
+    });
+    note.show();
+  });
+}
+
 const MAX_TITLE = 64;
 const MAX_BODY = 240;
 export const NOTES_PER_MINUTE = 12;

@@ -1,6 +1,7 @@
 // The native surfaces main owns: deep links checked against the route allowlist, calm
 // rate-limited notifications, and single-use, short-lived folder picker tokens.
 
+import { EventEmitter } from "node:events";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
@@ -8,7 +9,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { DeepLinkRouter, isAllowedRoute, linksInArgv, parseDeepLink, type RouteTarget } from "../../src/native/deep-links.ts";
 import { FolderTokens, TOKEN_TTL_MS } from "../../src/native/folder-tokens.ts";
-import { NOTES_PER_MINUTE, Notifier, plainLine } from "../../src/native/notifications.ts";
+import { NOTES_PER_MINUTE, Notifier, plainLine, settleShown } from "../../src/native/notifications.ts";
 import { BridgeRefusal } from "../../src/security/validate.ts";
 
 test("a deep link opens only an allowlisted route", () => {
@@ -95,6 +96,17 @@ test("a notification the system refuses to show rejects to the caller instead of
   await assert.rejects(Promise.resolve(notifier.notify({ title: "Question", body: "ready?" })), /could not show the notification: denied/);
   const accepting = new Notifier({ show: () => Promise.resolve() }, () => undefined);
   assert.equal(await accepting.notify({ title: "Question", body: "ready?" }), undefined);
+});
+
+test("settleShown follows the system's own show, failed and silence", async () => {
+  const note = (emit: (events: EventEmitter) => void) => {
+    const events = new EventEmitter();
+    return { once: events.once.bind(events), show: () => { setImmediate(() => emit(events)); } } as Parameters<typeof settleShown>[0];
+  };
+  assert.equal(await settleShown(note((events) => events.emit("show"))), undefined);
+  await assert.rejects(settleShown(note((events) => events.emit("failed", {}, "denied"))), /could not show the notification: denied/);
+  assert.equal(await settleShown(note(() => undefined), 20), undefined, "a system that says nothing counts as shown");
+  assert.throws(() => settleShown(note(() => undefined), 0), /positive time/);
 });
 
 test("a folder token is opaque, single use, bound to its purpose and short lived", () => {

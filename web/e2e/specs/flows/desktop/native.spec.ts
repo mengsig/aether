@@ -11,7 +11,7 @@ import type { Stack } from "../../../harness/stack.ts";
 import { expect, test, type Page } from "../../../harness/fixtures.ts";
 import { fixtureRepository, installGhStub, OWNER_REPO } from "../gh-stub.ts";
 import { startPrivateStack, stopPrivateStack, type PrivateStack } from "../private.ts";
-import { pressKeys, windowTitles } from "./native-host.ts";
+import { focusNextWindow, pressKeys, windowTitles } from "./native-host.ts";
 import { askingScript, installLavishStub, publishReport, shoot, shootScreen, startReportServer, VIEWPORT, type ReportServer } from "./native-fixtures.ts";
 import { launchPackaged, packagedBinary, type PackagedApp } from "./packaged.ts";
 import { route, setPaused } from "./state.ts";
@@ -186,6 +186,8 @@ test("UX-045: a real agent's questions alert the system; a click opens the quest
   await expect(card.getByRole("textbox", { name: "Answer Native asker" })).toBeFocused();
   await shoot(page, "ux045-question-focused");
   await page.keyboard.type("Short bullet points.");
+  await focusNextWindow(desktop().compositor);
+  await expect.poll(() => page.evaluate(() => document.hasFocus()), { message: "the app is in the background for the second question" }).toBe(false);
   await card.getByRole("button", { name: "Send answer" }).click();
   await until(async () => desktop().native.notes(), (notes) => notes.some((note) => note.body === QUESTIONS[1]), "the second question's alert", 60_000);
   const product = desktop().native.notes().filter((note) => note.title === "Native asker asks");

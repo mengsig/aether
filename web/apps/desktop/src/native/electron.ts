@@ -4,24 +4,9 @@
 import { app, BrowserWindow, dialog, Notification, webContents } from "electron";
 import { DEEP_LINK_CHANNEL, DEEP_LINK_SCHEME, type RouteTarget } from "./deep-links.ts";
 import { checkPurpose, type FolderTokens } from "./folder-tokens.ts";
-import type { NotificationSink } from "./notifications.ts";
+import { settleShown, type NotificationSink } from "./notifications.ts";
 
 const MAX_SHOWN = 32;
-
-const SHOW_SETTLE_MS = 2_000;
-
-/** Resolves on `show`, rejects on the system's `failed`; a system that reports neither counts as shown. */
-function settleShown(note: Notification): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, SHOW_SETTLE_MS);
-    note.once("show", () => { clearTimeout(timer); resolve(); });
-    note.once("failed", (_event, error) => {
-      clearTimeout(timer);
-      reject(new Error(`The system could not show the notification: ${error}`));
-    });
-    note.show();
-  });
-}
 
 /** Native notifications; each is held until it closes, so its click still reaches main. */
 export function notificationSink(): NotificationSink {

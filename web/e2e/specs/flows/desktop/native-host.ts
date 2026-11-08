@@ -112,3 +112,11 @@ export async function windowTitles(compositor: NodeJS.ProcessEnv): Promise<strin
   walk(JSON.parse(stdout) as Parameters<typeof walk>[0]);
   return titles;
 }
+
+/** Moves the focus to the next window on the run's own compositor, as a person switching windows would. */
+export async function focusNextWindow(compositor: NodeJS.ProcessEnv): Promise<void> {
+  const ipc = String(compositor.SWAYSOCK ?? "");
+  assert.ok(ipc.startsWith("/"), "the private compositor's IPC socket is known");
+  assert.ok((await windowTitles(compositor)).length >= 2, "another window is there to take the focus");
+  await exec("/usr/bin/swaymsg", ["-s", ipc, "focus", "next"], { timeout: 10_000 });
+}
