@@ -80,11 +80,15 @@ async fn answer_and_conclude(home: &mut Home) {
     let answer = json!({"cmd": "noesis_answer", "session": id,
         "question": posed["open_question"]["id"], "idempotency_key": "answer-1",
         "answer": {"text": "Lutetia", "dont_know": false}});
-    // The answer starts the teach session's next turn; it must take this reply, not the problem below.
+    home.model.tool(
+        "",
+        "noesis_judge_recall",
+        json!({"question": posed["open_question"]["id"], "correct": true}),
+    );
     home.model.text("Noted.");
     let asked = home.model.requests().len();
     home.ok(answer).await;
-    home.requests_reach(asked + 1).await;
+    home.requests_reach(asked + 2).await;
 
     let problem = json!({"statement": "Differentiate x^5.", "mode": "recall",
         "targets": [], "solution": "5x^4"});
