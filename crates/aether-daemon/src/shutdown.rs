@@ -9,7 +9,7 @@ use tokio::task::JoinSet;
 use crate::instance_lock::InstanceLock;
 use crate::noesis::NoesisService;
 
-const RUNTIME_DEADLINE: Duration = Duration::from_secs(12);
+const RUNTIME_DEADLINE: Duration = Duration::from_secs(30);
 const DRAIN_DEADLINE: Duration = Duration::from_secs(3);
 const STORE_DEADLINE: Duration = Duration::from_secs(2);
 const CLEANUP_DEADLINE: Duration = Duration::from_secs(2);
