@@ -1,5 +1,5 @@
-// The faux engine: an OpenAI chat-completions server on loopback that streams a scripted reply or
-// tool call, so agents run with no model and no credentials. Every request is kept for assertions.
+// The faux engine: an OpenAI chat-completions server on loopback that streams a scripted reply,
+// so agents run with no model and no credentials. Every request is kept for assertions.
 
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -14,11 +14,14 @@ export interface EngineRequest {
   readonly toolsCalled: readonly string[];
 }
 
-/** One tool call the model makes instead of replying, such as `ask_user` with its question. */
-export interface ToolCall { readonly tool: string; readonly arguments: Readonly<Record<string, unknown>> }
+export interface ToolReply {
+  readonly name: string;
+  readonly arguments: Record<string, unknown>;
+  readonly text?: string;
+}
 
-/** What an agent receives for a request: text, or a tool call; the default names the faux engine. */
-export type Script = (request: EngineRequest) => string | ToolCall;
+/** A text reply or one tool call; the default names the faux engine. */
+export type Script = (request: EngineRequest) => string | ToolReply;
 
 export interface FauxEngine {
   /** `http://127.0.0.1:<port>/v1`, the provider's `base_url`. */
@@ -69,27 +72,23 @@ async function readJson(request: http.IncomingMessage): Promise<Record<string, u
   return parsed as Record<string, unknown>;
 }
 
-let calls = 0;
-
-function streamReply(response: http.ServerResponse, model: string, reply: string | ToolCall): void {
+function streamReply(response: http.ServerResponse, model: string, reply: string | ToolReply): void {
+  const text = typeof reply === "string" ? reply : reply.text ?? "";
+  assert.ok(model.length > 0, "a streamed reply names its model");
+  assert.ok(typeof reply === "string" || reply.name.trim().length > 0, "a tool call has a name");
   const id = `chatcmpl-faux-${Date.now()}`;
   const chunk = (delta: Record<string, unknown>, finish: string | null, usage?: Record<string, number>) =>
     `data: ${JSON.stringify({ id, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model,
       choices: [{ index: 0, delta, finish_reason: finish }], ...(usage ? { usage } : {}) })}\n\n`;
   response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
   response.write(chunk({ role: "assistant", content: "" }, null));
-  const text = typeof reply === "string" ? reply : JSON.stringify(reply.arguments);
-  if (typeof reply === "string") {
-    for (let at = 0; at < text.length; at += 8) response.write(chunk({ content: text.slice(at, at + 8) }, null));
-  } else {
-    assert.match(reply.tool, /^[a-z_]+$/, "a tool call names a tool");
-    calls += 1;
-    const call = { index: 0, id: `call_faux_${calls}`, type: "function", function: { name: reply.tool, arguments: text } };
-    response.write(chunk({ tool_calls: [call] }, null));
+  for (let at = 0; at < text.length; at += 8) response.write(chunk({ content: text.slice(at, at + 8) }, null));
+  if (typeof reply !== "string") {
+    response.write(chunk({ tool_calls: [{ index: 0, id: `call_${crypto.randomUUID()}`, type: "function",
+      function: { name: reply.name, arguments: JSON.stringify(reply.arguments) } }] }, null));
   }
   const tokens = Math.max(1, Math.ceil(text.length / 4));
-  const finish = typeof reply === "string" ? "stop" : "tool_calls";
-  response.write(chunk({}, finish, { prompt_tokens: 10, completion_tokens: tokens, total_tokens: 10 + tokens }));
+  response.write(chunk({}, typeof reply === "string" ? "stop" : "tool_calls", { prompt_tokens: 10, completion_tokens: tokens, total_tokens: 10 + tokens }));
   response.end("data: [DONE]\n\n");
 }
 

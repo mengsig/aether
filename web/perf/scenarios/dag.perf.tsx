@@ -40,7 +40,7 @@ function LiveDag({ layout }: { readonly layout: (model: GraphModel) => Promise<L
   const graph = useSelector(useMemo(() => selectTaskGraph(CONN), []));
   const items = useSelector(useMemo(() => selectItems(CONN), []));
   if (graph === null) throw new Error("the perf DAG mounts after its graph is stored");
-  return <DagWorkspace graph={graph} items={items} layout={layout} />;
+  return <DagWorkspace graph={graph} items={items} layout={layout} initialShowCompleted />;
 }
 
 interface Dag { readonly view: Mounted; readonly layouts: () => number; readonly dispose: () => void }

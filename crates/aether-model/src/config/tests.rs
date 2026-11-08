@@ -983,17 +983,17 @@ fn memory_retrieval_defaults_to_the_contract_and_refuses_values_out_of_range() {
     std::fs::write(dir.path().join("config.toml"), "").unwrap();
     let defaults = load_config(dir.path()).unwrap().memory.retrieval;
     assert_eq!(defaults, MemoryRetrievalSection::default());
-    assert_eq!((defaults.max_items, defaults.holdout_rate), (6, 0.05));
+    assert_eq!((defaults.max_items, defaults.holdout_rate), (6, 0.0));
 
     std::fs::write(
         dir.path().join("config.toml"),
-        "[memory.retrieval]\nmin_score = 0.2\nholdout_rate = 0\nholdout_seed = 9\n",
+        "[memory.retrieval]\nmin_score = 0.2\nholdout_rate = 0.05\nholdout_seed = 9\n",
     )
     .unwrap();
     let set = load_config(dir.path()).unwrap().memory.retrieval;
     assert_eq!(
         (set.min_score, set.holdout_rate, set.holdout_seed),
-        (0.2, 0.0, 9)
+        (0.2, 0.05, 9)
     );
 
     for (line, key) in [
@@ -1012,4 +1012,29 @@ fn memory_retrieval_defaults_to_the_contract_and_refuses_values_out_of_range() {
             "{error}"
         );
     }
+}
+
+#[test]
+fn concurrent_template_writers_publish_complete_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            let barrier = barrier.clone();
+            let path = dir.path();
+            scope.spawn(move || {
+                barrier.wait();
+                super::ensure_templates(path).unwrap();
+                crate::Models::load(Some(path.to_path_buf())).unwrap();
+            });
+        }
+    });
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("config.toml")).unwrap(),
+        super::CONFIG_TEMPLATE
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("providers.toml")).unwrap(),
+        super::templates::providers_template()
+    );
 }

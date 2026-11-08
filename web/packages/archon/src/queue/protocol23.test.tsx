@@ -87,7 +87,7 @@ describe("a protocol 23 archond", () => {
     await h.until(() => container.querySelectorAll(".pipeline-step").length > 0, "the observed steps");
     expect([...container.querySelectorAll(".pipeline-name")].map((node) => node.textContent)).toEqual(["plan", "build", "review"]);
     expect(container.querySelector(".pipeline-step .ui-badge[data-tone=warning]")).toBeNull();
-    expect(container.querySelector(".pipeline-note")?.textContent).toBe("This archond has no run_plan (protocol 23). Showing the stages this run has started, in order.");
+    expect(container.querySelector(".pipeline-note")?.textContent).toBe("Plan unavailable. Showing started stages.");
     expect(sentAny(h, NOT_IN_23)).toEqual([]);
   });
 

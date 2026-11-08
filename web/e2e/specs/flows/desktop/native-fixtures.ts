@@ -93,7 +93,7 @@ export function askingScript(marker: string, questions: readonly string[]): Scri
     if (!request.userTexts.some((text) => text.includes(marker))) return DEFAULT_REPLY;
     const asked = request.toolsCalled.filter((tool) => tool === "ask_user").length;
     const next = questions[asked];
-    return next === undefined ? "Thanks, that is everything." : { tool: "ask_user", arguments: { question: next } };
+    return next === undefined ? "Thanks, that is everything." : { name: "ask_user", arguments: { question: next } };
   };
 }
 

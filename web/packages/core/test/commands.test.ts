@@ -88,6 +88,13 @@ describe("command access", () => {
   it("keeps archond's host commands and the CLI's knobs off every app", () => {
     expect(archonAccess({ cmd: "task_graph" })).toBe("observe");
     expect(archonAccess({ cmd: "get_initiative", initiative: "in_1" })).toBe("observe");
+    expect(archonAccess({ cmd: "model_policy" })).toBe("observe");
+    for (const cmd of ["steer_item", "update_item"]) {
+      const access = archonAccess({ cmd });
+      expect(access).toBe("operate");
+      expect(() => checkAllowed(access, "observer")).toThrow(/Observer/);
+      expect(() => checkAllowed(access, "operator")).not.toThrow();
+    }
     expect(archonAccess({ cmd: "merge_item" })).toBe("cli_only");
     expect(archonAccess({ cmd: "list_initiatives" })).toBe("cli_only");
     expect(archonAccess({ cmd: "not_a_command_yet" })).toBe("cli_only");
