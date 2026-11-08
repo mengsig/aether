@@ -1196,7 +1196,7 @@ mod tests {
         let section = aether_model::config::MemoryRetrievalSection::default();
         let policy = retrieval_policy_of(&section);
         assert!(policy.validate().is_ok());
-        assert_eq!(policy.holdout_rate, 0.05, "the daemon holds out by default");
+        assert_eq!(policy.holdout_rate, 0.0, "the daemon injects by default");
         let library = aether_memory::RetrievalPolicy::default();
         assert_eq!(
             (policy.max_items, policy.min_score),

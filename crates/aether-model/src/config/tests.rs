@@ -983,17 +983,17 @@ fn memory_retrieval_defaults_to_the_contract_and_refuses_values_out_of_range() {
     std::fs::write(dir.path().join("config.toml"), "").unwrap();
     let defaults = load_config(dir.path()).unwrap().memory.retrieval;
     assert_eq!(defaults, MemoryRetrievalSection::default());
-    assert_eq!((defaults.max_items, defaults.holdout_rate), (6, 0.05));
+    assert_eq!((defaults.max_items, defaults.holdout_rate), (6, 0.0));
 
     std::fs::write(
         dir.path().join("config.toml"),
-        "[memory.retrieval]\nmin_score = 0.2\nholdout_rate = 0\nholdout_seed = 9\n",
+        "[memory.retrieval]\nmin_score = 0.2\nholdout_rate = 0.05\nholdout_seed = 9\n",
     )
     .unwrap();
     let set = load_config(dir.path()).unwrap().memory.retrieval;
     assert_eq!(
         (set.min_score, set.holdout_rate, set.holdout_seed),
-        (0.2, 0.0, 9)
+        (0.2, 0.05, 9)
     );
 
     for (line, key) in [

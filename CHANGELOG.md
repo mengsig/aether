@@ -22,6 +22,11 @@ release is also the text of its GitHub release.
   stay pinned until answered, and a composer with a `/` menu sends, stops and
   keeps unsent drafts.
 
+### Fixed
+
+- Delegated children inherit their parent's current deadline and cost budget,
+  including extensions made while a turn is in flight.
+
 ## 1.3.0
 
 Released with Archon 1.5.0. One web app now serves every screen, from
@@ -56,9 +61,9 @@ before updating.
   `/asset-manifest.json`) answer 404.
 - **Memory retrieval can inject less.** `[memory.retrieval] min_score`
   (0, off, by default) is the relevance a memory needs to reach a turn,
-  pinned ones excepted. Off, retrieval injects what 1.2.11 did; 0.05 trades
-  recall for fewer injected tokens. `holdout_rate` (0.05) withholds a
-  seeded sample and logs it. Set `holdout_rate` to 0 to turn the holdout off.
+  pinned ones excepted. A value of 0.05 trades recall for fewer injected
+  tokens. `holdout_rate` defaults to 0; set it to 0.05 to withhold and log
+  a seeded sample. Stale-marked memories can still rank lower.
 - **Update the daemon before the clients.** The 1.3.0 Python and
   TypeScript clients ask for protocol 26, which a 1.2.11 daemon refuses as
   `incompatible`; give the Python client `protocol_version=25` to reach one.
