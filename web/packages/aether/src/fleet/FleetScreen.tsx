@@ -4,9 +4,9 @@
 import { routeHref, selectConnections, useApp, useSelector } from "@aether-ui/core";
 import type { ConnectionInfo } from "@aether-ui/protocol";
 import { Badge, Button, EmptyState, StatusPill, VirtualList } from "@aether-ui/ui";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import "./fleet.css";
-import { loadArchived } from "./archived.ts";
+import { useArchived } from "./useArchived.ts";
 import { FleetFilters } from "./FleetFilters.tsx";
 import { invariant } from "./invariant.ts";
 import { roleLabel } from "./roles.ts";
@@ -78,24 +78,8 @@ export function FleetScreen() {
   const app = useApp();
   const rows = useMemo(() => fleetRows(sources), [sources]);
   const [archive, setArchive] = useState("active");
-  const [attempt, setAttempt] = useState(0);
-  const [archiveResult, setArchiveResult] = useState<{ connections: typeof connections; attempt: number; error?: string }>();
-  useEffect(() => {
-    if (archive !== "archived") return;
-    let live = true;
-    const ready = Object.values(connections).filter((info) => info.daemon === "aether" && info.state === "ready");
-    if (ready.length === 0) return;
-    Promise.all(ready.map((info) => loadArchived(app, info, () => live))).then(
-      () => { if (live) setArchiveResult({ connections, attempt }); },
-      (error: unknown) => {
-        if (live) setArchiveResult({ connections, attempt, error: error instanceof Error ? error.message : String(error) });
-        live = false;
-      },
-    );
-    return () => { live = false; };
-  }, [app, archive, connections, attempt]);
-  const archiveLoading = archive === "archived" && (archiveResult?.connections !== connections || archiveResult.attempt !== attempt);
-  const archiveError = archive === "archived" && !archiveLoading ? archiveResult?.error : undefined;
+  const [archiveToken, setArchiveToken] = useState(0);
+  const archived = useArchived(app, archive === "archived", archiveToken, connections, sources);
   const visible = useMemo(() => rows.filter(row => archive === "archived" ? row.agent.archived : !row.agent.archived), [rows, archive]);
   const names = useMemo(() => runNames(visible), [visible]);
   const facets = useMemo(() => fleetFacets(visible, names), [visible, names]);
@@ -110,7 +94,7 @@ export function FleetScreen() {
     <section className="fleet" aria-label="Fleet">
       <div className="fleet-bar">
         <label className="ui-field fleet-filter"><span className="ui-field-label">Archive</span>
-          <select className="ui-field-input" value={archive} onChange={event => { setArchive(event.currentTarget.value); setAttempt(value => value + 1); setFilter(NO_FILTER); }}>
+          <select className="ui-field-input" value={archive} onChange={event => { setArchive(event.currentTarget.value); setArchiveToken(n => n + 1); setFilter(NO_FILTER); }}>
             <option value="active">Active fleet</option><option value="archived">Archived</option>
           </select>
         </label>
@@ -118,10 +102,12 @@ export function FleetScreen() {
         <p className="fleet-count" aria-live="polite">{shown.length.toLocaleString("en")} of {visible.length.toLocaleString("en")} agents</p>
         <a className="ui-link" href="#/fleet/topology">Delegation topology</a>
       </div>
-      {archiveError ? <div role="alert">Could not load archived agents: {archiveError} <Button onClick={() => setAttempt(value => value + 1)}>Retry</Button></div> : null}
-      {archiveLoading ? <p role="status">Loading archived agents…</p> : archiveError ? null : shown.length > 0 ? <FleetList rows={shown} names={names} />
-        : visible.length === 0 ? <EmptyState title={archive === "archived" ? "No archived agents" : "No agents yet"}>Agents appear here when they belong to this view.</EmptyState>
+      {archived.error ? <div role="alert">Could not load archived agents: {archived.error} <Button onClick={archived.retry}>Retry</Button></div> : null}
+      {archived.loading ? <p role="status">Loading archived agents…</p> : null}
+      {shown.length > 0 ? <FleetList rows={shown} names={names} />
+        : archived.loading || archived.error || archived.hasMore ? null : visible.length === 0 ? <EmptyState title={archive === "archived" ? "No archived agents" : "No agents yet"}>Agents appear here when they belong to this view.</EmptyState>
           : <EmptyState title="No agent matches" action={<Button onClick={clear}>Clear filters</Button>}>Every filter must match.</EmptyState>}
+      {archived.hasMore ? <Button disabled={archived.loading} onClick={archived.more}>Load more</Button> : null}
     </section>
   );
 }

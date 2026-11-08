@@ -1,8 +1,8 @@
 // `#/agents/:conn/:agent`: one agent's identity, state, model, cost and budget, above its
 // chat. Everything shown is derived from core's store; this screen keeps no daemon data.
 
-import { routeHref, selectAgent, selectAttention, selectConnection, useApp, useReread, useSelector } from "@aether-ui/core";
-import { aether, type ConnId, type RouteProps } from "@aether-ui/protocol";
+import { routeHref, selectAgent, selectAttention, selectConnection, useApp, useSelector } from "@aether-ui/core";
+import type { aether, ConnId, RouteProps } from "@aether-ui/protocol";
 import { Badge, EmptyState, EntityActionMenu, ErrorState, Skeleton, StatusPill } from "@aether-ui/ui";
 import { useEffect, useMemo, useState } from "react";
 import { Chat } from "../conversation/Chat.tsx";
@@ -56,37 +56,41 @@ function AgentFacts({ agent }: { readonly agent: aether.Agent }) {
   );
 }
 
+function AgentLoading() {
+  return <section className="ui-page agent" aria-busy="true" aria-label="Loading the agent"><Skeleton height="3rem" /><Skeleton height="8rem" /></section>;
+}
+
+function MissingAgent({ conn, id }: { readonly conn: ConnId; readonly id: string }) {
+  const app = useApp();
+  const [refresh, setRefresh] = useState(0);
+  const [failure, setFailure] = useState<{ attempt: number; message: string }>();
+  useEffect(() => {
+    let current = true;
+    app.send(conn, { cmd: "get_agent", id }).then((reply) => {
+      invariant(reply.reply === "agent" && reply.data !== null && typeof reply.data === "object" && !Array.isArray(reply.data), "get_agent returns an agent");
+      const agent = reply.data as aether.Agent;
+      invariant(agent.id === id, "get_agent returns the requested agent");
+      if (current) app.store.updateAether(conn, (state) => state.agents[id] ? state : { ...state, agents: { ...state.agents, [id]: agent } });
+    }).catch((error: unknown) => {
+      if (current) setFailure({ attempt: refresh, message: error instanceof Error ? error.message : String(error) });
+    });
+    return () => { current = false; };
+  }, [app, conn, id, refresh]);
+  if (failure?.attempt === refresh) {
+    return <ErrorState title="Agent unavailable" message={`This agent may no longer be available. ${failure.message}`} onRetry={() => setRefresh((n) => n + 1)} />;
+  }
+  return <AgentLoading />;
+}
+
 export function AgentScreen({ conn, id }: { readonly conn: ConnId; readonly id: string }) {
   invariant(conn !== "" && id !== "", "the agent route names a connection and an agent");
-  const app = useApp();
   const info = useSelector(useMemo(() => selectConnection(conn), [conn]));
-  const cached = useSelector(useMemo(() => selectAgent(conn, id), [conn, id]));
-  const [refresh, setRefresh] = useState(0);
-  const read = useReread(conn, `agent:${id}`, cached ? null : aether.getAgent({ id }), ["agent"], refresh);
-  useEffect(() => {
-    const value = read?.value;
-    if (cached || value == null) return;
-    invariant(typeof value === "object" && !Array.isArray(value), "the agent read returns an object");
-    invariant((value as aether.Agent).id === id, "the agent read returns the requested agent");
-    app.store.updateAether(conn, (state) => state.agents[id] ? state : { ...state, agents: { ...state.agents, [id]: value as aether.Agent } });
-  }, [app, cached, conn, id, read?.value]);
+  const agent = useSelector(useMemo(() => selectAgent(conn, id), [conn, id]));
   if (!info) {
     return <EmptyState title="Not connected">No connection {conn} is open. <a className="ui-link" href="#/fleet">Back to the fleet</a></EmptyState>;
   }
-  if (!cached && info.state !== "ready") {
-    return <section className="ui-page agent" aria-busy="true" aria-label="Loading the agent"><Skeleton height="3rem" /><Skeleton height="8rem" /></section>;
-  }
-  if (!cached && read?.error) {
-    return <ErrorState title="Agent unavailable" message={`This agent may no longer be available. ${read.error}`} onRetry={() => setRefresh((n) => n + 1)} />;
-  }
-  const value = cached ?? read?.value;
-  if (value == null && read && read.issued > 0) {
-    return <ErrorState title="Agent unavailable" message="The daemon returned no agent." onRetry={() => setRefresh((n) => n + 1)} />;
-  }
-  if (value == null) return <section className="ui-page agent" aria-busy="true" aria-label="Loading the agent"><Skeleton height="3rem" /><Skeleton height="8rem" /></section>;
-  invariant(typeof value === "object" && !Array.isArray(value), "the agent read returns an object");
-  invariant((value as aether.Agent).id === id, "the agent read returns the requested agent");
-  const agent = value as aether.Agent;
+  if (!agent && info.state !== "ready") return <AgentLoading />;
+  if (!agent) return <MissingAgent key={`${conn}/${id}`} conn={conn} id={id} />;
   return (
     <section className="ui-page agent" aria-label={`Agent ${agent.name}`}>
       <AgentHeader conn={conn} agent={agent} />
