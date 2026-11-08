@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import type { Stack } from "../../../harness/stack.ts";
+import { enqueueItem } from "../../../harness/agents.ts";
 import { connection } from "../../../harness/pair.ts";
 import { expect, test, type Page } from "../../../harness/fixtures.ts";
 import { fixtureRepository } from "../gh-stub.ts";
@@ -123,4 +124,92 @@ test("an initiative's detail opens in the app window", async () => {
   await expect(page.getByRole("region", { name: "Contract" })).toContainText(CONTRACT);
   await expect(page.getByRole("region", { name: "Members" }).locator(".dag-count")).toHaveText("2");
   await expect(connection(page, "archon"), "the read kept the link up").toHaveAttribute("data-state", "ready");
+});
+
+test("an import failure stays visible inside the confirmation on retry", async () => {
+  const page = window();
+  await route(page, "#/github/github.com/e2e-owner/e2e-repo/999999999");
+  await page.getByRole("button", { name: "Import as Archon work" }).click();
+  const dialog = page.getByRole("dialog", { name: /Import #999999999/ });
+  for (const theme of ["light", "dark"] as const) {
+    await page.evaluate((value) => { document.documentElement.dataset.theme = value; }, theme);
+    await dialog.getByRole("button", { name: "Import", exact: true }).click();
+    await expect(dialog.getByRole("alert")).toContainText("The import failed:");
+    await shoot(`import-error-${theme}`);
+  }
+  await dialog.getByRole("button", { name: "Not now" }).click();
+  await expect(dialog).toHaveCount(0);
+});
+
+test("an unknown initiative settles on an error and can be retried without reconnecting", async () => {
+  const page = window();
+  await route(page, "#/archon/initiatives/in_00000000000000000000000000");
+  const error = page.locator("section[role=alert]");
+  await expect(error).toBeVisible();
+  await shoot("initiative-missing-light");
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(error).toBeVisible();
+  await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+  await shoot("initiative-missing-dark");
+  await expect(connection(page, "archon")).toHaveAttribute("data-state", "ready");
+});
+
+test("a queued item explains when its daemon refuses steering", async () => {
+  const id = await enqueueItem(stack(), "Desktop steering capability");
+  const page = window();
+  await route(page, `#/archon/items/${id}`);
+  const actions = page.getByRole("group", { name: "Item actions" });
+  const steer = actions.getByRole("button", { name: "Steer item" });
+  const refusal = actions.getByText(/Steering is unavailable: .+/);
+  await expect.poll(async () => await steer.isEnabled() || await refusal.isVisible()).toBe(true);
+  if (await refusal.isVisible()) {
+    await expect(refusal).toContainText("model_policy is not available from the web app; use the archon CLI");
+    await expect(steer).toBeDisabled();
+    await shoot("steer-refused");
+  }
+});
+
+test("a queued item exposes steering and saves its priority", async () => {
+  const id = await enqueueItem(stack(), "Desktop steering journey");
+  const page = window();
+  await route(page, `#/archon/items/${id}`);
+  const actions = page.getByRole("group", { name: "Item actions" });
+  const refusal = actions.getByText(/Steering is unavailable: .+/);
+  await expect.poll(async () => await actions.getByRole("button", { name: "Steer item" }).isEnabled() || await refusal.isVisible()).toBe(true);
+  if (await refusal.isVisible()) await expect(refusal).toContainText("model_policy is not available from the web app; use the archon CLI");
+  test.skip(await refusal.isVisible(), "This Archon does not allow this device to read model policy; successful steering needs operator access.");
+  await expect(actions.getByRole("button", { name: "Steer item" })).toBeEnabled();
+  await actions.getByLabel("Priority").selectOption("high");
+  await actions.getByRole("button", { name: "Update priority" }).click();
+  await expect.poll(async () => {
+    const detail = await stack().archon.request({ cmd: "get_item", item: id });
+    return (detail.data.item as { priority?: string }).priority;
+  }).toBe("high");
+  await actions.getByRole("button", { name: "Steer item" }).click();
+  const dialog = page.getByRole("dialog", { name: "Steer item" });
+  await expect(dialog.getByLabel("Model")).toBeVisible();
+  await expect(dialog.getByLabel("Effort")).toBeVisible();
+  await shoot("steer-item-dark");
+  await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+  await shoot("steer-item-light");
+  const stage = dialog.getByLabel("Stage");
+  const model = dialog.getByLabel("Model");
+  await expect.poll(() => model.locator("option").count()).toBeGreaterThan(1);
+  await expect.poll(() => stage.locator("option").count()).toBeGreaterThan(1);
+  const stageId = await stage.locator("option").nth(1).getAttribute("value");
+  const modelId = await model.locator("option").nth(1).getAttribute("value");
+  assert.ok(stageId && modelId, "the catalog and queued plan offer concrete choices");
+  await stage.selectOption(stageId);
+  await model.selectOption(modelId);
+  await dialog.getByLabel("Effort").selectOption("low");
+  await dialog.getByRole("button", { name: "Apply changes" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(async () => {
+    const detail = await stack().archon.request({ cmd: "get_item", item: id });
+    return JSON.stringify(detail.data.item);
+  }).toContain('"effort":"low"');
+  await actions.getByRole("button", { name: "Steer item" }).click();
+  await dialog.getByLabel("Note").fill("Focus the queued work on the requested outcome.");
+  await dialog.getByRole("button", { name: "Apply changes" }).click();
+  await expect(dialog).toHaveCount(0);
 });

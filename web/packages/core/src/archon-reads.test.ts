@@ -66,6 +66,22 @@ describe("Archon on-demand reads", () => {
     expect(conn()?.graph?.asOf).toBe(100);
   });
 
+  it("keeps active items visible when old completed items fill the graph limit", async () => {
+    const history = Array.from({ length: GRAPH_LIMIT }, (_, index) => ({ id: `old_${index}`, state: "succeeded" }));
+    const { daemon, conn } = setup({ task_graph: (command) => {
+      const filter = command.filter as Json;
+      const active = filter.include_terminal_since === undefined;
+      return { ok: { reply: "task_graph", data: { nodes: active ? [{ id: "active", state: "running" }] : history,
+        edges: [], initiatives: [], as_of: active ? 101 : 100, truncated: !active } } };
+    } });
+    await settle();
+    expect(daemon.commands("task_graph")).toHaveLength(2);
+    expect(conn()?.graph?.nodes.active).toBeDefined();
+    expect(Object.keys(conn()?.graph?.nodes ?? {})).toHaveLength(GRAPH_LIMIT);
+    expect(conn()?.graph?.truncated).toBe(true);
+    expect(conn()?.graph?.asOf).toBe(100);
+  });
+
   it("stamps an item history with the cursor, and reads it again when a change overtook it", async () => {
     let reads = 0;
     const { daemon, manager, conn } = setup({
