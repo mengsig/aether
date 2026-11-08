@@ -148,11 +148,14 @@ impl<E: Engine> Teaching<'_, E> {
             caller,
             turn: Turn::new(self.events.len()),
         });
-        let current = advance
+        let agent = advance
             .current
             .as_ref()
-            .ok_or_else(|| TeachError::Corrupt("turn missing".into()))?;
-        if let Err(error) = self.deliver_queued(&advance.session, &current.caller.agent, None) {
+            .ok_or_else(|| TeachError::Corrupt("turn missing".into()))?
+            .caller
+            .agent
+            .clone();
+        if let Err(error) = self.deliver_queued(&advance.session, &agent, None) {
             self.finish_current(advance, Err(error))?;
         }
         let open = match db::open_question(self.conn(), &advance.session) {
@@ -167,7 +170,7 @@ impl<E: Engine> Teaching<'_, E> {
         if open.is_some() {
             return Ok(Some(TurnEnd::AwaitingAnswer));
         }
-        self.guide_recall_judgment(&advance.session, &current.caller.agent)?;
+        self.guide_recall_judgment(&advance.session, &agent)?;
         Ok(None)
     }
 
