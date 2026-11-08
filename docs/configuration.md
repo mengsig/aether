@@ -593,6 +593,14 @@ stopped. A process is signalled only through a pidfd opened before its tag,
 or its scope, and the keep entry are checked again, so a pid reused meanwhile
 is never hit. Mark a server as kept if it must outlive a clean stop.
 
+Shutdown gives the runtime, connections, Noesis, final store checkpoint and
+file cleanup separate deadlines. It names a phase that runs over its deadline
+in the log and skips the final checkpoint if an earlier phase is unfinished.
+Committed data stays in the WAL and is recovered on the next open. A timed-out
+phase may finish in the background while the process remains alive; it keeps
+the daemon locks until it does. A reader outside the daemon can still leave
+frames in the WAL, which the daemon also reports.
+
 The tag attributes processes; it is not a security boundary. Any process of
 the same user that sets `AETHER_ENGINE_AGENT` to one of the daemon's agents
 is treated as that agent's, and a descendant that removes it is found only

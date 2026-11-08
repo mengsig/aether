@@ -264,7 +264,10 @@ mod tests {
                 result
             },
         ));
-        started_rx.await.unwrap();
+        tokio::time::timeout(Duration::from_secs(3), started_rx)
+            .await
+            .unwrap()
+            .unwrap();
         let outcome = tokio::time::timeout(Duration::from_secs(3), stopping)
             .await
             .unwrap()
@@ -303,7 +306,10 @@ mod tests {
                 true
             },
         ));
-        started_rx.await.unwrap();
+        tokio::time::timeout(Duration::from_secs(3), started_rx)
+            .await
+            .unwrap()
+            .unwrap();
         assert!(
             !tokio::time::timeout(Duration::from_secs(3), stopping)
                 .await
@@ -311,6 +317,9 @@ mod tests {
                 .unwrap()
         );
         release_tx.send(()).unwrap();
-        finished_rx.await.unwrap();
+        tokio::time::timeout(Duration::from_secs(3), finished_rx)
+            .await
+            .unwrap()
+            .unwrap();
     }
 }
