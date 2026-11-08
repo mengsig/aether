@@ -163,14 +163,16 @@ async function startMissing(app: App): Promise<void> {
   invariant(desktop !== undefined, "only the desktop app starts daemons");
   const missing = (["aether", "archon"] as const).filter((kind) => !app.manager.all().some((c) => c.endpoint.daemon === kind));
   if (missing.length === 0) return;
+  let started = false;
   for (const kind of missing) {
     try {
       await desktop.startDaemon(kind);
+      started = true;
     } catch (error) {
       app.store.report(`Could not start ${kind === "aether" ? "Aether" : "Archon"} on this computer: ${errorText(error)}`);
-      return;
     }
   }
+  if (!started) return;
   try {
     await app.rediscover();
   } catch (error) {
