@@ -29,7 +29,7 @@ async fn answered_recall_is_judged_before_the_next_question() {
     );
     harness
         .send_json(json!({"cmd": "noesis_answer", "session": created.id,
-        "question": question, "answer": {"text": "x = 4", "thinking": "divide both sides by 2"},
+        "question": question, "answer": {"text": "x = 4", "thinking": "divide both sides by 2", "dont_know": false},
         "idempotency_key": "recall-answer"}))
         .await
         .expect("answer");
@@ -74,7 +74,7 @@ async fn missing_judgment_stops_with_a_visible_retry_and_can_recover() {
     }
     harness
         .send_json(json!({"cmd": "noesis_answer", "session": created.id,
-        "question": question, "answer": {"text": "x = 4"}, "idempotency_key": "answer"}))
+        "question": question, "answer": {"text": "x = 4", "dont_know": false}, "idempotency_key": "answer"}))
         .await
         .expect("answer");
     harness.settled().await;
