@@ -122,12 +122,20 @@ async fn store_with(
     sync: impl FnOnce(&SqliteStore) -> aether_store::Result<bool> + Send + 'static,
 ) -> anyhow::Result<bool> {
     assert!(!deadline.is_zero());
+    let (quiesced, ready) = tokio::sync::oneshot::channel();
+    let (start, proceed) = std::sync::mpsc::channel();
     let (send, receive) = tokio::sync::oneshot::channel();
     std::thread::Builder::new()
         .name("final-store-sync".into())
         .spawn(move || {
             let _guard = guard;
-            let result = if checkpoint {
+            while Arc::strong_count(&store) > 1 {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            if quiesced.send(()).is_err() {
+                return;
+            }
+            let result = if proceed.recv().unwrap_or(false) {
                 sync(&store).map(Some)
             } else {
                 Ok(None)
@@ -143,6 +151,28 @@ async fn store_with(
                 _ => {}
             }
         })?;
+    match tokio::time::timeout(deadline, ready).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return Err(anyhow::Error::new(error).context("store shutdown thread")),
+        Err(_) => {
+            tracing::warn!(
+                phase = "store readers and writers",
+                ?deadline,
+                "shutdown phase exceeded its deadline; committed data remains in the WAL"
+            );
+            return Ok(false);
+        }
+    }
+    start
+        .send(checkpoint)
+        .map_err(|error| anyhow::anyhow!("starting final store sync: {error}"))?;
+    store_result(receive, deadline).await
+}
+
+async fn store_result(
+    receive: tokio::sync::oneshot::Receiver<aether_store::Result<Option<bool>>>,
+    deadline: Duration,
+) -> anyhow::Result<bool> {
     match tokio::time::timeout(deadline, receive).await {
         Ok(Ok(Ok(Some(true)))) => Ok(true),
         Ok(Ok(Ok(Some(false)))) => {
@@ -231,6 +261,57 @@ mod tests {
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
+    }
+
+    struct OnDrop(Option<tokio::sync::oneshot::Sender<()>>);
+
+    impl Drop for OnDrop {
+        fn drop(&mut self) {
+            if let Some(done) = self.0.take() {
+                let _ = done.send(());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn an_active_store_owner_prevents_the_final_checkpoint() {
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer = output.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(move || Log(writer.clone()))
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let reader = store.clone();
+        let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sync_called = called.clone();
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        let outcome = store_with(
+            store,
+            true,
+            Duration::from_millis(100),
+            OnDrop(Some(done_tx)),
+            move |_| {
+                sync_called.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(true)
+            },
+        )
+        .await
+        .unwrap();
+        assert!(!outcome, "an active owner must delay the checkpoint");
+        let log = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(
+            log.contains("store readers and writers") && log.contains("exceeded its deadline"),
+            "{log}"
+        );
+        drop(reader);
+        tokio::time::timeout(Duration::from_secs(3), done_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!called.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[tokio::test]

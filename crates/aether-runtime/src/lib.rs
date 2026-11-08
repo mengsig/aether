@@ -532,8 +532,7 @@ impl Runtime {
                 "Startup artifact cleanup failed: {error}; periodic maintenance will retry. Run `aether doctor` and `aether diagnose`."
             )),
         }
-        // A daemon that died left what its ended agents detached or handed up
-        // running; a stop would have taken what no live agent holds, so this start does.
+        // A crash left detached processes running; stop those no live agent holds.
         let reaped = runtime.reap_unheld_agent_processes().await;
         if reaped > 0 {
             tracing::info!(

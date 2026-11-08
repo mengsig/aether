@@ -593,8 +593,8 @@ stopped. A process is signalled only through a pidfd opened before its tag,
 or its scope, and the keep entry are checked again, so a pid reused meanwhile
 is never hit. Mark a server as kept if it must outlive a clean stop.
 
-Shutdown gives the runtime, connections, Noesis, final store checkpoint and
-file cleanup separate deadlines. It names a phase that runs over its deadline
+Shutdown gives the runtime, connections, Noesis, store readers and writers,
+final store checkpoint and file cleanup separate deadlines. It names a phase that runs over its deadline
 in the log and skips the final checkpoint if an earlier phase is unfinished.
 Committed data stays in the WAL and is recovered on the next open. A timed-out
 phase may finish in the background while the process remains alive; it keeps
