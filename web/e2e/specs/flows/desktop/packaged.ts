@@ -33,6 +33,8 @@ export interface PackagedApp {
   readonly compositor: NodeJS.ProcessEnv;
   /** Runs the binary again on the same profile, as the system does for a link; resolves once it exits. */
   again(args: readonly string[]): Promise<number | null>;
+  mainLog(): string;
+  secondInstanceLogs(): string[];
   readonly waylandDisplay: string;
   close(): Promise<void>;
 }
@@ -172,7 +174,9 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
   record("roots", root);
   const profile = path.join(root, "profile");
   const log = path.join(root, "app.log");
-  const env: NodeJS.ProcessEnv = { ...process.env, AETHER_SOCKET: sockets.aether, ARCHON_SOCKET: sockets.archon };
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, XDG_CONFIG_HOME: path.join(root, "config"),
+    XDG_DATA_HOME: path.join(root, "data"), XDG_CACHE_HOME: path.join(root, "cache"),
+    XDG_STATE_HOME: path.join(root, "state"), AETHER_SOCKET: sockets.aether, ARCHON_SOCKET: sockets.archon };
   delete env.DISPLAY;
   delete env.WAYLAND_DISPLAY;
   delete env.SWAYSOCK;
@@ -217,7 +221,9 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
       runs += 1;
       return runAgain(binary, [...shared, ...args], { env: appEnv, cwd: root, log: path.join(root, `again-${runs}.log`) });
     };
-    return { window: await appWindow(browser), browser, native, compositor, waylandDisplay: display, again, close };
+    const secondInstanceLogs = () => Array.from({ length: runs }, (_, index) => readFileSync(path.join(root, `again-${index + 1}.log`), "utf8"));
+    return { window: await appWindow(browser), browser, native, compositor, waylandDisplay: display, again,
+      mainLog: () => readFileSync(log, "utf8"), secondInstanceLogs, close };
   } catch (error) {
     const tails = `${logTail(log)}\n-- sway:\n${logTail(path.join(root, "sway.log"))}\n-- keyboard:\n${logTail(path.join(root, "keyboard.log"))}`;
     return failLaunch(error, `The packaged app did not start; its logs ended:\n${tails}`, close);

@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "../../../harness/fixtures.ts";
 import { connection } from "../../../harness/pair.ts";
 import { startPrivateStack, stopPrivateStack, type PrivateStack } from "../private.ts";
-import { focusWindow, pressKeys, windowTitles } from "./native-host.ts";
+import { enterSavePath, focusWindow, pressKeys, windowTitles } from "./native-host.ts";
+import { shootScreen } from "./native-fixtures.ts";
 import { launchPackaged, packagedBinary, type PackagedApp } from "./packaged.ts";
 import { aetherConn, route } from "./state.ts";
 
@@ -147,4 +151,42 @@ test("a reviewed import reaches the store after native confirmation", async () =
   await expect(maintenance).toContainText("Imported", { timeout: 15_000 });
   await expect(page().getByText("A memory imported from another private store.")).toBeVisible();
   await screenshot("ux-017-import");
+});
+
+test("memory export opens a native save dialog and writes the daemon artifact", async () => {
+  assert.ok(running && app, "the private stack and packaged desktop are running");
+  const exported = await running.stack.aether.request({ cmd: "memory_export" });
+  assert.equal(exported.reply, "memory_export");
+  const artifact = exported.data.artifact;
+  assert.ok(typeof artifact === "string" && artifact.includes("A memory imported from another private store."), "the export contains the imported memory");
+  const file = path.join(path.dirname(String(app.compositor.XDG_RUNTIME_DIR)), "memories-export.jsonl");
+  await route(page(), `#/memory/${encodeURIComponent(conn)}`);
+  const maintenance = page().getByRole("region", { name: "Maintenance" });
+  for (const tabs of [2, 1, 0]) {
+    await maintenance.getByRole("button", { name: "Export memories" }).click();
+    await expect.poll(() => windowTitles(app!.compositor)).toContain("Export memories");
+    await focusWindow(app.compositor, "Export memories");
+    await pressKeys(app.compositor, [...Array<string>(tabs).fill("Tab"), "Return"]);
+    await expect.poll(async () => (await maintenance.innerText()).includes("exported") || (await maintenance.innerText()).includes("Cancelled")).toBe(true);
+    if (await maintenance.getByRole("link", { name: /^Download aether-memories-/ }).isVisible()) break;
+  }
+  const download = maintenance.getByRole("link", { name: /^Download aether-memories-/ });
+  await expect(download).toBeVisible();
+  const digest = await maintenance.locator(".mem-digest").innerText();
+  assert.match(digest, /^[a-f0-9]{64}$/, "the export shows its SHA-256 digest");
+  await download.click();
+  let title = "";
+  await expect.poll(async () => {
+    title = (await windowTitles(app!.compositor)).find((entry) => /^Save (As|File)$/i.test(entry)) ?? "";
+    return title;
+  }, { message: "the native save dialog opens" }).not.toBe("");
+  await shootScreen(app.compositor, "memory-export-save-dialog");
+  await focusWindow(app.compositor, title);
+  await enterSavePath(app.compositor, file);
+  await expect.poll(() => existsSync(file), { message: "the chosen export file is saved" }).toBe(true);
+  await expect.poll(async () => createHash("sha256").update(await readFile(file)).digest("hex")).toBe(digest);
+  const saved = await readFile(file, "utf8");
+  expect(saved.split("\n").slice(1), "the saved records match the daemon export").toEqual(artifact.split("\n").slice(1));
+  expect(JSON.parse(saved.split("\n")[0]).format).toBe("aether.memory-export");
+  await screenshot("memory-export-saved");
 });

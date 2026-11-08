@@ -99,6 +99,16 @@ export async function pressKeys(compositor: NodeJS.ProcessEnv, keys: readonly st
   await exec("/usr/bin/xdotool", ["key", "--delay", "150", ...keys], { env: { ...process.env, ...compositor }, timeout: 10_000 });
 }
 
+/** Enters an absolute save path in the focused native file chooser. */
+export async function enterSavePath(compositor: NodeJS.ProcessEnv, file: string): Promise<void> {
+  assert.ok(path.isAbsolute(file), "the save path is absolute");
+  assert.match(String(compositor.DISPLAY ?? ""), /^:\d+$/, "the chooser uses the private Xwayland display");
+  const env = { ...process.env, ...compositor };
+  await exec("/usr/bin/xdotool", ["key", "ctrl+l"], { env, timeout: 10_000 });
+  await exec("/usr/bin/xdotool", ["type", "--clearmodifiers", "--", file], { env, timeout: 10_000 });
+  await exec("/usr/bin/xdotool", ["key", "Return"], { env, timeout: 10_000 });
+}
+
 /** The titles of every window on the run's own compositor. */
 export async function windowTitles(compositor: NodeJS.ProcessEnv): Promise<string[]> {
   const ipc = String(compositor.SWAYSOCK ?? "");
@@ -117,7 +127,7 @@ export async function windowTitles(compositor: NodeJS.ProcessEnv): Promise<strin
 export async function focusWindow(compositor: NodeJS.ProcessEnv, title: string): Promise<void> {
   const ipc = String(compositor.SWAYSOCK ?? "");
   assert.ok(ipc.startsWith("/"), "the private compositor's IPC socket is known");
-  assert.ok(/^[A-Za-z0-9: ]+$/.test(title), "the window title is a safe exact match");
+  assert.ok(title.length > 0, "the window has a title");
   const tree = await exec("/usr/bin/swaymsg", ["-s", ipc, "-t", "get_tree"], { timeout: 10_000 });
   type Node = { id: number; name?: string; nodes?: Node[]; floating_nodes?: Node[] };
   const find = (node: Node): Node | undefined => node.name === title ? node
@@ -127,4 +137,11 @@ export async function focusWindow(compositor: NodeJS.ProcessEnv, title: string):
   const { stdout } = await exec("/usr/bin/swaymsg", ["-s", ipc, `[con_id=${window.id}]`, "focus"], { timeout: 10_000 });
   const results = JSON.parse(stdout) as Array<{ success: boolean }>;
   assert.ok(results.length > 0 && results.every((result) => result.success), "the compositor focused the window");
+}
+
+/** Minimizes the selected app on the private Xwayland display. */
+export async function minimizeWindow(compositor: NodeJS.ProcessEnv, title: string): Promise<void> {
+  assert.match(String(compositor.DISPLAY ?? ""), /^:\d+$/, "the display is the private Xwayland");
+  await focusWindow(compositor, title);
+  await exec("/usr/bin/xdotool", ["getactivewindow", "windowminimize"], { env: { ...process.env, ...compositor }, timeout: 10_000 });
 }
