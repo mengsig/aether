@@ -9,5 +9,6 @@ export interface QuestionResult {
   "answer_key"?: AnswerKey | null;
   "correct"?: boolean | null;
   "explanation"?: string | null;
+  "misconception"?: string | null;
   "question": string;
 }

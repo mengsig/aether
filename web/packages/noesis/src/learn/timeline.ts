@@ -60,7 +60,8 @@ function questionItems(session: aether.NoesisSession, learn: NoesisCache): Timel
     if (owner === session.id && !asked.has(question.id)) asked.set(question.id, { question });
   }
   return [...asked.values()].map(({ question, answer, result }) => {
-    const held = result ?? learn.results[question.id];
+    const eventResult = learn.results[question.id];
+    const held = result?.correct == null && eventResult?.correct != null ? eventResult : result ?? eventResult;
     invariant(held === undefined || held.question === question.id, "a result belongs to its question");
     return { kind: "question", key: question.id, at: question.posed_at, question, answer: answer ?? undefined, result: held, open: session.open_question?.id === question.id };
   });

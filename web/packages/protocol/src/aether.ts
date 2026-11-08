@@ -1,7 +1,7 @@
 // The Aether daemon protocol as TypeScript types and command builders.
 // Generated from clients/protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: 742852e7aecdf1e02b6baa3db70a7658a4a7ff763523df134708d27b6c531a0d
+// Schema SHA-256: 1eef750d559f03dfd9d684473dc2814ea1c4ed8cea3c77914ec5f0d30fa5a142
 
 export const PROTOCOL_VERSION = 26;
 export const MIN_PROTOCOL_VERSION = 17;
@@ -3611,6 +3611,7 @@ export interface QuestionResult {
   "answer_key"?: AnswerKey | null;
   "correct"?: boolean | null;
   "explanation"?: string | null;
+  "misconception"?: string | null;
   "question": string;
 }
 

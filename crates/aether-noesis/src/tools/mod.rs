@@ -21,6 +21,7 @@ pub const SEALED: &str = "<sealed>";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ToolName {
     Ask,
+    JudgeRecall,
     ProbeDone,
     Plan,
     Problem,
@@ -30,8 +31,9 @@ pub enum ToolName {
 }
 
 impl ToolName {
-    pub const ALL: [ToolName; 7] = [
+    pub const ALL: [ToolName; 8] = [
         ToolName::Ask,
+        ToolName::JudgeRecall,
         ToolName::ProbeDone,
         ToolName::Plan,
         ToolName::Problem,
@@ -43,6 +45,7 @@ impl ToolName {
     pub fn as_str(self) -> &'static str {
         match self {
             ToolName::Ask => "noesis.ask",
+            ToolName::JudgeRecall => "noesis.judge_recall",
             ToolName::ProbeDone => "noesis.probe_done",
             ToolName::Plan => "noesis.plan",
             ToolName::Problem => "noesis.problem",
@@ -71,12 +74,14 @@ pub fn tools_for(agent: Agent) -> &'static [ToolName] {
     match agent {
         Agent::Prober => &[
             ToolName::Ask,
+            ToolName::JudgeRecall,
             ToolName::ProbeDone,
             ToolName::GraphSearch,
             ToolName::LearnerRead,
         ],
         Agent::Teacher => &[
             ToolName::Ask,
+            ToolName::JudgeRecall,
             ToolName::Plan,
             ToolName::GraphSearch,
             ToolName::LearnerRead,
@@ -244,6 +249,13 @@ fn definition(tool: ToolName) -> ToolDef {
         ToolName::Ask => (
             "Pose one structured question. A successful pose ends your turn; the answer arrives as this tool's result.",
             ask_schema(),
+        ),
+        ToolName::JudgeRecall => (
+            "Judge the latest answered recall question once, after receiving its answer.",
+            object(
+                json!({"question": text(), "correct": {"type": "boolean"}, "misconception": text()}),
+                &["question", "correct"],
+            ),
         ),
         ToolName::ProbeDone => (
             "End the probe with the per-strand assessment and hand the session to the Teacher. Call once.",

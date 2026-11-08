@@ -533,6 +533,7 @@ pub(super) fn reveal(open: &super::db::QuestionRow, correct: Option<bool>) -> Qu
     QuestionResult {
         question: open.question.id.clone(),
         correct,
+        misconception: None,
         answer_key,
         explanation: open.explanation.clone(),
     }

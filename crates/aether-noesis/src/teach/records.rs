@@ -103,6 +103,7 @@ string_enum!(
         ProbeAnswer = "probe_answer",
         PredictAnswer = "predict_answer",
         CheckAnswer = "check_answer",
+        RecallJudged = "recall_judged",
         PracticeConclude = "practice_conclude",
         MisconceptionObserved = "misconception_observed"
     }
@@ -169,6 +170,8 @@ pub struct QuestionResult {
     pub question: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub correct: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub misconception: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answer_key: Option<RevealedKey>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -400,6 +403,7 @@ impl EvidenceDraft {
             EvidenceKind::ProbeAnswer
                 | EvidenceKind::CheckAnswer
                 | EvidenceKind::PredictAnswer
+                | EvidenceKind::RecallJudged
                 | EvidenceKind::PracticeConclude
         );
         retrieval && !self.dont_know && self.outcome == EvidenceOutcome::Correct

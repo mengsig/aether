@@ -10,4 +10,5 @@ class QuestionResult(TypedDict, total=False):
     answer_key: _protocol.AnswerKey | None  # optional
     correct: bool | None  # optional
     explanation: str | None  # optional
+    misconception: str | None  # optional
     question: str

@@ -285,6 +285,8 @@ pub struct QuestionResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correct: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub misconception: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer_key: Option<AnswerKey>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explanation: Option<String>,

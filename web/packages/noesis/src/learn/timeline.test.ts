@@ -22,3 +22,16 @@ describe("Noesis's own inputs to an agent", () => {
     expect([...internalSeqs({ agent: "agt_none", role: "prober" }, [])]).toEqual([]);
   });
 });
+
+test("a judgment event updates an older ungraded session read", async () => {
+  const { EMPTY_NOESIS, applyNoesisEvent } = await import("@aether-ui/core");
+  const { buildTimeline } = await import("./timeline.ts");
+  const { LESSON, VOTE_QUESTION } = await import("./fixture/scenario.ts");
+  const question = { ...VOTE_QUESTION.question, kind: "recall" as const };
+  const session = { ...LESSON, open_question: null, questions: [{ question, result: { question: question.id, answer_key: "Paris" } }] };
+  const cache = applyNoesisEvent(EMPTY_NOESIS, { type: "noesis.answer_recorded", session: session.id,
+    result: { question: question.id, correct: false, misconception: "Confuses cities" } }, session.agent);
+  const item = buildTimeline(session, [], cache).find((entry) => entry.kind === "question");
+  expect(item?.kind === "question" && item.result?.correct).toBe(false);
+  expect(item?.kind === "question" && item.result?.misconception).toBe("Confuses cities");
+});

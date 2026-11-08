@@ -641,6 +641,15 @@ mod tests {
         ));
         let search = call("c", "noesis.graph_search", json!({"query": "paris"}));
         assert!(reply_leaks(&none, &reply("", vec![search, posed.clone()])));
+        let judgment = call(
+            "judge",
+            "noesis.judge_recall",
+            json!({"question": "q_1", "correct": false, "misconception": "Paris"}),
+        );
+        assert!(reply_leaks(
+            &none,
+            &reply("", vec![judgment, posed.clone()])
+        ));
         assert!(!reply_leaks(&none, &reply("One question:", vec![posed])));
         let options = json!([{"value": "a", "label": "Paris"}, {"value": "b", "label": "Lyon"}]);
         let choice = json!({"kind": "choice", "prompt": "Capital?", "options": options, "answer_key": ["a"]});

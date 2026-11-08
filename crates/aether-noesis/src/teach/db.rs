@@ -279,6 +279,25 @@ pub(super) fn record_answer(
     Ok(changed == 1)
 }
 
+pub(super) fn judge_recall(
+    conn: &Connection,
+    session: &str,
+    question: &str,
+    correct: bool,
+    misconception: Option<&str>,
+) -> Result<bool, TeachError> {
+    let changed = conn.execute(
+        "UPDATE questions SET correct = ?3, answer = json_set(answer, '$.misconception', ?4)
+         WHERE id = ?2 AND session = ?1 AND kind = 'recall' AND answered_at IS NOT NULL
+           AND correct IS NULL AND json_extract(answer, '$.dont_know') = 0
+           AND json_extract(answer, '$.delivered') = 1
+           AND id = (SELECT id FROM questions WHERE session = ?1 ORDER BY rowid DESC LIMIT 1)",
+        params![session, question, correct, misconception],
+    )?;
+    debug_assert!(changed <= 1);
+    Ok(changed == 1)
+}
+
 /// A committed answer whose delivery to the agent is still owed.
 #[derive(Clone, PartialEq)]
 pub(super) struct OwedAnswer {

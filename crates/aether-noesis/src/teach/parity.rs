@@ -905,6 +905,7 @@ fn tools_register_only_for_a_running_service_and_noesis_roles() {
         names,
         vec![
             ASK,
+            "noesis.judge_recall",
             PROBE_DONE,
             "noesis.graph_search",
             "noesis.learner_read"

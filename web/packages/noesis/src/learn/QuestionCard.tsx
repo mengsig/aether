@@ -86,8 +86,10 @@ function Reveal({ question, answer, result }: { question: aether.Question; answe
   return (
     <div className="learn-reveal" role="status">
       {result.correct != null && <p className="learn-reveal-verdict" data-correct={result.correct}>{result.correct ? "✓ Correct" : "✗ Not quite"}</p>}
+      {question.kind === "recall" && result.correct == null && !answer?.dont_know && <p className="learn-muted">Awaiting the teacher’s judgment.</p>}
       {answer && <GivenAnswer answer={answer} />}
       {labels.length > 0 && <p><span className="learn-muted">{wrong ? "Correct answer: " : "Answer: "}</span>{labels.map((label, index) => <span key={index}>{index > 0 ? ", " : ""}<InlineMarkdown text={label} /></span>)}</p>}
+      {result.misconception && <p><span className="learn-muted">Misconception: </span><InlineMarkdown text={result.misconception} /></p>}
       {result.explanation && <div className="learn-reveal-why">{wrong && <span className="learn-muted">Why: </span>}<Markdown text={result.explanation} /></div>}
     </div>
   );

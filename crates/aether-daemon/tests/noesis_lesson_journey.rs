@@ -609,3 +609,90 @@ async fn j3_an_ended_extraction_reaches_a_noesis_subscriber_typed_and_the_graph_
         "{node}"
     );
 }
+
+#[tokio::test]
+async fn recall_judgment_survives_restart_and_duplicate_calls() {
+    let mut home = Home::start("").await;
+    home.enable().await;
+    home.model
+        .tool("Ready to teach.", "noesis_probe_done", probe_done());
+    home.model.tool(
+        "A question.",
+        "noesis_ask",
+        json!({
+            "kind": "recall", "prompt": "What is the capital of France?",
+            "answer_key": "Paris", "explanation": "Paris is the capital."
+        }),
+    );
+    let created = home.create_session("teach", "Learn geography").await;
+    let id = created["id"].as_str().unwrap().to_owned();
+    let open = home
+        .session_until(&id, "recall question", |s| {
+            s["open_question"]["id"].is_string()
+        })
+        .await;
+    assert!(!open.to_string().contains("Paris"));
+    let question = open["open_question"]["id"].as_str().unwrap().to_owned();
+    home.model.tool("", "noesis_judge_recall", json!({"question": question, "correct": false, "misconception": "Confuses France with England"}));
+    home.model.tool(
+        "",
+        "noesis_judge_recall",
+        json!({"question": question, "correct": true}),
+    );
+    home.model.text("Let's review.");
+    let answer = json!({"cmd": "noesis_answer", "session": id, "question": question,
+        "answer": {"text": "London", "dont_know": false, "confidence": 90}, "idempotency_key": "answer-recall"});
+    home.ok(answer.clone()).await;
+    let judged = home
+        .session_until(&id, "recall judgment", |s| {
+            s["questions"][0]["result"]["correct"] == false
+        })
+        .await;
+    assert_eq!(
+        judged["questions"][0]["result"]["misconception"],
+        "Confuses France with England"
+    );
+    home.ok(answer).await;
+    let requests = home.requests_reach(5).await;
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.to_string().contains("London"))
+    );
+    home = home.restart().await;
+    let restored = home.session(&id).await;
+    assert_recall_evidence(&mut home).await;
+    assert_eq!(restored["questions"][0]["result"]["correct"], false);
+    assert_eq!(
+        restored["questions"][0]["result"]["misconception"],
+        "Confuses France with England"
+    );
+}
+
+async fn assert_recall_evidence(home: &mut Home) {
+    let learner = home
+        .ok(json!({"cmd": "noesis_learner", "query": "Learn geography"}))
+        .await;
+    let concept = learner["concepts"][0]["id"]
+        .as_str()
+        .expect("a learner concept");
+    let evidence = home
+        .ok(json!({"cmd": "noesis_learner_evidence", "concept": concept}))
+        .await;
+    let evidence = evidence["evidence"].as_array().expect("an evidence page");
+    assert_eq!(
+        evidence
+            .iter()
+            .filter(|item| item["kind"] == "recall_judged" && item["outcome"] == "incorrect")
+            .count(),
+        1
+    );
+    assert_eq!(
+        evidence
+            .iter()
+            .filter(|item| item["kind"] == "misconception_observed"
+                && item["note"] == "Confuses France with England")
+            .count(),
+        1
+    );
+}

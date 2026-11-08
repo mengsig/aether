@@ -514,3 +514,98 @@ fn answered_recall_delivers_the_expected_answer_after_a_failed_delivery() {
     assert_eq!(answers[0]["answer_key"], "mitochondria");
     assert_eq!(answers[0]["text"], "mitochondria");
 }
+
+fn judge_recall_for_test(
+    t: &mut Teaching<'_, FauxEngine>,
+    id: &str,
+    question: &str,
+    correct: bool,
+) -> bool {
+    let args = json!({"question": question, "correct": correct, "misconception": "Confuses cells and organs"});
+    call(t, id, "noesis.judge_recall", args, "").result.is_error
+}
+
+#[test]
+fn recall_judgment_refuses_unanswered_foreign_and_duplicate_questions() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Learn cells", Mode::Teach, &[])
+        .unwrap()
+        .id;
+    t.engine_mut().script(
+        Agent::Prober,
+        "",
+        vec![(ASK, recall("Name the organelle", SECRET))],
+    );
+    t.advance(&id).unwrap();
+    let question = session(&t, &id).open_question.unwrap().id;
+    assert!(judge_recall_for_test(&mut t, &id, &question, false));
+    t.answer(
+        &id,
+        &question,
+        &Answer {
+            text: Some("nucleus".into()),
+            confidence: Some(90),
+            ..Answer::default()
+        },
+    )
+    .unwrap();
+    assert!(judge_recall_for_test(&mut t, &id, "q_other", false));
+    assert!(!judge_recall_for_test(&mut t, &id, &question, false));
+    assert!(judge_recall_for_test(&mut t, &id, &question, true));
+    let result = session(&t, &id).questions.pop().unwrap().result.unwrap();
+    assert_eq!(result.correct, Some(false));
+    assert_eq!(
+        result.misconception.as_deref(),
+        Some("Confuses cells and organs")
+    );
+    let evidence = t.take_evidence();
+    assert_eq!(evidence.len(), 2);
+    assert_eq!(evidence[0].outcome, EvidenceOutcome::Incorrect);
+    assert_eq!(evidence[1].kind, EvidenceKind::MisconceptionObserved);
+}
+
+#[test]
+fn recall_judgment_refuses_wrong_agent_and_dont_know() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Learn cells", Mode::Teach, &[])
+        .unwrap()
+        .id;
+    t.engine_mut().script(
+        Agent::Prober,
+        "",
+        vec![(ASK, recall("Name the organelle", SECRET))],
+    );
+    t.advance(&id).unwrap();
+    let question = session(&t, &id).open_question.unwrap().id;
+    let tool = ToolCall {
+        id: "judge".into(),
+        name: "noesis.judge_recall".into(),
+        input: json!({"question": question, "correct": true}),
+    };
+    let other = Caller {
+        agent: "agt_other".into(),
+        role: "noesis.prober".into(),
+    };
+    assert!(t.call_tool(&id, &other, &tool, "").unwrap().result.is_error);
+    t.answer(
+        &id,
+        &question,
+        &Answer {
+            dont_know: true,
+            ..Answer::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        call(&mut t, &id, "noesis.judge_recall", tool.input, "")
+            .result
+            .is_error
+    );
+    let evidence = t.take_evidence();
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0].outcome, EvidenceOutcome::DontKnow);
+}

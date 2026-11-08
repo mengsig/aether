@@ -434,6 +434,7 @@ fn noesis_events_are_durable_noesis_family_events_that_survive_the_log() {
                 result: QuestionResult {
                     question: "q_1".into(),
                     correct: Some(true),
+                    misconception: None,
                     answer_key: Some(AnswerKey::Many(vec!["a".into()])),
                     explanation: None,
                 },

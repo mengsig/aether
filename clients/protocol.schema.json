@@ -15022,6 +15022,12 @@
             "null"
           ]
         },
+        "misconception": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "question": {
           "type": "string"
         }

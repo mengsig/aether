@@ -17,7 +17,7 @@ use super::{PROBE_DONE_ACK, TeachError, agent_for_role, history, plan, question}
 use crate::learner::{self, LearnerError, Selection};
 use crate::prompts::Agent;
 use crate::tools::args::{
-    AskArgs, ConcludeArgs, LearnerReadArgs, PlanArgs, ProbeDoneArgs, ProblemArgs,
+    AskArgs, ConcludeArgs, JudgeRecallArgs, LearnerReadArgs, PlanArgs, ProbeDoneArgs, ProblemArgs,
 };
 use crate::tools::{self, ToolArgs, ToolName};
 
@@ -106,6 +106,7 @@ impl<E: Engine> Teaching<'_, E> {
         };
         match args {
             ToolArgs::Ask(args) => self.ask(&row, &args, visible_text),
+            ToolArgs::JudgeRecall(args) => self.judge_recall(&row, &args),
             ToolArgs::ProbeDone(args) => self.probe_done(&row, &args),
             ToolArgs::Plan(args) => self.plan(&row, &args),
             ToolArgs::Problem(args) => self.problem(&row, args, visible_text),
@@ -115,6 +116,104 @@ impl<E: Engine> Teaching<'_, E> {
                 Ok(Ok((json!({ "propositions": found }), None)))
             }
             ToolArgs::LearnerRead(args) => self.learner_read(args),
+        }
+    }
+
+    fn judge_recall(&mut self, row: &SessionRow, args: &JudgeRecallArgs) -> Handled {
+        if args
+            .misconception
+            .as_ref()
+            .is_some_and(|text| text.chars().count() > 1000)
+        {
+            return refuse("a misconception has at most 1000 characters");
+        }
+        let Some(asked) = history::questions(self.conn(), &row.id)?.pop() else {
+            return refuse("there is no answered recall question to judge");
+        };
+        let question = &asked.question;
+        let expected_step = question::step(row.phase, question.kind, question.collapsed);
+        if question.id != args.question
+            || question.kind != super::records::QuestionKind::Recall
+            || question.step != Some(expected_step)
+        {
+            return refuse("only the latest recall answer from this phase can be judged");
+        }
+        let (Some(answer), Some(mut result)) = (asked.answer, asked.result) else {
+            return refuse("the recall question has not been answered");
+        };
+        let tx = self.conn().unchecked_transaction()?;
+        if !db::judge_recall(
+            &tx,
+            &row.id,
+            &args.question,
+            args.correct,
+            args.misconception.as_deref(),
+        )? {
+            return refuse("the recall answer is not available for judgment");
+        }
+        db::touch(&tx, &row.id)?;
+        tx.commit()?;
+        result.correct = Some(args.correct);
+        result.misconception = args.misconception.clone();
+        self.events.push(NoesisEvent::AnswerRecorded {
+            session: row.id.clone(),
+            result,
+        });
+        self.record_recall_evidence(row, question, &answer, args);
+        if question.plan_node.is_some() {
+            self.push_plan_event(&row.id)?;
+        }
+        Ok(Ok((json!({"judged": true}), None)))
+    }
+
+    fn record_recall_evidence(
+        &mut self,
+        row: &SessionRow,
+        question: &Question,
+        answer: &super::records::RecordedAnswer,
+        args: &JudgeRecallArgs,
+    ) {
+        debug_assert_eq!(question.kind, super::records::QuestionKind::Recall);
+        debug_assert!(!answer.dont_know);
+        let concepts = if question.concepts.is_empty() {
+            question.plan_node.iter().cloned().collect()
+        } else {
+            question.concepts.clone()
+        };
+        let kind = if row.phase == Phase::Probe {
+            EvidenceKind::ProbeAnswer
+        } else {
+            EvidenceKind::RecallJudged
+        };
+        self.evidence.push(EvidenceDraft {
+            session: row.id.clone(),
+            concepts: concepts.clone(),
+            kind,
+            outcome: if args.correct {
+                EvidenceOutcome::Correct
+            } else {
+                EvidenceOutcome::Incorrect
+            },
+            confidence: answer.confidence,
+            dont_know: false,
+            mode: None,
+            hint_rung: None,
+            miss_class: None,
+            note: args.misconception.clone(),
+        });
+        if let Some(misconception) = &args.misconception {
+            self.evidence.push(EvidenceDraft {
+                session: row.id.clone(),
+                concepts,
+                kind: EvidenceKind::MisconceptionObserved,
+                outcome: EvidenceOutcome::Observed,
+                confidence: None,
+                dont_know: false,
+                mode: None,
+                hint_rung: None,
+                miss_class: None,
+                note: Some(misconception.clone()),
+            });
         }
     }
 

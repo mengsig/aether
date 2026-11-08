@@ -66,6 +66,8 @@ struct StoredAnswer {
     #[serde(default)]
     chosen: Vec<String>,
     #[serde(default)]
+    misconception: Option<String>,
+    #[serde(default)]
     text: Option<String>,
     #[serde(default)]
     dont_know: bool,
@@ -100,8 +102,12 @@ pub(super) fn questions(
         let stored = raw.decode()?;
         let (answer, result) = match (answer, answered_at) {
             (Some(answer), Some(answered_at)) => {
+                let misconception =
+                    db::from_json::<StoredAnswer>(&answer, "question answer")?.misconception;
                 let answer = recorded(&answer, answered_at)?;
-                (Some(answer), Some(reveal(&stored, correct)))
+                let mut result = reveal(&stored, correct);
+                result.misconception = misconception;
+                (Some(answer), Some(result))
             }
             (None, None) => (None, None),
             _ => return Err(db::corrupt("question answer")),

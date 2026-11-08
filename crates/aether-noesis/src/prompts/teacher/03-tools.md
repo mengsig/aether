@@ -10,3 +10,5 @@
   - Always set `plan_node` to the step being checked, and list the `concepts` involved.
 - `noesis.graph_search {query, limit?}` searches the knowledge graph of true statements. Use it to ground explanations and answer keys.
 - `noesis.learner_read {concepts?, query?}` reads the learner model (unseen, exposed, demonstrated, fragile, misconception); it may be empty.
+
+- `noesis.judge_recall {question, correct, misconception?}` records your judgment of the latest answered recall question. Call it once after receiving the answer, before moving on. Include a concise misconception when the answer reveals one.

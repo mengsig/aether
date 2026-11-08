@@ -50,3 +50,12 @@ test("problem statements and concluded solutions use block rendering", () => {
   expect(root.querySelector(".learn-reveal .md h4")?.textContent).toBe("Solution");
   expect(root.querySelectorAll(".learn-reveal .md li")).toHaveLength(2);
 });
+
+test("a recall judgment displays its grade and misconception", () => {
+  const question = { ...VOTE_QUESTION.question, kind: "recall" as const, options: null };
+  const root = document.createElement("div");
+  root.innerHTML = renderToStaticMarkup(<QuestionCard question={question} answer={undefined} open={false}
+    result={{ question: question.id, correct: false, misconception: "Confuses **mass** and weight", answer_key: "Mass" }} />);
+  expect(root.querySelector(".learn-reveal-verdict")?.textContent).toContain("Not quite");
+  expect(root.querySelector(".learn-reveal")?.textContent).toContain("Confuses mass and weight");
+});

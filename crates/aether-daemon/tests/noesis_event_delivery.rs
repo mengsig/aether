@@ -146,3 +146,34 @@ async fn a_web_subscription_receives_the_reveals_typed_and_one_without_the_featu
         "a client listing `noesis` gets every Noesis event typed"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn recall_judgment_reaches_a_web_subscriber() {
+    let mut home = Home::start("").await;
+    home.enable().await;
+    let mut web = subscribed(&mut home, WEB_FEATURES).await;
+    home.model.tool(
+        "A question.",
+        "noesis_ask",
+        json!({"kind": "recall", "prompt": "Name the capital of France", "answer_key": "Paris"}),
+    );
+    let created = home.create_session("teach", "Geography").await;
+    let id = created["id"].as_str().unwrap();
+    let posed = home
+        .session_until(id, "a question", |s| s["open_question"]["id"].is_string())
+        .await;
+    let question = posed["open_question"]["id"].as_str().unwrap();
+    home.model.tool(
+        "",
+        "noesis_judge_recall",
+        json!({"question": question, "correct": false, "misconception": "Confuses countries"}),
+    );
+    home.model.text("Let's review.");
+    home.ok(json!({"cmd": "noesis_answer", "session": id, "question": question, "idempotency_key": "recall-answer", "answer": {"text": "London", "dont_know": false}})).await;
+    let judged = await_kind(&mut web, "judgment", |kind| {
+        kind["type"] == "noesis.answer_recorded" && kind["result"]["correct"] == false
+    })
+    .await;
+    assert_eq!(judged["result"]["question"], question);
+    assert_eq!(judged["result"]["misconception"], "Confuses countries");
+}

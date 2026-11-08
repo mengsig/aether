@@ -115,8 +115,16 @@ pub struct LearnerReadArgs {
 }
 
 #[derive(Clone, PartialEq, Eq)]
+pub struct JudgeRecallArgs {
+    pub question: String,
+    pub correct: bool,
+    pub misconception: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub enum ToolArgs {
     Ask(AskArgs),
+    JudgeRecall(JudgeRecallArgs),
     ProbeDone(ProbeDoneArgs),
     Plan(PlanArgs),
     Problem(ProblemArgs),
@@ -138,6 +146,7 @@ macro_rules! shape_debug {
 }
 
 shape_debug! {
+    JudgeRecallArgs => |it| { "correct": it.correct, "has_misconception": it.misconception.is_some() },
     OptionArg => |it| { "value_chars": it.value.chars().count() },
     StrandArg => |it| { "misconceptions": it.misconceptions.len() },
     ProbeDoneArgs => |it| { "strands": it.strands.len() },
@@ -151,6 +160,7 @@ impl fmt::Debug for ToolArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ToolArgs::Ask(args) => args.fmt(f),
+            ToolArgs::JudgeRecall(args) => args.fmt(f),
             ToolArgs::ProbeDone(args) => args.fmt(f),
             ToolArgs::Plan(args) => args.fmt(f),
             ToolArgs::Problem(args) => args.fmt(f),
@@ -186,6 +196,11 @@ const ASK_FIELDS: &[Field] = &[
     field("multi", Kind::Bool),
     field("intent", Kind::Enum(Intent::NAMES)),
 ];
+const JUDGE_RECALL_FIELDS: &[Field] = &[
+    field("question", Kind::Text),
+    field("correct", Kind::Bool),
+    field("misconception", Kind::Text),
+];
 const PROBE_DONE_FIELDS: &[Field] = &[
     field("strands", Kind::Objects(STRAND_FIELDS)),
     field("summary", Kind::Text),
@@ -213,6 +228,7 @@ const LEARNER_READ_FIELDS: &[Field] = &[field("concepts", Kind::Texts), field("q
 pub(crate) fn fields(tool: ToolName) -> &'static [Field] {
     match tool {
         ToolName::Ask => ASK_FIELDS,
+        ToolName::JudgeRecall => JUDGE_RECALL_FIELDS,
         ToolName::ProbeDone => PROBE_DONE_FIELDS,
         ToolName::Plan => PLAN_FIELDS,
         ToolName::Problem => PROBLEM_FIELDS,
@@ -228,6 +244,11 @@ pub fn parse(tool: ToolName, input: Value) -> Result<ToolArgs, ArgError> {
     let mut reader = Reader::new(tool, healed);
     let args = match tool {
         ToolName::Ask => ToolArgs::Ask(read_ask(&mut reader)),
+        ToolName::JudgeRecall => ToolArgs::JudgeRecall(JudgeRecallArgs {
+            question: reader.text("question"),
+            correct: reader.boolean("correct"),
+            misconception: reader.opt_text("misconception"),
+        }),
         ToolName::ProbeDone => ToolArgs::ProbeDone(read_probe_done(&mut reader)),
         ToolName::Plan => ToolArgs::Plan(read_plan(&mut reader)),
         ToolName::Problem => ToolArgs::Problem(ProblemArgs {
