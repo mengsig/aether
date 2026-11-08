@@ -182,8 +182,10 @@ impl<E: Engine> Teaching<'_, E> {
         };
         let kind = if row.phase == Phase::Probe {
             EvidenceKind::ProbeAnswer
-        } else {
+        } else if question.collapsed {
             EvidenceKind::RecallJudged
+        } else {
+            EvidenceKind::PredictAnswer
         };
         self.evidence.push(EvidenceDraft {
             session: row.id.clone(),

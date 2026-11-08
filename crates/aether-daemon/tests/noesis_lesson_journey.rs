@@ -683,7 +683,7 @@ async fn assert_recall_evidence(home: &mut Home) {
     assert_eq!(
         evidence
             .iter()
-            .filter(|item| item["kind"] == "recall_judged" && item["outcome"] == "incorrect")
+            .filter(|item| item["kind"] == "predict_answer" && item["outcome"] == "incorrect")
             .count(),
         1
     );
