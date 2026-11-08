@@ -32,6 +32,7 @@ export const selectOutbox = (conn: ConnId): Selector<readonly Submission[]> => (
 export const selectItems = (conn: ConnId): Selector<Readonly<Record<string, ArchonItem>>> => (s) => s.archon[conn]?.items ?? EMPTY;
 export const selectItem = (conn: ConnId, item: string): Selector<ArchonItem | undefined> => (s) => s.archon[conn]?.items[item];
 export const selectItemDetail = (conn: ConnId, item: string): Selector<Stamped | undefined> => (s) => s.archon[conn]?.details[item];
+export const selectItemMissing = (conn: ConnId, item: string): Selector<boolean> => (s) => s.archon[conn]?.missingItems.includes(item) ?? false;
 export const selectItemLinks = (conn: ConnId, item: string): Selector<Stamped | undefined> => (s) => s.archon[conn]?.links[item];
 export const selectRunPlan = (conn: ConnId, run: string): Selector<ArchonPlan | undefined> => (s) => s.archon[conn]?.plans[run];
 export const selectTaskGraph = (conn: ConnId): Selector<ArchonGraph | null> => (s) => s.archon[conn]?.graph ?? null;

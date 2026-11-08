@@ -321,6 +321,19 @@ describe("Archon resync, third review", () => {
     expect(store.get().archon[CONN]?.staleItems).toEqual([]);
   });
 
+  it("shows a missing item without a toast; its page says so in place", async () => {
+    const { store, daemon, manager } = setup(archond({ get_item: () => ({ err: { code: "not_found", message: "queue item qi_gone not found" } }) }));
+    manager.start();
+    await settle();
+    manager.showItems(CONN, ["qi_gone"]);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(daemon.commands("get_item").map((c) => c.item)).toEqual(["qi_gone"]);
+    expect(store.get().archon[CONN]?.details.qi_gone).toBeUndefined();
+    expect(store.get().archon[CONN]?.staleItems).toEqual([]);
+    expect(store.get().archon[CONN]?.missingItems).toEqual(["qi_gone"]);
+    expect(store.get().reports).toEqual([]);
+  });
+
   it("refreshes an item's detail when it returns to the screen after an off-screen change", async () => {
     const { store, daemon, manager } = setup(archond());
     manager.start();

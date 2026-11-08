@@ -6,10 +6,11 @@ import { FORCE_SHAPE } from "./force.ts";
 import { at, invariant } from "./invariant.ts";
 import { GROUP_HEADER, GROUP_PADDING, LAYERED_SHAPE } from "./layered.ts";
 import type { VisibleGraph, VisibleNode } from "./model.ts";
+import { nodeScale, type NodeStyle, type NodeStyler } from "./style.ts";
 import type { Rect } from "./viewport.ts";
 
 export type NodeShape = "box" | "dot";
-export interface SceneNode extends Rect { node: VisibleNode }
+export interface SceneNode extends Rect { node: VisibleNode; style?: NodeStyle; opacity?: number }
 export interface SceneGroup extends Rect { id: string; label: string; depth: number; parent?: string }
 export interface Point { x: number; y: number }
 /** `curve` is a cubic Bezier (start, two controls, end); `box` holds its control points and so the curve. */
@@ -34,23 +35,27 @@ export interface Scene {
 export class GridIndex {
   private readonly cells = new Map<string, SceneNode[]>();
   private readonly cell: number;
+  private readonly dynamicNodes: readonly SceneNode[] | undefined;
   /** Each node's place in draw order, so culled results stack like hit testing does. */
   private readonly order = new Map<SceneNode, number>();
   /** Occupied cell range, so a query over empty space scans no empty cells. */
   private extent = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity };
 
-  constructor(nodes: readonly SceneNode[], cell: number) {
+  /** Moving nodes use a linear scan until the layout settles; no grid is rebuilt per frame. */
+  constructor(nodes: readonly SceneNode[], cell: number, dynamic = false) {
     invariant(cell > 0, "a grid cell has a positive size");
     this.cell = cell;
+    this.dynamicNodes = dynamic ? nodes : undefined;
     nodes.forEach((node, i) => {
       this.order.set(node, i);
-      this.each(node, (bucket) => bucket.push(node));
+      if (!dynamic) this.each(node, (bucket) => bucket.push(node));
     });
     invariant(this.order.size === nodes.length, "a node is indexed once");
   }
 
   /** The topmost node containing the world point. */
   at(x: number, y: number): SceneNode | undefined {
+    if (this.dynamicNodes !== undefined) return this.dynamicNodes.findLast((node) => contains(node, x, y));
     const bucket = this.cells.get(this.cellKey(Math.floor(x / this.cell), Math.floor(y / this.cell))) ?? [];
     return bucket.findLast((node) => contains(node, x, y));
   }
@@ -60,6 +65,7 @@ export class GridIndex {
    * a range larger than that walks the occupied cells instead.
    */
   query(rect: Rect): SceneNode[] {
+    if (this.dynamicNodes !== undefined) return this.dynamicNodes.filter((node) => overlaps(node, rect));
     const found = new Set<SceneNode>();
     const collect = (bucket: readonly SceneNode[]) => { for (const node of bucket) if (overlaps(node, rect)) found.add(node); };
     const { x0, x1, y0, y1 } = this.range(rect);
@@ -137,14 +143,18 @@ function groupBoxes(graph: VisibleGraph, nodes: readonly SceneNode[]): SceneGrou
   return boxes.reverse();
 }
 
-export function buildScene(graph: VisibleGraph, layout: Layout | undefined, shape: NodeShape): Scene {
+export function buildScene(graph: VisibleGraph, layout: Layout | undefined, shape: NodeShape, nodeStyle?: NodeStyler): Scene {
   const size = shape === "box" ? LAYERED_SHAPE : FORCE_SHAPE;
   const nodes: SceneNode[] = [];
   for (const node of graph.nodes) {
     const at = layout?.positions.get(node.id);
     if (at === undefined) continue;
     invariant(Number.isFinite(at.x) && Number.isFinite(at.y), `node ${node.id} has a non-finite position`);
-    nodes.push({ node, x: at.x - size.width / 2, y: at.y - size.height / 2, width: size.width, height: size.height });
+    const style = nodeStyle?.(node);
+    const scale = style === undefined ? 1 : nodeScale(node.weight);
+    const width = (style?.shape === "circle" ? size.height : size.width) * scale;
+    const height = size.height * scale;
+    nodes.push({ node, x: at.x - width / 2, y: at.y - height / 2, width, height, ...(style === undefined ? {} : { style }) });
   }
   const byId = new Map(nodes.map((n) => [n.node.id, n]));
   const edges: SceneEdge[] = [];
@@ -152,7 +162,7 @@ export function buildScene(graph: VisibleGraph, layout: Layout | undefined, shap
     const from = byId.get(edge.from);
     const to = byId.get(edge.to);
     if (from === undefined || to === undefined) continue;
-    const curve = edgeCurve(from, to, shape === "box");
+    const curve = edgeCurve(from, to, shape === "box", nodeStyle !== undefined);
     edges.push({ from, to, kind: edge.kind, curve, box: pointsBox(curve) });
   }
   const groups = shape === "box" ? groupBoxes(graph, nodes) : [];
@@ -166,11 +176,19 @@ export function buildScene(graph: VisibleGraph, layout: Layout | undefined, shap
  * An edge as a cubic Bezier: right side of the source to left side of the target for layered
  * graphs, a straight centre-to-centre line (controls on the ends) otherwise.
  */
-function edgeCurve(from: Rect, to: Rect, layered: boolean): [Point, Point, Point, Point] {
+function edgeCurve(from: Rect, to: Rect, layered: boolean, styled = false): [Point, Point, Point, Point] {
   if (!layered) {
     const a = { x: from.x + from.width / 2, y: from.y + from.height / 2 };
     const b = { x: to.x + to.width / 2, y: to.y + to.height / 2 };
-    return [a, a, b, b];
+    if (!styled || (a.x === b.x && a.y === b.y)) return [a, a, b, b];
+    const dx = b.x - a.x, dy = b.y - a.y, length = Math.hypot(dx, dy);
+    const offset = Math.min(24, length * 0.1);
+    const start = Math.min(from.width / 2 / Math.abs(dx), from.height / 2 / Math.abs(dy));
+    const end = Math.min(to.width / 2 / Math.abs(dx), to.height / 2 / Math.abs(dy));
+    a.x += dx * start; a.y += dy * start;
+    b.x -= dx * end; b.y -= dy * end;
+    return [a, { x: a.x + dx / 3 - dy / length * offset, y: a.y + dy / 3 + dx / length * offset },
+      { x: b.x - dx / 3 - dy / length * offset, y: b.y - dy / 3 + dx / length * offset }, b];
   }
   const x0 = from.x + from.width, y0 = from.y + from.height / 2;
   const x1 = to.x, y1 = to.y + to.height / 2;

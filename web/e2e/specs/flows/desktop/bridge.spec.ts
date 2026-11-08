@@ -54,7 +54,9 @@ test("the app window reads the fleet and the queue the daemons hold", async ({ s
   await route(window, "#/fleet");
   const fleet = window.getByRole("region", { name: "Fleet" });
   const agents = await listAgents(stack);
-  for (const agent of agents) await expect(fleet.getByRole("link", { name: agent.name, exact: true })).toBeVisible();
+  // Earlier specs on this stack may have named two agents alike, so links are counted by name.
+  const names = new Set(agents.map((agent) => agent.name));
+  for (const name of names) await expect(fleet.getByRole("link", { name, exact: true })).toHaveCount(agents.filter((agent) => agent.name === name).length);
   await expect(fleet.locator(".fleet-count")).toHaveText(`${agents.length} of ${agents.length} agents`);
 
   await route(window, "#/archon/queue");

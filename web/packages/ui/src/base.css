@@ -13,6 +13,8 @@
     -webkit-text-size-adjust: 100%;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    /* Anchors and focused controls stop clear of the sticky shell header. */
+    scroll-padding-block-start: calc(var(--space-12) + var(--space-6));
   }
   body { margin: 0; min-block-size: 100dvh; }
   button, input, select, textarea { font: inherit; color: inherit; letter-spacing: inherit; }
@@ -45,6 +47,9 @@
     box-shadow: var(--focus-ring);
   }
   :where(.ui-field-input, .ui-palette-input):focus-visible { border-color: var(--color-focus); }
+  /* A switch rings its track, not the whole row it spans. */
+  .ui-switch:focus-visible { box-shadow: none; }
+  .ui-switch:focus-visible .ui-switch-track { box-shadow: var(--focus-ring); }
   /* The shell moves focus to <main> after a navigation; that is a reading position, not a control. */
   .ui-shell-main:focus-visible { box-shadow: none; }
 }

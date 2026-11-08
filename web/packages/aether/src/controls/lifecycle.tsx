@@ -3,7 +3,8 @@
 
 import type { ConnId } from "@aether-ui/protocol";
 import { aether } from "@aether-ui/protocol";
-import { useState } from "react";
+import { useDraft } from "@aether-ui/core";
+import { Switch } from "@aether-ui/ui";
 import { invariant } from "../fleet/invariant.ts";
 import { Action, RunNote, Section, useRun } from "./kit.tsx";
 
@@ -19,7 +20,8 @@ export function terminalReason(agent: aether.Agent): string | null {
 export function LifecyclePanel({ conn, agent }: { readonly conn: ConnId; readonly agent: aether.Agent }) {
   invariant(agent.id !== "", "lifecycle controls name their agent");
   const run = useRun(conn);
-  const [subtree, setSubtree] = useState(false);
+  const draft = useDraft(`controls/${agent.id}/lifecycle`, { subtree: false });
+  const { subtree } = draft.value;
   const id = agent.id;
   const busy = run.status.state === "busy";
   const ended = terminalReason(agent);
@@ -39,10 +41,7 @@ export function LifecyclePanel({ conn, agent }: { readonly conn: ConnId; readonl
           <Action conn={conn} command={aether.interrupt({ agent: id })} label="Interrupt" busy={busy} blocked={ended} onRun={() => run.send(aether.interrupt({ agent: id }), "Interrupted")} />
           <Action conn={conn} command={hold} label={paused ? "Resume" : "Pause"} busy={busy} blocked={paused && subtree ? null : resumeBlocked} onRun={() => run.send(hold, paused ? "Resumed" : "Paused")} />
           {!paused && canResumeWait ? <Action conn={conn} command={aether.resume({ agent: id })} label="Resume" busy={busy} onRun={() => run.send(aether.resume({ agent: id }), "Resumed")} /> : null}
-          <label className="b3-check">
-            <input type="checkbox" checked={subtree} onChange={(event) => setSubtree(event.target.checked)} />
-            <span>Include the agents it delegated to</span>
-          </label>
+          <Switch label="Include the agents it delegated to" checked={subtree} onChange={subtree => draft.update({ subtree })} />
         </div>
       </Section>
       <Section title="Nudge it" hint="Wake a failed agent to continue in place, or compact a live agent’s context to free room.">

@@ -7,6 +7,7 @@ import type { ArchonGraph } from "@aether-ui/core";
 import { describe, expect, it } from "vitest";
 import { FauxGraphArchond } from "./fixture/faux-graph.ts";
 import { largeGraphWorld } from "./fixture/graph-world.ts";
+import { taskNodeStyle } from "./presentation.tsx";
 import { criticalPath, dagData, dagDisplay, dagStructure } from "./model.ts";
 
 const BUDGET_MS = 1000 / 60;
@@ -17,6 +18,7 @@ const ctx = {
   fillStyle: "", strokeStyle: "", lineWidth: 1, font: "", textBaseline: "alphabetic",
   setTransform: () => undefined, clearRect: () => undefined, strokeRect: () => undefined, beginPath: () => undefined,
   moveTo: () => undefined, lineTo: () => undefined, bezierCurveTo: () => undefined, stroke: () => undefined,
+  fill: () => undefined, strokeText: () => undefined, setLineDash: () => undefined, globalAlpha: 1,
   fillRect: () => undefined, fillText: () => undefined, measureText: (text: string) => ({ width: text.length * 7 }),
 };
 const theme: GraphTheme = {
@@ -33,14 +35,14 @@ function largeGraph(count: number): ArchonGraph {
 const percentile = (sorted: readonly number[], p: number): number => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))] ?? NaN;
 
 describe("the DAG's frame budget", () => {
-  it("pans and zooms 2,000 items within 16.7 ms a frame", async () => {
+  it.each(["legacy", "styled"])("pans and zooms 2,000 %s items within 16.7 ms a frame", async (mode) => {
     const data = dagData(largeGraph(2000));
     expect(data.nodes).toHaveLength(2000);
     const structure = dagStructure(data, new Set());
     const engine = new LayoutEngine({ createWorker: inlineLayoutWorker });
     const layout = await engine.layout(structure.model, "layered");
     engine.dispose();
-    const scene = buildScene(visibleGraph(dagDisplay(data, structure.model)), layout, "box");
+    const scene = buildScene(visibleGraph(dagDisplay(data, structure.model)), layout, "box", mode === "styled" ? taskNodeStyle : undefined);
     expect(scene.unplaced).toBe(0);
     const queued: (() => void)[] = [];
     const scheduler: FrameScheduler = { request: (frame) => queued.push(frame), cancel: () => undefined };

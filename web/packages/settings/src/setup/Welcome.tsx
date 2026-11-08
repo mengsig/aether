@@ -4,7 +4,7 @@
 import { selectConnections, useApp, useCapabilities, useReread, useSelector } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
 import { Button } from "@aether-ui/ui";
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { invariant } from "../kit/invariant.ts";
 import { ConnectArchon } from "./ConnectArchon.tsx";
 import { archonTools, mcpServersOf } from "./readiness.ts";
@@ -14,7 +14,8 @@ const MCP = { key: "settings.mcp", command: { cmd: "mcp_servers" }, tags: ["mcp_
 const MCP_REFRESH = { cmd: "mcp_servers", refresh: true };
 import "./setup.css";
 
-export function Welcome() {
+/** `connected` is the overview once Aether is ready; without it the home offers to start a task. */
+export function Welcome({ connected }: { readonly connected?: ReactNode } = {}) {
   const app = useApp();
   const canSetUp = useMemo(() => desktopSetup(app) !== null, [app]);
   const caps = useCapabilities();
@@ -22,7 +23,7 @@ export function Welcome() {
   const aether = connections.filter((c) => c.daemon === "aether");
   if (aether.some((c) => c.state === "ready")) {
     const local = canSetUp ? aether.find((c) => c.state === "ready" && app.manager.get(c.id)?.endpoint.transport.id === "ipc") : undefined;
-    return <Connected archon={connections.some((c) => c.daemon === "archon" && c.state === "ready")} local={local?.id ?? null} />;
+    return <Connected archon={connections.some((c) => c.daemon === "archon" && c.state === "ready")} local={local?.id ?? null} dashboard={connected} />;
   }
   if (aether.length > 0) return <Waiting text="Connecting to Aether…" canSetUp={canSetUp} />;
   if (caps["desktop.managed_start"] === true) return <Waiting text="Starting Aether and Archon on this computer…" canSetUp={canSetUp} />;
@@ -80,6 +81,10 @@ function FinishSetup({ conn }: { readonly conn: ConnId }) {
   const entry = useReread(conn, MCP.key, MCP.command, MCP.tags);
   const check = () => void app.reread(conn, MCP.key, MCP_REFRESH, MCP.tags);
   if (entry === undefined || (entry.value === null && entry.error === null)) return null;
+  return finishSetupBody(conn, entry, check);
+}
+
+function finishSetupBody(conn: ConnId, entry: { readonly value: unknown; readonly error: string | null }, check: () => void): ReactNode {
   // An error is cleared only by a newer success, so one held here is newer than any cached value.
   if (entry.error !== null) return <CheckFailed conn={conn} text={`The app could not check Archon's tools: ${entry.error}`} onRetry={check} />;
   invariant(entry.value !== null, "a read with no error has a value");
@@ -109,7 +114,8 @@ function CheckFailed({ conn, text, onRetry }: { readonly conn: ConnId; readonly 
   );
 }
 
-function Connected({ archon, local }: { readonly archon: boolean; readonly local: ConnId | null }) {
+function Connected({ archon, local, dashboard }: { readonly archon: boolean; readonly local: ConnId | null; readonly dashboard: ReactNode | undefined }) {
+  if (dashboard !== undefined) return <>{local === null ? null : <FinishSetup conn={local} />}{dashboard}</>;
   return (
     <div className="ui-page su-page">
       <section className="su-card su-welcome" aria-labelledby="su-home-title">

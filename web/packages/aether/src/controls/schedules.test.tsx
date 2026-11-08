@@ -1,12 +1,14 @@
 // @vitest-environment happy-dom
+import { drafts } from "@aether-ui/core";
 // The Schedules tab: cron and spawn schedules, every policy, fleet-wide listing and the observer view.
 
 import { act } from "react";
-import { afterEach, describe, expect, test } from "vitest";
+import { beforeEach, afterEach, describe, expect, test } from "vitest";
 import { AGENT_ID, CHILD_ID, controlsScript, demoAgents } from "./fixture/demo.ts";
-import { buttonNamed, click, connected, type, type Harness } from "./fixture/harness.test-util.tsx";
+import { buttonNamed, click, connected, pick, type, type Harness } from "./fixture/harness.test-util.tsx";
 import type { ScriptOptions } from "./fixture/daemon.ts";
 import { SchedulesPanel } from "./schedules.tsx";
+import { invariant } from "../fleet/invariant.ts";
 
 let current: Harness | null = null;
 afterEach(() => { current?.unmount(); current = null; });
@@ -27,16 +29,28 @@ function openDialog(): HTMLElement {
   return dialog ?? document.body;
 }
 
+/** The spawn workspace is a folder typed as "Other folder" and committed with Enter. */
+async function typeFolder(h: Harness, root: ParentNode, folder: string): Promise<void> {
+  const other = [...root.querySelectorAll<HTMLLabelElement>(".start-choice")].find(l => l.textContent?.includes("Other folder"))?.querySelector("input");
+  invariant(other, "the Other folder choice");
+  await act(async () => other.click()); await h.settle();
+  await type(h, root, "Folder path", folder);
+  const field = [...root.querySelectorAll<HTMLInputElement>("input")].find(i => i.value === folder);
+  invariant(field, "the typed folder path");
+  await act(async () => field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))); await h.settle();
+}
+
 describe("SchedulesPanel", () => {
   test("a cron schedule sends its expression, timezone, policies and delivery limit", async () => {
     const { h, root } = await open();
     await type(h, root, "Schedule name", "Weekday standup");
-    await type(h, root, "Recurrence", "cron");
+    await click(h, root, "Cron");
+    await pick(h, root, "Cron preset", "Custom");
     await type(h, root, "Cron expression", "30 9 * * 1-5");
     await type(h, root, "Timezone", "Europe/Oslo");
     await type(h, root, "Message to deliver", "Summarise yesterday");
-    await type(h, root, "When the agent is busy", "queue_one");
-    await type(h, root, "Missed occurrences", "skip");
+    await pick(h, root, "When the agent is busy", "Queue one");
+    await pick(h, root, "Missed occurrences", "Skip them");
     await type(h, root, "Maximum deliveries (blank for unlimited)", "20");
     await click(h, root, "Create schedule");
     expect(sent(h, "create_schedule")).toEqual([{
@@ -52,24 +66,24 @@ describe("SchedulesPanel", () => {
   test("a cron schedule with a bad timezone is refused on screen and nothing is sent", async () => {
     const { h, root } = await open();
     await type(h, root, "Schedule name", "Standup");
-    await type(h, root, "Recurrence", "cron");
+    await click(h, root, "Cron");
     await type(h, root, "Timezone", "Mars/Olympus");
     await type(h, root, "Message to deliver", "Go");
-    await click(h, root, "Create schedule");
-    expect(root.querySelector('[role="alert"]')?.textContent).toContain("not an IANA timezone");
+    expect(buttonNamed(root, "Create schedule").disabled).toBe(true);
+    expect(root.textContent).toContain("not an IANA timezone");
     expect(h.daemon.commands("create_schedule")).toHaveLength(0);
   });
 
   test("a spawn schedule asks first, then sends the spawn template with no target", async () => {
     const { h, root } = await open();
     await type(h, root, "Schedule name", "Nightly triage");
-    await type(h, root, "Send to", "spawn");
+    await click(h, root, "A new agent");
     expect(root.textContent).not.toContain("When the agent is busy");
-    await type(h, root, "Every (seconds)", "86400");
+    await pick(h, root, "Every (seconds)", "Daily");
     await type(h, root, "Objective for each new agent", "Triage the backlog");
-    await type(h, root, "Workspace", "/srv/repo");
-    await type(h, root, "Model", "anthropic/claude-sonnet-5-5");
-    await type(h, root, "Effort", "high");
+    await typeFolder(h, root, "/srv/repo");
+    await pick(h, root, "Model", "Sonnet 5.5");
+    await click(h, root, "high");
     await type(h, root, "Maximum runs (blank for unlimited)", "7");
     await click(h, root, "Create schedule");
     expect(h.daemon.commands("create_schedule")).toHaveLength(0);
@@ -87,13 +101,12 @@ describe("SchedulesPanel", () => {
     }]);
   });
 
-  test("an incomplete spawn schedule says what is missing after the confirm step", async () => {
+  test("an incomplete spawn schedule says what is missing before submitting", async () => {
     const { h, root } = await open();
     await type(h, root, "Schedule name", "Nightly triage");
-    await type(h, root, "Send to", "spawn");
-    await click(h, root, "Create schedule");
-    await click(h, openDialog(), "Create schedule");
-    expect(root.querySelector('[role="alert"]')?.textContent).toContain("Write the objective");
+    await click(h, root, "A new agent");
+    expect(buttonNamed(root, "Create schedule").disabled).toBe(true);
+    expect(root.textContent).toContain("Write the objective");
     expect(h.daemon.commands("create_schedule")).toHaveLength(0);
   });
 
@@ -106,7 +119,7 @@ describe("SchedulesPanel", () => {
     const { h, root } = await open({ script: { list_schedules: list } });
     expect(sent(h, "list_schedules")).toEqual([{ cmd: "list_schedules", target: AGENT_ID }]);
     expect(root.textContent).not.toContain("Nightly triage");
-    expect(buttonNamed(root, "This agent's schedules").getAttribute("aria-pressed")).toBe("true");
+    expect(buttonNamed(root, "This agent's schedules").getAttribute("aria-checked")).toBe("true");
     await click(h, root, "All schedules");
     expect(sent(h, "list_schedules")[1]).toEqual({ cmd: "list_schedules" });
     const rows = [...root.querySelectorAll('[aria-label="Schedules"] > li')].map((li) => li.textContent ?? "");
@@ -184,3 +197,5 @@ describe("SchedulesPanel", () => {
     expect(h.daemon.commands("create_schedule")).toHaveLength(0);
   });
 });
+
+beforeEach(() => { for (const key of drafts.keys()) drafts.clear(key); });

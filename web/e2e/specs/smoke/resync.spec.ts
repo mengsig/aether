@@ -2,7 +2,7 @@
 // shows what changed while it was away, with no reload and nothing stale left on screen.
 
 import { createAgent, enqueueItem, itemTitles, listAgents, pauseQueue, renameAgent, retitleItem } from "../../harness/agents.ts";
-import { connection, everyQueueRow, pairBoth } from "../../harness/pair.ts";
+import { connection, everyQueueRow, fleetLink, pairBoth } from "../../harness/pair.ts";
 import { expect, test, type Page } from "../../harness/fixtures.ts";
 
 async function markPage(page: Page): Promise<void> {
@@ -17,7 +17,7 @@ test("the fleet recovers from an aetherd restart without a reload", async ({ pag
   await pairBoth(page, stack);
   const before = await createAgent(stack, "Before restart", "Wait for the restart.", false);
   const fleet = page.getByRole("region", { name: "Fleet" });
-  await expect(fleet.getByRole("link", { name: "Before restart" })).toBeVisible();
+  await fleetLink(page, "Before restart");
   await markPage(page);
 
   await stack.aether.stop();
@@ -27,8 +27,8 @@ test("the fleet recovers from an aetherd restart without a reload", async ({ pag
   await createAgent(stack, "Created after restart", "Arrive after the restart.");
 
   await expect(connection(page, "aether")).toHaveAttribute("data-state", "ready", { timeout: 30_000 });
-  await expect(fleet.getByRole("link", { name: "Renamed after restart" })).toBeVisible();
-  await expect(fleet.getByRole("link", { name: "Created after restart" })).toBeVisible();
+  await fleetLink(page, "Renamed after restart");
+  await fleetLink(page, "Created after restart");
   await expect(fleet.getByRole("link", { name: "Before restart" })).toHaveCount(0);
   const agents = await listAgents(stack);
   await expect(fleet.locator(".fleet-count")).toHaveText(`${agents.length} of ${agents.length} agents`);

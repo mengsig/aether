@@ -99,8 +99,8 @@ describe("GraphCanvas", () => {
     vi.stubGlobal("devicePixelRatio", 2);
     await act(async () => { for (const listener of [...(queries.at(-1)?.listeners ?? [])]) listener(); });
     expect([canvas.width, canvas.height]).toEqual([1600, 800]);
-    expect(queries.map((q) => q.media)).toEqual(["(resolution: 1dppx)", "(resolution: 2dppx)"]);
-    expect(queries[0]?.listeners.size).toBe(0);
+    expect(queries.filter((q) => q.media.startsWith("(resolution:")).map((q) => q.media)).toEqual(["(resolution: 1dppx)", "(resolution: 2dppx)"]);
+    expect(queries.find((q) => q.media === "(resolution: 1dppx)")?.listeners.size).toBe(0);
 
     await act(async () => root.unmount());
     expect(queries.every((q) => q.listeners.size === 0)).toBe(true);

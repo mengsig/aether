@@ -56,7 +56,7 @@ describe("questions", () => {
     expect(card.querySelectorAll("input[type=checkbox]")).toHaveLength(3);
     await click(h, $(byText(card, "label", "The last log index"), "input"));
     await click(h, $(byText(card, "label", "The candidate's node id"), "input"));
-    await click(h, $(byText(card, "label", "90%"), "input"));
+    await click(h, byText(card, "[role=radio]", "90%"));
     await click(h, byText(card, "button", "Answer"));
     await h.settle(SETTLE_MS);
     expect(answers(h)).toEqual([{ dont_know: false, choices: ["i", "n"], confidence: 90 }]);
@@ -69,7 +69,7 @@ describe("questions", () => {
     h.daemon.pose(LESSON.id, RECALL_QUESTION);
     await h.settle(SETTLE_MS);
     let card = $(root, ".learn-q[data-state=open]");
-    expect(card.querySelector("textarea[aria-label='Your answer']")).not.toBeNull();
+    expect(card.querySelector("[data-testid=learn-answer]")).not.toBeNull();
     expect(card.textContent).toContain("How sure are you?");
     await click(h, byText(card, "button", "I don't know"));
     await h.settle(SETTLE_MS);
@@ -79,7 +79,7 @@ describe("questions", () => {
     h.daemon.pose(LESSON.id, { ...RECALL_QUESTION, question: { ...RECALL_QUESTION.question, id: "q_term_2" } });
     await h.settle(SETTLE_MS);
     card = $(root, ".learn-q[data-state=open]");
-    await type(h, $(card, "textarea[aria-label='Your answer']"), "  It steps down to follower.  ");
+    await type(h, $(card, "[data-testid=learn-answer]"), "  It steps down to follower.  ");
     await click(h, byText(card, "button", "Answer"));
     expect(answers(h)[1]).toEqual({ dont_know: false, text: "It steps down to follower.", confidence: 50 });
   });
@@ -101,7 +101,7 @@ describe("questions", () => {
     const { h, root } = await openLesson();
     h.daemon.pose(LESSON.id, VOTE_QUESTION);
     await h.settle(SETTLE_MS);
-    const composer = ($(root, "#learn-reply") as HTMLTextAreaElement);
+    const composer = ($(root, "[data-testid=learn-reply]") as HTMLTextAreaElement);
     expect(composer.disabled).toBe(true);
     expect(composer.placeholder).toContain("Answer the question above");
   });
@@ -110,11 +110,11 @@ describe("questions", () => {
 describe("teaching turns", () => {
   test("sending shows the teacher working until the committed reply arrives", async () => {
     const { h, root } = await openLesson();
-    await type(h, $(root, "#learn-reply"), "What stops two leaders?");
+    await type(h, $(root, "[data-testid=learn-reply]"), "What stops two leaders?");
     await click(h, byText(root, "button", "Send"));
     expect(h.daemon.sent.filter((c) => c.cmd === "noesis_send").map((c) => c.text)).toEqual(["What stops two leaders?"]);
     expect(root.querySelector(".learn-working")?.textContent).toContain("Your teacher is working");
-    expect(($(root, "#learn-reply") as HTMLTextAreaElement).disabled).toBe(true);
+    expect(($(root, "[data-testid=learn-reply]") as HTMLTextAreaElement).disabled).toBe(true);
 
     h.daemon.teach(LESSON.id, "Each server votes once per term, and a leader needs a majority.");
     await h.settle(SETTLE_MS);
@@ -124,7 +124,7 @@ describe("teaching turns", () => {
 
   test("a turn that never answers turns into a calm note with a way to check again", async () => {
     const { h, root } = await openLesson();
-    await type(h, $(root, "#learn-reply"), "Hello?");
+    await type(h, $(root, "[data-testid=learn-reply]"), "Hello?");
     await click(h, byText(root, "button", "Send"));
     await h.settle(STALL_MS);
     const note = root.querySelector(".learn-callout[role=status]");

@@ -183,3 +183,77 @@ describe("text contrast", () => {
     expect(trigger?.declarations.get("color")).toBe("var(--color-text)");
   });
 });
+
+describe("fills keep their text at AA", () => {
+  const AA = 4.5;
+  const themes: Array<[string, CssBlock | undefined]> = [["light", lightBlock], ["dark", darkBlock]];
+  const sheets = [...cssBlocks(primitives), ...cssBlocks(shell)].filter((block) => block.within.length === 1);
+  const colour = (block: CssBlock | undefined, name: string): Rgb => rgb(block?.declarations.get(name));
+  const declared = (selector: string, property: string): string => {
+    const value = sheets.find((rule) => rule.selector === selector)?.declarations.get(property);
+    expect(value, `${selector} { ${property} }`).toBeDefined();
+    return value ?? "";
+  };
+
+  /** A token or a two-colour `color-mix`; `transparent` resolves to the surface underneath. */
+  function paint(block: CssBlock | undefined, value: string, under: Rgb, local: Readonly<Record<string, string>> = {}): Rgb {
+    const token = (name: string): Rgb => (name === "transparent" ? under : colour(block, local[name] ?? name));
+    const plain = /^var\((--[\w-]+)\)$/.exec(value);
+    if (plain) return token(plain[1] ?? "");
+    const mixed = /^color-mix\(in srgb, var\((--[\w-]+)\) (\d+)%, (?:var\((--[\w-]+)\)|(transparent))\)$/.exec(value);
+    expect(mixed, value).not.toBeNull();
+    const [, first, share, second, clear] = mixed ?? [];
+    return mix(token(first ?? ""), token(clear ?? second ?? ""), Number(share) / 100);
+  }
+
+  test.each(themes)("%s: buttons, the current nav link and the palette row", (_name, block) => {
+    const s1 = colour(block, "--color-surface-1");
+    const bg = colour(block, "--color-bg");
+    const cases: Array<[string, string, string, Rgb]> = [
+      ['.ui-button[data-variant="primary"]', "background", "--color-accent-contrast", s1],
+      ['.ui-button[data-variant="primary"]:hover', "background", "--color-accent-contrast", s1],
+      ['.ui-button[data-variant="danger"]', "background", "--color-danger", s1],
+      ['.ui-button[data-variant="danger"]:hover', "background", "--color-danger", s1],
+      ['.ui-navrail-link[aria-current="page"]', "background", "--color-text", bg],
+      ['.ui-navrail-link[aria-current="page"]:hover', "background", "--color-text", bg],
+      [".ui-navrail-link:active", "background", "--color-text", bg],
+      ['.ui-palette-option[aria-selected="true"]', "background", "--color-text-faint", s1],
+      [".ui-table tbody tr:hover", "background", "--color-text-faint", s1],
+    ];
+    for (const [selector, property, text, under] of cases) {
+      const fill = paint(block, declared(selector, property), under);
+      expect(contrast(colour(block, text), fill), `${text} on ${selector}`).toBeGreaterThanOrEqual(AA);
+    }
+  });
+
+  test.each(themes)("%s: every status pill and badge tone on a card and on the page", (_name, block) => {
+    const pill = declared(".ui-pill", "background");
+    const badge = declared(".ui-badge", "background");
+    const grounds = [colour(block, "--color-surface-1"), colour(block, "--color-bg")];
+    const tones = ["--color-text-muted", "--color-accent", "--color-info", "--color-success", "--color-warning", "--color-danger"];
+    for (const ground of grounds) {
+      for (const status of STATUS) {
+        const fill = paint(block, pill, ground, { "--pill-color": status });
+        expect(contrast(colour(block, status), fill), `${status} pill`).toBeGreaterThanOrEqual(AA);
+      }
+      for (const tone of tones) {
+        const fill = paint(block, badge, ground, { "--badge": tone });
+        expect(contrast(colour(block, tone), fill), `${tone} badge`).toBeGreaterThanOrEqual(AA);
+      }
+    }
+  });
+
+  test.each(themes)("%s: surfaces step apart, and borders and focus stand out from them", (_name, block) => {
+    const steps = ["--color-bg", "--color-surface-1", "--color-surface-2", "--color-surface-3"];
+    for (const [index, a] of steps.entries()) {
+      for (const b of steps.slice(index + 1)) {
+        expect(contrast(colour(block, a), colour(block, b)), `${a} vs ${b}`).toBeGreaterThanOrEqual(1.05);
+      }
+    }
+    for (const ground of ["--color-bg", "--color-surface-1"]) {
+      expect(contrast(colour(block, "--color-border-strong"), colour(block, ground)), `border-strong on ${ground}`).toBeGreaterThanOrEqual(3);
+      expect(contrast(colour(block, "--color-focus"), colour(block, ground)), `focus on ${ground}`).toBeGreaterThanOrEqual(3);
+      expect(contrast(colour(block, "--color-accent"), colour(block, ground)), `accent on ${ground}`).toBeGreaterThanOrEqual(AA);
+    }
+  });
+});

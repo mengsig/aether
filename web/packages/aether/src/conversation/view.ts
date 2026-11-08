@@ -100,7 +100,9 @@ export function taskRowKey(rows: readonly ConversationRow[], delegated: boolean)
   if (!delegated) return null;
   const first = rows.find((row) => row.role === "user");
   const text = first?.parts[0];
-  if (first === undefined || text?.kind !== "text" || !text.text.startsWith(TASK_TURN)) return null;
+  // A delivery's header moved into the row's head (speaker.from); its body is a person's text, not the task.
+  if (first === undefined || first.speaker.from !== null) return null;
+  if (text?.kind !== "text" || !text.text.startsWith(TASK_TURN)) return null;
   invariant(first.seq !== null, "a task turn is a committed entry");
   return first.key;
 }

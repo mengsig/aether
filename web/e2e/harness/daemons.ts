@@ -174,6 +174,8 @@ export class Archond extends Daemon {
       "[aether]", 'mode = "shared"', `socket = "${aetherSocket}"`, "",
       "[orchestrator]", `model = "${FAUX_MODEL}"`, "",
       "[models]", `allow = ["${FAUX_MODEL}"]`, "",
+      // The host's free space is not the test's concern: only a full disk holds dispatch.
+      "[limits]", "min_free_gb = 1", "",
       "[remote]", `address = "127.0.0.1:${this.ports.archon}"`, 'mounted_at = "/archon"', `trusted_origins = [${trusted}]`, "",
     ].join("\n"));
   }

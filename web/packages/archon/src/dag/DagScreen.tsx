@@ -14,6 +14,7 @@ import { DagCanvas } from "./DagCanvas.tsx";
 import { DagOverview, NodeInspector } from "./DagPanel.tsx";
 import type { LayoutFn } from "./layout.ts";
 import { criticalPath, dagData, heldUp, initiativeProgress } from "./model.ts";
+import { DagEmpty } from "./presentation.tsx";
 import "./dag.css";
 
 export interface DagWorkspaceProps {
@@ -41,7 +42,7 @@ export function DagWorkspace({ graph, items, layout, progressItems = items, prog
   const onSelect = useCallback((id: string) => setPicked(id), []);
   const onPath = useMemo(() => new Set(path.nodes), [path]);
   if (allData.nodes.length === 0 && progress.length === 0) {
-    return <EmptyState title="Nothing in the graph">The task graph shows open items and how they depend on each other. Enqueue an item to see it here.</EmptyState>;
+    return <DagEmpty />;
   }
   const initiativeCount = progressItems === null ? data.initiatives.length : progress.length;
   const summary = `${data.nodes.length.toLocaleString("en")} items · ${data.edges.length.toLocaleString("en")} links · ${initiativeCount} initiatives`;
@@ -51,6 +52,7 @@ export function DagWorkspace({ graph, items, layout, progressItems = items, prog
         <p className="dag-muted">{summary}{data.truncated ? ` · showing the first ${data.nodes.length.toLocaleString("en")}` : ""}</p>
         <Button variant="quiet" size="sm" aria-pressed={showCompleted} onClick={() => setShowCompleted((value) => !value)}>Show completed</Button>
         <Legend />
+        <p className="dag-muted">Select an item to inspect · drag to pan · scroll to zoom</p>
       </header>
       <div className="dag-body">
         {data.nodes.length === 0

@@ -48,7 +48,7 @@ export function Artifacts({ access, item, version }: { readonly access: ArchonAc
   if (listing.error && !listing.data) return <ErrorState title="Could not list artifacts" message={listing.error} onRetry={listing.reload} />;
   if (!listing.data) return <p className="item-muted">Loading artifacts…</p>;
   const files = listing.data.files;
-  if (files.length === 0) return <EmptyState title="No artifacts">Files the stages publish show up here.</EmptyState>;
+  if (files.length === 0) return <EmptyState title="No artifacts">Open a stage to see its progress; files appear here after that stage publishes them.</EmptyState>;
   return (
     <>
       <ul className="item-list">

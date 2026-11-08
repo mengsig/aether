@@ -16,7 +16,7 @@ const GLOBAL_OBJECTS = ["window", "globalThis", "self"];
 const PACKAGE_SOURCES = ["packages/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"];
 const MODULES = "{ts,tsx,mts,cts,js,jsx,mjs,cjs}";
 // Everything that draws: the UI kit, the feature packages and the browser entry.
-const COMPONENT_SOURCES = ["ui", "aether", "archon", "github", "noesis", "settings"]
+const COMPONENT_SOURCES = ["ui", "aether", "archon", "github", "home", "noesis", "settings"]
   .map((name) => `packages/${name}/src/**/*.${MODULES}`)
   .concat(`apps/web/src/**/*.${MODULES}`);
 

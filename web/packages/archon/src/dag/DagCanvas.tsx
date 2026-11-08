@@ -1,6 +1,7 @@
 // The DAG on its canvas: layered, grouped by initiative, with the critical path in the accent. The
 // layout follows the structure only; statuses, titles and the path repaint over the layout it has.
 
+import { TaskDetails, taskNodeStyle, TASK_LEGEND, DagEmpty } from "./presentation.tsx";
 import { GraphCanvas } from "@aether-ui/graph";
 import { Button, ErrorState, Skeleton } from "@aether-ui/ui";
 import { useCallback, useMemo, useState } from "react";
@@ -39,7 +40,9 @@ export function DagCanvas({ data, path, layout, label, selected, onSelect }: Dag
   return (
     <div className="dag-canvas" data-pending={placed.pending ? "true" : undefined} aria-busy={placed.layout === undefined}>
       <GraphCanvas model={model} layout={placed.layout} label={label} shape="box" {...(selected === undefined ? {} : { selected })}
-        emphasis={path.emphasis} onActivate={onActivate} onToggleGroup={onToggleGroup} />
+        emphasis={path.emphasis} onActivate={onActivate} onToggleGroup={onToggleGroup}
+        nodeStyle={taskNodeStyle} legend={TASK_LEGEND} emptyState={<DagEmpty />}
+        details={(node) => { const task = data.byId.get(node.id); return task === undefined ? <strong>{node.label}</strong> : <TaskDetails node={task} />; }} />
       {placed.layout === undefined ? (
         <div className="dag-placing" aria-hidden="true">
           <Skeleton width="12rem" height="var(--space-3)" />
@@ -52,7 +55,7 @@ export function DagCanvas({ data, path, layout, label, selected, onSelect }: Dag
           <Button size="sm" onClick={placed.retry}>Try again</Button>
         </div>
       ) : null}
-      <p className="dag-hint">Drag to pan · scroll to zoom · 0 fits · click a group to fold it</p>
+
     </div>
   );
 }

@@ -3,7 +3,7 @@
 
 import { routeHref, selectAgent, selectConnection, useSelector } from "@aether-ui/core";
 import type { aether, ConnId, RouteProps } from "@aether-ui/protocol";
-import { Badge, EmptyState, Skeleton, StatusPill, Tabs } from "@aether-ui/ui";
+import { Badge, EmptyState, Skeleton, StatusPill, Switch, Tabs } from "@aether-ui/ui";
 import { useMemo, useState } from "react";
 import { draftKey, useDraft } from "../composer/drafts.ts";
 import { invariant } from "../fleet/invariant.ts";
@@ -40,11 +40,8 @@ function SteerPanel({ conn, agent }: { readonly conn: ConnId; readonly agent: ae
         <textarea className="b3-textarea" rows={3} value={draft.text} onChange={(event) => draft.set(event.target.value)} />
       </label>
       <div className="b3-row">
-        <label className="b3-check">
-          <input type="checkbox" checked={subtree} onChange={(event) => setSubtree(event.target.checked)} />
-          <span>Also send to the agents it delegated to</span>
-        </label>
-        <Action conn={conn} command={{ cmd: "send_message", to: agent.id }} label="Send" variant="primary" busy={run.status.state === "busy"} blocked={terminalReason(agent)} onRun={send} />
+        <Switch label="Also send to the agents it delegated to" checked={subtree} onChange={setSubtree} />
+        <Action conn={conn} command={{ cmd: "send_message", to: agent.id }} label="Send" blocked={terminalReason(agent) ?? (draft.text.trim() ? null : "Write a message")} variant="primary" busy={run.status.state === "busy"} onRun={send} />
       </div>
       {problem ? <p className="b3-note" role="alert" data-state="failed">{problem}</p> : null}
       {draft.problem ? <p className="b3-note" data-state="failed">{draft.problem}</p> : null}

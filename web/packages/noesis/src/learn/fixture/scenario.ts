@@ -20,6 +20,28 @@ export const SETTINGS: aether.NoesisSettingsView = {
   prompts: { overrides: false },
 } as aether.NoesisSettingsView;
 
+const capabilities = { context_window: 200_000, max_output_tokens: 8192, tools: true } as unknown as aether.CapabilityProfile;
+const model = (provider: string, id: string, providerName: string, extra: Partial<aether.ModelInfo> = {}): aether.ModelInfo => ({
+  model: { provider, model: id }, name: id, provider_name: providerName, configured: true, is_default: false, capabilities, ...extra,
+});
+
+/** Two API-billed Anthropic models (the saved choices), two subscription ones and one not signed in. */
+export const MODELS: readonly aether.ModelInfo[] = [
+  model("anthropic", "claude-opus-5-5", "Anthropic API", { auth_source: "ANTHROPIC_API_KEY (environment)" }),
+  model("anthropic", "claude-haiku-5-5", "Anthropic API", { auth_source: "ANTHROPIC_API_KEY (environment)" }),
+  model("claude-code", "claude-sonnet-5-5", "Claude Code", { is_default: true, auth_source: "Claude Code login" }),
+  model("codex", "gpt-6-luna", "Codex"),
+  model("gemini", "gemini-3", "Gemini", { configured: false }),
+];
+
+const provider = (id: string, name: string, engine: boolean): aether.ProviderInfo => ({
+  provider: id, name, engine, configured: true, enabled: true, models: 2, open_model_list: false, protocol: engine ? "engine" : "anthropic",
+  health: { provider: id } as aether.ProviderHealth, ...(engine ? {} : { auth_source: "stored credential" }),
+});
+
+/** The daemon's `providers` behind MODELS: two engines on subscriptions, one API provider with a stored key; gemini is not listed. */
+export const PROVIDERS: readonly aether.ProviderInfo[] = [provider("codex", "Codex", true), provider("claude-code", "Claude Code", true), provider("anthropic", "Anthropic API", false)];
+
 export function statusOf(enabled: boolean): aether.NoesisStatus {
   const settings = { ...SETTINGS, enabled };
   return {
@@ -131,7 +153,7 @@ export const GRAPH = {
 };
 
 const concept = (ref: string, title: string, state: aether.ConceptStateKind, strength: number, extra: Partial<aether.ConceptState> = {}): aether.ConceptState => ({
-  concept: { id: `c_${ref}`, kind: "proposition", ref, title }, state, strength, as_of_evidence: 3, misconceptions: [], ...extra,
+  concept: { id: `c_${ref.replace(/^p_/, "")}`, kind: "proposition", ref, title }, state, strength, as_of_evidence: 3, misconceptions: [], ...extra,
 });
 
 export const CONCEPTS: readonly aether.ConceptState[] = [
@@ -152,6 +174,8 @@ export function scenario(enabled: boolean, extra: Partial<FauxNoesisOptions> = {
     transcripts: { [LESSON.agent]: LESSON_TRANSCRIPT, [PRACTICE.agent]: [text("user", "Give me a problem on split votes.")] },
     graph: GRAPH,
     concepts: CONCEPTS,
+    models: MODELS,
+    providers: PROVIDERS,
     ...extra,
   };
 }
