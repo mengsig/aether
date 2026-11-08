@@ -79,12 +79,13 @@ export function alertsOf(conn: ConnId, attention: aether.Attention): Alert[] {
   return [...questions, ...approvals];
 }
 
-type Note = Parameters<DesktopBridge["notify"]>[0];
+type Note = Parameters<DesktopBridge["notify"]>[0] & { readonly backgroundOnly?: boolean };
 
 /** Shows `note` and returns whether main sent it to the system. */
 export async function notifyDesktop(desktop: Pick<DesktopBridge, "notify">, note: Note): Promise<boolean> {
   invariant(note.title !== "", "a notification has a title");
-  return (await desktop.notify(note)) !== false;
+  const reply: unknown = desktop.notify(note);
+  return (await reply) !== false;
 }
 
 export interface AlertHost {
