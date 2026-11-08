@@ -264,7 +264,7 @@ test("maintenance scope suggestions use stored identities rather than workspace 
   for (const [toolName, label, optionName, action] of [
     ["Export", "Export scope", "github.com/mengsig/aether · agent", "Export memories"],
     ["Consolidate", "Consolidation scope", "Repository github.com/mengsig/aether", "Plan consolidation"],
-  ]) {
+  ] as const) {
     const tool = maintenance.querySelector(`[aria-label="${toolName}"]`) as HTMLElement;
     await type(h, tool, label, "repo");
     const options = [...tool.querySelectorAll<HTMLElement>('[role="option"]')];

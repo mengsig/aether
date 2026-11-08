@@ -114,7 +114,7 @@ test("repository creation, filtering and store counts agree", async () => {
   await page().getByRole("button", { name: "Create memory" }).click();
   await sheet.getByLabel("Memory text").fill("The agent keeps this separate fact.");
   await sheet.getByRole("radio", { name: "Agent" }).click();
-  await sheet.getByRole("combobox", { name: "Agent", exact: true }).click();
+  await sheet.getByRole("combobox", { name: /^Agent\b/ }).click();
   await sheet.getByRole("option", { name: /Memory workspace/ }).click();
   await sheet.getByRole("button", { name: "Save memory" }).click();
   await expect(sheet).toHaveCount(0);
