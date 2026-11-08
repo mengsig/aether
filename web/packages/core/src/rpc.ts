@@ -9,7 +9,7 @@ export interface Link { send(frame: unknown): void; close(): void }
 /** Any client command: a generated command type, or a literal checked for its `cmd` at runtime. */
 export type Command = { readonly cmd: string } | Json;
 
-interface Pending { resolve: (reply: Json) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
+interface Pending { resolve: (reply: Json) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> | undefined }
 
 export const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_PENDING = 128;
@@ -20,11 +20,13 @@ export class Rpc {
   private closed: Error | null = null;
   private readonly link: Link;
   private readonly timeoutMs: number;
+  private readonly nativeMemoryConfirmation: boolean;
 
-  constructor(link: Link, timeoutMs = REQUEST_TIMEOUT_MS) {
+  constructor(link: Link, timeoutMs = REQUEST_TIMEOUT_MS, nativeMemoryConfirmation = false) {
     invariant(timeoutMs > 0, "request timeout must be positive");
     this.link = link;
     this.timeoutMs = timeoutMs;
+    this.nativeMemoryConfirmation = nativeMemoryConfirmation;
   }
 
   /** Sends one command; resolves with the `Ok` reply object, rejects with a DaemonError. */
@@ -34,7 +36,9 @@ export class Rpc {
     if (this.pending.size >= MAX_PENDING) return Promise.reject(new Error("Too many requests in flight"));
     const req = this.nextReq++;
     return new Promise<Json>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const needsConfirmation = this.nativeMemoryConfirmation && (cmd === "memory_export" ||
+        ((cmd === "memory_import" || cmd === "consolidate_memories") && (command as Json).dry_run === false));
+      const timer = needsConfirmation ? undefined : setTimeout(() => {
         this.pending.delete(req);
         reject(new DaemonError("timeout", `${cmd} got no answer in ${Math.round(this.timeoutMs / 1000)} s`));
       }, this.timeoutMs);

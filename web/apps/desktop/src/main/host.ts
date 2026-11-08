@@ -6,7 +6,7 @@ import {
   BrowserWindow, dialog, shell, webContents,
   type IpcMain, type IpcMainInvokeEvent,
 } from "electron";
-import type { Bridge } from "../bridge/bridge.ts";
+import { requestWithRefusal, type Bridge } from "../bridge/bridge.ts";
 import type { Frame } from "../bridge/daemon-link.ts";
 import type { Confirmation } from "../security/confirm.ts";
 import { BRIDGE_METHODS, type Sender } from "../security/validate.ts";
@@ -29,8 +29,10 @@ export function senderOf(event: IpcMainInvokeEvent, appWindows: ReadonlySet<numb
 
 export function registerIpc(ipcMain: IpcMain, bridge: Bridge, appWindows: ReadonlySet<number>): void {
   for (const method of BRIDGE_METHODS) {
-    ipcMain.handle(channel(method), (event, ...args: unknown[]) =>
-      bridge.handle(senderOf(event, appWindows), event.sender.id, method, args));
+    ipcMain.handle(channel(method), (event, ...args: unknown[]) => {
+      const handle = () => bridge.handle(senderOf(event, appWindows), event.sender.id, method, args);
+      return method === "request" ? requestWithRefusal(handle, args[1]) : handle();
+    });
   }
 }
 

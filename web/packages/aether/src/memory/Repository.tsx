@@ -4,33 +4,37 @@ import { Combo, Picker } from "@aether-ui/ui";
 import { useState } from "react";
 import { records } from "./shared.tsx";
 
-export function useRepositories(conn: string): string[] {
+export function useRepositories(conn: string): { roots: string[]; ids: string[] } {
   const agents = Object.values(useSelector(selectAgents(conn)));
   const workspaces = useReread(conn, "start:workspaces", { cmd: "list_workspaces" }, ["workspaces"]);
   const memories = useSelector(selectRead(conn, "memory:list"));
+  const repositoryMemories = useSelector(selectRead(conn, "memory:repositories"));
   const roots = [
     ...agents.map(a => a.scope.workspace_root),
-    ...records<aether.Workspace>(workspaces?.value).map(w => w.path),
-    ...records<aether.MemoryRecord>(memories?.value).flatMap(m => m.scope.scope === "repository" || m.scope.scope === "repository_role" ? [m.scope.id] : []),
+    ...records<aether.Workspace>(workspaces?.value).filter(w => w.exists).map(w => w.path),
   ];
-  return [...new Set(roots.filter((root): root is string => typeof root === "string" && root !== ""))].sort();
+  const ids = [memories, repositoryMemories].flatMap(entry => records<aether.MemoryRecord>(entry?.value))
+    .flatMap(m => m.scope.scope === "repository" || m.scope.scope === "repository_role" ? [m.scope.id] : []);
+  return { roots: [...new Set(roots.filter((root): root is string => typeof root === "string" && root !== ""))].sort(),
+    ids: [...new Set(ids.filter(id => id !== ""))].sort() };
 }
 
 export function Repository({ conn, label, value, onChange, testId, disabled, filter = false }: {
   conn: string; label: string; value: string; onChange: (value: string) => void; testId?: string; disabled?: boolean; filter?: boolean;
 }) {
-  const roots = useRepositories(conn);
+  const repositories = useRepositories(conn);
+  const roots = filter ? repositories.ids : repositories.roots;
   const [custom, setCustom] = useState(false);
   const suggestions = roots.map(id => ({ id, label: id }));
   if (filter && !custom && (value === "" || roots.includes(value))) return <Picker label={label} value={value} onChange={id => {
     if (id === "custom") setCustom(true); else onChange(id);
-  }} options={[{ id: "", label: "All" }, ...suggestions, { id: "custom", label: "Another repository…" }]} />;
+  }} options={[{ id: "", label: "Choose a repository" }, ...suggestions, { id: "custom", label: "Another repository…" }]} />;
   return <Combo label={label} data-testid={testId} value={value} onChange={onChange} disabled={disabled}
-    suggestions={suggestions.filter(s => s.id.toLowerCase().includes(value.toLowerCase()))} hint={filter ? "Blank for all repositories" : "Choose or enter a repository root"} />;
+    suggestions={suggestions.filter(s => s.id.toLowerCase().includes(value.toLowerCase()))} hint={filter ? "Choose a repository identity" : "Choose or enter a repository root"} />;
 }
 
 export function useScopeSuggestions(conn: string) {
-  const roots = useRepositories(conn);
+  const { ids: roots } = useRepositories(conn);
   const agents = Object.values(useSelector(selectAgents(conn)));
   const roles = [...new Set(agents.map(a => a.role).filter(Boolean))];
   return [{ id: "", label: "Every scope" }, { id: "global", label: "Global" },

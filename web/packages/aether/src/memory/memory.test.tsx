@@ -6,6 +6,7 @@ import { connected, click, buttonNamed, pick, type, type Harness } from "../cont
 import { AGENT_ID, demoAgents } from "../controls/fixture/demo.ts";
 import MemoryScreen from "./MemoryScreen.tsx";
 import { MemoryRow } from "./MemoryRow.tsx";
+import { V2_FEATURES } from "./fixture/data.ts";
 let h: Harness;
 afterEach(() => h?.unmount());
 const memory: aether.MemoryRecord = { id: "mem_1", text: "Remember the invariant", kind: "fact", scope: { scope: "global" }, tags: ["design"], created_at: "2026-11-04", confidence: 1, importance: 1, provenance: {} };
@@ -66,12 +67,12 @@ test("remote proposals actions display host-only marks and refusal", async () =>
   expect(root.textContent).toContain("Only the daemon's own host can do this");
 });
 
-test("on the host the proposals listing is refused with its reason and never sent", async () => {
+test("on the host the proposals listing is available", async () => {
   const desktop = { version: 1, connect: async () => "bridge", close: async () => {}, privileged: vi.fn(), getPreference: async () => false } as unknown as DesktopBridge;
   h = await connected({ role: "local", desktop, script: { memories: () => ({ tag: "memories", data: [] }) } });
   const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
-  expect(h.daemon.commands("memories").some(c => (c.query as { proposed?: boolean }).proposed)).toBe(false);
-  expect(root.textContent).toContain("The desktop does not pass this host-only read to the daemon yet");
+  expect(h.daemon.commands("memories").some(c => (c.query as { proposed?: boolean }).proposed)).toBe(true);
+  expect(root.textContent).toContain("No proposals to review");
 });
 
 test("a proposal row accepts and, after confirming, rejects through desktop privileged", async () => {
@@ -133,17 +134,67 @@ test("a late answer to an earlier search never hides the newer search's failure"
 });
 
 test("scope and kind filters and forgotten toggle use exact query fields", async () => {
-  h = await connected({ script: { memories: () => ({ tag: "memories", data: [] }) } });
+  h = await connected({ script: { memories: () => ({ tag: "memories", data: [{ ...memory, scope: { scope: "repository", id: "/repo" } }] }) } });
   const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
   await click(h, root, "Global");
   expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "global" } } });
   await click(h, root, "Repository");
+  expect(h.daemon.commands("memories").every(c => (c.query as { scope?: { id?: string } }).scope?.id !== "")).toBe(true);
   await pick(h, root, "Repository filter", "Another repository…");
   await type(h, root, "Repository filter", "/repo");
   await click(h, root, "decision");
   await click(h, root, "Include forgotten");
   await h.settle();
   expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "repository", id: "/repo" }, kinds: ["decision"], include_forgotten: true, limit: 100 } });
+  await type(h, root, "Repository filter", "github.com/example/older-repo");
+  expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "repository", id: "github.com/example/older-repo" } } });
+});
+
+test("repository creation uses the operator root and refreshes the store count", async () => {
+  let total = 0;
+  h = await connected({ features: V2_FEATURES, script: {
+    memories: () => ({ tag: "memories", data: [] }),
+    create_memory: () => { total++; return { tag: "memory", data: memory }; },
+    memory_migration_status: () => ({ tag: "memory_migration_status", data: {
+      schema_version: 32, migrations: [], memories: { total, admitted: total, implicit: 0, candidates: 0, stale: 0, held_out: 0 }, backups: [],
+    } }),
+  } });
+  const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
+  await click(h, root, "Create memory");
+  await type(h, document.body, "Memory text", "A repository fact");
+  await click(h, document.querySelector('[aria-label="Memory scope"]') as HTMLElement, "Repository");
+  await type(h, document.body, "Repository root", "/repo");
+  await click(h, document.body, "Save memory");
+  await h.settle();
+  expect(h.daemon.commands("create_memory")[0]).toMatchObject({ spec: { scope: { scope: "repository", root: "/repo" } } });
+  expect(h.daemon.commands("memory_migration_status")).toHaveLength(2);
+  expect(root.querySelector(".mem-big")?.textContent).toBe("1");
+});
+
+test("a rejected memory can be discarded or corrected and retried", async () => {
+  let reject = true;
+  h = await connected({ script: { memories: () => ({ tag: "memories", data: [] }), create_memory: () => reject
+    ? { code: "invalid_request", message: "Memory text is too short" } : { tag: "memory", data: memory } } });
+  const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
+  await click(h, root, "Create memory");
+  await type(h, document.body, "Memory text", "x");
+  await import("react").then(({ act }) => act(async () => (document.querySelector('[aria-label="Close Create memory"]') as HTMLButtonElement).click()));
+  await click(h, root, "Create memory");
+  expect((document.querySelector('dialog textarea') as HTMLInputElement).value).toBe("x");
+  await click(h, document.body, "Save memory");
+  expect(document.body.textContent).toContain("Memory text is too short");
+  await click(h, document.body, "Discard");
+  await click(h, root, "Create memory");
+  expect((document.querySelector('dialog textarea') as HTMLInputElement).value).toBe("");
+  await type(h, document.body, "Memory text", "A corrected memory");
+  reject = false;
+  await click(h, document.body, "Save memory");
+  expect(h.daemon.commands("create_memory")).toHaveLength(2);
+  expect(document.querySelector('dialog[open]')).toBeNull();
+  await click(h, root, "Create memory");
+  const reopened = document.querySelector('dialog[open]') as HTMLDialogElement;
+  expect((reopened.querySelector("textarea") as HTMLTextAreaElement).value).toBe("");
+  expect(reopened.textContent).not.toContain("Done");
 });
 
 test("an agent-scoped memory is created, filtered and shown by its agent", async () => {
@@ -163,8 +214,8 @@ test("an agent-scoped memory is created, filtered and shown by its agent", async
   expect(h.daemon.commands("create_memory")[0]).toMatchObject({ spec: { text: "Agent note", scope: { scope: "agent", id: AGENT_ID } } });
 });
 
-test("repository suggestions combine agent roots, recent workspaces and recorded scopes", async () => {
-  const scoped = { ...memory, scope: { scope: "repository", id: "/recorded" } } as aether.MemoryRecord;
+test("repository filter suggests identities and creation suggests workspace roots", async () => {
+  const scoped = { ...memory, scope: { scope: "repository", id: "github.com/acme/project" } } as aether.MemoryRecord;
   h = await connected({ agents: demoAgents().map(a => ({ ...a, scope: { workspace_root: "/agent-root" } })), script: {
     memories: () => ({ tag: "memories", data: [scoped] }),
     list_workspaces: () => ({ tag: "workspaces", data: [{ path: "/recent", exists: true }] }),
@@ -172,14 +223,25 @@ test("repository suggestions combine agent roots, recent workspaces and recorded
   } });
   const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
   await click(h, root, "Repository");
-  await pick(h, root, "Repository filter", "/recent");
-  expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "repository", id: "/recent" } } });
-  await pick(h, root, "Repository filter", "All");
-  expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: null } });
+  const filter = root.querySelector<HTMLButtonElement>('[role="combobox"][aria-labelledby*="label"]');
+  expect(filter).not.toBeNull();
+  await import("react").then(({ act }) => act(async () => filter?.click()));
+  expect([...root.querySelectorAll<HTMLElement>('[role="option"]')].map(option => option.textContent)).not.toContain("/recent");
+  await import("react").then(({ act }) => act(async () => filter?.click()));
+  await pick(h, root, "Repository filter", "github.com/acme/project");
+  expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { scope: { scope: "repository", id: "github.com/acme/project" } } });
+  const beforeClear = h.daemon.commands("memories").length;
+  await pick(h, root, "Repository filter", "Choose a repository");
+  expect(h.daemon.commands("memories")).toHaveLength(beforeClear);
+  expect(root.textContent).toContain("Choose a scope to filter memories.");
   await click(h, root, "Create memory");
   await click(h, document.querySelector('[aria-label="Memory scope"]') as HTMLElement, "Repository");
   await type(h, document.body, "Memory text", "Repository lesson");
   await click(h, document.querySelector('[aria-label="Memory kind"]') as HTMLElement, "lesson");
+  const repositoryRoot = document.querySelector<HTMLInputElement>('[data-testid="memory-create-repository"]');
+  expect(repositoryRoot).not.toBeNull();
+  await import("react").then(({ act }) => act(async () => repositoryRoot?.focus()));
+  expect([...document.querySelectorAll<HTMLElement>('[role="option"]')].map(option => option.textContent)).not.toContain("github.com/acme/project");
   await type(h, document.body, "Repository root", "/agent");
   const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(o => o.textContent === "/agent-root");
   expect(option).toBeDefined();
@@ -187,7 +249,7 @@ test("repository suggestions combine agent roots, recent workspaces and recorded
   await type(h, document.body, "Tags", "one, two");
   expect(document.querySelectorAll("dialog .ui-badge").length).toBeGreaterThanOrEqual(2);
   await click(h, document.body, "Save memory");
-  expect(h.daemon.commands("create_memory")[0]).toMatchObject({ spec: { kind: "lesson", text: "Repository lesson", scope: { scope: "repository", id: "/agent-root" }, tags: ["one", "two"] } });
+  expect(h.daemon.commands("create_memory")[0]).toMatchObject({ spec: { kind: "lesson", text: "Repository lesson", scope: { scope: "repository", root: "/agent-root" }, tags: ["one", "two"] } });
 });
 
 beforeEach(() => { for (const key of drafts.keys()) drafts.clear(key); });

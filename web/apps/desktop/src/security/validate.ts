@@ -14,6 +14,8 @@ export class BridgeRefusal extends Error {
   override readonly name = "BridgeRefusal";
 }
 
+export class BridgeConnectionLost extends BridgeRefusal {}
+
 /** Who sent an IPC message, as Electron reports it. */
 export interface Sender {
   /** Main registered this webContents as an app window (never a remote window). */
@@ -125,7 +127,7 @@ export class Validator {
   private frameCall(method: "request" | "subscribe", conn: string, text: string | undefined, connections: Connections): ValidCall {
     if (text === undefined) throw new BridgeRefusal("a frame call carries its frame text");
     const kind = connections.kindOf(conn);
-    if (kind === undefined) throw new BridgeRefusal(`${conn} is not an open local connection`);
+    if (kind === undefined) throw new BridgeConnectionLost(`${conn} is not an open local connection`);
     const frame = JSON.parse(text) as Frame;
     if (!Number.isSafeInteger(frame.req) || (frame.req as number) < 1) {
       throw new BridgeRefusal("A frame carries its request id in req, a positive integer");

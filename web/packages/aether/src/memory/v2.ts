@@ -1,29 +1,21 @@
-// Whether this connection serves Memory 2.0 (docs/memory/MEMORY-V2.md), and whether this device may
-// send one of its commands. The desktop bridge passes only observe and operate requests.
+// Whether this connection serves Memory 2.0 and may send its host-only commands.
 
-import { useCapabilities, usePermission, useSelector, type CommandInput, type Permission } from "@aether-ui/core";
+import { usePermission, useSelector, type CommandInput, type Permission } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
 import { useCallback } from "react";
 import { invariant } from "../fleet/invariant.ts";
 
 export const MEMORY_V2 = "memory_v2";
-export const DESKTOP_GAP = "The desktop does not pass this host-only command to the daemon yet";
 
 /** True when the daemon's welcome listed `memory_v2`; an older daemon sees the screen as before. */
 export function useMemoryV2(conn: ConnId): boolean {
   return useSelector(useCallback((state) => state.connections[conn]?.features.includes(MEMORY_V2) === true, [conn]));
 }
 
-/**
- * Core's access check for `command`, plus the desktop's own limit: a host-only command is a plain
- * request here, which the desktop bridge refuses, so it is refused before it is offered.
- */
+/** Apply the host-standing check before offering a memory maintenance command. */
 export function useHostGate(conn: ConnId, command: CommandInput): Permission {
   invariant(typeof (command as { cmd?: unknown }).cmd === "string", "a gated command names its cmd");
-  const permission = usePermission(conn, command);
-  const electron = useCapabilities()["host.electron"] === true;
-  if (permission.refusal !== null || permission.access !== "host_only" || !electron) return permission;
-  return { ...permission, refusal: DESKTOP_GAP };
+  return usePermission(conn, command);
 }
 
 /** The data of a command's reply, checked to be the reply `tag` the contract names. */

@@ -2,7 +2,8 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Bridge, type BridgeHost } from "../../src/bridge/bridge.ts";
+import { Bridge, requestWithRefusal, type BridgeHost } from "../../src/bridge/bridge.ts";
+import { BridgeRefusal } from "../../src/security/validate.ts";
 import type { DaemonLink, Frame } from "../../src/bridge/daemon-link.ts";
 import { APP_SENDER, VALIDATOR } from "./support.ts";
 
@@ -11,6 +12,58 @@ const DAEMON = { id: "archon:local", kind: "archon", label: "archond", socket: "
 const HELLO = { cmd: "hello", req: 1, protocol_version: 24, client: "archon-web", client_version: "0.0.0" };
 const SAY = { cmd: "say", req: 2, text: "hello" };
 const ANSWER = { cmd: "answer", req: 3, question: "q_1", text: "yes" };
+
+test("a local refusal is a definite error reply and other failures remain visible", async () => {
+  const refuse = async () => { throw new BridgeRefusal("invalid memory scope"); };
+  assert.deepEqual(await requestWithRefusal(refuse, { req: 7 }), {
+    frame: "reply", id: 7, result: { Err: { code: "forbidden", message: "invalid memory scope" } },
+  });
+  await assert.rejects(requestWithRefusal(refuse, { req: 0 }), /invalid memory scope/);
+  await assert.rejects(requestWithRefusal(async () => { throw new Error("link lost"); }, { req: 7 }), /link lost/);
+});
+
+test("a closed connection remains a bridge failure instead of a forbidden reply", async () => {
+  const bridge = bridgeToArchond(24, []);
+  const conn = await open(bridge);
+  await bridge.handle(APP_SENDER, OWNER, "close", [conn]);
+  await assert.rejects(requestWithRefusal(() => send(bridge, conn, SAY), SAY), /not an open local connection/);
+});
+
+test("an oversized import receives a definite refusal", async () => {
+  const host = { findDaemons: async () => [{ id: "aether:local", kind: "aether", label: "test", socket: "/private/aether.sock", reachable: true }],
+    openLink: async () => ({ isOpen: true, close: () => {} }) } as unknown as BridgeHost;
+  const bridge = new Bridge(VALIDATOR, host);
+  const conn = await bridge.handle(APP_SENDER, OWNER, "connect", ["aether:local"]) as string;
+  const frame = { cmd: "memory_import", artifact: "x".repeat(1024 * 1024), dry_run: true, req: 7 };
+  const reply = await requestWithRefusal(() => send(bridge, conn, frame), frame);
+  assert.deepEqual(reply, { frame: "reply", id: 7, result: { Err: { code: "forbidden", message: "The frame exceeds the 1 MiB limit" } } });
+});
+
+test("memory writes and export require native confirmation before the frame is sent", async () => {
+  const sent: Frame[] = [];
+  const shown: unknown[] = [];
+  let allowed = false;
+  const link = { isOpen: true, request: async (text: string) => { sent.push(JSON.parse(text) as Frame); return {}; },
+    send: (text: string) => { sent.push(JSON.parse(text) as Frame); }, hasPending: () => false, close: () => {} } as unknown as DaemonLink;
+  const host = { findDaemons: async () => [{ id: "aether:local", kind: "aether", label: "test", socket: "/private/aether.sock", reachable: true }],
+    openLink: async () => link, confirm: async (_owner: number, confirmation: unknown) => { shown.push(confirmation); return allowed; } } as unknown as BridgeHost;
+  const bridge = new Bridge(VALIDATOR, host);
+  const conn = await bridge.handle(APP_SENDER, OWNER, "connect", ["aether:local"]) as string;
+  for (const frame of [{ cmd: "consolidate_memories", dry_run: false }, { cmd: "memory_import", dry_run: false, artifact: "{}" }, { cmd: "memory_export" }]) {
+    await assert.rejects(send(bridge, conn, { ...frame, req: 1 }), /Cancelled/);
+    assert.equal(sent.length, 0);
+    allowed = true;
+    await send(bridge, conn, { ...frame, req: 2 });
+    assert.deepEqual(sent.at(-1), { ...frame, req: 2 });
+    allowed = false;
+    sent.length = 0;
+  }
+  assert.equal(shown.length, 6);
+  await assert.rejects(bridge.handle(APP_SENDER, OWNER, "subscribe", [conn, { cmd: "memory_import", dry_run: false, artifact: "{}", req: 4 }]), /Cancelled/);
+  assert.equal(sent.length, 0);
+  await send(bridge, conn, { cmd: "consolidate_memories", dry_run: true, req: 3 });
+  assert.equal(shown.length, 7);
+});
 
 /** An archond that welcomes with `protocol` and answers anything else Ok. */
 function bridgeToArchond(protocol: number | "garbled", sent: Frame[]): Bridge {

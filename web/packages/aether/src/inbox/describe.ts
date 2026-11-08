@@ -9,6 +9,7 @@ const VERBS: Readonly<Record<string, string>> = {
   pause: "Pause", resume: "Resume", restart: "Restart", archive: "Archive", update_agent: "Update", set_approvals: "Approval policy",
   add_approval_rule: "New rule", create_schedule: "New schedule", update_schedule: "Schedule change", create_agent: "Start agent",
   create_task: "New task", create_memory: "New memory", forget_memory: "Forget memory", pin_memory: "Pin memory",
+  accept_memory: "Accept memory", reject_memory: "Reject memory", restore_memory: "Restore memory",
   subscribe_push: "Turn on notifications", unsubscribe_push: "Turn off notifications",
 };
 
@@ -25,9 +26,10 @@ function target(command: Json): string | null {
 /** One line for the review: "Cancel · release-captain", with the agent's name when known. */
 export function describeCommand(command: Json, names: Readonly<Record<string, string>>): { readonly title: string; readonly detail: string | null } {
   invariant(typeof command.cmd === "string" && command.cmd !== "", "a submission is a named command");
-  const verb = VERBS[command.cmd] ?? command.cmd.replaceAll("_", " ");
+  const verb = command.cmd === "pin_memory" && command.pinned === false ? "Unpin memory" : VERBS[command.cmd] ?? command.cmd.replaceAll("_", " ");
   const id = target(command);
   const title = id === null ? verb : `${verb} · ${names[id] ?? id}`;
-  const text = typeof command.content === "string" ? command.content : typeof command.reason === "string" ? command.reason : null;
+  const spec = command.cmd === "create_memory" && command.spec !== null && typeof command.spec === "object" ? command.spec as Json : null;
+  const text = typeof spec?.text === "string" ? spec.text : typeof command.content === "string" ? command.content : typeof command.reason === "string" ? command.reason : null;
   return { title, detail: text === null ? null : text.length > 140 ? `${text.slice(0, 139)}…` : text };
 }

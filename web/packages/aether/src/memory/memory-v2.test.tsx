@@ -214,11 +214,11 @@ test("observers and paired devices see the refusal, not the host-only tools, but
   }
 });
 
-test("on the desktop the host-only tools say the bridge does not pass them yet", async () => {
+test("on the desktop the host can access the maintenance and explain tools", async () => {
   const desktop = { version: 1, connect: async () => "bridge", close: async () => {}, privileged: vi.fn(), getPreference: async () => false } as unknown as DesktopBridge;
   const root = await screen("local", V2_FEATURES, desktop);
-  expect(section(root, "Maintenance")?.textContent).toContain("The desktop does not pass this host-only command to the daemon yet");
-  expect(section(root, "Retrieval explain")?.querySelector("input")).toBeNull();
+  expect(section(root, "Maintenance")?.textContent).toContain("Plan consolidation");
+  expect(section(root, "Retrieval explain")?.querySelector("input")).not.toBeNull();
 });
 
 test("the store panel shows the schema, migrations, counts, backups and last import", async () => {
@@ -250,5 +250,35 @@ test("export and consolidation suggestions send the selected scope unchanged", a
   await act(async () => choice?.click());
   await click(h, maintenance, "Plan consolidation");
   expect(h.daemon.commands("consolidate_memories")[0]).toMatchObject({ scope: { scope: "global" }, dry_run: true });
+  vi.restoreAllMocks();
+});
+
+
+test("maintenance scope suggestions use stored identities rather than workspace roots", async () => {
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:scope-export");
+  vi.spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
+  h = await connected({ role: "local", features: V2_FEATURES, agents: demoAgents().map(agent => ({ ...agent, scope: { workspace_root: "/workspace/root" } })),
+    script: { ...memoryScript(), list_workspaces: () => ({ tag: "workspaces", data: [{ path: "/other/root", exists: true }] }) } });
+  const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
+  const maintenance = section(root, "Maintenance") as HTMLElement;
+  for (const [toolName, label, optionName, action] of [
+    ["Export", "Export scope", "github.com/mengsig/aether · agent", "Export memories"],
+    ["Consolidate", "Consolidation scope", "Repository github.com/mengsig/aether", "Plan consolidation"],
+  ] as const) {
+    const tool = maintenance.querySelector(`[aria-label="${toolName}"]`) as HTMLElement;
+    await type(h, tool, label, "repo");
+    const options = [...tool.querySelectorAll<HTMLElement>('[role="option"]')];
+    const labels = options.map(option => option.textContent);
+    expect(labels).toContain("Repository github.com/mengsig/aether");
+    expect(labels).toContain("github.com/mengsig/aether · agent");
+    expect(labels.join(" ")).not.toContain("/workspace/root");
+    expect(labels.join(" ")).not.toContain("/other/root");
+    const choice = options.find(option => option.textContent === optionName);
+    expect(choice).toBeDefined();
+    await act(async () => choice?.click());
+    await click(h, tool, action);
+  }
+  expect(h.daemon.commands("memory_export")[0]).toMatchObject({ scope: { scope: "repository_role", id: "github.com/mengsig/aether", role: "agent" } });
+  expect(h.daemon.commands("consolidate_memories")[0]).toMatchObject({ scope: { scope: "repository", id: "github.com/mengsig/aether" }, dry_run: true });
   vi.restoreAllMocks();
 });

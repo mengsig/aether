@@ -128,7 +128,7 @@ export class Connection {
         (code, reason) => { if (generation === this.generation) this.closed(code, reason); });
       if (generation !== this.generation) return link.close();
       this.link = link;
-      this.rpc = rpcBox.rpc = new Rpc(link);
+      this.rpc = rpcBox.rpc = new Rpc(link, undefined, this.endpoint.daemon === "aether" && this.endpoint.transport.id === "ipc");
       const welcome = await this.greet(this.rpc);
       if (generation !== this.generation) return;
       this.ready(welcome);

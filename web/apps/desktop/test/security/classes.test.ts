@@ -8,6 +8,25 @@ import { test } from "node:test";
 import { REPO_ROOT } from "../../src/main/paths.ts";
 import { AETHER_BY_FIELD, AETHER_HOST_READS, AETHER_REMOTE_ADMIN, AETHER_HOST_ONLY, ARCHON_PASS, aetherClass, passThroughRefusal } from "../../src/security/classes.ts";
 import { SCHEMAS } from "./support.ts";
+import { APP_SENDER, AETHER_CONN, CONNECTIONS, VALIDATOR } from "./support.ts";
+
+test("memory controls pass only schema-valid frames", () => {
+  const frames = [
+    { cmd: "memories", query: { proposed: true } },
+    { cmd: "memory_retrieval_explain", task: "tsk_01JAAAAAAAAAAAAAAAAAAAAAAA" },
+    { cmd: "consolidate_memories", dry_run: true },
+    { cmd: "memory_export" },
+    { cmd: "memory_import", artifact: "{}", dry_run: true },
+    { cmd: "create_memory", spec: { text: "Fact", kind: "fact", scope: { scope: "repository", root: "/repo" } } },
+    { cmd: "memories", query: { scope: { scope: "repository", id: "github.com/example/repo" } } },
+  ];
+  for (const frame of frames) assert.doesNotThrow(() => VALIDATOR.check(APP_SENDER, "request", [AETHER_CONN, { req: 1, ...frame }], CONNECTIONS));
+  assert.throws(() => VALIDATOR.check(APP_SENDER, "request", [AETHER_CONN, { req: 1, cmd: "memory_import", artifact: "{}", dry_run: "false" }], CONNECTIONS));
+  assert.throws(() => VALIDATOR.check(APP_SENDER, "request", [AETHER_CONN, { req: 1, cmd: "create_memory", spec: { text: "Fact", kind: "fact", scope: { scope: "repository", id: "/repo" } } }], CONNECTIONS));
+  assert.notEqual(passThroughRefusal("aether", { cmd: "memory_retrieval_explain" }), undefined);
+  assert.notEqual(passThroughRefusal("aether", { cmd: "consolidate_memories" }), undefined);
+  assert.notEqual(passThroughRefusal("aether", { cmd: "shutdown" }), undefined);
+});
 
 const RUST_CLASSES: Readonly<Record<string, string>> = {
   Observe: "observe", Operate: "operate", HostOnly: "host_only", RemoteAdmin: "remote_admin", DeviceSelf: "device_self",

@@ -33,6 +33,7 @@ export interface PackagedApp {
   readonly compositor: NodeJS.ProcessEnv;
   /** Runs the binary again on the same profile, as the system does for a link; resolves once it exits. */
   again(args: readonly string[]): Promise<number | null>;
+  readonly waylandDisplay: string;
   close(): Promise<void>;
 }
 
@@ -73,7 +74,6 @@ async function until<T>(read: () => T | undefined, what: string, alive: Spawned)
 /** Starts a headless sway whose Wayland socket will appear in `runtime`. */
 async function spawnCompositor(root: string, runtime: string, env: NodeJS.ProcessEnv): Promise<Spawned> {
   assert.ok(runtime.length <= MAX_RUNTIME_DIR, `the compositor's runtime dir is short enough for its sockets: ${runtime}`);
-  await mkdir(runtime, { mode: 0o700 });
   const config = path.join(root, "sway.conf");
   await writeFile(config, SWAY_CONFIG);
   const swayEnv: NodeJS.ProcessEnv = { ...env, XDG_RUNTIME_DIR: runtime, WLR_BACKENDS: "headless", WLR_RENDERER: "pixman", WLR_LIBINPUT_NO_DEVICES: "1" };
@@ -208,7 +208,7 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
       runs += 1;
       return runAgain(binary, [...shared, ...args], { env: appEnv, cwd: root, log: path.join(root, `again-${runs}.log`) });
     };
-    return { window: await appWindow(browser), browser, native, compositor, again, close };
+    return { window: await appWindow(browser), browser, native, compositor, waylandDisplay: display, again, close };
   } catch (error) {
     const tails = `${logTail(log)}\n-- sway:\n${logTail(path.join(root, "sway.log"))}\n-- keyboard:\n${logTail(path.join(root, "keyboard.log"))}`;
     return failLaunch(error, `The packaged app did not start; its logs ended:\n${tails}`, close);

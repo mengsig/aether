@@ -43,6 +43,15 @@ const RESEND_TEXT: Readonly<Record<"absent_safe" | "unknown", string>> = {
   unknown: "If it did run and the daemon has since forgotten its receipt, sending it again does it a second time.",
 };
 
+function repairRepositoryScope(command: Record<string, unknown>): Record<string, unknown> {
+  const spec = command.spec as Record<string, unknown> | undefined;
+  const scope = spec?.scope as Record<string, unknown> | undefined;
+  if (scope?.scope !== "repository" || typeof scope.id !== "string" || scope.id === "") return command;
+  const { id, ...rest } = scope;
+  const target = (id as string).startsWith("/") ? { root: id } : { repository: id };
+  return { ...command, spec: { ...spec, scope: { ...rest, ...target } } };
+}
+
 /** One unconfirmed submission on a live connection: check, then send again or discard. */
 function Unconfirmed({ conn, submission, names }: { readonly conn: ConnId; readonly submission: Submission; readonly names: Readonly<Record<string, string>> }) {
   invariant(submission.state === "unknown" && submission.key !== "", "the review shows unconfirmed, keyed submissions");
@@ -55,6 +64,8 @@ function Unconfirmed({ conn, submission, names }: { readonly conn: ConnId; reado
   const read = useSelector(useMemo(() => selectRead(conn, key), [conn, key]));
   const resolution = (read?.value ?? null) as Resolution | null;
   const { title, detail } = describeCommand(submission.command, names);
+  const refused = submission.command.cmd === "create_memory" && (submission.attempt ?? 1) === 1
+    && /Desktop bridge call failed:.*BridgeRefusal:/.test(submission.error ?? "");
   useEffect(() => {
     if (resolution?.outcome === "executed") app.settle(conn, submission.key);
   }, [app, conn, resolution?.outcome, submission.key]);
@@ -66,11 +77,13 @@ function Unconfirmed({ conn, submission, names }: { readonly conn: ConnId; reado
         <span className="b3-meta">{submission.error ?? "No reply"}</span>
       </div>
       {detail ? <p className="b3-prose">{detail}</p> : null}
+      {refused ? <p className="b3-note" role="status" data-state="failed">The desktop refused this request before sending it. You can try again or discard it.</p> : null}
       {resolution ? <p className="b3-note" role="status" data-state={resolution.outcome === "absent_safe" ? "done" : "unconfirmed"}>{OUTCOME_TEXT[resolution.outcome]}</p> : null}
       {read?.error ? <p className="b3-note" role="alert" data-state="failed">The check failed: {read.error}</p> : null}
       <div className="b3-row">
-        <Action conn={conn} command={check} label={resolution ? "Check again" : "Check what happened"} busy={readInFlight(read)}
-          onRun={() => app.reread(conn, key, check, ["submission_resolved"])} />
+        {refused ? <Action conn={conn} command={submission.command} label="Try again" busy={run.status.state === "busy"}
+          onRun={() => run.send(repairRepositoryScope(submission.command), "Sent and confirmed")} /> : <Action conn={conn} command={check} label={resolution ? "Check again" : "Check what happened"} busy={readInFlight(read)}
+          onRun={() => app.reread(conn, key, check, ["submission_resolved"])} />}
         {again ? (
           <Action conn={conn} command={submission.command} label="Send again" variant={again === "unknown" ? "danger" : "primary"} busy={run.status.state === "busy"}
             confirm={{ title: `Send ${title} again?`, body: RESEND_TEXT[again], confirmLabel: "Send again" }}

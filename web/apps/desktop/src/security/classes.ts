@@ -148,6 +148,14 @@ export function passThroughRefusal(kind: DaemonKind, frame: Frame, archonProtoco
   if (cmd === "shutdown") return "shutdown is never sent from the desktop app";
   if (kind === "archon") return archonRefusal(cmd, frame, archonProtocol);
   if (AETHER_HOST_READS.has(cmd)) return hostReadRefusal(frame, method);
+  if (cmd === "memories" && field(frame, "query").proposed === true) return undefined;
+  if (cmd === "memory_retrieval_explain") {
+    const task = typeof frame.task === "string" && frame.task.length > 0;
+    const invocation = typeof frame.invocation === "string" && frame.invocation.length > 0;
+    return task !== invocation ? undefined : "Name exactly one task or invocation";
+  }
+  if (cmd === "memory_export") return undefined;
+  if ((cmd === "consolidate_memories" || cmd === "memory_import") && typeof frame.dry_run === "boolean") return undefined;
   const access = aetherClass(frame);
   if (access === undefined) return `Unknown command ${cmd}`;
   if (access !== "observe" && access !== "operate") return `${cmd} is ${access} and needs a privileged action`;

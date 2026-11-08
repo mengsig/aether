@@ -1,12 +1,13 @@
 // The bridge's main side: every IPC call enters through `handle`, passes the Validator, and
 // only then reaches the method that serves it. Electron-specific effects come in through BridgeHost.
 
+import { createHash } from "node:crypto";
 import type { LocalDaemon, PreferenceKey, PrivilegedAction, SetupResult, SetupStep } from "@aether-ui/protocol";
 import { revokedRule, type DaemonKind } from "../security/classes.ts";
-import { confirmation, labelSlot, TEMPLATES, valueSlot, type Confirmation } from "../security/confirm.ts";
+import { confirmation, daemonSlot, labelSlot, TEMPLATES, valueSlot, type Confirmation } from "../security/confirm.ts";
 import { externalTarget } from "../native/external.ts";
 import { normalizeOrigin } from "../security/origins.ts";
-import { BridgeRefusal, Validator, type Sender, type ValidCall } from "../security/validate.ts";
+import { BridgeConnectionLost, BridgeRefusal, Validator, type Sender, type ValidCall } from "../security/validate.ts";
 import { ConnectionTable, type LocalDaemonRecord } from "./connections.ts";
 import { okData, type DaemonLink, type Frame } from "./daemon-link.ts";
 import { planAction, type Read } from "./privileged.ts";
@@ -43,6 +44,17 @@ const HELLO_REQ = 1;
 const ACTION_REQ = 2;
 const FIRST_READ_REQ = 3;
 
+/** A bridge refusal is known to precede delivery; return it as the request's error reply. */
+export async function requestWithRefusal(handle: () => Promise<unknown>, frame: unknown): Promise<unknown> {
+  try {
+    return await handle();
+  } catch (error) {
+    const req = frame !== null && typeof frame === "object" ? (frame as Frame).req : undefined;
+    if (!(error instanceof BridgeRefusal) || error instanceof BridgeConnectionLost || !Number.isSafeInteger(req) || (req as number) < 1) throw error;
+    return { frame: "reply", id: req, result: { Err: { code: "forbidden", message: error.message } } };
+  }
+}
+
 export class Bridge {
   readonly connections: ConnectionTable;
   private readonly validator: Validator;
@@ -66,9 +78,11 @@ export class Bridge {
       case "connect": return this.connections.connect(owner, await this.daemon(call.daemon));
       case "request":
         await this.refuseGlobalRuleRevocation(owner, call.conn, call.frame);
+        await this.confirmMemoryAccess(owner, call.conn, call.frame);
         return this.connections.request(owner, call.conn, call.frame, call.text);
       case "subscribe":
         await this.refuseGlobalRuleRevocation(owner, call.conn, call.frame);
+        await this.confirmMemoryAccess(owner, call.conn, call.frame);
         return this.connections.subscribe(owner, call.conn, call.frame, call.text);
       case "close": return this.connections.close(owner, call.conn);
       case "privileged": return this.privileged(owner, call.action);
@@ -81,6 +95,22 @@ export class Bridge {
       case "getPreference": return this.host.getPreference(call.key);
       case "setPreference": return this.host.setPreference(call.key, call.value);
       case "setup": return this.host.setup(owner, call.step);
+    }
+  }
+
+  private async confirmMemoryAccess(owner: number, conn: string, frame: Frame): Promise<void> {
+    const exporting = frame.cmd === "memory_export";
+    if (!exporting && (frame.dry_run !== false || (frame.cmd !== "consolidate_memories" && frame.cmd !== "memory_import"))) return;
+    const daemon = daemonSlot(this.connections.daemonOf(owner, conn));
+    const importing = frame.cmd === "memory_import";
+    if (importing && typeof frame.artifact !== "string") throw new BridgeRefusal("Import needs an artifact");
+    const scope = JSON.stringify(frame.scope ?? "all");
+    if (scope.length > 1024) throw new BridgeRefusal("The memory scope is too long to confirm");
+    const target = importing ? `SHA-256 ${createHash("sha256").update(frame.artifact as string).digest("hex")}`
+      : `Scope ${valueSlot(scope)}`;
+    const action = importing ? "Import memories" : exporting ? "Export memories" : "Consolidate memories";
+    if (!(await this.host.confirm(owner, { title: action, message: `${action}?`, detail: `${target}\nDaemon ${daemon}`, confirm: action }))) {
+      throw new BridgeRefusal("Cancelled");
     }
   }
 
