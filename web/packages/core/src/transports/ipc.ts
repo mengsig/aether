@@ -26,6 +26,7 @@ export function ipcTransport(bridge: DesktopBridge, report: (message: string) =>
         bridge.close(conn).catch((closeError: unknown) => report(`Could not close local connection ${conn}: ${errorText(closeError)}`));
         onClose(CLOSE_BRIDGE_FAILED, `Desktop bridge call failed: ${errorText(error)}`);
       };
+      unsubscribes.push(bridge.onClose(conn, () => lost(new Error("The daemon closed the connection"))));
       const deliver = (frame: unknown) => { if (open) onFrame(frame); };
       const rejected = (command: Json, error: unknown) => {
         const message = errorText(error);

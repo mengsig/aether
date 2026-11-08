@@ -10,8 +10,10 @@ import { requestWithRefusal, type Bridge } from "../bridge/bridge.ts";
 import type { Frame } from "../bridge/daemon-link.ts";
 import type { Confirmation } from "../security/confirm.ts";
 import { BRIDGE_METHODS, type Sender } from "../security/validate.ts";
+import { sendToOwner } from "./owner-events.ts";
 
 export const PUSH_CHANNEL = "desktop:push";
+export const CLOSED_CHANNEL = "desktop:closed";
 
 export function channel(method: string): string {
   return `desktop:${method}`;
@@ -38,10 +40,12 @@ export function registerIpc(ipcMain: IpcMain, bridge: Bridge, appWindows: Readon
 
 /** Sends a daemon frame to the window that owns its connection; false when that window is gone. */
 export function pushFrame(owner: number, conn: string, frame: Frame): boolean {
-  const contents = webContents.fromId(owner);
-  if (contents === undefined || contents.isDestroyed()) return false;
-  contents.send(PUSH_CHANNEL, conn, frame);
-  return true;
+  return sendToOwner((id) => webContents.fromId(id), owner, PUSH_CHANNEL, conn, frame);
+}
+
+/** Sends closure only to the connection's owner, if its window still exists. */
+export function pushClosed(owner: number, conn: string): boolean {
+  return sendToOwner((id) => webContents.fromId(id), owner, CLOSED_CHANNEL, conn);
 }
 
 /** The native dialog: Cancel is the default and the escape answer. */

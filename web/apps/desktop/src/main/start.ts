@@ -26,7 +26,7 @@ import { compileSchemas, readProtocolSchema } from "../security/schema.ts";
 import { Validator } from "../security/validate.ts";
 import { serveApp } from "./app-protocol.ts";
 import { appWindowOptions } from "./app-window.ts";
-import { confirmNatively, openExternalLink, openTerminal, pushFrame, registerIpc } from "./host.ts";
+import { confirmNatively, openExternalLink, openTerminal, pushClosed, pushFrame, registerIpc } from "./host.ts";
 import { AETHER_SCHEMA, ARCHON_SCHEMA, PRELOAD, WEB_DIST } from "./paths.ts";
 import { PreferenceStore } from "./preferences.ts";
 
@@ -69,6 +69,7 @@ interface HostParts {
   readonly deepLinks: DeepLinkRouter;
   readonly folders: FolderTokens;
   push(owner: number, conn: string, frame: Frame): void;
+  closed(owner: number, conn: string): void;
 }
 
 type Daemons = ReturnType<typeof daemonsOf>;
@@ -101,7 +102,7 @@ function setupOf(machine: Machine, daemons: Daemons, preferences: PreferenceStor
 }
 
 function host(options: DesktopOptions, parts: HostParts): BridgeHost {
-  const { remote, reports, preferences, protocolVersions, push, deepLinks, folders } = parts;
+  const { remote, reports, preferences, protocolVersions, push, closed, deepLinks, folders } = parts;
   const version = app.getVersion();
   const machine = machineOf(options.env, process.platform, os.userInfo().homedir);
   const daemons = daemonsOf(machine, preferences, (kind) => helloFrame(kind, protocolVersions[kind], version));
@@ -112,6 +113,7 @@ function host(options: DesktopOptions, parts: HostParts): BridgeHost {
     findDaemons: daemons.find,
     openLink: (socket) => DaemonLink.connect(socket),
     push,
+    closed,
     confirm,
     openTerminal,
     notify: async (owner, note) => {
@@ -154,6 +156,7 @@ export async function startDesktop(options: DesktopOptions): Promise<Desktop> {
   const bridge: Bridge = new Bridge(new Validator(schemas), host(options, {
     remote, reports, preferences, protocolVersions, deepLinks, folders,
     push: (owner, conn, frame) => { if (!pushFrame(owner, conn, frame)) bridge.connections.closeOwner(owner); },
+    closed: (owner, conn) => { if (!pushClosed(owner, conn)) bridge.connections.closeOwner(owner); },
   }));
   registerIpc(ipcMain, bridge, appWindowIds);
   const base = appWindowOptions(PRELOAD);

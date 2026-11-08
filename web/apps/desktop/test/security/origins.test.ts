@@ -24,7 +24,7 @@ test("an origin is https:, with no path, query, fragment or userinfo", () => {
 
 function hostWith(origins: unknown, opened: string[], asked: Confirmation[] = [], answer = false): BridgeHost {
   return {
-    findDaemons: async () => [], openLink: async () => { throw new Error("no daemon"); }, push: () => {},
+    findDaemons: async () => [], openLink: async () => { throw new Error("no daemon"); }, push: () => {}, closed: () => {},
     confirm: async (_owner, confirmation) => { asked.push(confirmation); return answer; },
     openTerminal: async () => {}, notify: () => {},
     startDaemon: async () => {}, pickDirectory: async () => null,

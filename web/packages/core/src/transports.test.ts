@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { Json } from "./guards.ts";
 import { newIdentity, type DeviceIdentity, type IdentityStore } from "./transports/identity.ts";
 import { ipcTransport } from "./transports/ipc.ts";
+import { Connection } from "./connection.ts";
+import { INITIAL_STATE, Store } from "./store.ts";
 import type { SocketLike } from "./transports/socket.ts";
 import { aetherSocketTransport } from "./transports/ws-aether.ts";
 import { archonSocketTransport } from "./transports/ws-archon.ts";
@@ -167,6 +169,7 @@ describe("ipc", () => {
         return unsubscribe;
       }),
       close: vi.fn(async () => {}),
+      onClose: vi.fn(() => () => {}),
       ...overrides,
     } as unknown as DesktopBridge;
     return { desktop, unsubscribe };
@@ -224,6 +227,34 @@ describe("ipc", () => {
     await tick();
     expect(onClose).toHaveBeenCalledWith(1011, expect.stringContaining("is closed"));
     expect(desktop.close).toHaveBeenCalledWith("c1");
+  });
+
+  it("moves to backoff and retries when main reports a closed link", async () => {
+    vi.useFakeTimers();
+    try {
+      let notify: (() => void) | undefined;
+      const { desktop } = bridge({
+        onClose: vi.fn((_conn, callback) => { notify = callback; return () => { notify = undefined; }; }),
+        request: vi.fn(() => new Promise(() => {})),
+      });
+      const store = new Store(INITIAL_STATE, (flush) => flush());
+      const connection = new Connection({ daemon: "aether", transport: ipcTransport(desktop, () => {}), target: "local", label: "host" },
+        { store, clientVersion: "test", random: () => 0, publish: () => {}, settingsChanged: () => {} });
+      connection.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(connection.current.state).toBe("connecting");
+      expect(notify).toBeDefined();
+      notify?.();
+      expect(connection.current.state).toBe("backoff");
+      await vi.advanceTimersByTimeAsync(250);
+      expect(desktop.connect).toHaveBeenCalledTimes(2);
+      connection.stop();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(desktop.connect).toHaveBeenCalledTimes(2);
+      expect(connection.current.state).toBe("closed");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("refuses an unknown bridge version", () => {

@@ -112,6 +112,7 @@ function fakeHost(recorded: Recorded, shown: Confirmation[], answer: boolean): B
     findDaemons: async () => [daemon, { ...daemon, id: "archon:local", kind: "archon", label: "archond" }],
     openLink: async () => recorded.link,
     push: () => {},
+    closed: () => {},
     confirm: async (_owner, confirmation) => { shown.push(confirmation); return answer; },
     openTerminal: async () => { throw new Error("no terminal in this test"); },
     notify: () => {}, startDaemon: async () => {}, pickDirectory: async () => null,

@@ -8,6 +8,7 @@ export interface DesktopBridge {
   connect(daemon: string): Promise<string>;      // returns a connection id
   request(conn: string, frame: unknown): Promise<unknown>;   // validated ClientFrame → reply frame
   subscribe(conn: string, frame: unknown, onFrame: (f: unknown) => void): Promise<() => void>;
+  onClose(conn: string, cb: () => void): () => void;         // unexpected local link closure
   close(conn: string): Promise<void>;
   privileged(action: PrivilegedAction): Promise<unknown>;   // main builds frame and confirmation text
   startDaemon(kind: "aether" | "archon"): Promise<void>;     // only if desktop.managed_start

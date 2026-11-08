@@ -16,6 +16,7 @@ export interface ConnectionDeps {
   openLink(socket: string): Promise<DaemonLink>;
   /** Hands a frame that answers no `request` to the window that owns the connection. */
   push(owner: number, conn: string, frame: Frame): void;
+  closed(owner: number, conn: string): void;
 }
 
 interface Entry {
@@ -45,10 +46,13 @@ export class ConnectionTable implements Connections {
   async connect(owner: number, daemon: LocalDaemonRecord): Promise<string> {
     if (!Number.isInteger(owner)) throw new Error("a connection's owner is a webContents id");
     const link = await this.deps.openLink(daemon.socket);
+    if (!link.isOpen) throw new BridgeConnectionLost("The daemon closed during connection setup");
     const conn = `local:${randomUUID()}`;
     if (this.entries.has(conn)) throw new Error("connection ids are unique");
     link.onFrame = (frame) => this.deps.push(owner, conn, frame);
-    link.onClose = () => this.entries.delete(conn);
+    link.onClose = () => {
+      if (this.entries.delete(conn)) this.deps.closed(owner, conn);
+    };
     this.entries.set(conn, { owner, daemon, link });
     return conn;
   }

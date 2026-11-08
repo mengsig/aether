@@ -18,6 +18,7 @@ export interface BridgeHost {
   findDaemons(): Promise<Array<LocalDaemonRecord & { reachable: boolean; version?: string }>>;
   openLink(socket: string): Promise<DaemonLink>;
   push(owner: number, conn: string, frame: Frame): void;
+  closed(owner: number, conn: string): void;
   confirm(owner: number, confirmation: Confirmation): Promise<boolean>;
   openTerminal(argv: readonly string[]): Promise<void>;
   notify(owner: number, note: { title: string; body: string; route?: string; backgroundOnly?: boolean }): undefined | Promise<boolean>;
@@ -63,7 +64,7 @@ export class Bridge {
   constructor(validator: Validator, host: BridgeHost) {
     this.validator = validator;
     this.host = host;
-    this.connections = new ConnectionTable({ openLink: (socket) => host.openLink(socket), push: (...args) => host.push(...args) });
+    this.connections = new ConnectionTable({ openLink: (socket) => host.openLink(socket), push: (...args) => host.push(...args), closed: (...args) => host.closed(...args) });
   }
 
   /** The one entry of every IPC call: validate, then serve. `owner` is the sender's webContents id. */

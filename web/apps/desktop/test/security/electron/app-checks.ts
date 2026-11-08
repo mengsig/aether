@@ -32,7 +32,7 @@ export async function appWindowChecks(ctx: Context): Promise<void> {
       keys: Object.keys(window.desktop).sort(), require: typeof require, process: typeof process })`);
     assert.deepEqual(seen, {
       type: "object", frozen: true, require: "undefined", process: "undefined",
-      keys: ["close", "connect", "diagnostics", "discover", "getPreference", "notify", "onDeepLink", "openExternal",
+      keys: ["close", "connect", "diagnostics", "discover", "getPreference", "notify", "onClose", "onDeepLink", "openExternal",
         "openRemote", "pickDirectory", "privileged", "request", "setPreference", "setup", "startDaemon", "subscribe", "version"],
     });
   });

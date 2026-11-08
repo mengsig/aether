@@ -11,6 +11,10 @@ const { contextBridge, ipcRenderer } = require("electron");
  * @type {Map<string, Map<(frame: unknown) => void, number>>}
  */
 const listeners = new Map();
+/** @type {Map<string, Set<() => void>>} */
+const closeListeners = new Map();
+/** @type {Set<string>} */
+const ownedConnections = new Set();
 /** @type {Set<(route: string) => void>} */
 const deepLinkListeners = new Set();
 /**
@@ -21,6 +25,11 @@ let undeliveredRoute;
 
 ipcRenderer.on("desktop:push", (_event, conn, frame) => {
   for (const callback of listeners.get(conn)?.keys() ?? []) callback(frame);
+});
+ipcRenderer.on("desktop:closed", (_event, conn) => {
+  const callbacks = closeListeners.get(conn);
+  closeListeners.delete(conn);
+  for (const callback of callbacks ?? []) callback();
 });
 ipcRenderer.on("desktop:deep-link", (_event, route) => {
   if (typeof route !== "string" || !route.startsWith("/")) throw new TypeError("main sends a deep link as an app route");
@@ -86,7 +95,12 @@ function hold(conn, callback) {
 const desktop = {
   version: 1,
   discover: () => call("discover"),
-  connect: (daemon) => call("connect", daemon),
+  async connect(daemon) {
+    const conn = await call("connect", daemon);
+    if (typeof conn !== "string") throw new TypeError("main returns a connection id");
+    ownedConnections.add(conn);
+    return conn;
+  },
   request: (conn, frame) => call("request", conn, frame),
   async subscribe(conn, frame, onFrame) {
     if (typeof onFrame !== "function") throw new TypeError("subscribe needs an onFrame callback");
@@ -99,7 +113,20 @@ const desktop = {
     }
     return release;
   },
+  onClose(conn, callback) {
+    if (typeof conn !== "string" || typeof callback !== "function") throw new TypeError("onClose needs a connection and callback");
+    if (!ownedConnections.has(conn)) throw new Error("onClose needs a connection owned by this window");
+    const callbacks = closeListeners.get(conn) ?? new Set();
+    callbacks.add(callback);
+    closeListeners.set(conn, callbacks);
+    return () => {
+      callbacks.delete(callback);
+      if (callbacks.size === 0 && closeListeners.get(conn) === callbacks) closeListeners.delete(conn);
+    };
+  },
   async close(conn) {
+    closeListeners.delete(conn);
+    ownedConnections.delete(conn);
     await call("close", conn);
     listeners.delete(conn);
   },
