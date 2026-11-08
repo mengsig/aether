@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterAll, expect, test } from "vitest";
-import { Markdown } from "../../packages/aether/src/conversation/markdown.tsx";
+import { Markdown } from "../../packages/ui/src/markdown/markdown.tsx";
 import { Results, timed } from "../measure.tsx";
 
 const results = new Results("markdown");

@@ -23,11 +23,11 @@ export interface GraphHarness {
   stop(): void;
 }
 
-export async function graphHarness(world: GraphWorld = demoGraphWorld(), role: "operator" | "observer" = "operator"): Promise<GraphHarness> {
+export async function graphHarness(world: GraphWorld = demoGraphWorld(), role: "operator" | "observer" = "operator", summaryLimit?: number): Promise<GraphHarness> {
   invariant(vi.isFakeTimers(), "the C2 harness runs on fake timers");
   const frames: (() => void)[] = [];
   const memory = new Map<string, unknown>();
-  const faux = new FauxGraphArchond(world, { protocol: 24, role });
+  const faux = new FauxGraphArchond(world, { protocol: 24, role, ...(summaryLimit === undefined ? {} : { summaryLimit }) });
   const app = createApp(
     { kind: "browser", storage: { get: async (key) => memory.get(key), set: async (key, value) => { memory.set(key, value); } } },
     { scheduler: (flush) => frames.push(flush), endpoints: [{ daemon: "archon", transport: faux.transport, target: "wss://faux/archon/ws", label: "faux" }] },

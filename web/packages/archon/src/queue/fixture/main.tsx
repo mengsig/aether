@@ -36,7 +36,15 @@ function FixtureShell() {
   );
 }
 
-const faux = new FauxArchond(demoWorld(), { protocol, role });
+const world = demoWorld();
+if (params.get("gate") === "long") {
+  const entry = world.items.get("qi_pairing");
+  invariant(entry !== undefined, "the fixture has a proposal gate");
+  const gates = entry.detail.gates as Record<string, unknown>[];
+  invariant(gates.length === 1, "the fixture has one proposal gate");
+  entry.detail = { ...entry.detail, gates: gates.map((gate) => ({ ...gate, summary: `Review the proposal at /workspace/${"long-path".repeat(60)} before deciding.` })) };
+}
+const faux = new FauxArchond(world, { protocol, role });
 const memory = new Map<string, unknown>();
 const app = createApp(
   { kind: "browser", storage: { get: async (key) => memory.get(key), set: async (key, value) => { memory.set(key, value); } } },
