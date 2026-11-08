@@ -2,11 +2,11 @@
 // pause, resume or cancel one, read its history, and create one that delivers or spawns a new agent.
 // Every list lives in core's store; this file holds only drafts and toggles.
 
-import { useReread } from "@aether-ui/core";
+import { routeHref, useReread, useSelector } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
 import { aether } from "@aether-ui/protocol";
 import { Badge, Button, Field } from "@aether-ui/ui";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import { DraftError, EFFORTS } from "./commands.ts";
 import { Action, isList, ReadView, RunNote, Section, useRun, type Run } from "./kit.tsx";
@@ -49,15 +49,26 @@ function targetText(schedule: aether.Schedule, agent: string): string {
   return schedule.target === agent ? "Delivers to this agent" : `Delivers to ${schedule.target ?? "an agent"}`;
 }
 
-function History({ conn, id }: { readonly conn: ConnId; readonly id: string }) {
+function SpawnedHistory({ conn, outcome }: { readonly conn: ConnId; readonly outcome: aether.ScheduleOutcomeSpawned }) {
+  const agent = useSelector(useCallback((state) => state.aether[conn]?.agents[outcome.agent], [conn, outcome.agent]));
+  return <>
+    {" · "}{agent?.name ?? outcome.agent}{agent ? ` · ${agent.status.state}` : null}
+    {" · "}<a className="ui-link" href={routeHref("#/agents/:conn/:agent", { conn, agent: outcome.agent })}>Open conversation</a>
+  </>;
+}
+
+function History({ conn, id, revision }: { readonly conn: ConnId; readonly id: string; readonly revision: string }) {
   const [refresh, setRefresh] = useState(0);
-  const history = useReread(conn, `schedule_history:${id}`, aether.scheduleHistory({ id, limit: 20 }), ["schedule_history"], refresh);
+  const history = useReread(conn, `schedule_history:${id}`, aether.scheduleHistory({ id, limit: 20 }), ["schedule_history"], `${revision}:${refresh}`);
   return (
     <ReadView entry={history} what="the history" empty="It has not run yet" guard={isList} isEmpty={(list) => list.length === 0} retry={() => setRefresh((n) => n + 1)}>
       {(list) => (
         <ul className="b3-list" aria-label="Schedule history">
           {(list as readonly aether.ScheduleOccurrence[]).map((entry) => (
-            <li key={entry.recorded_at} className="b3-meta">{when(entry.due)} · {(entry.outcome as { outcome?: string }).outcome ?? "recorded"}</li>
+            <li key={`${entry.due}:${entry.recorded_at}`} className="b3-meta">
+              {when(entry.due)} · {entry.outcome.outcome}
+              {entry.outcome.outcome === "spawned" ? <SpawnedHistory conn={conn} outcome={entry.outcome} /> : null}
+            </li>
           ))}
         </ul>
       )}
@@ -65,7 +76,7 @@ function History({ conn, id }: { readonly conn: ConnId; readonly id: string }) {
   );
 }
 
-function ScheduleRow({ conn, agent, schedule, run, changed }: { readonly conn: ConnId; readonly agent: string; readonly schedule: aether.Schedule; readonly run: Run; readonly changed: () => void }) {
+function ScheduleRow({ conn, agent, schedule, run, changed, revision }: { readonly conn: ConnId; readonly agent: string; readonly schedule: aether.Schedule; readonly run: Run; readonly changed: () => void; readonly revision: string }) {
   const [open, setOpen] = useState(false);
   const state = (schedule.status as { state: string }).state;
   const live = state === "active" || state === "paused";
@@ -79,6 +90,7 @@ function ScheduleRow({ conn, agent, schedule, run, changed }: { readonly conn: C
         <Badge tone={state === "active" ? "success" : state === "failed" ? "danger" : "neutral"}>{statusText(schedule.status)}</Badge>
       </div>
       <p className="b3-meta">{every(schedule.recurrence)} · {schedule.deliveries} {schedule.spawn != null ? "started" : "delivered"}</p>
+      <p className="b3-meta">Schedule updated {when(schedule.updated_at)}</p>
       <p className="b3-meta">{targetText(schedule, agent)}</p>
       <p className="b3-meta">{policyText(schedule)}</p>
       <div className="b3-row">
@@ -90,7 +102,7 @@ function ScheduleRow({ conn, agent, schedule, run, changed }: { readonly conn: C
         ) : null}
         <Button variant="quiet" size="sm" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{open ? "Hide history" : "History"}</Button>
       </div>
-      {open ? <History conn={conn} id={schedule.id} /> : null}
+      {open ? <History conn={conn} id={schedule.id} revision={revision} /> : null}
     </li>
   );
 }
@@ -197,15 +209,15 @@ function NewSchedule({ conn, agent, run, changed }: { readonly conn: ConnId; rea
 
 type Scope = "agent" | "all";
 
-function ScheduleList({ conn, agent, scope, run, refresh, changed }: { readonly conn: ConnId; readonly agent: string; readonly scope: Scope; readonly run: Run; readonly refresh: number; readonly changed: () => void }) {
+function ScheduleList({ conn, agent, scope, run, revision, changed }: { readonly conn: ConnId; readonly agent: string; readonly scope: Scope; readonly run: Run; readonly revision: string; readonly changed: () => void }) {
   const all = scope === "all";
   const command = all ? aether.listSchedules({}) : aether.listSchedules({ target: agent });
-  const schedules = useReread(conn, all ? "schedules:all" : `schedules:${agent}`, command, ["schedules"], refresh);
+  const schedules = useReread(conn, all ? "schedules:all" : `schedules:${agent}`, command, ["schedules"], revision);
   return (
     <ReadView entry={schedules} what="the schedules" empty={all ? "No schedules on this daemon" : "No schedules deliver to this agent"} guard={isList} isEmpty={(list) => list.length === 0} retry={changed}>
       {(list) => (
         <ul className="b3-list" aria-label="Schedules">
-          {(list as readonly aether.Schedule[]).map((s) => <ScheduleRow key={s.id} conn={conn} agent={agent} schedule={s} run={run} changed={changed} />)}
+          {(list as readonly aether.Schedule[]).map((s) => <ScheduleRow key={s.id} conn={conn} agent={agent} schedule={s} run={run} changed={changed} revision={revision} />)}
         </ul>
       )}
     </ReadView>
@@ -217,6 +229,11 @@ export function SchedulesPanel({ conn, agent }: { readonly conn: ConnId; readonl
   const run = useRun(conn);
   const [refresh, setRefresh] = useState(0);
   const [scope, setScope] = useState<Scope>("agent");
+  const scheduleEvent = useSelector(useCallback((state) => {
+    const events = state.aether[conn]?.events ?? [];
+    return events.findLast((event) => event.kind.type === "custom" && event.kind.name.startsWith("schedule.") && event.kind.name !== "schedule.occurrence")?.seq ?? 0;
+  }, [conn]));
+  const revision = `${scheduleEvent}:${refresh}`;
   const changed = () => setRefresh((n) => n + 1);
   return (
     <>
@@ -224,8 +241,9 @@ export function SchedulesPanel({ conn, agent }: { readonly conn: ConnId; readonl
         <div className="b3-row">
           <Button variant={scope === "agent" ? "primary" : "quiet"} size="sm" aria-pressed={scope === "agent"} onClick={() => setScope("agent")}>This agent's schedules</Button>
           <Button variant={scope === "all" ? "primary" : "quiet"} size="sm" aria-pressed={scope === "all"} onClick={() => setScope("all")}>All schedules</Button>
+          <Button variant="quiet" size="sm" onClick={changed}>Refresh schedules</Button>
         </div>
-        <ScheduleList conn={conn} agent={agent.id} scope={scope} run={run} refresh={refresh} changed={changed} />
+        <ScheduleList conn={conn} agent={agent.id} scope={scope} run={run} revision={revision} changed={changed} />
       </Section>
       <Section title="New schedule" hint="Choose a recurrence, what it sends and how missed or overlapping occurrences are handled.">
         <NewSchedule conn={conn} agent={agent.id} run={run} changed={changed} />

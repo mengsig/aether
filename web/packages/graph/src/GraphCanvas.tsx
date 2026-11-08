@@ -19,6 +19,7 @@ export interface GraphCanvasProps {
   /** The accessible name of the graph. */
   label: string;
   shape?: NodeShape;
+  renderControls?: (actions: { zoomIn: () => void; zoomOut: () => void; fit: () => void }) => ReactNode;
   selected?: string;
   /** Drawn in the accent without a relayout, e.g. a critical path; keep its identity stable between renders. */
   emphasis?: Emphasis;
@@ -211,6 +212,7 @@ export function GraphCanvas(props: GraphCanvasProps): ReactNode {
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <canvas ref={canvasRef} tabIndex={0} role="application" aria-label={label} aria-roledescription="graph"
         style={{ width: "100%", height: "100%", display: "block", touchAction: "none" }} onKeyDown={onKeyDown} />
+      {props.renderControls?.({ zoomIn: () => surface.current?.zoomAt(1.25), zoomOut: () => surface.current?.zoomAt(0.8), fit: () => surface.current?.fit() })}
       <GraphNodeList label={label} nodes={listed} groups={graph.groups} focused={focused}
         onFocusNode={setFocused} onActivate={onActivate} onToggleGroup={onToggleGroup} />
       <div aria-live="polite" style={VISUALLY_HIDDEN}>{announce(scene, focused)}</div>
