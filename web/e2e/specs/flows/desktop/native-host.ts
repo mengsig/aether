@@ -110,6 +110,13 @@ export async function enterSavePath(compositor: NodeJS.ProcessEnv, file: string)
   await exec("/usr/bin/xdotool", ["key", "Return"], { env, timeout: 10_000 });
 }
 
+/** Requests minimization of the app window on the private Xwayland display. */
+export async function minimizeWindow(compositor: NodeJS.ProcessEnv, title: string): Promise<void> {
+  assert.match(String(compositor.DISPLAY ?? ""), /^:\d+$/, "the display is the private Xwayland");
+  await focusWindow(compositor, title);
+  await exec("/usr/bin/xdotool", ["getactivewindow", "windowminimize"], { env: { ...process.env, ...compositor }, timeout: 10_000 });
+}
+
 /** The titles of every window on the run's own compositor. */
 export async function windowTitles(compositor: NodeJS.ProcessEnv): Promise<string[]> {
   const ipc = String(compositor.SWAYSOCK ?? "");

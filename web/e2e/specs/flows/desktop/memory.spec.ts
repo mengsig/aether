@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "../../../harness/fixtures.ts";
 import { connection } from "../../../harness/pair.ts";
@@ -184,7 +184,9 @@ test("memory export opens a native save dialog and writes the daemon artifact", 
   await shootScreen(app.compositor, "memory-export-save-dialog");
   await focusWindow(app.compositor, title);
   await enterSavePath(app.compositor, file);
-  await expect.poll(() => existsSync(file), { message: "the chosen export file is saved" }).toBe(true);
+  await shootScreen(app.compositor, "memory-after-save-attempt");
+  await expect.poll(async () => existsSync(file) ? "saved" : (await readdir(path.dirname(file))).join(", "),
+    { message: "the chosen export file is saved" }).toBe("saved");
   await expect.poll(async () => createHash("sha256").update(await readFile(file)).digest("hex")).toBe(digest);
   const saved = await readFile(file, "utf8");
   expect(saved.split("\n").slice(1), "the saved records match the daemon export").toEqual(artifact.split("\n").slice(1));
