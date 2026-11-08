@@ -10,6 +10,8 @@ export const DIST = path.resolve(import.meta.dirname, "..", "..", "dist");
 /** Paths of the retired crates/aether-remote/web app; no route may answer them now. */
 const LEGACY = ["/app.js", "/boot.js", "/precache.js", "/push-renewal.js", "/styles.css", "/asset-manifest.json",
   "/ui/shell.js", "/core/transport.js", "/features/start/pair.js", "/assets/icons/icon-192.png"];
+const FRAME = "/mermaid-frame.html";
+const FRAME_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; img-src data:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 
 /** Every file of the bundle, as URL paths: what the binary must have embedded. */
 export async function bundleFiles(): Promise<string[]> {
@@ -18,7 +20,7 @@ export async function bundleFiles(): Promise<string[]> {
     .filter((entry) => entry.isFile() && !entry.name.startsWith("."))
     .map((entry) => `/${path.relative(DIST, path.join(entry.parentPath, entry.name)).split(path.sep).join("/")}`)
     .sort();
-  assert.ok(files.includes("/index.html") && files.includes("/sw.js"), `web/dist is a built bundle: ${files.join(", ")}`);
+  assert.ok(files.includes("/index.html") && files.includes("/sw.js") && files.includes(FRAME), `web/dist is a built bundle: ${files.join(", ")}`);
   return files;
 }
 
@@ -35,8 +37,15 @@ export async function checkBundle(origin: string): Promise<string> {
     assert.equal(response.status, 200, file);
     const served = Buffer.from(await response.arrayBuffer());
     assert.ok(served.equals(await readFile(path.join(DIST, file))), `${file} is served as committed`);
-    policy ??= response.headers.get("content-security-policy");
-    assert.equal(response.headers.get("content-security-policy"), policy, `${file} has the same CSP`);
+    const csp = response.headers.get("content-security-policy");
+    if (file === FRAME) {
+      assert.equal(csp, FRAME_CSP, "the renderer frame has its restricted policy");
+      assert.equal(response.headers.get("x-frame-options"), "SAMEORIGIN", file);
+    } else {
+      policy ??= csp;
+      assert.equal(csp, policy, `${file} has the main CSP`);
+      assert.equal(response.headers.get("x-frame-options"), "DENY", file);
+    }
     assert.equal(response.headers.get("x-content-type-options"), "nosniff", file);
   }
   assert.ok(policy !== null, "every asset carries a CSP");
