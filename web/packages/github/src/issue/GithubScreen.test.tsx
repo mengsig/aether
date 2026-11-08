@@ -155,6 +155,18 @@ describe("capabilities", () => {
 });
 
 describe("importing an issue", () => {
+  test("shows a failed import in the open confirmation and allows retry", async () => {
+    const { h, container } = await loaded("acme/site", 77, { before: (faux) => faux.failing.add("import_issue") });
+    await click(h, buttonNamed(container, "Import as Archon work"));
+    await click(h, buttonNamed(container, "Import"));
+    await h.until(() => container.querySelector('dialog [role="alert"]') !== null, "the import failure");
+    expect(container.querySelector('dialog [role="alert"]')?.textContent).toContain("import_issue failed");
+    h.faux.failing.delete("import_issue");
+    await click(h, buttonNamed(container, "Import"));
+    await h.until(() => itemCard(container, "qi_import_77") !== null, "the successful retry");
+    expect(h.faux.commands("import_issue")).toHaveLength(2);
+  });
+
   test("previews the issue, imports it on confirm, and then lists the new item", async () => {
     const { h, container } = await loaded("acme/site", 77);
     await click(h, buttonNamed(container, "Import as Archon work"));

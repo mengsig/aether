@@ -69,6 +69,14 @@ fn uncut() -> RetrievalPolicy {
     }
 }
 
+/// The cutoff at the value its docs suggest; it is off by default.
+fn cutting() -> RetrievalPolicy {
+    RetrievalPolicy {
+        min_score: 0.05,
+        ..Default::default()
+    }
+}
+
 #[test]
 fn the_embedding_pass_finds_what_word_matching_cannot() {
     // Without an index no whole word of the question appears in any of
@@ -85,8 +93,8 @@ fn the_embedding_pass_finds_what_word_matching_cannot() {
         "the semantic pass connects 'rebuild the index' to 'reindexing'"
     );
     // A trigram similarity of about 0.26 is one unrelated sentences reach
-    // too, so by default it is below the relevance cutoff.
-    assert_eq!(top(&indexed()), None);
+    // too, so it is below a relevance cutoff of 0.05.
+    assert_eq!(top(&indexed().with_retrieval(cutting())), None);
 }
 
 #[test]

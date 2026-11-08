@@ -23,7 +23,7 @@ pub use memory::Remember;
 pub use notify::Notify;
 pub use playbook::{SWARM_PLAYBOOK, SwarmPlaybook};
 pub use providers::RefreshProviderUsage;
-pub use tasks::{CompleteTask, FailTask, WaitFor};
+pub use tasks::{CompleteTask, FailTask, MAX_STRUCTURED_BYTES, WaitFor};
 
 pub fn all() -> Vec<Arc<dyn Tool>> {
     let mut tools: Vec<Arc<dyn Tool>> = vec![

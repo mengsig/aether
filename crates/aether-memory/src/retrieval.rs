@@ -36,16 +36,14 @@ pub struct Considered {
     pub pinned: bool,
 }
 
-/// How retrieval cuts, and how much of it a turn withholds. The defaults are
-/// CONTRACTS.md §7's `[memory.retrieval]`, except the holdout: off here, so a
-/// service built without config never withholds; the daemon's config turns it
-/// on at 0.05.
+/// Retrieval policy: holdout and the relevance cutoff are off by default.
+/// A cutoff can drop relevant memories that share no word with the query.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RetrievalPolicy {
     /// Most memories one turn is shown.
     pub max_items: usize,
     /// Least relevance, in `0..=1`, a memory needs to a request that has a
-    /// query. A pinned memory needs none.
+    /// query; 0, the default, cuts nothing. A pinned memory needs none.
     pub min_score: f32,
     /// Share of eligible injections withheld and logged, in `0..=1`.
     pub holdout_rate: f32,
@@ -58,7 +56,7 @@ impl Default for RetrievalPolicy {
     fn default() -> Self {
         Self {
             max_items: 6,
-            min_score: 0.05,
+            min_score: 0.0,
             holdout_rate: 0.0,
             holdout_seed: 0,
         }

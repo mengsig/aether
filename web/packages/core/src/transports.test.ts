@@ -199,6 +199,33 @@ describe("ipc", () => {
     expect(() => link.send({ cmd: "status", req: 2 })).toThrow(/open/);
   });
 
+  it("settles a refused request without closing the connection and permits a retry", async () => {
+    const request = vi.fn().mockRejectedValueOnce(new Error("Error invoking remote method: BridgeRefusal: denied"))
+      .mockResolvedValueOnce({ frame: "reply", id: 2, result: { Ok: {} } });
+    const { desktop } = bridge({ request });
+    const frames: unknown[] = [];
+    const onClose = vi.fn();
+    const link = await ipcTransport(desktop, () => {}).open("archon-local", (frame) => frames.push(frame), onClose);
+    link.send({ cmd: "get_initiative", req: 1 });
+    await tick();
+    expect(frames[0]).toMatchObject({ frame: "reply", id: 1, result: { Err: { code: "forbidden", message: expect.stringContaining("denied") } } });
+    link.send({ cmd: "get_initiative", req: 2 });
+    await tick();
+    expect(frames[1]).toMatchObject({ frame: "reply", id: 2, result: { Ok: {} } });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(desktop.close).not.toHaveBeenCalled();
+  });
+
+  it("reconnects when the bridge reports the local connection has closed", async () => {
+    const { desktop } = bridge({ request: vi.fn(async () => { throw new Error("BridgeRefusal: c1 is closed"); }) });
+    const onClose = vi.fn();
+    const link = await ipcTransport(desktop, () => {}).open("archon-local", () => {}, onClose);
+    link.send({ cmd: "get_initiative", req: 1 });
+    await tick();
+    expect(onClose).toHaveBeenCalledWith(1011, expect.stringContaining("is closed"));
+    expect(desktop.close).toHaveBeenCalledWith("c1");
+  });
+
   it("refuses an unknown bridge version", () => {
     expect(() => ipcTransport({ version: 2 } as unknown as DesktopBridge, () => {})).toThrow(/version/);
   });
