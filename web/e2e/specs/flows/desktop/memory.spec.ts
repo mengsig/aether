@@ -154,6 +154,7 @@ test("a reviewed import reaches the store after native confirmation", async () =
   }
   assert.ok(app, "the packaged desktop is running");
   await route(page(), `#/memory/${encodeURIComponent(conn)}`);
+  await page().getByRole("radio", { name: "All scopes" }).click();
   const maintenance = page().getByRole("region", { name: "Maintenance" });
   await maintenance.getByLabel("Export file (.jsonl)").setInputFiles({ name: "memories.jsonl", mimeType: "application/jsonl", buffer: Buffer.from(artifact) });
   await maintenance.getByRole("button", { name: "Dry run import" }).click();
