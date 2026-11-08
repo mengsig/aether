@@ -5,7 +5,8 @@ import type { archon } from "@aether-ui/protocol";
 import { Badge, EmptyState, StatusPill } from "@aether-ui/ui";
 import type { ReactNode } from "react";
 import { dateTime, invariant, priorityLabel, safeHttpUrl, usd } from "../queue/model.ts";
-import { duration, modelOf, objectFor, runPill, stagePill } from "./facts.ts";
+import { StageAttempt } from "../pipeline/StageAttempt.tsx";
+import { duration, objectFor, runPill } from "./facts.ts";
 
 export function Section({ title, children }: { readonly title: string; readonly children: ReactNode }) {
   return <section className="ui-card item-section" aria-label={title}><h2 className="ui-card-title item-heading">{title}</h2>{children}</section>;
@@ -61,28 +62,7 @@ export function Runs({ item, runs, now }: { readonly item: string; readonly runs
   );
 }
 
-const VERDICT_TONE: Readonly<Record<archon.Verdict, "success" | "danger" | "neutral">> = { pass: "success", fail: "danger", unknown: "neutral" };
-
-export function StageNode({ stage, now }: { readonly stage: archon.StageRun; readonly now: number }) {
-  const pill = stagePill(stage.state);
-  const verdict = stage.verdict ?? null;
-  const name = [stage.stage_id, stage.attempt > 1 ? `attempt ${stage.attempt}` : null, stage.fan_index > 0 ? `slot ${stage.fan_index + 1}` : null].filter(Boolean).join(" · ");
-  const error = "error" in stage.state && typeof stage.state.error === "string" ? stage.state.error : null;
-  return (
-    <li className="item-stage" data-status={pill.status}>
-      <div className="item-stage-head">
-        <strong>{name}</strong>
-        <StatusPill status={pill.status} label={pill.label} />
-        {verdict ? <Badge tone={VERDICT_TONE[verdict] ?? "neutral"}>{verdict}</Badge> : null}
-      </div>
-      <span className="item-muted">{[modelOf(stage), usd(stage.cost_usd), duration(stage.started_at, stage.finished_at, now)].filter(Boolean).join(" · ")}</span>
-      {error ? <p className="item-error">{error}</p> : null}
-      {stage.summary ? <p className="item-summary">{stage.summary}</p> : null}
-    </li>
-  );
-}
-
-export function Stages({ detail, now }: { readonly detail: archon.ItemDetail; readonly now: number }) {
+export function Stages({ detail, now, conn }: { readonly detail: archon.ItemDetail; readonly now: number; readonly conn: string | null }) {
   if (detail.stages.length === 0) return <EmptyState title="No stages yet">Stages appear here once the item is dispatched. Check the queue for waiting reasons.</EmptyState>;
   const numbers = new Map(detail.runs.map((run, index) => [run.id, index + 1]));
   const groups: { run: string; stages: archon.StageRun[] }[] = [];
@@ -97,7 +77,7 @@ export function Stages({ detail, now }: { readonly detail: archon.ItemDetail; re
       {groups.map((group, index) => (
         <div key={`${group.run}-${index}`}>
           {numbers.size > 1 ? <h3 className="item-subheading">Run {numbers.get(group.run) ?? "?"}</h3> : null}
-          <ol className="item-list" aria-label="Stages">{group.stages.map((stage) => <StageNode key={stage.id} stage={stage} now={now} />)}</ol>
+          <ol className="item-list" aria-label="Stages">{group.stages.map((stage) => <StageAttempt key={stage.id} stage={stage} now={now} conn={conn} />)}</ol>
         </div>
       ))}
     </div>
@@ -117,7 +97,9 @@ export function Gates({ gates }: { readonly gates: readonly archon.OperatorGate[
         const look = GATE_LOOK[decision] ?? { tone: "neutral", label: decision };
         return (
           <li key={`${gate.run}-${gate.stage_id}-${gate.attempt}`} className="item-gate">
-            <span><strong>{gate.subject === "proposal" ? "Proposal" : "Report"} · {gate.stage_id}</strong> {gate.summary}</span>
+            <div className="item-gate-content"><strong>{gate.subject === "proposal" ? "Proposal" : "Report"} · {gate.stage_id}</strong>
+              {gate.summary.length > 180 ? <details><summary><span className="item-gate-preview">{gate.summary.slice(0, 180)}…</span><span className="item-gate-show">Show details</span><span className="item-gate-hide">Hide details</span></summary><p>{gate.summary}</p></details> : <p>{gate.summary}</p>}
+            </div>
             <Badge tone={look.tone}>{look.label}</Badge>
           </li>
         );

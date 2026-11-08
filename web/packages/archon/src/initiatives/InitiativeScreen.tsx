@@ -4,7 +4,7 @@
 import { routeHref, selectInitiative, selectItems, selectTaskGraph, useApp, useSelector } from "@aether-ui/core";
 import { layeredLayout } from "@aether-ui/graph";
 import type { archon, ConnectionInfo, RouteProps } from "@aether-ui/protocol";
-import { Badge, EmptyState, ErrorState, Skeleton, StatusPill } from "@aether-ui/ui";
+import { Badge, Button, EmptyState, ErrorState, Skeleton, StatusPill } from "@aether-ui/ui";
 import { useCallback, useMemo, useState } from "react";
 import { DagCanvas } from "../dag/DagCanvas.tsx";
 import type { LayoutFn } from "../dag/layout.ts";
@@ -143,7 +143,7 @@ function Initiative({ info, id, layout }: { readonly info: ConnectionInfo; reado
   const { failure, reload } = useStoreRead(read, signal);
   const stored = useSelector(useMemo(() => selectInitiative(access.conn, id), [access.conn, id]));
   if (failure?.code === "not_found") {
-    return <EmptyState title="No such initiative" action={<a className="ui-link" href="#/archon/graph">Back to the task graph</a>}>Archon has no initiative {id}. It may have been removed.</EmptyState>;
+    return <ErrorState title="No such initiative" message={`Archon has no initiative ${id}. It may have been removed.`} onRetry={reload} />;
   }
   if (stored === undefined) {
     if (failure !== null) return <ErrorState title="The initiative could not be read" message={failure.message} onRetry={reload} />;
@@ -151,7 +151,7 @@ function Initiative({ info, id, layout }: { readonly info: ConnectionInfo; reado
   }
   return (
     <>
-      {failure === null ? null : <p className="dag-warning" role="status">Showing the last read: {failure.message}</p>}
+      {failure === null ? null : <div className="dag-warning" role="status">Showing the last read: {failure.message} <Button variant="quiet" size="sm" onClick={reload}>Try again</Button></div>}
       <InitiativePage detail={stored.value as unknown as archon.InitiativeDetail} access={access} layout={layout} />
     </>
   );

@@ -1,21 +1,22 @@
 // `#/archon/items/:item/runs/:run`: one run's pipeline from `run_plan`, each planned stage with its stage
 // runs. A protocol 23 archond has no `run_plan`, so the view lists the stages the run has started instead.
 
-import { routeHref, selectItem, selectRunPlan, useApp, useSelector } from "@aether-ui/core";
+import { routeHref, selectConnections, selectItem, selectRunPlan, useApp, useSelector } from "@aether-ui/core";
 import type { archon, ConnectionInfo, RouteProps } from "@aether-ui/protocol";
 import { Badge, EmptyState, EntityActionMenu, ErrorState, Skeleton, StatusPill } from "@aether-ui/ui";
 import { useEffect, useMemo, useState } from "react";
 import { useItemDetail } from "../item/detail.ts";
 import { runPill } from "../item/facts.ts";
-import { StageNode } from "../item/ItemSections.tsx";
 import { useArchonAccess, useArchonConnection, type ArchonAccess } from "../queue/archon.ts";
 import { invariant, usd } from "../queue/model.ts";
 import { NotConnected, useNow } from "../queue/QueueScreen.tsx";
 import { pipelineView, stageTerms, type PipelineStep, type PipelineView } from "./plan.ts";
+import { StageAttempt } from "./StageAttempt.tsx";
+import { deadlineFor, StageSettings, settingsFor } from "./settings.tsx";
 import "../item/item.css";
 import "./pipeline.css";
 
-function Step({ step, index, fromPlan, now }: { readonly step: PipelineStep; readonly index: number; readonly fromPlan: boolean; readonly now: number }) {
+function Step({ step, index, fromPlan, now, settings, conn }: { readonly step: PipelineStep; readonly index: number; readonly fromPlan: boolean; readonly now: number; readonly settings: ReturnType<typeof settingsFor>; readonly conn: string | null }) {
   return (
     <li className="pipeline-step" data-current={step.current ? "true" : undefined} aria-current={step.current ? "step" : undefined}>
       <div className="pipeline-step-head">
@@ -25,21 +26,24 @@ function Step({ step, index, fromPlan, now }: { readonly step: PipelineStep; rea
         {fromPlan && step.planned === null ? <Badge tone="warning">Not in the plan</Badge> : null}
       </div>
       {step.planned ? <p className="pipeline-terms">{stageTerms(step.planned).join(" · ")}</p> : null}
+      {step.planned ? <StageSettings settings={settings} /> : null}
       {step.attempts.length > 0 ? (
         <ol className="item-list pipeline-attempts" aria-label={`Stage runs of ${step.id}`}>
-          {step.attempts.map((stage) => <StageNode key={stage.id} stage={stage} now={now} />)}
+          {step.attempts.map((stage) => <StageAttempt key={stage.id} stage={stage} now={now} conn={conn} deadline={deadlineFor(settings, stage)} />)}
         </ol>
       ) : null}
     </li>
   );
 }
 
-function PlanSource({ view, error }: { readonly view: PipelineView; readonly error: string | null }) {
+function PlanSource({ view, error, finished }: { readonly view: PipelineView; readonly error: string | null; readonly finished: boolean }) {
   if (view.source === "plan") {
-    return <p className="pipeline-note">Plan revision {view.revision} {view.edited ? <Badge tone="info">Edited after it started</Badge> : null}</p>;
+    return <p className="pipeline-note">Plan revision {view.revision}{finished ? <> <Badge tone="neutral">Final plan</Badge></> : null}{view.edited ? <> <Badge tone="info">Edited after it started</Badge></> : null}</p>;
   }
-  const why = error ? `run_plan failed: ${error}.` : "This archond has no run_plan (protocol 23).";
-  return <p className="pipeline-note" role="note">{why} Showing the stages this run has started, in order.</p>;
+  return <div className="pipeline-note" role="note">
+    <span>Plan unavailable. Showing started stages.</span>
+    {error ? <details><summary>Details</summary>{error}</details> : null}
+  </div>;
 }
 
 /** The run's plan from core's store, read once when missing; the item's rereads keep it current. */
@@ -66,6 +70,9 @@ function usePlan(access: ArchonAccess, item: string, run: string): { plan: archo
 
 function RunView({ access, detail, run, title }: { readonly access: ArchonAccess; readonly detail: archon.ItemDetail; readonly run: archon.PipelineRun; readonly title: string }) {
   const now = useNow();
+  const connections = useSelector(selectConnections);
+  const aether = Object.values(connections).filter((connection) => connection.daemon === "aether");
+  const conn = aether.length === 1 ? aether[0]?.id ?? null : null;
   const { plan, error, waiting: waitingForPlan } = usePlan(access, detail.item.id, run.id);
   const view = useMemo(() => pipelineView(run, detail.stages, plan), [run, detail.stages, plan]);
   const pill = runPill(run.state);
@@ -81,11 +88,12 @@ function RunView({ access, detail, run, title }: { readonly access: ArchonAccess
           <span className="item-muted">{[run.branch, usd(run.cost_usd), run.id].join(" · ")}</span>
           <EntityActionMenu entity={{ kind: "run", conn: access.conn, id: run.id }} />
         </div>
-        {waitingForPlan ? <Skeleton height="1.5rem" width="40%" /> : <PlanSource view={view} error={error} />}
+        {waitingForPlan ? <Skeleton height="1.5rem" width="40%" /> : <PlanSource view={view} error={error} finished={(plan as (archon.RunPlan & { finished?: unknown }) | null)?.finished === true} />}
       </header>
       {view.steps.length === 0 ? <EmptyState title="No stages yet">Stages appear once the run starts its first one. Open the item to check its waiting reasons.</EmptyState> : (
         <ol className="pipeline-steps" aria-label="Pipeline">
-          {view.steps.map((step, index) => <Step key={step.id} step={step} index={index} fromPlan={view.source === "plan"} now={now} />)}
+          {view.steps.map((step, index) => <Step key={step.id} step={step} index={index} fromPlan={view.source === "plan"} now={now} conn={conn}
+            settings={settingsFor(plan, step.id)} />)}
         </ol>
       )}
     </article>

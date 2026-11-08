@@ -27,7 +27,8 @@ export interface EngineToolCall {
   readonly text?: string;
 }
 
-export type Reply = string | { readonly toolCall: EngineToolCall };
+export type ToolReply = EngineToolCall;
+export type Reply = string | EngineToolCall | { readonly toolCall: EngineToolCall };
 
 /** What an agent receives for a request: text, or a tool call; the default names the faux engine. */
 export type Script = (request: EngineRequest) => Reply;
@@ -91,17 +92,19 @@ async function readJson(request: http.IncomingMessage): Promise<Record<string, u
 let callCounter = 0;
 
 function streamReply(response: http.ServerResponse, model: string, reply: Reply): void {
+  assert.ok(model.length > 0, "a streamed reply names its model");
+  const call = typeof reply === "string" ? null : "toolCall" in reply ? reply.toolCall : reply;
   const id = `chatcmpl-faux-${Date.now()}`;
   const chunk = (delta: Record<string, unknown>, finish: string | null, usage?: Record<string, number>) =>
     `data: ${JSON.stringify({ id, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model,
       choices: [{ index: 0, delta, finish_reason: finish }], ...(usage ? { usage } : {}) })}\n\n`;
-  const text = typeof reply === "string" ? reply : reply.toolCall.text ?? "";
+  const text = typeof reply === "string" ? reply : call?.text ?? "";
   response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
   response.write(chunk({ role: "assistant", content: "" }, null));
   for (let at = 0; at < text.length; at += 8) response.write(chunk({ content: text.slice(at, at + 8) }, null));
   let finish = "stop";
-  if (typeof reply !== "string") {
-    const { name, arguments: args } = reply.toolCall;
+  if (call !== null) {
+    const { name, arguments: args } = call;
     assert.ok(name.length > 0, "a scripted tool call names its tool");
     callCounter += 1;
     const callId = `call_faux_${callCounter}`;

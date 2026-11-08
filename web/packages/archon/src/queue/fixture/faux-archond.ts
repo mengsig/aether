@@ -13,6 +13,8 @@ export const FEATURES_24 = ["changes", "run_plan", "item_history", "item_filters
 export interface FauxOptions {
   readonly protocol: 23 | 24;
   readonly role?: "operator" | "observer";
+  readonly refuseModelPolicy?: boolean;
+  readonly summaryLimit?: number;
 }
 
 interface Link { open: boolean; onFrame(frame: unknown): void }
@@ -88,7 +90,7 @@ export class FauxArchond {
       case "feed_history": return reply("feed", []);
       case "list_item_summaries": {
         // Protocol 23 summaries carry pr_url but not the 24 issue and pr refs.
-        const rows = [...this.world.items.values()].map(({ summary }) => (v24 ? summary : Object.fromEntries(Object.entries(summary).filter(([key]) => key !== "issue" && key !== "pr"))));
+        const rows = [...this.world.items.values()].slice(0, this.options.summaryLimit).map(({ summary }) => (v24 ? summary : Object.fromEntries(Object.entries(summary).filter(([key]) => key !== "issue" && key !== "pr"))));
         return command.with_as_of === true && v24 ? reply("item_summaries_at", { summaries: rows, as_of: this.seq }) : reply("item_summaries", rows);
       }
       case "get_item": { const entry = this.entry(command.item); return entry ? reply("item_detail", entry.detail) : missing; }
@@ -101,6 +103,9 @@ export class FauxArchond {
       case "repo_list": return reply("repos", this.world.repos);
       case "list_questions": return reply("questions", this.world.questions);
       case "list_reports": return reply("reports", this.world.reports);
+      case "model_policy": return this.options.refuseModelPolicy
+        ? { err: { code: "forbidden", message: "model policy is unavailable" } }
+        : reply("model_policy", { allow: null, deny: [], max_effort: "high" });
       case "list_pipelines": return reply("catalog", { pipelines: [{ name: "adaptive", stages: [] }, { name: "direct", stages: [] }], problems: [] });
       case "cost_report": return reply("cost_report", { by: "repo", estimates_counted: false, range: { since: "2026-10-29", until: "2026-11-04" },
         total: { counted_usd: 7.49, cost_usd: 7.49, estimated_cost_usd: 0 }, rows: [{ key: "repo_site", counted_usd: 6.42, cost_usd: 6.42, estimated_cost_usd: 0 }, { key: "repo_api", counted_usd: 1.07, cost_usd: 1.07, estimated_cost_usd: 0 }] });
@@ -144,6 +149,7 @@ export class FauxArchond {
   private change(command: Json): Answer {
     const ok: Answer = { ok: { reply: "ok", data: null } };
     switch (command.cmd) {
+      case "update_item": case "steer_item": return this.entry(command.item) ? ok : { err: { code: "not_found", message: `no item ${String(command.item)}` } };
       case "cancel_item": return this.move(command.item, { state: "cancelled", reason: command.reason ?? null });
       case "retry_item": return this.move(command.item, { state: "queued" });
       case "pause": case "resume": {

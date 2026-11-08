@@ -19,6 +19,35 @@ const FEED_KEEP = 200;
 /** The most nodes `task_graph` serves (CONTRACTS.md §1.3); the default is 500. */
 export const GRAPH_LIMIT = 2000;
 
+function graphSnapshot(graph: Json): ArchonGraph {
+  const entries = array(graph.nodes, "task_graph.nodes");
+  const nodes = Object.fromEntries(entries.map((node) => [string(object(node, "node").id, "node.id"), node as Json]));
+  invariant(Object.keys(nodes).length === entries.length, "task_graph node ids are unique");
+  invariant(Object.keys(nodes).length <= GRAPH_LIMIT, `task_graph sent more than ${GRAPH_LIMIT} nodes`);
+  return { nodes, edges: array(graph.edges, "task_graph.edges") as Json[], initiatives: array(graph.initiatives ?? [], "initiatives") as Json[],
+    asOf: seq(graph.as_of, "task_graph.as_of"), truncated: graph.truncated === true };
+}
+
+function keepActiveGraph(active: ArchonGraph, history: ArchonGraph): ArchonGraph {
+  invariant(history.truncated, "active nodes need priority when history is truncated");
+  const nodes = { ...active.nodes };
+  let count = Object.keys(nodes).length;
+  for (const [id, node] of Object.entries(history.nodes)) {
+    if (count >= GRAPH_LIMIT) break;
+    if (!(id in nodes)) { nodes[id] = node; count += 1; }
+  }
+  const edges = new Map<string, Json>();
+  for (const edge of [...active.edges, ...history.edges]) {
+    const from = string(edge.from, "edge.from");
+    const to = string(edge.to, "edge.to");
+    if (from in nodes && to in nodes) edges.set(JSON.stringify([from, to, edge.kind]), edge);
+  }
+  const initiatives = new Map<string, Json>();
+  for (const entry of [...history.initiatives, ...active.initiatives]) initiatives.set(string(entry.id, "initiative.id"), entry);
+  invariant(Object.keys(nodes).length <= GRAPH_LIMIT, "the combined graph respects its node limit");
+  return { nodes, edges: [...edges.values()], initiatives: [...initiatives.values()], asOf: Math.min(active.asOf, history.asOf), truncated: true };
+}
+
 /** A queue state is a bare kind or an object tagged by `state`. */
 function stateKind(value: unknown): string {
   return typeof value === "string" ? value : string(object(value, "item state").state, "item state kind");
@@ -371,13 +400,10 @@ export class ArchonSync {
 
   private async readGraph(): Promise<void> {
     if (!this.ctx.features.has("task_graph")) return;
-    const graph = replyObject(await this.ctx.request({ cmd: "task_graph", filter: {}, limit: GRAPH_LIMIT }), "task_graph");
-    const nodes = Object.fromEntries(array(graph.nodes, "task_graph.nodes").map((node) => [string(object(node, "node").id, "node.id"), node as Json]));
-    const snapshot: ArchonGraph = {
-      nodes, edges: array(graph.edges, "task_graph.edges") as Json[], initiatives: array(graph.initiatives ?? [], "initiatives") as Json[],
-      asOf: seq(graph.as_of, "task_graph.as_of"), truncated: graph.truncated === true,
-    };
-    invariant(Object.keys(nodes).length <= GRAPH_LIMIT, `task_graph sent more than ${GRAPH_LIMIT} nodes`);
+    const graph = replyObject(await this.ctx.request({ cmd: "task_graph", filter: { include_terminal_since: "1970-01-01T00:00:00Z" }, limit: GRAPH_LIMIT }), "task_graph");
+    const history = graphSnapshot(graph);
+    const active = history.truncated ? graphSnapshot(replyObject(await this.ctx.request({ cmd: "task_graph", filter: {}, limit: GRAPH_LIMIT }), "task_graph")) : null;
+    const snapshot = active ? keepActiveGraph(active, history) : history;
     // A read older than the graph held, e.g. one a concurrent reread overtook, never replaces it.
     this.set((s) => (replaces(snapshot.asOf, s.graph?.asOf ?? null) ? { ...s, graph: snapshot } : s));
   }

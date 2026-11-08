@@ -66,12 +66,12 @@ export const ARCHON_PASS: ReadonlySet<string> = new Set([
   "orchestrator_status", "cost_report", "list_artifacts", "read_artifact", "item_diff", "settings",
   "autonomy", "github_watcher", "subscribe_changes", "changes_page", "item_history", "task_graph", "run_plan",
   "item_links", "issue_items", "list_github_objects", "get_initiative", "enqueue", "cancel_item", "retry_item",
-  "pause", "resume", "answer", "say", "link_issue", "unlink_issue", "import_issue",
+  "pause", "resume", "answer", "say", "link_issue", "unlink_issue", "import_issue", "model_policy", "steer_item", "update_item",
 ]);
 
 /** First Archon protocol (Archon 1.5.0) whose archon-web connections have a device's standing. */
 export const ARCHON_STANDING_PROTOCOL = 24;
-export const ARCHON_NEEDS_STANDING: ReadonlySet<string> = new Set(["say", "answer"]);
+export const ARCHON_NEEDS_STANDING: ReadonlySet<string> = new Set(["say", "answer", "steer_item", "update_item"]);
 
 /** The only client the app window's own connections may declare to archond. */
 export const ARCHON_APP_CLIENT = "archon-web";
@@ -178,7 +178,7 @@ export function revokedRule(kind: DaemonKind, frame: Frame): string | undefined 
 function archonRefusal(cmd: string, frame: Frame, protocol: number | undefined): string | undefined {
   if (!ARCHON_PASS.has(cmd)) return `${cmd} is not open to the desktop app's requests`;
   if (ARCHON_NEEDS_STANDING.has(cmd) && (protocol === undefined || protocol < ARCHON_STANDING_PROTOCOL)) {
-    return `Message Archon and answers need Archon 1.5.0 or newer; this archond reports protocol ${String(protocol ?? "unknown")}`;
+    return `This action needs Archon 1.5.0 or newer; this archond reports protocol ${String(protocol ?? "unknown")}`;
   }
   // archond takes a connection's standing from the client its hello declares, so the app's own
   // connections greet only as the web app; CLI standing stays with main's confirmed actions.

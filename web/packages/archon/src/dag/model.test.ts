@@ -1,6 +1,6 @@
 import type { ArchonGraph } from "@aether-ui/core";
 import { describe, expect, it } from "vitest";
-import { criticalPath, dagData, dagDisplay, dagStructure, heldUp, nodeStatus, reasonsFor } from "./model.ts";
+import { criticalPath, dagData, dagDisplay, dagStructure, heldUp, initiativeProgress, nodeStatus, reasonsFor } from "./model.ts";
 
 const node = (id: string, state: string, extra: Record<string, unknown> = {}) => ({
   id, title: `Title ${id}`, pipeline: "adaptive", priority: "normal", state, spent_usd: 0, tags: [], created_at: "2026-11-04T09:00:00Z",
@@ -71,4 +71,13 @@ describe("held-up items", () => {
     expect(reasonsFor(data, "d")).toEqual(["Stacked on “Title c” (blocked)", "Waits on “Title e” (running)"]);
     expect(reasonsFor(data, "f")).toEqual([]);
   });
+});
+
+it("counts initiative members absent from a filtered or truncated graph", () => {
+  const data = dagData(graph([node("b", "succeeded", { initiative: "in_a" })], []));
+  const items = {
+    a: { summary: { id: "a", initiative: "in_a" }, state: "succeeded", asOf: 7 },
+    b: { summary: { id: "b", initiative: "in_a" }, state: "succeeded", asOf: 7 },
+  };
+  expect(initiativeProgress(data, [], items)).toMatchObject([{ id: "in_a", done: 2, total: 2 }]);
 });

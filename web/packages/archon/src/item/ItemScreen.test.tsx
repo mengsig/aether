@@ -88,6 +88,19 @@ describe("an item's states", () => {
 });
 
 describe("an item's sections", () => {
+  test("contains long gate descriptions behind an expandable summary", async () => {
+    const world = demoWorld();
+    const entry = world.items.get("qi_pairing");
+    if (!entry) throw new Error("the demo world has qi_pairing");
+    const summary = `/workspace/${"long-path".repeat(40)}`;
+    entry.detail = { ...entry.detail, gates: [{ ...(entry.detail.gates as Record<string, unknown>[])[0], summary }] };
+    const { container } = await item("qi_pairing", world);
+    const details = section(container, "Gates")?.querySelector("details");
+    expect(details?.open).toBe(false);
+    expect(details?.querySelector("summary")?.textContent?.length).toBeLessThan(summary.length);
+    expect(details?.querySelector("p")?.textContent).toBe(summary);
+  });
+
   test("lists runs linking to their pipeline, the stage timeline and the gates", async () => {
     const { container } = await item("qi_pairing");
     expect(section(container, "Runs")?.querySelector("a")?.getAttribute("href")).toBe("#/archon/items/qi_pairing/runs/run_pair");
@@ -96,6 +109,7 @@ describe("an item's sections", () => {
     expect(section(container, "Gates")?.textContent).toContain("Proposal · plan");
     expect(section(container, "Gates")?.textContent).toContain("Waiting on you");
     expect(container.querySelector(".queue-question")?.textContent).toContain("Approve the proposal");
+    expect(container.querySelector(".item-callout")).toBeNull();
   });
 
   test("links each dependency and shows the brief and cost", async () => {

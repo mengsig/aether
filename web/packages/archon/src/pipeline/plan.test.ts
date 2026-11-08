@@ -44,6 +44,12 @@ describe("a run's pipeline", () => {
     expect(summary(pipelineView(later, detail.stages, null))).toEqual(["plan:Completed", "build:Completed", "review:Running", "ship:Not started*"]);
   });
 
+  test("keeps the frozen stage order and unrun stages for a completed run", () => {
+    const { detail, run, plan } = fixture("qi_dark_mode", "run_dark");
+    const finished: archon.PipelineRun = { ...run, state: { state: "succeeded", summary: "Done" } };
+    expect(summary(pipelineView(finished, detail.stages, plan))).toEqual(["plan:Completed", "build:Completed", "review:Running", "docs:Not run", "ship:Not run"]);
+  });
+
   test("refuses another run's plan", () => {
     const { detail, run, plan } = fixture("qi_dark_mode", "run_dark");
     expect(() => pipelineView(run, detail.stages, { ...plan, run: "run_other" })).toThrow(/not the plan of run_dark/);

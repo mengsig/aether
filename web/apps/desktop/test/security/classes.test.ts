@@ -84,6 +84,14 @@ test("the app says, answers and reads an initiative as the web app, never with t
   assert.match(passThroughRefusal("archon", { cmd: "resume", scope: "global", hard: true }) ?? "", /archon CLI/);
 });
 
+test("steering commands require web standing and model policy remains readable", () => {
+  assert.equal(passThroughRefusal("archon", { cmd: "model_policy" }, 24), undefined);
+  for (const cmd of ["steer_item", "update_item"]) {
+    assert.match(passThroughRefusal("archon", { cmd }, 23) ?? "", /Archon 1\.5\.0 or newer/);
+    assert.equal(passThroughRefusal("archon", { cmd }, 24), undefined);
+  }
+});
+
 test("no frame but the hello declares a client, and none names an agent caller", () => {
   assert.match(passThroughRefusal("archon", { cmd: "say", text: "hi", client: "archon-cli" }, 26) ?? "", /names no client/);
   assert.match(passThroughRefusal("archon", { cmd: "answer", question: "q_1", text: "y", caller: "agt_1" }, 26) ?? "", /names no caller/);

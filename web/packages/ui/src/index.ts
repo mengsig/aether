@@ -8,6 +8,7 @@ import "./primitives.css";
 import "./shell.css";
 
 export { classes } from "./classes.ts";
+export { Markdown, safeHref } from "./markdown.tsx";
 export { ThemeProvider, useTheme, resolveTheme, applyTheme, systemPrefersDark, isThemePreference, THEME_PREFERENCES } from "./theme.tsx";
 export type { ThemePreference, ResolvedTheme, ThemeProviderProps } from "./theme.tsx";
 export { Button, type ButtonProps, type ButtonVariant } from "./button.tsx";
