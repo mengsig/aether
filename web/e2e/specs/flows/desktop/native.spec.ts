@@ -11,7 +11,7 @@ import type { Stack } from "../../../harness/stack.ts";
 import { expect, test, type Page } from "../../../harness/fixtures.ts";
 import { fixtureRepository, installGhStub, OWNER_REPO } from "../gh-stub.ts";
 import { startPrivateStack, stopPrivateStack, type PrivateStack } from "../private.ts";
-import { focusNextWindow, pressKeys, windowTitles } from "./native-host.ts";
+import { focusWindow, pressKeys, windowTitles } from "./native-host.ts";
 import { askingScript, installLavishStub, publishReport, shoot, shootScreen, startReportServer, VIEWPORT, type ReportServer } from "./native-fixtures.ts";
 import { launchPackaged, packagedBinary, type PackagedApp } from "./packaged.ts";
 import { route, setPaused } from "./state.ts";
@@ -55,7 +55,7 @@ async function sendToBackground(page: Page): Promise<void> {
   await route(page, `#/archon/items/${item}`);
   await page.locator(".item-link").filter({ hasText: REPORT_TITLE }).getByRole("link", { name: "Open" }).click();
   await expect.poll(() => windowTitles(desktop().compositor), { message: "the report window is on the compositor" }).toHaveLength(2);
-  await focusNextWindow(desktop().compositor);
+  await focusWindow(desktop().compositor, REPORT_TITLE);
   await expect.poll(() => page.evaluate(() => document.hasFocus()), { message: "another native window has the focus" }).toBe(false);
 }
 
@@ -186,10 +186,11 @@ test("UX-045: a real agent's questions alert the system; a click opens the quest
   await expect(card.getByRole("textbox", { name: "Answer Native asker" })).toBeFocused();
   await shoot(page, "ux045-question-focused");
   await page.keyboard.type("Short bullet points.");
-  await focusNextWindow(desktop().compositor);
+  await focusWindow(desktop().compositor, REPORT_TITLE);
   await expect.poll(() => page.evaluate(() => document.hasFocus()), { message: "the app is in the background for the second question" }).toBe(false);
-  await card.getByRole("button", { name: "Send answer" }).click();
+  await card.getByRole("button", { name: "Send answer" }).evaluate((button: HTMLElement) => button.click());
   await until(async () => desktop().native.notes(), (notes) => notes.some((note) => note.body === QUESTIONS[1]), "the second question's alert", 60_000);
+  expect(await page.evaluate(() => document.hasFocus()), "the app remains in the background").toBe(false);
   const product = desktop().native.notes().filter((note) => note.title === "Native asker asks");
   expect(product.map((note) => note.body), "each question alerted exactly once").toEqual([...QUESTIONS]);
 });
