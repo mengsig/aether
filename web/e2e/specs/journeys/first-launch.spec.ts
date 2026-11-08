@@ -17,6 +17,8 @@ import { need, note, open, textField } from "./ui.ts";
 const journey = journeyHooks();
 const REPLY_MS = { faux: 30_000, real: 180_000 } as const;
 const MESSAGE = "Thanks; one more check, please.";
+/** The app's minimum window, the size the smoke `min-window` holds the shell to. */
+const SMALLEST_WINDOW = { width: 720, height: 451 } as const;
 
 test("first-launch smoke: paired, the fleet renders, Start-agent shows", async () => {
   const run = journey();
@@ -67,6 +69,7 @@ async function expectReplyAndToolCall(run: Journey, id: string): Promise<void> {
   await expect(output, "the unfolded call shows its command").toBeVisible();
   await expectFactsAboveTranscript(page);
   await shootWindow(window, "agent", "tool-unfolded");
+  await expectStackAtSmallestWindow(window);
   await until(() => toolCallInputs(stack, id), (inputs) => inputs.some((input) => input.includes(RELEASE_FILE)), "the agent to hold in its shell call", REPLY_MS[variant]);
   const held = await agent(stack, id);
   assert.ok(!["completed", "failed", "cancelled"].includes(held.state), `the held agent still works: ${held.state}`);
@@ -91,6 +94,19 @@ async function expectFactsAboveTranscript(page: Locator): Promise<void> {
   assert.ok(factsEnd <= toolbar.y, `the transcript toolbar starts below the facts (facts end at ${factsEnd}, the toolbar at ${toolbar.y})`);
   assert.ok(toolbar.y + toolbar.height <= transcript.y, `the transcript starts below its toolbar (toolbar ends at ${toolbar.y + toolbar.height}, the transcript at ${transcript.y})`);
   assert.ok(transcript.y + transcript.height <= composer.y, `the composer starts below the transcript (transcript ends at ${transcript.y + transcript.height}, the composer at ${composer.y})`);
+}
+
+/** The order holds at the smallest window the app allows, where the page is shorter than the chat's own minimum
+ * and scrolls instead of letting the transcript or the composer draw over a neighbour. */
+async function expectStackAtSmallestWindow(window: Page): Promise<void> {
+  const full = window.viewportSize();
+  assert.ok(full !== null && full.height > SMALLEST_WINDOW.height, "the journey runs in a window taller than the smallest allowed");
+  await window.setViewportSize(SMALLEST_WINDOW);
+  try {
+    await expectFactsAboveTranscript(agentPage(window));
+  } finally {
+    await window.setViewportSize(full);
+  }
 }
 
 /** Sends while the agent holds in its shell call: the daemon keeps the message for its next turn. */
