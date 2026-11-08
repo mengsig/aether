@@ -2,6 +2,15 @@
   "tolerance": 0.1,
   "host": "Intel(R) Core(TM) 5 210H, 12 threads, Linux, Node v22.22.2; margins from six runs: wall and heap budgets (enforce: local) hold on this host only; GitHub runners check the ci measures",
   "measures": {
+    "markdown.dense.ms": {
+      "budget": 2000,
+      "unit": "ms",
+      "enforce": "local",
+      "fixture": "200 KB dense Markdown",
+      "measured": 396.9,
+      "noise": 0.316,
+      "reason": "Dense Markdown render in happy-dom; budget retains the former unit-test limit, with one run's seven-sample median and spread."
+    },
     "fleet.mount.ms": {
       "budget": 82.5,
       "unit": "ms",
