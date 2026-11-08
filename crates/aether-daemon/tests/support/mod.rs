@@ -13,6 +13,29 @@ use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::{TcpStream, UnixStream};
 use tokio_util::sync::CancellationToken;
 
+struct LogWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        std::io::Write::write(&mut *self.0.lock().expect("log lock"), bytes)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+pub fn capture_logs() -> std::sync::Arc<std::sync::Mutex<Vec<u8>>> {
+    let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writer = output.clone();
+    tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer(move || LogWriter(writer.clone()))
+        .try_init()
+        .expect("the test binary has no other tracing subscriber");
+    output
+}
+
 /// How long a fresh daemon may take to answer. Startup sweeps Docker, bounded at
 /// ten seconds alone, so a loaded host needs far more than an idle one.
 const STARTUP_WAIT: Duration = Duration::from_secs(120);

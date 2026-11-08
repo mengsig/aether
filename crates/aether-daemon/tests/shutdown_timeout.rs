@@ -2,24 +2,9 @@
 
 mod support;
 
-use std::io::Write;
-use std::sync::{Arc, Mutex};
-
 use aether_store::{SqliteStore, Store};
 use serde_json::json;
-use support::{RawConn, TestDaemon, await_lock_free};
-
-struct Log(Arc<Mutex<Vec<u8>>>);
-
-impl Write for Log {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().write(bytes)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
+use support::{RawConn, TestDaemon, await_lock_free, capture_logs};
 
 async fn create_agent(connection: &mut RawConn) -> aether_core::id::AgentId {
     let reply = connection
@@ -53,13 +38,7 @@ fn assert_visible(path: &std::path::Path, ids: &[aether_core::id::AgentId]) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_reader_delaying_final_sync_does_not_hold_up_shutdown_or_lose_commits() {
-    let output = Arc::new(Mutex::new(Vec::new()));
-    let writer = output.clone();
-    tracing_subscriber::fmt()
-        .with_ansi(false)
-        .with_writer(move || Log(writer.clone()))
-        .try_init()
-        .unwrap();
+    let output = capture_logs();
     let daemon = TestDaemon::start().await;
     let path = daemon.store_path();
     let reader = rusqlite::Connection::open(&path).unwrap();

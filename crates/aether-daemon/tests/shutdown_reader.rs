@@ -4,24 +4,11 @@
 mod support;
 
 use std::io::Write;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::json;
-use support::{RawConn, TestDaemon};
+use support::{RawConn, TestDaemon, capture_logs};
 use tokio::io::{AsyncBufReadExt, BufReader};
-
-struct Log(Arc<Mutex<Vec<u8>>>);
-
-impl Write for Log {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().write(bytes)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
 
 #[test]
 fn reader_child() {
@@ -82,13 +69,7 @@ fn checkpoint_progress(conn: &rusqlite::Connection, pragma: &str) -> (i64, i64) 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn daemon_reaps_live_agent_reader_before_its_final_checkpoint() {
-    let output = Arc::new(Mutex::new(Vec::new()));
-    let writer = output.clone();
-    tracing_subscriber::fmt()
-        .with_ansi(false)
-        .with_writer(move || Log(writer.clone()))
-        .try_init()
-        .unwrap();
+    let output = capture_logs();
     let daemon = TestDaemon::start().await;
     let mut connection = RawConn::connect(&daemon.socket).await.unwrap();
     connection
