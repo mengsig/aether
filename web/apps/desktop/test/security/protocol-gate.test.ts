@@ -59,6 +59,7 @@ test("memory writes and export require native confirmation before the frame is s
     sent.length = 0;
   }
   assert.equal(shown.length, 6);
+  assert.match((shown[4] as { detail: string }).detail, /^Scope all\nDaemon /);
   await assert.rejects(bridge.handle(APP_SENDER, OWNER, "subscribe", [conn, { cmd: "memory_import", dry_run: false, artifact: "{}", req: 4 }]), /Cancelled/);
   assert.equal(sent.length, 0);
   await send(bridge, conn, { cmd: "consolidate_memories", dry_run: true, req: 3 });

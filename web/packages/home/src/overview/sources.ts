@@ -10,6 +10,7 @@ import { noesisConnection } from "./model.ts";
 export const WATCHER_KEY = "home:github_watcher";
 export const QUESTIONS_KEY = "home:questions";
 export const spendKey = (dayStart: number): string => `home:spend:${dayStart}`;
+export const LIFETIME_KEY = "home:lifetime-status";
 export const USAGE_FEATURE = "usage_breakdown";
 
 export interface AetherSource {
@@ -20,6 +21,7 @@ export interface AetherSource {
   readonly noesis: Readonly<Record<string, unknown>> | null;
   readonly learn: NoesisCache;
   readonly spend: ReadEntry | undefined;
+  readonly lifetime: ReadEntry | undefined;
 }
 
 export interface ArchonSource {
@@ -47,7 +49,7 @@ export function selectHomeSources(dayStart: number): (state: State) => HomeSourc
       if (info.daemon === "aether") {
         aether.push({
           info, agents: selectAgents(conn)(state), events: selectEvents(conn)(state), attention: selectAttention(conn)(state),
-          noesis: selectNoesisStatus(conn)(state), learn: selectLearn(conn)(state), spend: selectRead(conn, key)(state),
+          noesis: selectNoesisStatus(conn)(state), learn: selectLearn(conn)(state), spend: selectRead(conn, key)(state), lifetime: selectRead(conn, LIFETIME_KEY)(state),
         });
       } else {
         archon.push({ info, items: selectItems(conn)(state), watcher: selectRead(conn, WATCHER_KEY)(state), questions: selectRead(conn, QUESTIONS_KEY)(state) });
@@ -89,6 +91,9 @@ export function homeReads(sources: HomeSources, dayStart: number, noesisConn: st
     if (info.state !== "ready" || !info.features.includes(USAGE_FEATURE)) continue;
     const command = { cmd: "usage_breakdown", by: "model", since: new Date(dayStart).toISOString() };
     reads.push({ kind: "reread", conn: info.id, key: spendKey(dayStart), command, tags: ["usage_breakdown"] });
+  }
+  for (const { info } of sources.aether) {
+    if (info.state === "ready") reads.push({ kind: "reread", conn: info.id, key: LIFETIME_KEY, command: { cmd: "status" }, tags: ["status"] });
   }
   if (noesisConn !== null) {
     reads.push({ kind: "noesis", conn: noesisConn, read: { kind: "sessions", limit: 20 } }, { kind: "noesis", conn: noesisConn, read: { kind: "learner" } });

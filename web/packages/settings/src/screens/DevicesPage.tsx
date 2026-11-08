@@ -4,7 +4,7 @@
 import { useApp, usePermission, useReadPermission, useReread } from "@aether-ui/core";
 import type { aether, ConnId } from "@aether-ui/protocol";
 import { Badge, Button, EmptyState, Switch } from "@aether-ui/ui";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invariant } from "../kit/invariant.ts";
 import { Action, RunNote, Section, StandingNotice, useRun, type Run } from "../kit/kit.tsx";
 import { formatTime } from "./format.ts";
@@ -61,6 +61,14 @@ export function DevicesPage({ conn }: { readonly conn: ConnId }) {
   const entry = useReread(conn, KEY, command, ["devices"]);
   const run = useRun(conn);
   const reread = () => app.reread(conn, KEY, devicesCommand(includeRevoked), ["devices"]);
+  useEffect(() => {
+    if (listing.refusal !== null) return;
+    const refresh = () => { if (document.visibilityState === "visible") void app.reread(conn, KEY, devicesCommand(includeRevoked), ["devices"]); };
+    const timer = setInterval(refresh, 10_000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { clearInterval(timer); window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); };
+  }, [app, conn, includeRevoked, listing.refusal]);
 
   return (
     <div className="st-stack">

@@ -46,6 +46,9 @@ export function GithubTile({ view }: { readonly view: HomeView }) {
   const { facts, github } = view;
   if (facts.archon === "connecting" || (facts.archon === "ready" && github.state === "loading")) return <LoadingTile label="GitHub" />;
   const step = nextStep("github", facts);
+  if (github.state === "problem" && /the GitHub watcher needs Archon's own Aether; \[aether\] mode is shared/i.test(github.problem)) {
+    return <StatTile label="GitHub" value="Unavailable" hint="The watcher needs Archon's own Aether connection" href="#/github"><NextStep step={OPEN_OVERVIEW} /></StatTile>;
+  }
   if (github.state === "problem" && keptForCli(github.problem)) {
     return <StatTile label="GitHub" value="CLI" hint="The watcher reports to the archon CLI" href="#/github"><NextStep step={OPEN_OVERVIEW} /></StatTile>;
   }

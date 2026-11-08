@@ -3,6 +3,7 @@
 
 import type { DesktopBridge, Transport } from "@aether-ui/protocol";
 import { errorText, invariant, object, seq, string, type Json } from "../guards.ts";
+import { DaemonError } from "../errors.ts";
 
 /** Commands whose reply is followed by pushed frames on the same subscription. */
 export const SUBSCRIPTIONS: ReadonlySet<string> = new Set(["subscribe", "subscribe_changes", "subscribe_feed"]);
@@ -16,7 +17,14 @@ export function ipcTransport(bridge: DesktopBridge, report: (message: string) =>
   return {
     id: "ipc",
     async open(target, onFrame, onClose) {
-      const conn = string(await bridge.connect(string(target, "local daemon id")), "bridge connection id");
+      let connection: string;
+      try {
+        connection = await bridge.connect(string(target, "local daemon id"));
+      } catch (error) {
+        if (/\b(?:ENOENT|ECONNREFUSED)\b/.test(errorText(error))) throw new DaemonError("disconnected", "The local daemon is not connected", {}, { cause: error });
+        throw error;
+      }
+      const conn = string(connection, "bridge connection id");
       const unsubscribes: Array<() => void> = [];
       let open = true;
       const lost = (error: unknown) => {

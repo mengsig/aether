@@ -7,6 +7,8 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { Conversation } from "./Conversation.tsx";
 import { connected, type Harness } from "./fixture/harness.test-util.tsx";
 import { FAUX_AGENT, FAUX_PARENT, fauxAgent, text } from "./fixture/transcript.ts";
+import { ToolActivityContext, ToolCall } from "./ToolCall.tsx";
+import { ToggleContext, ToggleSet } from "./toggles.ts";
 
 let current: Harness | null = null;
 
@@ -43,6 +45,16 @@ describe("a tool call", () => {
     { message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "bash", input: { command: "ls -la crates" } }] }, invocation: "inv_1" },
     { message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: [{ type: "text", text: "aether-daemon\naether-cli" }], is_error: false }] } },
   ];
+
+  test("shows an interrupted call even before a result arrives", async () => {
+    const h = current = await connected({ instance: "faux-1", agents: [fauxAgent()] });
+    const activity = new Map([["toolu_1", { state: "interrupted" as const, durationMs: null }]]);
+    const part = { kind: "tool" as const, id: "toolu_1", name: "bash", input: "{}", result: null };
+    const container = await h.mount(<ToggleContext.Provider value={new ToggleSet()}><ToolActivityContext.Provider value={activity}><ToolCall part={part} live={false} toggleKey="t:interrupted" /></ToolActivityContext.Provider></ToggleContext.Provider>);
+    expect(container.querySelector(".conv-tool")?.getAttribute("data-state")).toBe("interrupted");
+    expect(container.textContent).toContain("Interrupted");
+    expect(container.textContent).not.toContain("No result yet");
+  });
 
   test("is one folded row with its name and argument, and opens and closes its output", async () => {
     const { container } = await open(seed);

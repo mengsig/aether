@@ -20,9 +20,10 @@ export const ToolActivityContext = createContext<ReadonlyMap<string, ToolActivit
 const clip = (text: string): string => (text.length > MAX_TOOL_TEXT ? `${text.slice(0, MAX_TOOL_TEXT)}\n… (${text.length - MAX_TOOL_TEXT} more characters)` : text);
 
 type ToolPart = Extract<Part, { kind: "tool" }>;
-interface ToolState { readonly state: "running" | "ok" | "error" | "pending"; readonly tone: Tone; readonly label: string }
+interface ToolState { readonly state: "running" | "ok" | "error" | "pending" | "interrupted"; readonly tone: Tone; readonly label: string }
 
 function toolState(part: ToolPart, live: boolean, activity: ToolActivity | undefined): ToolState {
+  if (activity?.state === "interrupted") return { state: "interrupted", tone: "warning", label: "Interrupted" };
   if (part.result) return part.result.isError ? { state: "error", tone: "danger", label: "Failed" } : { state: "ok", tone: "success", label: "Done" };
   if (activity?.state === "running") return { state: "running", tone: "info", label: "Running" };
   if (activity?.state === "error") return { state: "error", tone: "danger", label: "Failed" };
