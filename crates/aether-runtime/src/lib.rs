@@ -71,7 +71,6 @@ pub use commands::{
     AgentUpdate, CreateAgentSpec, CreateTaskSpec, MessageDelivery, RuntimeStatus, STATUS_DEADLINE,
     pending_question,
 };
-pub use noesis_engine::NoesisStepStream;
 pub use retention::HistorySweep;
 
 #[derive(Debug, thiserror::Error)]

@@ -14,6 +14,10 @@ use aether_engine::{
 use aether_model::{ModelClient, ModelStream};
 use tokio_util::sync::CancellationToken;
 
+mod streaming;
+pub(crate) use streaming::StreamingClient;
+
+#[derive(Clone)]
 pub(crate) struct CompactionClient {
     pub engine: Arc<dyn Engine>,
     pub turn: EngineTurn,
@@ -499,6 +503,10 @@ mod tests {
     }
 
     async fn failed_checkpoint(ending: Ending) -> aether_model::PartialFailure {
+        failed_isolated_call(ending, false).await
+    }
+
+    async fn failed_isolated_call(ending: Ending, streaming: bool) -> aether_model::PartialFailure {
         let cancel = CancellationToken::new();
         let client = CompactionClient {
             context: aether_engine::EngineLaunchContext {
@@ -521,10 +529,47 @@ mod tests {
             ModelRef::new("claude-code", "sonnet"),
             vec![Message::user_text("summarize")],
         );
+        let client: Box<dyn ModelClient> = if streaming {
+            Box::new(StreamingClient(client))
+        } else {
+            Box::new(client)
+        };
         let stream = client.stream(request, cancel).await.expect("stream");
         *aether_model::collect_partial(stream, |_| {})
             .await
             .expect_err("failed checkpoint")
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn noesis_streaming_failures_preserve_receipts_and_partial_usage() {
+        for ending in [
+            Ending::Failed,
+            Ending::Cancelled,
+            Ending::Timeout,
+            Ending::Truncated,
+            Ending::NotInstalled,
+            Ending::Unsupported,
+            Ending::Exhausted,
+        ] {
+            let failure = failed_isolated_call(ending, true).await;
+            let usage = failure.partial.usage;
+            match ending {
+                Ending::Failed | Ending::Exhausted => {
+                    assert_eq!(usage.input_tokens, 23);
+                    assert_eq!(usage.cost_usd, 1.25);
+                    assert!(usage.cost_complete);
+                }
+                Ending::Cancelled | Ending::Timeout | Ending::Truncated => {
+                    assert_eq!(usage.input_tokens, 13);
+                    assert_eq!(usage.output_tokens, 5);
+                    assert!(!usage.cost_complete);
+                }
+                Ending::NotInstalled | Ending::Unsupported => {
+                    assert_eq!(usage, Usage::default());
+                    assert!(usage.cost_complete);
+                }
+            }
+        }
     }
 
     #[tokio::test]

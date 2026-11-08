@@ -160,6 +160,7 @@ impl Feed {
             EventKind::AgentUsageUpdated {
                 total: usage(total_usd),
                 turn_usage: usage(turn_usd),
+                billing: None,
             },
         );
     }

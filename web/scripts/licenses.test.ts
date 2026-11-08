@@ -45,4 +45,13 @@ describe("licence rule", () => {
       .toEqual(["exception for minimatch is unused: remove it from scripts/licenses.ts"]);
     expect(licenseProblems({ lockfileVersion: 1 })).toEqual(["package-lock.json has no packages map (lockfile v2 or later)"]);
   });
+
+  it("allows a runtime exception at runtime, only for the licence it names", () => {
+    const runtime = { khroma: { license: "", reason: "test", runtime: true } };
+    expect(licenseProblems(lock({ "node_modules/khroma": {} }), runtime)).toEqual([]);
+    expect(licenseProblems(lock({ "node_modules/khroma": { license: "GPL-3.0-only" } }), runtime))
+      .toEqual(["node_modules/khroma: GPL-3.0-only is not allowed", "exception for khroma is unused: remove it from scripts/licenses.ts"]);
+    expect(licenseProblems(lock({ "node_modules/other": {} }), runtime))
+      .toEqual(["node_modules/other: no licence in the lockfile", "exception for khroma is unused: remove it from scripts/licenses.ts"]);
+  });
 });

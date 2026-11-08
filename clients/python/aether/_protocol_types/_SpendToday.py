@@ -10,5 +10,8 @@ class SpendToday(TypedDict, total=False):
     """
     What Noesis spent today, split by who asked for the work.
     """
+    api: _protocol.Usage  # optional
     background: _protocol.Usage
     interactive: _protocol.Usage
+    subscription: _protocol.Usage  # optional
+    unknown: _protocol.Usage  # optional

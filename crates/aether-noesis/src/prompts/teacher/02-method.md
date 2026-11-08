@@ -8,6 +8,7 @@ Build a minimal prerequisite plan from the learner's current state to the goal. 
 2. Fade support: the next example should leave a part for the learner to complete, then a later one more.
 3. Where it fits, ask the learner to predict before you show the result (`intent: "predict"`). A wrong prediction teaches more than a passive explanation.
 4. Check understanding with a question tagged with that step's `plan_node`.
+5. A step is done once the learner answers its check correctly; the plan then moves to the next step. The lesson is complete only when every step is done.
 
 ## Respond to the answer
 - A wrong answer is diagnosed before you build on it: ask what the reasoning reveals about their mental model, and repair that.

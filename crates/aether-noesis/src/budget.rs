@@ -36,6 +36,13 @@ pub struct Spend {
     pub tokens: u64,
 }
 
+impl std::ops::AddAssign for Spend {
+    fn add_assign(&mut self, other: Spend) {
+        self.usd += other.usd;
+        self.tokens = self.tokens.saturating_add(other.tokens);
+    }
+}
+
 impl Spend {
     fn is_valid(self) -> bool {
         self.usd.is_finite() && self.usd >= 0.0
@@ -49,6 +56,9 @@ pub struct LaneSpend {
     pub interactive: Spend,
     pub background: Spend,
 }
+
+/// The setting a learner raises when today's teaching budget is spent.
+pub const INTERACTIVE_BUDGET_SETTING: &str = "noesis.budget.interactive_usd_daily";
 
 /// Why a call was refused. Nothing was sent to a model.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]

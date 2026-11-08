@@ -170,6 +170,9 @@ export interface Draft<T extends DraftValue> {
   readonly dirty: boolean;
 }
 
+/** Drafts live in the browser: a server render shows every form as its initial value. */
+const getServerDraft = (): undefined => undefined;
+
 /**
  * A form's draft under `key` (`<screen>/<form>`), seeded from `initial` and kept until cleared. Fields
  * absent from a stored draft take their initial value, so a form may grow new fields safely.
@@ -178,6 +181,7 @@ export function useDraft<T extends DraftValue>(key: string, initial: T, store: D
   const stored = useSyncExternalStore(
     useCallback((listener: Listener) => store.subscribe(key, listener), [store, key]),
     useCallback(() => store.get(key), [store, key]),
+    getServerDraft,
   );
   const value = stored === undefined ? initial : { ...initial, ...(stored as Partial<T>) };
   const update = useCallback((patch: DraftPatch<T>) => {

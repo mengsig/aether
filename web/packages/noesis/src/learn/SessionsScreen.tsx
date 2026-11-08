@@ -9,6 +9,7 @@ import { useLearn, useNoesisChange, useNoesisRead, useOperateRefusal } from "./d
 import { LearnFrame, type OpenGate } from "./LearnFrame.tsx";
 import { classifyRefusal, dateTime, draftKey, invariant, nextStep, PHASE_LABEL, planProgress, recentGoals, sortSessions, type Refusal } from "./model.ts";
 import { RefusalNote } from "./RefusalNote.tsx";
+import { CatchUpEntry } from "../understand/CatchUpSheet.tsx";
 import { UnderstandFromHash } from "../understand/UnderstandSheet.tsx";
 
 const GOAL_MAX = 2000;
@@ -27,7 +28,10 @@ export function SessionsScreen({ conn }: OpenGate) {
   const sessions = useMemo(() => sortSessions(Object.values(learn.sessions)), [learn.sessions]);
   return (
     <div className="learn-columns">
-      <NewSession conn={conn} suggestions={recentGoals(sessions)} />
+      <div className="learn-start">
+        <NewSession conn={conn} suggestions={recentGoals(sessions)} />
+        <CatchUpEntry />
+      </div>
       <section className="learn-list" aria-label="Your sessions">
         <h2 className="learn-subtitle">Your sessions</h2>
         {read.error !== null && sessions.length === 0 && <ErrorState title="Could not load your sessions" message={read.error} onRetry={read.reload} />}

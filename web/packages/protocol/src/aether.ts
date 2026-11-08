@@ -1,7 +1,7 @@
 // The Aether daemon protocol as TypeScript types and command builders.
 // Generated from clients/protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: 55f268054e55693b0194c13f29b1afccac5dad05d8fed990797afcef4972e551
+// Schema SHA-256: 13b7ef07f48b72c7425a0d8494ba9971bfd263aed4c733a4502cbf654b6522e6
 
 export const PROTOCOL_VERSION = 26;
 export const MIN_PROTOCOL_VERSION = 17;
@@ -468,6 +468,15 @@ export interface ArtifactQuery {
 }
 
 /**
+ * A posed question with what the learner answered and what it revealed.
+ */
+export interface AskedQuestion {
+  "answer"?: RecordedAnswer | null;
+  "question": Question;
+  "result"?: QuestionResult | null;
+}
+
+/**
  * The SHA-256 of the stored bytes, in lowercase hex.
  * Pattern: ^[0-9a-f]{64}$
  */
@@ -512,6 +521,12 @@ export interface AuthInfo {
 export type BackgroundDisable = "cancel_at_model_boundary";
 
 export type BackgroundPriority = "low" | "normal";
+
+/**
+ * What paid for a usage record when it was written: an engine CLI on the
+ * user's own subscription, or a provider billed per request.
+ */
+export type Billing = "subscription" | "api";
 
 export interface BillingPatch {
   "allow_api"?: boolean | null;
@@ -1320,6 +1335,7 @@ export interface EventKindAgentConfigUpdated {
  * Absolute billing totals, including corrections from a completed engine run.
  */
 export interface EventKindAgentUsageUpdated {
+  "billing"?: Billing | null;
   "total": Usage;
   "turn_usage": Usage;
   "type": "agent.usage_updated";
@@ -1888,6 +1904,15 @@ export interface EventKindNoesisPracticeConcluded {
   "type": "noesis.practice_concluded";
 }
 
+/**
+ * A turn stopped before any model call; the session carries it too.
+ */
+export interface EventKindNoesisSessionStalled {
+  "session": string;
+  "stall": SessionStall;
+  "type": "noesis.session_stalled";
+}
+
 export interface EventKindNoesisJobUpdated {
   "job": Job;
   "type": "noesis.job_updated";
@@ -2009,6 +2034,7 @@ export type EventKind =
   | EventKindNoesisPlanUpdated
   | EventKindNoesisProblemPosed
   | EventKindNoesisPracticeConcluded
+  | EventKindNoesisSessionStalled
   | EventKindNoesisJobUpdated
   | EventKindNoesisGraphMerged
   | EventKindNoesisLearnerUpdated
@@ -3031,6 +3057,8 @@ export interface NoesisProvenance {
 export interface NoesisSession {
   "active_problem"?: Problem | null;
   "agent": AgentId;
+  "agents"?: Array<SessionAgent>;
+  "context"?: EvidenceBundle | null;
   "created_at": string;
   "goal": string;
   "id": string;
@@ -3038,7 +3066,11 @@ export interface NoesisSession {
   "open_question"?: Question | null;
   "phase": Phase;
   "plan"?: PlanTree | null;
+  "problems"?: Array<PosedProblem>;
+  "questions"?: Array<AskedQuestion>;
+  "stalled"?: SessionStall | null;
   "updated_at": string;
+  "usage"?: SessionUsage | null;
 }
 
 /**
@@ -3365,6 +3397,14 @@ export interface PlanTree {
   "revision": number;
 }
 
+/**
+ * A posed problem with its conclusion once it has one.
+ */
+export interface PosedProblem {
+  "conclusion"?: ProblemConclusion | null;
+  "problem": Problem;
+}
+
 export type PracticeOutcome = "solved" | "solved_with_hints" | "moved_on" | "surrendered" | "dismissed";
 
 export type Priority = "low" | "normal" | "high" | "critical";
@@ -3387,6 +3427,18 @@ export interface Problem {
   "posed_at": string;
   "statement": string;
   "targets": Array<string>;
+}
+
+/**
+ * How a problem ended, as `noesis.practice_concluded` announced it.
+ */
+export interface ProblemConclusion {
+  "concluded_at": string;
+  "miss_class"?: MissClass | null;
+  "outcome": PracticeOutcome;
+  "retest": boolean;
+  "rung"?: number | null;
+  "solution": string;
 }
 
 export type ProblemMode = "recall" | "discrimination" | "composition";
@@ -3576,6 +3628,18 @@ export interface QuotaWindow {
   "resets_at"?: string | null;
   "used_percent": number;
   "window_minutes"?: number | null;
+}
+
+/**
+ * The learner's answer as recorded.
+ */
+export interface RecordedAnswer {
+  "answered_at": string;
+  "chosen"?: Array<string>;
+  "confidence"?: number | null;
+  "dont_know": boolean;
+  "text"?: string | null;
+  "thinking"?: string | null;
 }
 
 /**
@@ -4739,9 +4803,42 @@ export type ServerFrame =
   | ServerFrameDelta
   | ServerFrameChallenge;
 
+/**
+ * One agent of a session and the inputs Noesis wrote to it.
+ */
+export interface SessionAgent {
+  "agent": AgentId;
+  "internal"?: Array<number>;
+  "role": SessionRole;
+}
+
 export type SessionExtraction = "manual" | "auto";
 
 export type SessionMode = "teach" | "practice";
+
+/**
+ * What an agent did in its session.
+ */
+export type SessionRole = "prober" | "teacher" | "practitioner";
+
+/**
+ * A turn that stopped before any model call, and why.
+ */
+export interface SessionStall {
+  "at": string;
+  "message": string;
+  "reason": StallReason;
+}
+
+/**
+ * A session's usage by billing: subscription use is covered by the
+ * learner's plan and never charged per request; API use is.
+ */
+export interface SessionUsage {
+  "api": Usage;
+  "subscription": Usage;
+  "unknown"?: Usage;
+}
 
 /**
  * What a tool does to the world. Drives retry policy, idempotency tracking
@@ -4788,8 +4885,11 @@ export interface SpawnSpec {
  * What Noesis spent today, split by who asked for the work.
  */
 export interface SpendToday {
+  "api"?: Usage;
   "background": Usage;
   "interactive": Usage;
+  "subscription"?: Usage;
+  "unknown"?: Usage;
 }
 
 /**
@@ -4800,6 +4900,8 @@ export interface StaleNote {
   "revision"?: string | null;
   "since": string;
 }
+
+export type StallReason = "budget_exhausted";
 
 /**
  * Why a [`DaemonStatus`] is not fresh, and how old it is.

@@ -169,3 +169,15 @@ export async function type(harness: Harness, element: Element, value: string): P
   });
   await harness.settle();
 }
+
+/** Picks an option of a select the way React hears it; a disabled option cannot be picked. */
+export async function choose(harness: Harness, element: Element, value: string): Promise<void> {
+  invariant(element instanceof HTMLSelectElement, "choosing happens in a select");
+  const option = [...element.options].find((candidate) => candidate.value === value);
+  invariant(option !== undefined && !option.disabled, `the select offers ${value}`);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(element, value);
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await harness.settle();
+}

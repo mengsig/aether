@@ -440,6 +440,9 @@ fn the_status_reply_carries_the_documented_shape() {
         spend_today: SpendToday {
             interactive: Usage::default(),
             background: Usage::default(),
+            subscription: Usage::default(),
+            api: Usage::default(),
+            unknown: Usage::default(),
         },
         disable_policy: DisablePolicy {
             grace_seconds: 60,

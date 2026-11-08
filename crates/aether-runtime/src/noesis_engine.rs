@@ -6,12 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aether_core::agent::{Agent, ExecutionBackend};
-use aether_core::id::{AgentId, InvocationId};
 use aether_core::model::ModelRef;
 use aether_model::ModelClient;
 
-use crate::bus::{DeltaKind, DeltaStream};
-use crate::noesis_seal::StreamSeal;
 use crate::{Result, Runtime, RuntimeError, turn_engine};
 
 /// How long one Noesis step may run on an engine: a lesson is longer than
@@ -60,15 +57,10 @@ impl Runtime {
                 detected.reason(&kind),
             ))
         })?;
-        let temp_dir = crate::turn::agent_temp_dir(self, agent.id)?;
-        let cwd = temp_dir
-            .clone()
-            .or_else(|| self.config.workspace_root.clone())
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
         debug_assert!(!resolved.model.id.is_empty(), "a resolved model has an id");
+        debug_assert_eq!(agent.scope.backend, ExecutionBackend::Host);
         let session_pricing = session_pricing(self, &resolved);
-        Ok(Arc::new(crate::compaction_client::CompactionClient {
+        let client = crate::compaction_client::CompactionClient {
             engine,
             context: aether_engine::EngineLaunchContext {
                 run_id: agent.run,
@@ -80,34 +72,51 @@ impl Runtime {
             purpose: "Noesis step",
             timeout: NOESIS_STEP_TIMEOUT,
             session_pricing: Some(session_pricing),
-            turn: aether_engine::EngineTurn {
-                redactor: self.tool_runtime.redactor().clone(),
-                prompt: String::new(),
-                images: Vec::new(),
-                system_prompt: String::new(),
-                session: None,
-                session_usage: aether_core::model::Usage::default(),
-                session_model_usage: None,
-                new_session_id: aether_engine::new_session_id(),
-                session_recorder: Some(turn_engine::session_recorder(self, agent.id)),
-                model: Some(resolved.model.id),
-                effort: None,
-                cwd,
-                extra_dirs: Vec::new(),
-                summary_only: true,
-                compact_session: false,
-                auto_compact_tokens: None,
-                lean_host_context: true,
-                network_access: false,
-                bypass_permissions: false,
-                hidden_env: self.tools.engine_hidden_env().to_vec(),
-                tool_hidden_env: self.tools.hidden_env().to_vec(),
-                temp_dir,
-                build_env: Vec::new(),
-                mcp: None,
-            },
-        }))
+            turn: isolated_turn(self, agent, resolved.model.id)?,
+        };
+        Ok(Arc::new(crate::compaction_client::StreamingClient(client)))
     }
+}
+
+fn isolated_turn(
+    runtime: &Arc<Runtime>,
+    agent: &Agent,
+    model: String,
+) -> Result<aether_engine::EngineTurn> {
+    debug_assert!(!model.is_empty());
+    debug_assert_eq!(agent.scope.backend, ExecutionBackend::Host);
+    let temp_dir = crate::turn::agent_temp_dir(runtime, agent.id)?;
+    let cwd = temp_dir
+        .clone()
+        .or_else(|| runtime.config.workspace_root.clone())
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    Ok(aether_engine::EngineTurn {
+        redactor: runtime.tool_runtime.redactor().clone(),
+        prompt: String::new(),
+        images: Vec::new(),
+        system_prompt: String::new(),
+        session: None,
+        session_usage: aether_core::model::Usage::default(),
+        session_model_usage: None,
+        new_session_id: aether_engine::new_session_id(),
+        session_recorder: Some(turn_engine::session_recorder(runtime, agent.id)),
+        model: Some(model),
+        effort: None,
+        cwd,
+        extra_dirs: Vec::new(),
+        summary_only: true,
+        compact_session: false,
+        auto_compact_tokens: None,
+        lean_host_context: true,
+        network_access: false,
+        bypass_permissions: false,
+        hidden_env: runtime.tools.engine_hidden_env().to_vec(),
+        tool_hidden_env: runtime.tools.hidden_env().to_vec(),
+        temp_dir,
+        build_env: Vec::new(),
+        mcp: None,
+    })
 }
 
 /// Prices a step from the model its engine session reports, as an ordinary
@@ -121,56 +130,4 @@ fn session_pricing(
     Arc::new(move |reported: &str| {
         turn_engine::TurnPricing::of_session(&runtime.upgrade()?, &configured, reported)
     })
-}
-
-/// The live deltas of one Noesis step, so a client streams the lesson as it
-/// does an ordinary turn. Only the turn's bounds and its text go out: a
-/// tool's input may hold a sealed value. Dropping it finishes the turn.
-pub struct NoesisStepStream {
-    runtime: Arc<Runtime>,
-    agent: AgentId,
-    deltas: DeltaStream,
-}
-
-impl std::fmt::Debug for NoesisStepStream {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NoesisStepStream")
-            .field("agent", &self.agent)
-            .field("deltas", &self.deltas)
-            .finish_non_exhaustive()
-    }
-}
-
-impl NoesisStepStream {
-    /// Opens turn `turn` (1 for the agent's first step) of `agent`.
-    pub fn start(runtime: Arc<Runtime>, agent: AgentId, turn: u32) -> Self {
-        assert!(turn >= 1, "turns count from one");
-        let mut deltas = DeltaStream::new(InvocationId::new(), StreamSeal::Noesis);
-        runtime
-            .bus
-            .publish_delta(agent, &mut deltas, DeltaKind::TurnStarted { turn });
-        Self {
-            runtime,
-            agent,
-            deltas,
-        }
-    }
-
-    pub fn text(&mut self, text: &str) {
-        if text.is_empty() {
-            return;
-        }
-        let delta = DeltaKind::Text { text: text.into() };
-        self.runtime
-            .bus
-            .publish_delta(self.agent, &mut self.deltas, delta);
-    }
-}
-
-impl Drop for NoesisStepStream {
-    fn drop(&mut self) {
-        self.runtime
-            .bus
-            .publish_delta(self.agent, &mut self.deltas, DeltaKind::TurnFinished);
-    }
 }

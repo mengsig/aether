@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::Noesis;
 use crate::prompts::Agent;
-use crate::teach::agent_for_role;
+use crate::teach::{agent_for_role, embedded_json};
 
 pub mod args;
 mod heal;
@@ -101,6 +101,54 @@ pub fn seal_input(tool: &str, input: &Value) -> Value {
     }
     debug_assert!(matches!(tool, "noesis.ask" | "noesis.problem"));
     Value::String(SEALED.to_string())
+}
+
+/// Every text a call's input leaves on the record: each key and scalar, but
+/// a sealing tool's sealed fields. A sealing tool shows its input as kept
+/// (an object with its sealed fields masked; text is sealed whole) and as
+/// healed, the way its question is parsed and published.
+pub fn visible_texts(tool: &str, input: &Value) -> Vec<String> {
+    let mut texts = Vec::new();
+    let pose = ToolName::parse(tool).filter(|tool| !tool.sealed_fields().is_empty());
+    let Some(pose) = pose else {
+        collect_shown(input, &mut texts);
+        return texts;
+    };
+    let healed = heal::heal_object(input.clone(), args::fields(pose));
+    for shown in [input, &healed] {
+        let Value::Object(map) = shown else {
+            continue;
+        };
+        let unsealed = map
+            .iter()
+            .filter(|(key, _)| !pose.sealed_fields().contains(&key.as_str()));
+        for (key, value) in unsealed {
+            texts.push(key.clone());
+            collect_shown(value, &mut texts);
+        }
+    }
+    texts
+}
+
+/// Every key and scalar in `value` as the sealer reads them: a number,
+/// boolean or null as its text, and text holding JSON as that JSON too.
+fn collect_shown(value: &Value, texts: &mut Vec<String>) {
+    match value {
+        Value::String(text) => {
+            texts.push(text.clone());
+            if let Some(embedded) = embedded_json(text) {
+                collect_shown(&embedded, texts);
+            }
+        }
+        Value::Array(items) => items.iter().for_each(|item| collect_shown(item, texts)),
+        Value::Object(map) => {
+            for (key, item) in map {
+                texts.push(key.clone());
+                collect_shown(item, texts);
+            }
+        }
+        scalar => texts.push(scalar.to_string()),
+    }
 }
 
 /// Every sealed text a call carries, read as the parser reads it: the sealed

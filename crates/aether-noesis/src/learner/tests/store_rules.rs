@@ -344,7 +344,7 @@ fn teaching_drafts_land_once_per_concept_they_bear_on() {
     let (_dir, store) = open_temp();
     let conn = store.connection();
     conn.execute(
-        "INSERT INTO sessions VALUES ('ns_1', 'Learn cells', 'teach', 'probe', 'agt_1', 't0', 't0')",
+        "INSERT INTO sessions (id, goal, mode, phase, agent, created_at, updated_at) VALUES ('ns_1', 'Learn cells', 'teach', 'probe', 'agt_1', 't0', 't0')",
         [],
     )
     .unwrap();

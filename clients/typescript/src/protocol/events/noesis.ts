@@ -13,6 +13,7 @@ import type {
   Problem,
   Question,
   QuestionResult,
+  SessionStall,
 } from "../../protocol.ts";
 
 
@@ -64,6 +65,15 @@ export interface EventKindNoesisPracticeConcluded {
   "session": string;
   "solution": string;
   "type": "noesis.practice_concluded";
+}
+
+/**
+ * A turn stopped before any model call; the session carries it too.
+ */
+export interface EventKindNoesisSessionStalled {
+  "session": string;
+  "stall": SessionStall;
+  "type": "noesis.session_stalled";
 }
 
 export interface EventKindNoesisJobUpdated {

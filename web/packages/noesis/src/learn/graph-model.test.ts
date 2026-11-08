@@ -1,9 +1,9 @@
 // The knowledge graph's model: propositions become nodes coloured by mastery, chains become edges
-// between drawn nodes only, and the force layout is stretched so labelled boxes never overlap.
+// between drawn nodes only, each titled so a person can read it.
 
 import { describe, expect, test } from "vitest";
 import { CONCEPTS, GRAPH } from "./fixture/scenario.ts";
-import { knowledgeGraph, knowledgeModel, masteryByProposition, spreadForLabels, structureKey } from "./graph-model.ts";
+import { knowledgeGraph, knowledgeModel, masteryByProposition, readableTitle, structureKey } from "./graph-model.ts";
 
 const graph = () => {
   const held = knowledgeGraph(GRAPH as unknown as Record<string, unknown>);
@@ -28,15 +28,21 @@ describe("knowledgeModel", () => {
   });
 });
 
-describe("spreadForLabels", () => {
-  test("stretches positions so boxes 42px apart as dots no longer overlap", () => {
-    const layout = { hash: "h", positions: new Map([["a", { x: 0, y: 0 }], ["b", { x: 30, y: 29.4 }], ["c", { x: 42, y: 0 }]]) };
-    const spread = spreadForLabels(layout);
-    const a = spread.positions.get("a");
-    const b = spread.positions.get("b");
-    const c = spread.positions.get("c");
-    expect(b && Math.abs(b.y - (a?.y ?? 0))).toBeGreaterThanOrEqual(44);
-    expect(c && Math.abs(c.x - (a?.x ?? 0))).toBeGreaterThanOrEqual(168);
-    expect(spread.hash).not.toBe(layout.hash);
+describe("readableTitle", () => {
+  test("a slug name reads as words, a spaced name stays as written", () => {
+    expect(readableTitle({ name: "raft-leader_election", statement: "Raft elects one leader per term." })).toBe("Raft leader election");
+    expect(readableTitle({ name: "Quorum overlap", statement: "Any two majorities share a node." })).toBe("Quorum overlap");
+  });
+
+  test("without a name the statement's first clause titles it, cut to a title's length", () => {
+    expect(readableTitle({ name: "", statement: "A term has at most one leader; votes are per term." })).toBe("A term has at most one leader");
+    const long = readableTitle({ name: " ", statement: `${"word ".repeat(30)}end.` });
+    expect(long.length).toBeLessThanOrEqual(60);
+    expect(long.endsWith("…")).toBe(true);
+  });
+
+  test("the graph's nodes carry the readable title", () => {
+    const named = { ...graph(), nodes: graph().nodes.map((node, index) => (index === 0 ? { ...node, name: "log-matching" } : node)) };
+    expect(knowledgeModel(named, new Map()).nodes[0]?.label).toBe("Log matching");
   });
 });

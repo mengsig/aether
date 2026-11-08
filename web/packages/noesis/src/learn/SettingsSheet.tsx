@@ -6,7 +6,7 @@ import type { aether } from "@aether-ui/protocol";
 import { Button, Field, ModelPicker, modelOptions, Sheet, Switch } from "@aether-ui/ui";
 import { useMemo, useState, type FormEvent } from "react";
 import { useGate, useHostAdmin, useNoesisConfigure, useNoesisRead, useOperateRefusal } from "./data.ts";
-import { budgetShare, invariant, spentUsd, usd } from "./model.ts";
+import { billingWords, budgetShare, invariant, spentUsd, usd } from "./model.ts";
 import { hasReadyModel, useModelChoices, type ModelChoices } from "./models.ts";
 import { draftOf, patchOf, settingsDraftKey, type BudgetField, type SettingsDraft } from "./settings-draft.ts";
 
@@ -63,7 +63,8 @@ function SettingsForm({ conn, status, onDone }: { conn: string; status: aether.N
       <Spend status={status} />
       <NoesisSwitches draft={value} host={host} set={set} />
       <BudgetFields draft={value} errors={errors} host={host} set={set} />
-      <ModelFields draft={value} choices={choices} active={status.settings.enabled || value.enabled} disabled={refusal !== null} set={set} />
+      <ModelFields draft={value} choices={choices} active={status.settings.enabled || value.enabled} disabled={refusal !== null} resolved={status.teaching_model} set={set} />
+      <EngineeringSwitch draft={value} disabled={refusal !== null} set={set} />
       {failure !== null && <p className="learn-callout" role="alert">{failure}</p>}
       <div className="learn-actions">
         <Button variant="primary" type="submit" data-testid="noesis-save" disabled={!dirty || saving || invalid}>{saving ? "Saving…" : "Save changes"}</Button>
@@ -115,7 +116,6 @@ function BudgetFields({ draft, errors, host, set }: SectionProps & { errors: Par
   );
 }
 
-/** Why a saved model is not in the list: it is billed per request with that off, or not ready now. */
 /**
  * Why the default slot cannot start a session: the daemon fills it with a subscription model only,
  * so with none ready and API billing allowed the person is asked to choose one of the ready models.
@@ -127,6 +127,7 @@ export function defaultModelNote(ref: string, choices: ModelChoices, allowApi: b
   return "No subscription model is ready, so the default cannot start a session: choose one of the API-billed models.";
 }
 
+/** Why a saved model is not in the list: it is billed per request with that off, or not ready now. */
 export function hiddenModelNote(ref: string, choices: ModelChoices, allowApi: boolean): string | undefined {
   if (ref === "" || !choices.loaded) return undefined;
   const listed = modelOptions(choices.models, choices.providers, { allowApiBilled: allowApi });
@@ -135,7 +136,24 @@ export function hiddenModelNote(ref: string, choices: ModelChoices, allowApi: bo
   return `${ref} is not offered: it is billed per request or not ready. Choose another, or allow API-billed models.`;
 }
 
-function ModelFields({ draft, choices, active, disabled, set }: SectionProps & { choices: ModelChoices; active: boolean; disabled: boolean }) {
+/** What the daemon resolved the teaching choice to, or why it could not: the model a lesson will really use. */
+export function resolvedNote(resolved: aether.NoesisModelChoice | null | undefined): string | undefined {
+  if (resolved?.refusal) return `Teaching cannot run now: ${resolved.refusal}`;
+  if (resolved?.model) return `Teaching runs on ${resolved.model}.`;
+  return undefined;
+}
+
+function EngineeringSwitch({ draft, disabled, set }: SectionProps & { disabled: boolean }) {
+  return (
+    <fieldset className="learn-fieldset">
+      <legend>Learn from my work</legend>
+      <Switch label="Learn from my work" data-testid="noesis-engineering" checked={draft.engineering} disabled={disabled} onChange={(engineering) => set({ engineering })}
+        hint="Lets you start a lesson from your own Archon items, runs and pull requests. What you pick is shown to the teaching model; nothing is read until you choose it." />
+    </fieldset>
+  );
+}
+
+function ModelFields({ draft, choices, active, disabled, resolved, set }: SectionProps & { choices: ModelChoices; active: boolean; disabled: boolean; resolved: aether.NoesisModelChoice | null | undefined }) {
   const extraction = (
     <Switch label="Add sessions to the knowledge graph automatically" hint="Off means you choose when, from a session" checked={draft.extraction === "auto"}
       disabled={disabled} onChange={(on) => set({ extraction: on ? "auto" : "manual" })} />
@@ -163,7 +181,8 @@ function ModelFields({ draft, choices, active, disabled, set }: SectionProps & {
       {pickers.map((picker) => (
         <ModelPicker key={picker.field} label={picker.label} data-testid={picker.testid} models={choices.models} providers={choices.providers} value={draft[picker.field]}
           defaultLabel={DEFAULT_MODEL_LABEL} allowApiBilled={draft.allowApi} disabled={disabled}
-          hint={hiddenModelNote(draft[picker.field], choices, draft.allowApi) ?? defaultModelNote(draft[picker.field], choices, draft.allowApi) ?? picker.hint}
+          hint={hiddenModelNote(draft[picker.field], choices, draft.allowApi) ?? defaultModelNote(draft[picker.field], choices, draft.allowApi)
+            ?? (picker.field === "strong" ? resolvedNote(resolved) : undefined) ?? picker.hint}
           onChange={(ref) => set({ [picker.field]: ref })} />
       ))}
       {extraction}
@@ -189,6 +208,7 @@ function Spend({ status }: { status: aether.NoesisStatus }) {
           <span className="learn-num">{usd(row.spent)} of {usd(row.budget)}</span>
         </div>
       ))}
+      <p className="learn-muted" aria-label="Billing today">{billingWords(status.spend_today)}</p>
       <p className="learn-muted">Background tokens: {usedTokens.toLocaleString("en")} of {budget.background_tokens_daily.toLocaleString("en")}. Subscription use counts at its estimated price.</p>
     </section>
   );

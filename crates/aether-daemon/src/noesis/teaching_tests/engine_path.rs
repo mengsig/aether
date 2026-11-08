@@ -14,6 +14,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::*;
 
+mod live_seal;
+
 const ENGINE_MODEL: &str = "faux-engine/tutor";
 const KEY_SECRET: &str = "Paris has been the capital since 987.";
 const SOLUTION_SECRET: &str = "SOLUTION-FIVE-41";
@@ -89,6 +91,22 @@ impl FauxCli {
     }
 }
 
+/// `reply` as the text deltas an engine streams it in, a few characters each.
+fn streamed(reply: &str) -> Vec<EngineEvent> {
+    let chars: Vec<char> = reply.chars().collect();
+    let deltas: Vec<EngineEvent> = chars
+        .chunks(7)
+        .map(|chunk| {
+            EngineEvent::Delta(StreamEvent::TextDelta {
+                index: 0,
+                text: chunk.iter().collect(),
+            })
+        })
+        .collect();
+    debug_assert_eq!(deltas.len(), chars.len().div_ceil(7));
+    deltas
+}
+
 #[async_trait::async_trait]
 impl aether_engine::Engine for FauxCli {
     fn kind(&self) -> EngineKind {
@@ -129,19 +147,21 @@ impl aether_engine::Engine for FauxCli {
             let content = vec![ContentBlock::Text {
                 text: reply.clone(),
             }];
-            let said = EngineEvent::Assistant {
+            // A real engine streams its reply before it sends it whole.
+            let mut events = streamed(&reply);
+            events.push(EngineEvent::Assistant {
                 content,
                 usage: None,
                 model: None,
-            };
-            let done = EngineEvent::Done(EngineOutcome {
+            });
+            events.push(EngineEvent::Done(EngineOutcome {
                 usage,
                 closing_accounting: true,
                 cost_usd: Some(0.002),
                 text: Some(reply),
                 ..Default::default()
-            });
-            for event in [said, done] {
+            }));
+            for event in events {
                 if tx.send(event).await.is_err() {
                     return;
                 }
@@ -338,15 +358,76 @@ async fn a_whole_session_runs_on_the_engine_with_sealed_answers_and_charged_step
         .filter(|event| matches!(event.kind, EventKind::NoesisAnswerRecorded { .. }))
         .count();
     assert_eq!(recorded, 2, "both answers were graded");
-    let spent = noesis_status(&harness).await.spend_today.interactive;
+    let spend = noesis_status(&harness).await.spend_today;
+    let spent = spend.interactive;
     assert!(spent.cost_usd > 0.0, "engine steps are charged: {spent:?}");
+    assert_eq!(
+        (spend.subscription, spend.api),
+        (spent, Usage::default()),
+        "engine use is the plan's, never an API charge"
+    );
     assert!(
         cli.launches().len() >= 4,
         "every step was one engine launch"
     );
-    let streamed = live_text(&mut bus, prober);
-    assert!(streamed.contains("First, a quick check."), "{streamed}");
+    assert_history(&harness, &created.id, prober).await;
+    assert_eq!(
+        live_text(&mut bus, prober),
+        "",
+        "lesson text is kept whole, never streamed"
+    );
     harness.close().await;
+}
+
+/// The finished lesson as `noesis_get_session` reads it: both agents with
+/// the inputs Noesis wrote, both answers with reveals, the passed check's
+/// step visited, and its usage on the subscription.
+async fn assert_history(harness: &Harness, id: &str, prober: AgentId) {
+    use aether_core::noesis::{PlanNodeStatus, SessionRole};
+    let session = harness.session(id).await.expect("session");
+    let roles: Vec<SessionRole> = session.agents.iter().map(|agent| agent.role).collect();
+    assert_eq!(roles, [SessionRole::Prober, SessionRole::Teacher]);
+    assert_eq!(session.agents[0].agent, prober);
+    for listed in &session.agents {
+        let entries = harness
+            .daemon
+            .runtime
+            .store()
+            .transcript(listed.agent, 0)
+            .expect("transcript");
+        assert_eq!(listed.internal.len(), 1, "one opening or hand-off each");
+        let first_user = entries
+            .iter()
+            .find(|entry| entry.message.role == MessageRole::User)
+            .expect("an input");
+        assert_eq!(
+            listed.internal[0], first_user.seq,
+            "the agent's first input"
+        );
+    }
+    assert_eq!(session.questions.len(), 2);
+    assert!(session.questions.iter().all(|asked| {
+        asked
+            .result
+            .as_ref()
+            .is_some_and(|result| result.answer_key.is_some())
+    }));
+    assert_eq!(
+        session.questions[1]
+            .answer
+            .as_ref()
+            .map(|answer| answer.chosen.clone()),
+        Some(vec!["Paris".to_string()])
+    );
+    let plan = session.plan.as_ref().expect("a plan");
+    assert_eq!(
+        plan.nodes[0].status,
+        PlanNodeStatus::Visited,
+        "its check passed"
+    );
+    let usage = session.usage.expect("usage of a session read");
+    assert!(usage.subscription.cost_usd > 0.0, "{usage:?}");
+    assert_eq!(usage.api, Usage::default());
 }
 
 #[tokio::test(flavor = "multi_thread")]

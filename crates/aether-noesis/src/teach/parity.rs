@@ -538,7 +538,7 @@ fn t08_plan_validation_reports_every_problem_and_a_rewrite_replaces_the_plan() {
 }
 
 #[test]
-fn t09_plan_node_status_follows_the_latest_tagged_question() {
+fn t09_a_passed_check_visits_its_node_and_the_next_step_is_current() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = teacher_session(&mut t);
@@ -562,8 +562,8 @@ fn t09_plan_node_status_follows_the_latest_tagged_question() {
         statuses(&t),
         vec![
             NodeStatus::Visited,
-            NodeStatus::Current,
-            NodeStatus::Upcoming
+            NodeStatus::Visited,
+            NodeStatus::Current
         ]
     );
     let last_plan = t
@@ -575,9 +575,9 @@ fn t09_plan_node_status_follows_the_latest_tagged_question() {
             _ => None,
         });
     assert_eq!(
-        last_plan.unwrap().nodes[1].status,
+        last_plan.unwrap().nodes[2].status,
         NodeStatus::Current,
-        "the event carries the status"
+        "the answer's event carries the status"
     );
 }
 
@@ -755,6 +755,13 @@ fn t11_the_solution_is_sealed_on_every_read_path_until_conclude_and_practice_nev
         _ => None,
     });
     assert_eq!(revealed, Some((SECRET.to_string(), Outcome::Solved)));
+    let history = session(&t, &id).problems;
+    let conclusion = history[0].conclusion.as_ref().expect("concluded");
+    assert_eq!(
+        (conclusion.solution.as_str(), conclusion.outcome),
+        (SECRET, Outcome::Solved),
+        "the session's history reveals the solution once concluded"
+    );
     assert_eq!(
         graph_rows(&noesis),
         graph_before,
@@ -797,6 +804,12 @@ fn t11_answer_keys_are_sealed_until_the_answer_is_recorded() {
         Some(RevealedKey::Text("KEY-CHAIN-RULE".into()))
     );
     assert_eq!(result.explanation.as_deref(), Some("EXPLAIN-OUTER-INNER"));
+    let asked = session(&t, &id).questions;
+    assert_eq!(
+        asked[0].result.as_ref(),
+        Some(&result),
+        "the history holds the reveal"
+    );
     assert!(
         !format!("{:?}", t.engine().inputs).contains("KEY-CHAIN-RULE"),
         "the agent's input stays sealed"

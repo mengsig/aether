@@ -7,9 +7,10 @@ use std::fmt;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::TeachError;
-use super::plan::PlanDag;
+use super::plan::{Mark, PlanDag};
 use super::records::{
     ChoiceOption, MissClass, Mode, Outcome, Phase, PracticeMode, Problem, Question, QuestionKind,
+    QuestionStep,
 };
 use crate::tools::SEALED;
 
@@ -22,16 +23,19 @@ pub(super) fn fresh_id(prefix: &str) -> String {
     format!("{prefix}_{}", ulid::Ulid::generate())
 }
 
-fn corrupt(what: &str) -> TeachError {
+pub(super) fn corrupt(what: &str) -> TeachError {
     TeachError::Corrupt(what.to_string())
 }
 
-fn json_text<T: serde::Serialize>(value: &T) -> Result<String, TeachError> {
+pub(super) fn json_text<T: serde::Serialize>(value: &T) -> Result<String, TeachError> {
     serde_json::to_string(value)
         .map_err(|error| TeachError::Corrupt(format!("cannot encode a record: {error}")))
 }
 
-fn from_json<T: serde::de::DeserializeOwned>(text: &str, what: &str) -> Result<T, TeachError> {
+pub(super) fn from_json<T: serde::de::DeserializeOwned>(
+    text: &str,
+    what: &str,
+) -> Result<T, TeachError> {
     serde_json::from_str(text).map_err(|_| corrupt(what))
 }
 
@@ -150,10 +154,11 @@ pub(super) fn insert_question(
     let options = question.options.as_ref().map(json_text).transpose()?;
     let concepts = json_text(&question.concepts)?;
     let answer_key = json_text(&row.answer_key)?;
+    debug_assert!(question.step.is_some(), "a question is posed as a step");
     conn.execute(
         "INSERT INTO questions(id, session, kind, prompt, options, multi, collapsed, plan_node,
-                               concepts, answer_key, explanation, posed_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                               concepts, answer_key, explanation, posed_at, step)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             question.id,
             session,
@@ -167,6 +172,7 @@ pub(super) fn insert_question(
             answer_key,
             row.explanation,
             question.posed_at,
+            question.step.map(QuestionStep::as_str),
         ],
     )?;
     Ok(())
@@ -179,9 +185,10 @@ pub(super) fn open_question(
 ) -> Result<Option<QuestionRow>, TeachError> {
     let raw = conn
         .query_row(
-            "SELECT id, kind, prompt, options, multi, collapsed, plan_node, concepts, answer_key,
-                    explanation, posed_at
-             FROM questions WHERE session = ?1 AND answered_at IS NULL",
+            &format!(
+                "SELECT {} FROM questions WHERE session = ?1 AND answered_at IS NULL",
+                RawQuestion::COLUMNS
+            ),
             [session],
             RawQuestion::read,
         )
@@ -190,7 +197,7 @@ pub(super) fn open_question(
 }
 
 /// A `questions` row with its JSON columns still encoded.
-struct RawQuestion {
+pub(super) struct RawQuestion {
     id: String,
     kind: String,
     prompt: String,
@@ -202,10 +209,16 @@ struct RawQuestion {
     answer_key: String,
     explanation: Option<String>,
     posed_at: String,
+    step: Option<String>,
 }
 
 impl RawQuestion {
-    fn read(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+    /// The columns [`RawQuestion::read`] reads, in its order.
+    pub(super) const COLUMNS: &str = "id, kind, prompt, options, multi, collapsed, plan_node, \
+        concepts, answer_key, explanation, posed_at, step";
+    pub(super) const WIDTH: usize = 12;
+
+    pub(super) fn read(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
             id: row.get(0)?,
             kind: row.get(1)?,
@@ -218,10 +231,12 @@ impl RawQuestion {
             answer_key: row.get(8)?,
             explanation: row.get(9)?,
             posed_at: row.get(10)?,
+            step: row.get(11)?,
         })
     }
 
-    fn decode(self) -> Result<QuestionRow, TeachError> {
+    /// The stored question, with the step it was posed as when one is recorded.
+    pub(super) fn decode(self) -> Result<QuestionRow, TeachError> {
         let options: Option<Vec<ChoiceOption>> = match &self.options {
             Some(text) => Some(from_json(text, "question options")?),
             None => None,
@@ -236,7 +251,10 @@ impl RawQuestion {
             collapsed: self.collapsed,
             plan_node: self.plan_node,
             posed_at: self.posed_at,
-            step: None,
+            step: self
+                .step
+                .map(|step| QuestionStep::parse(&step).ok_or_else(|| corrupt("question step")))
+                .transpose()?,
         };
         Ok(QuestionRow {
             question,
@@ -318,13 +336,21 @@ pub(super) fn mark_delivered(conn: &Connection, question: &str) -> Result<(), Te
     Ok(())
 }
 
-/// The plan nodes of the session's tagged questions, oldest first.
-pub(super) fn tagged_nodes(conn: &Connection, session: &str) -> Result<Vec<String>, TeachError> {
+/// The session's questions posed on a plan node, oldest first; a check is
+/// passed once answered correctly, and "don't know" never passes.
+pub(super) fn plan_marks(conn: &Connection, session: &str) -> Result<Vec<Mark>, TeachError> {
     let mut statement = conn.prepare_cached(
-        "SELECT plan_node FROM questions WHERE session = ?1 AND plan_node IS NOT NULL ORDER BY rowid",
+        "SELECT plan_node,
+                collapsed AND correct IS 1 AND coalesce(json_extract(answer, '$.dont_know'), 0) = 0
+         FROM questions WHERE session = ?1 AND plan_node IS NOT NULL ORDER BY rowid",
     )?;
-    let nodes = statement.query_map([session], |row| row.get::<_, String>(0))?;
-    Ok(nodes.collect::<Result<_, _>>()?)
+    let marks = statement.query_map([session], |row| {
+        Ok(Mark {
+            node: row.get(0)?,
+            passed: row.get(1)?,
+        })
+    })?;
+    Ok(marks.collect::<Result<_, _>>()?)
 }
 
 pub(super) fn latest_plan(

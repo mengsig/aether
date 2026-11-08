@@ -23,21 +23,22 @@ use aether_core::model::{
 };
 use aether_core::tool::ToolExposure;
 use aether_model::{ModelClient, ModelStream, Models};
-use aether_noesis::budget::{Billing, Spend};
+use aether_noesis::budget::{Billing, INTERACTIVE_BUDGET_SETTING, Spend};
 use aether_noesis::prompts;
 use aether_noesis::teach::engine::ModelInfo;
 use aether_noesis::teach::{
-    AgentSpec, Engine, EngineError, Input, Step, ToolCall, ToolResult, agent_for_role,
+    AgentSpec, Engine, EngineError, Input, Sealer, Step, ToolCall, ToolResult, agent_for_role,
+    kept_reply,
 };
 use aether_noesis::tools::{self, ToolName};
-use aether_runtime::noesis_guard::{NoesisBudget, NoesisCharge, lane_of};
-use aether_runtime::{BusMessage, CreateAgentSpec, NoesisStepStream, Runtime};
+use aether_runtime::noesis_guard::{NoesisBudget, NoesisCharge, NoesisRefusal, lane_of};
+use aether_runtime::{BusMessage, CreateAgentSpec, Runtime};
 use aether_store::Commit;
 use futures::StreamExt;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
-use super::budget::{ServiceBudget, spend_of};
+use super::budget::{ServiceBudget, runs_on_engine, spend_of};
 use super::engine_step::{self, EngineStepClient};
 
 /// What every engine of one running service shares.
@@ -53,14 +54,6 @@ pub(super) struct EngineHost {
     pub prompt_overrides: Option<PathBuf>,
     /// The one run every Noesis agent is created in.
     pub run: RunId,
-}
-
-/// Whether `model` runs on an engine CLI (a subscription), not an API.
-fn runs_on_engine(models: &Models, model: &ModelRef) -> bool {
-    models
-        .registry()
-        .provider(&model.provider)
-        .is_some_and(|provider| provider.protocol.is_engine())
 }
 
 /// Every listed model, ready only when a step on it could run now: an
@@ -157,7 +150,7 @@ impl<'a> AetherEngine<'a> {
                 .host
                 .budget
                 .admit(agent, lane_of(agent.role.as_str()))
-                .map_err(|refusal| not_sent(format!("{refusal:?}")))?;
+                .map_err(|refusal| self.refused(agent, refusal))?;
             self.charge = Some(OpenCharge {
                 agent: agent.id,
                 charge,
@@ -249,12 +242,16 @@ impl AetherEngine<'_> {
         agent: &Agent,
         role: MessageRole,
         content: Vec<ContentBlock>,
-    ) -> Result<(), EngineError> {
+    ) -> Result<u64, EngineError> {
         debug_assert!(!content.is_empty(), "an entry carries content");
         let mut commit = Commit::new();
         commit.push_event(message_draft(agent, role, content));
-        self.host.runtime.apply(commit).map_err(not_sent)?;
-        Ok(())
+        let events = self.host.runtime.apply(commit).map_err(not_sent)?;
+        debug_assert_eq!(events.len(), 1, "one message event per entry");
+        let message = events
+            .first()
+            .ok_or_else(|| not_sent("the transcript entry was not committed"))?;
+        Ok(message.seq)
     }
 
     /// The blocks `input` adds to the transcript; results the last reply's
@@ -262,7 +259,9 @@ impl AetherEngine<'_> {
     fn blocks_of(&self, history: &[Message], input: Input) -> Vec<ContentBlock> {
         let (calls, answered) = last_calls(history);
         match input {
-            Input::Learner(text) | Input::Handoff(text) => vec![ContentBlock::Text { text }],
+            Input::Learner(text) | Input::Opening(text) | Input::Handoff(text) => {
+                vec![ContentBlock::Text { text }]
+            }
             Input::ToolResults(results) => results
                 .into_iter()
                 .filter(|result| !answered.contains(&result.call))
@@ -292,16 +291,15 @@ impl AetherEngine<'_> {
     }
 
     /// One model call over the agent's transcript, ended if the service
-    /// stops or the agent ends (a cancel) while it runs.
+    /// stops or the agent ends (a cancel) while it runs. The reply is
+    /// buffered whole: nothing of it is published until it is kept.
     fn invoke(&self, agent: &Agent, request: ModelRequest) -> Result<CallEnd, EngineError> {
         let host = self.host;
         let handle = tokio::runtime::Handle::current();
         let cancel = host.cancel.child_token();
-        let turn = step_number(&request.messages);
         tokio::task::block_in_place(|| {
             handle.block_on(async {
                 let client = host.client_for(agent).await?;
-                let mut live = NoesisStepStream::start(host.runtime.clone(), agent.id, turn);
                 let ended = agent_ended(&host.runtime, agent.id);
                 tokio::pin!(ended);
                 let opening = client.stream(request, cancel.clone());
@@ -316,24 +314,63 @@ impl AetherEngine<'_> {
                         return Ok(stopped(settled_usage(opening).await));
                     }
                 };
-                read_reply(stream, &cancel, ended, &mut |text| live.text(text)).await
+                read_reply(stream, &cancel, ended).await
             })
         })
     }
 
-    /// Record the reply and its usage, so the day's spend survives a restart.
-    /// Only the agent's stats are written, over the row as it is now.
-    fn record_reply(&self, agent: AgentId, response: &ModelResponse) -> Result<(), EngineError> {
-        let content: Vec<ContentBlock> = response
-            .content
-            .iter()
-            .filter(|block| !matches!(block, ContentBlock::Thinking { .. }))
-            .cloned()
-            .collect();
+    /// One reply to `request`, retried once with a corrective note when an
+    /// engine's reply is not the object asked for; each attempt is gated,
+    /// and what it spent is added to the agent's admission.
+    fn reply(
+        &mut self,
+        row: &Agent,
+        request: &mut ModelRequest,
+    ) -> Result<ModelResponse, EngineError> {
+        for attempt in 1..=engine_step::ATTEMPTS {
+            self.gate(row)?;
+            match self.invoke(row, request.clone())? {
+                CallEnd::Replied(response) => {
+                    if let Some(open) = self.charge.as_mut() {
+                        open.spent += response.usage;
+                    }
+                    return Ok(response);
+                }
+                CallEnd::AgentEnded(spent) => return Err(self.record_cut_short(row, spent)),
+                CallEnd::Broke(spent, error)
+                    if attempt < engine_step::ATTEMPTS && engine_step::is_malformed(&error) =>
+                {
+                    self.charge_spent(row, spent).map_err(failed)?;
+                    with_note(&mut request.messages, engine_step::RETRY_NOTE);
+                }
+                CallEnd::Broke(spent, error) => {
+                    return Err(self.record_broken(row, spent, error.to_string()));
+                }
+            }
+        }
+        unreachable!("the last attempt returns whatever it got")
+    }
+
+    /// Record the kept reply's `content` and the `usage` of the step `called`
+    /// made, so the day's spend survives a restart. Only the agent's stats are
+    /// written, over the row as it is now; the runtime seals a pose's sealed fields.
+    fn record_reply(
+        &self,
+        called: &Agent,
+        usage: Usage,
+        content: Vec<ContentBlock>,
+    ) -> Result<(), EngineError> {
+        debug_assert!(
+            content
+                .iter()
+                .all(|block| !matches!(block, ContentBlock::Thinking { .. })),
+            "thinking is never kept"
+        );
+        let agent = called.id;
         let row = self
             .host
             .runtime
-            .record_noesis_call(agent, response.usage, |row, commit| {
+            .record_noesis_call(agent, &called.model, usage, |row, commit| {
                 // An agent ended meanwhile acts on no reply: only the spend lands.
                 if !content.is_empty() && !row.status.is_terminal() {
                     commit.push_event(message_draft(row, MessageRole::Assistant, content));
@@ -348,7 +385,8 @@ impl AetherEngine<'_> {
 
     /// The agent ended mid-call: what the provider reported spending so far
     /// is charged and recorded, as the runtime records a cancelled call.
-    fn record_cut_short(&mut self, agent: AgentId, mut spent: Usage) -> EngineError {
+    fn record_cut_short(&mut self, called: &Agent, mut spent: Usage) -> EngineError {
+        let agent = called.id;
         spent.mark_cost_gap(CostGap::Interrupted);
         if let Some(open) = self.charge.as_mut() {
             debug_assert_eq!(open.agent, agent, "the call ran under its own admission");
@@ -357,7 +395,7 @@ impl AetherEngine<'_> {
         match self
             .host
             .runtime
-            .record_noesis_call(agent, spent, |_, _| {})
+            .record_noesis_call(agent, &called.model, spent, |_, _| {})
         {
             Ok(row) => failed(format!(
                 "agent {agent} became {} during its model call",
@@ -371,10 +409,10 @@ impl AetherEngine<'_> {
 
     /// The reply failed mid-stream: what the provider reported spending is
     /// charged and recorded, so a failed step still counts against the budget.
-    fn record_broken(&mut self, agent: AgentId, mut spent: Usage, error: String) -> EngineError {
+    fn record_broken(&mut self, called: &Agent, mut spent: Usage, error: String) -> EngineError {
         debug_assert!(!error.is_empty(), "a broken reply says why");
         spent.mark_cost_gap(CostGap::Interrupted);
-        match self.charge_spent(agent, spent) {
+        match self.charge_spent(called, spent) {
             Ok(()) => failed(error),
             Err(record) => failed(format!(
                 "{error}; and the call's spend was not recorded: {record}"
@@ -383,20 +421,28 @@ impl AetherEngine<'_> {
     }
 
     /// Charge a call that produced no reply to keep, and record its usage.
-    fn charge_spent(&mut self, agent: AgentId, spent: Usage) -> Result<(), String> {
+    fn charge_spent(&mut self, called: &Agent, spent: Usage) -> Result<(), String> {
         let open = self.charge.as_mut();
         assert!(
-            open.as_ref().is_some_and(|open| open.agent == agent),
+            open.as_ref().is_some_and(|open| open.agent == called.id),
             "the call ran under its own admission"
         );
         if let Some(open) = open {
             open.spent += spent;
         }
-        let recorded = self
-            .host
-            .runtime
-            .record_noesis_call(agent, spent, |_, _| {});
-        recorded.map(|_| ()).map_err(|error| error.to_string())
+        self.record_spend(called, spent)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Record what a call `called` made and already charged spent, with
+    /// nothing of its reply.
+    fn record_spend(&self, called: &Agent, spent: Usage) -> Result<(), EngineError> {
+        debug_assert!(spent.cost_usd >= 0.0, "a call never refunds");
+        let recorded =
+            self.host
+                .runtime
+                .record_noesis_call(called.id, &called.model, spent, |_, _| {});
+        recorded.map(|_| ()).map_err(failed)
     }
 
     /// Refuse a call the agent's admission does not cover, given its spend
@@ -408,7 +454,29 @@ impl AetherEngine<'_> {
             .charge
             .refuses_model(&row.model)
             .or_else(|| open.charge.before_invocation(&open.spent));
-        refused.map_or(Ok(()), |reason| Err(not_sent(reason)))
+        let Some(reason) = refused else {
+            return Ok(());
+        };
+        // A spent budget is told apart: the session records it as its stall.
+        Err(match self.host.budget.spent(lane_of(row.role.as_str())) {
+            Some(spent) => EngineError::BudgetSpent(spent),
+            None => not_sent(reason),
+        })
+    }
+
+    /// The error of a refused admission; a spent budget names its setting.
+    fn refused(&self, agent: &Agent, refusal: NoesisRefusal) -> EngineError {
+        match refusal {
+            NoesisRefusal::Busy(reason) => not_sent(reason),
+            NoesisRefusal::Exhausted(reason) => EngineError::BudgetSpent(
+                self.host
+                    .budget
+                    .spent(lane_of(agent.role.as_str()))
+                    .unwrap_or_else(|| {
+                        format!("{reason}; raise {INTERACTIVE_BUDGET_SETTING} to continue today")
+                    }),
+            ),
+        }
     }
 
     fn request(&self, agent: &Agent, history: Vec<Message>) -> Result<ModelRequest, EngineError> {
@@ -473,14 +541,14 @@ impl Engine for AetherEngine<'_> {
         Ok(agent.id.to_string())
     }
 
-    fn deliver(&mut self, agent: &str, input: Input) -> Result<(), EngineError> {
+    fn deliver(&mut self, agent: &str, input: Input) -> Result<Option<u64>, EngineError> {
         let row = self.agent(agent)?;
         let history = self.transcript(row.id)?;
         let blocks = self.blocks_of(&history, input);
         if blocks.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
-        self.record(&row, MessageRole::User, blocks)
+        self.record(&row, MessageRole::User, blocks).map(Some)
     }
 
     fn estimate(&self, _agent: &str) -> Spend {
@@ -491,35 +559,35 @@ impl Engine for AetherEngine<'_> {
         true
     }
 
-    fn step(&mut self, agent: &str) -> Result<Step, EngineError> {
+    /// The step's reply is kept only as [`kept_reply`] decides: a reply
+    /// that gives a sealed answer away is charged and discarded, never
+    /// recorded, and made once more with the seal's reminder.
+    fn step(&mut self, agent: &str, live: &Sealer) -> Result<Step, EngineError> {
         let row = self.agent(agent)?;
         if row.status.is_terminal() {
             return Err(not_sent(format!("agent {agent} is {}", row.status.kind())));
         }
         let mut request = self.request(&row, self.transcript(row.id)?)?;
-        let mut attempt = 1;
-        let response = loop {
-            self.gate(&row)?;
-            match self.invoke(&row, request.clone())? {
-                CallEnd::Replied(response) => break response,
-                CallEnd::AgentEnded(spent) => return Err(self.record_cut_short(row.id, spent)),
-                CallEnd::Broke(spent, error)
-                    if attempt < engine_step::ATTEMPTS && engine_step::is_malformed(&error) =>
-                {
-                    self.charge_spent(row.id, spent).map_err(failed)?;
-                    request.messages.push(engine_step::retry_note());
-                    attempt += 1;
+        let mut unrecorded = None;
+        let replies = kept_reply(live, |reminder| {
+            if let Some(reminder) = reminder {
+                // The last reply was discarded: its spend lands before the next is made.
+                if let Some(spent) = unrecorded.take() {
+                    self.record_spend(&row, spent)?;
                 }
-                CallEnd::Broke(spent, error) => {
-                    return Err(self.record_broken(row.id, spent, error.to_string()));
-                }
+                with_note(&mut request.messages, reminder);
             }
+            let response = self.reply(&row, &mut request)?;
+            unrecorded = Some(response.usage);
+            Ok((step_of(&response), response))
+        })?;
+        let (usage, content) = match (&replies.kept, replies.discarded.last()) {
+            (Some(kept), _) => (kept.usage, kept_content(kept)),
+            (None, Some(last)) => (last.usage, text_content(&replies.step.text)),
+            (None, None) => unreachable!("a step without a kept reply discarded two"),
         };
-        if let Some(open) = self.charge.as_mut() {
-            open.spent += response.usage;
-        }
-        self.record_reply(row.id, &response)?;
-        Ok(step_of(&response))
+        self.record_reply(&row, usage, content)?;
+        Ok(replies.step)
     }
 }
 
@@ -581,7 +649,6 @@ async fn read_reply(
     mut stream: ModelStream,
     cancel: &CancellationToken,
     mut ended: Pin<&mut impl Future<Output = ()>>,
-    on_text: &mut impl FnMut(&str),
 ) -> Result<CallEnd, EngineError> {
     let mut reply = StreamAccumulator::new();
     let mut usage = Usage::default();
@@ -599,10 +666,8 @@ async fn read_reply(
             Some(Ok(event)) => event,
             Some(Err(error)) => return Ok(CallEnd::Broke(usage, error)),
         };
-        match &event {
-            StreamEvent::Usage { usage: reading } => usage = *reading,
-            StreamEvent::TextDelta { text, .. } => on_text(text),
-            _ => {}
+        if let StreamEvent::Usage { usage: reading } = &event {
+            usage = *reading;
         }
         reply
             .apply(&event)
@@ -660,13 +725,41 @@ fn stopped(usage: Usage) -> CallEnd {
     )
 }
 
-/// The step's turn number for live deltas: one more than the replies so far.
-fn step_number(history: &[Message]) -> u32 {
-    let replies = history
+/// A kept reply's blocks as its transcript keeps them: thinking dropped.
+fn kept_content(response: &ModelResponse) -> Vec<ContentBlock> {
+    let content: Vec<ContentBlock> = response
+        .content
         .iter()
-        .filter(|message| message.role == MessageRole::Assistant)
-        .count();
-    u32::try_from(replies).map_or(u32::MAX, |replies| replies.saturating_add(1))
+        .filter(|block| !matches!(block, ContentBlock::Thinking { .. }))
+        .cloned()
+        .collect();
+    debug_assert!(content.len() <= response.content.len());
+    content
+}
+
+/// The transcript entry of a step that kept no reply.
+fn text_content(text: &str) -> Vec<ContentBlock> {
+    debug_assert!(!text.is_empty(), "a neutral step says something");
+    vec![ContentBlock::Text {
+        text: text.to_string(),
+    }]
+}
+
+/// Add `note` to the request's last message when it is the user's, else as
+/// a user message of its own, so roles still alternate.
+fn with_note(messages: &mut Vec<Message>, note: &str) {
+    let text = ContentBlock::Text {
+        text: note.to_string(),
+    };
+    match messages.last_mut() {
+        Some(last) if last.role == MessageRole::User => last.content.push(text),
+        _ => messages.push(Message::user_text(note)),
+    }
+    debug_assert!(
+        messages
+            .last()
+            .is_some_and(|last| last.role == MessageRole::User)
+    );
 }
 
 fn message_draft(agent: &Agent, role: MessageRole, content: Vec<ContentBlock>) -> EventDraft {
@@ -763,8 +856,17 @@ fn step_of(response: &ModelResponse) -> Step {
             _ => None,
         })
         .collect();
+    let text_blocks = response
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
     Step {
         text: response.text(),
+        text_blocks,
         calls,
         usage: spend_of(&response.usage),
     }
@@ -800,15 +902,12 @@ mod tests {
             cancel.cancel();
             let ended = std::future::pending::<()>();
             tokio::pin!(ended);
-            let mut texts = Vec::new();
-            let mut on_text = |text: &str| texts.push(text.to_string());
-            let end = read_reply(settled_stream(spent), &cancel, ended, &mut on_text).await;
+            let end = read_reply(settled_stream(spent), &cancel, ended).await;
             let Ok(CallEnd::Broke(usage, error)) = end else {
                 panic!("a stopped call breaks");
             };
             assert_eq!(usage, spent, "the settled usage is charged");
             assert_eq!(error.class, ModelErrorClass::Cancelled);
-            assert!(texts.is_empty());
         }
     }
 
@@ -822,7 +921,7 @@ mod tests {
             let cancel = CancellationToken::new();
             let ended = std::future::ready(());
             tokio::pin!(ended);
-            let end = read_reply(settled_stream(spent), &cancel, ended, &mut |_| {}).await;
+            let end = read_reply(settled_stream(spent), &cancel, ended).await;
             let usage = match end {
                 Ok(CallEnd::AgentEnded(usage) | CallEnd::Broke(usage, _)) => usage,
                 _ => panic!("the call ended without a reply"),
@@ -892,3 +991,7 @@ mod tests {
         assert_eq!(merged[0].content.len(), 2);
     }
 }
+
+#[cfg(test)]
+#[path = "engine_seal_tests.rs"]
+mod seal_tests;

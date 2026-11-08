@@ -223,6 +223,7 @@ fn receipts_among_others(own: usize, others: usize) -> (SqliteStore, RunId) {
             EventKind::AgentUsageUpdated {
                 total: usage,
                 turn_usage: usage,
+                billing: None,
             },
         )
         .agent(AgentId::new())

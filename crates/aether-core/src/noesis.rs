@@ -71,6 +71,127 @@ pub struct NoesisSession {
     pub active_problem: Option<Problem>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+    /// Every agent that ran the session, in the order they ran: the Prober,
+    /// then the Teacher or the Practitioner. Only `noesis_get_session` fills
+    /// the four history fields below; events and older daemons leave them out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agents: Vec<SessionAgent>,
+    /// Every question posed, oldest first, with the answer and its result.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub questions: Vec<AskedQuestion>,
+    /// Every practice problem posed, oldest first, with its conclusion.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub problems: Vec<PosedProblem>,
+    /// What the session's model calls used, split by how they were paid for.
+    /// Boxed so the session's event stays small; the wire form is the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Box<SessionUsage>>,
+    /// The evidence bundle the session started from, when it had one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<EvidenceBundle>,
+    /// Why the session's last turn could not run, until a later turn runs.
+    /// Every session read carries it; events leave it out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stalled: Option<SessionStall>,
+}
+
+/// A turn that stopped before any model call, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SessionStall {
+    pub reason: StallReason,
+    /// What the learner can do about it, naming the setting to change.
+    pub message: String,
+    pub at: Timestamp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StallReason {
+    /// Today's interactive budget (`noesis.budget.interactive_usd_daily`) is spent.
+    BudgetExhausted,
+}
+
+/// What an agent did in its session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionRole {
+    Prober,
+    Teacher,
+    Practitioner,
+}
+
+/// One agent of a session and the inputs Noesis wrote to it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SessionAgent {
+    pub agent: AgentId,
+    pub role: SessionRole,
+    /// The transcript seqs of the user-role messages Noesis wrote for the
+    /// agent (the opening context, a hand-off). They are never the
+    /// learner's own words, so a client does not show them as the learner's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub internal: Vec<u64>,
+}
+
+/// A posed question with what the learner answered and what it revealed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AskedQuestion {
+    pub question: Question,
+    /// Absent while the question is open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<RecordedAnswer>,
+    /// Absent while the question is open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<QuestionResult>,
+}
+
+/// The learner's answer as recorded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RecordedAnswer {
+    /// The labels of the options chosen, in the order they were shown.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chosen: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    pub dont_know: bool,
+    /// One of [`CONFIDENCE_LEVELS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<u8>,
+    /// The reasoning the learner gave with the answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+    pub answered_at: Timestamp,
+}
+
+/// A posed problem with its conclusion once it has one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PosedProblem {
+    pub problem: Problem,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conclusion: Option<ProblemConclusion>,
+}
+
+/// How a problem ended, as `noesis.practice_concluded` announced it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ProblemConclusion {
+    pub outcome: PracticeOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rung: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub miss_class: Option<MissClass>,
+    pub retest: bool,
+    pub solution: String,
+    pub concluded_at: Timestamp,
+}
+
+/// A session's usage by billing: subscription use is covered by the
+/// learner's plan and never charged per request; API use is.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SessionUsage {
+    pub subscription: Usage,
+    pub api: Usage,
+    /// Use on a provider no longer configured, so what paid for it is unknown.
+    #[serde(default)]
+    pub unknown: Usage,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

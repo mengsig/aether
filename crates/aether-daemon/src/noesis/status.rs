@@ -30,11 +30,12 @@ impl NoesisService {
         let effective = self.effective(&settings);
         let store = runtime.store().clone();
         let day = budget::today();
-        let (interactive, background) =
-            tokio::task::spawn_blocking(move || budget::usage_today(store.as_ref(), day))
-                .await
-                .map_err(|e| ErrorReply::internal(format!("the spend read did not finish: {e}")))?
-                .map_err(crate::connection::store_err)?;
+        let used = tokio::task::spawn_blocking(move || budget::usage_today(store.as_ref(), day))
+            .await
+            .map_err(|e| ErrorReply::internal(format!("the spend read did not finish: {e}")))?
+            .map_err(crate::connection::store_err)?;
+        let (interactive, background) = budget::by_lane(&used);
+        let billing = budget::by_billing(used.iter().map(|used| (used.billing, &used.usage)));
         let jobs_running = runtime
             .noesis_turns_running()
             .iter()
@@ -55,6 +56,9 @@ impl NoesisService {
             spend_today: SpendToday {
                 interactive,
                 background,
+                subscription: billing.subscription,
+                api: billing.api,
+                unknown: billing.unknown,
             },
             disable_policy: DisablePolicy {
                 grace_seconds: settings.disable_grace_seconds,

@@ -63,7 +63,12 @@ pub fn author(
     }
     if reveals_key(args, visible_text) {
         problems.push(
-            "your visible message gives away the answer; rewrite it without the answer and pose again"
+            "what your turn has shown gives away the answer; ask a different question".to_string(),
+        );
+    }
+    if Sealer::new(args.explanation.iter()).holds(visible_text) {
+        problems.push(
+            "what your turn has shown gives away the explanation; keep it until the learner answers"
                 .to_string(),
         );
     }
@@ -178,7 +183,7 @@ pub(super) fn model_key_values(args: &AskArgs) -> Vec<String> {
 
 /// Whether a field the learner sees repeats a sealed text: the explanation
 /// anywhere, a recall key in the prompt or a label, any key in a tag.
-fn shown_fields_reveal(args: &AskArgs) -> bool {
+pub(super) fn shown_fields_reveal(args: &AskArgs) -> bool {
     let explanation = Sealer::new(args.explanation.iter());
     let key: Vec<String> = match args.kind {
         QuestionKind::Choice => args

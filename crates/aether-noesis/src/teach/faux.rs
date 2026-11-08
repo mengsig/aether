@@ -6,6 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use serde_json::Value;
 
 use super::engine::{AgentSpec, Engine, EngineError, Input, ModelInfo, Step, ToolCall};
+use super::seal::{Sealer, kept_reply};
 use crate::budget::{Billing, Spend};
 use crate::prompts::Agent;
 
@@ -18,7 +19,12 @@ pub const STEP_ESTIMATE: Spend = Spend {
 pub struct FauxEngine {
     pub spawned: Vec<(String, AgentSpec)>,
     pub inputs: Vec<(String, Input)>,
+    /// Every reply made, a discarded one included.
     pub steps_run: usize,
+    /// How many replies were made again after the seal discarded one.
+    pub reminders: usize,
+    /// For each step run, the live seal it was given.
+    pub step_seals: Vec<Sealer>,
     pub fail_spawn: bool,
     /// Refuse this many next deliveries with `NotSent`.
     pub fail_deliveries: usize,
@@ -53,6 +59,7 @@ impl FauxEngine {
                 usd: 0.002,
                 tokens: 100,
             },
+            text_blocks: Vec::new(),
         };
         self.scripts.entry(agent).or_default().push_back(Ok(step));
         self
@@ -115,7 +122,8 @@ impl Engine for FauxEngine {
         Ok(id)
     }
 
-    fn deliver(&mut self, agent: &str, input: Input) -> Result<(), EngineError> {
+    /// Every input is recorded; its seq is its place among all inputs.
+    fn deliver(&mut self, agent: &str, input: Input) -> Result<Option<u64>, EngineError> {
         assert!(
             self.kind_of(agent).is_some(),
             "input for an unknown agent {agent}"
@@ -127,18 +135,27 @@ impl Engine for FauxEngine {
             ));
         }
         self.inputs.push((agent.to_string(), input));
-        Ok(())
+        let seq = u64::try_from(self.inputs.len()).expect("a test's inputs fit");
+        Ok(Some(seq))
     }
 
     fn estimate(&self, _agent: &str) -> Spend {
         STEP_ESTIMATE
     }
 
-    /// An agent without a scripted step replies with nothing and waits.
-    fn step(&mut self, agent: &str) -> Result<Step, EngineError> {
+    /// Each reply replays the agent's next scripted step, kept as the
+    /// daemon's are; an agent without one replies with nothing and waits.
+    fn step(&mut self, agent: &str, live: &Sealer) -> Result<Step, EngineError> {
         let kind = self.kind_of(agent).expect("a step for a spawned agent");
-        self.steps_run += 1;
-        let next = self.scripts.get_mut(&kind).and_then(VecDeque::pop_front);
-        next.unwrap_or_else(|| Ok(Step::default()))
+        self.step_seals.push(live.clone());
+        let replies = kept_reply(live, |reminder| {
+            self.steps_run += 1;
+            self.reminders += usize::from(reminder.is_some());
+            let next = self.scripts.get_mut(&kind).and_then(VecDeque::pop_front);
+            next.unwrap_or_else(|| Ok(Step::default()))
+                .map(|step| (step, ()))
+        })?;
+        debug_assert!(replies.discarded.len() <= 2);
+        Ok(replies.step)
     }
 }

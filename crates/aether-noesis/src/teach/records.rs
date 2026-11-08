@@ -1,14 +1,16 @@
 //! The Noesis vocabulary and the wire-shaped records of CONTRACTS.md §6.2.
-//! Every record here is safe to show: none carries a sealed value before its
-//! reveal, because none has a field for one.
+//! Every record here is safe to show: only a reveal ([`QuestionResult`],
+//! [`ProblemConclusion`]) has a field for a sealed value, and the service
+//! builds one only after the answer or the conclusion is recorded.
 
+use aether_core::noesis::EvidenceBundle;
 use serde::Serialize;
 
 /// A closed set of snake_case names, parsed and printed the same way.
 macro_rules! string_enum {
     ($(#[$doc:meta])* $name:ident { $($variant:ident = $text:literal),+ $(,)? }) => {
         $(#[$doc])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, serde::Deserialize)]
         pub enum $name {
             $(#[serde(rename = $text)] $variant),+
         }
@@ -106,6 +108,20 @@ string_enum!(
     }
 );
 
+string_enum!(
+    /// What an agent did in its session.
+    SessionRole {
+        Prober = "prober",
+        Teacher = "teacher",
+        Practitioner = "practitioner"
+    }
+);
+
+string_enum!(
+    /// Why a session's turn stopped before any model call.
+    StallReason { BudgetExhausted = "budget_exhausted" }
+);
+
 string_enum!(EvidenceOutcome {
     Correct = "correct",
     Incorrect = "incorrect",
@@ -198,6 +214,71 @@ pub struct PlanTree {
     pub edges: Vec<PlanEdge>,
 }
 
+/// One agent of a session and the seqs of the transcript inputs Noesis
+/// wrote for it (its opening or hand-off), which are not the learner's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SessionAgent {
+    pub agent: String,
+    pub role: SessionRole,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub internal: Vec<u64>,
+}
+
+/// A posed question with the learner's answer and its reveal, both absent
+/// while the question is open.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AskedQuestion {
+    pub question: Question,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answer: Option<RecordedAnswer>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<QuestionResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RecordedAnswer {
+    /// The labels of the chosen options.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub chosen: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    pub dont_know: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+    pub answered_at: String,
+}
+
+/// A posed problem with its conclusion, absent while it is active.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PosedProblem {
+    pub problem: Problem,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conclusion: Option<ProblemConclusion>,
+}
+
+/// A concluded problem's reveal, as [`NoesisEvent::PracticeConcluded`] made it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProblemConclusion {
+    pub outcome: Outcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rung: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub miss_class: Option<MissClass>,
+    pub retest: bool,
+    pub solution: String,
+    pub concluded_at: String,
+}
+
+/// Why the session's last turn made no model call; stored as JSON.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct SessionStall {
+    pub reason: StallReason,
+    pub message: String,
+    pub at: String,
+}
+
 /// `noesis_session`: the session as every reader sees it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SessionView {
@@ -214,6 +295,17 @@ pub struct SessionView {
     pub active_problem: Option<Problem>,
     pub created_at: String,
     pub updated_at: String,
+    /// The history below is read only by [`super::Teaching::get_session`].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub agents: Vec<SessionAgent>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub questions: Vec<AskedQuestion>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub problems: Vec<PosedProblem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<EvidenceBundle>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stalled: Option<SessionStall>,
 }
 
 /// The durable `noesis.*` events the teaching loop emits, for F3 to publish.
@@ -255,6 +347,10 @@ pub enum NoesisEvent {
         retest: bool,
         solution: String,
     },
+    SessionStalled {
+        session: String,
+        stall: SessionStall,
+    },
 }
 
 impl NoesisEvent {
@@ -268,6 +364,7 @@ impl NoesisEvent {
             NoesisEvent::PlanUpdated { .. } => "noesis.plan_updated",
             NoesisEvent::ProblemPosed { .. } => "noesis.problem_posed",
             NoesisEvent::PracticeConcluded { .. } => "noesis.practice_concluded",
+            NoesisEvent::SessionStalled { .. } => "noesis.session_stalled",
         }
     }
 }

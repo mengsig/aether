@@ -610,8 +610,12 @@ impl Runtime {
                 if event.at < since {
                     return Ok((first_in_window, approximate));
                 }
-                if let (Some(agent), EventKind::AgentUsageUpdated { total, turn_usage }) =
-                    (event.agent_id, &event.kind)
+                if let (
+                    Some(agent),
+                    EventKind::AgentUsageUpdated {
+                        total, turn_usage, ..
+                    },
+                ) = (event.agent_id, &event.kind)
                 {
                     let turn_start = (total.cost_usd - turn_usage.cost_usd).max(0.0);
                     first_in_window.insert(agent, (event.seq, turn_start));

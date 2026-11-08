@@ -101,7 +101,7 @@ fn assert_labelled(text: &str, bundle: &EvidenceBundle) {
 
 fn input_text(input: &Input) -> &str {
     match input {
-        Input::Learner(text) | Input::Handoff(text) => text,
+        Input::Learner(text) | Input::Opening(text) | Input::Handoff(text) => text,
         other => panic!("a text input, got {other:?}"),
     }
 }

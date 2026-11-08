@@ -9,10 +9,11 @@ use super::engine::{Engine, Input, ToolCall, ToolResult};
 use super::phase::{Trigger, advance};
 use super::records::{
     EvidenceDraft, EvidenceKind, EvidenceOutcome, NoesisEvent, Outcome, Phase, Problem, Question,
+    SessionRole,
 };
 use super::seal::Sealer;
 use super::service::{Caller, Teaching, TurnEnd, driving_agent};
-use super::{PROBE_DONE_ACK, TeachError, agent_for_role, plan, question};
+use super::{PROBE_DONE_ACK, TeachError, agent_for_role, history, plan, question};
 use crate::learner::{self, LearnerError, Selection};
 use crate::prompts::Agent;
 use crate::tools::args::{
@@ -107,7 +108,7 @@ impl<E: Engine> Teaching<'_, E> {
             ToolArgs::Ask(args) => self.ask(&row, &args, visible_text),
             ToolArgs::ProbeDone(args) => self.probe_done(&row, &args),
             ToolArgs::Plan(args) => self.plan(&row, &args),
-            ToolArgs::Problem(args) => self.problem(&row, args),
+            ToolArgs::Problem(args) => self.problem(&row, args, visible_text),
             ToolArgs::Conclude(args) => self.conclude(&row, &args),
             ToolArgs::GraphSearch(args) => {
                 let found = db::search_propositions(self.conn(), &args.query, args.limit)?;
@@ -246,16 +247,19 @@ impl<E: Engine> Teaching<'_, E> {
         }
         // The Teacher and its hand-off input exist before the phase moves, so a
         // failed wake later finds the input persisted and recovers.
-        let teacher = match self.spawn_teacher(row, args) {
-            Ok(teacher) => teacher,
+        let (teacher, handed_off_at) = match self.spawn_teacher(row, args) {
+            Ok(spawned) => spawned,
             Err(TeachError::Engine(error)) => {
                 return refuse(format!("the hand-off failed, call again: {error}"));
             }
             Err(error) => return Err(error),
         };
-        if !db::transition(self.conn(), &row.id, Phase::Probe, Phase::Plan, &teacher)? {
+        let tx = self.conn().unchecked_transaction()?;
+        if !db::transition(&tx, &row.id, Phase::Probe, Phase::Plan, &teacher)? {
             return refuse("the probe is already recorded; noesis.probe_done is called once");
         }
+        history::add_agent(&tx, &row.id, &teacher, SessionRole::Teacher, handed_off_at)?;
+        tx.commit()?;
         self.events.push(NoesisEvent::PhaseChanged {
             session: row.id.clone(),
             from: Phase::Probe,
@@ -270,11 +274,12 @@ impl<E: Engine> Teaching<'_, E> {
         Ok(Ok((json!(PROBE_DONE_ACK), Some(TurnEnd::HandedOff))))
     }
 
+    /// The new Teacher and the seq its hand-off input was recorded at.
     fn spawn_teacher(
         &mut self,
         row: &SessionRow,
         args: &ProbeDoneArgs,
-    ) -> Result<String, TeachError> {
+    ) -> Result<(String, Option<u64>), TeachError> {
         // The Teacher is a new agent: the session's bundle goes with the hand-off.
         let bundle = crate::evidence::store::load(self.conn(), &row.id)
             .map_err(|error| TeachError::Corrupt(error.to_string()))?;
@@ -290,18 +295,13 @@ impl<E: Engine> Teaching<'_, E> {
                 .map_err(|error| TeachError::Corrupt(error.to_string()))?;
             handoff.push_str(&rendered);
         }
-        self.engine.deliver(&teacher, Input::Handoff(handoff))?;
-        Ok(teacher)
+        let handed_off_at = self.engine.deliver(&teacher, Input::Handoff(handoff))?;
+        Ok((teacher, handed_off_at))
     }
 
+    /// Store a new plan revision. The reply that sent it passed the seal
+    /// check, so no node id or title holds a live secret.
     fn plan(&mut self, row: &SessionRow, args: &PlanArgs) -> Handled {
-        // Checked before validation, whose problems quote node ids.
-        let live = Sealer::new(self.live_secrets(&row.id)?);
-        let named = args.nodes.iter().flat_map(|node| [&node.id, &node.title]);
-        let linked = args.edges.iter().flat_map(|edge| [&edge.from, &edge.to]);
-        if named.chain(linked).any(|text| live.holds(text)) {
-            return refuse("the plan gives away a sealed answer; rewrite it");
-        }
         let dag = match plan::validate(args) {
             Ok(dag) => dag,
             Err(problems) => {
@@ -337,11 +337,12 @@ impl<E: Engine> Teaching<'_, E> {
         })
     }
 
-    fn push_plan_event(&mut self, session: &str) -> Result<(), TeachError> {
+    /// Announce the session's plan with its statuses as they now are.
+    pub(super) fn push_plan_event(&mut self, session: &str) -> Result<(), TeachError> {
         let Some((revision, dag)) = db::latest_plan(self.conn(), session)? else {
             return Ok(());
         };
-        let tree = plan::tree(revision, &dag, &db::tagged_nodes(self.conn(), session)?);
+        let tree = plan::tree(revision, &dag, &db::plan_marks(self.conn(), session)?);
         self.events.push(NoesisEvent::PlanUpdated {
             session: session.to_string(),
             plan: tree,
@@ -381,13 +382,18 @@ impl<E: Engine> Teaching<'_, E> {
         Ok(Ok(targets))
     }
 
-    fn problem(&mut self, row: &SessionRow, args: ProblemArgs) -> Handled {
+    fn problem(&mut self, row: &SessionRow, args: ProblemArgs, visible_text: &str) -> Handled {
         if db::active_problem(self.conn(), &row.id)?.is_some() {
             return refuse("a problem is already active; noesis.conclude it first");
         }
-        let solution = Sealer::new([&args.solution]);
-        if solution.holds(&args.statement) || args.targets.iter().any(|t| solution.holds(t)) {
+        if problem_shows_solution(&args) {
             return refuse("the statement or a target gives away the solution; rewrite it");
+        }
+        let solution = Sealer::new([&args.solution]);
+        if solution.holds(visible_text) {
+            return refuse(
+                "what your turn has shown gives away the solution; pose a problem it does not solve",
+            );
         }
         let targets = match self.problem_targets(&args.targets, &solution)? {
             Ok(targets) => targets,
@@ -422,8 +428,8 @@ impl<E: Engine> Teaching<'_, E> {
         let Some(active) = db::active_problem(self.conn(), &row.id)? else {
             return refuse("there is no active problem to conclude");
         };
-        if args.outcome == Outcome::SolvedWithHints && args.rung.is_none_or(|rung| rung == 0) {
-            return refuse("solved_with_hints needs the highest hint rung used, 1 to 5");
+        if let Some(refusal) = conclusion_refusal(args) {
+            return refuse(refusal);
         }
         let conclusion = Conclusion {
             outcome: args.outcome,
@@ -455,6 +461,27 @@ impl<E: Engine> Teaching<'_, E> {
             None,
         )))
     }
+}
+
+/// Why a conclusion is refused whatever the session holds, if it is.
+pub(super) fn conclusion_refusal(args: &ConcludeArgs) -> Option<&'static str> {
+    let hinted = args.outcome == Outcome::SolvedWithHints;
+    let unranked = args.rung.is_none_or(|rung| rung == 0);
+    debug_assert!(
+        args.rung.is_none_or(|rung| rung <= 5),
+        "parsing bounds the rung"
+    );
+    (hinted && unranked).then_some("solved_with_hints needs the highest hint rung used, 1 to 5")
+}
+
+/// Whether a problem's statement or a target names its own solution.
+pub(super) fn problem_shows_solution(args: &ProblemArgs) -> bool {
+    let solution = Sealer::new([&args.solution]);
+    debug_assert!(
+        !args.solution.trim().is_empty(),
+        "parsing requires a solution"
+    );
+    solution.holds(&args.statement) || args.targets.iter().any(|t| solution.holds(t))
 }
 
 /// Whether a node id or title of `plan` holds any of `secrets`; edges name

@@ -17,7 +17,7 @@ const FEATURE: Allowance = { packages: ["core", "ui", "graph", "protocol"], exte
 export const BOUNDARIES: Readonly<Record<string, Allowance>> = {
   protocol: { packages: [], external: [], typeOnly: [] },
   core: { packages: ["protocol"], external: REACT, typeOnly: [] },
-  ui: { packages: ["protocol"], external: REACT, typeOnly: ["protocol"] },
+  ui: { packages: ["protocol"], external: [...REACT, "katex", "mermaid"], typeOnly: ["protocol"] },
   // The knowledge graph's force layout is d3-force (ARCHITECTURE.md §a).
   graph: { packages: ["protocol"], external: [...REACT, "d3-force"], typeOnly: ["protocol"] },
   aether: FEATURE,

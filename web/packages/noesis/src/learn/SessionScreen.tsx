@@ -1,44 +1,27 @@
-// `#/learn/sessions/:id`: the conversation with its questions and problems, the plan beside it, and the
-// way to answer. Teaching has no streaming yet: after the learner speaks the chat shows the teacher is
-// working until the committed reply arrives, which the session's reread and the transcript bring.
+// `#/learn/sessions/:id`: the lesson's whole conversation (every agent's, with its questions and
+// problems), the plan beside it and the way to answer. The teacher's reply streams in as it is written.
 
-import { selectTranscript, useApp, useSelector } from "@aether-ui/core";
 import type { aether, RouteProps } from "@aether-ui/protocol";
-import { Button, EmptyState, ErrorState } from "@aether-ui/ui";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Composer } from "./Composer.tsx";
-import { errorText, useLearn, useNoesisChange, useNoesisRead, useOperateRefusal } from "./data.ts";
+import { Button, EmptyState, ErrorState, Markdown } from "@aether-ui/ui";
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useLearn, useNoesisRead, useOperateRefusal } from "./data.ts";
 import { LearnFrame, type OpenGate } from "./LearnFrame.tsx";
-import { buildTimeline, classifyRefusal, invariant, PHASE_LABEL, type Refusal, type TimelineItem } from "./model.ts";
+import { Composer } from "./Composer.tsx";
+import { CompletionCard, SourcesCard } from "./LessonCards.tsx";
+import { useLessonTurn } from "./lesson-turn.ts";
+import { exhaustedBudget, invariant, PHASE_LABEL, planComplete, type BudgetUse, type Refusal } from "./model.ts";
 import { ProblemCard } from "./ProblemCard.tsx";
 import { QuestionCard, type AnswerInput } from "./QuestionCard.tsx";
 import { RefusalNote } from "./RefusalNote.tsx";
 import { SessionAside } from "./SessionAside.tsx";
+import { useLessonTranscripts, useLiveText } from "./session-data.ts";
+import { buildTimeline, type TimelineItem } from "./timeline.ts";
 
-/** After this long without a reply the chat says so and offers to check again. */
-export const STALL_MS = 90_000;
+export { STALL_MS } from "./lesson-turn.ts";
 
-interface Pending {
-  readonly teacher: number;
-  readonly question: string | null;
-  readonly problem: string | null;
-  readonly stalled: boolean;
-}
+const BUDGET_REFUSAL: Refusal = { kind: "budget", message: "noesis.budget.interactive_usd_daily is spent for today" };
 
-/** Where the session stood when the learner spoke: a newer teacher message, question or problem ends the wait. */
-function progressOf(session: aether.NoesisSession, items: readonly TimelineItem[]): Omit<Pending, "stalled"> {
-  return {
-    teacher: items.filter((item) => item.kind === "message" && item.role === "teacher").length,
-    question: session.open_question?.id ?? null,
-    problem: session.active_problem?.id ?? null,
-  };
-}
-
-function answered(pending: Pending, now: Omit<Pending, "stalled">): boolean {
-  return now.teacher > pending.teacher || (now.question !== null && now.question !== pending.question) || (now.problem !== null && now.problem !== pending.problem);
-}
-
-export function SessionScreen({ conn, id }: OpenGate & { id: string }) {
+export function SessionScreen({ conn, status, id }: OpenGate & { id: string }) {
   const read = useNoesisRead(conn, { kind: "session", id });
   const learn = useLearn(conn);
   const session = learn.sessions[id];
@@ -47,58 +30,25 @@ export function SessionScreen({ conn, id }: OpenGate & { id: string }) {
     if (read.error !== null) return <ErrorState title="Could not open this session" message={read.error} onRetry={read.reload} />;
     return <p className="learn-muted" aria-busy="true">Opening the session…</p>;
   }
-  return <SessionView conn={conn} session={session} reload={read.reload} />;
+  return <SessionView conn={conn} status={status} session={session} reload={read.reload} />;
 }
 
-/** Deltas and transcript rereads for the session's agent: core keeps the conversation current. */
-function useWatchAgent(conn: string, agent: string) {
-  invariant(conn.length > 0 && agent.length > 0, "a session's conversation is followed on a connection, by its agent");
-  const app = useApp();
-  useEffect(() => {
-    const watch = (agents: readonly string[]) => app.manager.watchAgents(conn, agents).catch((error: unknown) => {
-      app.store.report(`Could not follow the session's conversation: ${errorText(error)}`, conn);
-    });
-    void watch([agent]);
-    return () => void watch([]);
-  }, [app, conn, agent]);
-}
-
-function SessionView({ conn, session, reload }: { conn: string; session: aether.NoesisSession; reload: () => void }) {
+function SessionView({ conn, status, session, reload }: OpenGate & { session: aether.NoesisSession; reload: () => void }) {
   const learn = useLearn(conn);
-  const change = useNoesisChange(conn);
-  const refusal = useOperateRefusal(conn);
-  const transcript = useSelector(useMemo(() => selectTranscript(conn, session.agent), [conn, session.agent]));
-  const items = useMemo(() => buildTimeline(session, transcript?.entries ?? [], learn), [session, transcript, learn]);
-  const progress = progressOf(session, items);
-  const [pending, setPending] = useState<Pending | null>(null);
-  const [failure, setFailure] = useState<Refusal | null>(null);
-
-  useWatchAgent(conn, session.agent);
-
-  if (pending !== null && answered(pending, progress)) setPending(null);
-  useEffect(() => {
-    if (pending === null || pending.stalled) return;
-    const timer = setTimeout(() => setPending((old) => (old === null ? null : { ...old, stalled: true })), STALL_MS);
-    return () => clearTimeout(timer);
-  }, [pending]);
-
-  const act = async (command: Record<string, unknown>): Promise<string | null> => {
-    const before = progress;
-    const result = await change(command);
-    if (!result.ok) {
-      setFailure(classifyRefusal(result.error));
-      return result.error;
-    }
-    setFailure(null);
-    setPending({ ...before, stalled: false });
-    return null;
-  };
-  const answer = (question: string, input: AnswerInput) => act({ cmd: "noesis_answer", session: session.id, question, answer: input });
+  const operate = useOperateRefusal(conn);
+  const statusRead = useNoesisRead(conn, { kind: "status" });
+  const transcripts = useLessonTranscripts(conn, session);
+  const live = useLiveText(conn, session.agent);
+  const items = useMemo(() => buildTimeline(session, transcripts, learn), [session, transcripts, learn]);
+  const streamed = live.map((item) => (item.kind === "message" ? item.text : "")).join("");
+  const turn = useLessonTurn(conn, session, items, streamed);
+  const budget = exhaustedBudget(status);
+  const refusal = turn.refusal ?? spentRefusal(session, budget);
+  const answer = (question: string, input: AnswerInput) => turn.act({ cmd: "noesis_answer", session: session.id, question, answer: input });
   const checkAgain = () => {
     reload();
-    setPending((old) => (old === null ? null : { ...old, stalled: false }));
+    turn.unstall();
   };
-
   return (
     <div className="learn-session">
       <section className="learn-chat" aria-label="Session">
@@ -106,13 +56,27 @@ function SessionView({ conn, session, reload }: { conn: string; session: aether.
           <p className="learn-session-goal">{session.goal}</p>
           <p className="learn-muted">{PHASE_LABEL[session.phase]}</p>
         </header>
-        <Transcript items={items} pending={pending} failure={failure} onAnswer={refusal === null ? answer : undefined} onCheck={checkAgain} />
-        <Composer sessionId={session.id} waiting={session.open_question != null} problem={session.active_problem != null}
-          disabled={refusal !== null || pending !== null} onSend={(text) => act({ cmd: "noesis_send", session: session.id, text })} />
+        <Transcript items={[...items, ...live]} live={live.length > 0} pending={turn.pending} onAnswer={operate === null ? answer : undefined} onCheck={checkAgain}>
+          {session.context && session.context.items.length > 0 && <SourcesCard bundle={session.context} />}
+          {planComplete(session.plan) && <CompletionCard conn={conn} session={session} />}
+          {refusal !== null && <RefusalNote refusal={refusal} budget={refusal.kind === "budget" ? budget : null} onRetry={turn.retry ?? (refusal.kind === "budget" ? statusRead.reload : undefined)} />}
+        </Transcript>
+        <Composer sessionId={session.id} waiting={session.open_question != null} problem={session.active_problem != null} reason={pausedBy(budget)}
+          disabled={operate !== null || turn.pending !== null || budget !== null} onSend={(text) => turn.act({ cmd: "noesis_send", session: session.id, text })} />
       </section>
-      <SessionAside conn={conn} session={session} items={items} disabled={refusal !== null} />
+      <SessionAside conn={conn} session={session} items={items} disabled={operate !== null} />
     </div>
   );
+}
+
+/** The daemon's own record of a turn it stopped for the budget speaks first; today's status is the fallback. */
+function spentRefusal(session: aether.NoesisSession, budget: BudgetUse | null): Refusal | null {
+  if (session.stalled) return { kind: "budget", message: session.stalled.message };
+  return budget === null ? null : BUDGET_REFUSAL;
+}
+
+function pausedBy(budget: BudgetUse | null): string | null {
+  return budget === null ? null : "Teaching is paused: today's budget is spent";
 }
 
 type AnswerFn = (question: string, input: AnswerInput) => Promise<string | null>;
@@ -126,7 +90,7 @@ export function scrolledAway(metrics: { scrollHeight: number; scrollTop: number;
 }
 
 /** Keeps the newest entry in view while the reader is at the bottom; scrolled up, it stays put. */
-function useFollowLatest(items: readonly TimelineItem[], pending: Pending | null, failure: Refusal | null) {
+function useFollowLatest(items: readonly TimelineItem[], pending: object | null) {
   const ref = useRef<HTMLDivElement>(null);
   const [away, setAway] = useState(false);
   const onScroll = () => {
@@ -136,7 +100,7 @@ function useFollowLatest(items: readonly TimelineItem[], pending: Pending | null
   useLayoutEffect(() => {
     const node = ref.current;
     if (node !== null && !away) node.scrollTop = node.scrollHeight;
-  }, [items, pending, failure, away]);
+  }, [items, pending, away]);
   const jump = () => {
     const node = ref.current;
     if (node === null) return;
@@ -146,8 +110,17 @@ function useFollowLatest(items: readonly TimelineItem[], pending: Pending | null
   return { ref, away, onScroll, jump };
 }
 
-function Transcript({ items, pending, failure, onAnswer, onCheck }: { items: readonly TimelineItem[]; pending: Pending | null; failure: Refusal | null; onAnswer: AnswerFn | undefined; onCheck: () => void }) {
-  const { ref, away, onScroll, jump } = useFollowLatest(items, pending, failure);
+interface TranscriptProps {
+  readonly items: readonly TimelineItem[];
+  readonly live: boolean;
+  readonly pending: { readonly stalled: boolean } | null;
+  readonly onAnswer: AnswerFn | undefined;
+  readonly onCheck: () => void;
+  readonly children: ReactNode;
+}
+
+function Transcript({ items, live, pending, onAnswer, onCheck, children }: TranscriptProps) {
+  const { ref, away, onScroll, jump } = useFollowLatest(items, pending);
   return (
     <div className="learn-transcript">
       <div className="learn-scroll" ref={ref} onScroll={onScroll} data-testid="learn-transcript">
@@ -155,8 +128,8 @@ function Transcript({ items, pending, failure, onAnswer, onCheck }: { items: rea
           {items.map((item) => <li key={item.key} className="learn-timeline-item"><TimelineEntry item={item} onAnswer={onAnswer} /></li>)}
         </ol>
         {items.length === 0 && pending === null && <p className="learn-muted">Your teacher is getting ready. The conversation shows here.</p>}
-        {pending !== null && <Working stalled={pending.stalled} onCheck={onCheck} />}
-        {failure !== null && <RefusalNote refusal={failure} />}
+        {pending !== null && !live && <Working stalled={pending.stalled} onCheck={onCheck} />}
+        {children}
       </div>
       {away && <button type="button" className="learn-jump" data-testid="learn-jump-latest" onClick={jump}>Jump to latest ↓</button>}
     </div>
@@ -165,11 +138,15 @@ function Transcript({ items, pending, failure, onAnswer, onCheck }: { items: rea
 
 function TimelineEntry({ item, onAnswer }: { item: TimelineItem; onAnswer: AnswerFn | undefined }) {
   if (item.kind === "message") {
-    return <div className="learn-bubble" data-role={item.role}><span className="ui-visually-hidden">{item.role === "teacher" ? "Teacher:" : "You:"}</span>{item.text}</div>;
+    return (
+      <div className="learn-bubble" data-role={item.role} data-live={item.live || undefined} aria-busy={item.live || undefined}>
+        <span className="ui-visually-hidden">{item.role === "teacher" ? "Teacher:" : "You:"}</span><Markdown text={item.text} />
+      </div>
+    );
   }
   if (item.kind === "problem") return <ProblemCard problem={item.problem} conclusion={item.conclusion} active={item.active} />;
   const id = item.question.id;
-  return <QuestionCard question={item.question} result={item.result} open={item.open} onAnswer={onAnswer && ((input) => onAnswer(id, input))} />;
+  return <QuestionCard question={item.question} answer={item.answer} result={item.result} open={item.open} onAnswer={onAnswer && ((input) => onAnswer(id, input))} />;
 }
 
 function Working({ stalled, onCheck }: { stalled: boolean; onCheck: () => void }) {

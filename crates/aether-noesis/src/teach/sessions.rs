@@ -5,11 +5,10 @@ use std::collections::{HashMap, VecDeque};
 
 use rusqlite::{OptionalExtension, params};
 
-use super::TeachError;
-use super::db;
 use super::engine::{Engine, Input};
 use super::records::SessionView;
 use super::service::Teaching;
+use super::{TeachError, db, history};
 
 /// Inputs whose delivery failed, by agent, kept between calls by the host.
 pub type Undelivered = HashMap<String, VecDeque<Input>>;
@@ -77,14 +76,18 @@ impl<E: Engine> Teaching<'_, E> {
     }
 
     /// Delete the session's rows (plans, questions, problems and messages go
-    /// with it) and forget its agent's undelivered inputs. Returns its agent.
-    /// Learner evidence is append-only history and stays.
+    /// with it) and forget every agent's undelivered inputs. Returns the
+    /// current agent. Learner evidence is append-only history and stays.
     pub fn delete_session(&mut self, session: &str) -> Result<String, TeachError> {
         let row = db::session(self.conn(), session)?;
+        let agents = history::agents(self.conn(), session)?;
         let deleted = self
             .conn()
             .execute("DELETE FROM sessions WHERE id = ?1", [session])?;
         assert_eq!(deleted, 1, "the session was read just above");
+        for agent in &agents {
+            self.undelivered.remove(&agent.agent);
+        }
         self.undelivered.remove(&row.agent);
         debug_assert!(db::open_question(self.conn(), session)?.is_none());
         Ok(row.agent)

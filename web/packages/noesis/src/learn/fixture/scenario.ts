@@ -42,14 +42,29 @@ const provider = (id: string, name: string, engine: boolean): aether.ProviderInf
 /** The daemon's `providers` behind MODELS: two engines on subscriptions, one API provider with a stored key; gemini is not listed. */
 export const PROVIDERS: readonly aether.ProviderInfo[] = [provider("codex", "Codex", true), provider("claude-code", "Claude Code", true), provider("anthropic", "Anthropic API", false)];
 
+/** What the daemon offers Noesis in its status: two ready subscription engines, an API model and one not signed in. */
+export const OFFERS: readonly aether.NoesisModelOffer[] = [
+  { id: "anthropic/claude-opus-5-5", billing: "subscription", ready: true },
+  { id: "anthropic/claude-haiku-5-5", billing: "subscription", ready: true },
+  { id: "openai/gpt-faux", billing: "subscription", ready: false },
+  { id: "anthropic-api/claude-sonnet-5-5", billing: "api", ready: true },
+];
+
 export function statusOf(enabled: boolean): aether.NoesisStatus {
   const settings = { ...SETTINGS, enabled };
   return {
     enabled, settings, effective: settings, jobs_running: 0, prompt_overrides: [],
     disable_policy: { background: "cancel_at_model_boundary", grace_seconds: 30 },
-    spend_today: { interactive: usage(1.85, 420_000), background: usage(0.4, 610_000) },
+    models: [...OFFERS], teaching_model: { model: "anthropic/claude-opus-5-5" },
+    spend_today: {
+      interactive: usage(1.85, 420_000), background: usage(0.4, 610_000),
+      subscription: { ...usage(0, 900_000), estimated_cost_usd: 2.05 }, api: usage(0.2, 130_000),
+    },
   };
 }
+
+/** A session's usage, all of it on a subscription: covered by the plan, priced at list for the budget. */
+export const LESSON_USAGE: aether.SessionUsage = { subscription: { ...usage(0, 52_000), estimated_cost_usd: 0.02 }, api: usage(0, 0) };
 
 const text = (role: aether.MessageRole, value: string): aether.Message => ({ role, content: [{ type: "text", text: value }] });
 const at = (minute: number): string => new Date(Date.UTC(2026, 10, 4, 8, minute, 0)).toISOString();
@@ -118,6 +133,16 @@ export const PRACTICE: aether.NoesisSession = {
 export const EARLIER: aether.NoesisSession = {
   id: "ns_logs", agent: "agt_noesis_logs", goal: "Log replication basics", mode: "teach", phase: "plan",
   created_at: "2026-11-02T15:00:00Z", updated_at: "2026-11-02T15:40:00Z",
+};
+
+/** The work the lesson started from, as "Learn from this" gathered it. */
+export const LESSON_CONTEXT: aether.EvidenceBundle = {
+  title: "PR #42: randomise the election timer",
+  items: [
+    { ref: { kind: "pr", id: "42" }, status: "verified", excerpt: "All 9 checks passed\nVerified: every check run passed." },
+    { ref: { kind: "item", id: "qi_timer" }, status: "reviewed", excerpt: "Review passed: the timeout is drawn per term." },
+    { ref: { kind: "agent", id: "agt_impl" }, status: "preliminary", excerpt: "I think the split vote retry is covered." },
+  ],
 };
 
 export const LESSON_TRANSCRIPT: readonly aether.Message[] = [
