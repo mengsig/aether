@@ -130,6 +130,8 @@ describe("ControlsScreen", () => {
     agents[0] = { ...required(agents[0]), status: { state: "completed" }, paused: true, archived: true };
     const { h, root } = await open({ agents });
     expect(buttonNamed(root, "Resume").disabled).toBe(true);
+    expect(root.textContent).toContain("Include the agents it delegated to");
+    expect(document.getElementById(required(buttonNamed(root, "Resume").getAttribute("aria-describedby")))?.textContent).toContain("Include the agents it delegated to");
     await act(async () => (root.querySelector(".b3-check input") as HTMLInputElement).click());
     await click(h, root, "Resume");
     await click(h, root, "Restore");

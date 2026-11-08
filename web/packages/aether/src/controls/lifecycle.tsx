@@ -27,6 +27,7 @@ export function LifecyclePanel({ conn, agent }: { readonly conn: ConnId; readonl
   const wakeBlocked = agent.status.state === "failed" ? recoveryBlocked : "Only failed agents can be woken.";
   const restartBlocked = agent.status.state === "failed" || agent.status.state === "cancelled" ? recoveryBlocked : "Only failed or cancelled agents can be restarted.";
   const paused = agent.paused === true;
+  const resumeBlocked = paused && ended ? `${ended} Select “Include the agents it delegated to” to resume its subtree.` : ended;
   const archived = agent.archived === true;
   const canResumeWait = agent.status.state === "waiting" || (agent.status.state === "blocked" && (agent.status.reason.block === "inspection" || agent.status.reason.block === "exhausted"));
   const hold = paused ? aether.resume({ agent: id, ...(subtree ? { subtree } : {}) }) : aether.pause({ agent: id, ...(subtree ? { subtree } : {}) });
@@ -36,7 +37,7 @@ export function LifecyclePanel({ conn, agent }: { readonly conn: ConnId; readonl
       <Section title="Steady it" hint="Stop the current turn, or hold the agent until you resume it.">
         <div className="b3-row">
           <Action conn={conn} command={aether.interrupt({ agent: id })} label="Interrupt" busy={busy} blocked={ended} onRun={() => run.send(aether.interrupt({ agent: id }), "Interrupted")} />
-          <Action conn={conn} command={hold} label={paused ? "Resume" : "Pause"} busy={busy} blocked={paused && subtree ? null : ended} onRun={() => run.send(hold, paused ? "Resumed" : "Paused")} />
+          <Action conn={conn} command={hold} label={paused ? "Resume" : "Pause"} busy={busy} blocked={paused && subtree ? null : resumeBlocked} onRun={() => run.send(hold, paused ? "Resumed" : "Paused")} />
           {!paused && canResumeWait ? <Action conn={conn} command={aether.resume({ agent: id })} label="Resume" busy={busy} onRun={() => run.send(aether.resume({ agent: id }), "Resumed")} /> : null}
           <label className="b3-check">
             <input type="checkbox" checked={subtree} onChange={(event) => setSubtree(event.target.checked)} />
