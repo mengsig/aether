@@ -169,6 +169,7 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
   delete env.WAYLAND_DISPLAY;
   delete env.SWAYSOCK;
   let sway: Spawned | undefined;
+  let keyboard: Spawned | undefined;
   let app: Spawned | undefined;
   let browser: Browser | undefined;
   let proxy: Awaited<ReturnType<typeof cdpProxy>> | undefined;
@@ -178,6 +179,7 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
     async () => proxy?.close(),
     async () => app !== undefined && stopGroup(app),
     async () => native?.close(),
+    async () => keyboard !== undefined && stopGroup(keyboard),
     async () => sway !== undefined && stopGroup(sway),
     () => rm(root, { recursive: true, force: true, maxRetries: 3 }),
   ]);
@@ -185,6 +187,8 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
     const runtime = path.join(root, "run");
     sway = await spawnCompositor(root, runtime, env);
     const display = await waylandSocket(runtime, sway);
+    keyboard = spawnLogged(onPath("wtype"), ["-P", "Shift", "-p", "Shift", "-s", "300000", "-k", "Shift"],
+      { env: { ...env, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display }, cwd: root, log: path.join(root, "keyboard.log") });
     native = await startNativeHost(root, env);
     const appEnv = { ...env, ...native.env, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display };
     const shared = [`--user-data-dir=${profile}`, "--ozone-platform=wayland"];
@@ -194,6 +198,7 @@ export async function launchPackaged(binary: string, sockets: { aether: string; 
     await appDocument(port, app);
     proxy = await cdpProxy(port);
     browser = await chromium.connectOverCDP(proxy.endpoint, { noDefaults: true });
+    assert.ok(keyboard.child.exitCode === null && keyboard.child.signalCode === null, "the private compositor has a virtual keyboard");
     const ipc = await until(() => swaySocket(runtime), "sway's IPC socket", sway);
     const compositor = { PATH: env.PATH, XDG_RUNTIME_DIR: runtime, WAYLAND_DISPLAY: display, SWAYSOCK: ipc };
     let runs = 0;
