@@ -141,6 +141,22 @@ test("a live removal does not restart archive pagination", async () => {
   h.app.store.updateAether(info.id, state => ({ ...state, agents: {} }));
   await h.frame();
   expect(send).toHaveBeenCalledTimes(1);
+  const newRoot = { ...must(fixtureAgents(2).agt_00001, "agent"), parent: undefined };
+  h.app.store.updateAether(info.id, state => ({ ...state, roots: [newRoot.id], agents: { ...state.agents, [newRoot.id]: newRoot } }));
+  await h.frame();
+  expect(send).toHaveBeenCalledTimes(1);
   await click(container, "Load more");
   expect(send).toHaveBeenNthCalledWith(2, info.id, expect.objectContaining({ after: "cursor" }));
+});
+
+test("waits for a disconnected daemon before reporting an empty archive", async () => {
+  const h = harness();
+  const info = { ...fixtureConnection(), state: "backoff" as const };
+  seedFleet(h.app.store, info, {});
+  const send = vi.spyOn(h.app, "send");
+  const container = await h.mount(<FleetScreen />);
+  await openArchive(container);
+  expect(container.textContent).toContain("Waiting for an Aether connection");
+  expect(container.textContent).not.toContain("No archived agents");
+  expect(send).not.toHaveBeenCalled();
 });

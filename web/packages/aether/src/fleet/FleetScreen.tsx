@@ -80,6 +80,7 @@ export function FleetScreen() {
   const [archive, setArchive] = useState("active");
   const [archiveToken, setArchiveToken] = useState(0);
   const archived = useArchived(app, archive === "archived", archiveToken, connections, sources);
+  const ready = Object.values(connections).some(info => info.daemon === "aether" && info.state === "ready");
   const visible = useMemo(() => rows.filter(row => archive === "archived" ? row.agent.archived : !row.agent.archived), [rows, archive]);
   const names = useMemo(() => runNames(visible), [visible]);
   const facets = useMemo(() => fleetFacets(visible, names), [visible, names]);
@@ -103,7 +104,7 @@ export function FleetScreen() {
         <a className="ui-link" href="#/fleet/topology">Delegation topology</a>
       </div>
       {archived.error ? <div role="alert">Could not load archived agents: {archived.error} <Button onClick={archived.retry}>Retry</Button></div> : null}
-      {archived.loading ? <p role="status">Loading archived agents…</p> : null}
+      {archived.loading ? <p role="status">{ready ? "Loading archived agents…" : "Waiting for an Aether connection…"}</p> : null}
       {shown.length > 0 ? <FleetList rows={shown} names={names} />
         : archived.loading || archived.error || archived.hasMore ? null : visible.length === 0 ? <EmptyState title={archive === "archived" ? "No archived agents" : "No agents yet"}>Agents appear here when they belong to this view.</EmptyState>
           : <EmptyState title="No agent matches" action={<Button onClick={clear}>Clear filters</Button>}>Every filter must match.</EmptyState>}

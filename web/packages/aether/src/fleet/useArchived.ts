@@ -2,6 +2,7 @@ import type { App } from "@aether-ui/core";
 import type { ConnectionInfo } from "@aether-ui/protocol";
 import { useEffect, useRef, useState } from "react";
 import { loadArchived } from "./archived.ts";
+import { invariant } from "./invariant.ts";
 import type { FleetSource } from "./rows.ts";
 
 interface Entry {
@@ -20,10 +21,15 @@ class ArchiveSession {
   private active = true;
   private app: App;
   private changed: () => void;
-  constructor(app: App, changed: () => void) { this.app = app; this.changed = changed; }
+  constructor(app: App, changed: () => void) {
+    this.app = app;
+    this.changed = changed;
+  }
 
   updateConnections(infos: readonly ConnectionInfo[]) {
     const ready = new Map(infos.map(info => [info.id, info]));
+    invariant(ready.size === infos.length, "archive connections have unique ids");
+    invariant(infos.every(info => info.daemon === "aether" && info.state === "ready"), "archive connections are ready Aether daemons");
     for (const [id, entry] of this.entries) {
       const info = ready.get(id);
       if (info && info.features.includes("agents_paging") === entry.info.features.includes("agents_paging")) continue;
@@ -42,16 +48,23 @@ class ArchiveSession {
   get loading() { return this.entries.size === 0 || [...this.entries.values()].some(entry => entry.loading); }
   get error() { return [...this.entries.values()].find(entry => entry.error)?.error; }
   get hasMore() { return [...this.entries.values()].some(entry => entry.started && entry.next !== null); }
-  retry() { for (const entry of this.entries.values()) if (entry.error) void this.fetch(entry); }
-  more() { for (const entry of this.entries.values()) if (entry.started && entry.next !== null && !entry.error) void this.fetch(entry); }
+  retry() {
+    for (const entry of this.entries.values()) if (entry.error) void this.fetch(entry);
+  }
+  more() {
+    for (const entry of this.entries.values()) if (entry.started && entry.next !== null && !entry.error) void this.fetch(entry);
+  }
 
   reconcile() {
     for (const entry of this.entries.values()) {
       const state = this.app.store.get().aether[entry.info.id];
       const roots = state?.roots;
-      if (roots === entry.roots) continue;
-      entry.roots = roots;
       const agents = state?.agents ?? {};
+      if (roots === entry.roots) {
+        for (const id of entry.ids) if (agents[id] === undefined) entry.ids.delete(id);
+        continue;
+      }
+      entry.roots = roots;
       if (![...entry.ids].some(id => agents[id] === undefined)) continue;
       entry.generation += 1;
       entry.ids.clear();
