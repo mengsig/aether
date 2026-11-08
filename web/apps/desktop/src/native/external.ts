@@ -24,18 +24,18 @@ function parse(value: string): URL {
 }
 
 /** A loopback http: page with an explicit port: a report a local server shows. */
-function reportTarget(url: URL): ExternalTarget {
-  if (!LOOPBACK_HOSTS.has(url.hostname)) {
+function reportTarget(url: URL, daemonReport: boolean): ExternalTarget {
+  if (!LOOPBACK_HOSTS.has(url.hostname) && !daemonReport) {
     throw new BridgeRefusal(`Only https: links open from the app; ${url.host} is not on this computer`);
   }
-  if (url.port === "") throw new BridgeRefusal("A local report link names its server's port");
+  if (url.port === "" && !daemonReport) throw new BridgeRefusal("A local report link names its server's port");
   return { kind: "report", url: url.href, origin: url.origin };
 }
 
 /** The target of `value`; only main's own constant list makes a site trusted. */
-export function externalTarget(value: string): ExternalTarget {
+export function externalTarget(value: string, daemonReport = false): ExternalTarget {
   const url = parse(value);
-  if (url.protocol === "http:") return reportTarget(url);
+  if (url.protocol === "http:") return reportTarget(url, daemonReport);
   if (url.protocol !== "https:") throw new BridgeRefusal(`The app opens https: links only, not ${url.protocol}`);
   if (url.hostname === "") throw new BridgeRefusal("This link names no host");
   const trusted = TRUSTED_ORIGINS.has(url.origin);

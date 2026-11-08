@@ -172,7 +172,7 @@ export class Bridge {
 
   /** GitHub opens at once, another https: site after a native question, a local report in its window. */
   private async openExternal(owner: number, value: string): Promise<void> {
-    const target = externalTarget(value);
+    const target = externalTarget(value, this.connections.hasReport(owner, value));
     if (target.kind === "report") return this.host.openReport(target.url);
     if (!target.trusted) {
       const asked = confirmation(TEMPLATES["external.open"], { origin: valueSlot(target.origin), url: labelSlot(target.url) });
