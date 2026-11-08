@@ -2,7 +2,7 @@
 // page's pairing screen claims it, and (for Aether) the host confirms the phrase.
 
 import assert from "node:assert/strict";
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import { until } from "./process.ts";
 import type { Stack } from "./stack.ts";
 
@@ -12,6 +12,22 @@ const PAIR_MS = 20_000;
 export function connection(page: Page, daemon: "aether" | "archon") {
   return page.getByRole("list", { name: "Connections" }).getByRole("listitem")
     .filter({ has: page.locator(".ui-conn-kind", { hasText: new RegExp(`^${daemon}$`) }) });
+}
+
+/**
+ * An agent's link in the fleet. The fleet draws only the rows in view and sorts agents by their
+ * time-ordered ids, so on a stack that earlier specs filled the newest sit below the fold: the list
+ * is scrolled to its end until the link is drawn.
+ */
+export async function fleetLink(page: Page, name: string, timeoutMs = 15_000): Promise<Locator> {
+  assert.ok(name.trim() !== "", "a fleet link is looked up by name");
+  const fleet = page.getByRole("region", { name: "Fleet" });
+  const link = fleet.getByRole("link", { name, exact: true });
+  await expect(async () => {
+    await fleet.getByRole("list", { name: "Agents" }).evaluate((list) => { list.scrollTop = list.scrollHeight; });
+    await expect(link).toBeVisible({ timeout: 1_000 });
+  }, `the fleet draws ${name}`).toPass({ timeout: timeoutMs });
+  return link;
 }
 
 /**

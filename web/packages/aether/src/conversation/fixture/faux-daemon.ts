@@ -13,6 +13,7 @@ export const FAUX_FEATURES = ["deltas", "delta_order", "transcript_paging", "age
 export interface FauxOptions {
   readonly instance: string;
   readonly agents: readonly aether.Agent[];
+  readonly tasks?: readonly aether.Task[];
   /** Commands left unanswered while their name is here, to hold a reply mid-flight. */
   readonly hold?: Set<string>;
 }
@@ -21,7 +22,10 @@ export class FauxDaemon {
   readonly sent: Json[] = [];
   readonly transport: Transport;
   readonly agents: Map<string, aether.Agent>;
+  readonly tasks: readonly aether.Task[];
   readonly hold: Set<string>;
+  /** Commands answered with this error while their name is here, to make a command fail. */
+  readonly refuse = new Map<string, { readonly code: string; readonly message: string }>();
   private readonly instance: string;
   private readonly transcripts = new Map<string, aether.TranscriptEntry[]>();
   private readonly events: aether.Event[] = [];
@@ -36,6 +40,7 @@ export class FauxDaemon {
   constructor(options: FauxOptions) {
     this.instance = options.instance;
     this.agents = new Map(options.agents.map((agent) => [agent.id, agent]));
+    this.tasks = options.tasks ?? [];
     this.hold = options.hold ?? new Set();
     this.transport = {
       id: "ws-aether",
@@ -143,6 +148,8 @@ export class FauxDaemon {
 
   private reply(command: Json): { reply: Json; then: Json[] } {
     const ok = (tag: string, data: unknown) => ({ reply: { Ok: { reply: tag, data } }, then: [] as Json[] });
+    const refused = this.refuse.get(String(command.cmd));
+    if (refused !== undefined) return { reply: { Err: { ...refused } }, then: [] };
     switch (command.cmd) {
       case "hello": return ok("welcome", {
         protocol_version: 26, daemon_version: "1.3.0-faux", pid: 1, schema_version: 29, instance_id: this.instance,
@@ -153,7 +160,9 @@ export class FauxDaemon {
       case "get_attention": return ok("attention", { agents: [], approvals: [], questions: [], last_seq: this.lastSeq });
       case "list_agents_page": return ok("agents_page", { agents: [...this.agents.values()] });
       case "get_agent": return ok("agent", this.agents.get(String(command.id)));
+      case "list_tasks": return ok("tasks", this.tasks.filter((task) => task.owner === (command.query as { owner?: string }).owner));
       case "get_transcript_page": return ok("transcript_page", this.page(command));
+      case "send_message": return ok("ok", null);
       default: return { reply: { Err: { code: "invalid_argument", message: `the faux daemon has no ${String(command.cmd)}` } }, then: [] };
     }
   }

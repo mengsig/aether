@@ -1,6 +1,7 @@
 import type { Capabilities, RouteDef } from "@aether-ui/protocol";
 import type { ReactNode } from "react";
 import { invariant } from "./classes.ts";
+import { NavIcon } from "./nav-icons.tsx";
 
 export type NavSectionId = NonNullable<RouteDef["nav"]>["section"];
 export const NAV_SECTIONS: ReadonlyArray<{ readonly id: NavSectionId; readonly label: string }> = [
@@ -60,8 +61,16 @@ export interface NavRailProps {
   readonly footer?: ReactNode;
 }
 
-/** The primary navigation: the same ground as the page, parted by one hairline. */
+/** A heading that only repeats its one entry's name ("Settings" over "Settings") is left out; the list keeps the name. */
+export function redundantHeading(section: NavSection): boolean {
+  invariant(section.items.length > 0, `nav section ${section.id} has no entries`);
+  const only = section.items.length === 1 ? section.items[0] : undefined;
+  return only !== undefined && only.label.trim().toLowerCase() === section.label.trim().toLowerCase();
+}
+
+/** The primary navigation: muted uppercase group labels over pill links, the current one tinted and barred. */
 export function NavRail({ sections, hash, footer }: NavRailProps) {
+  invariant(new Set(sections.map((section) => section.id)).size === sections.length, "nav sections repeat an id");
   const active = activeHref(sections, hash);
   return (
     <nav className="ui-navrail" aria-label="Primary">
@@ -70,20 +79,29 @@ export function NavRail({ sections, hash, footer }: NavRailProps) {
         <span className="ui-brand-name">Aether</span>
       </a>
       <div className="ui-navrail-sections">
-        {sections.map((section) => (
-          <div className="ui-navrail-section" key={section.id}>
-            <h2 className="ui-navrail-heading" id={`nav-${section.id}`}>{section.label}</h2>
-            <ul aria-labelledby={`nav-${section.id}`}>
-              {section.items.map((item) => (
-                <li key={item.href}>
-                  <a className="ui-navrail-link" href={item.href} aria-current={item.href === active ? "page" : undefined}>{item.label}</a>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
+        {sections.map((section) => <NavGroup key={section.id} section={section} active={active} />)}
       </div>
       {footer === undefined ? null : <div className="ui-navrail-footer">{footer}</div>}
     </nav>
+  );
+}
+
+function NavGroup({ section, active }: { readonly section: NavSection; readonly active: string | null }) {
+  const solo = redundantHeading(section);
+  const headingId = `nav-${section.id}`;
+  return (
+    <div className="ui-navrail-section" data-section={section.id} data-solo={solo ? "true" : undefined}>
+      {solo ? null : <h2 className="ui-navrail-heading" id={headingId}>{section.label}</h2>}
+      <ul aria-labelledby={solo ? undefined : headingId} aria-label={solo ? section.label : undefined}>
+        {section.items.map((item) => (
+          <li key={item.href}>
+            <a className="ui-navrail-link" href={item.href} aria-current={item.href === active ? "page" : undefined}>
+              <NavIcon label={item.label} />
+              <span className="ui-navrail-label">{item.label}</span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

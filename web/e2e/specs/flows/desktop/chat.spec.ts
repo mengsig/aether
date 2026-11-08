@@ -182,9 +182,10 @@ test("start a chat: a refused first message keeps its settings fixed, retries as
   await app.window.getByRole("button", { name: "Start an agent" }).first().click();
   const sheet = app.window.getByRole("dialog", { name: "Start an agent" });
   await sheet.getByLabel("First message").fill("/calm please");
-  await sheet.getByLabel("Workspace").fill(stack.layout.aether.work);
-  await sheet.getByRole("button", { name: "Validate workspace" }).click();
-  await expect(sheet.getByText("Workspace ready", { exact: false })).toBeVisible();
+  await sheet.getByRole("radio", { name: "Other folder" }).check();
+  await sheet.getByLabel("Folder path").fill(stack.layout.aether.work);
+  await sheet.getByLabel("Folder path").press("Enter");
+  await expect(sheet.locator('.b3-note[data-state="done"]'), "the workspace validates by itself").toBeVisible();
   await app.refuseNext("send_message", "Inbox is full (scripted refusal)");
   await sheet.getByRole("button", { name: "Start chat" }).click();
   await expect(sheet.getByText("The first message was not delivered: ", { exact: false })).toBeVisible();

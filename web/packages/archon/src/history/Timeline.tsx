@@ -13,7 +13,7 @@ import { duration, timeline, type Transition } from "./model.ts";
 function Rows({ transitions }: { readonly transitions: readonly Transition[] }) {
   const now = useNow(30_000);
   const rows = useMemo(() => timeline(transitions, now), [transitions, now]);
-  if (rows.length === 0) return <p className="dag-muted">Archon recorded no transitions for this item.</p>;
+  if (rows.length === 0) return <p className="dag-muted">Archon recorded no transitions for this item. Open the item to inspect its current state.</p>;
   return (
     <ol className="history-timeline" aria-label="Transitions">
       {rows.map((row, index) => (

@@ -37,7 +37,7 @@ function useInitiativeSignal(conn: string, id: string): object {
 }
 
 function Members({ view, graph, selected, onSelect }: { readonly view: InitiativeView; readonly graph: DagData; readonly selected: string | undefined; readonly onSelect: (id: string) => void }) {
-  if (view.members.length === 0) return <p className="dag-muted">This initiative has no items yet.</p>;
+  if (view.members.length === 0) return <p className="dag-muted">This initiative has no items yet. Message Archon from the queue to plan its next work.</p>;
   return (
     <ul className="initiative-members">
       {view.members.map((row) => (
@@ -87,7 +87,7 @@ function Header({ view }: { readonly view: InitiativeView }) {
 
 function Order({ data, layout, selected, onSelect }: { readonly data: DagData; readonly layout: LayoutFn; readonly selected: string | undefined; readonly onSelect: (id: string) => void }) {
   const path = useMemo(() => criticalPath(data), [data]);
-  if (data.nodes.length === 0) return <p className="dag-muted">None of its items is in the task graph.</p>;
+  if (data.nodes.length === 0) return <p className="dag-muted">None of its items is in the task graph. Open a member item to inspect its current state.</p>;
   return (
     <>
       <p className="dag-muted">{path.nodes.length > 1 ? `The critical path runs through ${path.nodes.length} items.` : "No open item waits on another."}</p>
@@ -117,7 +117,7 @@ export function InitiativePage({ detail, access, layout }: InitiativePageProps) 
       <div className="initiative-body">
         <section className="ui-card initiative-card" aria-label="Contract">
           <h2 className="dag-heading">Contract</h2>
-          {detail.initiative.contract.trim() === "" ? <p className="dag-muted">No contract was written.</p>
+          {detail.initiative.contract.trim() === "" ? <p className="dag-muted">No contract was written. Message Archon from the queue to define the intended outcome.</p>
             : <p className="initiative-contract">{detail.initiative.contract}</p>}
         </section>
         <section className="ui-card initiative-card" aria-label="Members">

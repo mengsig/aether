@@ -59,17 +59,18 @@ export const AETHER_BY_FIELD: ReadonlySet<string> = new Set([
  * What Archon lets an operator device send (archon-remote `allow.rs`, Archon 9a8d63d1), and
  * `get_initiative`, a `Read`. The app's connections greet as the web app, so archond marks its
  * `say` and `answer` as a device's and refuses it authority confirmations: no CLI standing.
+ * `repo_add` is `Change` only without `auto_merge` or `github_watch`, which `archonRefusal` checks.
  * The web packages' `archonAccess` must agree, which test/security/ui-parity.test.ts checks.
  * That standing exists from Archon 1.5.0 (protocol 24) on: `ARCHON_NEEDS_STANDING` commands pass
  * only on a connection whose welcome reported at least that protocol.
  */
 export const ARCHON_PASS: ReadonlySet<string> = new Set([
-  "hello", "status", "repo_list", "list_items", "list_item_summaries", "get_item", "get_stage",
+  "hello", "status", "repo_list", "repo_add", "list_items", "list_item_summaries", "get_item", "get_stage",
   "resolve_item", "list_pipelines", "list_questions", "feed_history", "subscribe_feed", "list_reports",
   "orchestrator_status", "cost_report", "list_artifacts", "read_artifact", "item_diff", "settings",
-  "autonomy", "subscribe_changes", "changes_page", "item_history", "task_graph", "run_plan", "item_links",
-  "issue_items", "list_github_objects", "get_initiative", "enqueue", "cancel_item", "retry_item", "pause",
-  "resume", "answer", "say", "link_issue", "unlink_issue", "import_issue", "model_policy", "steer_item", "update_item",
+  "autonomy", "github_watcher", "subscribe_changes", "changes_page", "item_history", "task_graph", "run_plan",
+  "item_links", "issue_items", "list_github_objects", "get_initiative", "enqueue", "cancel_item", "retry_item",
+  "pause", "resume", "answer", "say", "link_issue", "unlink_issue", "import_issue", "model_policy", "steer_item", "update_item",
 ]);
 
 /** First Archon protocol (Archon 1.5.0) whose archon-web connections have a device's standing. */
@@ -204,6 +205,9 @@ function archonRefusal(cmd: string, frame: Frame, protocol: number | undefined):
   if (cmd !== "hello" && "client" in frame) return `${cmd} names no client; the connection's hello did`;
   if ("caller" in frame) return `${cmd} names no caller; only Aether names an agent caller`;
   if ((cmd === "pause" || cmd === "resume") && frame.hard === true) return `${cmd} with hard is for the archon CLI`;
+  if (cmd === "repo_add" && (frame.auto_merge === true || frame.github_watch === true)) {
+    return "repo_add with auto_merge or github_watch is for the archon CLI";
+  }
   // `chat` records an answer as given in archon chat; the app's answers are its own.
   if (cmd === "answer" && frame.chat === true) return "answer with chat is for archon chat; the app answers as itself";
   return undefined;

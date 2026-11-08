@@ -1,6 +1,6 @@
 import { readInFlight, selectAgents, useSelector, type ReadEntry } from "@aether-ui/core";
 import { useMemo } from "react";
-import { ErrorState, Skeleton } from "@aether-ui/ui";
+import { ErrorState, Skeleton, Picker } from "@aether-ui/ui";
 import { invariant } from "../fleet/invariant.ts";
 
 export function records<T>(value: unknown): T[] {
@@ -22,11 +22,8 @@ export function AgentPicker({ conn, label, value, onChange, disabled = false }: 
 }) {
   const agents = useSelector(useMemo(() => selectAgents(conn), [conn]));
   const list = Object.values(agents);
-  invariant(value === "" || agents[value] !== undefined || list.length === 0, "the chosen agent belongs to this connection");
+  invariant(typeof value === "string", "an agent picker holds an id");
   invariant(list.every(agent => agent.id.length > 0), "every agent has an id");
-  return <label className="b3-field"><span className="ui-field-label">{label}</span>
-    <select className="b3-select" value={value} disabled={disabled} onChange={e => onChange(e.target.value)}>
-      <option value="">Choose an agent</option>
-      {list.map(agent => <option key={agent.id} value={agent.id}>{agent.name || agent.id}</option>)}
-    </select></label>;
+  return <Picker label={label} value={value} disabled={disabled} onChange={onChange}
+    options={[{ id: "", label: "Choose an agent" }, ...list.map(agent => ({ id: agent.id, label: agent.name || agent.id, description: agent.id }))]} />;
 }

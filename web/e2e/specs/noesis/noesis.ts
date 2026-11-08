@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { readdir } from "node:fs/promises";
 import { expect, type Page } from "@playwright/test";
-import { connection } from "../../harness/pair.ts";
+import { connection, fleetLink } from "../../harness/pair.ts";
 import type { Stack } from "../../harness/stack.ts";
 
 /** The `noesis_*` commands that only read; every other one changes something. */
@@ -90,7 +90,7 @@ export async function reconnect(page: Page): Promise<void> {
 /** Opens an agent's screen from the fleet; returns the Aether connection id its route names. */
 export async function openAgent(page: Page, stack: Stack, name: string): Promise<string> {
   await page.goto(`${stack.aether.origin}/#/fleet`);
-  await page.getByRole("region", { name: "Fleet" }).getByRole("link", { name, exact: true }).click();
+  await (await fleetLink(page, name)).click();
   await expect(page.locator(".agent-name")).toHaveText(name);
   const match = /#\/agents\/([^/]+)\/(agt_[^/?]+)/.exec(page.url());
   assert.ok(match?.[1] !== undefined, `the agent screen's route names its connection: ${page.url()}`);

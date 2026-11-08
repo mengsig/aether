@@ -35,6 +35,37 @@ export function orderedEvents(events: readonly aether.Event[]): aether.Event[] {
   return [...new Map(events.map(e => [e.id, e])).values()].sort((a, b) => b.seq - a.seq);
 }
 
+export function defaultWorkspace(workspaces: readonly aether.Workspace[], home?: aether.PathCompletions): string {
+  invariant(workspaces.every(w => typeof w.path === "string" && typeof w.exists === "boolean"), "workspaces report paths and existence");
+  invariant(home === undefined || Array.isArray(home.entries), "home completion is a list");
+  const recent = [...workspaces].filter(w => w.exists).sort((a, b) => (b.active_at ?? "").localeCompare(a.active_at ?? ""));
+  return recent[0]?.path ?? home?.entries.find(p => p.is_dir)?.path ?? "";
+}
+
+export function defaultModel(models: readonly aether.ModelInfo[]): string {
+  invariant(models.every(m => typeof m.configured === "boolean"), "model readiness is explicit");
+  invariant(models.every(m => m.model.provider && m.model.model), "models have qualified identities");
+  const ready = models.filter(m => m.configured);
+  const model = ready.find(m => m.is_default) ?? ready[0];
+  return model ? `${model.model.provider}/${model.model.model}` : "";
+}
+
+/** "agent.turn_completed" as "Agent turn completed"; a bare "custom" is "Custom event". */
+export function kindLabel(type: string): string {
+  invariant(type.length > 0, "an event kind is named");
+  const words = type.split(/[._]/).filter(word => word.length > 0);
+  invariant(words.length > 0, `an event kind has words: ${type}`);
+  if (words.length === 1 && words[0] === "custom") return "Custom event";
+  const [first, ...rest] = words as [string, ...string[]];
+  return [first[0]?.toUpperCase() + first.slice(1), ...rest].join(" ");
+}
+
+/** The family an event kind belongs to, as the filter shows it: "agent" as "Agent". */
+export function familyLabel(family: string): string {
+  invariant(family.length > 0, "a family is named");
+  return family[0]?.toUpperCase() + family.slice(1);
+}
+
 export const EFFORTS = [
   { value: "low", label: "Low" }, { value: "medium", label: "Medium" }, { value: "high", label: "High" },
   { value: "x_high", label: "Extra high" }, { value: "max", label: "Max" },

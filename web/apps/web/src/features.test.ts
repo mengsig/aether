@@ -14,7 +14,7 @@ describe("feature packages", () => {
     const loaded: Record<string, readonly string[]> = {
       aether: ["./activity/routes.ts", "./agent/routes.ts", "./controls/routes.ts", "./fleet/routes.ts", "./inbox/routes.ts", "./memory/routes.ts", "./topology/routes.ts"],
       archon: ["./dag/routes.ts", "./history/routes.ts", "./initiatives/routes.ts", "./item/routes.ts", "./pipeline/routes.ts", "./queue/routes.ts"],
-      github: ["./issue/routes.ts"],
+      github: ["./issue/routes.ts", "./overview/routes.ts"],
       noesis: ["./learn/routes.ts", "./understand/routes.ts"],
       settings: ["./screens/routes.ts", "./setup/routes.ts"],
     };
@@ -24,7 +24,7 @@ describe("feature packages", () => {
       ["#/memory/:conn", "B3"], ["#/fleet/topology", "B1"],
       ["#/archon/graph", "C2"], ["#/archon/history", "C2"], ["#/archon/initiatives/:id", "C2"],
       ["#/archon/items/:item", "C1"], ["#/archon/items/:item/runs/:run", "C1"], ["#/archon/queue", "C1"],
-      ["#/github/:host/:owner/:repo/:number", "D4"],
+      ["#/github/:host/:owner/:repo/:number", "D4"], ["#/github", "D4"],
       ["#/learn", "F5"], ["#/learn/sessions/:id", "F5"], ["#/learn/graph", "F5"], ["#/learn/me", "F5"],
       ["#/settings/*", "B3"], ["#/setup", "B3"],
     ]);

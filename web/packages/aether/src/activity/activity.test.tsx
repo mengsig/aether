@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 import { afterEach, expect, test, vi } from "vitest";
 import { act } from "react";
-import { routeHref } from "@aether-ui/core";
+import { connectionDraftKey, drafts, routeHref } from "@aether-ui/core";
+import type { DesktopBridge } from "@aether-ui/protocol";
 import type { aether } from "@aether-ui/protocol";
-import { connected, click, buttonNamed, type, type Harness } from "../controls/fixture/harness.test-util.tsx";
+import { connected, click, buttonNamed, pick, type, type Harness } from "../controls/fixture/harness.test-util.tsx";
 import { fauxAgent } from "../conversation/fixture/transcript.ts";
 import { invariant } from "../fleet/invariant.ts";
 import ActivityScreen from "./ActivityScreen.tsx";
@@ -11,7 +12,11 @@ import StartScreen from "./StartScreen.tsx";
 import { FIRST_MESSAGE_LIMIT } from "./firstMessage.ts";
 import { UndeliveredFirst } from "./UndeliveredFirst.tsx";
 let h: Harness;
-afterEach(() => { h?.unmount(); location.hash = ""; });
+afterEach(() => {
+  h?.unmount();
+  location.hash = "";
+  for (const key of drafts.keys()) drafts.clear(key);
+});
 const agent = fauxAgent();
 const event = (seq: number): aether.Event => ({ id: `evt_${seq}`, seq, at: "2026-11-04", actor: { actor: "system" }, agent_id: agent.id, kind: { type: "agent.ready" } });
 const script = {
@@ -30,17 +35,18 @@ test("shows live events, backward store pages, filters, and agent links", async 
   h = await connected({ agents: [agent], events: [event(20)], script: { get_events: () => ({ tag: "events", data: [event(10)] }) } });
   const root = await h.mount(<ActivityScreen />);
   await act(async () => { h.daemon.emit(agent.id, { type: "invocation.completed" }); }); await h.settle();
-  expect(root.textContent).toContain("invocation.completed");
+  expect(root.textContent).toContain("Invocation completed");
   expect(h.daemon.commands("get_events")[0]).toMatchObject({ after: 0, limit: 100, query: { before: Number.MAX_SAFE_INTEGER } });
   expect(h.app.store.get().reads[h.conn]?.[`activity:before:${Number.MAX_SAFE_INTEGER}`]?.value).toEqual([event(10)]);
   await click(h, root, "Show older"); await h.settle();
   expect(h.daemon.commands("get_events").at(-1)).toMatchObject({ after: 0, limit: 100, query: { before: 10 } });
   expect(root.querySelectorAll('a[href*="#/agents/"]').length).toBe(2);
   expect(root.querySelector('a[href*="#/controls/"]')).not.toBeNull();
-  await type(h, root, "Kind family", "invocation");
+  await pick(h, root, "Kind family", "Invocation");
   expect(root.querySelectorAll("article")).toHaveLength(1);
-  await type(h, root, "Agent filter", "other");
-  expect(root.textContent).toContain("No activity to show");
+  await pick(h, root, "Agent filter", agent.name);
+  expect(root.querySelectorAll("article")).toHaveLength(1);
+  expect(root.querySelector('a[href*="#/agents/"]')?.textContent).toBe(agent.name);
 });
 
 const workspaces = [
@@ -364,7 +370,7 @@ test("closing the sheet returns focus to the Start an agent button", async () =>
   opener.focus();
   await click(h, root, "Start an agent");
   expect(document.activeElement).not.toBe(opener);
-  await act(async () => buttonNamed(document.body, "✕").click());
+  await act(async () => (document.body.querySelector<HTMLButtonElement>('[aria-label="Close Start an agent"]') as HTMLButtonElement).click());
   await h.settle();
   expect(document.activeElement).toBe(opener);
 });
@@ -412,7 +418,7 @@ test("history retries errors, pages backwards, and stops at an empty page", asyn
   expect(root.textContent).toContain("History unavailable");
   fail = false;
   await click(h, root, "Try again"); await h.settle();
-  expect(root.textContent).toContain("agent.ready");
+  expect(root.textContent).toContain("Agent ready");
   await click(h, root, "Show older"); await h.settle();
   expect(h.daemon.commands("get_events").at(-1)).toMatchObject({ query: { before: 10 } });
   expect(buttonNamed(root, "Beginning of history").disabled).toBe(true);
@@ -437,8 +443,106 @@ test("Start a task opens the Start sheet at once, and closing it leaves the star
   location.hash = "#/activity/start";
   const root = await h.mount(<StartScreen />);
   expect(root.querySelector("dialog[open]") ?? document.querySelector("dialog[open]")).not.toBeNull();
-  await act(async () => buttonNamed(document.body, "✕").click());
+  await act(async () => (document.body.querySelector<HTMLButtonElement>('[aria-label="Close Start an agent"]') as HTMLButtonElement).click());
   await h.settle();
   expect(document.querySelector("dialog[open]")).toBeNull();
   expect(location.hash).toBe("#/activity");
+});
+
+test("the start draft survives unmount per connection, restores every choice, and clears once the agent exists", async () => {
+  h = await connected({ agents: [agent], script: startScript });
+  let root = await h.mount(<ActivityScreen />);
+  await click(h, root, "Start an agent"); await click(h, document.body, "Task agent"); await h.settle();
+  await type(h, document.body, "What should the agent do?", "Keep this objective");
+  await type(h, document.body, "Name", "Draft agent");
+  await type(h, document.body, "Effort", "max");
+  await choose("old-repo");
+  const key = connectionDraftKey("activity", h.conn, "start-agent");
+  expect(drafts.get(key)).toMatchObject({ mode: "agent", objective: "Keep this objective", name: "Draft agent", effort: "max", path: "/work/old-repo" });
+  h.unmount();
+  h = await connected({ agents: [agent], script: startScript, instance: "laptop" });
+  root = await h.mount(<ActivityScreen />);
+  await click(h, root, "Start an agent");
+  expect(document.querySelector<HTMLTextAreaElement>('[data-testid="start-objective"]')?.value, "another connection starts blank").toBe("");
+  h.unmount();
+  h = await connected({ agents: [agent], script: startScript });
+  root = await h.mount(<ActivityScreen />);
+  await click(h, root, "Start an agent"); await h.settle(); await h.settle();
+  expect(document.querySelector<HTMLTextAreaElement>('[data-testid="start-objective"]')?.value).toBe("Keep this objective");
+  expect((field("Name") as HTMLInputElement).value).toBe("Draft agent");
+  expect((field("Effort") as HTMLSelectElement).value).toBe("max");
+  expect(choice("old-repo")?.querySelector("input")?.checked).toBe(true);
+  await click(h, document.body, "Start agent"); await h.settle();
+  expect(h.daemon.commands("create_agent")[0]).toMatchObject({ objective: "Keep this objective", name: "Draft agent", config: { effort: "max" }, scope: { workspace_root: "/work/old-repo" } });
+  expect(drafts.get(key)).toBeUndefined();
+});
+
+test("a failed create keeps the draft for retry", async () => {
+  h = await connected({ agents: [agent], script: { ...startScript, create_task: () => ({ code: "invalid_argument", message: "Owner is unavailable" }) } });
+  const root = await h.mount(<ActivityScreen />);
+  await click(h, root, "Start an agent"); await click(h, document.body, "Existing agent task");
+  await type(h, document.body, "What should the agent do?", "Keep the work");
+  await type(h, document.body, "Agent", agent.id);
+  await click(h, document.body, "Create task"); await h.settle();
+  expect(document.body.textContent).toContain("Owner is unavailable");
+  expect(drafts.get(connectionDraftKey("activity", h.conn, "start-agent"))).toMatchObject({ objective: "Keep the work", owner: agent.id });
+});
+
+test("a chat's late first-message confirmation clears only the draft it sent, never a newer one", async () => {
+  window.location.hash = "";
+  h = await connected({ agents: [agent], script: { ...script, send_message: () => "hold" } });
+  await startChat("First idea");
+  const key = connectionDraftKey("activity", h.conn, "start-agent");
+  expect(drafts.get(key), "an unconfirmed chat keeps its draft").toMatchObject({ objective: "First idea" });
+  await act(async () => document.body.querySelector<HTMLButtonElement>('[aria-label="Close Start an agent"]')?.click());
+  await h.settle();
+  await click(h, document.body, "Start an agent"); await h.settle();
+  await type(h, document.body, "First message", "Second idea");
+  h.daemon.script = { ...h.daemon.script, send_message: () => ({ tag: "message_sent", data: { seq: 1 } }) };
+  h.daemon.release();
+  await h.settle(); await h.settle();
+  expect(window.location.hash, "the confirmed chat opens").toBe(`#/agents/${encodeURIComponent(h.conn)}/${agent.id}`);
+  expect(drafts.get(key), "the newer draft survives the older chat's confirmation").toMatchObject({ objective: "Second idea" });
+  await click(h, document.body, "Start an agent"); await h.settle();
+  await click(h, document.body, "Start chat"); await h.settle(); await h.settle();
+  expect(h.daemon.commands("send_message").at(-1)).toMatchObject({ content: "Second idea" });
+  expect(drafts.get(key), "a confirmed chat clears the draft it sent").toBeUndefined();
+});
+
+test("a restored draft shows its other folder checked, with the path, and clicking the choice again keeps it", async () => {
+  h = await connected({ agents: [agent], script: startScript });
+  let root = await h.mount(<ActivityScreen />);
+  await click(h, root, "Start an agent"); await click(h, document.body, "Task agent"); await h.settle();
+  await choose("Other folder");
+  await type(h, document.body, "Folder path", "/elsewhere");
+  await act(async () => field("Folder path").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  await h.settle(); await h.settle();
+  const key = connectionDraftKey("activity", h.conn, "start-agent");
+  expect(drafts.get(key)).toMatchObject({ path: "/elsewhere" });
+  h.unmount();
+  h = await connected({ agents: [agent], script: startScript });
+  root = await h.mount(<ActivityScreen />);
+  await click(h, root, "Start an agent"); await h.settle(); await h.settle();
+  expect(choice("Other folder")?.querySelector("input")?.checked).toBe(true);
+  expect(choice("repo")?.querySelector("input")?.checked).toBe(false);
+  expect(document.querySelector<HTMLInputElement>('[data-testid="start-workspace-path"]')?.value).toBe("/elsewhere");
+  expect(h.daemon.commands("validate_workspace").at(-1), "the restored folder is validated").toMatchObject({ path: "/elsewhere" });
+  await choose("Other folder");
+  expect(drafts.get(key), "the checked choice is not re-chosen blank").toMatchObject({ path: "/elsewhere" });
+  await choose("repo");
+  expect(drafts.get(key)).toMatchObject({ path: "/work/repo" });
+});
+
+test("desktop Browse fills another folder and validates it without another action", async () => {
+  const pickDirectory = vi.fn(async () => "/picked");
+  const desktop = { version: 1, pickDirectory, connect: async () => "bridge", close: async () => {}, getPreference: async () => false } as unknown as DesktopBridge;
+  h = await connected({ desktop, role: "local", agents: [agent], script: startScript });
+  const root = await h.mount(<ActivityScreen />);
+  await click(h, root, "Start an agent"); await click(h, document.body, "Task agent"); await h.settle();
+  await choose("Other folder");
+  await click(h, document.body, "Browse");
+  expect(pickDirectory).toHaveBeenCalledWith("workspace");
+  expect(document.querySelector<HTMLInputElement>('[data-testid="start-workspace-path"]')?.value).toBe("/picked");
+  expect(h.daemon.commands("validate_workspace").at(-1)).toMatchObject({ path: "/picked" });
+  expect(h.daemon.commands("get_git_summary").at(-1)).toMatchObject({ workspace: "/picked" });
 });

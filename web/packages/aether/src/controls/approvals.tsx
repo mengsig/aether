@@ -1,11 +1,12 @@
 // Approvals for one agent: which side effects need a person's approval (`set_approvals`), and the
 // standing rules that approve or deny a tool call without asking (list, add, revoke).
 
-import { useReread } from "@aether-ui/core";
+import { useDraft, useReread, selectAttention, selectEvents, useSelector } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
 import { aether } from "@aether-ui/protocol";
-import { Badge, Field } from "@aether-ui/ui";
+import { Badge, Field, Combo, Picker, Switch } from "@aether-ui/ui";
 import { useState } from "react";
+import { HARNESS_TOOLS } from "./tool-names.ts";
 import { invariant } from "../fleet/invariant.ts";
 import { DraftError, ruleCommand, SIDE_EFFECTS, type RuleDraft } from "./commands.ts";
 import { Action, isList, ReadView, RunNote, Section, useRun, type Confirm, type Run } from "./kit.tsx";
@@ -16,33 +17,26 @@ const EFFECT_LABELS: Readonly<Record<aether.SideEffectClass, string>> = {
 
 function PolicySection({ conn, agent, run }: { readonly conn: ConnId; readonly agent: aether.Agent; readonly run: Run }) {
   const current = agent.config.approval?.require_for ?? [];
-  const [draft, setDraft] = useState<ReadonlySet<aether.SideEffectClass> | null>(null);
-  const [subtree, setSubtree] = useState(false);
-  const chosen = draft ?? new Set(current);
+  const form = useDraft(`controls/${agent.id}/approvals`, { effects: null as aether.SideEffectClass[] | null, subtree: false });
+  const { effects, subtree } = form.value;
+  const chosen = new Set(effects ?? current);
   const toggle = (effect: aether.SideEffectClass) => {
     const next = new Set(chosen);
-    if (next.has(effect)) next.delete(effect);
-    else next.add(effect);
-    setDraft(next);
+    if (next.has(effect)) next.delete(effect); else next.add(effect);
+    form.update({ effects: [...next] });
   };
   const command = aether.setApprovals({ agent: agent.id, policy: { require_for: SIDE_EFFECTS.filter((e) => chosen.has(e)) }, ...(subtree ? { subtree } : {}) });
   return (
     <Section title="Ask before" hint="The agent waits for a person before any tool call with a checked effect.">
       <div className="b3-row">
         {SIDE_EFFECTS.map((effect) => (
-          <label key={effect} className="b3-check">
-            <input type="checkbox" checked={chosen.has(effect)} onChange={() => toggle(effect)} />
-            <span>{EFFECT_LABELS[effect]}</span>
-          </label>
+          <Switch key={effect} label={EFFECT_LABELS[effect]} checked={chosen.has(effect)} onChange={() => toggle(effect)} />
         ))}
       </div>
       <div className="b3-row">
-        <label className="b3-check">
-          <input type="checkbox" checked={subtree} onChange={(event) => setSubtree(event.target.checked)} />
-          <span>Also for the agents it delegated to</span>
-        </label>
-        <Action conn={conn} command={command} label="Apply approval policy" busy={run.status.state === "busy"} blocked={draft === null && !subtree ? "Nothing changed yet" : null}
-          onRun={async () => { if (await run.send(command, "Approval policy applied")) setDraft(null); }} />
+        <Switch label="Also for the agents it delegated to" checked={subtree} onChange={subtree => form.update({ subtree })} />
+        <Action conn={conn} command={command} label="Apply approval policy" busy={run.status.state === "busy"} blocked={effects === null && !subtree ? "Nothing changed yet" : null}
+          onRun={async () => { if (await run.send(command, "Approval policy applied")) form.clearIfUnchanged(); }} />
       </div>
     </Section>
   );
@@ -78,30 +72,19 @@ function RuleRow({ conn, agent, rule, run, changed }: { readonly conn: ConnId; r
 
 const EMPTY_RULE: RuleDraft = { tool: "", argument: "", resource: "", note: "", decision: "approved", scope: "agent" };
 
-function RuleFields({ draft, edit, runId }: { readonly draft: RuleDraft; readonly edit: (patch: Partial<RuleDraft>) => void; readonly runId: string }) {
+function RuleFields({ draft, edit, runId, tools }: { readonly draft: RuleDraft; readonly edit: (patch: Partial<RuleDraft>) => void; readonly runId: string; readonly tools: string[] }) {
   invariant(["agent", "subtree", "run"].includes(draft.scope), "the rule form selects a browser scope");
   invariant(draft.decision === "approved" || draft.decision === "denied", "the rule form selects an approval decision");
   return (
     <div className="b3-form">
-      <Field label="Tool" hint="Optional; blank matches any tool." placeholder="shell" value={draft.tool} onChange={(event) => edit({ tool: event.target.value })} />
+      <Combo label="Tool" data-testid="rule-tool" suggestions={tools.filter(id => id.toLowerCase().includes(draft.tool.toLowerCase())).map(id => ({ id, label: id }))} hint="Optional; blank matches any tool." placeholder="shell" value={draft.tool} onChange={tool => edit({ tool })} />
       <Field label="Argument (optional)" placeholder="git status" value={draft.argument} onChange={(event) => edit({ argument: event.target.value })} />
       <Field label="Resource prefix (optional)" value={draft.resource} onChange={(event) => edit({ resource: event.target.value })} />
       <Field label="Note (optional)" value={draft.note} onChange={(event) => edit({ note: event.target.value })} />
-      <label className="b3-field">
-        <span className="ui-field-label">Scope</span>
-        <select className="b3-select" value={draft.scope} onChange={(event) => edit({ scope: event.target.value as RuleDraft["scope"] })}>
-          <option value="agent">This agent</option>
-          <option value="subtree">This agent and its delegates</option>
-          <option value="run" disabled={runId.trim() === ""}>This run{runId.trim() === "" ? " (this agent has no run)" : ""}</option>
-        </select>
-      </label>
-      <label className="b3-field">
-        <span className="ui-field-label">Decision</span>
-        <select className="b3-select" value={draft.decision} onChange={(event) => edit({ decision: event.target.value as aether.ApprovalDecision })}>
-          <option value="approved">Approve without asking</option>
-          <option value="denied">Deny without asking</option>
-        </select>
-      </label>
+      <Picker label="Scope" value={draft.scope} onChange={scope => edit({ scope: scope as RuleDraft["scope"] })}
+        options={[{ id: "agent", label: "This agent" }, { id: "subtree", label: "This agent and its delegates" }, { id: "run", label: runId.trim() === "" ? "This run (this agent has no run)" : "This run", disabled: runId.trim() === "" }]} />
+      <Picker label="Decision" value={draft.decision} onChange={decision => edit({ decision: decision as aether.ApprovalDecision })}
+        options={[{ id: "approved", label: "Approve without asking" }, { id: "denied", label: "Deny without asking" }]} />
     </div>
   );
 }
@@ -129,7 +112,13 @@ function ruleConfirm(draft: RuleDraft): Confirm {
 function NewRule({ conn, agent, run, changed }: { readonly conn: ConnId; readonly agent: aether.Agent; readonly run: Run; readonly changed: () => void }) {
   invariant(agent.id.trim() !== "", "a new rule names its agent");
   invariant(conn.trim() !== "", "a new rule targets a daemon connection");
-  const [draft, setDraft] = useState<RuleDraft>(EMPTY_RULE);
+  const form = useDraft(`controls/${agent.id}/rule`, { ...EMPTY_RULE });
+  const draft = form.value;
+  const events = useSelector(selectEvents(conn));
+  const attention = useSelector(selectAttention(conn));
+  const seen = events.flatMap(e => e.agent_id === agent.id && e.kind.type === "approval.requested" ? [e.kind.tool] : []);
+  const pending = attention?.approvals.filter(a => a.agent_id === agent.id).map(a => a.tool) ?? [];
+  const tools = [...new Set([...pending, ...seen, ...HARNESS_TOOLS])];
   const [problem, setProblem] = useState<string | null>(null);
   const scope: aether.RuleScope = draft.scope === "subtree" ? { scope: "subtree", root: agent.id }
     : { scope: draft.scope, id: draft.scope === "run" ? agent.run : agent.id };
@@ -138,7 +127,7 @@ function NewRule({ conn, agent, run, changed }: { readonly conn: ConnId; readonl
       const command = ruleCommand(agent.id, { ...draft, run: agent.run });
       setProblem(null);
       if (await run.send(command, "Rule added")) {
-        setDraft((old) => ({ ...old, tool: "", argument: "", resource: "", note: "" }));
+        form.clearIfUnchanged();
         changed();
       }
     } catch (error) {
@@ -148,9 +137,9 @@ function NewRule({ conn, agent, run, changed }: { readonly conn: ConnId; readonl
   };
   return (
     <div className="b3-stack">
-      <RuleFields draft={draft} edit={(patch) => setDraft((old) => ({ ...old, ...patch }))} runId={agent.run ?? ""} />
+      <RuleFields draft={draft} edit={form.update} runId={agent.run ?? ""} tools={tools} />
       <div className="b3-row">
-        <Action conn={conn} command={{ cmd: "add_approval_rule", scope }} label="Add rule" busy={run.status.state === "busy"} onRun={add}
+        <Action conn={conn} command={{ cmd: "add_approval_rule", scope }} label="Add rule" data-testid="rule-submit" busy={run.status.state === "busy"} onRun={add}
           confirm={ruleConfirm(draft)} variant={draft.decision === "approved" && !draft.tool.trim() && !draft.argument.trim() && !draft.resource.trim() ? "danger" : "secondary"} />
       </div>
       {problem ? <p className="b3-note" role="alert" data-state="failed">{problem}</p> : null}

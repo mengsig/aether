@@ -1,0 +1,1 @@
+function s(t){return{cmd:"import_issue",...t}}function e(t){return{cmd:"issue_items",...t}}function i(t){return{cmd:"list_github_objects",...t}}function r(t){return{cmd:"repo_add",...t}}export{e as a,s as i,i as l,r};

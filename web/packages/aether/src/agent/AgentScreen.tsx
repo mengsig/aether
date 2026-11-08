@@ -1,7 +1,7 @@
 // `#/agents/:conn/:agent`: one agent's identity, state, model, cost and budget, above its
 // chat. Everything shown is derived from core's store; this screen keeps no daemon data.
 
-import { routeHref, selectAgent, selectAttention, selectConnection, useSelector } from "@aether-ui/core";
+import { routeHref, selectAgent, selectAttention, selectConnection, useReread, useSelector } from "@aether-ui/core";
 import type { aether, ConnId, RouteProps } from "@aether-ui/protocol";
 import { Badge, EmptyState, EntityActionMenu, Skeleton, StatusPill } from "@aether-ui/ui";
 import { useMemo } from "react";
@@ -10,7 +10,7 @@ import { agentStatus } from "../fleet/rows.ts";
 import { roleLabel } from "../fleet/roles.ts";
 import { invariant } from "../fleet/invariant.ts";
 import "./agent.css";
-import { agentFacts, statusDetail } from "./facts.ts";
+import { agentFacts, currentTask, statusDetail, taskFact, type Fact } from "./facts.ts";
 
 function AgentLink({ conn, id, children }: { readonly conn: ConnId; readonly id: string; readonly children: string }) {
   return <a className="ui-link" href={routeHref("#/agents/:conn/:agent", { conn, agent: id })}>{children}</a>;
@@ -42,12 +42,22 @@ function AgentHeader({ conn, agent }: { readonly conn: ConnId; readonly agent: a
   );
 }
 
-function AgentFacts({ agent }: { readonly agent: aether.Agent }) {
-  const facts = useMemo(() => agentFacts(agent), [agent]);
+/** The agent's facts with its current task first; the task list is re-read whenever the held task changes. */
+function useFacts(conn: ConnId, agent: aether.Agent): Fact[] {
+  const tasks = useReread(conn, `agent:${agent.id}:tasks`, { cmd: "list_tasks", query: { owner: agent.id } }, ["tasks"], agent.current_task ?? null);
+  const listed = tasks?.value;
+  return useMemo(() => {
+    const task = Array.isArray(listed) ? currentTask(agent, listed as aether.Task[]) : null;
+    return task === null ? agentFacts(agent) : [taskFact(task), ...agentFacts(agent)];
+  }, [agent, listed]);
+}
+
+function AgentFacts({ conn, agent }: { readonly conn: ConnId; readonly agent: aether.Agent }) {
+  const facts = useFacts(conn, agent);
   return (
     <dl className="ui-card agent-facts">
       {facts.map((fact) => (
-        <div key={fact.label} className="agent-fact">
+        <div key={fact.label} className="agent-fact" data-testid={`agent-fact-${fact.label.toLowerCase()}`}>
           <dt>{fact.label}</dt>
           <dd title={fact.hint}>{fact.value}{fact.hint ? <span className="agent-hint">{fact.hint}</span> : null}</dd>
         </div>
@@ -72,7 +82,7 @@ export function AgentScreen({ conn, id }: { readonly conn: ConnId; readonly id: 
   return (
     <section className="ui-page agent" aria-label={`Agent ${agent.name}`}>
       <AgentHeader conn={conn} agent={agent} />
-      <AgentFacts agent={agent} />
+      <AgentFacts conn={conn} agent={agent} />
       <Chat key={`${conn}/${id}`} conn={conn} agent={agent} />
     </section>
   );

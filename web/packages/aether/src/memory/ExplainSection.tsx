@@ -1,9 +1,9 @@
 // What retrieval did for each model call of a task, or for one invocation (MEMORY-V2.md §2.1).
 // The trace was recorded when the turn was built, so it says what happened then.
 
-import { useReread } from "@aether-ui/core";
+import { connectionDraftKey, useDraft, useReread, selectEvents, useSelector } from "@aether-ui/core";
 import type { aether, ConnId } from "@aether-ui/protocol";
-import { Button, Field, Tabs } from "@aether-ui/ui";
+import { Button, Combo, Segmented } from "@aether-ui/ui";
 import { useState, type FormEvent } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import { ReadView, Section } from "../controls/kit.tsx";
@@ -16,8 +16,11 @@ const PREFIX = { task: "tsk_", invocation: "inv_" } as const;
 const LABEL = { task: "Task id", invocation: "Invocation id" } as const;
 
 export function ExplainSection({ conn, known }: { conn: ConnId; known: ReadonlyMap<string, string> }) {
-  const [kind, setKind] = useState<Target["kind"]>("task");
-  const [draft, setDraft] = useState("");
+  const form = useDraft(connectionDraftKey("memory", conn, "explain"), { kind: "task" as Target["kind"], text: "" });
+  const { kind, text: draft } = form.value;
+  const events = useSelector(selectEvents(conn));
+  const ids = events.flatMap(e => kind === "task" ? (e.task_id ? [e.task_id] : []) : e.kind.type === "invocation.completed" ? [e.kind.invocation] : []);
+  const suggestions = [...new Set(ids)].map(id => ({ id, label: id }));
   const [target, setTarget] = useState<Target | null>(null);
   const gate = useHostGate(conn, { cmd: "memory_retrieval_explain", task: null });
   const id = draft.trim();
@@ -29,10 +32,10 @@ export function ExplainSection({ conn, known }: { conn: ConnId; known: ReadonlyM
   };
   return <Section title="Retrieval explain" hint="Host only · Which memories each turn was given, and why the rest were not.">
     {gate.refusal ? <p role="note" className="b3-note">{gate.refusal}</p> : <>
-      <Tabs label="Explain by" selected={kind} onSelect={next => { setKind(next as Target["kind"]); setDraft(""); }}
-        tabs={[{ id: "task", label: "Task", panel: null }, { id: "invocation", label: "Invocation", panel: null }]} />
+      <Segmented label="Explain by" value={kind} onChange={next => form.update({ kind: next as Target["kind"], text: "" })}
+        options={[{ id: "task", label: "Task" }, { id: "invocation", label: "Invocation" }]} />
       <form className="mem-inline-form" onSubmit={submit}>
-        <Field label={LABEL[kind]} value={draft} onChange={e => setDraft(e.target.value)} {...(malformed ? { error: malformed } : {})} spellCheck={false} autoComplete="off" />
+        <Combo label={LABEL[kind]} suggestions={suggestions} value={draft} onChange={text => form.update({ text })} {...(malformed ? { error: malformed } : {})} spellCheck={false} autoComplete="off" />
         <Button type="submit" disabled={id === "" || malformed !== undefined}>Explain</Button>
       </form>
       {target ? <ExplainResult conn={conn} target={target} known={known} /> : <p className="b3-meta">Name a task or an invocation to see its turns, with every memory retrieval weighed.</p>}

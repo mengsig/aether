@@ -30,7 +30,7 @@ describe("sessions", () => {
   test("starting a session creates it and opens it", async () => {
     harness = await connected(scenario(true), vi);
     const root = await harness.mount(<SessionsRoute />);
-    await type(harness, $(root, "#learn-goal"), "How TCP slow start works");
+    await type(harness, $(root, "[data-testid=learn-goal]"), "How TCP slow start works");
     await click(harness, byText(root, "button", "Start session"));
     const created = harness.daemon.sent.filter((c) => c.cmd === "noesis_create_session");
     expect(created).toMatchObject([{ goal: "How TCP slow start works", mode: "teach" }]);
@@ -41,7 +41,7 @@ describe("sessions", () => {
     harness = await connected(scenario(true, { refuse: "no ready model for Noesis: set noesis.billing.allow_api to use API models" }), vi);
     location.hash = "#/learn";
     const root = await harness.mount(<SessionsRoute />);
-    await type(harness, $(root, "#learn-goal"), "Anything");
+    await type(harness, $(root, "[data-testid=learn-goal]"), "Anything");
     await click(harness, byText(root, "button", "Start session"));
     const note = root.querySelector(".learn-callout");
     expect(note?.textContent).toContain("Noesis needs a model it may use");
@@ -105,7 +105,7 @@ describe("knowledge graph", () => {
 
     await click(h, byText(panel, "button", "Delete source…"));
     const dialog = $(document, "dialog[open]");
-    await click(h, $(byText(dialog, "label", "Remove those nothing else supports"), "input"));
+    await click(h, byText(dialog, "[role=radio]", "Remove those nothing else supports"));
     expect(deletes()).toEqual([]);
     await click(h, byText(dialog, "button", "Delete"));
     expect(deletes()).toMatchObject([{ cmd: "noesis_delete_source", source: "s_notes", graph: "delete_unsupported" }]);
@@ -176,15 +176,16 @@ describe("settings", () => {
 
   test("a change no host key is in goes as a plain change", async () => {
     const { h, sheet } = await openSettings("ipc");
-    await type(h, $(byText(sheet, ".ui-field", "Teaching model"), "input"), "faux-strong");
+    await click(h, $(sheet, "[data-testid=noesis-model-strong]"));
+    await click(h, byText(sheet, "[role=option]", "claude-sonnet-5-5"));
     await click(h, byText(sheet, "button", "Save"));
-    expect(h.daemon.sent.filter((c) => c.cmd === "noesis_configure").map((c) => c.patch)).toEqual([{ models: { strong: "faux-strong" } }]);
+    expect(h.daemon.sent.filter((c) => c.cmd === "noesis_configure").map((c) => c.patch)).toEqual([{ models: { strong: "claude-code/claude-sonnet-5-5" } }]);
     expect(h.daemon.privileged).toEqual([]);
   });
 
   test("a remote device sees host-only settings disabled, with the reason", async () => {
     const { sheet } = await openSettings("ws-aether");
-    const enabled = $(byText(sheet, "label", "Turn on Noesis"), "input") as HTMLInputElement;
+    const enabled = byText(sheet, "[role=switch]", "Turn on Noesis") as HTMLButtonElement;
     expect(enabled.disabled).toBe(true);
     expect(sheet.textContent).toContain("Only the daemon's own host can change this");
   });

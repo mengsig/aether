@@ -58,7 +58,7 @@ function PushBody({ conn, value, run, reread }: Omit<PushControlsProps, "config"
   const config = recordOf<aether.PushConfig>(value);
   if (config === null || typeof config.enabled !== "boolean") return <Unexpected label="the push settings" />;
   if (!config.enabled || !config.vapid_public_key) {
-    return <EmptyState title="Push is not available">The daemon has push turned off, so there is nothing to subscribe to.</EmptyState>;
+    return <EmptyState title="Push is not available">The daemon has push turned off, so there is nothing to subscribe to. Turn push on in the daemon's configuration on its host, then come back.</EmptyState>;
   }
   const blocked = standing === "local" ? "Push is for paired devices; the desktop app has its own notifications" : pushSupported() ? null : "This browser cannot receive push notifications";
   return (
