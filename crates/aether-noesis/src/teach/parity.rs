@@ -810,10 +810,23 @@ fn t11_answer_keys_are_sealed_until_the_answer_is_recorded() {
         Some(&result),
         "the history holds the reveal"
     );
+    let inputs = &t.engine().inputs;
+    let answers: Vec<_> = inputs
+        .iter()
+        .filter_map(|(_, input)| match input {
+            Input::Answer(answer) => Some(answer),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(answers.len(), 1, "one answer is delivered");
+    assert_eq!(answers[0]["answer_key"], "KEY-CHAIN-RULE");
     assert!(
-        !format!("{:?}", t.engine().inputs).contains("KEY-CHAIN-RULE"),
-        "the agent's input stays sealed"
+        inputs
+            .iter()
+            .all(|(_, input)| matches!(input, Input::Answer(_))
+                || !format!("{input:?}").contains("KEY-CHAIN-RULE"))
     );
+    assert!(!format!("{inputs:?}").contains("EXPLAIN-OUTER-INNER"));
 }
 
 #[test]
