@@ -106,14 +106,19 @@ impl TestDaemon {
 
     pub async fn stop_cleanly(self) -> tempfile::TempDir {
         let (store, socket) = (self.store_path(), self.socket.clone());
+        let dir = self.stop_serving().await;
+        await_lock_free(&store.with_extension("db.lock")).await;
+        await_lock_free(&socket.with_extension("sock.lock")).await;
+        dir
+    }
+
+    pub async fn stop_serving(self) -> tempfile::TempDir {
         self.shutdown.cancel();
         let stopped = tokio::time::timeout(Duration::from_secs(10), self.serving).await;
         stopped
             .expect("the daemon stops in time")
             .expect("the daemon task joins")
             .expect("the daemon stops cleanly");
-        await_lock_free(&store.with_extension("db.lock")).await;
-        await_lock_free(&socket.with_extension("sock.lock")).await;
         self._dir
     }
 
@@ -213,7 +218,7 @@ impl TestDaemon {
 
 /// Wait until no one holds the daemon lock at `path`. In one test process a
 /// child forked by another test's daemon can hold it until that child execs.
-async fn await_lock_free(path: &std::path::Path) {
+pub async fn await_lock_free(path: &std::path::Path) {
     let file = std::fs::File::open(path).expect("a stopped daemon leaves its lock file");
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
