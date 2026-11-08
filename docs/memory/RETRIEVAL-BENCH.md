@@ -168,7 +168,7 @@ runs of an arm are disturbed.
 max_items = 6        # 1..=50, memories injected per turn at most
 min_score = 0.0      # 0..=1, least relevance to inject; 0 (the default since
                      # the 1.3.0 release check) turns the cutoff off
-holdout_rate = 0.05  # 0..=1, share of unpinned memories withheld and logged
+holdout_rate = 0.05  # opt in; default 0, share of unpinned memories withheld and logged
 holdout_seed = 0     # changes which memories the draw withholds
 ```
 
