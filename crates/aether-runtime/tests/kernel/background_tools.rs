@@ -255,12 +255,11 @@ pub(super) async fn wait_custom_event(
     .await
 }
 
-/// A daemon stop ends no agent and leaves what a waiting agent detached
-/// running, as its recovery after a restart expects; what an ended agent no
-/// live agent holds left is stopped, and a process outside them runs on.
+/// A daemon stop ends no agent, but stops its detached processes and those
+/// left by ended agents; a process outside them runs on.
 #[cfg(target_os = "linux")]
 #[tokio::test]
-async fn a_daemon_stop_leaves_what_its_waiting_agents_detached() {
+async fn a_daemon_stop_reaps_what_its_waiting_agents_detached() {
     let marker_name = "detached-at-stop.pid";
     let h = harness(vec![
         ScriptedClient::tool_call("bash", json!({ "command": detach_sleep(marker_name) })),
@@ -302,13 +301,7 @@ async fn a_daemon_stop_leaves_what_its_waiting_agents_detached() {
     h.runtime.shutdown().await;
 
     wait_gone(&h, leftover.pid(), "the ended agent's leftover").await;
-    let survived = process_alive(pid);
-    // Not a child of this test, so it is killed by hand.
-    let _ = std::process::Command::new("kill")
-        .args(["-9", &pid.to_string()])
-        .stderr(std::process::Stdio::null())
-        .status();
-    assert!(survived, "a waiting agent's server survives the stop");
+    wait_gone(&h, pid, "the waiting agent's server").await;
     assert!(
         sibling.alive(),
         "a process outside the agents survives the stop"
