@@ -187,6 +187,10 @@ test("UX-045: Settings has desktop alerts and a test notification that reaches t
 test("UX-045: a real agent's notification restores the packaged app and focuses its question", async () => {
   test.setTimeout(120_000);
   const page = window();
+  await route(page, "#/settings/notifications");
+  const front = page.getByRole("region", { name: "Desktop alerts" }).getByRole("switch", { name: /^Also while Aether is in front/ });
+  await expect(front).not.toBeChecked();
+  await front.click();
   await route(page, "#/inbox");
   await expect(page.getByText(/^Nothing on .* needs you$/)).toBeVisible();
   await route(page, "#/fleet");
@@ -203,6 +207,7 @@ test("UX-045: a real agent's notification restores the packaged app and focuses 
   await expect.poll(() => page.evaluate(() => location.hash), { message: "the click opens the inbox" }).toBe("#/inbox");
   const card = page.locator(`[data-question*="/${agent}:"]`).filter({ hasText: QUESTIONS[0] });
   await expect(card.getByRole("textbox", { name: "Answer Native asker" })).toBeFocused();
+  await expect.poll(() => windowTitles(desktop().compositor), { message: "the click shows the packaged window" }).toContain(await page.title());
   await shootScreen(desktop().compositor, "notification-answer-focused");
 });
 
