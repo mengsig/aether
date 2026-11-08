@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { classes, invariant } from "./classes.ts";
 
 export interface TabItem {
@@ -41,9 +41,10 @@ export function Tabs({ label, tabs, selected, onSelect, className }: TabsProps) 
     if (tab) choose(tab.id);
   };
 
+  const indicator = useIndicator(refs, current.id);
   return (
     <div className={classes("ui-tabs", className)}>
-      <div className="ui-tablist" role="tablist" aria-label={label} onKeyDown={onKeyDown}>
+      <div className="ui-tablist" role="tablist" aria-label={label} onKeyDown={onKeyDown} data-measured={indicator === null ? undefined : "true"}>
         {tabs.map((tab) => (
           <button key={tab.id} type="button" role="tab" className="ui-tab" id={`${base}-tab-${tab.id}`}
             aria-selected={tab === current} aria-controls={`${base}-panel-${tab.id}`} tabIndex={tab === current ? 0 : -1}
@@ -52,10 +53,30 @@ export function Tabs({ label, tabs, selected, onSelect, className }: TabsProps) 
             {tab.label}
           </button>
         ))}
+        {indicator === null ? null : <span className="ui-tab-indicator" aria-hidden="true" style={indicator} />}
       </div>
       <div key={current.id} className="ui-tabpanel" role="tabpanel" id={`${base}-panel-${current.id}`} aria-labelledby={`${base}-tab-${current.id}`} tabIndex={0}>
         {current.panel}
       </div>
     </div>
   );
+}
+
+/** Where the one underline sits: under the selected tab, measured after layout and on resize; null until measured. */
+function useIndicator(refs: RefObject<Map<string, HTMLButtonElement>>, selected: string): CSSProperties | null {
+  const [box, setBox] = useState<{ readonly left: number; readonly width: number } | null>(null);
+  useLayoutEffect(() => {
+    const tab = refs.current.get(selected);
+    invariant(tab !== undefined, `the selected tab ${selected} is mounted`);
+    const measure = () => setBox(tab.offsetWidth > 0 ? { left: tab.offsetLeft, width: tab.offsetWidth } : null);
+    measure();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(tab);
+    if (tab.parentElement !== null) observer.observe(tab.parentElement);
+    return () => observer.disconnect();
+  }, [refs, selected]);
+  if (box === null) return null;
+  invariant(Number.isFinite(box.left) && box.width > 0, "the tab indicator has a real box");
+  return { inlineSize: `${box.width}px`, translate: `${box.left}px 0` };
 }

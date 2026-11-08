@@ -96,7 +96,7 @@ describe("the catch-up evidence", () => {
     const { h } = await open(understandHref(REPOSITORY));
     const sheet = $(document, "dialog[open]");
     expect(pills()).toEqual(["Verified", "Verified", "Preliminary", "Verified", "Reviewed", "Preliminary", "Preliminary"]);
-    expect(($(sheet, "#understand-goal") as HTMLTextAreaElement).value).toBe("Catch up on forge since 2026-11-01");
+    expect(($(sheet, "[data-testid=understand-goal]") as HTMLTextAreaElement).value).toBe("Catch up on forge since 2026-11-01");
     await click(h, byText(sheet, "button", "Start learning"));
     const expected = catchUpBundle({ repoName: "forge", since: SINCE, pulls: MERGED, items: SUMMARIES.filter((item) => item.repo === REPO.id), memories: MEMORIES, unread: [] });
     expect(created(h)).toHaveLength(1);

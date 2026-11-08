@@ -77,9 +77,15 @@ describe("the boundaries", () => {
   });
 
   test("an enqueue leaves an empty repository, pipeline and review to archond's defaults", () => {
-    const command = enqueueCommand({ title: " T ", brief: "B", repo: "", pipeline: "", priority: "normal", review: "" }, "k1");
-    expect(command).toEqual({ cmd: "enqueue", repo: null, pipeline: null, title: "T", brief: "B", priority: "normal", budget_usd: null, idempotency_key: "k1" });
+    const command = enqueueCommand({ title: " T ", brief: "B", repo: "repo_site", pipeline: "", priority: "normal", review: "" }, "k1");
+    expect(command).toEqual({ cmd: "enqueue", repo: "repo_site", pipeline: null, title: "T", brief: "B", priority: "normal", budget_usd: null, idempotency_key: "k1" });
     expect(() => enqueueCommand({ title: "", brief: "B", repo: "", pipeline: "", priority: "normal", review: "" }, "k1")).toThrow(/title and brief/);
+  });
+
+  test("an ask item needs no repository, so the enqueue sends null for it", () => {
+    const command = enqueueCommand({ title: "Q", brief: "B", repo: "", pipeline: "ask", priority: "normal", review: "" }, "k2");
+    expect(command).toMatchObject({ repo: null, pipeline: "ask" });
+    expect(() => enqueueCommand({ title: "Q", brief: "B", repo: "", pipeline: "ask", priority: "normal", review: "" }, "")).toThrow(/idempotency key/);
   });
 
   test("formats money and ages", () => {

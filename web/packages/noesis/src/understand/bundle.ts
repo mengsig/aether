@@ -2,7 +2,7 @@
 // trimmed here so a refused bundle is never sent. The daemon checks the same 32 KiB limit again.
 
 import type { aether, EntityKind } from "@aether-ui/protocol";
-import { invariant } from "../learn/model.ts";
+import { invariant } from "../learn/invariant.ts";
 import { isSince } from "./catchup-range.ts";
 
 /** The most excerpt text one bundle may carry, in UTF-8 bytes, as the daemon counts it. */

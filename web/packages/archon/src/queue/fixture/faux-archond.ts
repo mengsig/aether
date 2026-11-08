@@ -21,6 +21,9 @@ interface Link { open: boolean; onFrame(frame: unknown): void }
 
 export class FauxArchond {
   readonly sent: Json[] = [];
+  /** Commands left unanswered while their name is here, to hold a reply mid-flight. */
+  readonly hold = new Set<string>();
+  private readonly held: { readonly link: Link; readonly command: Json; readonly answer: Answer }[] = [];
   readonly world: World;
   readonly transport: Transport;
   private readonly options: FauxOptions;
@@ -48,15 +51,28 @@ export class FauxArchond {
     return this.sent.filter((command) => command.cmd === cmd);
   }
 
+  /** Answers the oldest held command of this name now. */
+  release(cmd: string): void {
+    this.hold.delete(cmd);
+    const index = this.held.findIndex((entry) => entry.command.cmd === cmd);
+    invariant(index >= 0, `a held ${cmd} to release`);
+    const [entry] = this.held.splice(index, 1);
+    invariant(entry !== undefined, "the held entry was found");
+    this.reply(entry.link, entry.command, entry.answer);
+  }
+
   private receive(link: Link, command: Json): void {
     this.sent.push(command);
     const answer = this.answer(command);
+    if (this.hold.has(String(command.cmd))) return void this.held.push({ link, command, answer });
     // Replies arrive on a later turn, as they would from a socket.
-    void Promise.resolve().then(() => {
-      if (!link.open) return;
-      const result = "err" in answer ? { Err: answer.err } : { Ok: answer.ok };
-      link.onFrame({ frame: "reply", id: command.req, result: structuredClone(result) });
-    });
+    void Promise.resolve().then(() => this.reply(link, command, answer));
+  }
+
+  private reply(link: Link, command: Json, answer: Answer): void {
+    if (!link.open) return;
+    const result = "err" in answer ? { Err: answer.err } : { Ok: answer.ok };
+    link.onFrame({ frame: "reply", id: command.req, result: structuredClone(result) });
   }
 
   private entry(item: unknown): FauxItem | undefined {
@@ -79,6 +95,11 @@ export class FauxArchond {
       }
       case "get_item": { const entry = this.entry(command.item); return entry ? reply("item_detail", entry.detail) : missing; }
       case "status": return reply("status", this.status());
+      case "repo_add": {
+        const repo = { id: `repo_${this.world.repos.length}`, name: command.name, path: command.path, default_pipeline: command.default_pipeline, base_branch: command.base_branch, ship: "pr", added_at: new Date().toISOString() };
+        this.world.repos.push(repo);
+        return reply("repo", repo);
+      }
       case "repo_list": return reply("repos", this.world.repos);
       case "list_questions": return reply("questions", this.world.questions);
       case "list_reports": return reply("reports", this.world.reports);

@@ -1,12 +1,13 @@
 // The "learn from this" sheet: it previews the evidence gathered about one entity, each fact with its
 // status, and starts a teaching session from it. While Noesis or engineering context is off it reads nothing.
 
-import { navigate, routeHref } from "@aether-ui/core";
+import { navigate, routeHref, useDraft } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
-import { Button, EmptyState, ErrorState, Sheet, Skeleton, StatusPill, type Status } from "@aether-ui/ui";
+import { Button, EmptyState, ErrorState, Sheet, Skeleton, StatusPill, TextArea, type Status } from "@aether-ui/ui";
 import { useCallback, useMemo, useState, useSyncExternalStore, type FormEvent } from "react";
 import { useGate, useNoesisChange, useNoesisConfigure, useOperateRefusal, type Gate } from "../learn/data.ts";
-import { classifyRefusal, invariant } from "../learn/model.ts";
+import { settingsHref } from "../learn/LearnFrame.tsx";
+import { classifyRefusal, draftKey, invariant } from "../learn/model.ts";
 import { RefusalNote } from "../learn/RefusalNote.tsx";
 import { BUNDLE_LIMIT_BYTES, checkBundle, formatBytes, parseUnderstand, type BundleCheck, type UnderstandRequest } from "./bundle.ts";
 import { ContinueButton, ResumeNote } from "./ResumeActions.tsx";
@@ -54,11 +55,21 @@ function OffNote({ gate }: { readonly gate: Gate }) {
     case "loading":
       return <div className="ui-loading understand-loading" aria-busy="true" aria-label="Loading Noesis"><Skeleton height="var(--space-8)" /><Skeleton height="var(--space-12)" /></div>;
     case "disconnected":
-      return <EmptyState title="Not connected to Aether">Learning runs on your Aether daemon. This opens once the app reconnects.</EmptyState>;
+      return (
+        <EmptyState title="Not connected to Aether" action={<a className="ui-link" href="#/settings/connections">Check your connections</a>}>
+          Learning runs on your Aether daemon. This opens once the app reconnects.
+        </EmptyState>
+      );
     case "unsupported":
       return <EmptyState title="This daemon has no Noesis">Update the Aether daemon to learn from your work.</EmptyState>;
     case "off":
-      return <div data-testid="understand-off"><EmptyState title="Noesis is off">Learning from your work needs Noesis, which the daemon's host has not turned on. Nothing is read or sent.</EmptyState></div>;
+      return (
+        <div data-testid="understand-off">
+          <EmptyState title="Noesis is off" action={<a className="ui-link" href={settingsHref("#/learn")}>Turn on Noesis in its settings</a>}>
+            Learning from your work needs Noesis, which the daemon's host has not turned on. Nothing is read or sent.
+          </EmptyState>
+        </div>
+      );
     case "on":
       return <EnableWorkContext conn={gate.conn} />;
   }
@@ -148,7 +159,9 @@ interface PreviewProps {
 function BundlePreview({ conn, request, bundle, goal: offered, notice }: PreviewProps) {
   const check = useMemo(() => checkBundle(bundle), [bundle]);
   const initialGoal = offered ?? `Understand ${bundle.title}`;
-  const [goal, setGoal] = useState(initialGoal);
+  const initial = useMemo(() => ({ goal: initialGoal }), [initialGoal]);
+  const draft = useDraft(draftKey("understand", request.kind, request.id, "goal"), initial);
+  const goal = draft.value.goal;
   const resume = useResumable(conn, request, initialGoal);
   const start = useStart(conn, bundle, check, useRecordStart(request));
   const refusal = useOperateRefusal(conn);
@@ -156,14 +169,12 @@ function BundlePreview({ conn, request, bundle, goal: offered, notice }: Preview
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (trimmed === "" || trimmed.length > GOAL_MAX) return;
-    void start.send(trimmed);
+    void start.send(trimmed).then((sent) => { if (sent) draft.clearIfUnchanged(); });
   };
   return (
     <form className="understand" onSubmit={submit} aria-label="Start a session from this evidence">
-      <div className="understand-goal">
-        <label className="understand-label" htmlFor="understand-goal">What do you want to understand?</label>
-        <textarea id="understand-goal" className="learn-textarea" rows={2} maxLength={GOAL_MAX} value={goal} onChange={(e) => setGoal(e.target.value)} />
-      </div>
+      <TextArea className="understand-goal" label="What do you want to understand?" data-testid="understand-goal" rows={2} maxLength={GOAL_MAX}
+        value={goal} onChange={(e) => draft.update({ goal: e.target.value })} />
       <div className="understand-summary">
         <h3 className="understand-title">{bundle.title}</h3>
         <SizeMeter check={check} />
@@ -208,18 +219,22 @@ function useStart(conn: string, bundle: aether.EvidenceBundle, check: BundleChec
   const change = useNoesisChange(conn);
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<UnderstandRefusal | null>(null);
-  const send = async (goal: string) => {
+  const send = async (goal: string): Promise<boolean> => {
     invariant(check.ok, "a refused bundle is never sent");
     invariant(goal.length > 0, "a session names its goal");
     setBusy(true);
     setRefusal(null);
     const result = await change({ cmd: "noesis_create_session", goal, mode: "teach", context: bundle });
     setBusy(false);
-    if (!result.ok) return setRefusal(classifyUnderstandRefusal(result.error));
+    if (!result.ok) {
+      setRefusal(classifyUnderstandRefusal(result.error));
+      return false;
+    }
     const data = result.reply.data as { id?: unknown } | undefined;
     invariant(typeof data?.id === "string", "noesis_create_session answers with the new session");
     onStarted(data.id);
     navigate(routeHref("#/learn/sessions/:id", { id: data.id }));
+    return true;
   };
   return { busy, send, failure: refusal === null ? null : <RefusalView refusal={refusal} /> };
 }

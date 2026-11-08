@@ -123,6 +123,8 @@ export interface ArchonConnState {
   /** Refreshes an applied change asked for; they survive reconnects until done. */
   readonly staleSnapshots: boolean;
   readonly staleItems: readonly string[];
+  /** Items archond answered not_found for; their pages say so in place. A later read of the item clears it. */
+  readonly missingItems: readonly string[];
   /** Items a change named since their summary was read; one coalesced reread serves them all. */
   readonly staleSummaries: readonly string[];
 }
@@ -157,7 +159,7 @@ export const EMPTY_AETHER: AetherConnState = Object.freeze({
 export const EMPTY_ARCHON: ArchonConnState = Object.freeze({
   changeCursor: null, feedSeq: null, items: {}, itemsAsOf: null, graph: null, details: {}, links: {}, plans: {},
   histories: {}, initiatives: {}, searches: {}, feed: [], outbox: [],
-  staleSnapshots: false, staleItems: [], staleSummaries: [],
+  staleSnapshots: false, staleItems: [], missingItems: [], staleSummaries: [],
 });
 
 export const INITIAL_STATE: State = Object.freeze({

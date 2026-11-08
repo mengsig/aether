@@ -4,7 +4,7 @@
 import type { GraphModel, Layout } from "@aether-ui/protocol";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { SETTLE_MS } from "./data.ts";
-import { $, byText, choose, click, connected, hashChanged, must, stubCanvas, type, type Harness } from "./fixture/harness.test-util.tsx";
+import { $, byText, click, connected, hashChanged, must, stubCanvas, type, type Harness } from "./fixture/harness.test-util.tsx";
 import { EARLIER, GRAPH, LESSON, PRACTICE, scenario, SETTINGS, statusOf } from "./fixture/scenario.ts";
 import type { FauxNoesisOptions } from "./fixture/faux-noesis.ts";
 import { JOB_POLL_MS } from "./graph-jobs.ts";
@@ -32,7 +32,7 @@ describe("sessions", () => {
   test("starting a session creates it and opens it", async () => {
     harness = await connected(scenario(true), vi);
     const root = await harness.mount(<SessionsRoute />);
-    await type(harness, $(root, "#learn-goal"), "How TCP slow start works");
+    await type(harness, $(root, "[data-testid=learn-goal]"), "How TCP slow start works");
     await click(harness, byText(root, "button", "Start session"));
     const created = harness.daemon.sent.filter((c) => c.cmd === "noesis_create_session");
     expect(created).toMatchObject([{ goal: "How TCP slow start works", mode: "teach" }]);
@@ -43,7 +43,7 @@ describe("sessions", () => {
     harness = await connected(scenario(true, { refuse: "no ready model for Noesis: set noesis.billing.allow_api to use API models" }), vi);
     location.hash = "#/learn";
     const root = await harness.mount(<SessionsRoute />);
-    await type(harness, $(root, "#learn-goal"), "Anything");
+    await type(harness, $(root, "[data-testid=learn-goal]"), "Anything");
     await click(harness, byText(root, "button", "Start session"));
     const note = root.querySelector(".learn-callout");
     expect(note?.textContent).toContain("Noesis needs a model it may use");
@@ -147,7 +147,7 @@ describe("knowledge graph", () => {
 
     await click(h, byText(panel, "button", "Delete source…"));
     const dialog = $(document, "dialog[open]");
-    await click(h, $(byText(dialog, "label", "Remove those nothing else supports"), "input"));
+    await click(h, byText(dialog, "[role=radio]", "Remove those nothing else supports"));
     expect(deletes()).toEqual([]);
     await click(h, byText(dialog, "button", "Delete"));
     expect(deletes()).toMatchObject([{ cmd: "noesis_delete_source", source: "s_notes", graph: "delete_unsupported" }]);
@@ -218,35 +218,24 @@ describe("settings", () => {
 
   test("a change no host key is in goes as a plain change", async () => {
     const { h, sheet } = await openSettings("ipc");
-    await choose(h, $(sheet, "#learn-model-strong"), "anthropic/claude-haiku-5-5");
+    await click(h, $(sheet, "[data-testid=noesis-model-strong]"));
+    await click(h, byText(sheet, "[role=option]", "claude-sonnet-5-5"));
     await click(h, byText(sheet, "button", "Save"));
-    expect(h.daemon.sent.filter((c) => c.cmd === "noesis_configure").map((c) => c.patch)).toEqual([{ models: { strong: "anthropic/claude-haiku-5-5" } }]);
+    expect(h.daemon.sent.filter((c) => c.cmd === "noesis_configure").map((c) => c.patch)).toEqual([{ models: { strong: "claude-code/claude-sonnet-5-5" } }]);
     expect(h.daemon.privileged).toEqual([]);
   });
 
-  test("the model choosers offer the daemon's models by billing, and only ready ones it may use", async () => {
-    const status = statusOf(true);
-    const { sheet } = await openSettings("ipc", { status: { ...status, settings: { ...status.settings, billing: { allow_api: false } } } });
-    const strong = $(sheet, "#learn-model-strong") as HTMLSelectElement;
-    expect([...strong.querySelectorAll("optgroup")].map((group) => group.label)).toEqual(["Subscription — covered by your plan", "API — billed per request"]);
-    const option = (value: string) => must([...strong.options].find((candidate) => candidate.value === value), value);
-    expect(option("anthropic/claude-haiku-5-5").disabled).toBe(false);
-    expect(option("openai/gpt-faux").disabled).toBe(true);
-    expect(option("openai/gpt-faux").textContent).toContain("not ready");
-    expect(option("anthropic-api/claude-sonnet-5-5").disabled).toBe(true);
+  test("the teaching model says which model the daemon resolved it to", async () => {
+    const { sheet } = await openSettings("ipc");
     expect(sheet.textContent).toContain("Teaching runs on anthropic/claude-opus-5-5.");
   });
 
-  test("a stored model the daemon does not offer shows as unknown, asks for a pick, and other changes still save", async () => {
+  test("a teaching model the daemon cannot resolve says why, and a stored model it does not offer is flagged while other changes still save", async () => {
     const status = statusOf(true);
     const settings = { ...status.settings, models: { ...SETTINGS.models, strong: "retired/model-x" } };
     const { h, sheet } = await openSettings("ipc", { status: { ...status, settings, effective: settings, teaching_model: { refusal: "no ready model for Noesis" } } });
-    const strong = $(sheet, "#learn-model-strong") as HTMLSelectElement;
-    expect(strong.value).toBe("retired/model-x");
-    expect(strong.selectedOptions[0]?.textContent).toContain("unknown here");
-    expect(strong.getAttribute("aria-invalid")).toBe("true");
-    expect(sheet.textContent).toContain("Pick one from the list.");
-    await click(h, $(byText(sheet, "label", "Learn from my work"), "input"));
+    expect(sheet.textContent).toContain("retired/model-x is not offered");
+    await click(h, byText(sheet, "[role=switch]", "Learn from my work"));
     await click(h, byText(sheet, "button", "Save"));
     expect(h.daemon.sent.filter((c) => c.cmd === "noesis_configure").map((c) => c.patch)).toEqual([{ engineering_context: true }]);
   });
@@ -258,7 +247,7 @@ describe("settings", () => {
 
   test("a remote device sees host-only settings disabled, with the reason", async () => {
     const { sheet } = await openSettings("ws-aether");
-    const enabled = $(byText(sheet, "label", "Turn on Noesis"), "input") as HTMLInputElement;
+    const enabled = byText(sheet, "[role=switch]", "Turn on Noesis") as HTMLButtonElement;
     expect(enabled.disabled).toBe(true);
     expect(sheet.textContent).toContain("Only the daemon's own host can change this");
   });

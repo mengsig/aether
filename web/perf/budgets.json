@@ -75,13 +75,13 @@
       "reason": "Rows rendered by one State filter change."
     },
     "fleet.filter.dom_mutations": {
-      "budget": 40,
+      "budget": 47,
       "unit": "mutations",
       "enforce": "ci",
       "fixture": "5,000 agents",
-      "measured": 40,
+      "measured": 47,
       "noise": 0,
-      "reason": "DOM mutations for one filter change: bounded by the rows on screen."
+      "reason": "Filtering through the State picker: its value, the count and the rows that change; the picker draws its value and badge beside the list."
     },
     "fleet.filter.ms": {
       "budget": 17.67,
@@ -174,13 +174,13 @@
       "reason": "Mount commits: the render and the viewport measure."
     },
     "conversation.mount.dom_elements": {
-      "budget": 135,
+      "budget": 201,
       "unit": "elements",
       "enforce": "ci",
       "fixture": "20,000 entries",
-      "measured": 135,
+      "measured": 201,
       "noise": 0,
-      "reason": "The transcript is virtualized (\u00a75.4): DOM holds the rows in view plus 800 px overscan."
+      "reason": "The full-height chat: speaker marks, folded tool rows with Copy, the find bar, jump to latest and the pinned composer (\u00a75.5)."
     },
     "conversation.mount.row_renders": {
       "budget": 21,
@@ -345,13 +345,13 @@
       "reason": "Selecting an item repaints once."
     },
     "dag.select.dom_mutations": {
-      "budget": 3,
+      "budget": 5,
       "unit": "mutations",
       "enforce": "ci",
       "fixture": "2,000 items",
-      "measured": 3,
+      "measured": 5,
       "noise": 0,
-      "reason": "Selecting swaps the overview panel for the inspector."
+      "reason": "Selecting a node also fills the detail card and raises the legend entry of its kind."
     },
     "dag.select.ms": {
       "budget": 37.45,

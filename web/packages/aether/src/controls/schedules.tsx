@@ -2,15 +2,16 @@
 // pause, resume or cancel one, read its history, and create one that delivers or spawns a new agent.
 // Every list lives in core's store; this file holds only drafts and toggles.
 
-import { routeHref, useReread, useSelector } from "@aether-ui/core";
+import { routeHref, useDraft, useReread, useSelector } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
 import { aether } from "@aether-ui/protocol";
-import { Badge, Button, Field } from "@aether-ui/ui";
+import { Badge, Button, Field, Segmented, TextArea } from "@aether-ui/ui";
 import { useCallback, useState } from "react";
 import { invariant } from "../fleet/invariant.ts";
-import { DraftError, EFFORTS } from "./commands.ts";
+import { DraftError } from "./commands.ts";
 import { Action, isList, ReadView, RunNote, Section, useRun, type Run } from "./kit.tsx";
-import { scheduleCommand, type ScheduleDraft } from "./schedule-commands.ts";
+import { RecurrenceFields, SpawnFields, PolicyFields, type ScheduleForm } from "./schedule-fields.tsx";
+import { scheduleCommand } from "./schedule-commands.ts";
 
 function when(iso: string): string {
   const date = new Date(iso);
@@ -107,83 +108,22 @@ function ScheduleRow({ conn, agent, schedule, run, changed, revision }: { readon
   );
 }
 
-type Edit = (field: keyof ScheduleDraft) => (event: { target: { value: string } }) => void;
-
-function Choice({ label, value, onChange, options }: { readonly label: string; readonly value: string; readonly onChange: (event: { target: { value: string } }) => void; readonly options: readonly (readonly [string, string])[] }) {
-  return (
-    <label className="b3-field">
-      <span className="ui-field-label">{label}</span>
-      <select className="b3-select" value={value} onChange={onChange}>
-        {options.map(([option, text]) => <option key={option} value={option}>{text}</option>)}
-      </select>
-    </label>
-  );
-}
-
-function Text({ label, value, onChange, rows }: { readonly label: string; readonly value: string; readonly onChange: (event: { target: { value: string } }) => void; readonly rows: number }) {
-  return (
-    <label className="b3-field">
-      <span className="ui-field-label">{label}</span>
-      <textarea className="b3-textarea" rows={rows} value={value} onChange={onChange} />
-    </label>
-  );
-}
-
-function RecurrenceFields({ draft, edit }: { readonly draft: ScheduleDraft; readonly edit: Edit }) {
-  return (
-    <div className="b3-form">
-      <Choice label="Recurrence" value={draft.recurrence} onChange={edit("recurrence")} options={[["interval", "Every N seconds"], ["cron", "Cron"]]} />
-      {draft.recurrence === "interval" ? (
-        <Field label="Every (seconds)" inputMode="numeric" value={draft.seconds} onChange={edit("seconds")} />
-      ) : (
-        <>
-          <Field label="Cron expression" placeholder="0 9 * * 1-5" value={draft.expression} onChange={edit("expression")} />
-          <Field label="Timezone" placeholder="Europe/Oslo" value={draft.timezone} onChange={edit("timezone")} />
-        </>
-      )}
-    </div>
-  );
-}
-
-function SpawnFields({ draft, edit }: { readonly draft: ScheduleDraft; readonly edit: Edit }) {
-  return (
-    <>
-      <Text label="Objective for each new agent" rows={2} value={draft.objective} onChange={edit("objective")} />
-      <div className="b3-form">
-        <Field label="Workspace" placeholder="/srv/repo" value={draft.workspace} onChange={edit("workspace")} />
-        <Field label="Model" placeholder="anthropic/claude-opus-5-5" value={draft.model} onChange={edit("model")} />
-        <Choice label="Effort" value={draft.effort} onChange={edit("effort")} options={[["", "Model default"], ...EFFORTS.map((e) => [e, e.replace("_", " ")] as const)]} />
-      </div>
-    </>
-  );
-}
-
-function PolicyFields({ draft, edit }: { readonly draft: ScheduleDraft; readonly edit: Edit }) {
-  const spawns = draft.target === "spawn";
-  return (
-    <div className="b3-form">
-      {spawns ? null : <Choice label="When the agent is busy" value={draft.busy} onChange={edit("busy")} options={[["skip", "Skip that delivery"], ["queue_one", "Queue one"]]} />}
-      <Choice label="Missed occurrences" value={draft.missed} onChange={edit("missed")} options={[["coalesce", "Catch up once"], ["skip", "Skip them"]]} />
-      <Field label={spawns ? "Maximum runs (blank for unlimited)" : "Maximum deliveries (blank for unlimited)"} inputMode="numeric" value={draft.limit} onChange={edit("limit")} />
-    </div>
-  );
-}
-
-const newDraft = (): ScheduleDraft => ({
-  name: "", target: "agent", recurrence: "interval", seconds: "3600", expression: "0 9 * * *", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+const newDraft = (): ScheduleForm => ({
+  customInterval: false, customCron: false, name: "", target: "agent", recurrence: "interval", seconds: "3600", expression: "0 9 * * *", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   busy: "skip", missed: "coalesce", limit: "", message: "", objective: "", workspace: "", model: "", effort: "",
 });
 
 function NewSchedule({ conn, agent, run, changed }: { readonly conn: ConnId; readonly agent: string; readonly run: Run; readonly changed: () => void }) {
-  const [draft, setDraft] = useState<ScheduleDraft>(newDraft);
+  const form = useDraft(`controls/${agent}/schedule`, { ...newDraft() });
+  const draft = form.value;
   const [problem, setProblem] = useState<string | null>(null);
-  const edit: Edit = (field) => (event) => setDraft((old) => ({ ...old, [field]: event.target.value }));
+  const edit = form.update;
   const spawns = draft.target === "spawn";
   const create = async () => {
     try {
       const command = scheduleCommand(agent, draft);
       setProblem(null);
-      if (await run.send(command, "Schedule created")) { setDraft(newDraft()); changed(); }
+      if (await run.send(command, "Schedule created")) { form.clearIfUnchanged(); changed(); }
     } catch (error) {
       if (!(error instanceof DraftError)) throw error;
       setProblem(error.message);
@@ -193,14 +133,14 @@ function NewSchedule({ conn, agent, run, changed }: { readonly conn: ConnId; rea
   return (
     <div className="b3-stack">
       <div className="b3-form">
-        <Field label="Schedule name" placeholder="Morning check" value={draft.name} onChange={edit("name")} />
-        <Choice label="Send to" value={draft.target} onChange={edit("target")} options={[["agent", "This agent"], ["spawn", "A new agent"]]} />
+        <Field label="Schedule name" data-testid="schedule-name" placeholder="Morning check" value={draft.name} onChange={e => edit({ name: e.target.value })} />
+        <Segmented label="Send to" value={draft.target} onChange={target => edit({ target: target as ScheduleForm["target"] })} options={[{ id: "agent", label: "This agent" }, { id: "spawn", label: "A new agent" }]} />
       </div>
       <RecurrenceFields draft={draft} edit={edit} />
-      {spawns ? <SpawnFields draft={draft} edit={edit} /> : <Text label="Message to deliver" rows={2} value={draft.message} onChange={edit("message")} />}
+      {spawns ? <SpawnFields conn={conn} draft={draft} edit={edit} /> : <TextArea label="Message to deliver" rows={2} value={draft.message} onChange={e => edit({ message: e.target.value })} />}
       <PolicyFields draft={draft} edit={edit} />
       <div className="b3-row">
-        <Action conn={conn} command={{ cmd: "create_schedule" }} label="Create schedule" busy={run.status.state === "busy"} confirm={confirm} onRun={create} />
+        <Action conn={conn} command={{ cmd: "create_schedule" }} label="Create schedule" variant="primary" data-testid="schedule-submit" blocked={scheduleProblem(agent, draft)} busy={run.status.state === "busy"} confirm={confirm} onRun={create} />
       </div>
       {problem ? <p className="b3-note" role="alert" data-state="failed">{problem}</p> : null}
     </div>
@@ -228,7 +168,8 @@ export function SchedulesPanel({ conn, agent }: { readonly conn: ConnId; readonl
   invariant(agent.id !== "", "schedule controls name their agent");
   const run = useRun(conn);
   const [refresh, setRefresh] = useState(0);
-  const [scope, setScope] = useState<Scope>("agent");
+  const filter = useDraft(`controls/${agent.id}/schedule-filter`, { scope: "agent" as Scope });
+  const { scope } = filter.value;
   const scheduleEvent = useSelector(useCallback((state) => {
     const events = state.aether[conn]?.events ?? [];
     return events.findLast((event) => event.kind.type === "custom" && event.kind.name.startsWith("schedule.") && event.kind.name !== "schedule.occurrence")?.seq ?? 0;
@@ -238,11 +179,9 @@ export function SchedulesPanel({ conn, agent }: { readonly conn: ConnId; readonl
   return (
     <>
       <Section title="Schedules" hint="Recurring work: messages to an agent, or new agents started on a timer.">
-        <div className="b3-row">
-          <Button variant={scope === "agent" ? "primary" : "quiet"} size="sm" aria-pressed={scope === "agent"} onClick={() => setScope("agent")}>This agent's schedules</Button>
-          <Button variant={scope === "all" ? "primary" : "quiet"} size="sm" aria-pressed={scope === "all"} onClick={() => setScope("all")}>All schedules</Button>
-          <Button variant="quiet" size="sm" onClick={changed}>Refresh schedules</Button>
-        </div>
+        <Segmented label="Schedule scope" value={scope} onChange={scope => filter.update({ scope: scope as Scope })}
+          options={[{ id: "agent", label: "This agent's schedules" }, { id: "all", label: "All schedules" }]} />
+        <Button variant="quiet" size="sm" onClick={changed}>Refresh schedules</Button>
         <ScheduleList conn={conn} agent={agent.id} scope={scope} run={run} revision={revision} changed={changed} />
       </Section>
       <Section title="New schedule" hint="Choose a recurrence, what it sends and how missed or overlapping occurrences are handled.">
@@ -251,4 +190,9 @@ export function SchedulesPanel({ conn, agent }: { readonly conn: ConnId; readonl
       <RunNote status={run.status} />
     </>
   );
+}
+
+function scheduleProblem(agent: string, draft: ScheduleForm): string | null {
+  try { scheduleCommand(agent, draft); return null; }
+  catch (error) { if (!(error instanceof DraftError)) throw error; return error.message; }
 }

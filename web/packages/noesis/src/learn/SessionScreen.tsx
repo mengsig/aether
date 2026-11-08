@@ -3,18 +3,17 @@
 
 import type { aether, RouteProps } from "@aether-ui/protocol";
 import { Button, EmptyState, ErrorState, Markdown } from "@aether-ui/ui";
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLearn, useNoesisRead, useOperateRefusal } from "./data.ts";
 import { LearnFrame, type OpenGate } from "./LearnFrame.tsx";
 import { Composer } from "./Composer.tsx";
-import { CompletionCard, SourcesCard, UsageNote } from "./LessonCards.tsx";
+import { CompletionCard, SourcesCard } from "./LessonCards.tsx";
 import { useLessonTurn } from "./lesson-turn.ts";
 import { exhaustedBudget, invariant, PHASE_LABEL, planComplete, type BudgetUse, type Refusal } from "./model.ts";
-import { PlanTree } from "./PlanTree.tsx";
 import { ProblemCard } from "./ProblemCard.tsx";
 import { QuestionCard, type AnswerInput } from "./QuestionCard.tsx";
 import { RefusalNote } from "./RefusalNote.tsx";
-import { SessionActions } from "./SessionActions.tsx";
+import { SessionAside } from "./SessionAside.tsx";
 import { useLessonTranscripts, useLiveText } from "./session-data.ts";
 import { buildTimeline, type TimelineItem } from "./timeline.ts";
 
@@ -52,24 +51,20 @@ function SessionView({ conn, status, session, reload }: OpenGate & { session: ae
   };
   return (
     <div className="learn-session">
-      <div className="learn-chat">
-        <h2 className="learn-session-goal">{session.goal}</h2>
-        <p className="learn-muted">{PHASE_LABEL[session.phase]}</p>
-        {session.context && session.context.items.length > 0 && <SourcesCard bundle={session.context} />}
-        <ol className="learn-timeline" aria-label="Conversation">
-          {[...items, ...live].map((item) => <li key={item.key} className="learn-timeline-item"><TimelineEntry item={item} onAnswer={operate === null ? answer : undefined} /></li>)}
-        </ol>
-        {items.length === 0 && live.length === 0 && turn.pending === null && <p className="learn-muted">Your teacher is getting ready. The conversation shows here.</p>}
-        {turn.pending !== null && live.length === 0 && <Working stalled={turn.pending.stalled} onCheck={checkAgain} />}
-        {planComplete(session.plan) && <CompletionCard conn={conn} session={session} />}
-        {refusal !== null && <RefusalNote refusal={refusal} budget={refusal.kind === "budget" ? budget : null} onRetry={turn.retry ?? (refusal.kind === "budget" ? statusRead.reload : undefined)} />}
-        <Composer session={session} busy={operate !== null || turn.pending !== null} paused={pausedBy(budget)} onSend={(text) => turn.act({ cmd: "noesis_send", session: session.id, text })} />
-      </div>
-      <aside className="learn-aside">
-        {session.plan ? <PlanTree plan={session.plan} /> : <p className="learn-muted">The plan appears once Noesis knows where you stand.</p>}
-        <UsageNote usage={session.usage} />
-        <SessionActions conn={conn} session={session} disabled={operate !== null} />
-      </aside>
+      <section className="learn-chat" aria-label="Session">
+        <header className="learn-chat-head">
+          <p className="learn-session-goal">{session.goal}</p>
+          <p className="learn-muted">{PHASE_LABEL[session.phase]}</p>
+        </header>
+        <Transcript items={[...items, ...live]} live={live.length > 0} pending={turn.pending} onAnswer={operate === null ? answer : undefined} onCheck={checkAgain}>
+          {session.context && session.context.items.length > 0 && <SourcesCard bundle={session.context} />}
+          {planComplete(session.plan) && <CompletionCard conn={conn} session={session} />}
+          {refusal !== null && <RefusalNote refusal={refusal} budget={refusal.kind === "budget" ? budget : null} onRetry={turn.retry ?? (refusal.kind === "budget" ? statusRead.reload : undefined)} />}
+        </Transcript>
+        <Composer sessionId={session.id} waiting={session.open_question != null} problem={session.active_problem != null} reason={pausedBy(budget)}
+          disabled={operate !== null || turn.pending !== null || budget !== null} onSend={(text) => turn.act({ cmd: "noesis_send", session: session.id, text })} />
+      </section>
+      <SessionAside conn={conn} session={session} items={items} disabled={operate !== null} />
     </div>
   );
 }
@@ -84,7 +79,64 @@ function pausedBy(budget: BudgetUse | null): string | null {
   return budget === null ? null : "Teaching is paused: today's budget is spent";
 }
 
-function TimelineEntry({ item, onAnswer }: { item: TimelineItem; onAnswer: ((question: string, input: AnswerInput) => Promise<string | null>) | undefined }) {
+type AnswerFn = (question: string, input: AnswerInput) => Promise<string | null>;
+
+/** Scrolled further than this from the bottom, the chat stops following and offers a jump back. */
+const FOLLOW_SLACK_PX = 64;
+
+export function scrolledAway(metrics: { scrollHeight: number; scrollTop: number; clientHeight: number }): boolean {
+  invariant(metrics.scrollHeight >= 0 && metrics.clientHeight >= 0, "scroll metrics are nonnegative");
+  return metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight > FOLLOW_SLACK_PX;
+}
+
+/** Keeps the newest entry in view while the reader is at the bottom; scrolled up, it stays put. */
+function useFollowLatest(items: readonly TimelineItem[], pending: object | null) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [away, setAway] = useState(false);
+  const onScroll = () => {
+    const node = ref.current;
+    if (node !== null) setAway(scrolledAway(node));
+  };
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (node !== null && !away) node.scrollTop = node.scrollHeight;
+  }, [items, pending, away]);
+  const jump = () => {
+    const node = ref.current;
+    if (node === null) return;
+    node.scrollTop = node.scrollHeight;
+    setAway(false);
+  };
+  return { ref, away, onScroll, jump };
+}
+
+interface TranscriptProps {
+  readonly items: readonly TimelineItem[];
+  readonly live: boolean;
+  readonly pending: { readonly stalled: boolean } | null;
+  readonly onAnswer: AnswerFn | undefined;
+  readonly onCheck: () => void;
+  readonly children: ReactNode;
+}
+
+function Transcript({ items, live, pending, onAnswer, onCheck, children }: TranscriptProps) {
+  const { ref, away, onScroll, jump } = useFollowLatest(items, pending);
+  return (
+    <div className="learn-transcript">
+      <div className="learn-scroll" ref={ref} onScroll={onScroll} data-testid="learn-transcript">
+        <ol className="learn-timeline" aria-label="Conversation">
+          {items.map((item) => <li key={item.key} className="learn-timeline-item"><TimelineEntry item={item} onAnswer={onAnswer} /></li>)}
+        </ol>
+        {items.length === 0 && pending === null && <p className="learn-muted">Your teacher is getting ready. The conversation shows here.</p>}
+        {pending !== null && !live && <Working stalled={pending.stalled} onCheck={onCheck} />}
+        {children}
+      </div>
+      {away && <button type="button" className="learn-jump" data-testid="learn-jump-latest" onClick={jump}>Jump to latest ↓</button>}
+    </div>
+  );
+}
+
+function TimelineEntry({ item, onAnswer }: { item: TimelineItem; onAnswer: AnswerFn | undefined }) {
   if (item.kind === "message") {
     return (
       <div className="learn-bubble" data-role={item.role} data-live={item.live || undefined} aria-busy={item.live || undefined}>

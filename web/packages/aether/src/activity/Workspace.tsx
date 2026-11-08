@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
 import { selectRead, useApp, usePermission, useReread, useSelector, type ReadEntry } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
-import { Field } from "@aether-ui/ui";
+import { Button, Field } from "@aether-ui/ui";
 import { Action } from "../controls/kit.tsx";
 import { ReadNote } from "../memory/shared.tsx";
 import { invariant } from "../fleet/invariant.ts";
@@ -13,14 +13,19 @@ interface WorkspaceProps {
   readonly path: string;
   readonly change: (path: string) => void;
   readonly recent: ReadEntry | undefined;
+  /** The test id of the whole field; the typed path is `<testId>-path`. */
+  readonly testId?: string;
 }
 
-export function Workspace({ conn, path, change, recent }: WorkspaceProps) {
+export function Workspace({ conn, path, change, recent, testId = "start-workspace" }: WorkspaceProps) {
   const app = useApp();
   const name = useId();
-  const [other, setOther] = useState(false);
-  const [typed, setTyped] = useState("");
   const folders = recentWorkspaces(recent?.value);
+  // A restored draft may name a folder outside the recent list: it is the other folder, shown as typed.
+  const custom = path !== "" && !folders.some(w => w.path === path);
+  const [otherChosen, setOther] = useState(false);
+  const other = otherChosen || custom;
+  const [typed, setTyped] = useState(() => (custom ? path : ""));
   const validate = { cmd: "validate_workspace", path };
   const disabled = usePermission(conn, validate).refusal !== null;
   const validationKey = `start:validation:${path}`;
@@ -28,7 +33,7 @@ export function Workspace({ conn, path, change, recent }: WorkspaceProps) {
   const valid = workspaceValidation(validation?.value);
   const pick = (folder: string) => { setOther(false); change(folder); };
   const chooseOther = () => { setOther(true); change(typed.trim()); };
-  return <fieldset className="start-section"><legend className="start-section-title">Workspace</legend>
+  return <fieldset className="start-section" data-testid={testId}><legend className="start-section-title">Workspace</legend>
     <ReadNote entry={recent} retry={() => app.reread(conn, "start:workspaces", { cmd: "list_workspaces" }, ["workspaces"])} />
     <div role="radiogroup" aria-label="Workspace" className="start-section">
       {folders.map(w => <FolderChoice key={w.path} group={name} path={w.path} checked={!other && path === w.path} disabled={disabled} onChoose={() => pick(w.path)} />)}
@@ -36,7 +41,7 @@ export function Workspace({ conn, path, change, recent }: WorkspaceProps) {
         <input type="radio" className="start-choice-radio" name={name} checked={other} disabled={disabled} onChange={chooseOther} />
         <span className="start-choice-name">Other folder</span></label>
     </div>
-    {other && <OtherFolder conn={conn} typed={typed} disabled={disabled} setTyped={setTyped} commit={value => change(value.trim())} />}
+    {other && <OtherFolder conn={conn} typed={typed} disabled={disabled} testId={testId} setTyped={setTyped} commit={value => change(value.trim())} />}
     {validation && <ReadNote entry={validation} retry={() => app.reread(conn, validationKey, validate, ["workspace_validation"])} />}
     {valid && !valid.valid && <p role="status" className="b3-note" data-state="failed">{valid.reason}</p>}
     {valid?.valid && valid.path && <GitPreview conn={conn} path={valid.path} />}
@@ -54,20 +59,29 @@ function FolderChoice({ group, path, checked, disabled, onChoose }: {
     <span className="start-choice-path" title={path}>{parent || "/"}</span></label>;
 }
 
-function OtherFolder({ conn, typed, disabled, setTyped, commit }: {
-  readonly conn: string; readonly typed: string; readonly disabled: boolean; readonly setTyped: (value: string) => void; readonly commit: (value: string) => void;
+function OtherFolder({ conn, typed, disabled, testId, setTyped, commit }: {
+  readonly conn: string; readonly typed: string; readonly disabled: boolean; readonly testId: string;
+  readonly setTyped: (value: string) => void; readonly commit: (value: string) => void;
 }) {
   const app = useApp();
+  const [problem, setProblem] = useState<string>();
   const completionKey = `start:completion:${typed}`;
   const completion = useSelector(selectRead(conn, completionKey));
   const complete = { cmd: "complete_path", prefix: typed, kind: "directory", limit: 50 };
   const completions = completion?.value as aether.PathCompletions | undefined;
   const absolute = typed.trim().startsWith("/");
   const choose = (path: string) => { setTyped(path); commit(path); };
+  // The desktop app's folder picker; its failure is said here rather than lost.
+  const browse = async () => {
+    try { const picked = await app.host.desktop?.pickDirectory("workspace"); if (picked) choose(picked); }
+    catch (error) { setProblem(error instanceof Error ? error.message : String(error)); }
+  };
   return <div className="start-section">
-    <Field label="Folder path" hint="An absolute path, such as /home/you/project" value={typed} disabled={disabled}
+    <Field label="Folder path" hint="An absolute path, such as /home/you/project" data-testid={`${testId}-path`} value={typed} disabled={disabled}
       {...(typed !== "" && !absolute ? { error: "Start the path with /" } : {})}
       onChange={e => setTyped(e.target.value)} onBlur={() => commit(typed)} onKeyDown={e => { if (e.key === "Enter") commit(typed); }} />
+    {app.host.desktop ? <Button data-testid={`${testId}-browse`} disabled={disabled} onClick={() => { void browse(); }}>Browse</Button> : null}
+    {problem ? <p role="alert">Could not open the folder picker: {problem}</p> : null}
     <Action conn={conn} command={complete} label="Complete path" blocked={absolute ? null : "Type an absolute path first"}
       onRun={() => app.reread(conn, completionKey, complete, ["path_completions"])} />
     {completion && <ReadNote entry={completion} retry={() => app.reread(conn, completionKey, complete, ["path_completions"])} />}

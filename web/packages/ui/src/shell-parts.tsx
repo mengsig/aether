@@ -36,5 +36,5 @@ export function ThemeMenu({ theme }: { readonly theme: NonNullable<ReturnType<ty
     label: `${preference === theme.preference ? "✓ " : ""}${PREFERENCE_LABELS[preference]}`,
     onSelect: () => theme.setPreference(preference),
   }));
-  return <Menu label="Theme" items={items} variant="quiet" />;
+  return <Menu label="Theme" items={items} variant="quiet" size="sm" />;
 }

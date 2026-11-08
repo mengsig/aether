@@ -7,6 +7,7 @@ import { Button, EmptyState, Skeleton } from "@aether-ui/ui";
 import { useCallback, useSyncExternalStore, type ReactNode } from "react";
 import { useGate } from "./data.ts";
 import { SettingsSheet } from "./SettingsSheet.tsx";
+import { TurnOnNoesis } from "./TurnOn.tsx";
 import "./learn.css";
 
 export type LearnView = "sessions" | "session" | "graph" | "me";
@@ -72,25 +73,18 @@ export function LearnFrame({ view, title, children }: { view: LearnView; title?:
 function body(gate: ReturnType<typeof useGate>, showSettings: () => void, children: (gate: OpenGate) => ReactNode): ReactNode {
   switch (gate.state) {
     case "disconnected":
-      return <EmptyState title="Not connected to Aether">Learning runs on your Aether daemon. It appears here once the app reconnects.</EmptyState>;
+      return (
+        <EmptyState title="Not connected to Aether" action={<a className="ui-link" href="#/settings/connections">Check your connections</a>}>
+          Learning runs on your Aether daemon. It appears here once the app reconnects.
+        </EmptyState>
+      );
     case "unsupported":
-      return <EmptyState title="This daemon has no Noesis">Noesis arrived in Aether 1.3. Update the daemon to learn here.</EmptyState>;
+      return <EmptyState title="This daemon has no Noesis">Noesis arrived in Aether 1.3. Update the daemon on its host, then reconnect to learn here.</EmptyState>;
     case "loading":
       return <div className="ui-loading learn-loading" aria-busy="true" aria-label="Loading Noesis"><Skeleton height="var(--space-12)" /><Skeleton height="var(--space-12)" /></div>;
     case "off":
-      return <OffState onSettings={showSettings} />;
+      return <TurnOnNoesis conn={gate.conn} status={gate.status} onSettings={showSettings} />;
     case "on":
       return children({ conn: gate.conn, status: gate.status });
   }
-}
-
-function OffState({ onSettings }: { onSettings: () => void }) {
-  return (
-    <div className="learn-off" data-testid="noesis-off">
-      <EmptyState title="Noesis is off" action={<Button variant="primary" onClick={onSettings}>Open Noesis settings</Button>}>
-        Noesis teaches through questions: it finds where you stand, plans a path to your goal, and keeps track of what you
-        understand. It stays off until the daemon's host turns it on. While it is off, nothing is read or sent.
-      </EmptyState>
-    </div>
-  );
 }

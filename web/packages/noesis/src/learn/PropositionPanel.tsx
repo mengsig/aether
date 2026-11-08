@@ -3,12 +3,25 @@
 
 import { routeHref } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
-import { Button, Dialog } from "@aether-ui/ui";
+import { Button, Dialog, Segmented } from "@aether-ui/ui";
 import { useState } from "react";
 import { useNoesisChange, useOperateRefusal } from "./data.ts";
 import { readableTitle } from "./graph-model.ts";
 import { MasteryBadge } from "./Mastery.tsx";
 import { invariant, type Mastery } from "./model.ts";
+
+export const SOURCE_GRAPH = [
+  { id: "preserve", label: "Keep them in the graph", hint: "Statements stay, even with nothing else behind them" },
+  { id: "delete_unsupported", label: "Remove those nothing else supports", hint: "Statements another source backs stay" },
+] as const;
+
+type SourceGraph = (typeof SOURCE_GRAPH)[number]["id"];
+
+function sourceGraphOf(id: string): SourceGraph {
+  const found = SOURCE_GRAPH.find((option) => option.id === id);
+  invariant(found !== undefined, `${id} is a source-graph option`);
+  return found.id;
+}
 
 type Pending = { readonly kind: "proposition"; readonly id: string } | { readonly kind: "source"; readonly id: string };
 
@@ -16,7 +29,7 @@ export function PropositionPanel({ conn, proposition, mastery, onClose }: { conn
   const change = useNoesisChange(conn);
   const refusal = useOperateRefusal(conn);
   const [pending, setPending] = useState<Pending | null>(null);
-  const [sourceGraph, setSourceGraph] = useState<"preserve" | "delete_unsupported">("preserve");
+  const [sourceGraph, setSourceGraph] = useState<SourceGraph>("preserve");
   const [failure, setFailure] = useState<string | null>(null);
   const sources = [...new Set(proposition.provenance.map((p) => p.source))];
   invariant(proposition.id.length > 0, "the panel shows a stored proposition");
@@ -55,11 +68,9 @@ export function PropositionPanel({ conn, proposition, mastery, onClose }: { conn
         description={pending?.kind === "source" ? "Noesis forgets the imported notes." : "The statement leaves the graph, with every chain that uses it."}
         footer={<><Button onClick={() => setPending(null)} data-autofocus>Keep it</Button><Button variant="danger" onClick={() => void confirm()}>Delete</Button></>}>
         {pending?.kind === "source" && (
-          <fieldset className="learn-fieldset">
-            <legend>Statements it added</legend>
-            <label className="learn-toggle"><input type="radio" name="source-graph" checked={sourceGraph === "preserve"} onChange={() => setSourceGraph("preserve")} />Keep them in the graph</label>
-            <label className="learn-toggle"><input type="radio" name="source-graph" checked={sourceGraph === "delete_unsupported"} onChange={() => setSourceGraph("delete_unsupported")} />Remove those nothing else supports</label>
-          </fieldset>
+          <div data-testid="learn-source-graph">
+            <Segmented label="Statements it added" layout="cards" options={SOURCE_GRAPH} value={sourceGraph} onChange={(id) => setSourceGraph(sourceGraphOf(id))} />
+          </div>
         )}
         <p className="learn-muted">What Noesis knows about your understanding stays as it is.</p>
       </Dialog>

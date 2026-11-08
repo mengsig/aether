@@ -1,7 +1,7 @@
 // `#/archon/items/:item`: one item's execution, pull request and issue states side by side, what holds it,
 // the operator's actions, its runs, stages, gates, questions, links, artifacts and reports.
 
-import { routeHref, selectConnections, selectItem, selectItemLinks, selectItems, useSelector, type ArchonItem, type Stamped } from "@aether-ui/core";
+import { routeHref, selectConnections, selectItem, selectItemLinks, selectItemMissing, selectItems, useSelector, type ArchonItem, type Stamped } from "@aether-ui/core";
 import type { archon, ConnectionInfo, RouteProps } from "@aether-ui/protocol";
 import { EmptyState, EntityActionMenu, ErrorState, Skeleton, StatusPill } from "@aether-ui/ui";
 import { useMemo } from "react";
@@ -104,11 +104,12 @@ function Item({ info, item }: { readonly info: ConnectionInfo; readonly item: st
   const access = useArchonAccess(info);
   const stored = useSelector(useMemo(() => selectItem(access.conn, item), [access.conn, item]));
   const known = useSelector(useMemo(() => selectItems(access.conn), [access.conn]));
+  const gone = useSelector(useMemo(() => selectItemMissing(access.conn, item), [access.conn, item]));
   const read = useItemDetail(access, item);
   const stamped = read.detail;
   if (!stamped) {
     if (read.error) return <ErrorState title="Could not load the item" message={read.error} onRetry={read.reload} />;
-    const missing = access.ready && stored === undefined && Object.keys(known).length > 0;
+    const missing = access.ready && stored === undefined && (gone || Object.keys(known).length > 0);
     if (missing) return <EmptyState title="Item not found">Archon has no item {item}. <a className="ui-link" href={routeHref("#/archon/queue", {})}>Back to the queue</a></EmptyState>;
     return <div className="ui-page item" aria-busy="true" aria-label="Loading the item"><Skeleton height="2rem" width="60%" /><Skeleton height="6rem" /><Skeleton height="12rem" /></div>;
   }

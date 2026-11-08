@@ -30,7 +30,7 @@ export function Section({ title, children }: { readonly title: string; readonly 
 
 function Runs({ item, runs }: { readonly item: string; readonly runs: ItemView["runs"] }) {
   if (runs === null) return <div aria-busy="true" aria-label="Loading the runs"><Skeleton height="1.25rem" width="70%" /></div>;
-  if (runs.length === 0) return <p className="gh-muted">No runs yet.</p>;
+  if (runs.length === 0) return <p className="gh-muted">No runs yet. Open the item to check its queue status.</p>;
   return (
     <ul className="gh-list" aria-label="Runs">
       {runs.map((run) => (
@@ -82,7 +82,7 @@ export function Agents({ items, aether }: { readonly items: readonly ItemView[];
   if (!aether.connected) return <p className="gh-muted">Connect Aether to see the agents that worked on this.</p>;
   const rows: AgentRow[] = items.flatMap((item) => item.agents.map((use) => ({ use, item })));
   invariant(rows.every((row) => row.use.stages.length > 0), "an agent is listed for the stages it ran");
-  if (rows.length === 0) return <p className="gh-muted">No Aether agent has worked on this yet.</p>;
+  if (rows.length === 0) return <p className="gh-muted">No Aether agent has worked on this yet. Open a linked item to check when it can start.</p>;
   return <ul className="gh-list" aria-label="Agents">{rows.map((row) => <AgentLine key={`${row.item.id} ${row.use.agent}`} row={row} aether={aether} />)}</ul>;
 }
 

@@ -107,7 +107,7 @@ describe("the whole conversation", () => {
   test("the teacher's text shows while it streams, then once as the committed message", async () => {
     const h = await start();
     const root = await open(h);
-    await type(h, $(root, "#learn-reply"), "What stops two leaders?");
+    await type(h, $(root, "[data-testid=learn-reply]"), "What stops two leaders?");
     await click(h, byText(root, "button", "Send"));
     h.daemon.stream(LESSON.id, "inv_1", 1, "Each server votes ");
     h.daemon.stream(LESSON.id, "inv_1", 2, "once per term");
@@ -125,7 +125,7 @@ describe("the whole conversation", () => {
     const h = await start({ contexts: { [LESSON.id]: context } });
     h.daemon.history.bill(LESSON.id, LESSON_USAGE);
     const root = await open(h);
-    expect($(root, "h2.learn-session-goal").textContent).toBe(LESSON.goal);
+    expect($(root, ".learn-session-goal").textContent).toBe(LESSON.goal);
     const sources = $(root, ".learn-lesson-sources");
     expect(sources.textContent).toContain("Sources");
     expect(sources.textContent).toContain("Verified");
@@ -139,7 +139,7 @@ describe("budget", () => {
     const h = await start();
     h.daemon.refuseTurns = BUDGET;
     const root = await open(h);
-    await type(h, $(root, "#learn-reply"), "Go on");
+    await type(h, $(root, "[data-testid=learn-reply]"), "Go on");
     await click(h, byText(root, "button", "Send"));
     await h.settle();
     const note = $(root, ".learn-callout[data-kind=budget]");
@@ -167,7 +167,7 @@ describe("budget", () => {
     await h.settle(SETTLE_MS);
     expect(root.querySelector(".learn-working")).toBeNull();
     expect($(root, ".learn-callout[data-kind=budget]")).toBeTruthy();
-    expect(($(root, "#learn-reply") as HTMLTextAreaElement).disabled).toBe(false);
+    expect(($(root, "[data-testid=learn-reply]") as HTMLTextAreaElement).disabled).toBe(false);
   });
 
   test("a day whose teaching budget is spent pauses the lesson and says how much", async () => {
@@ -175,8 +175,8 @@ describe("budget", () => {
     const h = await start({ status: { ...status, settings: { ...status.settings, budget: { ...status.settings.budget, interactive_usd_daily: 1 } } } });
     const root = await open(h);
     expect($(root, ".learn-callout[data-kind=budget]").textContent).toContain("You have used $1.85 of your $1.00 daily teaching budget.");
-    expect(($(root, "#learn-reply") as HTMLTextAreaElement).disabled).toBe(true);
-    expect(($(root, "#learn-reply") as HTMLTextAreaElement).placeholder).toContain("paused");
+    expect(($(root, "[data-testid=learn-reply]") as HTMLTextAreaElement).disabled).toBe(true);
+    expect(($(root, "[data-testid=learn-reply]") as HTMLTextAreaElement).placeholder).toContain("paused");
   });
 
   test("a session the daemon stalled on the budget says so even before today's spend is reread", async () => {

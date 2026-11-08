@@ -1,38 +1,65 @@
-// The learner's reply box: closed while a question waits for its own answer or teaching is paused.
+// The session's composer, pinned under the chat: Enter sends, Shift+Enter starts a new line, and what
+// was typed is kept per session until that text is sent; text typed meanwhile stays.
 
-import type { aether } from "@aether-ui/protocol";
-import { Button } from "@aether-ui/ui";
-import { useState, type FormEvent } from "react";
-import { invariant } from "./model.ts";
+import { useDraft } from "@aether-ui/core";
+import { Button, TextArea } from "@aether-ui/ui";
+import { useState, type FormEvent, type KeyboardEvent } from "react";
+import { draftKey, invariant } from "./model.ts";
 
 const TEXT_MAX = 20_000;
+const EMPTY_REPLY: { readonly text: string } = { text: "" };
 
-function placeholderOf(session: aether.NoesisSession, paused: string | null): string {
-  if (paused !== null) return paused;
-  if (session.open_question != null) return "Answer the question above to go on";
-  return session.active_problem ? "Your answer, or ask for a hint" : "Ask, answer or say what is unclear";
+export interface ComposerProps {
+  readonly sessionId: string;
+  /** A question is open: it is answered in its card, not here. */
+  readonly waiting: boolean;
+  readonly problem: boolean;
+  readonly disabled: boolean;
+  /** Why the learner cannot write now (for example a spent budget); shown in place of the hint. */
+  readonly reason?: string | null;
+  /** Resolves to null when sent, else to why not. */
+  readonly onSend: (text: string) => Promise<string | null>;
 }
 
-/** `paused` says why the learner cannot write now; null leaves the box open. */
-export function Composer({ session, busy, paused, onSend }: {
-  session: aether.NoesisSession; busy: boolean; paused: string | null; onSend: (text: string) => Promise<string | null>;
-}) {
-  const [text, setText] = useState("");
-  const closed = busy || paused !== null || session.open_question != null;
-  const trimmed = text.trim();
-  invariant(paused === null || paused.trim() !== "", "a paused composer says why");
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (trimmed === "" || closed) return;
-    invariant(trimmed.length <= TEXT_MAX, "a message fits the box's limit");
-    if ((await onSend(trimmed)) === null) setText("");
+/** Whether a key press in the composer sends: Enter alone, never while an IME is composing. */
+export function sendsOnKey(event: Pick<KeyboardEvent, "key" | "shiftKey" | "altKey"> & { readonly nativeEvent?: { readonly isComposing?: boolean } }): boolean {
+  if (event.key !== "Enter" || event.shiftKey || event.altKey) return false;
+  return event.nativeEvent?.isComposing !== true;
+}
+
+export function Composer({ sessionId, waiting, problem, disabled, reason = null, onSend }: ComposerProps) {
+  invariant(sessionId.length > 0, "a composer belongs to a session");
+  invariant(reason === null || reason.trim() !== "", "a paused composer says why");
+  const draft = useDraft(draftKey(sessionId, "reply"), EMPTY_REPLY);
+  const [sending, setSending] = useState(false);
+  const trimmed = draft.value.text.trim();
+  const blocked = disabled || waiting;
+  const send = async () => {
+    if (trimmed === "" || blocked || sending) return;
+    invariant(trimmed.length <= TEXT_MAX, "the composer keeps a message within its limit");
+    setSending(true);
+    const failure = await onSend(trimmed);
+    setSending(false);
+    if (failure === null) draft.clearIfUnchanged();
   };
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    void send();
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!sendsOnKey(event)) return;
+    event.preventDefault();
+    void send();
+  };
+  const placeholder = reason ?? (waiting ? "Answer the question above to go on" : problem ? "Your answer, or ask for a hint" : "Ask, answer or say what is unclear");
   return (
-    <form className="learn-composer" onSubmit={(event) => void submit(event)}>
-      <label className="ui-visually-hidden" htmlFor="learn-reply">Message your teacher</label>
-      <textarea id="learn-reply" className="learn-textarea" rows={2} maxLength={TEXT_MAX} disabled={closed}
-        placeholder={placeholderOf(session, paused)} value={text} onChange={(e) => setText(e.target.value)} />
-      <Button variant="primary" type="submit" disabled={closed || trimmed === ""}>Send</Button>
+    <form className="learn-composer" onSubmit={submit} aria-label="Reply">
+      <TextArea label="Message your teacher" hideLabel data-testid="learn-reply" rows={2} maxLength={TEXT_MAX} disabled={blocked} placeholder={placeholder}
+        value={draft.value.text} onChange={(event) => draft.update({ text: event.target.value })} onKeyDown={onKeyDown} />
+      <div className="learn-composer-bar">
+        <span className="learn-muted learn-composer-keys" aria-hidden="true">Enter to send · Shift+Enter for a new line</span>
+        <Button variant="primary" type="submit" data-testid="learn-send" disabled={blocked || sending || trimmed === ""}>{sending ? "Sending…" : "Send"}</Button>
+      </div>
     </form>
   );
 }

@@ -2,10 +2,11 @@
 // never on the wire before the answer is recorded; once it is, the card shows the learner's answer
 // beside the daemon's reveal: right or wrong, the key and why.
 
+import { useDraft } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
-import { Button, InlineMarkdown, Markdown } from "@aether-ui/ui";
+import { Button, InlineMarkdown, Markdown, Segmented, TextArea } from "@aether-ui/ui";
 import { useId, useState, type FormEvent } from "react";
-import { CONFIDENCE_STOPS, invariant, type Confidence } from "./model.ts";
+import { CONFIDENCE_STOPS, draftKey, invariant, type Confidence } from "./model.ts";
 
 export interface AnswerInput {
   readonly choices?: string[];
@@ -92,14 +93,16 @@ function Reveal({ question, answer, result }: { question: aether.Question; answe
   );
 }
 
+const EMPTY_ANSWER: { readonly text: string; readonly thinking: string } = { text: "", thinking: "" };
+
 function AnswerForm({ question, onAnswer }: { question: aether.Question; onAnswer: QuestionCardProps["onAnswer"] }) {
   const id = useId();
+  const draft = useDraft(draftKey(question.id, "answer"), EMPTY_ANSWER);
   const [choices, setChoices] = useState<readonly string[]>([]);
-  const [text, setText] = useState("");
   const [confidence, setConfidence] = useState<Confidence>(50);
-  const [thinking, setThinking] = useState("");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const { text, thinking } = draft.value;
   const graded = question.kind !== "goal";
   const ready = question.kind === "choice" ? choices.length > 0 : text.trim() !== "";
   const send = async (dontKnow: boolean) => {
@@ -114,6 +117,7 @@ function AnswerForm({ question, onAnswer }: { question: aether.Question; onAnswe
     const problem = await onAnswer(answer);
     setBusy(false);
     setFailure(problem);
+    if (problem === null) draft.clearIfUnchanged();
   };
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -123,25 +127,14 @@ function AnswerForm({ question, onAnswer }: { question: aether.Question; onAnswe
     setChoices((old) => (question.multi ? (on ? [...old, value] : old.filter((v) => v !== value)) : [value]));
   return (
     <form className="learn-q-form" onSubmit={submit}>
-      {question.kind === "choice" ? (
-        <fieldset className="learn-options">
-          <legend className="ui-visually-hidden">Options</legend>
-          {(question.options ?? []).map((option) => (
-            <label key={option.value} className="learn-option">
-              <input type={question.multi ? "checkbox" : "radio"} name={`${id}-choice`} value={option.value} checked={choices.includes(option.value)}
-                onChange={(e) => pick(option.value, e.target.checked)} />
-              <InlineMarkdown text={option.label} />
-            </label>
-          ))}
-        </fieldset>
-      ) : (
-        <textarea className="learn-textarea" rows={3} aria-label={question.kind === "goal" ? "Your goal, in your words" : "Your answer"}
-          placeholder={question.kind === "goal" ? "Describe it in your own words" : "Answer from memory"} value={text} onChange={(e) => setText(e.target.value)} />
-      )}
-      {graded && <ConfidencePicker name={`${id}-confidence`} value={confidence} onChange={setConfidence} />}
-      <details className="learn-thinking">
+      {question.kind === "choice"
+        ? <ChoiceOptions name={`${id}-choice`} question={question} chosen={choices} onPick={pick} />
+        : <TextArea label={question.kind === "goal" ? "Your goal, in your words" : "Your answer"} hideLabel data-testid="learn-answer" rows={3}
+            placeholder={question.kind === "goal" ? "Describe it in your own words" : "Answer from memory"} value={text} onChange={(e) => draft.update({ text: e.target.value })} />}
+      {graded && <ConfidencePicker value={confidence} onChange={setConfidence} />}
+      <details className="learn-thinking" open={thinking !== "" || undefined}>
         <summary>Add how you got there</summary>
-        <textarea className="learn-textarea" rows={2} aria-label="Your reasoning" value={thinking} onChange={(e) => setThinking(e.target.value)} />
+        <TextArea label="Your reasoning" hideLabel rows={2} value={thinking} onChange={(e) => draft.update({ thinking: e.target.value })} />
       </details>
       {failure !== null && <p className="learn-callout" role="alert">{failure}</p>}
       <div className="learn-actions">
@@ -152,18 +145,37 @@ function AnswerForm({ question, onAnswer }: { question: aether.Question; onAnswe
   );
 }
 
-function ConfidencePicker({ name, value, onChange }: { name: string; value: Confidence; onChange: (value: Confidence) => void }) {
+/** The options as cards; each keeps its native radio or checkbox, so arrows, Space and screen readers work as ever. */
+function ChoiceOptions({ name, question, chosen, onPick }: { name: string; question: aether.Question; chosen: readonly string[]; onPick: (value: string, on: boolean) => void }) {
+  const options = question.options ?? [];
+  invariant(new Set(options.map((option) => option.value)).size === options.length, "choice options have distinct values");
   return (
-    <fieldset className="learn-confidence">
-      <legend className="learn-muted">How sure are you?</legend>
-      <div className="learn-segmented">
-        {CONFIDENCE_STOPS.map((stop) => (
-          <label key={stop} className="learn-segment">
-            <input type="radio" name={name} value={stop} checked={value === stop} onChange={() => onChange(stop)} />
-            <span>{stop}%</span>
-          </label>
-        ))}
-      </div>
+    <fieldset className="learn-options">
+      <legend className="ui-visually-hidden">Options</legend>
+      {options.map((option, index) => (
+        <label key={option.value} className="learn-option" data-multi={question.multi || undefined}>
+          <input type={question.multi ? "checkbox" : "radio"} name={name} value={option.value} checked={chosen.includes(option.value)}
+            onChange={(e) => onPick(option.value, e.target.checked)} />
+          <span className="learn-option-mark" aria-hidden="true">{String.fromCharCode(65 + (index % 26))}</span>
+          <span className="learn-option-label"><InlineMarkdown text={option.label} /></span>
+        </label>
+      ))}
     </fieldset>
+  );
+}
+
+export const CONFIDENCE_OPTIONS = CONFIDENCE_STOPS.map((stop) => ({ id: String(stop), label: `${stop}%` }));
+
+function ConfidencePicker({ value, onChange }: { value: Confidence; onChange: (value: Confidence) => void }) {
+  const choose = (id: string) => {
+    const stop = CONFIDENCE_STOPS.find((candidate) => String(candidate) === id);
+    invariant(stop !== undefined, `confidence ${id} is one of the stops`);
+    onChange(stop);
+  };
+  return (
+    <div className="learn-confidence">
+      <span className="learn-muted" aria-hidden="true">How sure are you?</span>
+      <Segmented label="How sure are you?" size="sm" options={CONFIDENCE_OPTIONS} value={String(value)} onChange={choose} />
+    </div>
   );
 }

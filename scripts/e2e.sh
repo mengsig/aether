@@ -126,7 +126,7 @@ done
 if [ ! -f web/node_modules/.package-lock.json ]; then (cd web && npm ci --no-audit --no-fund); fi
 
 # Short, so the stacks' socket paths stay far below the 108-byte limit.
-STATE=$(mktemp -d /tmp/ae-run-XXXXXX)
+STATE=$(mktemp -d "${E2E_RUN_BASE:-/var/tmp}/ae-run-XXXXXX")
 mkdir -m 700 "$STATE/t" "$STATE/home" "$STATE/xdg"
 export E2E_STATE=$STATE E2E_TMP=$STATE/t E2E_USER_HOME=$HOME E2E_OUT=${E2E_OUT:-$REPO_ROOT/web/e2e/.out}
 export AETHER_BIN ARCHOND_BIN

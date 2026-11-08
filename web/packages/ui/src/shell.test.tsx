@@ -106,6 +106,28 @@ describe("AppShell", () => {
     expect(container.querySelector(".ui-state-title")?.textContent).toBe("No screens yet");
   });
 
+  test("the home slot replaces the pick-a-screen prompt at the root hashes only", async () => {
+    const home = <p className="home">Dashboard</p>;
+    for (const hash of ["", "#", "#/"]) {
+      const { container, unmount } = await render(shell({ hash, home }).node);
+      expect(container.querySelector(".ui-screen > .home")?.textContent).toBe("Dashboard");
+      expect(container.querySelector(".ui-state")).toBeNull();
+      await unmount();
+    }
+    const { container, rerender } = await render(shell({ hash: "#/" }).node);
+    expect(container.querySelector(".ui-state-title")?.textContent).toBe("Pick a screen");
+    await rerender(shell({ hash: "#/nowhere", home }).node);
+    expect(container.querySelector(".home")).toBeNull();
+    expect(container.querySelector(".ui-state-title")?.textContent).toBe("No screen here");
+  });
+
+  test("a routed screen renders inside the animated screen wrapper", async () => {
+    const route = routes[0] as RouteDef;
+    const { container } = await render(shell({ match: { route, params: {} }, hash: "#/fleet" }).node);
+    await settle();
+    expect(container.querySelector("#ui-main > .ui-screen .screen")).not.toBeNull();
+  });
+
   test("a screen that fails shows an error with a retry that loads it again", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     let fail = true;

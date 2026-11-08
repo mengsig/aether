@@ -4,11 +4,12 @@
 import { navigate, routeHref, useSelector } from "@aether-ui/core";
 import { GraphCanvas, layeredLayout } from "@aether-ui/graph";
 import type { Layout } from "@aether-ui/protocol";
-import { Button, EmptyState, ErrorState } from "@aether-ui/ui";
+import { Button, ErrorState } from "@aether-ui/ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { sameSources, selectFleetSources } from "../fleet/rows.ts";
+import { fleetRows, sameSources, selectFleetSources } from "../fleet/rows.ts";
 import { buildTopology, collapsedRuns, toggleRun, topologyModel, type RunOverrides } from "./graph.ts";
 import { LayoutGate, type LayoutFn } from "./relayout.ts";
+import { AgentDetails, agentNodeStyle, AGENT_LEGEND, TopologyEmpty } from "./presentation.tsx";
 import { RunList } from "./RunList.tsx";
 import { selectRun, summarizeRuns } from "./runs.ts";
 import "./topology.css";
@@ -25,6 +26,7 @@ export interface TopologyScreenProps {
 export function TopologyScreen({ layout = layeredLayout }: TopologyScreenProps) {
   const sources = useSelector(selectFleetSources, sameSources);
   const topology = useMemo(() => buildTopology(sources), [sources]);
+  const rows = useMemo(() => new Map(fleetRows(sources).map((row) => [row.key, row])), [sources]);
   const runs = useMemo(() => summarizeRuns(topology, sources), [topology, sources]);
   const [chosen, setChosen] = useState(() => runs[0]?.id);
   const selected = runs.some((run) => run.id === chosen) ? chosen : runs[0]?.id;
@@ -51,10 +53,8 @@ export function TopologyScreen({ layout = layeredLayout }: TopologyScreenProps) 
     if (ref !== undefined) navigate(routeHref("#/agents/:conn/:agent", { conn: ref.conn, agent: ref.agent }));
   }, [topology]);
 
-  if (sources.length === 0) {
-    return <EmptyState title="No Aether daemon connected">The topology shows how the agents of every connected Aether daemon delegate.</EmptyState>;
-  }
-  if (topology.nodes.length === 0) return <EmptyState title="No agents yet">Agents and their delegations appear here as daemons create them.</EmptyState>;
+  if (sources.length === 0) return <TopologyEmpty disconnected />;
+  if (topology.nodes.length === 0) return <TopologyEmpty />;
   if (failure !== undefined) return <ErrorState title="The topology could not be laid out" message={failure} onRetry={() => setAttempt((n) => n + 1)} />;
   return (
     <section className="topology" aria-label="Delegation topology">
@@ -68,6 +68,8 @@ export function TopologyScreen({ layout = layeredLayout }: TopologyScreenProps) 
         <RunList runs={runs} selected={selected} onSelect={setChosen} />
         <div className="topology-canvas">
           <GraphCanvas key={selected} model={model} layout={placed} label="Delegation topology" onActivate={activate} onToggleGroup={toggle}
+            controls={false} nodeStyle={(node) => agentNodeStyle(rows.get(node.id)?.agent)} legend={AGENT_LEGEND} emptyState={<TopologyEmpty />}
+            details={(node) => { const row = rows.get(node.id); return row === undefined ? <strong>{node.label}</strong> : <AgentDetails row={row} />; }}
             renderControls={({ zoomIn, zoomOut, fit }) => <div className="topology-zoom" role="group" aria-label="Graph zoom">
               <Button onClick={zoomIn}>Zoom in</Button><Button onClick={zoomOut}>Zoom out</Button><Button onClick={fit}>Fit</Button>
             </div>} />

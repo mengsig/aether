@@ -1,18 +1,25 @@
 // `#/learn`: start a session and pick one up again. Sessions come from core's store; the list is
 // reread on mount and whenever an event names a session.
 
-import { navigate, routeHref } from "@aether-ui/core";
+import { navigate, routeHref, useDraft } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
-import { Badge, Button, EmptyState, ErrorState } from "@aether-ui/ui";
+import { Badge, Button, EmptyState, ErrorState, Segmented, TextArea } from "@aether-ui/ui";
 import { useMemo, useState, type FormEvent } from "react";
 import { useLearn, useNoesisChange, useNoesisRead, useOperateRefusal } from "./data.ts";
 import { LearnFrame, type OpenGate } from "./LearnFrame.tsx";
-import { classifyRefusal, dateTime, invariant, nextStep, PHASE_LABEL, sortSessions, type Refusal } from "./model.ts";
+import { classifyRefusal, dateTime, draftKey, invariant, nextStep, PHASE_LABEL, planProgress, recentGoals, sortSessions, type Refusal } from "./model.ts";
 import { RefusalNote } from "./RefusalNote.tsx";
 import { CatchUpEntry } from "../understand/CatchUpSheet.tsx";
 import { UnderstandFromHash } from "../understand/UnderstandSheet.tsx";
 
 const GOAL_MAX = 2000;
+
+export const MODES: readonly { readonly id: aether.SessionMode; readonly label: string; readonly hint: string }[] = [
+  { id: "teach", label: "Learn something new", hint: "Finds what you know, then teaches step by step" },
+  { id: "practice", label: "Practise what I know", hint: "Problems at the edge of what you can do" },
+];
+
+const EMPTY_GOAL: { readonly goal: string; readonly mode: aether.SessionMode } = { goal: "", mode: "teach" };
 
 export function SessionsScreen({ conn }: OpenGate) {
   const read = useNoesisRead(conn, { kind: "sessions" });
@@ -22,14 +29,16 @@ export function SessionsScreen({ conn }: OpenGate) {
   return (
     <div className="learn-columns">
       <div className="learn-start">
-        <NewSession conn={conn} />
+        <NewSession conn={conn} suggestions={recentGoals(sessions)} />
         <CatchUpEntry />
       </div>
       <section className="learn-list" aria-label="Your sessions">
         <h2 className="learn-subtitle">Your sessions</h2>
         {read.error !== null && sessions.length === 0 && <ErrorState title="Could not load your sessions" message={read.error} onRetry={read.reload} />}
         {read.error === null && !listed && sessions.length === 0 && <p className="learn-muted" aria-busy="true">Loading sessions…</p>}
-        {listed && sessions.length === 0 && <EmptyState title="No sessions yet">Name something you want to learn, and Noesis starts by finding out what you already know.</EmptyState>}
+        {listed && sessions.length === 0 && (
+          <EmptyState title="No sessions yet">Name something you want to learn on the left, and Noesis starts by finding out what you already know.</EmptyState>
+        )}
         <ul className="learn-cards">
           {sessions.map((session) => <SessionCard key={session.id} conn={conn} session={session} />)}
         </ul>
@@ -41,6 +50,7 @@ export function SessionsScreen({ conn }: OpenGate) {
 function SessionCard({ conn, session }: { conn: string; session: aether.NoesisSession }) {
   const href = routeHref("#/learn/sessions/:id", { id: session.id });
   const waiting = session.open_question != null || session.active_problem != null;
+  const progress = planProgress(session);
   invariant(conn.length > 0, "a session card belongs to a connection");
   return (
     <li className="learn-card">
@@ -52,50 +62,76 @@ function SessionCard({ conn, session }: { conn: string; session: aether.NoesisSe
           <span aria-hidden="true">·</span>
           <span>{dateTime(session.updated_at)}</span>
         </span>
+        {progress !== null && (
+          <span className="learn-card-progress">
+            <meter className="learn-meter" min={0} max={progress.total} value={progress.done} aria-label={`Progress on ${session.goal}`} />
+            <span className="learn-num">{progress.done} of {progress.total} steps</span>
+          </span>
+        )}
         <span className="learn-card-next" data-waiting={waiting || undefined}>{nextStep(session)}</span>
       </a>
     </li>
   );
 }
 
-function NewSession({ conn }: { conn: string }) {
+/** Why Start is off, said beside it; null when it may be pressed. */
+function startBlocker(goal: string, refusal: string | null): string | null {
+  if (refusal !== null) return refusal;
+  if (goal === "") return "Name a goal to start";
+  if (goal.length > GOAL_MAX) return `Keep the goal under ${GOAL_MAX} characters`;
+  return null;
+}
+
+function NewSession({ conn, suggestions }: { conn: string; suggestions: readonly string[] }) {
   const change = useNoesisChange(conn);
   const refusal = useOperateRefusal(conn);
-  const [goal, setGoal] = useState("");
-  const [mode, setMode] = useState<aether.SessionMode>("teach");
+  const draft = useDraft(draftKey("new-session", conn), EMPTY_GOAL);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<Refusal | null>(null);
+  const goal = draft.value.goal;
+  const mode = draft.value.mode;
+  invariant(MODES.some((option) => option.id === mode), "the draft holds a known mode");
   const trimmed = goal.trim();
+  const blocker = startBlocker(trimmed, refusal);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (trimmed === "" || trimmed.length > GOAL_MAX) return;
+    if (blocker !== null) return;
     setBusy(true);
     const result = await change({ cmd: "noesis_create_session", goal: trimmed, mode });
     setBusy(false);
     if (!result.ok) return setFailure(classifyRefusal(result.error));
     const data = result.reply.data as { id?: unknown } | undefined;
     invariant(typeof data?.id === "string", "noesis_create_session answers with the new session");
+    draft.clearIfUnchanged();
     navigate(routeHref("#/learn/sessions/:id", { id: data.id }));
   };
   return (
     <form className="learn-new" onSubmit={(event) => void submit(event)} aria-label="Start a session">
       <h2 className="learn-subtitle">What do you want to learn?</h2>
-      <label className="ui-visually-hidden" htmlFor="learn-goal">Your goal</label>
-      <textarea id="learn-goal" className="learn-textarea" rows={3} maxLength={GOAL_MAX} placeholder="For example: how TCP congestion control reacts to loss"
-        value={goal} onChange={(e) => setGoal(e.target.value)} />
-      <div className="learn-segmented" role="radiogroup" aria-label="Kind of session">
-        {(["teach", "practice"] as const).map((value) => (
-          <label key={value} className="learn-segment">
-            <input type="radio" name="learn-mode" value={value} checked={mode === value} onChange={() => setMode(value)} />
-            <span>{value === "teach" ? "Learn something new" : "Practise what I know"}</span>
-          </label>
-        ))}
+      <TextArea label="Your goal" hideLabel data-testid="learn-goal" rows={3} maxLength={GOAL_MAX} autoFocus placeholder="For example: how TCP congestion control reacts to loss"
+        value={goal} onChange={(event) => draft.update({ goal: event.target.value })} />
+      {suggestions.length > 0 && trimmed === "" && <GoalSuggestions goals={suggestions} onPick={(picked) => draft.update({ goal: picked })} />}
+      <div data-testid="learn-mode">
+        <Segmented label="Kind of session" layout="cards" options={MODES} value={mode} onChange={(id) => draft.update({ mode: id as aether.SessionMode })} />
       </div>
       {failure !== null && <RefusalNote refusal={failure} />}
       <div className="learn-actions">
-        <Button variant="primary" type="submit" disabled={busy || trimmed === "" || refusal !== null} title={refusal ?? undefined}>{busy ? "Starting…" : "Start session"}</Button>
+        <Button variant="primary" type="submit" data-testid="learn-start" disabled={busy || blocker !== null} aria-describedby={blocker === null ? undefined : "learn-start-why"}>
+          {busy ? "Starting…" : "Start session"}
+        </Button>
+        {blocker !== null && <span className="learn-muted" id="learn-start-why">{blocker}</span>}
       </div>
     </form>
+  );
+}
+
+function GoalSuggestions({ goals, onPick }: { goals: readonly string[]; onPick: (goal: string) => void }) {
+  invariant(goals.length > 0, "suggestions are offered only when there are some");
+  return (
+    <div className="learn-suggestions" data-testid="learn-goal-suggestions">
+      <span className="learn-muted">Pick up a recent goal:</span>
+      {goals.map((goal) => <button key={goal} type="button" className="learn-chip" onClick={() => onPick(goal)}>{goal}</button>)}
+    </div>
   );
 }
 

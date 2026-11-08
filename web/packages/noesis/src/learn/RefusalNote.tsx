@@ -29,6 +29,7 @@ export function RefusalNote({ refusal, budget = null, onRetry }: { refusal: Refu
       <p className="learn-callout-title">Noesis needs a model it may use</p>
       <p>{refusal.message}</p>
       <p>Choose a subscription model, or allow API-billed models, in <a className="ui-link" href={settingsHref()}>Noesis settings</a>.</p>
+      <p>No model signed in yet? <a className="ui-link" href="#/settings/providers">Sign in to a provider</a> first.</p>
     </div>
   );
 }

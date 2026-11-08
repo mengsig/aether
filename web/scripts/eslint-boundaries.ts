@@ -23,6 +23,7 @@ export const BOUNDARIES: Readonly<Record<string, Allowance>> = {
   aether: FEATURE,
   archon: FEATURE,
   github: FEATURE,
+  home: FEATURE,
   noesis: FEATURE,
   settings: FEATURE,
 };

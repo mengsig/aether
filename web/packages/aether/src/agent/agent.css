@@ -1,16 +1,33 @@
 @layer app {
-  .agent-head { display: grid; gap: var(--space-1); }
-  .agent-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
-  .agent-title > .ui-menu { margin-inline-start: auto; }
-  .agent-sub { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
-  .agent-id { font-family: var(--font-mono); font-size: var(--text-xs); }
+  /* The page fills the viewport under the shell header: title, facts card, then the chat, which alone scrolls. */
+  .agent {
+    grid-template-rows: auto auto minmax(0, 1fr); gap: var(--space-3); max-inline-size: 100rem;
+    block-size: calc(100dvh - 3.5rem - var(--space-4) * 2); min-block-size: 30rem;
+    margin-block-end: calc(var(--space-4) - var(--space-12));
+  }
+  /* Inside the fixed-height page the chat is a column whose transcript takes the space the title, facts and
+     composer leave. The stage contributes no intrinsic height (size containment), so the conversation's own
+     minimum is its toolbar, any banner and an 8rem transcript: a shorter window scrolls the page, nothing overlaps. */
+  .agent > .conv-chat { display: flex; flex-direction: column; }
+  .agent > .conv-chat > .conv { display: flex; flex: 1 1 auto; flex-direction: column; min-block-size: auto; }
+  .agent .conv-stage { flex: 1 1 auto; min-block-size: 8rem; contain: size; }
+  .agent .conv-list { block-size: 100%; min-block-size: 8rem; }
+  .agent-head { display: grid; gap: var(--space-1); min-inline-size: 0; }
+  .agent-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); min-inline-size: 0; }
+  .agent-name { font-size: var(--text-xl); }
+  .agent-sub { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
+  .agent-id { color: var(--color-text-faint); font-family: var(--font-mono); font-size: var(--text-xs); }
   .agent-detail { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); transition: color var(--motion-base) var(--ease-standard); }
   .agent-detail[data-state="failed"] { color: var(--color-danger); }
-  .agent-facts {
-    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: var(--space-4) var(--space-5); margin: 0;
-  }
+
+  .agent-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: var(--space-4) var(--space-5); margin: 0; }
   .agent-fact { display: grid; gap: var(--space-1); min-inline-size: 0; }
   .agent-fact dt { color: var(--color-text-faint); font: var(--weight-medium) var(--text-xs) / var(--leading-tight) var(--font-ui); }
   .agent-fact dd { display: grid; margin: 0; overflow-wrap: anywhere; font-size: var(--text-sm); }
   .agent-hint { color: var(--color-text-muted); font-size: var(--text-xs); }
+
+  @media (max-width: 48rem) {
+    .agent { block-size: calc(100dvh - 3rem - var(--space-3) * 2); margin-block-end: calc(var(--space-3) - var(--space-10)); gap: var(--space-2); }
+    .agent-name { font-size: var(--text-lg); }
+  }
 }

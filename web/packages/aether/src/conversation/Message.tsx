@@ -1,68 +1,50 @@
-// One transcript row as its view mode draws it: a committed message or a live tail, with its
-// reasoning, tool calls (each paired with its result), coordination cards, attachments and cost.
+// One transcript row as its view mode draws it: who speaks (the operator on a tonal surface with a
+// mark, the agent plain on the page, a notice quietly), then its text, folded reasoning, tool rows
+// (each paired with its result), coordination cards, attachments, model and cost.
 
 import { Badge } from "@aether-ui/ui";
 import type { ConnId } from "@aether-ui/protocol";
-import { memo, type ReactNode } from "react";
+import { createContext, memo, useContext, useId, type ReactNode } from "react";
+import { invariant } from "../fleet/invariant.ts";
 import { CoordinationCard, FailedLine, isCard } from "./Coordination.tsx";
 import { formatBytes, formatCost, formatDuration, formatTime, formatTokens } from "./format.ts";
-import { Markdown } from "@aether-ui/ui";
-import type { ConversationRow, InvocationMeta, Part, ToolResultView } from "./rows.ts";
+import { Markdown } from "./markdown.tsx";
+import type { ConversationRow, InvocationMeta, Part, Speaker } from "./rows.ts";
+import { foldKey, orphanKey, toolKey, useToggle } from "./toggles.ts";
+import { OrphanResult, ToolCall } from "./ToolCall.tsx";
 import type { ViewPart, ViewRow } from "./view.ts";
 
-/** Long tool input and output stay readable without one call filling the screen. */
-const MAX_TOOL_TEXT = 20_000;
-
-const clip = (text: string): string => (text.length > MAX_TOOL_TEXT ? `${text.slice(0, MAX_TOOL_TEXT)}\n… (${text.length - MAX_TOOL_TEXT} more characters)` : text);
-
-function ToolResult({ result }: { readonly result: ToolResultView }) {
+/** Reasoning or a compaction summary: one quiet line that opens to the text. */
+function Fold({ label, text, toggleKey }: { readonly label: string; readonly text: string | null; readonly toggleKey: string }) {
+  invariant(toggleKey.startsWith("f:"), `fold toggle ${toggleKey} is a fold key`);
+  const [open, flip] = useToggle(toggleKey);
+  const panel = useId();
+  if (text === null) return <p className="conv-fold conv-note">{label}</p>;
   return (
-    <div className="conv-tool-result" data-error={result.isError ? "true" : undefined}>
-      <span className="conv-tool-label">{result.isError ? "Error" : "Result"}</span>
-      {result.text === "" ? null : <pre className="conv-pre">{clip(result.text)}</pre>}
-      {result.images > 0 ? <span className="conv-note">{result.images} image{result.images === 1 ? "" : "s"}</span> : null}
+    <div className="conv-fold">
+      <button type="button" className="conv-fold-toggle" aria-expanded={open} aria-controls={panel} onClick={flip}>
+        <span className="conv-chevron" aria-hidden="true" />{label}
+      </button>
+      <p className="conv-fold-text" id={panel} hidden={!open}>{text}</p>
     </div>
   );
 }
 
-function toolState(part: Extract<Part, { kind: "tool" }>, live: boolean): { tone: "info" | "success" | "danger" | "neutral"; label: string } {
-  if (part.result) return part.result.isError ? { tone: "danger", label: "Failed" } : { tone: "success", label: "Done" };
-  return live ? { tone: "info", label: "Writing" } : { tone: "neutral", label: "No result yet" };
+interface PartProps {
+  readonly part: Part;
+  readonly live: boolean;
+  /** The list's key for the row, so a fold's state follows the row as the list is redrawn. */
+  readonly rowKey: string;
+  readonly index: number;
 }
 
-function ToolCall({ part, live }: { readonly part: Extract<Part, { kind: "tool" }>; readonly live: boolean }) {
-  const state = toolState(part, live);
-  return (
-    <details className="conv-tool" data-tool-use-id={part.id ?? undefined}>
-      <summary className="conv-tool-summary">
-        <code className="conv-tool-name">{part.name || "tool"}</code>
-        <Badge tone={state.tone}>{state.label}</Badge>
-      </summary>
-      <span className="conv-tool-label">Input</span>
-      <pre className="conv-pre">{clip(part.input)}</pre>
-      {part.result ? <ToolResult result={part.result} /> : null}
-    </details>
-  );
-}
-
-function PartView({ part, live }: { readonly part: Part; readonly live: boolean }): ReactNode {
+function PartView({ part, live, rowKey, index }: PartProps): ReactNode {
   switch (part.kind) {
     case "text": return <Markdown text={part.text} />;
     case "reasoning":
-      return (
-        <details className="conv-reasoning">
-          <summary>{part.redacted ? "Reasoning (redacted)" : "Reasoning"}</summary>
-          {part.redacted ? null : <p className="conv-reasoning-text">{part.text}</p>}
-        </details>
-      );
-    case "tool": return <ToolCall part={part} live={live} />;
-    case "orphan-result":
-      return (
-        <div className="conv-tool conv-orphan">
-          <span className="conv-tool-label">Result for <code>{part.toolUseId}</code></span>
-          <ToolResult result={part.result} />
-        </div>
-      );
+      return <div className="conv-reasoning"><Fold label={part.redacted ? "Thinking (redacted)" : "Thinking"} text={part.redacted ? null : part.text} toggleKey={foldKey(rowKey, index)} /></div>;
+    case "tool": return <ToolCall part={part} live={live} toggleKey={toolKey(rowKey, index, part.id)} />;
+    case "orphan-result": return <OrphanResult part={part} toggleKey={orphanKey(rowKey, part.toolUseId)} />;
     case "attachment":
       return (
         <span className="conv-attachment">
@@ -71,12 +53,7 @@ function PartView({ part, live }: { readonly part: Part; readonly live: boolean 
         </span>
       );
     case "compaction":
-      return (
-        <details className="conv-reasoning conv-compaction">
-          <summary>Earlier conversation compacted</summary>
-          <p className="conv-reasoning-text">{part.text}</p>
-        </details>
-      );
+      return <div className="conv-reasoning conv-compaction"><Fold label="Earlier conversation compacted" text={part.text} toggleKey={foldKey(rowKey, index)} /></div>;
   }
 }
 
@@ -86,13 +63,13 @@ export interface MessageContext {
   readonly parent: string | null;
 }
 
-function ViewPartView({ view, live, context }: { readonly view: ViewPart; readonly live: boolean; readonly context: MessageContext }): ReactNode {
+function ViewPartView({ view, context, ...part }: { readonly view: ViewPart; readonly context: MessageContext } & Omit<PartProps, "part">): ReactNode {
   if (view.outcome === "line") return <FailedLine part={view.part} />;
-  if (!isCard(view)) return <PartView part={view.part} live={live} />;
+  if (!isCard(view)) return <PartView part={view.part} {...part} />;
   const card = <CoordinationCard view={view} conn={context.conn} parent={context.parent} />;
   // Drawn whole, a card keeps the call it summarises, input and result, one click away.
   if (view.outcome !== "full" || view.part.kind !== "tool") return card;
-  return <>{card}<ToolCall part={view.part} live={live} /></>;
+  return <>{card}<ToolCall part={view.part} live={part.live} toggleKey={toolKey(part.rowKey, part.index, view.part.id)} /></>;
 }
 
 function MetaLine({ meta, usage }: { readonly meta: InvocationMeta; readonly usage: boolean }) {
@@ -119,22 +96,59 @@ function LiveBadges({ row }: { readonly row: ConversationRow }) {
   );
 }
 
-export const MessageView = memo(function MessageView({ view, context }: { readonly view: ViewRow; readonly context: MessageContext }) {
+/** The agent's own name, for the head of its turns. */
+export const AgentNameContext = createContext("Agent");
+
+/** The name a row's head shows, and the initial its mark carries. */
+export function speakerName(speaker: Speaker, agentName: string): { name: string; mark: string } {
+  switch (speaker.kind) {
+    case "assistant": return { name: agentName, mark: (agentName[0] ?? "A").toUpperCase() };
+    case "notice": return { name: "Notice", mark: "i" };
+    case "agent": return { name: speaker.from ?? "Another agent", mark: "⇢" };
+    case "user": {
+      const named = speaker.from?.split(":")[1];
+      const name = named === undefined || named === "" || /^(local_socket|tcp|device)/.test(named) ? "You" : named;
+      return { name, mark: (name[0] ?? "Y").toUpperCase() };
+    }
+  }
+}
+
+function MessageHead({ view }: { readonly view: ViewRow }) {
+  const row = view.row;
+  const { name, mark } = speakerName(row.speaker, useContext(AgentNameContext));
+  const marked = row.speaker.kind === "user" || row.speaker.kind === "agent";
+  return (
+    <header className="conv-msg-head">
+      {marked ? <span className="conv-mark" aria-hidden="true">{mark}</span> : null}
+      <span className="conv-role" title={row.speaker.from ?? undefined}>{name}</span>
+      {row.at ? <time className="conv-time" dateTime={row.at}>{formatTime(row.at)}</time> : null}
+      <LiveBadges row={row} />
+      {row.meta ? <MetaLine meta={row.meta} usage={view.usage} /> : null}
+    </header>
+  );
+}
+
+export interface MessageViewProps {
+  readonly view: ViewRow;
+  readonly context: MessageContext;
+  /** The list's key for this row; folds are remembered under it. Defaults to the row's own key. */
+  readonly rowKey?: string;
+  /** Holds Find's current match. */
+  readonly current?: boolean;
+}
+
+export const MessageView = memo(function MessageView({ view, context, rowKey, current = false }: MessageViewProps) {
   const row = view.row;
   const live = row.live !== null;
+  invariant(row.key !== "", "a row has a key");
+  const scope = rowKey ?? row.key;
   return (
-    <article className="conv-msg" data-role={row.role} data-slim={view.slim || undefined} data-live={live ? "true" : undefined} data-seq={row.seq ?? undefined} data-invocation={row.invocation ?? undefined}>
-      {view.slim ? null : (
-        <header className="conv-msg-head">
-          <span className="conv-role">{row.role === "assistant" ? "Assistant" : "User"}</span>
-          {row.at ? <time className="conv-note" dateTime={row.at}>{formatTime(row.at)}</time> : null}
-          <LiveBadges row={row} />
-          {row.meta ? <MetaLine meta={row.meta} usage={view.usage} /> : null}
-        </header>
-      )}
+    <article className="conv-msg" data-role={row.role} data-speaker={row.speaker.kind} data-slim={view.slim || undefined} data-live={live ? "true" : undefined}
+      data-seq={row.seq ?? undefined} data-invocation={row.invocation ?? undefined} data-current={current ? "true" : undefined}>
+      {view.slim ? null : <MessageHead view={view} />}
       <div className="conv-msg-body">
         {row.live?.recovering && row.parts.length === 0 ? <p className="conv-note">Reading the transcript to catch up with the live output…</p> : null}
-        {view.parts.map((part, index) => <ViewPartView key={index} view={part} live={live} context={context} />)}
+        {view.parts.map((part, index) => <ViewPartView key={index} view={part} live={live} context={context} rowKey={scope} index={index} />)}
       </div>
     </article>
   );

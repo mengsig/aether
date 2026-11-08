@@ -45,12 +45,10 @@ test("the settings pick each model from the daemon's offers and say what today w
   await pairBoth(page, stack);
   await page.goto(`${stack.aether.origin}/#/learn?panel=settings`);
   const sheet = page.getByRole("dialog", { name: "Noesis settings" });
-  for (const select of ["#learn-model-strong", "#learn-model-cheap"]) {
-    const chooser = sheet.locator(select);
-    await expect(chooser, `${select} is a select, not free text`).toHaveJSProperty("tagName", "SELECT");
-    await expect(chooser.locator("option").first()).toHaveText("Automatic — the first ready subscription model");
+  for (const picker of ["noesis-model-strong", "noesis-model-cheap"]) {
+    await expect(sheet.getByTestId(picker), `${picker} is a chooser, not free text`).toHaveAttribute("aria-haspopup", "listbox");
   }
-  await expect(sheet.locator("#learn-model-strong-note"), "the note says what teaching runs on, or why it cannot").toContainText(/Teaching (runs on|cannot run now)/);
+  await expect(sheet, "the note says what teaching runs on, or why it cannot").toContainText(/Teaching (runs on|cannot run now)/);
   await expect(sheet.getByLabel("Billing today")).toContainText(/No model use recorded yet|subscription|API key/);
   await expect(sheet.getByRole("switch", { name: /Learn from my work/ })).not.toBeChecked();
 });
@@ -58,8 +56,8 @@ test("the settings pick each model from the daemon's offers and say what today w
 test("the knowledge graph switches between the drawing and a list of the same propositions", async ({ page, stack }) => {
   await pairBoth(page, stack);
   await page.goto(`${stack.aether.origin}/#/learn/graph`);
-  const shown = page.getByRole("group", { name: "Show as" });
-  await expect(shown.getByRole("button", { name: "Graph" })).toHaveAttribute("aria-pressed", "true");
-  await shown.getByRole("button", { name: "List" }).click();
-  await expect(shown.getByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
+  const shown = page.getByRole("radiogroup", { name: "Show as" });
+  await expect(shown.getByRole("radio", { name: "Graph" })).toBeChecked();
+  await shown.getByRole("radio", { name: "List" }).click();
+  await expect(shown.getByRole("radio", { name: "List" })).toBeChecked();
 });

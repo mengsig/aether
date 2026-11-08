@@ -75,7 +75,7 @@ function PageBody({ info, page, view, error, reload }: Body) {
       <Actions info={info} page={page} view={view} reload={reload} />
       <div className="gh-grid">
         <Section title="Archon work">
-          {view.items.length === 0 ? <p className="gh-muted">No Archon item is linked to this yet.</p>
+          {view.items.length === 0 ? <p className="gh-muted">No Archon item is linked to this yet. Import an issue as work, or open the GitHub overview to find related work.</p>
             : <ul className="gh-list gh-items">{view.items.map((item) => <ItemCard key={item.id} view={item} />)}</ul>}
         </Section>
         <Section title="Agents"><AgentsFor view={view} /></Section>
@@ -109,7 +109,7 @@ function Unknown({ info, page, view, reload }: Omit<Body, "error">) {
   return (
     <div className="ui-page gh-page">
       <EmptyState title={`Archon knows nothing of ${page.repo}#${page.number} yet`}>
-        Archon's GitHub cache has not read it and no item is linked to it.
+        Archon's GitHub cache has not read it and no item is linked to it. Refresh after the next watcher poll, or open the GitHub overview to check watching.
       </EmptyState>
       <Notices info={info} error={null} stale={false} fetchedAt={null} />
       <Actions info={info} page={page} view={view} reload={reload} />
@@ -131,7 +131,7 @@ export default function GithubRoute({ params }: RouteProps) {
   const { host = "", owner = "", repo = "", number = "" } = params;
   const page = useMemo(() => parsePage({ host, owner, repo, number }), [host, owner, repo, number]);
   const info = useArchonConnection();
-  if (page === null) return <EmptyState title="Not a GitHub issue or pull request">This link does not name a repository and number.</EmptyState>;
+  if (page === null) return <EmptyState title="Not a GitHub issue or pull request">This link does not name a repository and number. Open an object from the GitHub overview.</EmptyState>;
   if (!info) return <EmptyState title="Archon is not connected">GitHub pages read Archon's links and cache; connect to archond to see them.</EmptyState>;
   return <Connected info={info} page={page} />;
 }

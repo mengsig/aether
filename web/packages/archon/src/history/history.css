@@ -1,8 +1,9 @@
 @layer app {
   .history { display: grid; align-content: start; gap: var(--space-5); animation: ui-rise var(--motion-base) var(--ease-standard); }
   /* The search is a row of fields on the page, not a box of its own. */
-  .history-search { display: grid; grid-template-columns: minmax(12rem, 2fr) repeat(2, minmax(9rem, 1fr)) auto; align-items: end; gap: var(--space-3); }
-  .history-search .ui-field { margin: 0; }
+  .history-search { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-3); }
+  .history-search .ui-field { margin: 0; flex: 1; min-inline-size: 10rem; }
+  .history-search .history-text { flex: 2; }
   .history-body { display: grid; grid-template-columns: minmax(0, 2fr) minmax(18rem, 3fr); gap: var(--space-6); align-items: start; }
   .history-results { display: grid; align-content: start; gap: var(--space-2); }
   .history-list { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
