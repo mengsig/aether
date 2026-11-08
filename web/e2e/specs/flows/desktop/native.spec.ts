@@ -56,6 +56,8 @@ async function sendToBackground(page: Page): Promise<void> {
   await session.send("Emulation.setFocusEmulationEnabled", { enabled: false });
   await route(page, `#/archon/items/${item}`);
   await page.locator(".item-link").filter({ hasText: REPORT_TITLE }).getByRole("link", { name: "Open" }).click();
+  await expect.poll(() => windowTitles(desktop().compositor), { message: "the report window is on the compositor" }).toHaveLength(2);
+  await focusNextWindow(desktop().compositor);
   await expect.poll(() => page.evaluate(() => document.hasFocus()), { message: "another native window has the focus" }).toBe(false);
 }
 
