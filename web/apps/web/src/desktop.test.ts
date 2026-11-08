@@ -18,6 +18,7 @@ function anchor(href: string, text = "Open"): HTMLAnchorElement {
 }
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   document.body.replaceChildren();
   location.hash = "";
 });
@@ -117,6 +118,8 @@ describe("deep links and alert clicks", () => {
   });
 
   test("a click on a question alert opens the inbox on that alert's own question", async () => {
+    const frames: Array<() => void> = [];
+    vi.stubGlobal("requestAnimationFrame", (step: () => void) => frames.push(step));
     let deliver: (route: string) => void = () => {};
     const notify = vi.fn<(note: { title: string; body: string; route?: string }) => Promise<boolean>>(async () => true);
     const alerts = new DesktopAlerts({ desktop: { notify }, settings: async () => DEFAULT_ALERT_SETTINGS });
@@ -127,10 +130,52 @@ describe("deep links and alert clicks", () => {
     const second = question("c2/a1:1");
     const [toFirst, toSecond] = notify.mock.calls.map(([note]) => note.route ?? "");
     deliver(toSecond ?? "");
+    frames.shift()?.();
     expect(location.hash).toBe("#/inbox");
     expect(document.activeElement, "the later alert's question, on its own daemon").toBe(second);
     deliver(toFirst ?? "");
+    frames.shift()?.();
     expect(document.activeElement, "the earlier alert still finds its own question").toBe(first);
+  });
+
+  test("navigation waits for the new inbox and cancels stale focus requests", async () => {
+    const frames: Array<() => void> = [];
+    vi.stubGlobal("requestAnimationFrame", (step: () => void) => frames.push(step));
+    let deliver: (route: string) => void = () => {};
+    const notify = vi.fn<(note: { title: string; body: string; route?: string }) => Promise<boolean>>(async () => true);
+    const alerts = new DesktopAlerts({ desktop: { notify }, settings: async () => DEFAULT_ALERT_SETTINGS });
+    const stop = followDeepLinks({ onDeepLink: (callback) => { deliver = callback; return () => {}; } }, alerts, document);
+    await alerts.deliver([{ key: "q:c/a:1", kind: "question", title: "A asks", body: "Which?", anchor: "c/a:1" }]);
+    const route = notify.mock.calls[0]?.[0].route ?? "";
+    const oldAnswer = question("c/a:1");
+    location.hash = "#/fleet";
+    deliver(route);
+    expect(document.activeElement).not.toBe(oldAnswer);
+    oldAnswer.parentElement?.remove();
+    const answer = question("c/a:1");
+    frames.shift()?.();
+    expect(document.activeElement).toBe(answer);
+    answer.blur();
+    deliver(route);
+    deliver("/fleet");
+    frames.shift()?.();
+    expect(document.activeElement).not.toBe(answer);
+    deliver(route);
+    stop();
+    frames.shift()?.();
+    expect(document.activeElement).not.toBe(answer);
+  });
+
+  test("focusQuestion waits for the answer field, not an earlier button", () => {
+    const frames: Array<() => void> = [];
+    const entry = document.body.appendChild(document.createElement("li"));
+    entry.dataset.question = "c/a:1";
+    entry.scrollIntoView = vi.fn();
+    entry.appendChild(document.createElement("button"));
+    focusQuestion(document, "c/a:1", (step) => frames.push(step));
+    const answer = entry.appendChild(document.createElement("textarea"));
+    frames.shift()?.();
+    expect(document.activeElement).toBe(answer);
   });
 
   test("focusQuestion waits for the entry to render, then puts the cursor in its answer", () => {

@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { DeepLinkRouter, isAllowedRoute, linksInArgv, parseDeepLink, type RouteTarget } from "../../src/native/deep-links.ts";
+import { windowTarget } from "../../src/native/window-target.ts";
 import { FolderTokens, TOKEN_TTL_MS } from "../../src/native/folder-tokens.ts";
 import { NOTES_PER_MINUTE, Notifier, notifyWindow, plainLine, settleShown, windowInFront } from "../../src/native/notifications.ts";
 import { BridgeRefusal } from "../../src/security/validate.ts";
@@ -165,4 +166,34 @@ test("a folder token is opaque, single use, bound to its purpose and short lived
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("notification clicks restore and show the app before opening the question route", () => {
+  const calls: string[] = [];
+  let minimized = true;
+  let visible = false;
+  const window = {
+    isDestroyed: () => false,
+    isMinimized: () => minimized,
+    isVisible: () => visible,
+    restore: () => { calls.push("restore"); minimized = false; },
+    show: () => { calls.push("show"); visible = true; },
+    focus: () => { calls.push("focus"); },
+    webContents: {
+      isCrashed: () => false,
+      send: (channel: string, route: string) => { calls.push(`${channel}:${route}`); },
+    },
+  };
+  const router = new DeepLinkRouter();
+  router.attach(windowTarget(window));
+  let click: () => void = () => { throw new Error("notification was not shown"); };
+  const notifier = new Notifier({ show: (_content, onClick) => { click = onClick; } },
+    (route) => { if (route === undefined) router.focus(); else router.open(route); });
+  notifier.notify({ title: "Question", body: "Answer?", route: "/inbox/ticket.1" });
+  click();
+  assert.deepEqual(calls, ["restore", "show", "focus", "desktop:deep-link:/inbox/ticket.1"]);
+  calls.length = 0;
+  notifier.notify({ title: "Alert", body: "" });
+  click();
+  assert.deepEqual(calls, ["focus"]);
 });

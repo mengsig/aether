@@ -288,6 +288,10 @@ looks like a boundary and is not one.
 
 ## Platforms
 
+- On Wayland, the compositor may decline a notification click’s request to focus
+  the Aether window when no activation token is available. The window is shown
+  and the question opens, but you may need to select the window yourself.
+
 Aether supports Linux and macOS. Native Windows is not supported: the daemon
 and its clients talk over Unix sockets, and the process runners rely on Unix
 process groups. Continuous integration runs on Linux for every change; the

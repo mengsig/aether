@@ -2,7 +2,7 @@
 // window as a deep-link target, and the link scheme registration. Wording stays short and calm.
 
 import { app, BrowserWindow, dialog, Notification, webContents } from "electron";
-import { DEEP_LINK_CHANNEL, DEEP_LINK_SCHEME, type RouteTarget } from "./deep-links.ts";
+import { DEEP_LINK_SCHEME } from "./deep-links.ts";
 import { checkPurpose, type FolderTokens } from "./folder-tokens.ts";
 import { settleShown, type NotificationSink } from "./notifications.ts";
 
@@ -20,24 +20,6 @@ export function notificationSink(): NotificationSink {
       if (shown.size >= MAX_SHOWN) shown.delete(shown.values().next().value as Notification);
       shown.add(note);
       return settleShown(note);
-    },
-  };
-}
-
-/** The app window, once its first load finished, as the place links and notification clicks open. */
-export function windowTarget(window: BrowserWindow): RouteTarget {
-  const focus = () => {
-    if (window.isDestroyed()) throw new Error("the app window is gone");
-    if (window.isMinimized()) window.restore();
-    if (!window.isVisible()) window.show();
-    window.focus();
-  };
-  return {
-    isReady: () => !window.isDestroyed() && !window.webContents.isCrashed(),
-    focus,
-    show(route) {
-      focus();
-      window.webContents.send(DEEP_LINK_CHANNEL, route);
     },
   };
 }
