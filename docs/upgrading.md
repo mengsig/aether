@@ -84,7 +84,7 @@ Retrieval changes what reaches a turn. Under `[memory.retrieval]`:
 | --- | --- | --- |
 | `max_items` | 6 | At most this many memories per turn, as before |
 | `min_score` | 0 | A memory below this relevance is not injected; pinned ones are. 0, the default, turns the cutoff off: an absolute cutoff also drops relevant memories that share no word with the task |
-| `holdout_rate` | 0.05 | A seeded share of the memories that would fit is withheld and logged, to measure lift. 0 turns it off |
+| `holdout_rate` | 0 | A seeded share of the memories that would fit is withheld and logged, to measure lift. Set a positive rate to opt in |
 | `holdout_seed` | 0 | The seed of that sample |
 
 `aether memory consolidate --dry-run` shows which near-duplicates would merge;
