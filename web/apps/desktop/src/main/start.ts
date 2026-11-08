@@ -183,7 +183,8 @@ export async function startDesktop(options: DesktopOptions): Promise<Desktop> {
   });
   await appWindow.loadURL(APP_ENTRY);
   if (!options.offscreen) appWindow.show();
-  const remapX11 = x11Session(process.platform, app.commandLine.getSwitchValue("ozone-platform"), options.env.XDG_SESSION_TYPE);
+  const hint = app.commandLine.getSwitchValue("ozone-platform-hint") || options.env.ELECTRON_OZONE_PLATFORM_HINT || "";
+  const remapX11 = x11Session(process.platform, app.commandLine.getSwitchValue("ozone-platform"), hint, options.env);
   deepLinks.attach(windowTarget(appWindow, remapX11));
   return { appWindow, bridge, remote, reports, preferences, appWindowIds, deepLinks, folders };
 }

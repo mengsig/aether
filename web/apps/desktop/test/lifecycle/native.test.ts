@@ -203,8 +203,11 @@ test("notification clicks restore and show the app before opening the question r
 });
 
 test("only Linux X11 sessions remap a visible window", () => {
-  assert.equal(x11Session("linux", "x11", "wayland"), true);
-  assert.equal(x11Session("linux", "", "x11"), true);
-  assert.equal(x11Session("linux", "wayland", "x11"), false);
-  assert.equal(x11Session("darwin", "x11", "x11"), false);
+  assert.equal(x11Session("linux", "x11", "", { XDG_SESSION_TYPE: "wayland" }), true);
+  assert.equal(x11Session("linux", "", "", { XDG_SESSION_TYPE: "x11" }), true);
+  assert.equal(x11Session("linux", "", "", { DISPLAY: ":2", XDG_SESSION_TYPE: "tty" }), true);
+  assert.equal(x11Session("linux", "", "wayland", { XDG_SESSION_TYPE: "x11" }), false);
+  assert.equal(x11Session("linux", "wayland", "x11", { XDG_SESSION_TYPE: "x11" }), false);
+  assert.equal(x11Session("linux", "", "", { DISPLAY: ":2", WAYLAND_DISPLAY: "wayland-1" }), false);
+  assert.equal(x11Session("darwin", "x11", "", { XDG_SESSION_TYPE: "x11" }), false);
 });

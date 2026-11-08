@@ -11,8 +11,13 @@ interface AppWindow {
   webContents: { isCrashed(): boolean; send(channel: string, route: string): void };
 }
 
-export function x11Session(platform: string, ozone: string, session: string | undefined): boolean {
-  return platform === "linux" && (ozone === "x11" || ((ozone === "" || ozone === "auto") && session === "x11"));
+export function x11Session(platform: string, ozone: string, hint: string, env: Readonly<Record<string, string | undefined>>): boolean {
+  if (platform !== "linux") return false;
+  const selected = ozone !== "" && ozone !== "auto" ? ozone : hint;
+  if (selected !== "" && selected !== "auto") return selected === "x11";
+  if (env.XDG_SESSION_TYPE === "x11") return true;
+  if (env.XDG_SESSION_TYPE === "wayland") return false;
+  return Boolean(env.DISPLAY) && !env.WAYLAND_DISPLAY;
 }
 
 /** Restores the app and delivers routes to its renderer. */
