@@ -28,7 +28,7 @@ function hostWith(origins: unknown, opened: string[], asked: Confirmation[] = []
     findDaemons: async () => [], openLink: async () => { throw new Error("no daemon"); }, push: () => {}, closed: () => {},
     confirm: async (_owner, confirmation) => { asked.push(confirmation); return answer; },
     openTerminal: async () => {}, notify: () => {},
-    startDaemon: async () => {}, pickDirectory: async () => null,
+    startDaemon: async () => {}, pickDirectory: async () => null, saveMemoryExport: async () => true,
     openExternal: async (url) => { opened.push(`external ${url}`); },
     openReport: async (url) => { opened.push(`report ${url}`); },
     openRemote: async (origin) => { opened.push(origin); },

@@ -115,7 +115,7 @@ function fakeHost(recorded: Recorded, shown: Confirmation[], answer: boolean): B
     closed: () => {},
     confirm: async (_owner, confirmation) => { shown.push(confirmation); return answer; },
     openTerminal: async () => { throw new Error("no terminal in this test"); },
-    notify: () => {}, startDaemon: async () => {}, pickDirectory: async () => null,
+    notify: () => {}, startDaemon: async () => {}, pickDirectory: async () => null, saveMemoryExport: async () => true,
     openExternal: async () => {}, openReport: async () => {}, openRemote: async () => {},
     getPreference: () => undefined, setPreference: async () => {},
     setup: async () => { throw new Error("no setup in this test"); },

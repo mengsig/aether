@@ -1,9 +1,10 @@
 // Starts the desktop app: the app:// scheme, the guarded default session, the bridge and the
 // app window. The entry and the headless security harness both start it through here.
 
+import { writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { app, BrowserWindow, ipcMain, protocol, session, webContents } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, protocol, session, webContents } from "electron";
 import { Bridge, helloFrame, type BridgeHost } from "../bridge/bridge.ts";
 import { DaemonLink, type Frame } from "../bridge/daemon-link.ts";
 import { findDaemons } from "../discovery/daemons.ts";
@@ -125,6 +126,16 @@ function host(options: DesktopOptions, parts: HostParts): BridgeHost {
     },
     startDaemon: daemons.start,
     pickDirectory: (owner, purpose) => pickFolder(owner, purpose, folders),
+    saveMemoryExport: async (owner, name, artifact) => {
+      const contents = webContents.fromId(owner);
+      const window = contents === undefined ? null : BrowserWindow.fromWebContents(contents);
+      if (window === null || window.isDestroyed()) throw new Error("The app window is no longer available");
+      const result = await dialog.showSaveDialog(window, { defaultPath: name, filters: [{ name: "JSON Lines", extensions: ["jsonl"] }] });
+      if (result.canceled) return false;
+      if (result.filePath === undefined) throw new Error("The save dialog did not return a path");
+      await writeFile(result.filePath, artifact, "utf8");
+      return true;
+    },
     openExternal: openExternalLink,
     openReport: async (url) => { await reports.open(url); },
     openRemote: async (origin) => { await remote.open(origin); },
@@ -168,6 +179,7 @@ export async function startDesktop(options: DesktopOptions): Promise<Desktop> {
   appWindow.on("closed", () => {
     appWindowIds.delete(id);
     bridge.connections.closeOwner(id);
+    bridge.memoryExports.forget(id);
   });
   await appWindow.loadURL(APP_ENTRY);
   if (!options.offscreen) appWindow.show();

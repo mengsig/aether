@@ -1,9 +1,9 @@
-import { connectionDraftKey, useDraft } from "@aether-ui/core";
+import { connectionDraftKey, useApp, useDraft } from "@aether-ui/core";
 import { useScopeSuggestions } from "./Repository.tsx";
 // Export every memory of a scope, or of the store, as the JSON Lines artifact (MEMORY-V2.md §2.4),
 // offered as a download with its record count and SHA-256 digest.
 
-import type { aether, ConnId } from "@aether-ui/protocol";
+import type { aether, ConnId, DesktopMemoryExport } from "@aether-ui/protocol";
 import { Combo } from "@aether-ui/ui";
 import { useEffect, useMemo, useState } from "react";
 import { invariant } from "../fleet/invariant.ts";
@@ -44,12 +44,24 @@ export function ExportTool({ conn }: { conn: ConnId }) {
 
 function Download({ result }: { result: aether.MemoryExport }) {
   invariant(Number.isInteger(result.records) && result.records >= 0, "records is a count");
-  const url = useMemo(() => URL.createObjectURL(new Blob([result.artifact], { type: "application/jsonl" })), [result.artifact]);
-  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+  const app = useApp();
+  const desktop = app.host.desktop as (typeof app.host.desktop & Partial<DesktopMemoryExport>);
+  const save = desktop?.saveMemoryExport;
+  const [error, setError] = useState("");
+  const url = useMemo(() => save ? null : URL.createObjectURL(new Blob([result.artifact], { type: "application/jsonl" })), [result.artifact, save]);
+  useEffect(() => () => { if (url !== null) URL.revokeObjectURL(url); }, [url]);
+  const download = async () => {
+    if (!save) return;
+    setError("");
+    try { await save(result.digest); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  };
   const name = `aether-memories-${result.digest.slice(0, 12)}.jsonl`;
   return <div className="mem-plan" data-kind="export">
     <p className="mem-plan-sum">{count(result.records, "record", "records")} exported</p>
     <p className="b3-meta">SHA-256 <code className="b3-code mem-digest">{result.digest}</code></p>
-    <a className="mem-download" href={url} download={name}>Download {name}</a>
+    {url === null ? <button className="mem-download" type="button" onClick={() => { void download(); }}>Download {name}</button>
+      : <a className="mem-download" href={url} download={name}>Download {name}</a>}
+    {error ? <p role="alert">{error}</p> : null}
   </div>;
 }

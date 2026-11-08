@@ -92,6 +92,7 @@ test("a guarded session allows notifications and nothing else, and never spellch
   let spellchecker: boolean | undefined;
   let dictionaries: string[] | undefined;
   const fake = {
+    on: () => {}, removeListener: () => {},
     setSpellCheckerEnabled: (enabled: boolean) => { spellchecker = enabled; },
     setSpellCheckerLanguages: (languages: string[]) => { dictionaries = languages; },
     setPermissionRequestHandler: (handler: typeof request) => { request = handler; },
@@ -117,6 +118,7 @@ test("a report window's session holds no permission at all, notifications includ
   let request: ((contents: unknown, permission: string, callback: (granted: boolean) => void) => void) | undefined;
   let check: ((contents: unknown, permission: string) => boolean) | undefined;
   const fake = {
+    on: () => {}, removeListener: () => {},
     setSpellCheckerEnabled: () => {},
     setSpellCheckerLanguages: () => {},
     setPermissionRequestHandler: (handler: typeof request) => { request = handler; },

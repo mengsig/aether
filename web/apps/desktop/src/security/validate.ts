@@ -37,6 +37,7 @@ export type ValidCall =
   | { method: "privileged"; action: PrivilegedAction }
   | { method: "startDaemon"; kind: DaemonKind }
   | { method: "pickDirectory"; purpose: string }
+  | { method: "saveMemoryExport"; digest: string }
   | { method: "notify"; note: { title: string; body: string; route?: string; backgroundOnly?: boolean } }
   | { method: "openExternal"; url: string }
   | { method: "openRemote"; origin: string }
@@ -57,6 +58,7 @@ const ARGUMENTS: Readonly<Record<BridgeMethod, readonly unknown[]>> = {
   privileged: [{ type: "object" }],
   startDaemon: [{ enum: ["aether", "archon"] }],
   pickDirectory: [TEXT],
+  saveMemoryExport: [{ type: "string", pattern: "^[0-9a-f]{64}$" }],
   notify: [{
     type: "object", additionalProperties: false, required: ["title", "body"],
     properties: { title: TEXT, body: { type: "string" }, route: { type: "string", pattern: "^/" }, backgroundOnly: { type: "boolean" } },
@@ -115,6 +117,7 @@ export class Validator {
       case "privileged": return { method, action: this.privilegedAction(first, connections) };
       case "startDaemon": return { method, kind: first as DaemonKind };
       case "pickDirectory": return { method, purpose: first as string };
+      case "saveMemoryExport": return { method, digest: first as string };
       case "notify": return { method, note: first as { title: string; body: string; route?: string; backgroundOnly?: boolean } };
       case "openExternal": return { method, url: first as string };
       case "openRemote": return { method, origin: first as string };
