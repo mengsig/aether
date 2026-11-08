@@ -45,7 +45,7 @@ export function TopologyScreen({ layout = layeredLayout }: TopologyScreenProps) 
     return () => { live = false; };
   }, [gate, model, attempt]);
 
-  const toggle = useCallback((group: string) => setOverrides((old) => toggleRun(topology, old, group)), [topology]);
+  const toggle = useCallback((group: string) => setOverrides((old) => toggleRun(visible, old, group)), [visible]);
   const activate = useCallback((id: string) => {
     const ref = topology.agentOf.get(id);
     if (ref !== undefined) navigate(routeHref("#/agents/:conn/:agent", { conn: ref.conn, agent: ref.agent }));

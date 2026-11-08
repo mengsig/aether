@@ -79,6 +79,15 @@ describe("the topology screen", () => {
     expect(calls[2]?.collapsed.size).toBe(calls[2]?.groups.length);
   });
 
+  test("collapses a small selected run on its first group click in a large fleet", async () => {
+    const { container, calls } = await topology(410);
+    const group = container.querySelector<HTMLButtonElement>('button[aria-expanded="true"]');
+    if (!group) throw new Error("expanded group missing");
+    expect(calls.at(-1)?.collapsed.size).toBe(0);
+    await act(async () => group.click());
+    expect(calls.at(-1)?.collapsed.size).toBe(1);
+  });
+
   test("labels Archon-run agents by role in the graph's node list without archond", async () => {
     const { container } = await topology(6);
     const items = [...container.querySelectorAll("li")].map((node) => node.textContent ?? "");
