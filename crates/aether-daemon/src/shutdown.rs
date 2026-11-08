@@ -14,6 +14,7 @@ const DRAIN_DEADLINE: Duration = Duration::from_secs(3);
 const STORE_DEADLINE: Duration = Duration::from_secs(2);
 const CLEANUP_DEADLINE: Duration = Duration::from_secs(2);
 
+/// A timed-out phase keeps these until it actually finishes.
 #[derive(Clone)]
 pub(crate) struct Locks {
     _store: Arc<InstanceLock>,
