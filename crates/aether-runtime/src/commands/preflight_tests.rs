@@ -62,6 +62,8 @@ async fn stale_delegation_checks_create_neither_agents_nor_tasks() {
                 Preflight {
                     checked: Some(checked),
                     run_budget: false,
+                    inherit_limits: false,
+                    before_hold: None,
                     isolated_workspace: None,
                 },
                 None,
@@ -83,6 +85,8 @@ async fn stale_delegation_checks_create_neither_agents_nor_tasks() {
             Preflight {
                 checked: Some((&parent.model, parent.scope.network)),
                 run_budget: false,
+                inherit_limits: false,
+                before_hold: None,
                 isolated_workspace: None,
             },
             None,
