@@ -107,6 +107,14 @@ export class FauxNoesis {
     this.push({ frame: "delta", sub, agent, invocation, invocation_seq: order, delta: { delta: "text", text } });
   }
 
+  turn(session: string, invocation: string, order: number, started: boolean): void {
+    const agent = this.session(session).agent;
+    const sub = this.deltaSubs.get(agent);
+    invariant(sub !== undefined, `a screen watches ${agent} for deltas`);
+    const delta = started ? { delta: "turn_started", turn: 0 } : { delta: "turn_finished" };
+    this.push({ frame: "delta", sub, agent, invocation, invocation_seq: order, delta });
+  }
+
   /** Noesis writes to the session's agent: a user-role message that is never the learner's. */
   internal(session: string, text: string): void {
     const agent = this.session(session).agent;

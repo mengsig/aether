@@ -788,6 +788,23 @@ impl Runtime {
         self.bus.subscribe()
     }
 
+    /// Announce a Noesis model call without publishing its unsealed content.
+    pub fn noesis_turn_started(&self, agent: AgentId) -> DeltaStream {
+        let mut stream = DeltaStream::new(
+            aether_core::id::InvocationId::new(),
+            noesis_seal::StreamSeal::Noesis,
+        );
+        self.bus
+            .publish_delta(agent, &mut stream, DeltaKind::TurnStarted { turn: 0 });
+        stream
+    }
+
+    /// Close the matching transient Noesis turn announcement.
+    pub fn noesis_turn_finished(&self, agent: AgentId, stream: &mut DeltaStream) {
+        self.bus
+            .publish_delta(agent, stream, DeltaKind::TurnFinished);
+    }
+
     /// Stop scheduling, cancel running turns, and record the stop.
     pub async fn shutdown(&self) -> ShutdownOutcome {
         self.shutdown.cancel();

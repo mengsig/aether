@@ -75,6 +75,25 @@ describe("grades", () => {
 });
 
 describe("the whole conversation", () => {
+  test("a new session shows writing even when its start preceded the subscription", async () => {
+    const h = await start({ sessions: [LESSON], transcripts: {} });
+    const root = await open(h);
+    expect(root.textContent).toContain("Your teacher is writing…");
+    h.daemon.teach(LESSON.id, "Welcome to the lesson.");
+    await h.settle(SETTLE_MS);
+    expect(root.textContent).not.toContain("Your teacher is writing…");
+  });
+
+  test("turn activity shows writing until a buffered reply finishes", async () => {
+    const h = await start();
+    const root = await open(h);
+    h.daemon.turn(LESSON.id, "inv_writing", 1, true);
+    await h.settle();
+    expect(root.textContent).toContain("Your teacher is writing…");
+    h.daemon.turn(LESSON.id, "inv_writing", 2, false);
+    await h.settle();
+    expect(root.textContent).not.toContain("Your teacher is writing…");
+  });
   test("the Prober's transcript stays after the hand-off, and Noesis's own inputs never read as the learner's", async () => {
     const h = await start();
     h.daemon.internal(LESSON.id, "NOESIS CONTEXT: the learner studies Raft elections.");

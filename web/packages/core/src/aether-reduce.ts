@@ -121,6 +121,7 @@ export function applyDelta(state: AetherConnState, frame: Json): { state: Aether
   const order = frame.invocation_seq === undefined || frame.invocation_seq === null ? null : seq(frame.invocation_seq, "delta.invocation_seq");
   const previous = state.streams[invocation];
   invariant(!previous || previous.agent === agent, "an invocation belongs to one agent");
+  if (delta.delta === "turn_finished" && previous === undefined) return { state, outcome: "ignored" };
   if (previous?.committed) return { state, outcome: "ignored" };
   const lost: StreamState = { ...emptyStream(agent, invocation, order), recovering: true, partial: true };
   if (order !== null && previous?.lastInvocationSeq != null && order <= previous.lastInvocationSeq) return { state, outcome: "ignored" };
@@ -128,6 +129,9 @@ export function applyDelta(state: AetherConnState, frame: Json): { state: Aether
   const expected = previous?.lastInvocationSeq == null ? 1 : previous.lastInvocationSeq + 1;
   if (order !== null && order !== expected) return { state: withStream(state, invocation, lost), outcome: "reread" };
   const stream: StreamState = { ...(previous ?? emptyStream(agent, invocation, order)), lastInvocationSeq: order };
+  if (delta.delta === "turn_finished" && stream.text === "" && stream.thinking === "" && stream.tools.length === 0) {
+    return { state: withStream(state, invocation, undefined), outcome: "applied" };
+  }
   const grown = grow(stream, delta);
   if (grown === null) return { state: withStream(state, invocation, lost), outcome: "reread" };
   return { state: withStream(state, invocation, grown), outcome: "applied" };

@@ -113,7 +113,7 @@ describe("teaching turns", () => {
     await type(h, $(root, "[data-testid=learn-reply]"), "What stops two leaders?");
     await click(h, byText(root, "button", "Send"));
     expect(h.daemon.sent.filter((c) => c.cmd === "noesis_send").map((c) => c.text)).toEqual(["What stops two leaders?"]);
-    expect(root.querySelector(".learn-working")?.textContent).toContain("Your teacher is working");
+    expect(root.querySelector(".learn-working")?.textContent).toContain("Your teacher is writing");
     expect(($(root, "[data-testid=learn-reply]") as HTMLTextAreaElement).disabled).toBe(true);
 
     h.daemon.teach(LESSON.id, "Each server votes once per term, and a leader needs a majority.");

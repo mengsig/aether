@@ -19,6 +19,13 @@ function feed(state: AetherConnState, frames: readonly Json[]): AetherConnState 
 }
 
 describe("the streamed tail of an invocation", () => {
+  it("removes a finished activity-only turn without keeping an empty stream", () => {
+    const started = feed(EMPTY_AETHER, [delta(1, { delta: "turn_started", turn: 0 })]);
+    expect(started.streams[INV]).toBeDefined();
+    const finished = feed(started, [delta(2, { delta: "turn_finished" })]);
+    expect(finished.streams[INV]).toBeUndefined();
+    expect(applyDelta(EMPTY_AETHER, delta(2, { delta: "turn_finished" })).state.streams[INV]).toBeUndefined();
+  });
   it("is emptied by its committed message and drops a late delta after it", () => {
     let state = feed(EMPTY_AETHER, [text(1, "Hel"), text(2, "lo")]);
     expect(state.streams[INV]?.text).toBe("Hello");

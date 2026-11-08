@@ -48,7 +48,11 @@ export interface LessonTurn {
 export function useLessonTurn(conn: string, session: aether.NoesisSession, items: readonly TimelineItem[], streamed: string): LessonTurn {
   const change = useNoesisChange(conn);
   const progress = progressOf(session, items);
-  const [pending, setPending] = useState<Pending | null>(null);
+  const [pending, setPending] = useState<Pending | null>(() => (
+    items.length === 0 && session.open_question == null && session.active_problem == null && session.stalled == null
+      ? { ...progress, stalled: false }
+      : null
+  ));
   const [refused, setRefused] = useState<{ refusal: Refusal; command: Record<string, unknown> } | null>(null);
 
   if (pending !== null && answered(pending, progress)) setPending(null);

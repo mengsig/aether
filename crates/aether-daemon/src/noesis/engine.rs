@@ -300,6 +300,19 @@ impl AetherEngine<'_> {
     /// stops or the agent ends (a cancel) while it runs. The reply is
     /// buffered whole: nothing of it is published until it is kept.
     fn invoke(&self, agent: &Agent, request: ModelRequest) -> Result<CallEnd, EngineError> {
+        let mut stream = self.host.runtime.noesis_turn_started(agent.id);
+        let result = self.invoke_buffered(agent, request);
+        self.host
+            .runtime
+            .noesis_turn_finished(agent.id, &mut stream);
+        result
+    }
+
+    fn invoke_buffered(
+        &self,
+        agent: &Agent,
+        request: ModelRequest,
+    ) -> Result<CallEnd, EngineError> {
         let host = self.host;
         let handle = tokio::runtime::Handle::current();
         let cancel = host.cancel.child_token();

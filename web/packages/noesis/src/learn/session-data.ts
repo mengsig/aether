@@ -45,3 +45,9 @@ export function useLiveText(conn: string, agent: string): readonly TimelineItem[
   const streams = useSelector(useMemo(() => selectStreams(conn), [conn]));
   return useMemo(() => liveItems(streams, agent), [streams, agent]);
 }
+
+/** A turn start without visible text still indicates that the teacher is writing. */
+export function useTeacherWriting(conn: string, agent: string): boolean {
+  const streams = useSelector(useMemo(() => selectStreams(conn), [conn]));
+  return Object.values(streams).some((stream) => stream.agent === agent && !stream.committed && !stream.recovering);
+}

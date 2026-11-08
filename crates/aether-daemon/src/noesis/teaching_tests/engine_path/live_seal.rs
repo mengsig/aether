@@ -82,7 +82,7 @@ async fn a_pose_carrying_its_answer_streams_nothing_that_holds_it() {
     harness.settled().await;
 
     let prober = agent_of(&created);
-    let mut deltas = 0;
+    let mut deltas = Vec::new();
     loop {
         let message = match bus.try_recv() {
             Ok(message) => message,
@@ -91,11 +91,24 @@ async fn a_pose_carrying_its_answer_streams_nothing_that_holds_it() {
         };
         let shown = format!("{message:?}");
         assert!(!shown.contains(KEY), "a client could read it: {shown}");
-        if matches!(message, BusMessage::Delta { agent, .. } if agent == prober) {
-            deltas += 1;
+        if let BusMessage::Delta { agent, delta, .. } = message
+            && agent == prober
+        {
+            deltas.push(delta);
         }
     }
-    assert_eq!(deltas, 0, "a lesson reply is buffered whole");
+    assert!(matches!(
+        deltas.first(),
+        Some(aether_runtime::DeltaKind::TurnStarted { .. })
+    ));
+    assert!(matches!(
+        deltas.last(),
+        Some(aether_runtime::DeltaKind::TurnFinished)
+    ));
+    assert!(deltas.iter().all(|delta| matches!(
+        delta,
+        aether_runtime::DeltaKind::TurnStarted { .. } | aether_runtime::DeltaKind::TurnFinished
+    )));
     let session = harness.session(&created.id).await.expect("session");
     assert_eq!(
         session.open_question.expect("posed").prompt,

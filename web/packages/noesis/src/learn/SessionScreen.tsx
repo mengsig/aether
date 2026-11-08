@@ -1,5 +1,5 @@
 // `#/learn/sessions/:id`: the lesson's whole conversation (every agent's, with its questions and
-// problems), the plan beside it and the way to answer. The teacher's reply streams in as it is written.
+// problems), the plan beside it and the way to answer. Turn activity is shown while replies are sealed.
 
 import type { aether, RouteProps } from "@aether-ui/protocol";
 import { useSelector } from "@aether-ui/core";
@@ -15,7 +15,7 @@ import { ProblemCard } from "./ProblemCard.tsx";
 import { QuestionCard, type AnswerInput } from "./QuestionCard.tsx";
 import { RefusalNote } from "./RefusalNote.tsx";
 import { SessionAside } from "./SessionAside.tsx";
-import { useLessonTranscripts, useLiveText } from "./session-data.ts";
+import { useLessonTranscripts, useLiveText, useTeacherWriting } from "./session-data.ts";
 import { buildTimeline, type TimelineItem } from "./timeline.ts";
 
 export { STALL_MS } from "./lesson-turn.ts";
@@ -40,6 +40,7 @@ function SessionView({ conn, status, session, reload }: OpenGate & { session: ae
   const canRetryTurn = useSelector(useCallback((state) => state.connections[conn]?.features.includes("noesis_retry_turn") === true, [conn]));
   const transcripts = useLessonTranscripts(conn, session);
   const live = useLiveText(conn, session.agent);
+  const writing = useTeacherWriting(conn, session.agent);
   const items = useMemo(() => buildTimeline(session, transcripts, learn), [session, transcripts, learn]);
   const streamed = live.map((item) => (item.kind === "message" ? item.text : "")).join("");
   const turn = useLessonTurn(conn, session, items, streamed);
@@ -59,7 +60,7 @@ function SessionView({ conn, status, session, reload }: OpenGate & { session: ae
           <p className="learn-session-goal">{session.goal}</p>
           <p className="learn-muted">{PHASE_LABEL[session.phase]}</p>
         </header>
-        <Transcript items={[...items, ...live]} live={live.length > 0} pending={turn.pending} onAnswer={operate === null ? answer : undefined} onCheck={checkAgain}>
+        <Transcript items={[...items, ...live]} live={live.length > 0} writing={writing} pending={turn.pending} onAnswer={operate === null ? answer : undefined} onCheck={checkAgain}>
           {session.context && session.context.items.length > 0 && <SourcesCard bundle={session.context} />}
           {planComplete(session.plan) && <CompletionCard conn={conn} session={session} />}
           {refusal !== null && <RefusalNote refusal={refusal} budget={refusal.kind === "budget" ? budget : null} onRetry={retry} />}
@@ -116,13 +117,14 @@ function useFollowLatest(items: readonly TimelineItem[], pending: object | null)
 interface TranscriptProps {
   readonly items: readonly TimelineItem[];
   readonly live: boolean;
+  readonly writing: boolean;
   readonly pending: { readonly stalled: boolean } | null;
   readonly onAnswer: AnswerFn | undefined;
   readonly onCheck: () => void;
   readonly children: ReactNode;
 }
 
-function Transcript({ items, live, pending, onAnswer, onCheck, children }: TranscriptProps) {
+function Transcript({ items, live, writing, pending, onAnswer, onCheck, children }: TranscriptProps) {
   const { ref, away, onScroll, jump } = useFollowLatest(items, pending);
   return (
     <div className="learn-transcript">
@@ -130,8 +132,8 @@ function Transcript({ items, live, pending, onAnswer, onCheck, children }: Trans
         <ol className="learn-timeline" aria-label="Conversation">
           {items.map((item) => <li key={item.key} className="learn-timeline-item"><TimelineEntry item={item} onAnswer={onAnswer} /></li>)}
         </ol>
-        {items.length === 0 && pending === null && <p className="learn-muted">Your teacher is getting ready. The conversation shows here.</p>}
-        {pending !== null && !live && <Working stalled={pending.stalled} onCheck={onCheck} />}
+        {items.length === 0 && pending === null && !writing && <p className="learn-muted">Your teacher is getting ready. The conversation shows here.</p>}
+        {!live && (writing || pending !== null) && <Working stalled={!writing && pending?.stalled === true} onCheck={onCheck} />}
         {children}
       </div>
       {away && <button type="button" className="learn-jump" data-testid="learn-jump-latest" onClick={jump}>Jump to latest ↓</button>}
@@ -161,7 +163,7 @@ function Working({ stalled, onCheck }: { stalled: boolean; onCheck: () => void }
       </div>
     );
   }
-  return <p className="learn-working" role="status"><span className="learn-dots" aria-hidden="true"><span /><span /><span /></span>Your teacher is working…</p>;
+  return <p className="learn-working" role="status"><span className="learn-dots" aria-hidden="true"><span /><span /><span /></span>Your teacher is writing…</p>;
 }
 
 export default function SessionRoute({ params }: RouteProps) {
