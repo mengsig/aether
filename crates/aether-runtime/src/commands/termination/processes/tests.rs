@@ -211,7 +211,7 @@ async fn a_late_hand_up_settles_with_the_live_owner_it_would_have_reached() {
     assert_eq!(runtime.settle_owner(middle), None, "a stop took it");
 }
 
-/// A daemon stop or start sweeps an ended agent no live agent holds; a live
+/// A start after a crash sweeps an ended agent no live agent holds; a live
 /// one keeps its own, a completed one's stay with its nearest live ancestor,
 /// recorded as holding them, and an agent this store never ran is left alone.
 #[tokio::test]
