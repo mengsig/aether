@@ -53,7 +53,7 @@ test("packaged Learn with Haiku and Luna", async () => {
       const graded = await until(() => session(stack, id), (value) => value.questions?.some((entry) => entry.result?.correct != null) === true, "the recall grade", WAIT_MS);
       expect(graded.questions?.find((entry) => entry.answer?.thinking === "Divide both sides by 2.")?.result?.correct, "the teacher accepts the learner's reasoning").toBe(true);
       expect(await assistantText(stack, saved.agent)).not.toMatch(/didn.t come from you/i);
-      await expect(question.locator("[data-correct]")).toBeVisible({ timeout: WAIT_MS });
+      await expect(window.getByRole("article", { name: "Recall question" }).locator('[data-correct="true"]')).toBeVisible({ timeout: WAIT_MS });
       await capture(window, `${model.model}-graded`);
       const finishReads = stopReads;
       stopReads = undefined;
