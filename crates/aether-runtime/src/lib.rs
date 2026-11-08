@@ -298,6 +298,14 @@ pub(crate) fn withheld_by_position(
     None
 }
 
+/// The known processes left after a runtime shutdown.
+#[derive(Debug, Default)]
+pub struct ShutdownOutcome {
+    /// PIDs still alive after the agent process sweep. This excludes explicitly
+    /// kept processes, foreign agents and processes the scanner could not see.
+    pub surviving_agent_processes: Vec<u32>,
+}
+
 pub struct Runtime {
     /// This runtime, for a task that commits after the call that spawned it returned.
     pub(crate) me: std::sync::Weak<Runtime>,
@@ -528,8 +536,7 @@ impl Runtime {
                 "Startup artifact cleanup failed: {error}; periodic maintenance will retry. Run `aether doctor` and `aether diagnose`."
             )),
         }
-        // A daemon that died left what its ended agents detached or handed up
-        // running; a stop would have taken what no live agent holds, so this start does.
+        // A crash left detached processes running; stop those no live agent holds.
         let reaped = runtime.reap_unheld_agent_processes().await;
         if reaped > 0 {
             tracing::info!(
@@ -783,7 +790,7 @@ impl Runtime {
     }
 
     /// Stop scheduling, cancel running turns, and record the stop.
-    pub async fn shutdown(&self) {
+    pub async fn shutdown(&self) -> ShutdownOutcome {
         self.shutdown.cancel();
         let (tokens, interrupted): (Vec<CancellationToken>, HashSet<AgentId>) = {
             let sched = self.sched.lock();
@@ -812,11 +819,13 @@ impl Runtime {
             }
             None => 0,
         };
-        // What left those groups, and what engines detached, is found by agent;
-        // a live agent's stays up for its recovery after a restart.
-        let reaped = self.reap_unheld_agent_processes().await;
-        if reaped > 0 {
-            tracing::info!(reaped, "stopped agent processes with the daemon");
+        // Find processes that escaped those groups, including live agents' servers.
+        let reaped = self.reap_shutdown_agent_processes().await;
+        if !reaped.terminated.is_empty() {
+            tracing::info!(
+                count = reaped.terminated.len(),
+                "stopped agent processes with the daemon"
+            );
         }
         if let Err(e) = self.apply(Commit::new().event(EventDraft::new(
             Actor::System,
@@ -825,6 +834,9 @@ impl Runtime {
             },
         ))) {
             tracing::error!(error = %e, "failed to record daemon stop");
+        }
+        ShutdownOutcome {
+            surviving_agent_processes: reaped.survived,
         }
     }
 }

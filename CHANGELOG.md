@@ -24,6 +24,9 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- Daemon shutdown reaps live agents' detached servers before the final store
+  checkpoint and bounds each shutdown phase; committed data remains recoverable
+  from the WAL if a deadline prevents the checkpoint.
 - Delegated children inherit their parent's current deadline and cost budget,
   including extensions made while a turn is in flight.
 
