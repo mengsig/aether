@@ -133,6 +133,7 @@ async fn store_with(
                 std::thread::sleep(Duration::from_millis(50));
             }
             if quiesced.send(()).is_err() {
+                drop(store);
                 return;
             }
             let result = if proceed.recv().unwrap_or(false) {
