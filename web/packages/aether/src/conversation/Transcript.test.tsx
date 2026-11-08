@@ -181,6 +181,15 @@ describe("the screen's states", () => {
     expect(container.textContent).toContain("Write to it in the box below");
   });
 
+  test("shows the disconnected banner even when the transcript is empty", async () => {
+    const { h, container } = await open([]);
+    expect(byTestId(container, "conv-connection")).toBeNull();
+    h.daemon.drop(1006);
+    await h.settle();
+    expect(byTestId(container, "conv-connection")?.textContent).toMatch(/lost|Disconnected/);
+    expect(container.textContent).toContain("No messages yet");
+  });
+
   test("keeps the transcript and shows a quiet banner while the connection is down", async () => {
     const { h, container } = await open([{ message: text("user", "Still here") }]);
     expect(byTestId(container, "conv-connection")).toBeNull();

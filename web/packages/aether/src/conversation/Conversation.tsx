@@ -158,9 +158,12 @@ export function Conversation({ conn, agent, rules = null, layout = "standard" }:
   }
   if (rows.length === 0) {
     return (
-      <EmptyState className="conv-empty" title="No messages yet">
-        The agent's replies, its tool calls and the messages it receives appear here as it works. Write to it in the box below.
-      </EmptyState>
+      <>
+        <ConnectionBanner info={info} />
+        <EmptyState className="conv-empty" title="No messages yet">
+          The agent's replies, its tool calls and the messages it receives appear here as it works. Write to it in the box below.
+        </EmptyState>
+      </>
     );
   }
   const hidden = rows.length - views.length;
