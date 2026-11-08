@@ -41,18 +41,44 @@ describe("app.rediscover", () => {
     app.stop();
   });
 
-  it("starts nothing when managed start is off, and reports a start that failed", async () => {
+  it("starts nothing when managed start is off", async () => {
     const off = bridge([[]]);
     const quiet = createApp({ kind: "electron", desktop: off, storage }, { scheduler: (f) => f() });
     await quiet.start();
     expect(off.startDaemon).not.toHaveBeenCalled();
 
-    const failing = bridge([[]], true);
-    vi.mocked(failing.startDaemon).mockRejectedValue(new Error("no aether binary"));
-    const app = createApp({ kind: "electron", desktop: failing, storage }, { scheduler: (f) => f() });
+  });
+
+  it("connects a started daemon even when the other start fails", async () => {
+    const desktop = bridge([[], [daemon("aether", true)]], true);
+    vi.mocked(desktop.startDaemon).mockImplementation(async (kind) => {
+      if (kind === "archon") throw new Error("no archon binary");
+    });
+    const app = createApp({ kind: "electron", desktop, storage }, { scheduler: (f) => f() });
     await app.start();
-    await vi.waitFor(() => expect(app.store.get().reports.at(-1)?.message).toMatch(/Could not start Aether on this computer: no aether binary/));
-    expect(failing.startDaemon).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(app.manager.all()).toHaveLength(1));
+    expect(app.store.get().reports.map((report) => report.message)).toContain("Could not start Archon on this computer: no archon binary");
+    expect(desktop.startDaemon).toHaveBeenCalledTimes(2);
+    expect(app.manager.all()[0]?.endpoint.daemon).toBe("aether");
+    expect(desktop.connect).toHaveBeenCalledWith("aether-local");
+    app.stop();
+  });
+
+  it("reports both failures without rediscovering when neither daemon starts", async () => {
+    const desktop = bridge([[]], true);
+    vi.mocked(desktop.startDaemon).mockImplementation(async (kind) => { throw new Error(`no ${kind} binary`); });
+    const app = createApp({ kind: "electron", desktop, storage }, { scheduler: (f) => f() });
+    await app.start();
+    await vi.waitFor(() => expect(app.store.get().reports).toHaveLength(2));
+    expect(app.store.get().reports.map((report) => report.message)).toEqual([
+      "Could not start Aether on this computer: no aether binary",
+      "Could not start Archon on this computer: no archon binary",
+    ]);
+    expect(desktop.startDaemon).toHaveBeenCalledTimes(2);
+    expect(desktop.discover).toHaveBeenCalledTimes(1);
+    expect(app.manager.all()).toHaveLength(0);
+    expect(desktop.connect).not.toHaveBeenCalled();
+    app.stop();
   });
 
   it("is refused in a browser, which cannot see this computer's daemons", async () => {
