@@ -11,7 +11,7 @@ import type { Stack } from "../../../harness/stack.ts";
 import { expect, test, type Page } from "../../../harness/fixtures.ts";
 import { fixtureRepository, installGhStub, OWNER_REPO } from "../gh-stub.ts";
 import { startPrivateStack, stopPrivateStack, type PrivateStack } from "../private.ts";
-import { focusWindow, minimizeWindow, pressKeys, windowTitles } from "./native-host.ts";
+import { focusWindow, pressKeys, windowTitles } from "./native-host.ts";
 import { askingScript, installLavishStub, publishReport, shoot, shootScreen, startReportServer, VIEWPORT, type ReportServer } from "./native-fixtures.ts";
 import { launchPackaged, packagedBinary, type PackagedApp } from "./packaged.ts";
 import { route, setPaused } from "./state.ts";
@@ -190,9 +190,11 @@ test("UX-045: a real agent's notification restores the packaged app and focuses 
   await route(page, "#/inbox");
   await expect(page.getByText(/^Nothing on .* needs you$/)).toBeVisible();
   await route(page, "#/fleet");
-  const title = await page.title();
-  await minimizeWindow(desktop().compositor, title);
-  await expect.poll(() => page.evaluate(() => document.hasFocus()), { message: "the minimized app is in the background" }).toBe(false);
+  const session = await page.context().newCDPSession(page);
+  const { windowId } = await session.send("Browser.getWindowForTarget");
+  await session.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "minimized" } });
+  await expect.poll(async () => (await session.send("Browser.getWindowBounds", { windowId })).bounds.windowState,
+    { message: "the packaged window is minimized" }).toBe("minimized");
   stack().engine.setScript(askingScript(MARKER, QUESTIONS));
   const agent = await createAgent(stack(), "Native asker", `Ask the operator two things (${MARKER}).`);
   const alerted = await until(async () => desktop().native.notes(), (notes) => notes.some((note) => note.body === QUESTIONS[0]), "the first question's alert", 60_000);
@@ -201,11 +203,13 @@ test("UX-045: a real agent's notification restores the packaged app and focuses 
   expect(first.title).toBe("Native asker asks");
   expect(first.actions).toContain("default");
   await desktop().native.click(first.id);
-  await expect.poll(() => page.evaluate(() => document.hasFocus()), { message: "the click focuses the packaged app" }).toBe(true);
+  await expect.poll(async () => (await session.send("Browser.getWindowBounds", { windowId })).bounds.windowState,
+    { message: "the click restores the packaged window" }).toBe("normal");
   await expect.poll(() => page.evaluate(() => location.hash), { message: "the click opens the inbox" }).toBe("#/inbox");
   const card = page.locator(`[data-question*="/${agent}:"]`).filter({ hasText: QUESTIONS[0] });
   await expect(card.getByRole("textbox", { name: "Answer Native asker" })).toBeFocused();
   await shootScreen(desktop().compositor, "notification-answer-focused");
+  await session.detach();
 });
 
 test("UX-054: links from a second launch navigate the open window, again after moving away", async () => {
