@@ -33,7 +33,10 @@ fn delivered_answer_keeps_its_turn_pending_across_reload() {
     let engine = std::mem::take(teaching.engine_mut());
     drop(teaching);
     let mut reloaded = Teaching::new(&noesis, engine);
-    assert_eq!(reloaded.sessions_pending_turns().unwrap(), [id.clone()]);
+    assert_eq!(
+        reloaded.sessions_pending_turns().unwrap().as_slice(),
+        std::slice::from_ref(&id)
+    );
     reloaded.advance(&id).unwrap();
     assert!(reloaded.sessions_pending_turns().unwrap().is_empty());
 }

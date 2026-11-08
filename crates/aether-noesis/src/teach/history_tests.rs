@@ -176,7 +176,10 @@ fn a_spent_budget_stalls_the_session_until_a_turn_runs() {
         Some(spent)
     );
     t.retry_turn(&id).unwrap();
-    assert_eq!(t.sessions_pending_turns().unwrap(), [id.clone()]);
+    assert_eq!(
+        t.sessions_pending_turns().unwrap().as_slice(),
+        std::slice::from_ref(&id)
+    );
     t.advance(&id).unwrap();
     assert_eq!(session(&t, &id).stalled, None, "a turn that ran clears it");
     assert!(t.sessions_pending_turns().unwrap().is_empty());
@@ -191,11 +194,17 @@ fn pending_turn_survives_a_new_teaching_loop_and_clears_after_completion() {
         .create_session("Learn derivatives", Mode::Teach, &[])
         .unwrap()
         .id;
-    assert_eq!(first.sessions_pending_turns().unwrap(), [id.clone()]);
+    assert_eq!(
+        first.sessions_pending_turns().unwrap().as_slice(),
+        std::slice::from_ref(&id)
+    );
     let engine = std::mem::take(first.engine_mut());
     drop(first);
     let mut reloaded = Teaching::new(&noesis, engine);
-    assert_eq!(reloaded.sessions_pending_turns().unwrap(), [id.clone()]);
+    assert_eq!(
+        reloaded.sessions_pending_turns().unwrap().as_slice(),
+        std::slice::from_ref(&id)
+    );
     reloaded.advance(&id).unwrap();
     assert!(reloaded.sessions_pending_turns().unwrap().is_empty());
 }
