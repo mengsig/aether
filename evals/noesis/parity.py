@@ -24,6 +24,7 @@ REQUIRED_IDS = (
     + [f"S5-G{n:02d}" for n in range(1, 16)]
     + ["S5-H1", "S5-H2", "S5-SETTINGS"]
     + [f"X{n}" for n in range(1, 11)]
+    + ["B01", "B02"]
 )
 CRATES = ("aether-noesis", "aether-daemon", "aether-protocol")
 CASE_KEYS = {"id", "behaviour", "noesis_form", "clauses"}

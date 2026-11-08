@@ -1713,6 +1713,42 @@
           ]
         }
       ]
+    },
+    {
+      "id": "B01",
+      "behaviour": "Tagged teaching predictions are open and checks are collapsed in backend presentation flags",
+      "noesis_form": "differs: the current question card does not initially collapse unanswered checks",
+      "clauses": [
+        {
+          "clause": "Tagged teaching predictions are open and checks are collapsed in backend presentation flags",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/teach/parity.rs",
+              "name": "t07_teach_checks_collapse_and_predictions_probes_and_goals_never_do"
+            }
+          ],
+          "noesis": "differs: the current question card does not initially collapse unanswered checks"
+        }
+      ]
+    },
+    {
+      "id": "B02",
+      "behaviour": "Redundant superset and transitive shortcut chains are removed in the tested graph",
+      "noesis_form": "matches for this example; general selection order differs",
+      "clauses": [
+        {
+          "clause": "Redundant superset and transitive shortcut chains are removed in the tested graph",
+          "tests": [
+            {
+              "crate": "aether-noesis",
+              "file": "crates/aether-noesis/src/graph/tests.rs",
+              "name": "simplification_drops_supersets_and_shortcuts_covered_by_ancestry"
+            }
+          ],
+          "noesis": "matches for this example; general selection order differs"
+        }
+      ]
     }
   ]
 }
