@@ -280,11 +280,12 @@ pub(super) fn record_answer(
 }
 
 /// A committed answer whose delivery to the agent is still owed.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub(super) struct OwedAnswer {
     pub question: String,
     pub record: serde_json::Map<String, serde_json::Value>,
     pub correct: Option<bool>,
+    pub recall_key: Option<String>,
 }
 
 /// The session's answers recorded with `"delivered": false`, oldest first.
@@ -294,7 +295,7 @@ pub(super) fn owed_answers(
     session: &str,
 ) -> Result<Vec<OwedAnswer>, TeachError> {
     let mut statement = conn.prepare_cached(
-        "SELECT id, answer, correct FROM questions
+        "SELECT id, answer, correct, kind, answer_key FROM questions
          WHERE session = ?1 AND answered_at IS NOT NULL
            AND json_extract(answer, '$.delivered') = 0
          ORDER BY answered_at, rowid",
@@ -304,11 +305,23 @@ pub(super) fn owed_answers(
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, Option<bool>>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
         ))
     })?;
     let mut owed = Vec::new();
     for row in rows {
-        let (question, answer, correct) = row?;
+        let (question, answer, correct, kind, answer_key) = row?;
+        let recall_key = if kind == QuestionKind::Recall.as_str() {
+            let keys: Vec<String> = from_json(&answer_key, "question answer key")?;
+            Some(
+                keys.into_iter()
+                    .next()
+                    .ok_or_else(|| corrupt("recall answer key"))?,
+            )
+        } else {
+            None
+        };
         let serde_json::Value::Object(record) = from_json(&answer, "question answer")? else {
             return Err(corrupt("question answer"));
         };
@@ -316,6 +329,7 @@ pub(super) fn owed_answers(
             question,
             record,
             correct,
+            recall_key,
         });
     }
     Ok(owed)

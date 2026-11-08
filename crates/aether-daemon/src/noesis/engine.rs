@@ -267,17 +267,21 @@ impl AetherEngine<'_> {
                 .filter(|result| !answered.contains(&result.call))
                 .map(result_block)
                 .collect(),
-            Input::Answer(payload) => {
+            Input::Answer(mut payload) => {
                 let ask = wire_name(ToolName::Ask.as_str());
                 if !calls.iter().any(|(_, name)| *name == ask) {
-                    // No parked call to answer: the answer still reaches the agent.
                     return vec![ContentBlock::Text {
                         text: format!("The learner answered: {payload}"),
                     }];
                 }
                 let open = open_asks(&calls, &answered);
                 debug_assert!(open.len() <= 1, "one question is open at a time");
-                open.into_iter()
+                if open.is_empty() {
+                    return Vec::new();
+                }
+                let learner = learner_answer(&mut payload);
+                let mut blocks: Vec<_> = open
+                    .into_iter()
                     .map(|call| {
                         result_block(ToolResult {
                             call,
@@ -285,7 +289,9 @@ impl AetherEngine<'_> {
                             is_error: false,
                         })
                     })
-                    .collect()
+                    .collect();
+                blocks.push(ContentBlock::Text { text: learner });
+                blocks
             }
         }
     }
@@ -779,6 +785,31 @@ fn message_draft(agent: &Agent, role: MessageRole, content: Vec<ContentBlock>) -
     .run(agent.run)
 }
 
+/// Separate the learner's words from the tool's grading metadata.
+fn learner_answer(payload: &mut serde_json::Value) -> String {
+    let mut learner = serde_json::Map::new();
+    if let Some(fields) = payload.as_object_mut() {
+        for name in [
+            "choices",
+            "chosen",
+            "text",
+            "dont_know",
+            "confidence",
+            "thinking",
+        ] {
+            if let Some(value) = fields.remove(name) {
+                learner.insert(name.to_string(), value);
+            }
+        }
+    }
+    debug_assert!(!learner.is_empty(), "an answer has learner fields");
+    debug_assert!(payload.get("answer_key").is_some() || payload.get("question").is_some());
+    format!(
+        "The learner answered: {}",
+        serde_json::Value::Object(learner)
+    )
+}
+
 fn result_block(result: ToolResult) -> ContentBlock {
     let text = match result.content {
         serde_json::Value::String(text) => text,
@@ -977,6 +1008,22 @@ mod tests {
         answered_history.push(result("call_0"));
         let (calls, answered) = last_calls(&answered_history);
         assert!(open_asks(&calls, &answered).is_empty(), "delivered once");
+    }
+
+    #[test]
+    fn learner_answer_is_separate_from_tool_grading_metadata() {
+        let mut payload = serde_json::json!({
+            "question": "q1", "text": "My answer", "thinking": "My reasoning",
+            "chosen": ["Choice"], "confidence": 90, "dont_know": false,
+            "answer_key": "Expected"
+        });
+        let text = learner_answer(&mut payload);
+        assert!(text.contains("My reasoning") && text.contains("Choice"));
+        assert!(!text.contains("Expected"));
+        assert_eq!(
+            payload,
+            serde_json::json!({"question": "q1", "answer_key": "Expected"})
+        );
     }
 
     #[test]

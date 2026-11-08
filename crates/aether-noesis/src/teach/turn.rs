@@ -253,6 +253,9 @@ impl<E: Engine> Teaching<'_, E> {
             if let Some(correct) = owed.correct {
                 fields.insert("correct".into(), Value::Bool(correct));
             }
+            if let Some(key) = owed.recall_key {
+                fields.insert("answer_key".into(), Value::String(key));
+            }
             debug_assert!(fields.contains_key("dont_know"), "an answer record");
             let payload = Value::Object(fields);
             self.engine.deliver(agent, Input::Answer(payload))?;

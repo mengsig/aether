@@ -477,3 +477,40 @@ fn a_key_or_solution_ending_in_punctuation_is_matched_without_it() {
     assert_eq!(report.steps[0].text, "", "the retry replaced it");
     assert!(!format!("{report:?}").contains("x = 4"), "{report:?}");
 }
+
+#[test]
+fn answered_recall_delivers_the_expected_answer_after_a_failed_delivery() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Learn cells", Mode::Teach, &[])
+        .unwrap()
+        .id;
+    t.engine_mut().script(
+        Agent::Prober,
+        "",
+        vec![(ASK, recall("Name the organelle", "mitochondria"))],
+    );
+    t.advance(&id).unwrap();
+    let open = session(&t, &id).open_question.unwrap().id;
+    t.engine_mut().fail_deliveries = 1;
+    let answer = Answer {
+        text: Some("mitochondria".into()),
+        ..Answer::default()
+    };
+    assert!(t.answer(&id, &open, &answer).is_err());
+    t.engine_mut().script(Agent::Prober, "Correct.", vec![]);
+    t.advance(&id).unwrap();
+    let agent = session(&t, &id).agent;
+    let inputs = t.engine().inputs_of(&agent);
+    let answers: Vec<_> = inputs
+        .iter()
+        .filter_map(|input| match input {
+            Input::Answer(answer) => Some(answer),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(answers.len(), 1);
+    assert_eq!(answers[0]["answer_key"], "mitochondria");
+    assert_eq!(answers[0]["text"], "mitochondria");
+}

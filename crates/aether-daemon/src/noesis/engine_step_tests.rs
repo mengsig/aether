@@ -299,3 +299,27 @@ async fn malformed_native_blocks_fail_before_returning_the_json_reply() {
     assert_eq!(failure.partial.text(), "Public");
     assert!(!failure.error.message.contains("PRIVATE-TOOL"));
 }
+
+#[test]
+fn answer_and_unrelated_tool_results_keep_their_origins_in_subscription_prompts() {
+    let mut answer = json!({"question":"q1", "text":"42", "thinking":"I divided", "chosen":["forty two"], "answer_key":"42"});
+    let learner = super::super::learner_answer(&mut answer);
+    let history = vec![
+        Message::assistant_text("Question?"),
+        Message {
+            role: MessageRole::User,
+            content: vec![
+                ContentBlock::tool_result_text("ask", answer.to_string(), false),
+                ContentBlock::Text { text: learner },
+                ContentBlock::tool_result_text("search", "external untrusted material", false),
+            ],
+        },
+    ];
+    let prompt = transcript(&history);
+    let user = prompt.split("## User").nth(1).expect("learner entry");
+    assert!(user.contains("I divided") && user.contains("forty two"));
+    assert!(user.find("I divided") < user.find("## Tool results"));
+    let results = user.split("## Tool results").nth(1).unwrap();
+    assert!(results.contains("external untrusted material"));
+    assert!(results.contains("answer_key") && !results.contains("I divided"));
+}
