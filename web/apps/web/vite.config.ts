@@ -19,7 +19,7 @@ export default defineConfig({
     target: "es2022",
     sourcemap: false,
     rollupOptions: {
-      input: { index: path.join(here, "index.html"), sw: path.join(here, "src", "sw.ts") },
+      input: { index: path.join(here, "index.html"), "mermaid-frame": path.join(here, "mermaid-frame.html"), sw: path.join(here, "src", "sw.ts") },
       output: {
         entryFileNames: (chunk) => (chunk.name === "sw" ? SW_FILE : "assets/[name]-[hash].js"),
       },

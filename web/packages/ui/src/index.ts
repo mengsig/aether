@@ -37,4 +37,5 @@ export { ModelPicker, modelOptions, modelRefText, billingOf, type ModelPickerPro
 export { BarChart, Donut, Sparkline, StatTile, donutArcs, sparkPath, type ChartPoint, type ChartTone, type DonutArc } from "./charts.tsx";
 
 export { Markdown, InlineMarkdown } from "./markdown/markdown.tsx";
+export { MermaidDiagram } from "./markdown/mermaid.tsx";
 export { safeHref } from "./markdown/url.ts";

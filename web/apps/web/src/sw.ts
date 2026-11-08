@@ -39,6 +39,7 @@ const LIVE_PREFIXES = ["/api", "/ws", "/archon"];
 
 const worker = self as unknown as WorkerScope;
 const shellUrl = new URL("./", worker.registration.scope).href;
+const diagramFrameUrl = new URL("./mermaid-frame.html", worker.registration.scope).href;
 const precached = new Set(PRECACHE.map((path) => new URL(path, worker.registration.scope).href));
 
 function isLive(url: URL): boolean {
@@ -68,6 +69,11 @@ async function networkFirst(request: Request): Promise<Response> {
   try {
     return await fetch(request);
   } catch (error) {
+    if (request.url === diagramFrameUrl) {
+      const frame = await caches.match(request, { cacheName: CACHE });
+      if (frame) return frame;
+      throw error;
+    }
     const cached = await caches.match(shellUrl, { cacheName: CACHE });
     if (cached) return cached;
     throw error;

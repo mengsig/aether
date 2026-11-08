@@ -1,4 +1,4 @@
-// What main puts on every app:// response (ARCHITECTURE.md §c). `'self'` is app://aether
+// The default for app:// responses (ARCHITECTURE.md §c). `'self'` is app://aether
 // alone: the renderer opens no network connection and reaches daemons only through IPC.
 
 export const APP_SCHEME = "app";
@@ -19,6 +19,20 @@ export const APP_CSP = [
   "base-uri 'none'",
   "form-action 'none'",
   "frame-ancestors 'none'",
+].join("; ");
+
+export const MERMAID_FRAME_PATH = "/mermaid-frame.html";
+export const MERMAID_FRAME_CSP = [
+  "default-src 'none'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "connect-src 'none'",
+  "img-src data:",
+  "font-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'self'",
 ].join("; ");
 
 export const APP_HEADERS: Readonly<Record<string, string>> = {

@@ -30,6 +30,7 @@ export default defineConfig([
   globalIgnores([
     "**/node_modules/",
     "**/dist/",
+    "e2e/.out/",
     "packages/protocol/src/aether.ts",
     "packages/protocol/src/archon.ts",
     "packages/protocol/src/index.ts",

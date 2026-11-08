@@ -1,6 +1,7 @@
 // A small Markdown renderer that is safe by construction: it builds React elements from a fixed
 // set of tags and puts every piece of input in a text node, so input can never become markup.
 
+import { MermaidDiagram } from "@aether-ui/ui";
 import { Fragment, useMemo, type ReactNode } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import { CopyButton } from "./CopyButton.tsx";
@@ -79,6 +80,7 @@ function startsBlock(line: string, depth: number): boolean {
 }
 
 function readFence(lines: string[], i: number, ticks: number, lang: string | undefined): Block {
+  invariant(i >= 0 && i < lines.length && ticks >= 3, "a fenced block starts at a valid opening fence");
   let end = i + 1;
   while (end < lines.length) {
     const text = (lines[end] ?? "").trim();
@@ -87,7 +89,10 @@ function readFence(lines: string[], i: number, ticks: number, lang: string | und
   }
   invariant(end > i, "a fenced block spans its opening line");
   const code = lines.slice(i + 1, end).join("\n");
-  return { node: <CodeBlock code={code} lang={lang} />, next: end + 1 };
+  const node = lang === "mermaid"
+    ? <div className="md-diagram-chat"><MermaidDiagram source={code} /><CopyButton text={code} what="the mermaid code" /></div>
+    : <CodeBlock code={code} lang={lang} />;
+  return { node, next: end + 1 };
 }
 
 function CodeBlock({ code, lang }: { readonly code: string; readonly lang: string | undefined }) {

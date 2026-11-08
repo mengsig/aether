@@ -7,6 +7,10 @@ import { diagramRefusal } from "./mermaid-policy.ts";
 
 const api = vi.hoisted(() => ({ initialize: vi.fn(), render: vi.fn() }));
 vi.mock("mermaid", () => ({ default: api }));
+vi.mock("./mermaid-render.ts", async () => {
+  const { renderDiagram } = await import("./mermaid-frame-render.ts");
+  return { renderDiagram, diagramPalette: () => ({ surface: "#fff", text: "#111", border: "#777", accent: "#070", font: "sans-serif" }) };
+});
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const roots: Root[] = [];
 beforeEach(() => {
@@ -33,12 +37,13 @@ async function render(source: string): Promise<HTMLElement> {
 describe("Mermaid image sandbox", () => {
   test("renders a diagram as an inert local SVG image with strict settings", async () => {
     const bindFunctions = vi.fn();
-    api.render.mockResolvedValue({ svg: '<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 420 160"><text>A → B</text></svg>', bindFunctions });
+    api.render.mockResolvedValue({ svg: '<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 420 160"><text>A → B</text><script>bad()</script><foreignObject><div>bad</div></foreignObject></svg>', bindFunctions });
     const root = await render("graph TD\n A --> B");
     expect(root.querySelector("img")?.src).toMatch(/^data:image\/svg\+xml;charset=utf-8,/);
     const svg = decodeURIComponent(root.querySelector("img")?.src.split(",")[1] ?? "");
     expect(svg).toContain('width="420"');
     expect(svg).toContain('height="160"');
+    expect(svg).not.toMatch(/<script|<foreignObject/i);
     expect(root.querySelector("svg,script,iframe")).toBeNull();
     expect(api.initialize).toHaveBeenCalledWith(expect.objectContaining({ securityLevel: "strict", htmlLabels: false, startOnLoad: false, maxEdges: 200 }));
     expect(bindFunctions).not.toHaveBeenCalled();
