@@ -27,7 +27,7 @@ export const nodeId = (conn: ConnId, agent: string): string => `${conn}/${agent}
 export const runGroupId = (conn: ConnId, run: string): string => `run:${conn}/${run}`;
 
 export function buildTopology(sources: readonly FleetSource[]): Topology {
-  const rows = fleetRows(sources);
+  const rows = fleetRows(sources).filter(({ agent }) => !agent.archived);
   const names = runNames(rows);
   const nodes: GNode[] = [];
   const edges: GEdge[] = [];

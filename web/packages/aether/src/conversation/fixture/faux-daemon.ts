@@ -159,7 +159,10 @@ export class FauxDaemon {
       case "unsubscribe": return ok("ok", null);
       case "get_attention": return ok("attention", { agents: [], approvals: [], questions: [], last_seq: this.lastSeq });
       case "list_agents_page": return ok("agents_page", { agents: [...this.agents.values()] });
-      case "get_agent": return ok("agent", this.agents.get(String(command.id)));
+      case "get_agent": {
+        const agent = this.agents.get(String(command.id));
+        return agent ? ok("agent", agent) : { reply: { Err: { code: "not_found", message: "Agent not found" } }, then: [] };
+      }
       case "list_tasks": return ok("tasks", this.tasks.filter((task) => task.owner === (command.query as { owner?: string }).owner));
       case "get_transcript_page": return ok("transcript_page", this.page(command));
       case "send_message": return ok("ok", null);
