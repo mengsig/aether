@@ -1,11 +1,12 @@
 // `#/fleet`: every agent of every Aether connection in one virtualized list, filtered by run,
 // role, state and model. core pages the agents in (`list_agents_page`); the list draws only what is on screen.
 
-import { routeHref, useDraft, useSelector } from "@aether-ui/core";
-import { Badge, Button, EmptyState, StatusPill, VirtualList } from "@aether-ui/ui";
-import { memo, useCallback, useMemo } from "react";
+import { routeHref, selectConnections, useApp, useDraft, useSelector } from "@aether-ui/core";
+import { Badge, Button, EmptyState, Picker, StatusPill, VirtualList } from "@aether-ui/ui";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import "./fleet.css";
 import { StartAgentButton } from "../activity/StartAgent.tsx";
+import { loadArchived } from "./archived.ts";
 import { FleetFilters } from "./FleetFilters.tsx";
 import { invariant } from "./invariant.ts";
 import { roleLabel } from "./roles.ts";
@@ -61,13 +62,29 @@ function FleetList({ rows, names }: { readonly rows: readonly FleetRow[]; readon
 
 export function FleetScreen() {
   const sources = useSelector(selectFleetSources, sameSources);
+  const connections = useSelector(selectConnections);
+  const app = useApp();
   const rows = useMemo(() => fleetRows(sources), [sources]);
-  const names = useMemo(() => runNames(rows), [rows]);
-  const facets = useMemo(() => fleetFacets(rows, names), [rows, names]);
+  const archiveDraft = useDraft("fleet/archive", { value: "active" });
+  const archive = archiveDraft.value.value;
+  const [archiveError, setArchiveError] = useState<string>();
+  useEffect(() => {
+    if (archive !== "archived") return;
+    let live = true;
+    const ready = Object.values(connections).filter((info) => info.daemon === "aether" && info.state === "ready");
+    Promise.all(ready.map((info) => loadArchived(app, info, () => live))).then(
+      () => { if (live) setArchiveError(undefined); },
+      (error: unknown) => { if (live) setArchiveError(error instanceof Error ? error.message : String(error)); },
+    );
+    return () => { live = false; };
+  }, [app, archive, connections, sources]);
+  const visible = useMemo(() => rows.filter(row => archive === "archived" ? row.agent.archived : !row.agent.archived), [rows, archive]);
+  const names = useMemo(() => runNames(visible), [visible]);
+  const facets = useMemo(() => fleetFacets(visible, names), [visible, names]);
   const draft = useDraft("fleet/filters", { ...NO_FILTER });
   const filter = draft.value;
   const setFilter = draft.update;
-  const shown = useMemo(() => filterRows(rows, filter), [rows, filter]);
+  const shown = useMemo(() => filterRows(visible, filter), [visible, filter]);
   const clear = draft.clear;
 
   if (sources.length === 0) {
@@ -76,12 +93,15 @@ export function FleetScreen() {
   return (
     <section className="fleet" aria-label="Fleet">
       <div className="fleet-bar">
+        <Picker label="Archive" size="sm" value={archive} onChange={value => { archiveDraft.update({ value }); clear(); }}
+          options={[{ id: "active", label: "Active fleet" }, { id: "archived", label: "Archived" }]} />
         <FleetFilters facets={facets} filter={filter} onChange={setFilter} />
-        <p className="fleet-count" aria-live="polite">{shown.length.toLocaleString("en")} of {rows.length.toLocaleString("en")} agents</p>
+        <p className="fleet-count" aria-live="polite">{shown.length.toLocaleString("en")} of {visible.length.toLocaleString("en")} agents</p>
         <a className="ui-link" href="#/fleet/topology">Delegation topology</a>
       </div>
+      {archiveError ? <p role="alert">Could not load archived agents: {archiveError}</p> : null}
       {shown.length > 0 ? <FleetList rows={shown} names={names} />
-        : rows.length === 0 ? <EmptyState title="No agents yet" action={<StartAgentButton conn={sources[0]?.conn ?? ""} label="Start your first agent" />}>Choose an objective and workspace to begin.</EmptyState>
+        : visible.length === 0 ? archive === "archived" ? <EmptyState title="No archived agents">Agents you archive appear here.</EmptyState> : <EmptyState title="No agents yet" action={<StartAgentButton conn={sources[0]?.conn ?? ""} label="Start your first agent" />}>Choose an objective and workspace to begin.</EmptyState>
           : <EmptyState title="No agent matches" action={<Button onClick={clear}>Clear filters</Button>}>Every filter must match.</EmptyState>}
     </section>
   );

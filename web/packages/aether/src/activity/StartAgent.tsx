@@ -117,7 +117,7 @@ function StartedChat({ conn, state, retry, restart, close, busy }: {
 
 function useStartData(conn: string, path: string | null) {
   const app = useApp();
-  const live = Object.values(useSelector(selectAgents(conn))).filter(a => !ENDED.has(a.status.state));
+  const live = Object.values(useSelector(selectAgents(conn))).filter(a => !a.archived && !ENDED.has(a.status.state));
   const models = useReread(conn, "start:models", { cmd: "list_models" }, ["models"]);
   const recent = useReread(conn, "start:workspaces", { cmd: "list_workspaces" }, ["workspaces"]);
   const network = networkDefault(useReread(conn, "start:status", { cmd: "status" }, ["status"])?.value);
@@ -145,8 +145,8 @@ function formCommand(form: StartForm, data: ReturnType<typeof useStartData>, sel
   const workspace = data.validation?.valid ? data.validation.path ?? "" : "";
   const objective = form.objective.trim();
   if (form.mode === "task") {
-    const blocked = objective === "" ? "Describe the work to start" : data.live.some(a => a.id === form.owner) ? null : "Choose an active owner";
-    return { command: aether.createTask({ objective, owner: form.owner, priority: "normal" }), blocked, settings: null };
+    const blocked = objective === "" ? "Describe the work to start" : form.owner === "" || data.live.some(a => a.id === form.owner && !a.current_task) ? null : "Choose an available owner";
+    return { command: aether.createTask({ objective, owner: form.owner || null, priority: "normal" }), blocked, settings: null };
   }
   const textProblem = form.mode === "chat" ? firstMessageProblem(form.objective) : objective === "" ? "Describe the work to start" : null;
   const blocked = textProblem ?? (!selected ? "Choose a configured model" : !data.effectivePath ? "Choose a workspace" : !data.validation ? "Checking the workspace…" : !workspace.startsWith("/") ? data.validation.reason ?? "Choose a valid workspace" : data.network === undefined ? "Reading this computer's settings…" : null);
@@ -172,7 +172,7 @@ function StartFormView({ conn, form, change, run, onStart, close }: {
     <p className="b3-section-hint">{MODE_HINTS[form.mode]}</p>
     <TextAreaField label={form.mode === "chat" ? "First message" : "What should the agent do?"} testId="start-objective" value={form.objective} disabled={disabled} autoFocus onChange={objective => change({ objective })} />
     {form.mode === "task" ? <SelectField label="Agent" testId="start-owner" value={form.owner} disabled={disabled} onChange={owner => change({ owner })}>
-      <option value="">Choose an agent</option>{data.live.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</SelectField> : <>
+      <option value="">Unassigned</option>{data.live.map(a => <option key={a.id} value={a.id} disabled={!!a.current_task}>{a.name}{a.current_task ? " — already owns a task" : ""}</option>)}</SelectField> : <>
       <Workspace conn={conn} path={data.effectivePath} change={path => change({ path })} recent={data.recent} />
       <ReadNote entry={data.models} retry={data.retryModels} />
       {data.models?.issued && data.choices.length === 0 ? <EmptyState title="No model is ready yet" action={<a className="ui-link" href="#/settings/providers">Open providers</a>}>Sign in to a model provider to start agents.</EmptyState> :
@@ -204,6 +204,11 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
       const reply = await run.send(command, "Starting…");
       if (reply === null) return;
       draft.clearIfUnchanged();
+      if (form.mode === "task" && !form.owner) {
+        close();
+        app.store.report("Created unassigned task", conn, undefined, "success");
+        return;
+      }
       const agent = form.mode === "task" ? { id: form.owner, name: agents[form.owner]?.name ?? form.owner } : createdAgent(reply);
       close();
       app.store.report(form.mode === "task" ? `Started task for ${agent.name}` : `Started ${agent.name}`, conn, undefined, "success");

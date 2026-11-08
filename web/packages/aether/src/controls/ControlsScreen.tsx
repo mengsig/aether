@@ -12,7 +12,7 @@ import { ApprovalsPanel } from "./approvals.tsx";
 import { DraftError, sendCommand } from "./commands.ts";
 import { ConfigurePanel } from "./configure.tsx";
 import { Action, RunNote, Section, StandingNotice, useRun } from "./kit.tsx";
-import { LifecyclePanel } from "./lifecycle.tsx";
+import { LifecyclePanel, terminalReason } from "./lifecycle.tsx";
 import { RecordsPanel } from "./records.tsx";
 import { SchedulesPanel } from "./schedules.tsx";
 
@@ -41,7 +41,7 @@ function SteerPanel({ conn, agent }: { readonly conn: ConnId; readonly agent: ae
       </label>
       <div className="b3-row">
         <Switch label="Also send to the agents it delegated to" checked={subtree} onChange={setSubtree} />
-        <Action conn={conn} command={{ cmd: "send_message", to: agent.id }} label="Send" blocked={draft.text.trim() ? null : "Write a message"} variant="primary" busy={run.status.state === "busy"} onRun={send} />
+        <Action conn={conn} command={{ cmd: "send_message", to: agent.id }} label="Send" blocked={terminalReason(agent) ?? (draft.text.trim() ? null : "Write a message")} variant="primary" busy={run.status.state === "busy"} onRun={send} />
       </div>
       {problem ? <p className="b3-note" role="alert" data-state="failed">{problem}</p> : null}
       {draft.problem ? <p className="b3-note" data-state="failed">{draft.problem}</p> : null}

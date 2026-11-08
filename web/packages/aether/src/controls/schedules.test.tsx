@@ -4,7 +4,7 @@ import { drafts } from "@aether-ui/core";
 
 import { act } from "react";
 import { beforeEach, afterEach, describe, expect, test } from "vitest";
-import { AGENT_ID, controlsScript, demoAgents } from "./fixture/demo.ts";
+import { AGENT_ID, CHILD_ID, controlsScript, demoAgents } from "./fixture/demo.ts";
 import { buttonNamed, click, connected, pick, type, type Harness } from "./fixture/harness.test-util.tsx";
 import type { ScriptOptions } from "./fixture/daemon.ts";
 import { SchedulesPanel } from "./schedules.tsx";
@@ -94,7 +94,7 @@ describe("SchedulesPanel", () => {
       spec: {
         name: "Nightly triage", recurrence: { kind: "interval", seconds: 86_400 }, missed: "coalesce", max_deliveries: 7,
         spawn: {
-          role: "worker", objective: "Triage the backlog", model: { provider: "anthropic", model: "claude-sonnet-5-5" },
+          role: "worker", name: "Nightly triage", objective: "Triage the backlog", model: { provider: "anthropic", model: "claude-sonnet-5-5" },
           scope: { workspace_root: "/srv/repo" }, approval: { require_for: ["external"] }, config: { effort: "high" },
         },
       },
@@ -146,6 +146,46 @@ describe("SchedulesPanel", () => {
     ]);
     await click(h, root, "History");
     expect(sent(h, "schedule_history")).toEqual([{ cmd: "schedule_history", id: "sch_2", limit: 20 }]);
+  });
+
+  test("an occurrence refreshes progress and open history, and links to the spawned agent", async () => {
+    const schedule = { id: "sch_2", name: "Nightly triage", updated_at: "2026-11-04T00:00:00Z", deliveries: 0, missed: "skip", payload: null, recurrence: { kind: "cron", expression: "* * * * *", timezone: "UTC" }, status: { state: "active", next_due: "2026-11-05T00:00:00Z" }, spawn: { role: "worker", objective: "Triage" } };
+    let fired = false;
+    const occurrence = { schedule: "sch_2", due: "2026-11-05T00:00:00Z", recorded_at: "2026-11-05T00:00:01Z", outcome: { outcome: "spawned", agent: CHILD_ID, run: "run_1", task: "tsk_1" } };
+    const { h, root } = await open({ script: {
+      list_schedules: () => ({ tag: "schedules", data: [fired ? { ...schedule, deliveries: 1, status: { state: "finished" } } : schedule] }),
+      schedule_history: () => ({ tag: "schedule_history", data: fired ? [occurrence] : [] }),
+    } });
+    await click(h, root, "All schedules");
+    await click(h, root, "History");
+    expect(root.textContent).toContain("0 started");
+    expect(root.textContent).toContain("It has not run yet");
+    fired = true;
+    await act(async () => { h.daemon.emit(CHILD_ID, { type: "custom", name: "schedule.advanced", payload: { ...schedule, deliveries: 1 } }); });
+    await h.settle();
+    await h.settle();
+    expect(root.textContent).toContain("Finished");
+    expect(root.textContent).toContain("1 started");
+    expect(root.textContent).toContain("changelog-writer · waiting");
+    const link = root.querySelector<HTMLAnchorElement>('[aria-label="Schedule history"] a');
+    expect(link?.getAttribute("href")).toBe(`#/agents/${encodeURIComponent(h.conn)}/${CHILD_ID}`);
+    expect(link?.textContent).toBe("Open conversation");
+    const before = h.daemon.commands("list_schedules").length;
+    await click(h, root, "Refresh schedules");
+    expect(h.daemon.commands("list_schedules")).toHaveLength(before + 1);
+  });
+
+  test("history keeps a link when the spawned agent is absent from the fleet cache", async () => {
+    const missing = "agt_missing";
+    const { h, root } = await open({ script: { schedule_history: () => ({ tag: "schedule_history", data: [
+      { schedule: "sch_1", due: "2026-11-05T00:00:00Z", recorded_at: "2026-11-05T00:00:01Z", outcome: { outcome: "spawned", agent: missing, run: "run_1", task: "tsk_1" } },
+      { schedule: "sch_1", due: "2026-11-06T00:00:00Z", recorded_at: "2026-11-06T00:00:01Z", outcome: { outcome: "skipped", reason: "busy" } },
+    ] }) } });
+    await click(h, root, "History");
+    expect(root.querySelector('[aria-label="Schedule history"]')?.textContent).toContain(missing);
+    const links = root.querySelectorAll<HTMLAnchorElement>('[aria-label="Schedule history"] a');
+    expect(links).toHaveLength(1);
+    expect(links[0]?.getAttribute("href")).toBe(`#/agents/${encodeURIComponent(h.conn)}/${missing}`);
   });
 
   test("an observer sees the create button disabled with the reason", async () => {

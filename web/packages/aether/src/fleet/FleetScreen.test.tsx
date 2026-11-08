@@ -2,7 +2,7 @@
 import { drafts } from "@aether-ui/core";
 import type { ConnectionInfo } from "@aether-ui/protocol";
 import { act } from "react";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { fixtureAgents, fixtureConnection, seedFleet } from "./fixture/agents.ts";
 import { harness } from "./fixture/mount.test-util.tsx";
 import { must } from "./fixture/must.ts";
@@ -28,7 +28,7 @@ async function pick(container: HTMLElement, label: string, value: string): Promi
   await act(async () => trigger.click());
   const option = [...field.querySelectorAll<HTMLElement>('[role="option"]')].find(o => {
     const text = o.querySelector(".ui-picker-option-label")?.textContent;
-    return value === "" ? text === "All" : text?.startsWith(`${value} (`);
+    return value === "" ? text === "All" : text === value || text?.startsWith(`${value} (`);
   });
   if (!option) throw new Error(`no ${value} option`);
   await act(async () => option.click());
@@ -100,11 +100,48 @@ describe("the fleet list", () => {
   test("names every control and the list, for assistive technology", async () => {
     const { container } = await fleet(300);
     const controls = container.querySelectorAll('[role="combobox"]');
-    expect(controls).toHaveLength(4);
+    expect(controls).toHaveLength(5);
     for (const control of controls) {
-      expect(control.closest(".ui-picker")?.querySelector("label")?.textContent).toMatch(/^(Run|Role|State|Model)$/);
+      expect(control.closest(".ui-picker")?.querySelector("label")?.textContent).toMatch(/^(Run|Role|State|Model|Archive)$/);
     }
     expect(container.querySelector("[role=list]")?.getAttribute("aria-label")).toBe("Agents");
     expect(container.querySelector("[role=group]")?.getAttribute("aria-label")).toBe("Filter agents");
+  });
+
+  test("loads archived agents again after reconnect while the archived view is open", async () => {
+    const h = harness();
+    const info = fixtureConnection();
+    const archived = { ...must(fixtureAgents(1).agt_00000, "agent"), archived: true };
+    seedFleet(h.app.store, info, {});
+    const send = vi.spyOn(h.app, "send").mockResolvedValue({ reply: "agents_page", data: { agents: [archived] } });
+    const container = await h.mount(<FleetScreen />);
+    await pick(container, "Archive", "Archived");
+    await h.frame();
+    expect(container.querySelector('[data-agent="agt_00000"]')).not.toBeNull();
+    expect(send).toHaveBeenCalledWith(info.id, expect.objectContaining({ query: { include_archived: true } }));
+    h.app.store.update((state) => ({ ...state, connections: { ...state.connections, [info.id]: { ...info, state: "backoff" } } }));
+    h.app.store.updateAether(info.id, (state) => ({ ...state, agents: {} }));
+    await h.frame();
+    h.app.store.update((state) => ({ ...state, connections: { ...state.connections, [info.id]: info } }));
+    await h.frame();
+    await h.frame();
+    expect(send.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(container.querySelector('[data-agent="agt_00000"]')).not.toBeNull();
+    h.app.store.updateAether(info.id, (state) => ({ ...state, agents: {} }));
+    await h.frame();
+    await h.frame();
+    expect(container.querySelector('[data-agent="agt_00000"]')).not.toBeNull();
+  });
+
+  test("moves archived agents out of the default fleet and back on restore", async () => {
+    const { h, container } = await fleet(2);
+    h.app.store.updateAether("aether:fixture", state => ({ ...state, agents: { ...state.agents, agt_00000: { ...must(state.agents.agt_00000, "agent"), archived: true } } }));
+    await h.frame();
+    expect(count(container)).toBe("1 of 1 agents");
+    await pick(container, "Archive", "Archived");
+    expect(container.querySelector('[data-agent="agt_00000"]')).not.toBeNull();
+    h.app.store.updateAether("aether:fixture", state => ({ ...state, agents: { ...state.agents, agt_00000: { ...must(state.agents.agt_00000, "agent"), archived: false } } }));
+    await h.frame();
+    expect(container.textContent).toContain("No archived agents");
   });
 });
