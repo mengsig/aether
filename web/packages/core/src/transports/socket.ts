@@ -46,18 +46,33 @@ export function checkSocketUrl(target: string, path: string): string {
 export function openSocket(factory: SocketFactory, url: string, protocol: string, handlers: {
   onText(raw: unknown): void;
   onClose(code: number, reason: string): void;
-}): Promise<SocketLike> {
+}, signal?: AbortSignal): Promise<SocketLike> {
   return new Promise((resolve, reject) => {
     const socket = factory(url, protocol);
     let opened = false;
+    let cancelled = false;
+    const abort = () => {
+      cancelled = true;
+      socket.onopen = null;
+      socket.onmessage = null;
+      socket.onclose = null;
+      socket.onerror = null;
+      socket.close();
+      reject(new DOMException("Connection attempt cancelled", "AbortError"));
+    };
+    if (signal?.aborted) return abort();
+    signal?.addEventListener("abort", abort, { once: true });
     socket.onopen = () => {
+      if (cancelled) return;
       opened = true;
+      signal?.removeEventListener("abort", abort);
       resolve(socket);
     };
     socket.onmessage = (event) => handlers.onText(event.data);
     // Errors always end in a close event, which carries the handling.
     socket.onerror = () => {};
     socket.onclose = (event) => {
+      signal?.removeEventListener("abort", abort);
       if (opened) handlers.onClose(event.code, event.reason);
       else reject(new Error(`WebSocket ${url} closed before it opened (${event.code})`));
     };
