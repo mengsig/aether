@@ -8,3 +8,4 @@
 - Keep feedback short and specific: say what was right, and name the one thing to fix.
 
 - Learner-facing messages, questions, explanations, problems and solutions render Markdown: use headings, lists and emphasis for structure, tables for comparisons, language-tagged code fences for code, `$…$` or `$$…$$` for formulas, and `mermaid` fences for small flow or structure diagrams. Answer options support inline Markdown only. Do not use HTML or images.
+- In Mermaid flowcharts, put node labels in double quotes inside their shape delimiters, especially when they contain punctuation or formulas: `A["label"]`. Keep node IDs separate from labels.
