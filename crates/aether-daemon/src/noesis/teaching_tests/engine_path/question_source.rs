@@ -123,6 +123,37 @@ async fn a_question_in_the_lead_in_is_refused_and_replaced_on_the_card() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_refused_check_without_a_replacement_ends_in_a_retryable_stall() {
+    let home = Home::new();
+    let cli = Arc::new(FauxCli::default());
+    let plan = json!({"nodes": [{"id": "turns", "title": "Turns"}], "edges": []});
+    let harness = engine_harness(&home, cli.clone()).await;
+    let id = start_teaching(&harness, &cli, plan).await;
+    let invalid = check("How many sides has a square?", "4", "3", "missing");
+    cli.queue("teacher", json!({"tool_calls": [tool_call(ASK, invalid)]}));
+    for _ in 0..3 {
+        cli.queue("teacher", json!({"text": "Let us continue later."}));
+    }
+    harness.send_json(json!({"cmd": "noesis_send", "session": id, "text": "Go", "idempotency_key": "bad-node"})).await.expect("send");
+    tokio::time::timeout(Duration::from_secs(4), harness.settled())
+        .await
+        .expect("turn ended");
+    let session = harness.session(&id).await.expect("session");
+    assert!(session.open_question.is_none());
+    assert_eq!(
+        session.stalled.as_ref().unwrap().reason,
+        aether_core::noesis::StallReason::EngineStalled
+    );
+    assert!(!harness.daemon.runtime.turn_in_flight(session.agent));
+    assert!(
+        !assistant_texts(&harness, agent_of(&session))
+            .iter()
+            .any(|text| text.contains("continue later"))
+    );
+    harness.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn only_prose_from_the_accepted_check_reaches_the_transcript() {
     let home = Home::new();
     let cli = Arc::new(FauxCli::default());

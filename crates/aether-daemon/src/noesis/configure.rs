@@ -153,10 +153,7 @@ impl NoesisService {
             let stored = self.config.read_noesis().map_err(ErrorReply::internal)?;
             let next = NoesisSettings::from_table(&stored)
                 .map_err(|e| ErrorReply::invalid(e.to_string()))?;
-            if !next.enabled
-                || matches!(&*state, State::Off)
-                || matches!(&*state, State::Running(live) if live.settings == next)
-            {
+            if !next.enabled || matches!(&*state, State::Running(live) if live.settings == next) {
                 self.settings_applied();
                 return Ok(());
             }

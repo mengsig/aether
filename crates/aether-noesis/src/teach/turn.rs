@@ -297,15 +297,7 @@ impl<E: Engine> Teaching<'_, E> {
         let mut owed = Vec::new();
         for call in calls {
             let outcome = self.call_tool(session, caller, &call, shown)?;
-            if agent_for_teacher(caller)
-                && check_refusal(
-                    &call.name,
-                    &call.input,
-                    &outcome.result.content,
-                    outcome.result.is_error,
-                )
-                .is_some()
-            {
+            if agent_for_teacher(caller) && is_ask_name(&call.name) && outcome.result.is_error {
                 turn.check_attempts = turn.check_attempts.max(1);
             }
             if outcome.ends.is_none() {

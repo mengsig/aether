@@ -308,6 +308,74 @@ async fn a_new_turn_waits_for_saved_settings_before_it_starts() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn changed_reenable_starts_after_the_disable_grace_expires() {
+    let home = Home::new();
+    let (harness, gated, first) = held_call(&home).await;
+    let _free = gated.release.clone().drop_guard();
+    harness
+        .configure(NoesisSettingsPatch {
+            enabled: Some(false),
+            disable: Some(DisablePatch {
+                grace_seconds: Some(1),
+            }),
+            ..Default::default()
+        })
+        .await;
+    let reply = tokio::time::timeout(
+        Duration::from_secs(2),
+        harness.send(Command::NoesisConfigure {
+            patch: NoesisSettingsPatch {
+                enabled: Some(true),
+                budget: Some(BudgetPatch {
+                    interactive_usd_daily: Some(9.0),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            idempotency_key: None,
+        }),
+    )
+    .await
+    .expect("re-enable answered")
+    .expect("saved");
+    let Reply::NoesisStatus(saved) = reply else {
+        panic!("status")
+    };
+    assert!(saved.settings_pending && saved.settings.enabled);
+    wait_for_reenabled_settings(&harness).await;
+    assert!(gated.aborted.load(Ordering::SeqCst));
+    let Reply::NoesisSessions { sessions, .. } = harness
+        .send_json(json!({"cmd": "noesis_list_sessions"}))
+        .await
+        .expect("service is usable")
+    else {
+        panic!("sessions")
+    };
+    assert!(sessions.iter().any(|session| session.id == first.id));
+    harness.close().await;
+}
+
+async fn wait_for_reenabled_settings(harness: &Harness) {
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let status = harness
+                .daemon
+                .noesis
+                .status(&harness.daemon.runtime)
+                .await
+                .unwrap();
+            if !status.settings_pending && status.effective.enabled {
+                assert_eq!(status.effective.budget.interactive_usd_daily, 9.0);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("saved settings became effective");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_model_policy_change_refuses_a_new_session_before_creating_it() {
     let home = Home::new();
     let (harness, gated, first) = held_call(&home).await;

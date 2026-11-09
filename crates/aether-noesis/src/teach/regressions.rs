@@ -535,13 +535,19 @@ fn a_pose_is_refused_when_a_plan_posted_earlier_in_its_turn_shows_its_key() {
         "",
         vec![(ASK, recall("Which organelle makes ATP?", SECRET))],
     );
+    teacher.script(
+        Agent::Teacher,
+        "",
+        vec![(ASK, recall("What is Italy's capital?", "Rome"))],
+    );
     let report = t.advance(&id).unwrap().remove(0);
     let pose = &report.steps[2].calls[0];
     assert!(
         pose.is_error,
         "the superseded plan still goes out: {report:?}"
     );
-    assert!(session(&t, &id).open_question.is_none());
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer);
+    assert!(session(&t, &id).open_question.is_some());
 }
 
 #[test]
@@ -567,11 +573,16 @@ fn a_numeric_key_shown_with_a_unit_before_the_pose_is_refused() {
     );
     let question = recall("Convert 42000 grams to kilograms; give the number.", "42");
     teacher.script(Agent::Teacher, "", vec![(ASK, question)]);
+    teacher.script(
+        Agent::Teacher,
+        "",
+        vec![(ASK, recall("How many minutes in an hour?", "60"))],
+    );
     let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.end, TurnEnd::AwaitingLearner, "{report:?}");
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
     assert!(report.steps[1].calls[0].is_error, "{report:?}");
     assert_eq!(t.engine().reminders, 0, "a refused pose is no leak");
-    assert!(session(&t, &id).open_question.is_none());
+    assert!(session(&t, &id).open_question.is_some());
 }
 
 #[test]
