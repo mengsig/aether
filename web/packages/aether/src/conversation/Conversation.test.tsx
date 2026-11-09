@@ -149,7 +149,7 @@ describe("the conversation joins deltas to their committed message", () => {
     expect(meta()).toContain("Usage not reported");
     h.daemon.usageUpdated(FAUX_AGENT, usage(0.0123));
     await h.settle();
-    expect(meta()).toContain("$0.012 · Turn: 52k in · 900 out");
+    expect(meta()).toContain("Turn usage · $0.012 · 52k in · 900 out");
     expect(meta()).not.toContain("Usage not reported");
   });
 
@@ -162,7 +162,7 @@ describe("the conversation joins deltas to their committed message", () => {
     const container = await h.mount(<Conversation conn={h.conn} agent={FAUX_AGENT} />);
     await h.settle();
     const meta = container.querySelector(`.conv-msg[data-invocation="${INV}"] .conv-meta`)?.textContent;
-    expect(meta).toContain("Turn: 52k in · 900 out");
+    expect(meta).toContain("Turn usage · $0.012 · 52k in · 900 out");
     expect(meta).not.toContain("Usage not reported");
   });
 
@@ -173,6 +173,7 @@ describe("the conversation joins deltas to their committed message", () => {
     await h.settle();
     const meta = container.querySelector(`.conv-msg[data-invocation="${INV}"] .conv-meta`)?.textContent;
     expect(meta).toContain("Estimated ≈$0.020+");
+    expect(meta).toContain("Cost not reported");
     expect(meta).not.toContain("Usage not reported");
   });
 });

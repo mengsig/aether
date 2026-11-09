@@ -24,7 +24,7 @@ function seedSessions(stack: Stack, remove: boolean): void {
       const goal = GOALS[index];
       assert.ok(goal, "each seeded session has a goal");
       const at = `2026-11-0${index + 1}T12:00:00Z`;
-      expect(insertSession.run(id, goal, `agt_layout_${index}`, at, at).changes).toBe(1);
+      expect(insertSession.run(id, goal, `agt_0000000000000000000000000${index}`, at, at).changes).toBe(1);
     }
   } finally {
     db.close();
