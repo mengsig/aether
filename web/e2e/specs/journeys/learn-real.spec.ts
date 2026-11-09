@@ -5,7 +5,7 @@ import { REAL_MODELS } from "../../harness/real-engine.ts";
 import { until } from "../../harness/process.ts";
 import { connectionsReady, journeyHooks } from "./journey.ts";
 import { assistantText } from "./daemon.ts";
-import { assertModel, assertQueuedTurn, attachSlowRequests, capture, checkBinaries, configure, endStreamProbe, holdEngine, practiceTurnFinished, sampleReads, session, startSession, warmBudget, WAIT_MS } from "./learn-real-support.ts";
+import { assertModel, assertQueuedTurn, attachSlowRequests, capture, checkBinaries, configure, endStreamProbe, holdEngine, turnFinished, sampleReads, session, startSession, warmBudget, WAIT_MS } from "./learn-real-support.ts";
 import { need, textField } from "./ui.ts";
 
 const real = process.env.JOURNEY_ENGINE === "real";
@@ -55,6 +55,7 @@ test("packaged Learn with Haiku and Luna", async () => {
       expect(await assistantText(stack, saved.agent)).not.toMatch(/didn.t come from you/i);
       await expect(window.getByRole("article", { name: "Recall question" }).locator('[data-correct="true"]')).toBeVisible({ timeout: WAIT_MS });
       await capture(window, `${model.model}-graded`);
+      await until(async () => turnFinished(stack, id), Boolean, "the graded teaching turn to finish", WAIT_MS);
       const finishReads = stopReads;
       stopReads = undefined;
       await finishReads();
@@ -89,7 +90,7 @@ async function restartPractice(run: ReturnType<typeof journey>, model: string, c
     await stack.aether.start();
     await connectionsReady(run, false);
     await until(() => session(stack, id), (value) => value.active_problem != null, "practice to resume after restart", WAIT_MS);
-    await until(async () => practiceTurnFinished(stack, id), Boolean, "the resumed turn to finish", WAIT_MS);
+    await until(async () => turnFinished(stack, id), Boolean, "the resumed turn to finish", WAIT_MS);
     await expect(window.getByRole("article", { name: "Practice problem" }).first()).toBeVisible({ timeout: WAIT_MS });
     await capture(window, `${model.split("/")[1]}-practice-resumed`);
   } finally {

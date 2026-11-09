@@ -66,7 +66,7 @@ export async function warmBudget(stack: Stack): Promise<void> {
     assert.equal(reply.reply, "noesis_session");
     const id = String(reply.data.id);
     assert.match(id, /^ns_/);
-    await until(async () => practiceTurnFinished(stack, id), Boolean, "the budget warm-up turn to finish", WAIT_MS);
+    await until(async () => turnFinished(stack, id), Boolean, "the budget warm-up turn to finish", WAIT_MS);
   }
   assert.ok(await interactiveSpend(stack) >= 0.01, "warm-up spent at least one cent");
 }
@@ -177,7 +177,7 @@ export async function assertQueuedTurn(stack: Stack, id: string, ready: string):
   return pid;
 }
 
-export function practiceTurnFinished(stack: Stack, id: string): boolean {
+export function turnFinished(stack: Stack, id: string): boolean {
   return !pendingTurn(stack, id);
 }
 
