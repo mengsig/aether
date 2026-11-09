@@ -14,12 +14,13 @@ startSingleInstance(app, start);
 
 function start(): void {
   // Links can arrive before the window exists: on macOS through open-url, elsewhere in argv.
-  let desktopReady: Promise<Desktop>;
   const recover = () => {
     void Promise.resolve().then(() => desktopReady).then((desktop) => desktop.ensureMainWindow())
       .then(() => deepLinks.focus()).catch((error: unknown) => console.error("The app window could not be restored:", error));
   };
   const deepLinks = new DeepLinkRouter(recover);
+  const build = readBuildInfo();
+  const desktopReady: Promise<Desktop> = app.whenReady().then(() => startDesktop({ offscreen: false, env: process.env, deepLinks, build }));
   app.on("open-url", (event, url) => {
     event.preventDefault();
     deepLinks.acceptLink(url);
@@ -32,10 +33,8 @@ function start(): void {
   deepLinks.acceptArgv(process.argv);
   registerDeepLinkScheme();
 
-  const build = readBuildInfo();
   labelAboutPanel(build);
 
-  desktopReady = app.whenReady().then(() => startDesktop({ offscreen: false, env: process.env, deepLinks, build }));
   desktopReady
     .then(async (desktop) => {
       if (process.env[SMOKE_ENV] === "1") await reportSmoke(desktop, build, app);
