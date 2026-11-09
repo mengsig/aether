@@ -21,6 +21,7 @@ async function widths(page: Page, ready: string): Promise<{ readonly page: numbe
 }
 
 test("at the minimum window size no screen scrolls sideways and the controls form stacks", async ({ page, stack }, info) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await pairBoth(page, stack);
   const agentId = await createAgent(stack, "Narrow worker", "Stay idle for the narrow-window smoke.", false);
   const conn = encodeURIComponent(await openAgent(page, stack, "Narrow worker"));
