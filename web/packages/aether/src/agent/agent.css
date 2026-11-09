@@ -1,7 +1,7 @@
 @layer app {
   /* The page fills the viewport under the shell header: title, facts card, then the chat, which alone scrolls. */
   .agent {
-    grid-template-rows: auto auto minmax(0, 1fr); gap: var(--space-3); max-inline-size: 100rem;
+    grid-template-rows: auto auto minmax(0, 1fr); gap: var(--space-3); max-inline-size: none;
     block-size: calc(100dvh - 3.5rem - var(--space-4) * 2); min-block-size: 30rem;
     margin-block-end: calc(var(--space-4) - var(--space-12));
   }
@@ -26,6 +26,9 @@
   .agent-fact dd { display: grid; margin: 0; overflow-wrap: anywhere; font-size: var(--text-sm); }
   .agent-hint { color: var(--color-text-muted); font-size: var(--text-xs); }
 
+  @media (min-width: 90rem) {
+    .agent-facts { grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+  }
   @media (max-width: 48rem) {
     .agent { block-size: calc(100dvh - 3rem - var(--space-3) * 2); margin-block-end: calc(var(--space-3) - var(--space-10)); gap: var(--space-2); }
     .agent-name { font-size: var(--text-lg); }
