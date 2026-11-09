@@ -22,6 +22,10 @@
   .item-steering-summary p { margin: 0; overflow-wrap: anywhere; }
   .item-confirm { display: flex; justify-content: end; gap: var(--space-2); }
   .item-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr)); gap: var(--space-4); align-items: start; }
+  @media (min-width: 90rem) {
+    .item { max-inline-size: none; }
+    .item-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
   .item-section { gap: var(--space-3); }
   .item-subheading { margin: 0 0 var(--space-2); color: var(--color-text-muted); font-size: var(--text-sm); }
   .item-facts-list { display: grid; gap: var(--space-2); margin: 0; }

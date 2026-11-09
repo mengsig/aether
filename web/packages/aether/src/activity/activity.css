@@ -19,4 +19,5 @@
   .start-choice-path { color: var(--color-text-faint); font-size: var(--text-xs); }
 
   .start-footer { display: flex; flex: 1; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); min-inline-size: 0; }
+  @media (min-width: 90rem) { .ui-dialog.start-sheet[data-kind="sheet"] { inline-size: 36rem; } }
 }

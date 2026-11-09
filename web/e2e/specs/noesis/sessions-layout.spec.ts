@@ -61,7 +61,7 @@ test("long goals stay in their columns and the practice picker remains clickable
   await expect(page.locator(".learn-card-goal")).toHaveCount(GOALS.length);
   await expect(page.locator(".learn-chip")).toHaveCount(GOALS.length);
 
-  for (const width of [1280, 1440, 1920]) {
+  for (const width of [1280, 1440, 1920, 2560, 3440]) {
     await page.setViewportSize({ width, height: 1000 });
     const start = await page.locator(".learn-start").boundingBox();
     const list = await page.locator(".learn-list").boundingBox();

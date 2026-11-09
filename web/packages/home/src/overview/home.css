@@ -14,6 +14,19 @@
   .home-cell:is([data-area="activity"], [data-area="github"]) { grid-column: span 8; }
 }
 
+@media (min-width: 90rem) {
+  .home { max-inline-size: none; }
+  .home-grid { grid-template-areas: "needs agents spend queue" "activity activity learn github"; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .home-cell { grid-column: auto; }
+  .home-cell[data-area="needs"] { grid-area: needs; }
+  .home-cell[data-area="agents"] { grid-area: agents; }
+  .home-cell[data-area="spend"] { grid-area: spend; }
+  .home-cell[data-area="queue"] { grid-area: queue; }
+  .home-cell[data-area="activity"] { grid-area: activity; }
+  .home-cell[data-area="learn"] { grid-area: learn; }
+  .home-cell[data-area="github"] { grid-area: github; }
+}
+
 .home-loading { gap: var(--space-3); }
 .home-skeleton-value { margin-block-start: var(--space-2); }
 

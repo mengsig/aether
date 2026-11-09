@@ -24,6 +24,9 @@
   .fleet-state { display: flex; align-items: center; gap: var(--space-2); }
   .fleet-model { color: var(--color-text-muted); font-family: var(--font-mono); font-size: var(--text-xs); }
   .fleet-run { color: var(--color-text-muted); }
+  @media (min-width: 90rem) {
+    .fleet-row { grid-template-columns: minmax(12rem, 2fr) minmax(9rem, 1.4fr) 11rem minmax(12rem, 1.5fr) minmax(12rem, 1.5fr); }
+  }
   @media (max-width: 64rem) {
     .fleet-row { grid-template-columns: minmax(8rem, 2fr) minmax(7rem, 1.5fr) 8.5rem; }
     .fleet-model, .fleet-run, .fleet-head > :nth-child(n + 4) { display: none; }

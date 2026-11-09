@@ -5,6 +5,11 @@
   .mem-tight { gap: var(--space-2); }
   .mem-screen .b3-screen-head > .ui-button { justify-self: start; }
   .mem-screen .b3-facts { grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr)); }
+  @media (min-width: 90rem) {
+    .b3-screen.mem-screen { max-inline-size: none; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+    .mem-screen > :is(.b3-screen-head, .b3-standing) { grid-column: 1 / -1; }
+    .mem-screen > .b3-section:first-of-type { grid-row: span 4; }
+  }
 
   .mem-standing { display: grid; gap: var(--space-2); }
   .mem-refs { display: flex; flex-wrap: wrap; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
