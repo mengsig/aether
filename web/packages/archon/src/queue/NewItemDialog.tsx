@@ -4,7 +4,7 @@
 import { connectionDraftKey, navigate, routeHref, useDraft } from "@aether-ui/core";
 import type { archon } from "@aether-ui/protocol";
 import { Button, Dialog, Field, Picker, TextArea } from "@aether-ui/ui";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useChange, useRead, type ArchonAccess } from "./archon.ts";
 import { invariant, PRIORITIES, priorityLabel, replyOf } from "./model.ts";
 
@@ -90,16 +90,29 @@ export function SayDialog({ access, open, onClose }: { readonly access: ArchonAc
   const setText = (text: string) => update({ text });
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+  const [sending, setSending] = useState(false);
+  const inFlight = useRef(false);
   const close = () => { setError(null); setSent(false); onClose(); };
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (inFlight.current) return;
     if (access.speakRefusal !== null) return setError(access.speakRefusal);
     if (!text.trim()) return setError("Write a message first.");
-    const result = await change({ cmd: "say", text: text.trim() });
-    if (!result.ok) return setError(result.error);
-    clearIfUnchanged();
+    inFlight.current = true;
+    setSending(true);
     setError(null);
-    setSent(true);
+    setSent(false);
+    try {
+      const result = await change({ cmd: "say", text: text.trim() });
+      if (!result.ok) return setError(result.error);
+      clearIfUnchanged();
+      setSent(true);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+    } finally {
+      inFlight.current = false;
+      setSending(false);
+    }
   };
   return (
     <Dialog open={open} onClose={close} title="Message Archon" description="The orchestrator reads it on its next turn.">
@@ -108,7 +121,7 @@ export function SayDialog({ access, open, onClose }: { readonly access: ArchonAc
           <textarea className="ui-field-input" rows={4} value={text} data-autofocus onChange={(event) => { setText(event.target.value); setSent(false); }} /></label>
         {error ? <p role="alert" className="queue-error">{error}</p> : null}
         {sent ? <p role="status" className="queue-muted">Sent to the orchestrator.</p> : null}
-        <div className="queue-form-actions"><Button onClick={close}>Close</Button><Button type="submit" variant="primary">Send</Button></div>
+        <div className="queue-form-actions"><Button onClick={close}>Close</Button><Button type="submit" variant="primary" disabled={sending}>{sending ? "Sending…" : "Send"}</Button></div>
       </form>
     </Dialog>
   );
