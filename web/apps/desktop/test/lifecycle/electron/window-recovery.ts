@@ -1,8 +1,37 @@
 import assert from "node:assert/strict";
 import { app, BrowserWindow } from "electron";
+import { fileURLToPath } from "node:url";
 import { registerAppScheme, startDesktop } from "../../../src/main/start.ts";
 import { DeepLinkRouter } from "../../../src/native/deep-links.ts";
 
+async function testQuit(): Promise<void> {
+  Object.defineProperty(app, "getAppPath", { value: () => fileURLToPath(new URL("../../..", import.meta.url)) });
+  const ready = app.whenReady();
+  Object.defineProperty(app, "whenReady", { value: () => new Promise(() => {}) });
+  await import("../../../src/main/index.ts");
+  await ready;
+  const main = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
+  const secondary = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
+  let quitting = false;
+  const quit = new Promise<void>((resolve) => app.once("before-quit", (event) => {
+    event.preventDefault();
+    quitting = true;
+    resolve();
+  }));
+  main.destroy();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(secondary.isDestroyed(), false);
+  assert.equal(quitting, false);
+  secondary.destroy();
+  await quit;
+  assert.equal(quitting, true);
+  console.log("WINDOW-QUIT-OK");
+  app.exit(0);
+}
+
+if (process.argv.includes("quit")) {
+  void testQuit().catch((error: unknown) => { console.error(error); app.exit(1); });
+} else {
 registerAppScheme();
 app.whenReady().then(async () => {
   let recovery: Promise<BrowserWindow> | undefined;
@@ -60,3 +89,4 @@ app.whenReady().then(async () => {
   console.log("WINDOW-RECOVERY-OK");
   app.exit(0);
 }).catch((error: unknown) => { console.error(error); app.exit(1); });
+}
