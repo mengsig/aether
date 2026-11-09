@@ -29,6 +29,7 @@ ipcRenderer.on("desktop:push", (_event, conn, frame) => {
 ipcRenderer.on("desktop:closed", (_event, conn) => {
   const callbacks = closeListeners.get(conn);
   closeListeners.delete(conn);
+  listeners.delete(conn);
   for (const callback of callbacks ?? []) callback();
 });
 ipcRenderer.on("desktop:deep-link", (_event, route) => {
@@ -127,8 +128,8 @@ const desktop = {
   async close(conn) {
     closeListeners.delete(conn);
     ownedConnections.delete(conn);
-    await call("close", conn);
     listeners.delete(conn);
+    await call("close", conn);
   },
   privileged: (action) => call("privileged", action),
   startDaemon: (kind) => call("startDaemon", kind),
