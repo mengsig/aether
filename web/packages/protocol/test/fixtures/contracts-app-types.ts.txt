@@ -47,7 +47,7 @@ interface HostAdapter { readonly kind: "browser" | "electron";
   readonly desktop?: DesktopBridge; readonly storage: KeyValueStore }
 interface KeyValueStore { get(key: string): Promise<unknown>; set(key: string, v: unknown): Promise<void> }
 interface Transport { readonly id: "ws-aether" | "ws-archon" | "ipc";
-  open(target: string, onFrame: (f: unknown) => void, onClose: (code: number, reason: string) => void):
+  open(target: string, onFrame: (f: unknown) => void, onClose: (code: number, reason: string) => void, signal?: AbortSignal):
     Promise<{ send(frame: unknown): void; close(): void }> }
 
 type EntityKind = "agent" | "run" | "item" | "stage" | "initiative" | "issue" | "pull_request" | "proposition";
