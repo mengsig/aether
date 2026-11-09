@@ -107,6 +107,7 @@
     .learn-timeline :is(.learn-bubble:not([data-role="learner"]), .learn-q, .learn-lesson-sources, .learn-complete) {
       max-inline-size: clamp(46rem, 45vw, 64rem);
     }
+    .learn-scroll > .learn-lesson-sources { max-inline-size: clamp(46rem, 45vw, 64rem); margin-inline-start: max(0px, (100% - 96rem) / 2); }
   }
   .learn-timeline-item { animation: ui-rise var(--motion-base) var(--ease-standard); }
   /* The teacher reads like a page; your words sit in a bubble on the right. */
