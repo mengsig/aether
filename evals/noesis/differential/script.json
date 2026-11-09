@@ -2,11 +2,11 @@
   "topic": "Derivatives",
   "user_messages": ["Teach me derivatives"],
   "model_turns": [
-    {"tool_calls": [{"name": "noesis.ask", "arguments": {"kind": "choice", "prompt": "Pick", "options": [{"value": "a", "label": "Only"}], "answer_key": ["a"], "explanation": "why"}}]},
+    {"tool_calls": [{"name": "noesis.ask", "arguments": {"kind": "choice", "prompt": "Pick", "options": [{"value": "a", "label": "Only"}], "answer_key": ["Only"], "explanation": "why"}}]},
     {"tool_calls": [{"name": "noesis.probe_done", "arguments": {"strands": [{"strand": "limits", "floor": "knows slopes", "ceiling": "epsilon-delta", "misconceptions": ["a limit is the value at the point"], "start": "limit laws"}]}}]},
     {"content": "Here is the plan.", "tool_calls": [{"name": "noesis.plan", "arguments": {"nodes": [{"id": "a", "title": "A"}, {"id": "b", "title": "B"}], "edges": [{"from": "a", "to": "a"}]}}]},
     {"tool_calls": [{"name": "noesis.plan", "arguments": {"nodes": [{"id": "a", "title": "A"}, {"id": "b", "title": "B"}], "edges": [{"from": "a", "to": "b"}]}}]},
-    {"tool_calls": [{"name": "noesis.ask", "arguments": {"kind": "choice", "plan_node": "a", "prompt": "Slope of x^2 at 1?", "options": [{"value": "o1", "label": "2"}, {"value": "o2", "label": "1"}, {"value": "o3", "label": "0"}], "answer_key": ["o1"], "explanation": "the derivative is 2x"}}]},
+    {"tool_calls": [{"name": "noesis.ask", "arguments": {"kind": "choice", "plan_node": "a", "prompt": "Slope of x^2 at 1?", "options": [{"value": "o1", "label": "2"}, {"value": "o2", "label": "1"}, {"value": "o3", "label": "0"}], "answer_key": ["2"], "explanation": "the derivative is 2x"}}]},
     {"content": "{\"propositions\": [{\"statement\": \"The derivative of x^2 is 2x\"}, {\"statement\": \"A derivative is a limit of slopes\"}, {\"statement\": \"The slope of x^2 at 1 is 2\"}], \"chains\": [{\"conclusion\": \"The slope of x^2 at 1 is 2\", \"premises\": [\"The derivative of x^2 is 2x\", \"A derivative is a limit of slopes\"]}]}"}
   ]
 }

@@ -279,7 +279,7 @@ fn t05_question_authoring_reports_every_problem() {
     broken["plan_node"] = json!("nowhere");
     let error = error_of(&call(&mut t, &id, ASK, broken, ""));
     assert!(error.contains("2 to 12 options"), "{error}");
-    assert!(error.contains("one of the option values"), "{error}");
+    assert!(error.contains("exact label"), "{error}");
     assert!(error.contains("not a node of the current plan"), "{error}");
 
     let keyless = json!({"kind": "recall", "prompt": "Define a limit"});
@@ -344,6 +344,116 @@ fn t06_options_shuffle_deterministically() {
     sorted.sort_by(|x, y| x.value.cmp(&y.value));
     assert_eq!(sorted, options, "a shuffle is a permutation");
     assert!((0..32).any(|n| shuffle(&format!("q_{n}"), &options) != options));
+}
+
+#[test]
+fn rekey_preserves_the_correct_option_in_both_orders_and_id_bases() {
+    for ids in [["0", "1"], ["1", "2"]] {
+        let authored = vec![
+            ChoiceOption {
+                value: ids[0].into(),
+                label: "Square".into(),
+            },
+            ChoiceOption {
+                value: ids[1].into(),
+                label: "Circle".into(),
+            },
+        ];
+        for options in [authored.clone(), authored.iter().rev().cloned().collect()] {
+            let (shown, key) = rekey(&options, &[ids[0].into()]);
+            let square = shown
+                .iter()
+                .find(|option| option.label == "Square")
+                .unwrap();
+            let circle = shown
+                .iter()
+                .find(|option| option.label == "Circle")
+                .unwrap();
+            assert_eq!(key, [square.value.clone()]);
+            let posed = question::Posed {
+                kind: QuestionKind::Choice,
+                multi: false,
+                options: &shown,
+                answer_key: &key,
+            };
+            for (option, expected) in [(square, true), (circle, false)] {
+                let answer = Answer {
+                    choices: vec![option.value.clone()],
+                    ..Answer::default()
+                };
+                assert_eq!(
+                    question::grade(&posed, &answer).unwrap().correct,
+                    Some(expected)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn choice_key_tracks_its_label_through_shuffle_and_answer() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Learn shapes", Mode::Teach, &[])
+        .unwrap()
+        .id;
+    for values in [["0", "1", "2"], ["1", "2", "3"]] {
+        for correct in [false, true] {
+            let input = json!({"kind": "choice", "prompt": "Which shape has four equal sides?",
+                "options": [{"value": values[0], "label": "Square"},
+                            {"value": values[1], "label": "Triangle"},
+                            {"value": values[2], "label": "Circle"}],
+                "answer_key": ["Square"], "explanation": "Four equal sides form a square."});
+            assert!(!call(&mut t, &id, ASK, input, "").result.is_error);
+            let posed = session(&t, &id).open_question.unwrap();
+            let wire = serde_json::to_string(&posed).unwrap();
+            assert!(!wire.contains("answer_key"));
+            assert!(!wire.contains("Four equal sides form a square."));
+            let options = posed.options.as_ref().unwrap();
+            let picked = if correct { "Square" } else { "Triangle" };
+            let chosen = options
+                .iter()
+                .find(|option| option.label == picked)
+                .unwrap();
+            let answer = Answer {
+                choices: vec![chosen.value.clone()],
+                ..Answer::default()
+            };
+            let result = t.answer(&id, &posed.id, &answer).unwrap();
+            assert_eq!(result.correct, Some(correct));
+            let square = options
+                .iter()
+                .find(|option| option.label == "Square")
+                .unwrap();
+            assert_eq!(
+                result.answer_key,
+                Some(RevealedKey::Choices(vec![square.value.clone()]))
+            );
+        }
+    }
+}
+
+#[test]
+fn stale_choice_key_is_refused_until_it_names_the_new_label() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Learn shapes", Mode::Teach, &[])
+        .unwrap()
+        .id;
+    let mut question = choice(
+        "Which shape has four equal sides?",
+        &[("opt1", "Square"), ("opt2", "Circle")],
+        &["opt1"],
+    );
+    question["answer_key"] = json!(["opt2"]);
+    let error = error_of(&call(&mut t, &id, ASK, question.clone(), ""));
+    assert!(error.contains("exact label"));
+    assert!(session(&t, &id).open_question.is_none());
+    question["answer_key"] = json!(["Square"]);
+    assert!(!call(&mut t, &id, ASK, question, "").result.is_error);
+    assert_eq!(answer_choice(&mut t, &id, &["Square"]).correct, Some(true));
 }
 
 #[test]
@@ -841,7 +951,7 @@ fn t12_malformed_tool_arguments_are_healed() {
     let messy_ask = json!({
         "kind": "\"choice\"", "prompt": "Capital of France?",
         "options": "[{\"value\": \"a\", \"label\": \"Paris\"}, {\"value\": \"b\", \"label\": \"Rome\"}]",
-        "answer_key": "[\"a\"]", "multi": "false", "explanation": "why", "concepts": "geography",
+        "answer_key": "[\"Paris\"]", "multi": "false", "explanation": "why", "concepts": "geography",
     });
     assert!(!call(&mut t, &teach, ASK, messy_ask, "").result.is_error);
     let open = session(&t, &teach).open_question.unwrap();

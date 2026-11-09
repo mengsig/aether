@@ -37,6 +37,15 @@ pub(super) fn fixture() -> (tempfile::TempDir, crate::Noesis) {
 }
 
 pub(super) fn choice(prompt: &str, options: &[(&str, &str)], key: &[&str]) -> Value {
+    let key: Vec<&str> = key
+        .iter()
+        .map(|value| {
+            options
+                .iter()
+                .find(|(id, _)| id == value)
+                .map_or(*value, |(_, label)| *label)
+        })
+        .collect();
     let options: Vec<Value> = options
         .iter()
         .map(|(v, l)| json!({"value": v, "label": l}))

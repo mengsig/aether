@@ -303,7 +303,7 @@ fn capital_question() -> Value {
             {"value": "opt2", "label": "Rome"},
             {"value": "opt3", "label": "Madrid"}
         ],
-        "answer_key": ["opt1"],
+        "answer_key": ["Paris"],
         "explanation": "Paris has been the capital since 987."
     })
 }
@@ -442,6 +442,47 @@ async fn a_sealed_probe_question_is_answered_and_the_learner_model_shows_it() {
     );
 
     assert_deltas_sealed_and_gapless(&mut bus, agent);
+    harness.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wrong_choice_reveals_the_value_of_the_correct_displayed_option() {
+    let home = Home::new();
+    let client = Arc::new(ScriptedClient::new());
+    client.push(ScriptedClient::tool_call(ASK, capital_question()));
+    client.push(ScriptedClient::text("Let's continue."));
+    let harness = Harness::open(&home, client).await;
+    harness.configure(teaching_on(|_| {})).await;
+    let created = harness.create(json!({})).await;
+    let posed = harness.posed(&created.id).await;
+    let question = posed.open_question.as_ref().unwrap();
+    let options = question.options.as_ref().unwrap();
+    let correct = options
+        .iter()
+        .find(|option| option.label == "Paris")
+        .unwrap();
+    let view = serde_json::to_value(&posed).unwrap();
+    assert!(view["open_question"].get("answer_key").is_none());
+    assert!(view["open_question"].get("explanation").is_none());
+    harness.answer(&posed, "Rome").await.unwrap();
+    harness.settled().await;
+    let result = harness
+        .events()
+        .iter()
+        .find_map(|event| match &event.kind {
+            EventKind::NoesisAnswerRecorded { session, result } if *session == created.id => {
+                Some(result.clone())
+            }
+            _ => None,
+        })
+        .expect("answer recorded");
+    assert_eq!(result.correct, Some(false));
+    assert_eq!(
+        result.answer_key,
+        Some(aether_core::noesis::AnswerKey::Many(vec![
+            correct.value.clone()
+        ]))
+    );
     harness.close().await;
 }
 

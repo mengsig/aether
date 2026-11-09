@@ -27,6 +27,30 @@ async function openLesson(): Promise<{ h: Harness; root: HTMLElement }> {
 const answers = (h: Harness) => h.daemon.sent.filter((command) => command.cmd === "noesis_answer").map((command) => command.answer);
 
 describe("questions", () => {
+  test.each([
+    { values: ["0", "1"], reversed: false, correct: true },
+    { values: ["0", "1"], reversed: true, correct: false },
+    { values: ["1", "2"], reversed: false, correct: false },
+    { values: ["1", "2"], reversed: true, correct: true },
+  ] as const)("choice values follow the displayed labels: $values, reversed=$reversed, correct=$correct", async ({ values, reversed, correct }) => {
+    const { h, root } = await openLesson();
+    const options = [{ value: values[0], label: "Square" }, { value: values[1], label: "Circle" }];
+    if (reversed) options.reverse();
+    h.daemon.pose(LESSON.id, { ...VOTE_QUESTION, key: [values[0]], explanation: "A square has four equal sides.",
+      question: { ...VOTE_QUESTION.question, options, prompt: "Which shape has four equal sides?" } });
+    await h.settle(SETTLE_MS);
+    const card = $(root, ".learn-q[data-state=open]");
+    expect(card.textContent).not.toContain("A square has four equal sides.");
+    expect(card.querySelector(".learn-reveal")).toBeNull();
+    await click(h, $(byText(card, "label", correct ? "Square" : "Circle"), "input"));
+    await click(h, byText(card, "button", "Answer"));
+    await h.settle(SETTLE_MS);
+    expect(answers(h)[0]).toMatchObject({ choices: [correct ? values[0] : values[1]] });
+    const reveal = root.querySelector(".learn-reveal");
+    expect(reveal?.textContent).toContain(correct ? "✓ Correct" : "✗ Not quite");
+    expect(reveal?.textContent).toContain(correct ? "Answer: Square" : "Correct answer: Square");
+  });
+
   test("a choice question's answer and explanation stay out of the page and the store until the answer is recorded", async () => {
     const { h, root } = await openLesson();
     h.daemon.pose(LESSON.id, VOTE_QUESTION);

@@ -249,7 +249,9 @@ impl<E: Engine> Teaching<'_, E> {
             return refuse("a question is already open; wait for its answer");
         }
         if row.phase == Phase::Probe && args.plan_node.is_some() {
-            return refuse("probe questions are not tagged with a plan node");
+            return refuse(
+                "probe questions cannot have `plan_node`; omit `plan_node` and retry noesis.ask",
+            );
         }
         let plan = db::latest_plan(self.conn(), &row.id)?.map(|(_, dag)| dag);
         let authored = match question::author(args, plan.as_ref(), visible_text) {

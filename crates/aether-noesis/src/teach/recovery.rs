@@ -347,6 +347,87 @@ fn an_unreadable_pose_is_refused_and_seals_nothing() {
     );
 }
 
+#[test]
+fn a_tagged_probe_is_refused_then_corrected_within_the_turn() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Learn cells", Mode::Teach, &[])
+        .unwrap()
+        .id;
+    let clean = recall("Which organelle makes ATP?", SECRET);
+    let mut tagged = clean.clone();
+    tagged["plan_node"] = json!("cell");
+    t.engine_mut()
+        .script(Agent::Prober, "", vec![(ASK, tagged)]);
+    t.engine_mut().script(Agent::Prober, "", vec![(ASK, clean)]);
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer);
+    assert_eq!(report.steps.len(), 2);
+    let refused = &report.steps[0].calls[0];
+    assert!(refused.is_error);
+    assert!(
+        refused.result["error"]
+            .as_str()
+            .unwrap()
+            .contains("omit `plan_node`")
+    );
+    assert!(!report.steps[1].calls[0].is_error);
+    assert_eq!(session(&t, &id).open_question.unwrap().plan_node, None);
+    assert!(!format!("{report:?}").contains(SECRET));
+    let agent = session(&t, &id).agent;
+    let inputs = t.engine().inputs_of(&agent);
+    assert!(inputs.iter().any(|input| matches!(input, Input::ToolResults(results)
+        if results.iter().any(|result| result.is_error && result.content["error"].as_str().unwrap().contains("omit `plan_node`")))));
+}
+
+#[test]
+fn repeated_tagged_probes_stop_at_the_existing_step_limit() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Learn cells", Mode::Teach, &[])
+        .unwrap()
+        .id;
+    let mut tagged = capital_question();
+    tagged["plan_node"] = json!("cell");
+    for _ in 0..service::MAX_STEPS {
+        t.engine_mut()
+            .script(Agent::Prober, "", vec![(ASK, tagged.clone())]);
+    }
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::StepLimit);
+    assert_eq!(report.steps.len(), service::MAX_STEPS);
+    assert!(report.steps.iter().all(|step| step.calls[0].is_error));
+    assert!(session(&t, &id).open_question.is_none());
+}
+
+#[test]
+fn a_teacher_goal_question_must_omit_the_plan_node() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let mut goal =
+        json!({"kind": "goal", "prompt": "What would you like to achieve?", "plan_node": "a"});
+    t.engine_mut()
+        .script(Agent::Teacher, "", vec![(ASK, goal.clone())]);
+    goal.as_object_mut().unwrap().remove("plan_node");
+    t.engine_mut().script(Agent::Teacher, "", vec![(ASK, goal)]);
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer);
+    assert_eq!(report.steps.len(), 2);
+    let refused = &report.steps[0].calls[0];
+    assert!(refused.is_error);
+    assert!(
+        refused.result["error"]
+            .as_str()
+            .unwrap()
+            .contains("omit `plan_node`")
+    );
+    assert!(!report.steps[1].calls[0].is_error);
+    assert_eq!(session(&t, &id).open_question.unwrap().plan_node, None);
+}
+
 /// A reply that shows its own problem's solution is discarded; the retry
 /// poses the problem, and a second problem waits until it is concluded.
 #[test]

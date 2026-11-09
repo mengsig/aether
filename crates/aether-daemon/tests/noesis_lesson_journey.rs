@@ -70,7 +70,7 @@ fn choice(prompt: &str, labels: [&str; 3], right: usize, explanation: &str) -> V
         .map(|(index, label)| json!({"value": format!("opt{}", index + 1), "label": label}))
         .collect();
     json!({"kind": "choice", "prompt": prompt, "options": options,
-        "answer_key": [format!("opt{}", right + 1)], "explanation": explanation})
+        "answer_key": [labels[right]], "explanation": explanation})
 }
 
 /// The whole scripted lesson, in the order the model is asked: the Prober's

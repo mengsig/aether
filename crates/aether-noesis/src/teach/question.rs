@@ -95,28 +95,37 @@ fn author_choice(args: &AskArgs, problems: &mut Vec<String>) -> Authored {
     if values.len() != options.len() || values.contains("") {
         problems.push("option values must be distinct and non-empty".to_string());
     }
-    let key: BTreeSet<&str> = args.answer_key.iter().map(String::as_str).collect();
-    if key.is_empty() {
-        problems.push("a choice question needs an `answer_key` of option values".to_string());
+    let labels: BTreeSet<&str> = options.iter().map(|o| o.label.as_str()).collect();
+    if labels.len() != options.len() || labels.contains("") {
+        problems.push("option labels must be distinct and non-empty".to_string());
     }
-    if !key.iter().all(|value| values.contains(value)) {
-        problems.push("every `answer_key` entry must be one of the option values".to_string());
+    let key_labels: BTreeSet<&str> = args.answer_key.iter().map(String::as_str).collect();
+    if key_labels.is_empty() {
+        problems.push("a choice question needs an `answer_key` of exact option labels".to_string());
     }
+    if !key_labels.iter().all(|label| labels.contains(label)) {
+        problems.push("each `answer_key` entry must be the exact label of a correct option, not its value or position; update it whenever options change".to_string());
+    }
+    let key: Vec<String> = options
+        .iter()
+        .filter(|option| key_labels.contains(option.label.as_str()))
+        .map(|option| option.value.clone())
+        .collect();
     if prose_holds_a_value(args, &values) {
         problems.push(
             "option values are internal ids and never appear in the prompt or a label; use opaque values such as `opt1`"
                 .to_string(),
         );
     }
-    let multi = args.multi.unwrap_or(key.len() > 1);
-    if !multi && key.len() > 1 {
+    let multi = args.multi.unwrap_or(key_labels.len() > 1);
+    if !multi && key_labels.len() > 1 {
         problems.push(
             "a single-answer question has exactly one `answer_key` entry; set `multi`".to_string(),
         );
     }
     Authored {
         options,
-        answer_key: key.into_iter().map(str::to_string).collect(),
+        answer_key: key,
         multi,
     }
 }
@@ -140,7 +149,8 @@ fn author_goal(args: &AskArgs, problems: &mut Vec<String>) -> Authored {
         problems.push("a goal question has no `answer_key`".to_string());
     }
     if args.plan_node.is_some() {
-        problems.push("a goal question is not tagged with a plan node".to_string());
+        problems
+            .push("a goal question must omit `plan_node`; remove that field and retry".to_string());
     }
     let options = args
         .options
@@ -176,7 +186,7 @@ pub(super) fn model_key_values(args: &AskArgs) -> Vec<String> {
     }
     args.options
         .iter()
-        .filter(|option| args.answer_key.contains(&option.value))
+        .filter(|option| args.answer_key.contains(&option.label))
         .map(|option| option.value.clone())
         .collect()
 }
@@ -189,7 +199,7 @@ pub(super) fn shown_fields_reveal(args: &AskArgs) -> bool {
         QuestionKind::Choice => args
             .options
             .iter()
-            .filter(|option| args.answer_key.contains(&option.value))
+            .filter(|option| args.answer_key.contains(&option.label))
             .map(|option| option.label.clone())
             .collect(),
         _ => args.answer_key.clone(),
@@ -227,7 +237,7 @@ pub fn reveals_key(args: &AskArgs, visible_text: &str) -> bool {
         QuestionKind::Choice => args
             .options
             .iter()
-            .filter(|option| args.answer_key.contains(&option.value))
+            .filter(|option| args.answer_key.contains(&option.label))
             .map(|option| option.label.as_str())
             .collect(),
         QuestionKind::Recall => args.answer_key.iter().map(String::as_str).collect(),

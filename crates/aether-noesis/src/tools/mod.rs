@@ -185,8 +185,7 @@ pub fn sealed_texts(tool: &str, input: &Value) -> Option<Vec<String>> {
     Some(texts)
 }
 
-/// The key as a reader could recognise it: each entry, and for an entry naming
-/// an option (by its trimmed value, as the parser compares) that option's label.
+/// Seal both the label and value of every option named by a key entry.
 fn shown_key(map: &serde_json::Map<String, Value>, key: &Value) -> Vec<String> {
     let mut entries = Vec::new();
     collect_texts(key, &mut entries);
@@ -199,9 +198,13 @@ fn shown_key(map: &serde_json::Map<String, Value>, key: &Value) -> Vec<String> {
     let count = entries.len();
     let mut shown = Vec::with_capacity(count * 2);
     for entry in entries {
-        let label = labels.iter().find(|(value, _)| *value == entry.trim());
-        if let Some((_, label)) = label.filter(|(_, label)| !label.trim().is_empty()) {
-            shown.push(label.to_string());
+        for (value, label) in &labels {
+            if label.trim() == entry.trim() && !value.trim().is_empty() && *value != entry.trim() {
+                shown.push(value.to_string());
+            }
+            if *value == entry.trim() && !label.trim().is_empty() && label.trim() != entry.trim() {
+                shown.push(label.to_string());
+            }
         }
         shown.push(entry);
     }
@@ -324,9 +327,9 @@ fn ask_schema() -> Value {
             "kind": names(QuestionKind::NAMES),
             "prompt": text(),
             "options": {"type": "array", "items": option, "minItems": 2},
-            "answer_key": {"anyOf": [text(), texts()]},
+            "answer_key": {"anyOf": [text(), texts()], "description": "For choice questions, provide the exact label of each correct option, not its value or position. For recall, provide the expected answer text. Omit for goal questions."},
             "explanation": text(),
-            "plan_node": text(),
+            "plan_node": {"type": "string", "description": "Omit for all probe questions and for goal questions. For a teaching choice or recall question, use the current plan step being checked."},
             "concepts": texts(),
             "multi": {"type": "boolean"},
             "intent": names(Intent::NAMES),
@@ -409,6 +412,12 @@ mod tests {
         assert_eq!(
             sealed_texts("noesis.ask", &input),
             Some(vec!["Paris".into(), "a".into(), "b".into()])
+        );
+        let mut by_label = input.clone();
+        by_label["answer_key"] = json!(["Paris"]);
+        assert_eq!(
+            sealed_texts("noesis.ask", &by_label),
+            Some(vec!["a".into(), "Paris".into(), "b".into()])
         );
         let stringified = Value::String(r#"{"solution": "x = 4"}"#.into());
         assert_eq!(
