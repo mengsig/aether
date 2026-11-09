@@ -1,0 +1,83 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createApp } from "./app.ts";
+
+const storage = { get: async () => undefined, set: async () => {} };
+const identities = { load: async () => undefined, save: async () => {}, remove: async () => {} };
+const health = (mounted: boolean) => ({ ok: true, status: 200, json: async () => ({ mounts: mounted ? [{ prefix: "/archon", kind: "archon" }] : [] }) } as Response);
+const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+let events: EventTarget;
+beforeEach(() => {
+  vi.useFakeTimers();
+  events = new EventTarget();
+  vi.stubGlobal("location", new URL("https://example.test/"));
+  vi.stubGlobal("addEventListener", events.addEventListener.bind(events));
+  vi.stubGlobal("removeEventListener", events.removeEventListener.bind(events));
+});
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+describe("browser discovery recovery", () => {
+  it.each(["fetch", "body"])("starts Aether while health %s hangs and retries", async (stage) => {
+    const never = new Promise<never>(() => {});
+    const fetcher = vi.fn(() => stage === "fetch" ? never : Promise.resolve({ ok: true, json: () => never } as unknown as Response));
+    const app = createApp({ kind: "browser", storage }, { fetch: fetcher as typeof fetch, identities, scheduler: (f) => f() });
+    await app.start(); await flush();
+    expect(app.manager.all().map((c) => c.endpoint.daemon)).toEqual(["aether"]);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(app.store.get().reports.some((r) => r.message.includes("discover Archon"))).toBe(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetcher.mock.calls.length).toBeGreaterThan(1);
+    app.stop();
+    const calls = fetcher.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetcher).toHaveBeenCalledTimes(calls);
+  });
+
+  it("recovers a failed startup through online and deduplicates rediscovery", async () => {
+    let mounted = false;
+    const fetcher = vi.fn(async () => { if (!mounted) throw new Error("offline"); return health(true); });
+    const app = createApp({ kind: "browser", storage }, { fetch: fetcher as typeof fetch, identities, scheduler: (f) => f() });
+    await app.start(); await flush();
+    expect(app.manager.all()).toHaveLength(1);
+    mounted = true;
+    events.dispatchEvent(new Event("online")); await flush();
+    expect(app.manager.all().map((c) => c.endpoint.daemon)).toEqual(["aether", "archon"]);
+    await expect(app.rediscover()).resolves.toBe(0);
+    app.stop();
+    const calls = fetcher.mock.calls.length;
+    events.dispatchEvent(new Event("online")); await flush();
+    expect(fetcher).toHaveBeenCalledTimes(calls);
+  });
+
+  it("adds a mount on explicit rediscovery and ignores a late health response after stop", async () => {
+    let resolve!: (response: Response) => void;
+    let pending = false;
+    const fetcher = vi.fn(() => pending ? new Promise<Response>((done) => { resolve = done; }) : Promise.resolve(health(false)));
+    const app = createApp({ kind: "browser", storage }, { fetch: fetcher as typeof fetch, identities, scheduler: (f) => f() });
+    await app.start(); await flush();
+    pending = true;
+    const discovery = app.rediscover();
+    resolve(health(true));
+    await expect(discovery).resolves.toBe(1);
+    const later = app.rediscover();
+    app.stop();
+    resolve(health(true));
+    await expect(later).resolves.toBe(0);
+    expect(app.manager.all()).toHaveLength(2);
+  });
+
+  it("discovers a later mount on explicit rediscovery and after pairing", async () => {
+    let mounted = false;
+    const fetcher = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url).includes("pair/claim")) return { ok: true, status: 200, text: async () => JSON.stringify({ device: { id: "device" } }) } as Response;
+      return health(mounted);
+    });
+    const app = createApp({ kind: "browser", storage }, { fetch: fetcher as typeof fetch, identities, scheduler: (f) => f() });
+    await app.start(); await flush();
+    await expect(app.rediscover()).resolves.toBe(0);
+    mounted = true;
+    await app.pairing("archon").start("code", "browser"); await flush();
+    expect(app.manager.all().map((c) => c.endpoint.daemon)).toEqual(["aether", "archon"]);
+    expect(await app.rediscover()).toBe(0);
+    app.stop();
+  });
+});

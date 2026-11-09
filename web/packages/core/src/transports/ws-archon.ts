@@ -17,24 +17,36 @@ export interface ArchonSocketOptions {
  * GET /archon/api/session: the paired device, `unpaired` on 401, or null from
  * an archond too old to have the endpoint, whose upgrade then decides.
  */
-export async function archonSession(fetcher: typeof fetch, socketUrl: string): Promise<Json | null> {
-  const url = new URL(`${ARCHON_MOUNT}/api/session`, socketUrl.replace(/^ws/, "http"));
-  const response = await fetcher(url.href, { method: "GET", credentials: "same-origin", cache: "no-store" });
-  if (response.status === 401) throw new DaemonError("unpaired", "Pair this browser with Archon");
-  if (response.status === 404) return null;
-  if (!response.ok) throw new DaemonError("unavailable", `Archon's session check answered ${response.status}`);
-  const session = object(await response.json(), "archon session");
-  object(session.device, "archon session.device");
-  return session;
+export async function archonSession(fetcher: typeof fetch, socketUrl: string, signal?: AbortSignal): Promise<Json | null> {
+  const request = async () => {
+    const url = new URL(`${ARCHON_MOUNT}/api/session`, socketUrl.replace(/^ws/, "http"));
+    const response = await fetcher(url.href, { method: "GET", credentials: "same-origin", cache: "no-store", signal: signal ?? null });
+    if (response.status === 401) throw new DaemonError("unpaired", "Pair this browser with Archon");
+    if (response.status === 404) return null;
+    if (!response.ok) throw new DaemonError("unavailable", `Archon's session check answered ${response.status}`);
+    const session = object(await response.json(), "archon session");
+    object(session.device, "archon session.device");
+    return session;
+  };
+  if (!signal) return request();
+  signal.throwIfAborted();
+  let abort: () => void = () => {};
+  const cancelled = new Promise<never>((_, reject) => {
+    abort = () => reject(new DOMException("Connection attempt cancelled", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  try { return await Promise.race([request(), cancelled]); }
+  finally { signal.removeEventListener("abort", abort); }
 }
 
 export function archonSocketTransport(options: ArchonSocketOptions = {}): Transport {
   const factory = options.socket ?? browserSocket;
   return {
     id: "ws-archon",
-    async open(target, onFrame, onClose) {
+    async open(target, onFrame, onClose, signal) {
       const url = checkSocketUrl(target, `${ARCHON_MOUNT}/ws`);
-      await archonSession(options.fetch ?? globalThis.fetch.bind(globalThis), url);
+      await archonSession(options.fetch ?? globalThis.fetch.bind(globalThis), url, signal);
+      signal?.throwIfAborted();
       const socket = await openSocket(factory, url, "archon", {
         onText(raw) {
           try {
@@ -46,7 +58,7 @@ export function archonSocketTransport(options: ArchonSocketOptions = {}): Transp
           }
         },
         onClose,
-      });
+      }, signal);
       return {
         send: (frame: unknown) => sendFrame(socket, object(frame, "client frame")),
         close: () => socket.close(1000, "bye"),

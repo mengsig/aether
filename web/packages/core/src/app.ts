@@ -2,6 +2,7 @@
 // host can reach, command sending with error reporting, and pairing flows.
 
 import type { HostAdapter, PrivilegedAction } from "@aether-ui/protocol";
+import { backoffDelay } from "./backoff.ts";
 import { isKeyed } from "./commands.ts";
 import type { Endpoint } from "./connection.ts";
 import { codeOf, RefusedError } from "./errors.ts";
@@ -59,10 +60,7 @@ export interface App {
   noteUnconfirmed(conn: string, command: Json, error: string): string;
   pairing(daemon: "aether" | "archon"): PairingFlow;
   start(): Promise<void>;
-  /**
-   * Desktop only: asks the bridge again which local daemons answer, connects any new one and
-   * retries the rest, for daemons started after the app (first-run setup). Returns how many were added.
-   */
+  /** Finds newly available daemons and retries connections. Returns how many were added. */
   rediscover(): Promise<number>;
   stop(): void;
 }
@@ -75,6 +73,57 @@ export function createApp(host: HostAdapter, options: AppOptions = {}): App {
   const fetcher = options.fetch ?? globalThis.fetch?.bind(globalThis);
   const identities = () => options.identities ?? indexedDbIdentity(globalThis.location.origin);
   let issued = 0;
+  let active = false;
+  let discoveryGeneration = 0;
+  let discoveryAttempt = 0;
+  let discoveryTimer: ReturnType<typeof setTimeout> | undefined;
+  let discoveryAbort: AbortController | undefined;
+  let discovering: Promise<number> | undefined;
+  const known = (endpoint: Endpoint) => manager.all().some((c) => c.endpoint.daemon === endpoint.daemon && c.endpoint.target === endpoint.target);
+  const addFresh = (found: readonly Endpoint[]) => {
+    let added = 0;
+    for (const endpoint of found) {
+      if (known(endpoint)) continue;
+      manager.add(endpoint).start();
+      added += 1;
+    }
+    return added;
+  };
+  const scheduleDiscovery = () => {
+    if (!active || host.desktop || options.endpoints !== undefined) return;
+    clearTimeout(discoveryTimer);
+    discoveryTimer = setTimeout(() => { void browserDiscovery(); }, backoffDelay(discoveryAttempt++));
+  };
+  const browserDiscovery = (): Promise<number> => {
+    if (!active || options.endpoints !== undefined) return Promise.resolve(0);
+    if (discovering) return discovering;
+    clearTimeout(discoveryTimer);
+    const generation = discoveryGeneration;
+    const controller = new AbortController();
+    discoveryAbort = controller;
+    const deadline = setTimeout(() => controller.abort(), 10_000);
+    discovering = (async () => {
+      try {
+        const mounted = await archonMounted(fetcher, controller.signal);
+        if (!active || generation !== discoveryGeneration) return 0;
+        if (!mounted) { scheduleDiscovery(); return 0; }
+        discoveryAttempt = 0;
+        return addFresh([browserArchonEndpoint(fetcher)]);
+      } catch (error) {
+        if (active && generation === discoveryGeneration) {
+          store.report(`Could not discover Archon: ${errorText(error)}`);
+          scheduleDiscovery();
+        }
+        return 0;
+      } finally {
+        clearTimeout(deadline);
+        if (discoveryAbort === controller) discoveryAbort = undefined;
+        if (generation === discoveryGeneration) discovering = undefined;
+      }
+    })();
+    return discovering;
+  };
+  const online = () => { void app.rediscover(); };
   const app: App = {
     host, store, manager, registry,
     async send(conn, command) {
@@ -131,29 +180,51 @@ export function createApp(host: HostAdapter, options: AppOptions = {}): App {
       return key;
     },
     pairing(daemon) {
-      const retry = () => { for (const c of manager.all()) if (c.endpoint.daemon === daemon) c.retryNow(); };
+      const retry = () => {
+        for (const c of manager.all()) if (c.endpoint.daemon === daemon) c.retryNow();
+        if (!host.desktop && options.endpoints === undefined) void browserDiscovery();
+      };
       if (daemon === "archon") return new PairingFlow(archonPairing(fetcher), retry);
       return new PairingFlow(aetherPairing(identities(), fetcher), retry);
     },
     async start() {
-      const endpoints = options.endpoints ?? (await discover(host, store, fetcher, identities));
-      for (const endpoint of endpoints) manager.add(endpoint);
+      if (active) return;
+      active = true;
+      if (!host.desktop && options.endpoints === undefined) {
+        addFresh([browserAetherEndpoint(identities)]);
+        globalThis.addEventListener?.("online", online);
+        void browserDiscovery();
+        return;
+      }
+      const endpoints = options.endpoints ?? await discover(host, store);
+      if (!active) return;
+      for (const endpoint of endpoints) if (!known(endpoint)) manager.add(endpoint);
       const managed = host.desktop !== undefined && (await host.desktop.getPreference("desktop.managed_start")) === true;
+      if (!active) return;
       if (host.desktop) manager.setManagedStart(managed);
       manager.start();
       if (managed && options.endpoints === undefined) void startMissing(app);
     },
     async rediscover() {
-      if (!host.desktop) throw new RefusedError("Only the desktop app finds daemons on this computer");
-      const found = await discover(host, store, fetcher, identities);
-      const known = (endpoint: Endpoint) => manager.all().some((c) => c.endpoint.daemon === endpoint.daemon && c.endpoint.target === endpoint.target);
-      const fresh = found.filter((endpoint) => !known(endpoint));
       for (const connection of manager.all()) if (connection.current.state === "backoff") connection.retryNow();
-      for (const endpoint of fresh) manager.add(endpoint).start();
-      invariant(found.every(known), "every reachable daemon has a connection after rediscovery");
-      return fresh.length;
+      if (!host.desktop) {
+        if (options.endpoints !== undefined) throw new RefusedError("Discovery is disabled for explicit endpoints");
+        return browserDiscovery();
+      }
+      const found = await discover(host, store);
+      if (!active) return 0;
+      return addFresh(found);
     },
-    stop: () => manager.stop(),
+    stop() {
+      active = false;
+      discoveryGeneration += 1;
+      discoveryAbort?.abort();
+      discoveryAbort = undefined;
+      discovering = undefined;
+      clearTimeout(discoveryTimer);
+      globalThis.removeEventListener?.("online", online);
+      manager.stop();
+    },
   };
   return app;
 }
@@ -199,29 +270,43 @@ async function runPrivileged(host: HostAdapter, manager: ConnectionManager, conn
   }
 }
 
-async function discover(host: HostAdapter, store: Store, fetcher: typeof fetch, identities: () => IdentityStore): Promise<Endpoint[]> {
-  if (host.desktop) {
-    const transport = ipcTransport(host.desktop, (message) => store.report(message));
-    const daemons = await host.desktop.discover();
-    return daemons.filter((d) => d.reachable).map((d) => ({ daemon: d.kind, transport, target: d.id, label: d.label }));
-  }
-  const { origin, host: hostLabel, protocol } = globalThis.location;
-  const socketOrigin = `${protocol === "https:" ? "wss:" : "ws:"}//${hostLabel}`;
-  const endpoints: Endpoint[] = [{
-    daemon: "aether", label: hostLabel, target: `${socketOrigin}/ws`,
-    transport: aetherSocketTransport({ identity: identities(), origin }),
-  }];
-  if (await archonMounted(fetcher)) {
-    endpoints.push({ daemon: "archon", label: hostLabel, target: `${socketOrigin}${ARCHON_MOUNT}/ws`, transport: archonSocketTransport({ fetch: fetcher }) });
-  }
-  return endpoints;
+async function discover(host: HostAdapter, store: Store): Promise<Endpoint[]> {
+  invariant(host.desktop !== undefined, "desktop discovery requires a bridge");
+  const transport = ipcTransport(host.desktop, (message) => store.report(message));
+  const daemons = await host.desktop.discover();
+  return daemons.filter((d) => d.reachable).map((d) => ({ daemon: d.kind, transport, target: d.id, label: d.label }));
+}
+
+function browserAetherEndpoint(identities: () => IdentityStore): Endpoint {
+  const { origin, host, protocol } = globalThis.location;
+  const socketOrigin = `${protocol === "https:" ? "wss:" : "ws:"}//${host}`;
+  return { daemon: "aether", label: host, target: `${socketOrigin}/ws`,
+    transport: aetherSocketTransport({ identity: identities(), origin }) };
+}
+
+function browserArchonEndpoint(fetcher: typeof fetch): Endpoint {
+  const { host, protocol } = globalThis.location;
+  const socketOrigin = `${protocol === "https:" ? "wss:" : "ws:"}//${host}`;
+  return { daemon: "archon", label: host, target: `${socketOrigin}${ARCHON_MOUNT}/ws`,
+    transport: archonSocketTransport({ fetch: fetcher }) };
 }
 
 /** Whether Aether's health lists an Archon mount at /archon (CONTRACTS.md §1.1). */
-export async function archonMounted(fetcher: typeof fetch): Promise<boolean> {
-  const response = await fetcher("/api/health", { credentials: "omit", cache: "no-store" });
-  if (!response.ok) throw new Error(`Aether's health check answered ${response.status}`);
-  const health = object(await response.json(), "health");
-  const mounts = array(health.mounts ?? [], "health.mounts");
-  return mounts.some((mount) => object(mount, "mount").prefix === ARCHON_MOUNT && object(mount, "mount").kind === "archon");
+export async function archonMounted(fetcher: typeof fetch, signal?: AbortSignal): Promise<boolean> {
+  const check = async () => {
+    const response = await fetcher("/api/health", { credentials: "omit", cache: "no-store", signal: signal ?? null });
+    if (!response.ok) throw new Error(`Aether's health check answered ${response.status}`);
+    const health = object(await response.json(), "health");
+    const mounts = array(health.mounts ?? [], "health.mounts");
+    return mounts.some((mount) => object(mount, "mount").prefix === ARCHON_MOUNT && object(mount, "mount").kind === "archon");
+  };
+  if (!signal) return check();
+  signal.throwIfAborted();
+  let abort: () => void = () => {};
+  const cancelled = new Promise<never>((_, reject) => {
+    abort = () => reject(new Error("Health discovery timed out or was cancelled"));
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  try { return await Promise.race([check(), cancelled]); }
+  finally { signal.removeEventListener("abort", abort); }
 }

@@ -32,6 +32,8 @@ export interface ConnectionHooks {
 export const ARCHON_VERSIONS = [24, 23] as const;
 /** `noesis`: typed `noesis.*` events; without it the daemon sends them as `custom`, which the Noesis cache ignores. */
 export const AETHER_HELLO_FEATURES = ["deltas", "artifact_bytes", "delta_order", "memory_v2", "noesis"];
+export const CONNECT_TIMEOUT_MS = 15_000;
+
 const CLOSE_REVOKED = 4401;
 const CLOSE_BUSY = 4503;
 const CLOSE_LAGGED = 1013;
@@ -49,6 +51,7 @@ export class Connection {
   private generation = 0;
   private stopped = true;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
+  private opening: AbortController | null = null;
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   /** What the screen shows; kept across reconnects so each new sync resumes it. */
   private onScreen: readonly string[] = [];
@@ -100,7 +103,9 @@ export class Connection {
 
   /** Skips a backoff wait, or leaves `pairing` after the device paired. */
   retryNow(): void {
-    if (this.stopped || this.info.state === "ready" || this.info.state === "connecting") return;
+    if (this.stopped || this.info.state === "ready") return;
+    this.generation += 1;
+    this.teardown(new DaemonError("disconnected", "Connection retry requested"));
     clearTimeout(this.retryTimer);
     void this.open();
   }
@@ -123,9 +128,7 @@ export class Connection {
     this.setState("connecting");
     try {
       const rpcBox: { rpc?: Rpc } = {};
-      const link = await this.endpoint.transport.open(this.endpoint.target,
-        (frame) => { if (generation === this.generation) this.receive(frame, rpcBox.rpc); },
-        (code, reason) => { if (generation === this.generation) this.closed(code, reason); });
+      const link = await this.openTransport(generation, rpcBox);
       if (generation !== this.generation) return link.close();
       this.link = link;
       this.rpc = rpcBox.rpc = new Rpc(link, undefined, this.endpoint.daemon === "aether" && this.endpoint.transport.id === "ipc");
@@ -135,6 +138,29 @@ export class Connection {
       await this.sync?.start();
     } catch (error) {
       if (generation === this.generation) this.failed(error);
+    }
+  }
+
+  private async openTransport(generation: number, rpcBox: { rpc?: Rpc }): Promise<Link> {
+    const controller = new AbortController();
+    this.opening = controller;
+    const pending = this.endpoint.transport.open(this.endpoint.target,
+      (frame) => { if (generation === this.generation) this.receive(frame, rpcBox.rpc); },
+      (code, reason) => { if (generation === this.generation) this.closed(code, reason); }, controller.signal);
+    void pending.then((link) => { if (controller.signal.aborted) link.close(); }, () => {});
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cancelled = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener("abort", () => reject(new Error("Connection attempt cancelled")), { once: true });
+      timer = setTimeout(() => {
+        reject(new DaemonError("timeout", "Connection attempt timed out"));
+        controller.abort();
+      }, CONNECT_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([pending, cancelled]);
+    } finally {
+      clearTimeout(timer);
+      if (this.opening === controller) this.opening = null;
     }
   }
 
@@ -238,6 +264,8 @@ export class Connection {
   }
 
   private teardown(error: Error): void {
+    this.opening?.abort();
+    this.opening = null;
     clearInterval(this.heartbeat);
     this.sync?.stop();
     this.sync = null;
