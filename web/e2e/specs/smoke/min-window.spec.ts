@@ -21,6 +21,7 @@ async function widths(page: Page, ready: string): Promise<{ readonly page: numbe
 }
 
 test("at the minimum window size no screen scrolls sideways and the controls form stacks", async ({ page, stack }, info) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await pairBoth(page, stack);
   const agentId = await createAgent(stack, "Narrow worker", "Stay idle for the narrow-window smoke.", false);
   const conn = encodeURIComponent(await openAgent(page, stack, "Narrow worker"));
@@ -54,11 +55,20 @@ async function openModelTab(page: Page): Promise<void> {
 
 /** The effort choice sits below the model, and the apply button below the effort, never beside them. */
 async function expectStacked(page: Page): Promise<void> {
-  const model = await page.getByTestId("configure-model").boundingBox();
-  const effort = await page.getByRole("radiogroup", { name: "Effort" }).boundingBox();
-  const apply = await page.getByRole("button", { name: "Apply model" }).boundingBox();
-  expect(model !== null && effort !== null && apply !== null, "the model form's controls are laid out").toBe(true);
-  if (model === null || effort === null || apply === null) return;
-  expect(effort.y, "the effort row is below the model").toBeGreaterThanOrEqual(model.y + model.height);
-  expect(apply.y, "the apply button is below the effort row").toBeGreaterThanOrEqual(effort.y + effort.height);
+  await expect(page.getByRole("radiogroup", { name: "Effort" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Apply model", exact: true })).toBeVisible();
+  const bounds = await page.evaluate(() => {
+    const model = document.querySelector('[data-testid="configure-model"]');
+    const effort = document.querySelector('[role="radiogroup"][aria-label="Effort"]');
+    const apply = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Apply model");
+    if (!model || !effort || !apply) return null;
+    const modelBox = model.getBoundingClientRect();
+    const effortBox = effort.getBoundingClientRect();
+    const applyBox = apply.getBoundingClientRect();
+    return { modelBottom: modelBox.bottom, effortTop: effortBox.top, effortBottom: effortBox.bottom, applyTop: applyBox.top };
+  });
+  expect(bounds, "the model form's controls are laid out").not.toBeNull();
+  if (bounds === null) return;
+  expect(bounds.effortTop, "the effort row is below the model").toBeGreaterThanOrEqual(bounds.modelBottom);
+  expect(bounds.applyTop, "the apply button is below the effort row").toBeGreaterThanOrEqual(bounds.effortBottom);
 }

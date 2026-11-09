@@ -32,7 +32,10 @@ function useFollowAgents(conn: string, current: string, earlier: readonly string
         setResumed({ agent: current, alive: agent.engine_alive === true });
         if (agent.engine_alive === true) timer = setTimeout(() => void check(), 1_000);
       } catch (error) {
-        if (live) report(error);
+        if (live) {
+          report(error);
+          timer = setTimeout(() => void check(), 1_000);
+        }
       }
     };
     void app.manager.watchAgents(conn, [current]).then(check, report);

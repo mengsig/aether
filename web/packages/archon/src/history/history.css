@@ -5,6 +5,11 @@
   .history-search .ui-field { margin: 0; flex: 1; min-inline-size: 10rem; }
   .history-search .history-text { flex: 2; }
   .history-body { display: grid; grid-template-columns: minmax(0, 2fr) minmax(18rem, 3fr); gap: var(--space-6); align-items: start; }
+  @media (min-width: 90rem) {
+    .history { max-inline-size: none; }
+    .history-body { grid-template-columns: minmax(24rem, 32rem) minmax(0, 1fr); }
+    .history-search { max-inline-size: 72rem; }
+  }
   .history-results { display: grid; align-content: start; gap: var(--space-2); }
   .history-list { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
   .history-row[aria-pressed="true"] { background: var(--color-surface-3); }

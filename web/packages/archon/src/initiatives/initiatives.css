@@ -1,4 +1,5 @@
 @layer app {
+  @media (min-width: 90rem) { .initiative { max-inline-size: none; } }
   .initiative-header { display: grid; gap: var(--space-3); }
   .initiative-facts { display: flex; flex-wrap: wrap; gap: var(--space-4) var(--space-10); margin: var(--space-2) 0 0; padding-block: var(--space-4); border-block: 1px solid var(--color-border); }
   .initiative-facts div { display: grid; gap: var(--space-1); min-inline-size: 7rem; }

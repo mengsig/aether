@@ -48,6 +48,7 @@ export class FauxNoesis {
   refuse: string | undefined;
   /** The message `noesis_send` and `noesis_answer` refuse with, as at a spent budget. */
   refuseTurns: string | undefined;
+  failAgentReads = 0;
   /** Off, an answer is recorded without its `noesis.answer_recorded` event: only a reread shows it. */
   answerEvents = true;
   readonly history = new SessionHistory();
@@ -261,7 +262,13 @@ export class FauxNoesis {
         return OK("ok", null);
       case "get_attention": return OK("attention", { agents: [], approvals: [], questions: [], last_seq: this.seq });
       case "list_agents_page": return OK("agents_page", { agents: [...this.agents.values()] });
-      case "get_agent": return this.agents.has(String(command.id)) ? OK("agent", this.agents.get(String(command.id))) : ERR("not_found", "agent");
+      case "get_agent": {
+        if (this.failAgentReads > 0) {
+          this.failAgentReads -= 1;
+          return ERR("unavailable", "temporary agent read failure");
+        }
+        return this.agents.has(String(command.id)) ? OK("agent", this.agents.get(String(command.id))) : ERR("not_found", "agent");
+      }
       case "get_transcript_page": return OK("transcript_page", this.page(command));
       case "list_models": return OK("models", this.models);
       case "providers": return OK("providers", this.providers);

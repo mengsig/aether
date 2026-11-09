@@ -1,5 +1,6 @@
 @layer app {
   .su-page { display: grid; justify-items: center; padding-block: var(--space-8); }
+  @media (min-width: 90rem) { .su-page { max-inline-size: none; } }
   .su-card {
     inline-size: min(100%, 40rem); display: grid; gap: var(--space-6); padding: var(--space-8);
     background: var(--color-surface-1); border: 1px solid var(--color-border); border-radius: var(--radius-xl);

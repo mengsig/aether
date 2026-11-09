@@ -82,7 +82,8 @@ only run through the journeys config.
   checks the effect and, after a sequence that landed on Cancel, saves again with the next. A
   dialog that stays open leaves a `grim` shot and sway's tree under `$E2E_OUT/journeys/dialogs/`.
   This needs `sway`, `swaymsg`, `wtype` and `grim` on PATH, and `Xwayland` with `xdotool` for the
-  journey on X11.
+  journey on X11. The fullscreen layout journey also needs `wmctrl` and `xprop` on X11 to set and
+  verify the native window state.
 - **Sockets.** The app gets `AETHER_SOCKET` and `ARCHON_SOCKET` for the stack. Local sockets need
   no pairing, so the smoke records that as a `pairing` annotation. If a later UI asks to pair, the journey
   pairs with a code from the host, as `harness/pair.ts` does.

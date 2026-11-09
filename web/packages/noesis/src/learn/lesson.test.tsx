@@ -91,6 +91,19 @@ describe("the whole conversation", () => {
     expect(root.textContent).not.toContain("Your teacher is writing…");
   });
 
+  test("liveness polling recovers after a failed read", async () => {
+    const h = await start();
+    h.daemon.setAgentAlive(LESSON.id, true);
+    const root = await open(h);
+    expect(root.textContent).toContain("Your teacher is writing…");
+    h.daemon.failAgentReads = 1;
+    h.daemon.setAgentAlive(LESSON.id, false);
+    await h.settle(1_000);
+    expect(h.daemon.failAgentReads).toBe(0);
+    await h.settle(1_000);
+    expect(root.textContent).not.toContain("Your teacher is writing…");
+  });
+
   test("turn activity shows writing until a buffered reply finishes", async () => {
     const h = await start();
     const root = await open(h);

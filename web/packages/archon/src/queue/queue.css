@@ -40,6 +40,10 @@
   .queue-select { display: grid; gap: var(--space-1); min-inline-size: 10rem; }
   .queue-select .ui-field-input { inline-size: 100%; color: var(--color-text); font: inherit; }
   .queue-search { flex: 1; min-inline-size: 14rem; }
+  @media (min-width: 90rem) {
+    .queue { max-inline-size: none; }
+    .queue-search { max-inline-size: 36rem; }
+  }
   .queue-form { display: grid; gap: var(--space-3); }
   /* As tall as its rows, up to the viewport; the scroller itself is capped, so it still virtualizes. */
   .queue-list { border-block-start: 1px solid var(--color-border); }

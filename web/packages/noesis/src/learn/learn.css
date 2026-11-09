@@ -12,6 +12,9 @@
   .learn-tab[aria-current="page"] { background: var(--color-surface-1); color: var(--color-text); box-shadow: var(--elevation-1); }
   .learn-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); }
   .learn-body { display: grid; gap: var(--space-6); min-inline-size: 0; }
+  @media (min-width: 90rem) {
+    .learn { max-inline-size: none; }
+  }
   .learn-off { display: grid; justify-items: center; gap: var(--space-3); padding-block: var(--space-12); }
   .learn-off-status { margin: 0; color: var(--color-text-muted); }
   .learn-turn-on { max-inline-size: 36rem; }
@@ -36,9 +39,11 @@
   /* Sessions list. */
   .learn-columns { display: grid; gap: var(--space-8); grid-template-columns: minmax(0, 1fr); }
   @media (min-width: 60rem) { .learn-columns { grid-template-columns: minmax(0, 3fr) minmax(16rem, 2fr); align-items: start; } }
+  @media (min-width: 90rem) { .learn-columns { grid-template-columns: minmax(30rem, 46rem) minmax(0, 1fr); } }
   .learn-start { display: grid; gap: var(--space-4); min-inline-size: 0; }
   .learn-list { display: grid; gap: var(--space-4); min-inline-size: 0; }
   .learn-cards { display: grid; gap: var(--space-3); min-inline-size: 0; margin: 0; padding: 0; list-style: none; }
+  @media (min-width: 90rem) { .learn-cards { grid-template-columns: repeat(auto-fill, minmax(24rem, 1fr)); } }
   .learn-card {
     border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1);
     transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard);
@@ -70,6 +75,7 @@
   /* The chat takes the height the window gives it; the transcript scrolls and the composer stays put. */
   .learn-session { display: grid; gap: var(--space-6); grid-template-columns: minmax(0, 1fr); }
   @media (min-width: 75rem) { .learn-session { grid-template-columns: minmax(0, 1fr) 20rem; align-items: start; } }
+  @media (min-width: 90rem) { .learn-session { grid-template-columns: minmax(0, 1fr) 22rem; } }
   .learn-chat {
     display: flex; flex-direction: column; gap: var(--space-4); min-inline-size: 0;
     block-size: max(28rem, calc(100dvh - 12rem)); padding: var(--space-5) var(--space-6);
@@ -96,6 +102,13 @@
     border-inline-start: 3px solid var(--learn-mastery); border-radius: var(--radius-sm); background: var(--color-surface-2); font-size: var(--text-sm);
   }
   .learn-timeline { display: grid; gap: var(--space-5); margin: 0; padding: 0; list-style: none; }
+  @media (min-width: 90rem) {
+    .learn-timeline { inline-size: 100%; max-inline-size: 96rem; margin-inline: auto; }
+    .learn-timeline :is(.learn-bubble:not([data-role="learner"]), .learn-q, .learn-lesson-sources, .learn-complete) {
+      max-inline-size: clamp(46rem, 45vw, 64rem);
+    }
+    .learn-scroll > .learn-lesson-sources { max-inline-size: clamp(46rem, 45vw, 64rem); margin-inline-start: max(0px, (100% - 96rem) / 2); }
+  }
   .learn-timeline-item { animation: ui-rise var(--motion-base) var(--ease-standard); }
   /* The teacher reads like a page; your words sit in a bubble on the right. */
   .learn-bubble {

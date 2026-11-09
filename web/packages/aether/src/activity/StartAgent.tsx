@@ -167,7 +167,7 @@ function StartFormView({ conn, form, change, run, onStart, close }: {
   const label = form.mode === "task" ? "Create task" : form.mode === "chat" ? "Start chat" : "Start agent";
   const footer = <div className="start-footer"><RunNote status={run.status} />
     <Action conn={conn} command={command} label={label} variant="primary" data-testid="start-submit" blocked={blocked} busy={run.status.state === "busy" || (form.mode !== "chat" && run.status.state === "done")} onRun={() => onStart(settings, command)} /></div>;
-  return <Sheet open onClose={close} title="Start an agent" footer={footer}><div className="start-form"><StandingNotice conn={conn} />
+  return <Sheet open onClose={close} title="Start an agent" className="start-sheet" footer={footer}><div className="start-form"><StandingNotice conn={conn} />
     <div data-testid="start-mode"><Tabs label="Work type" selected={form.mode} onSelect={id => change({ mode: id as Mode })} tabs={[{ id: "chat", label: "Chat", panel: null }, { id: "agent", label: "Task agent", panel: null }, { id: "task", label: "Existing agent task", panel: null }]} /></div>
     <p className="b3-section-hint">{MODE_HINTS[form.mode]}</p>
     <TextAreaField label={form.mode === "chat" ? "First message" : "What should the agent do?"} testId="start-objective" value={form.objective} disabled={disabled} autoFocus onChange={objective => change({ objective })} />
@@ -221,7 +221,7 @@ export function StartAgent({ conn, close }: { conn: string; close: () => void })
   };
   const busy = chat.create.status.state === "busy" || chat.first.run.status.state === "busy";
   if (chat.state.phase === "editing") return <StartFormView conn={conn} form={form} change={change} run={form.mode === "chat" ? chat.create : run} onStart={onStart} close={close} />;
-  return <Sheet open onClose={close} title="Start an agent"><div className="start-form"><StandingNotice conn={conn} />
+  return <Sheet open onClose={close} title="Start an agent" className="start-sheet"><div className="start-form"><StandingNotice conn={conn} />
     <StartedChat conn={conn} state={chat.state} retry={() => void chat.retry()} restart={chat.restart} close={close} busy={busy} />
   </div></Sheet>;
 }
