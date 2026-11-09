@@ -5,7 +5,7 @@ use std::collections::{HashMap, VecDeque};
 
 use serde_json::Value;
 
-use super::engine::{AgentSpec, Engine, EngineError, Input, ModelInfo, Step, ToolCall};
+use super::engine::{AgentSpec, Engine, EngineError, Input, ModelInfo, ReplyText, Step, ToolCall};
 use super::seal::{Sealer, kept_reply};
 use crate::budget::{Billing, Spend};
 use crate::prompts::Agent;
@@ -143,13 +143,22 @@ impl Engine for FauxEngine {
         STEP_ESTIMATE
     }
 
+    fn last_input_is_answer(&self, agent: &str) -> Result<bool, EngineError> {
+        Ok(self
+            .inputs
+            .iter()
+            .rev()
+            .find(|(id, input)| id == agent && !matches!(input, Input::Guidance(_)))
+            .is_some_and(|(_, input)| matches!(input, Input::Answer(_))))
+    }
+
     /// Each reply replays the agent's next scripted step, kept as the
     /// daemon's are; an agent without one replies with nothing and waits.
     fn step(
         &mut self,
         agent: &str,
         live: &Sealer,
-        suppress_text: bool,
+        text_policy: ReplyText,
     ) -> Result<Step, EngineError> {
         let kind = self.kind_of(agent).expect("a step for a spawned agent");
         self.step_seals.push(live.clone());
@@ -162,7 +171,7 @@ impl Engine for FauxEngine {
         })?;
         debug_assert!(replies.discarded.len() <= 2);
         let mut step = replies.step;
-        if suppress_text {
+        if text_policy.suppressed(&step) {
             step.text.clear();
             step.text_blocks.clear();
         }

@@ -132,6 +132,19 @@ pub enum EngineError {
     BudgetSpent(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplyText {
+    Keep,
+    Suppress,
+    SuppressWithoutCalls,
+}
+
+impl ReplyText {
+    pub fn suppressed(self, step: &Step) -> bool {
+        self == Self::Suppress || (self == Self::SuppressWithoutCalls && step.calls.is_empty())
+    }
+}
+
 pub trait Engine {
     fn models(&self) -> Vec<ModelInfo>;
     /// Create an agent; returns its Aether agent id.
@@ -142,6 +155,8 @@ pub trait Engine {
     /// Inputs are the agent's private context, sealed only against what is
     /// committed when they go: a host publishes turn reports, never them.
     fn deliver(&mut self, agent: &str, input: Input) -> Result<Option<u64>, EngineError>;
+    /// Whether the agent's latest persisted input is a learner answer.
+    fn last_input_is_answer(&self, agent: &str) -> Result<bool, EngineError>;
     /// The estimated spend of the agent's next step, admitted before it runs.
     fn estimate(&self, agent: &str) -> Spend;
     /// Whether [`Engine::step`] admits and settles each call against the
@@ -157,6 +172,6 @@ pub trait Engine {
         &mut self,
         agent: &str,
         live: &Sealer,
-        suppress_text: bool,
+        text_policy: ReplyText,
     ) -> Result<Step, EngineError>;
 }

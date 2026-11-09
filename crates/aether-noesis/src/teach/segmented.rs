@@ -1,7 +1,7 @@
 //! Resumable teaching turns, split at the model call so the host can release its store.
 
 use super::db;
-use super::engine::{Engine, EngineError, Input, Step};
+use super::engine::{Engine, EngineError, Input, ReplyText, Step};
 use super::history;
 use super::seal::Sealer;
 use super::service::{Caller, MAX_STEPS, Teaching, TurnEnd, TurnReport, driving_agent};
@@ -28,7 +28,7 @@ struct CurrentTurn {
 pub struct ModelCall {
     agent: String,
     live: Sealer,
-    suppress_text: bool,
+    text_policy: ReplyText,
     admission: Option<Admission>,
 }
 
@@ -37,7 +37,7 @@ impl ModelCall {
     pub fn run<E: Engine>(self, engine: &mut E) -> Result<Step, TeachError> {
         debug_assert!(!self.agent.is_empty());
         debug_assert_eq!(self.admission.is_none(), engine.charges_own_calls());
-        let result = engine.step(&self.agent, &self.live, self.suppress_text);
+        let result = engine.step(&self.agent, &self.live, self.text_policy);
         match (self.admission, result) {
             (Some(admission), Ok(step)) => {
                 admission.settle(step.usage);
@@ -171,6 +171,11 @@ impl<E: Engine> Teaching<'_, E> {
         if open.is_some() {
             return Ok(Some(TurnEnd::AwaitingAnswer));
         }
+        let current = advance
+            .current
+            .as_mut()
+            .ok_or_else(|| TeachError::Corrupt("turn missing".into()))?;
+        self.mark_answer_turn(&advance.session, &current.caller, &mut current.turn)?;
         self.guide_recall_judgment(&advance.session, &agent)?;
         Ok(None)
     }
@@ -204,7 +209,7 @@ impl<E: Engine> Teaching<'_, E> {
         Ok(ModelCall {
             agent: current.caller.agent.clone(),
             live,
-            suppress_text: current.turn.recovering_check(),
+            text_policy: self.reply_text_policy(&advance.session, &current.turn)?,
             admission,
         })
     }

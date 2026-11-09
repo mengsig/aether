@@ -711,11 +711,15 @@ impl Engine for Unreachable {
         aether_noesis::budget::Spend::default()
     }
 
+    fn last_input_is_answer(&self, _agent: &str) -> Result<bool, EngineError> {
+        Err(EngineError::NotSent("unreachable".into()))
+    }
+
     fn step(
         &mut self,
         _agent: &str,
         _live: &Sealer,
-        _suppress_text: bool,
+        _text_policy: aether_noesis::teach::engine::ReplyText,
     ) -> Result<Step, EngineError> {
         Err(EngineError::NotSent("unreachable".into()))
     }

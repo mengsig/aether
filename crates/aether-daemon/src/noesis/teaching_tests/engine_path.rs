@@ -22,6 +22,52 @@ const KEY_SECRET: &str = "Paris has been the capital since 987.";
 const SOLUTION_SECRET: &str = "SOLUTION-FIVE-41";
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_passed_check_resumes_the_plan_without_a_learner_message() {
+    let home = Home::new();
+    let cli = Arc::new(FauxCli::default());
+    cli.queue(
+        "prober",
+        json!({"tool_calls": [tool_call(ASK, capital_question())]}),
+    );
+    cli.queue("prober", json!({"tool_calls": [tool_call("noesis_probe_done", json!({"strands": [{"strand": "capitals", "floor": "Europe", "ceiling": "cities", "start": "France"}]}))]}));
+    let plan = json!({"nodes": [{"id": "a", "title": "First"}, {"id": "b", "title": "Second"}], "edges": [{"from": "a", "to": "b"}]});
+    let mut first = capital_question();
+    first["plan_node"] = json!("a");
+    cli.queue("teacher", json!({"text": "First step.", "tool_calls": [tool_call("noesis_plan", plan), tool_call(ASK, first)]}));
+    let harness = engine_harness(&home, cli.clone()).await;
+    let created = harness.create(json!({"goal": "Learn capitals"})).await;
+    let probe = harness.posed(&created.id).await;
+    harness.answer(&probe, "Paris").await.unwrap();
+    let first_check = harness.posed(&created.id).await;
+    harness.settled().await;
+    let next = json!({"kind": "choice", "prompt": "Which city is Italy's capital?", "options": [{"value": "opt1", "label": "Rome"}, {"value": "opt2", "label": "Berlin"}], "answer_key": ["Rome"], "plan_node": "b"});
+    cli.queue(
+        "teacher",
+        json!({"text": "Are you ready for the next step?"}),
+    );
+    cli.queue(
+        "teacher",
+        json!({"text": "Next step.", "tool_calls": [tool_call(ASK, next)]}),
+    );
+    harness.answer(&first_check, "Paris").await.unwrap();
+    let second = harness.posed(&created.id).await;
+    harness.settled().await;
+    assert_eq!(
+        second.open_question.as_ref().unwrap().plan_node.as_deref(),
+        Some("b")
+    );
+    let transcript = serde_json::to_string(&harness.transcript(agent_of(&second))).unwrap();
+    assert!(!transcript.contains("System guidance"));
+    assert!(!transcript.contains("Are you ready for the next step?"));
+    assert!(
+        cli.launches()
+            .iter()
+            .any(|launch| launch.prompt.contains("another plan step remains"))
+    );
+    harness.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn teaching_check_recovery_never_records_internal_chatter() {
     let home = Home::new();
     let cli = Arc::new(FauxCli::default());

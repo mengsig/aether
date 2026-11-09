@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 
 use super::db;
-use super::engine::{Engine, EngineError, Input, Step, ToolResult};
+use super::engine::{Engine, EngineError, Input, ReplyText, Step, ToolResult};
 use super::history;
 use super::records::{NoesisEvent, SessionStall, StallReason};
 use super::seal::{self, Sealer};
@@ -99,9 +99,11 @@ impl<E: Engine> Teaching<'_, E> {
         if db::open_question(self.conn(), session)?.is_some() {
             return Ok(TurnEnd::AwaitingAnswer);
         }
+        self.mark_answer_turn(session, caller, turn)?;
         self.guide_recall_judgment(session, &caller.agent)?;
         for _ in 0..MAX_STEPS {
-            let step = self.model_step(session, &caller.agent, turn.recovering_check())?;
+            let policy = self.reply_text_policy(session, turn)?;
+            let step = self.model_step(session, &caller.agent, policy)?;
             let (end, results) = self.run_calls(session, caller, step, turn)?;
             if !results.is_empty() {
                 let input = Input::ToolResults(results);
@@ -133,17 +135,7 @@ impl<E: Engine> Teaching<'_, E> {
         };
         turn.own.extend(own.iter().cloned());
         if step.calls.is_empty() {
-            if turn.check_attempts > 0 {
-                pending.text.clear();
-                turn.steps.push(pending);
-                return Ok((None, Vec::new()));
-            }
-            if db::unjudged_recall(self.conn(), session)?.is_some() {
-                turn.steps.push(pending);
-                return Ok((None, Vec::new()));
-            }
-            turn.steps.push(pending);
-            return Ok((Some(TurnEnd::AwaitingLearner), Vec::new()));
+            return self.finish_without_calls(session, caller, pending, turn);
         }
         // Each step is kept as it ends, so a pose is checked against all the
         // turn has kept, not only its own step's text.
@@ -159,6 +151,91 @@ impl<E: Engine> Teaching<'_, E> {
         let results = self.engine_results(session, &own, &pending, &owed)?;
         turn.steps.push(pending);
         Ok((end, results))
+    }
+
+    fn finish_without_calls(
+        &mut self,
+        session: &str,
+        caller: &Caller,
+        mut pending: PendingStep,
+        turn: &mut Turn,
+    ) -> Result<(Option<TurnEnd>, Vec<ToolResult>), TeachError> {
+        debug_assert!(pending.calls.is_empty());
+        if turn.check_attempts > 0 {
+            pending.text.clear();
+            turn.steps.push(pending);
+            return Ok((None, Vec::new()));
+        }
+        if db::unjudged_recall(self.conn(), session)?.is_some() {
+            turn.steps.push(pending);
+            return Ok((None, Vec::new()));
+        }
+        if turn.answer_turn && self.has_next_plan_step(session)? {
+            turn.continuation_attempts += 1;
+            if turn.continuation_attempts > CHECK_ATTEMPTS {
+                return Err(EngineError::Failed(
+                    "the teaching agent could not continue the plan".into(),
+                )
+                .into());
+            }
+            self.engine.deliver(&caller.agent, Input::Guidance(
+                "System guidance, not a learner message: the last check passed and another plan step remains. Continue teaching and pose its check now; do not wait for the learner to prompt you.".into(),
+            ))?;
+            turn.steps.push(pending);
+            return Ok((None, Vec::new()));
+        }
+        turn.steps.push(pending);
+        Ok((Some(TurnEnd::AwaitingLearner), Vec::new()))
+    }
+
+    pub(super) fn mark_answer_turn(
+        &self,
+        session: &str,
+        caller: &Caller,
+        turn: &mut Turn,
+    ) -> Result<(), TeachError> {
+        if !agent_for_teacher(caller)
+            || db::session(self.conn(), session)?.phase != super::records::Phase::Teach
+        {
+            return Ok(());
+        }
+        let latest = history::questions(self.conn(), session)?.pop();
+        if latest
+            .as_ref()
+            .is_some_and(|asked| asked.question.collapsed && asked.answer.is_some())
+        {
+            turn.answer_turn = self.engine.last_input_is_answer(&caller.agent)?;
+        }
+        Ok(())
+    }
+
+    fn has_next_plan_step(&self, session: &str) -> Result<bool, TeachError> {
+        let marks = db::plan_marks(self.conn(), session)?;
+        if !marks.last().is_some_and(|mark| mark.passed) {
+            return Ok(false);
+        }
+        let Some((revision, plan)) = db::latest_plan(self.conn(), session)? else {
+            return Ok(false);
+        };
+        let tree = super::plan::tree(revision, &plan, &marks);
+        Ok(tree
+            .nodes
+            .iter()
+            .any(|node| node.status == super::records::NodeStatus::Current))
+    }
+
+    pub(super) fn reply_text_policy(
+        &self,
+        session: &str,
+        turn: &Turn,
+    ) -> Result<ReplyText, TeachError> {
+        if turn.recovering_check() {
+            return Ok(ReplyText::Suppress);
+        }
+        if turn.answer_turn && self.has_next_plan_step(session)? {
+            return Ok(ReplyText::SuppressWithoutCalls);
+        }
+        Ok(ReplyText::Keep)
     }
 
     fn execute_calls(
@@ -398,12 +475,12 @@ impl<E: Engine> Teaching<'_, E> {
         &mut self,
         session: &str,
         agent: &str,
-        suppress_text: bool,
+        text_policy: ReplyText,
     ) -> Result<Step, TeachError> {
         let solution = db::active_problem(self.conn(), session)?.map(|row| row.solution);
         let live = Sealer::live(self.live_secrets(session)?, solution.as_deref());
         if self.engine.charges_own_calls() {
-            return Ok(self.engine.step(agent, &live, suppress_text)?);
+            return Ok(self.engine.step(agent, &live, text_policy)?);
         }
         let today = chrono::Local::now().date_naive();
         let estimate = self.engine.estimate(agent);
@@ -411,7 +488,7 @@ impl<E: Engine> Teaching<'_, E> {
             .noesis
             .accountant()
             .admit(Lane::Interactive, estimate, today)?;
-        match self.engine.step(agent, &live, suppress_text) {
+        match self.engine.step(agent, &live, text_policy) {
             Ok(step) => {
                 admission.settle(step.usage);
                 Ok(step)
@@ -463,6 +540,8 @@ pub(super) struct Turn {
     own: Vec<String>,
     judgment_attempts: usize,
     check_attempts: usize,
+    answer_turn: bool,
+    continuation_attempts: usize,
     /// Where the turn's events start in the pending event list.
     pub(super) events_from: usize,
 }
@@ -488,6 +567,8 @@ impl Turn {
             own: Vec::new(),
             judgment_attempts: 0,
             check_attempts: 0,
+            answer_turn: false,
+            continuation_attempts: 0,
             events_from,
         }
     }

@@ -385,3 +385,44 @@ fn teacher_judges_the_perimeter_answer_by_its_prompt_and_continues() {
     );
     assert!(view.open_question.is_some());
 }
+
+#[test]
+fn a_judged_recall_also_continues_to_the_next_step() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let mut first = recall("What is 2 + 2?", "four");
+    first["plan_node"] = json!("a");
+    t.engine_mut()
+        .script(Agent::Teacher, "", vec![(ASK, first)]);
+    t.advance(&id).unwrap();
+    let question = session(&t, &id).open_question.unwrap().id;
+    t.answer(
+        &id,
+        &question,
+        &Answer {
+            text: Some("four".into()),
+            ..Answer::default()
+        },
+    )
+    .unwrap();
+    let mut next = recall("What is 3 + 3?", "six");
+    next["plan_node"] = json!("b");
+    t.engine_mut()
+        .script(Agent::Teacher, "", vec![(JUDGE, json!({"correct": true}))]);
+    t.engine_mut()
+        .script(Agent::Teacher, "Are you ready?", vec![]);
+    t.engine_mut()
+        .script(Agent::Teacher, "Next step.", vec![(ASK, next)]);
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer);
+    assert!(report.steps[1].text.is_empty());
+    assert_eq!(
+        session(&t, &id).questions[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .correct,
+        Some(true)
+    );
+}

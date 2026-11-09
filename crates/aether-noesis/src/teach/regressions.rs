@@ -108,6 +108,74 @@ fn a_check_refusal_identifies_the_overlapping_fields_without_quoting_the_key() {
 }
 
 #[test]
+fn a_passed_check_continues_to_the_next_step_without_a_readiness_message() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let mut first = capital_question();
+    first["plan_node"] = json!("a");
+    t.engine_mut()
+        .script(Agent::Teacher, "First step.", vec![(ASK, first)]);
+    assert_eq!(t.advance(&id).unwrap()[0].end, TurnEnd::AwaitingAnswer);
+    assert_eq!(answer_choice(&mut t, &id, &["Paris"]).correct, Some(true));
+    let mut next = recall("What is the capital of Italy?", "Rome");
+    next["plan_node"] = json!("b");
+    t.engine_mut()
+        .script(Agent::Teacher, "Are you ready for step two?", vec![]);
+    t.engine_mut()
+        .script(Agent::Teacher, "Next step.", vec![(ASK, next)]);
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer);
+    assert!(report.steps[0].text.is_empty());
+    assert!(!report.steps[1].calls[0].is_error);
+    assert_eq!(
+        session(&t, &id).open_question.unwrap().plan_node.as_deref(),
+        Some("b")
+    );
+}
+
+#[test]
+fn a_learner_message_after_a_passed_check_can_still_receive_a_plain_reply() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let mut first = capital_question();
+    first["plan_node"] = json!("a");
+    t.engine_mut()
+        .script(Agent::Teacher, "", vec![(ASK, first)]);
+    t.advance(&id).unwrap();
+    answer_choice(&mut t, &id, &["Paris"]);
+    t.send(&id, "Please explain that answer first.").unwrap();
+    t.engine_mut()
+        .script(Agent::Teacher, "Here is an explanation.", vec![]);
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingLearner);
+    assert_eq!(report.steps.len(), 1);
+}
+
+#[test]
+fn a_passed_check_continuation_is_bounded_when_no_next_check_is_posed() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let mut first = capital_question();
+    first["plan_node"] = json!("a");
+    t.engine_mut()
+        .script(Agent::Teacher, "", vec![(ASK, first)]);
+    t.advance(&id).unwrap();
+    answer_choice(&mut t, &id, &["Paris"]);
+    for _ in 0..4 {
+        t.engine_mut()
+            .script(Agent::Teacher, "Are you ready?", vec![]);
+    }
+    let before = t.engine().steps_run;
+    let error = t.advance(&id).unwrap_err();
+    assert!(error.to_string().contains("could not continue the plan"));
+    assert_eq!(t.engine().steps_run - before, 4);
+    assert!(session(&t, &id).open_question.is_none());
+}
+
+#[test]
 fn a_stringified_argument_escaping_the_active_solution_is_discarded() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());

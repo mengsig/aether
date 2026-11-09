@@ -25,7 +25,7 @@ use aether_core::tool::ToolExposure;
 use aether_model::{ModelClient, ModelStream, Models};
 use aether_noesis::budget::{Billing, INTERACTIVE_BUDGET_SETTING, Spend};
 use aether_noesis::prompts;
-use aether_noesis::teach::engine::ModelInfo;
+use aether_noesis::teach::engine::{ModelInfo, ReplyText};
 use aether_noesis::teach::{
     AgentSpec, Engine, EngineError, Input, Sealer, Step, ToolCall, ToolResult, agent_for_role,
     kept_reply,
@@ -593,6 +593,29 @@ impl Engine for AetherEngine<'_> {
         Spend::default()
     }
 
+    fn last_input_is_answer(&self, agent: &str) -> Result<bool, EngineError> {
+        let row = self.agent(agent)?;
+        let history = self.transcript(row.id)?;
+        let Some(last) = history
+            .last()
+            .filter(|message| message.role == MessageRole::User)
+        else {
+            return Ok(false);
+        };
+        let (calls, _) = last_calls(&history);
+        let ask = wire_name(ToolName::Ask.as_str());
+        let answered = last.content.iter().any(|block| {
+            matches!(block,
+            ContentBlock::ToolResult { tool_use_id, is_error: false, .. }
+                if calls.iter().any(|(id, name)| id == tool_use_id && name == &ask))
+        });
+        let learner = last.content.iter().any(|block| {
+            matches!(block,
+            ContentBlock::Text { text } if text.starts_with("The learner answered: "))
+        });
+        Ok(answered && learner)
+    }
+
     fn charges_own_calls(&self) -> bool {
         true
     }
@@ -604,7 +627,7 @@ impl Engine for AetherEngine<'_> {
         &mut self,
         agent: &str,
         live: &Sealer,
-        suppress_text: bool,
+        text_policy: ReplyText,
     ) -> Result<Step, EngineError> {
         let row = self.agent(agent)?;
         if row.status.is_terminal() {
@@ -642,7 +665,7 @@ impl Engine for AetherEngine<'_> {
             (None, None) => unreachable!("a step without a kept reply discarded two"),
         };
         let mut step = replies.step;
-        if suppress_text {
+        if text_policy.suppressed(&step) {
             content.retain(|block| !matches!(block, ContentBlock::Text { .. }));
             step.text.clear();
             step.text_blocks.clear();
