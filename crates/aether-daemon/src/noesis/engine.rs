@@ -25,7 +25,7 @@ use aether_core::tool::ToolExposure;
 use aether_model::{ModelClient, ModelStream, Models};
 use aether_noesis::budget::{Billing, INTERACTIVE_BUDGET_SETTING, Spend};
 use aether_noesis::prompts;
-use aether_noesis::teach::engine::{ModelInfo, ReplyText};
+use aether_noesis::teach::engine::{AskPolicy, ModelInfo, ReplyText};
 use aether_noesis::teach::{
     AgentSpec, Engine, EngineError, Input, Sealer, Step, ToolCall, ToolResult, agent_for_role,
     kept_reply,
@@ -40,6 +40,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::budget::{ServiceBudget, runs_on_engine, spend_of};
 use super::engine_step::{self, EngineStepClient};
+
+const MODEL_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
+const MODEL_CALL_LIMIT: Duration = Duration::from_secs(300);
 
 /// What every engine of one running service shares.
 pub(super) struct EngineHost {
@@ -123,6 +126,7 @@ pub(super) struct AetherEngine<'a> {
     host: &'a EngineHost,
     charge: Option<OpenCharge>,
     guidance: Option<(String, String)>,
+    turn_stream: Option<(AgentId, aether_runtime::DeltaStream)>,
 }
 
 /// One agent's admission and what its steps have spent under it.
@@ -138,6 +142,7 @@ impl<'a> AetherEngine<'a> {
             host,
             charge: None,
             guidance: None,
+            turn_stream: None,
         }
     }
 
@@ -177,6 +182,7 @@ impl<'a> AetherEngine<'a> {
 impl Drop for AetherEngine<'_> {
     fn drop(&mut self) {
         self.settle();
+        self.finish_turn_stream();
     }
 }
 
@@ -305,13 +311,26 @@ impl AetherEngine<'_> {
     /// One model call over the agent's transcript, ended if the service
     /// stops or the agent ends (a cancel) while it runs. The reply is
     /// buffered whole: nothing of it is published until it is kept.
-    fn invoke(&self, agent: &Agent, request: ModelRequest) -> Result<CallEnd, EngineError> {
-        let mut stream = self.host.runtime.noesis_turn_started(agent.id);
-        let result = self.invoke_buffered(agent, request);
-        self.host
-            .runtime
-            .noesis_turn_finished(agent.id, &mut stream);
-        result
+    fn invoke(&mut self, agent: &Agent, request: ModelRequest) -> Result<CallEnd, EngineError> {
+        if self
+            .turn_stream
+            .as_ref()
+            .is_none_or(|(id, _)| *id != agent.id)
+        {
+            self.finish_turn_stream();
+            let stream = self
+                .host
+                .runtime
+                .noesis_turn_started(agent.id, lane_of(agent.role.as_str()));
+            self.turn_stream = Some((agent.id, stream));
+        }
+        self.invoke_buffered(agent, request)
+    }
+
+    fn finish_turn_stream(&mut self) {
+        if let Some((agent, mut stream)) = self.turn_stream.take() {
+            self.host.runtime.noesis_turn_finished(agent, &mut stream);
+        }
     }
 
     fn invoke_buffered(
@@ -324,13 +343,20 @@ impl AetherEngine<'_> {
         let cancel = host.cancel.child_token();
         tokio::task::block_in_place(|| {
             handle.block_on(async {
-                let client = host.client_for(agent).await?;
+                let client = match tokio::time::timeout(MODEL_IDLE_TIMEOUT, host.client_for(agent)).await {
+                    Ok(client) => client?,
+                    Err(_) => return Ok(timed_out(Usage::default())),
+                };
                 let ended = agent_ended(&host.runtime, agent.id);
                 tokio::pin!(ended);
                 let opening = client.stream(request, cancel.clone());
                 tokio::pin!(opening);
                 let stream = tokio::select! {
-                    stream = &mut opening => stream.map_err(not_sent)?,
+                    stream = &mut opening => match stream {
+                        Ok(stream) => stream,
+                        Err(error) if error.class == ModelErrorClass::Timeout => return Ok(CallEnd::Broke(Usage::default(), error)),
+                        Err(error) => return Err(not_sent(error)),
+                    },
                     () = &mut ended => {
                         cancel.cancel();
                         return Ok(CallEnd::AgentEnded(settled_usage(opening).await));
@@ -338,8 +364,13 @@ impl AetherEngine<'_> {
                     () = cancel.cancelled() => {
                         return Ok(stopped(settled_usage(opening).await));
                     }
+                    () = tokio::time::sleep(MODEL_IDLE_TIMEOUT) => {
+                        cancel.cancel();
+                        return Ok(timed_out(settled_usage(opening).await));
+                    }
                 };
-                read_reply(stream, &cancel, ended).await
+                let idle = (!host.is_engine(&agent.model)).then_some(MODEL_IDLE_TIMEOUT);
+                read_reply(stream, &cancel, ended, idle).await
             })
         })
     }
@@ -351,7 +382,8 @@ impl AetherEngine<'_> {
         row: &Agent,
         request: &mut ModelRequest,
     ) -> Result<ModelResponse, EngineError> {
-        for attempt in 1..=engine_step::ATTEMPTS {
+        let mut stalls = 0;
+        for attempt in 1..=engine_step::ATTEMPTS + 1 {
             self.gate(row)?;
             match self.invoke(row, request.clone())? {
                 CallEnd::Replied(response) => {
@@ -361,6 +393,14 @@ impl AetherEngine<'_> {
                     return Ok(response);
                 }
                 CallEnd::AgentEnded(spent) => return Err(self.record_cut_short(row, spent)),
+                CallEnd::Broke(mut spent, error) if error.class == ModelErrorClass::Timeout => {
+                    spent.mark_cost_gap(CostGap::Interrupted);
+                    self.charge_spent(row, spent).map_err(failed)?;
+                    stalls += 1;
+                    if stalls >= 2 {
+                        return Err(EngineError::Stalled(error.to_string()));
+                    }
+                }
                 CallEnd::Broke(spent, error)
                     if attempt < engine_step::ATTEMPTS && engine_step::is_malformed(&error) =>
                 {
@@ -526,6 +566,29 @@ impl AetherEngine<'_> {
         debug_assert!(request.tools.iter().all(|tool| !tool.name.contains('.')));
         Ok(request)
     }
+
+    fn step_request(
+        &mut self,
+        row: &Agent,
+        agent: &str,
+        policy: ReplyText,
+    ) -> Result<ModelRequest, EngineError> {
+        let mut request = self.request(row, self.transcript(row.id)?)?;
+        if let Some((for_agent, guidance)) = self.guidance.take() {
+            if for_agent != agent {
+                return Err(not_sent("guidance belongs to a different agent"));
+            }
+            with_note(&mut request.messages, &guidance);
+        }
+        if policy.asks == AskPolicy::Withhold {
+            request
+                .tools
+                .retain(|tool| tool.name != wire_name(ToolName::Ask.as_str()));
+            debug_assert!(request.tools.iter().all(|tool| tool.name != "noesis_ask"));
+        }
+        debug_assert!(!request.messages.is_empty());
+        Ok(request)
+    }
 }
 
 impl Engine for AetherEngine<'_> {
@@ -633,13 +696,7 @@ impl Engine for AetherEngine<'_> {
         if row.status.is_terminal() {
             return Err(not_sent(format!("agent {agent} is {}", row.status.kind())));
         }
-        let mut request = self.request(&row, self.transcript(row.id)?)?;
-        if let Some((for_agent, guidance)) = self.guidance.take() {
-            if for_agent != agent {
-                return Err(not_sent("guidance belongs to a different agent"));
-            }
-            with_note(&mut request.messages, &guidance);
-        }
+        let mut request = self.step_request(&row, agent, text_policy)?;
         let mut unrecorded = None;
         let replies = kept_reply(live, |reminder| {
             if let Some(reminder) = reminder {
@@ -665,10 +722,12 @@ impl Engine for AetherEngine<'_> {
             (None, None) => unreachable!("a step without a kept reply discarded two"),
         };
         let mut step = replies.step;
-        if text_policy.suppressed(&step) {
+        let shaped = text_policy.shape(&mut step);
+        if shaped.text_dropped {
             content.retain(|block| !matches!(block, ContentBlock::Text { .. }));
-            step.text.clear();
-            step.text_blocks.clear();
+        }
+        if shaped.asks_dropped {
+            content.retain(|block| !is_ask_use(block));
         }
         if content.is_empty() {
             self.record_spend(&row, usage)?;
@@ -737,9 +796,11 @@ async fn read_reply(
     mut stream: ModelStream,
     cancel: &CancellationToken,
     mut ended: Pin<&mut impl Future<Output = ()>>,
+    idle: Option<Duration>,
 ) -> Result<CallEnd, EngineError> {
     let mut reply = StreamAccumulator::new();
     let mut usage = Usage::default();
+    let deadline = tokio::time::Instant::now() + MODEL_CALL_LIMIT;
     loop {
         let item = tokio::select! {
             item = stream.next() => item,
@@ -748,6 +809,14 @@ async fn read_reply(
                 return Ok(CallEnd::AgentEnded(drained_usage(&mut stream, usage).await));
             }
             () = cancel.cancelled() => return Ok(stopped(drained_usage(&mut stream, usage).await)),
+            () = async { match idle { Some(timeout) => tokio::time::sleep(timeout).await, None => std::future::pending().await } } => {
+                cancel.cancel();
+                return Ok(timed_out(drained_usage(&mut stream, usage).await));
+            }
+            () = tokio::time::sleep_until(deadline) => {
+                cancel.cancel();
+                return Ok(timed_out(drained_usage(&mut stream, usage).await));
+            }
         };
         let event = match item {
             None => break,
@@ -813,6 +882,13 @@ fn stopped(usage: Usage) -> CallEnd {
     )
 }
 
+fn timed_out(usage: Usage) -> CallEnd {
+    CallEnd::Broke(
+        usage,
+        ModelError::new(ModelErrorClass::Timeout, "Noesis model made no progress"),
+    )
+}
+
 /// A kept reply's blocks as its transcript keeps them: thinking dropped.
 fn kept_content(response: &ModelResponse) -> Vec<ContentBlock> {
     let content: Vec<ContentBlock> = response
@@ -823,6 +899,11 @@ fn kept_content(response: &ModelResponse) -> Vec<ContentBlock> {
         .collect();
     debug_assert!(content.len() <= response.content.len());
     content
+}
+
+fn is_ask_use(block: &ContentBlock) -> bool {
+    matches!(block, ContentBlock::ToolUse { name, .. }
+        if tool_name(name) == ToolName::Ask.as_str())
 }
 
 /// The transcript entry of a step that kept no reply.
@@ -989,6 +1070,26 @@ fn step_of(response: &ModelResponse) -> Step {
 mod tests {
     use super::*;
 
+    #[tokio::test(start_paused = true)]
+    async fn silent_model_stream_is_cancelled_with_its_usage() {
+        let spent = Usage {
+            input_tokens: 17,
+            ..Usage::default()
+        };
+        let events = futures::stream::iter(vec![Ok(StreamEvent::Usage { usage: spent })]);
+        let stream: ModelStream = Box::pin(events.chain(futures::stream::pending()));
+        let cancel = CancellationToken::new();
+        let ended = std::future::pending::<()>();
+        tokio::pin!(ended);
+        let result = read_reply(stream, &cancel, ended, Some(Duration::from_secs(1))).await;
+        let Ok(CallEnd::Broke(usage, error)) = result else {
+            panic!("a silent call must fail");
+        };
+        assert_eq!(error.class, ModelErrorClass::Timeout);
+        assert_eq!(usage.input_tokens, 17);
+        assert!(cancel.is_cancelled());
+    }
+
     /// A cancelled call's stream as an engine client settles it.
     fn settled_stream(spent: Usage) -> ModelStream {
         let events = vec![
@@ -1015,7 +1116,7 @@ mod tests {
             cancel.cancel();
             let ended = std::future::pending::<()>();
             tokio::pin!(ended);
-            let end = read_reply(settled_stream(spent), &cancel, ended).await;
+            let end = read_reply(settled_stream(spent), &cancel, ended, None).await;
             let Ok(CallEnd::Broke(usage, error)) = end else {
                 panic!("a stopped call breaks");
             };
@@ -1034,7 +1135,7 @@ mod tests {
             let cancel = CancellationToken::new();
             let ended = std::future::ready(());
             tokio::pin!(ended);
-            let end = read_reply(settled_stream(spent), &cancel, ended).await;
+            let end = read_reply(settled_stream(spent), &cancel, ended, None).await;
             let usage = match end {
                 Ok(CallEnd::AgentEnded(usage) | CallEnd::Broke(usage, _)) => usage,
                 _ => panic!("the call ended without a reply"),

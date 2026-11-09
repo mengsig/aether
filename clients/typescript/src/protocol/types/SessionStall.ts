@@ -6,7 +6,7 @@ import type {
 } from "../../protocol.ts";
 
 /**
- * A turn that stopped before any model call, and why.
+ * A turn that stopped before completion, and why.
  */
 export interface SessionStall {
   "at": string;

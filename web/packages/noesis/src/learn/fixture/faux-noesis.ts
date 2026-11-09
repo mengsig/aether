@@ -92,6 +92,13 @@ export class FauxNoesis {
     return this.sent.map((command) => String(command.cmd));
   }
 
+  setAgentAlive(session: string, alive: boolean): void {
+    const id = this.session(session).agent;
+    const agent = this.agents.get(id);
+    invariant(agent !== undefined, `the faux daemon has agent ${id}`);
+    this.agents.set(id, { ...agent, engine_alive: alive });
+  }
+
   /** The teacher speaks: a committed assistant message on the session's agent, pushed as an event. */
   teach(session: string, text: string, invocation: string | null = null): void {
     const agent = this.session(session).agent;

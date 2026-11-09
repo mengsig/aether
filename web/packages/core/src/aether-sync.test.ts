@@ -272,6 +272,26 @@ describe("Aether resync review regressions", () => {
     expect(daemon.commands("unsubscribe")).toEqual([expect.objectContaining({ id: 2 })]);
   });
 
+  it("drops a lesson's unfinished stream when its subscription is removed", async () => {
+    const { store, daemon, manager } = setup(healthy());
+    manager.start();
+    await settle();
+    store.updateAether(CONN_A, (state) => ({
+      ...state,
+      learn: { ...state.learn, sessions: { lesson: { id: "lesson", agent: F.agent } as never } },
+    }));
+    await manager.watchAgents(CONN_A, [F.agent]);
+    await settle();
+    daemon.push(F.deltas_gap[0] as Json);
+    expect(store.get().aether[CONN_A]?.streams[F.invocation]).toBeDefined();
+    await manager.watchAgents(CONN_A, []);
+    await settle();
+    expect(store.get().aether[CONN_A]?.streams[F.invocation]).toBeUndefined();
+    await manager.watchAgents(CONN_A, [F.agent]);
+    await settle();
+    expect(store.get().aether[CONN_A]?.streams[F.invocation]).toBeUndefined();
+  });
+
   it("keeps a keyed command unknown when the link is revoked before its answer", async () => {
     const { store, daemon, manager } = setup(healthy({ send_message: () => undefined }));
     manager.start();

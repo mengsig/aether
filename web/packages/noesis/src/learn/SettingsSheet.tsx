@@ -60,6 +60,7 @@ function SettingsForm({ conn, status, onDone }: { conn: string; status: aether.N
   };
   return (
     <form className="learn-settings" onSubmit={(event) => void submit(event)}>
+      {status.settings_pending && <p className="learn-callout" role="status">Settings saved. They will take effect when the current work finishes.</p>}
       <Spend status={status} />
       <NoesisSwitches draft={value} host={host} set={set} />
       <BudgetFields draft={value} errors={errors} host={host} set={set} />

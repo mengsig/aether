@@ -3,6 +3,7 @@
 use super::db;
 use super::engine::{Engine, EngineError, Input, ReplyText, Step};
 use super::history;
+use super::records::{NoesisEvent, SessionStall, StallReason};
 use super::seal::Sealer;
 use super::service::{Caller, MAX_STEPS, Teaching, TurnEnd, TurnReport, driving_agent};
 use super::turn::{Turn, budget_stall};
@@ -74,6 +75,21 @@ impl Advance {
 }
 
 impl<E: Engine> Teaching<'_, E> {
+    fn stall_engine(&mut self, session: &str) -> Result<(), TeachError> {
+        debug_assert!(!session.is_empty());
+        let stall = SessionStall {
+            reason: StallReason::EngineStalled,
+            message: "The teacher stopped responding. Try again to continue your lesson.".into(),
+            at: db::now(),
+        };
+        history::set_stall(self.conn(), session, &stall)?;
+        self.events.push(NoesisEvent::SessionStalled {
+            session: session.to_string(),
+            stall,
+        });
+        Ok(())
+    }
+
     /// Resume until the next call or completion; pass `None` only at the start.
     /// Keep the same engine and teaching buffer between calls.
     pub fn advance_until_call(
@@ -85,11 +101,13 @@ impl<E: Engine> Teaching<'_, E> {
         if matches!(progressed, Ok(Some(_))) {
             return progressed;
         }
-        match progressed.as_ref().err().and_then(budget_stall) {
-            Some(message) => self.stall_session(&advance.session, message)?,
-            None => {
-                history::clear_stall(self.conn(), &advance.session)?;
-            }
+        let error = progressed.as_ref().err();
+        if matches!(error, Some(TeachError::Engine(EngineError::Stalled(_)))) {
+            self.stall_engine(&advance.session)?;
+        } else if let Some(message) = error.and_then(budget_stall) {
+            self.stall_session(&advance.session, message)?;
+        } else {
+            history::clear_stall(self.conn(), &advance.session)?;
         }
         if matches!(progressed, Ok(None)) {
             super::sessions::set_turn_pending(self.conn(), &advance.session, false)?;
@@ -239,6 +257,12 @@ impl<E: Engine> Teaching<'_, E> {
                 &current.caller.agent,
                 &mut current.turn,
             )?;
+            if end.is_none() && current.turn.steps.len() == MAX_STEPS && current.turn.needs_card() {
+                return Err(EngineError::Stalled(
+                    "the teaching turn ended before its check".into(),
+                )
+                .into());
+            }
             Ok(end
                 .or_else(|| (current.turn.steps.len() == MAX_STEPS).then_some(TurnEnd::StepLimit)))
         });

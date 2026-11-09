@@ -56,7 +56,7 @@ fn skipped_judgment_is_refused_then_corrected_before_the_next_question() {
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingAnswer);
     assert!(report.steps[0].calls[0].is_error);
-    assert_eq!(report.steps[0].text, "Next question");
+    assert_eq!(report.steps[0].text, "", "an ask never shows prose");
     assert!(report.steps[1].calls.iter().all(|call| !call.is_error));
     let view = session(&t, &id);
     assert_eq!(
@@ -412,8 +412,7 @@ fn a_judged_recall_also_continues_to_the_next_step() {
         .script(Agent::Teacher, "", vec![(JUDGE, json!({"correct": true}))]);
     t.engine_mut()
         .script(Agent::Teacher, "Are you ready?", vec![]);
-    t.engine_mut()
-        .script(Agent::Teacher, "Next step.", vec![(ASK, next)]);
+    t.engine_mut().script(Agent::Teacher, "", vec![(ASK, next)]);
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingAnswer);
     assert!(report.steps[1].text.is_empty());

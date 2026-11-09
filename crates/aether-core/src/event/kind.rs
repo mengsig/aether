@@ -588,7 +588,7 @@ pub enum EventKind {
         retest: bool,
         solution: String,
     },
-    /// A turn stopped before any model call; the session carries it too.
+    /// A turn stopped before completion; the session carries it too.
     #[serde(rename = "noesis.session_stalled")]
     NoesisSessionStalled {
         session: SessionId,

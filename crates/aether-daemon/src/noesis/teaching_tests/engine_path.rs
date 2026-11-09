@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 use super::*;
 
 mod live_seal;
+mod question_source;
 mod recall;
 
 const ENGINE_MODEL: &str = "faux-engine/tutor";
@@ -33,7 +34,10 @@ async fn a_passed_check_resumes_the_plan_without_a_learner_message() {
     let plan = json!({"nodes": [{"id": "a", "title": "First"}, {"id": "b", "title": "Second"}], "edges": [{"from": "a", "to": "b"}]});
     let mut first = capital_question();
     first["plan_node"] = json!("a");
-    cli.queue("teacher", json!({"text": "First step.", "tool_calls": [tool_call("noesis_plan", plan), tool_call(ASK, first)]}));
+    cli.queue(
+        "teacher",
+        json!({"tool_calls": [tool_call("noesis_plan", plan), tool_call(ASK, first)]}),
+    );
     let harness = engine_harness(&home, cli.clone()).await;
     let created = harness.create(json!({"goal": "Learn capitals"})).await;
     let probe = harness.posed(&created.id).await;
@@ -47,8 +51,13 @@ async fn a_passed_check_resumes_the_plan_without_a_learner_message() {
     );
     cli.queue(
         "teacher",
-        json!({"text": "Next step.", "tool_calls": [tool_call(ASK, next)]}),
+        json!({"text": "Next step. Name the capital of Italy.", "tool_calls": [tool_call(ASK, next.clone())]}),
     );
+    cli.queue(
+        "teacher",
+        json!({"text": "Italy's capital is in the Lazio region."}),
+    );
+    cli.queue("teacher", json!({"tool_calls": [tool_call(ASK, next)]}));
     harness.answer(&first_check, "Paris").await.unwrap();
     let second = harness.posed(&created.id).await;
     harness.settled().await;
@@ -59,6 +68,14 @@ async fn a_passed_check_resumes_the_plan_without_a_learner_message() {
     let transcript = serde_json::to_string(&harness.transcript(agent_of(&second))).unwrap();
     assert!(!transcript.contains("System guidance"));
     assert!(!transcript.contains("Are you ready for the next step?"));
+    assert!(
+        !transcript.contains("Name the capital of Italy"),
+        "{transcript}"
+    );
+    assert!(
+        transcript.contains("Italy's capital is in the Lazio region"),
+        "{transcript}"
+    );
     assert!(
         cli.launches()
             .iter()
@@ -87,8 +104,10 @@ async fn teaching_check_recovery_never_records_internal_chatter() {
     let fresh = json!({"kind": "choice", "prompt": "How many degrees in half a turn?", "options": [{"value": "opt1", "label": "180°"}, {"value": "opt2", "label": "270°"}], "answer_key": ["180°"], "plan_node": "turns"});
     cli.queue(
         "teacher",
-        json!({"text": "Four corners make a turn.", "tool_calls": [tool_call(ASK, first)]}),
+        json!({"text": "Four corners make a turn. Pick how many right angles fit around a point", "tool_calls": [tool_call(ASK, first.clone())]}),
     );
+    cli.queue("teacher", json!({"text": "Four corners make a turn."}));
+    cli.queue("teacher", json!({"tool_calls": [tool_call(ASK, first)]}));
     cli.queue(
         "teacher",
         json!({"text": "My checks were blocked; say when ready."}),
@@ -105,6 +124,7 @@ async fn teaching_check_recovery_never_records_internal_chatter() {
     assert!(!transcript.contains("checks were blocked"), "{transcript}");
     assert!(!transcript.contains("say when ready"), "{transcript}");
     assert!(!transcript.contains("overlaps answer_key"), "{transcript}");
+    assert!(!transcript.contains("Pick how many"), "{transcript}");
     harness.answer(&check, "180°").await.expect("check answer");
     harness.settled().await;
     let view = harness.session(&created.id).await.unwrap();
@@ -400,7 +420,7 @@ async fn a_whole_session_runs_on_the_engine_with_sealed_answers_and_charged_step
     check["intent"] = json!("check");
     cli.queue(
         "teacher",
-        json!({"text": "Here is the plan.", "tool_calls": [
+        json!({"text": "", "tool_calls": [
             tool_call("noesis_plan", plan), tool_call(ASK, check)]}),
     );
     cli.queue("teacher", json!({"text": "Well done; that is the lesson."}));

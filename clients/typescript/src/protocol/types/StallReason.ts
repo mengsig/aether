@@ -2,4 +2,4 @@
 // Do not edit: change the Rust types and regenerate.
 
 
-export type StallReason = "budget_exhausted";
+export type StallReason = "budget_exhausted" | "engine_stalled";

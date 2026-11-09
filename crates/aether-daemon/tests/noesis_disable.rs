@@ -43,7 +43,6 @@ async fn session_in_flight(home: &mut Home) -> (String, String, JoinHandle<Value
     let id = side.request(create).await;
     let created = tokio::spawn(async move { side.await_reply(id).await });
     home.requests_reach(asked + 1).await;
-    // A Noesis read waits for the turn in flight; the generic reads do not.
     let events = home
         .ok(json!({"cmd": "get_events", "after": 0, "limit": 10000, "query": {}}))
         .await;
@@ -110,8 +109,8 @@ async fn g14_an_interactive_turn_in_flight_finishes_within_the_grace() {
     );
     let text = transcript_text(&mut home, &agent).await;
     assert!(
-        text.contains(HELD_TEXT),
-        "the turn finished and its reply stays: {text}"
+        text.contains("noesis_ask"),
+        "the turn finished and its question call stays: {text}"
     );
     let created = created.await.expect("the creation's reply");
     assert!(

@@ -4,7 +4,7 @@
 
 import { selectStreams, useApp, useSelector, type State } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { errorText } from "./data.ts";
 import { invariant } from "./model.ts";
 import { liveItems, sessionAgents, type AgentTranscript, type TimelineItem } from "./timeline.ts";
@@ -12,15 +12,35 @@ import { liveItems, sessionAgents, type AgentTranscript, type TimelineItem } fro
 const NO_ENTRIES: readonly aether.TranscriptEntry[] = [];
 
 /** Follows the current agent's deltas and reads the earlier agents' transcripts. */
-function useFollowAgents(conn: string, current: string, earlier: readonly string[]): void {
+function useFollowAgents(conn: string, current: string, earlier: readonly string[]): boolean {
   const app = useApp();
   const others = earlier.join(" ");
+  const [resumed, setResumed] = useState<{ agent: string; alive: boolean } | null>(null);
   useEffect(() => {
-    const watch = (agents: readonly string[]) => app.manager.watchAgents(conn, agents).catch((error: unknown) => {
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const report = (error: unknown) => {
       app.store.report(`Could not follow the session's conversation: ${errorText(error)}`, conn);
-    });
-    void watch([current]);
-    return () => void watch([]);
+    };
+    const check = async () => {
+      if (!live) return;
+      try {
+        const reply = await app.manager.send(conn, { cmd: "get_agent", id: current });
+        if (!live) return;
+        const agent = reply.data as aether.Agent | undefined;
+        invariant(reply.reply === "agent" && agent?.id === current, "the liveness read names the watched agent");
+        setResumed({ agent: current, alive: agent.engine_alive === true });
+        if (agent.engine_alive === true) timer = setTimeout(() => void check(), 1_000);
+      } catch (error) {
+        if (live) report(error);
+      }
+    };
+    void app.manager.watchAgents(conn, [current]).then(check, report);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+      void app.manager.watchAgents(conn, []).catch(report);
+    };
   }, [app, conn, current]);
   useEffect(() => {
     for (const agent of others === "" ? [] : others.split(" ")) {
@@ -29,15 +49,17 @@ function useFollowAgents(conn: string, current: string, earlier: readonly string
       });
     }
   }, [app, conn, others]);
+  return resumed?.agent === current && resumed.alive;
 }
 
 /** Every agent's transcript, oldest agent first, as the store holds it. */
-export function useLessonTranscripts(conn: string, session: aether.NoesisSession): readonly AgentTranscript[] {
+export function useLessonTranscripts(conn: string, session: aether.NoesisSession): { transcripts: readonly AgentTranscript[]; resumed: boolean } {
   const agents = useMemo(() => sessionAgents(session), [session]);
   invariant(agents.some((entry) => entry.agent === session.agent), "the current agent is one of the session's");
-  useFollowAgents(conn, session.agent, useMemo(() => agents.filter((entry) => entry.agent !== session.agent).map((entry) => entry.agent), [agents, session.agent]));
+  const resumed = useFollowAgents(conn, session.agent, useMemo(() => agents.filter((entry) => entry.agent !== session.agent).map((entry) => entry.agent), [agents, session.agent]));
   const held = useSelector(useCallback((state: State) => state.aether[conn]?.transcripts, [conn]));
-  return useMemo(() => agents.map((agent) => ({ agent, entries: held?.[agent.agent]?.entries ?? NO_ENTRIES })), [agents, held]);
+  const transcripts = useMemo(() => agents.map((agent) => ({ agent, entries: held?.[agent.agent]?.entries ?? NO_ENTRIES })), [agents, held]);
+  return { transcripts, resumed };
 }
 
 /** The current agent's text while it streams, before its message commits. */

@@ -229,7 +229,7 @@ export function noesisListSessions(args: Omit<NoesisListSessionsCommand, "cmd">)
 }
 
 /**
- * Retry a stalled teaching turn after changing its budget.
+ * Retry a stalled teaching turn without repeating the learner's input.
  */
 export interface NoesisRetryTurnCommand {
   "cmd": "noesis_retry_turn";

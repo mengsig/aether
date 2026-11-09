@@ -301,12 +301,20 @@ impl Runtime {
 
     /// Noesis agents with a turn in flight, and the lane each runs in.
     pub fn noesis_turns_running(&self) -> Vec<(AgentId, NoesisLane)> {
-        self.sched
+        let mut running: Vec<_> = self
+            .sched
             .lock()
             .running
             .iter()
             .filter_map(|(id, turn)| turn.noesis.as_ref().map(|noesis| (*id, noesis.lane)))
-            .collect()
+            .collect();
+        running.extend(
+            self.noesis_calls
+                .lock()
+                .iter()
+                .map(|(id, lane)| (*id, *lane)),
+        );
+        running
     }
 
     /// Interrupt the Noesis turns in flight (of `lane`, or all), keeping the

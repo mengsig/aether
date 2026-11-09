@@ -445,6 +445,7 @@ fn the_status_reply_carries_the_documented_shape() {
         enabled: false,
         settings: view.clone(),
         effective: view,
+        settings_pending: false,
         jobs_running: 0,
         spend_today: SpendToday {
             interactive: Usage::default(),

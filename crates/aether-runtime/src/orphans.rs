@@ -57,7 +57,9 @@ impl Runtime {
     /// Whether a turn of this agent is running in this daemon now.
     pub fn turn_in_flight(&self, agent: AgentId) -> bool {
         let sched = self.sched.lock();
-        sched.running.contains_key(&agent) || sched.engine_retakers.contains(&agent)
+        sched.running.contains_key(&agent)
+            || sched.engine_retakers.contains(&agent)
+            || self.noesis_calls.lock().contains_key(&agent)
     }
 
     /// Fill in the reply-only liveness fields of agents about to be sent out.

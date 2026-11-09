@@ -95,11 +95,11 @@ pub struct NoesisSession {
     pub stalled: Option<SessionStall>,
 }
 
-/// A turn that stopped before any model call, and why.
+/// A turn that stopped before completion, and why.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SessionStall {
     pub reason: StallReason,
-    /// What the learner can do about it, naming the setting to change.
+    /// What the learner can do about it.
     pub message: String,
     pub at: Timestamp,
 }
@@ -109,6 +109,8 @@ pub struct SessionStall {
 pub enum StallReason {
     /// Today's interactive budget (`noesis.budget.interactive_usd_daily`) is spent.
     BudgetExhausted,
+    /// The teacher stopped making progress after an automatic retry.
+    EngineStalled,
 }
 
 /// What an agent did in its session.

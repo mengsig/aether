@@ -3,6 +3,7 @@
 use aether_core::model::{BlockStart, ModelError, ModelErrorClass, ModelRequest, StreamEvent};
 use aether_engine::{EngineEvent, EngineRun, EngineTurn};
 use aether_model::{ModelClient, ModelStream};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -12,6 +13,9 @@ use super::{
 };
 
 type Sender = mpsc::Sender<Result<StreamEvent, ModelError>>;
+
+const IDLE_TIMEOUT: Duration = Duration::from_secs(90);
+const STALLED: &str = "Noesis engine made no progress";
 
 pub(crate) struct StreamingClient(pub(crate) CompactionClient);
 
@@ -68,7 +72,7 @@ async fn produce(
         collect(&client, turn, &cancel, &mut accounting, &mut output),
     );
     let result = tokio::select! {
-        result = run => result.unwrap_or_else(|_| Err(failure(format!("{} engine timed out", client.purpose)))),
+        result = run => result.unwrap_or_else(|_| Err(ModelError::new(ModelErrorClass::Timeout, format!("{} engine timed out", client.purpose)))),
         () = cancel.cancelled() => Err(ModelError::new(ModelErrorClass::Cancelled, format!("{} generation cancelled", client.purpose))),
     };
     accounting.finish(cancel.is_cancelled());
@@ -106,16 +110,35 @@ async fn collect(
 ) -> Result<String, ModelError> {
     debug_assert!(turn.session.is_none());
     debug_assert!(accounting.usage.is_none());
-    let mut run = client
-        .engine
-        .run_with_context(turn, client.context.clone(), cancel.clone())
-        .await
-        .map_err(|error| {
-            accounting.unsubmitted = error.proves_no_submission();
-            failure(error.to_string())
-        })?;
+    let engine_cancel = cancel.child_token();
+    let _cleanup = engine_cancel.clone().drop_guard();
+    let mut run = tokio::time::timeout(
+        IDLE_TIMEOUT,
+        client
+            .engine
+            .run_with_context(turn, client.context.clone(), engine_cancel.clone()),
+    )
+    .await
+    .map_err(|_| stalled(&engine_cancel))?
+    .map_err(|error| {
+        accounting.unsubmitted = error.proves_no_submission();
+        failure(error.to_string())
+    })?;
     let mut final_text = String::new();
-    while let Some(event) = run.events.recv().await {
+    let mut deadline = tokio::time::Instant::now() + IDLE_TIMEOUT;
+    loop {
+        let event = match tokio::time::timeout_at(deadline, run.events.recv()).await {
+            Ok(Some(event)) => event,
+            Ok(None) => break,
+            Err(_) => {
+                engine_cancel.cancel();
+                drain_cancelled(&mut run, accounting).await;
+                return Err(stalled(&engine_cancel));
+            }
+        };
+        if is_progress(&event) {
+            deadline = tokio::time::Instant::now() + IDLE_TIMEOUT;
+        }
         if let Some(text) =
             observe(event, &run, client, accounting, output, &mut final_text).await?
         {
@@ -126,6 +149,65 @@ async fn collect(
         "{} engine ended without a result",
         client.purpose
     )))
+}
+
+fn is_progress(event: &EngineEvent) -> bool {
+    match event {
+        EngineEvent::Delta(event) => stream_progress(event),
+        EngineEvent::Assistant { content, .. } => !content.is_empty(),
+        EngineEvent::UsageDelta { usage } => usage.total_tokens() > 0,
+        EngineEvent::UsageRequest { request } => request.delta().total_tokens() > 0,
+        EngineEvent::ToolResult { .. }
+        | EngineEvent::Permission { .. }
+        | EngineEvent::Question { .. }
+        | EngineEvent::Done(_) => true,
+        _ => false,
+    }
+}
+
+fn stream_progress(event: &StreamEvent) -> bool {
+    match event {
+        StreamEvent::TextDelta { text, .. } | StreamEvent::ThinkingDelta { text, .. } => {
+            !text.is_empty()
+        }
+        StreamEvent::ToolInputDelta { partial_json, .. } => !partial_json.is_empty(),
+        StreamEvent::CompactionDelta { content, .. } => !content.is_empty(),
+        StreamEvent::BlockStart {
+            block: BlockStart::Text { text } | BlockStart::Thinking { text, .. },
+            ..
+        } => !text.is_empty(),
+        StreamEvent::BlockStart {
+            block: BlockStart::ToolUse { .. } | BlockStart::Compaction { .. },
+            ..
+        } => true,
+        _ => false,
+    }
+}
+
+async fn drain_cancelled(run: &mut EngineRun, accounting: &mut Accounting) {
+    let drained = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(event) = run.events.recv().await {
+            match event {
+                EngineEvent::Assistant {
+                    usage: Some(usage), ..
+                } => accounting.reported(usage),
+                EngineEvent::UsageDelta { usage } => accounting.reported(usage),
+                EngineEvent::UsageRequest { request } => accounting.reported(request.delta()),
+                EngineEvent::Done(outcome) => accounting.close(&outcome),
+                _ => {}
+            }
+        }
+    })
+    .await;
+    accounting.finish(true);
+    if drained.is_err() {
+        tracing::warn!("a cancelled Noesis engine did not finish cleanup in time");
+    }
+}
+
+fn stalled(cancel: &CancellationToken) -> ModelError {
+    cancel.cancel();
+    ModelError::new(ModelErrorClass::Timeout, STALLED)
 }
 
 async fn observe(
@@ -248,6 +330,16 @@ impl TextOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notes_do_not_reset_the_silence_clock() {
+        assert!(!is_progress(&EngineEvent::Note("heartbeat".into())));
+        assert!(!is_progress(&EngineEvent::ContextUsage { tokens: 42 }));
+        assert!(is_progress(&EngineEvent::Delta(StreamEvent::TextDelta {
+            index: 0,
+            text: "x".into()
+        })));
+    }
 
     #[tokio::test]
     async fn noesis_receipt_appends_only_the_unstreamed_suffix() {

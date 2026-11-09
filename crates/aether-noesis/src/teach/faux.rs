@@ -171,10 +171,7 @@ impl Engine for FauxEngine {
         })?;
         debug_assert!(replies.discarded.len() <= 2);
         let mut step = replies.step;
-        if text_policy.suppressed(&step) {
-            step.text.clear();
-            step.text_blocks.clear();
-        }
+        text_policy.shape(&mut step);
         Ok(step)
     }
 }

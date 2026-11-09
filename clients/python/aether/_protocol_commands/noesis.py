@@ -176,7 +176,7 @@ def noesis_list_sessions(*, after: str | None = None, limit: int | None = None) 
     return frame
 
 def noesis_retry_turn(*, session: str, idempotency_key: str | None = None) -> dict[str, Any]:
-    """Retry a stalled teaching turn after changing its budget."""
+    """Retry a stalled teaching turn without repeating the learner's input."""
     frame: dict[str, Any] = {"cmd": "noesis_retry_turn"}
     if idempotency_key is not None:
         frame["idempotency_key"] = idempotency_key

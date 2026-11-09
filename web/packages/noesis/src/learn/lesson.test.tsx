@@ -75,6 +75,13 @@ describe("grades", () => {
 });
 
 describe("the whole conversation", () => {
+  test("a queued turn shows it is waiting for saved settings", async () => {
+    const h = await start({ sessions: [LESSON], transcripts: {}, status: { ...statusOf(true), settings_pending: true } });
+    const root = await open(h);
+    expect(root.textContent).toContain("Waiting for saved settings to take effect");
+    expect(root.textContent).not.toContain("Your teacher is writing");
+  });
+
   test("a new session shows writing even when its start preceded the subscription", async () => {
     const h = await start({ sessions: [LESSON], transcripts: {} });
     const root = await open(h);
@@ -90,9 +97,11 @@ describe("the whole conversation", () => {
     h.daemon.turn(LESSON.id, "inv_writing", 1, true);
     await h.settle();
     expect(root.textContent).toContain("Your teacher is writing…");
+    expect(($(root, "[data-testid=learn-reply]") as HTMLTextAreaElement).disabled).toBe(true);
     h.daemon.turn(LESSON.id, "inv_writing", 2, false);
     await h.settle();
     expect(root.textContent).not.toContain("Your teacher is writing…");
+    expect(($(root, "[data-testid=learn-reply]") as HTMLTextAreaElement).disabled).toBe(false);
   });
   test("the Prober's transcript stays after the hand-off, and Noesis's own inputs never read as the learner's", async () => {
     const h = await start();
@@ -154,6 +163,18 @@ describe("the whole conversation", () => {
 });
 
 describe("budget", () => {
+  test("a stalled teacher offers a retry without a budget warning", async () => {
+    const h = await start({ retryTurn: true });
+    const root = await open(h);
+    h.daemon.stall(LESSON.id, { reason: "engine_stalled", message: "The teacher stopped responding.", at: "2026-01-01T00:00:09Z" });
+    await h.settle(SETTLE_MS);
+    const note = $(root, ".learn-callout[role=alert]");
+    expect(note.textContent).toContain("The teacher stopped responding.");
+    expect(root.textContent).not.toContain("Today's teaching budget is spent");
+    await click(h, byText(note, "button", "Try again"));
+    expect(h.daemon.names()).toContain("noesis_retry_turn");
+  });
+
   test("a budget refusal explains itself at once, never waits, and tries the same turn again", async () => {
     const h = await start();
     h.daemon.refuseTurns = BUDGET;

@@ -17,5 +17,6 @@ class NoesisStatus(TypedDict, total=False):
     models: list[_protocol.NoesisModelOffer]  # optional
     prompt_overrides: list[str]
     settings: _protocol.NoesisSettingsView
+    settings_pending: bool  # optional
     spend_today: _protocol.SpendToday
     teaching_model: _protocol.NoesisModelChoice | None  # optional

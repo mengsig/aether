@@ -175,8 +175,11 @@ pub struct NoesisStatus {
     pub enabled: bool,
     /// As stored.
     pub settings: NoesisSettingsView,
-    /// After prerequisites: a switch whose prerequisite is off reads off.
+    /// In effect after prerequisites; saved changes may still be pending.
     pub effective: NoesisSettingsView,
+    /// Saved settings are waiting for existing work to finish before applying.
+    #[serde(default)]
+    pub settings_pending: bool,
     pub jobs_running: u32,
     pub spend_today: SpendToday,
     pub disable_policy: DisablePolicy,

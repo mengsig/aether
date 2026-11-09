@@ -8,7 +8,7 @@ from .. import protocol as _protocol
 
 class SessionStall(TypedDict, total=False):
     """
-    A turn that stopped before any model call, and why.
+    A turn that stopped before completion, and why.
     """
     at: str
     message: str

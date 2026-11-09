@@ -127,22 +127,104 @@ pub enum EngineError {
     /// The call may have reached a model; its estimate is charged.
     #[error("the engine failed: {0}")]
     Failed(String),
+    /// The engine stopped making progress after an automatic retry.
+    #[error("the engine stalled: {0}")]
+    Stalled(String),
     /// The Noesis budget refused the call, so nothing reached a model.
     #[error("{0}")]
     BudgetSpent(String),
 }
 
+/// What the learner is shown of a reply's text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReplyText {
+pub enum TextPolicy {
     Keep,
+    Explanation,
     Suppress,
     SuppressWithoutCalls,
 }
 
+/// How to handle a reply's `noesis.ask` calls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AskPolicy {
+    /// The loop runs the asks.
+    Pose,
+    /// Hold a mixed reply so the loop can request a separate explanation.
+    Hold,
+    /// The model is not offered `noesis.ask`; any it makes are dropped.
+    Withhold,
+}
+
+/// How a step's reply is shaped before it is recorded and shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReplyText {
+    pub text: TextPolicy,
+    pub asks: AskPolicy,
+}
+
+/// What [`ReplyText::shape`] removed from the reply a host records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Shaped {
+    pub text_dropped: bool,
+    pub asks_dropped: bool,
+}
+
+pub fn is_ask(call: &ToolCall) -> bool {
+    crate::tools::ToolName::parse(&call.name) == Some(crate::tools::ToolName::Ask)
+}
+
+/// Whether the step attempts a card with prose beside it.
+pub fn asks_with_prose(step: &Step) -> bool {
+    step.calls.iter().any(is_ask) && !step.text.trim().is_empty()
+}
+
 impl ReplyText {
-    pub fn suppressed(self, step: &Step) -> bool {
-        self == Self::Suppress || (self == Self::SuppressWithoutCalls && step.calls.is_empty())
+    pub const fn new(text: TextPolicy, asks: AskPolicy) -> Self {
+        Self { text, asks }
     }
+
+    pub fn suppressed(self, step: &Step) -> bool {
+        self.text == TextPolicy::Suppress
+            || (self.text == TextPolicy::SuppressWithoutCalls && step.calls.is_empty())
+            || (self.text == TextPolicy::Explanation && has_prose_question_mark(&step.text))
+    }
+
+    /// Keep a held reply for routing while dropping it from the transcript.
+    pub fn shape(self, step: &mut Step) -> Shaped {
+        let had_text = !(step.text.is_empty() && step.text_blocks.is_empty());
+        if self.asks == AskPolicy::Hold && asks_with_prose(step) {
+            return Shaped {
+                text_dropped: true,
+                asks_dropped: true,
+            };
+        }
+        let attempts = step.calls.iter().any(is_ask);
+        let hides_text = self.suppressed(step) || attempts;
+        if hides_text {
+            step.text.clear();
+            step.text_blocks.clear();
+        }
+        if self.asks == AskPolicy::Withhold {
+            step.calls.retain(|call| !is_ask(call));
+        }
+        debug_assert!(!attempts || step.text.is_empty(), "an ask's prose is gone");
+        Shaped {
+            text_dropped: hides_text && had_text,
+            asks_dropped: attempts && self.asks == AskPolicy::Withhold,
+        }
+    }
+}
+
+fn has_prose_question_mark(text: &str) -> bool {
+    let mut code = false;
+    for character in text.chars() {
+        if character == '`' {
+            code = !code;
+        } else if !code && matches!(character, '?' | '？' | '¿') {
+            return true;
+        }
+    }
+    false
 }
 
 pub trait Engine {

@@ -142,6 +142,11 @@ pub struct NoesisService {
     models: Arc<Models>,
     gate: NoesisGate,
     state: tokio::sync::Mutex<State>,
+    effective_settings: parking_lot::RwLock<Option<NoesisSettings>>,
+    settings_pending: std::sync::atomic::AtomicBool,
+    settings_generation: std::sync::atomic::AtomicU64,
+    settings_ready: tokio::sync::Notify,
+    waiting_settings: std::sync::atomic::AtomicUsize,
     drains: std::sync::atomic::AtomicU64,
     /// Teaching calls running or waiting for the desk, which a drain
     /// waits for through the grace.
@@ -186,6 +191,11 @@ impl NoesisService {
             models,
             gate,
             state: tokio::sync::Mutex::new(State::Off),
+            effective_settings: parking_lot::RwLock::new(None),
+            settings_pending: std::sync::atomic::AtomicBool::new(false),
+            settings_generation: std::sync::atomic::AtomicU64::new(0),
+            settings_ready: tokio::sync::Notify::new(),
+            waiting_settings: std::sync::atomic::AtomicUsize::new(0),
             drains: std::sync::atomic::AtomicU64::new(0),
             teaching_calls: std::sync::atomic::AtomicUsize::new(0),
             model_client: None,
@@ -254,6 +264,7 @@ impl NoesisService {
             self.models.clone(),
         ));
         let extraction = graph::Extraction::start(&noesis, budget.clone())?;
+        *self.effective_settings.write() = Some(settings.clone());
         self.gate.enable(budget.clone());
         debug_assert!(self.gate.is_enabled());
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -276,7 +287,12 @@ impl NoesisService {
     /// the service is not running whatever is stored.
     fn effective(&self, stored: &NoesisSettings) -> NoesisSettings {
         if self.gate.is_enabled() {
-            return stored.effective();
+            return self
+                .effective_settings
+                .read()
+                .as_ref()
+                .unwrap_or(stored)
+                .effective();
         }
         NoesisSettings {
             enabled: false,
@@ -288,7 +304,12 @@ impl NoesisService {
     /// Stop the service with the daemon; in-flight turns end with it.
     pub async fn shutdown(&self) {
         self.gate.disable();
-        let previous = std::mem::replace(&mut *self.state.lock().await, State::Off);
+        let mut state = self.state.lock().await;
+        let previous = std::mem::replace(&mut *state, State::Off);
+        self.settings_generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.settings_applied();
+        drop(state);
         let live = match previous {
             State::Off => return,
             State::Running(live) | State::Draining { live, .. } => live,

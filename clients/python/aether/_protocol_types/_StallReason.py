@@ -5,4 +5,4 @@ from __future__ import annotations
 from typing import Any, Literal, TypedDict
 
 
-StallReason = Literal["budget_exhausted"]
+StallReason = Literal["budget_exhausted", "engine_stalled"]

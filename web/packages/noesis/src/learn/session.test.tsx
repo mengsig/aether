@@ -132,6 +132,19 @@ describe("questions", () => {
 });
 
 describe("teaching turns", () => {
+  test("returning during a turn reads its liveness and stops writing when it finishes", async () => {
+    const h = await connected(scenario(true, { transport: "ipc" }), vi);
+    harness = h;
+    h.daemon.setAgentAlive(LESSON.id, true);
+    location.hash = `#/learn/sessions/${LESSON.id}`;
+    const root = await h.mount(<SessionRoute params={{ id: LESSON.id }} />);
+    await h.settle(SETTLE_MS);
+    expect(root.querySelector(".learn-working")?.textContent).toContain("Your teacher is writing");
+    h.daemon.setAgentAlive(LESSON.id, false);
+    await h.settle(1_000);
+    expect(root.querySelector(".learn-working")).toBeNull();
+  });
+
   test("sending shows the teacher working until the committed reply arrives", async () => {
     const { h, root } = await openLesson();
     await type(h, $(root, "[data-testid=learn-reply]"), "What stops two leaders?");

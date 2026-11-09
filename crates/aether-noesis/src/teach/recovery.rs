@@ -115,7 +115,11 @@ fn a_reply_giving_its_own_key_away_is_discarded_and_made_again() {
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingAnswer);
     let texts: Vec<&str> = report.steps.iter().map(|s| s.text.as_str()).collect();
-    assert_eq!(texts, ["One question:"], "the leaking reply is never kept");
+    assert_eq!(
+        texts,
+        [""],
+        "neither the leaking reply nor card prose is kept"
+    );
     assert_eq!(t.engine().reminders, 1);
     let open = session(&t, &id)
         .open_question
@@ -342,7 +346,7 @@ fn a_reply_showing_any_shape_of_its_own_sealed_text_is_discarded() {
         prober.script(Agent::Prober, "Name it:", vec![(ASK, capital_question())]);
         let report = t.advance(&id).unwrap().remove(0);
         let texts: Vec<&str> = report.steps.iter().map(|s| s.text.as_str()).collect();
-        assert_eq!(texts, ["Name it:"]);
+        assert_eq!(texts, [""]);
         assert_eq!(t.engine().reminders, 1);
         assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
     }

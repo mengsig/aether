@@ -5,7 +5,10 @@
 use serde_json::{Value, json};
 
 use super::db;
-use super::engine::{Engine, EngineError, Input, ReplyText, Step, ToolResult};
+use super::engine::{
+    AskPolicy, Engine, EngineError, Input, ReplyText, Step, TextPolicy, ToolResult,
+    asks_with_prose, is_ask,
+};
 use super::history;
 use super::records::{NoesisEvent, SessionStall, StallReason};
 use super::seal::{self, Sealer};
@@ -19,6 +22,20 @@ use crate::tools::{self, SEALED, ToolName};
 
 const JUDGMENT_ATTEMPTS: usize = 3;
 const CHECK_ATTEMPTS: usize = 3;
+
+const EXPLAIN_GUIDANCE: &str = "System guidance, not a learner message: the check card you tried to pose was not posed, and the text beside it was not shown. First teach this step: write only the explanation or worked example, in plain statements. Do not ask the learner anything or give them a task. Make no tool calls in this reply; if using the JSON envelope, set tool_calls to an empty array. The check card is posed for you right after.";
+const POSE_GUIDANCE: &str = "System guidance, not a learner message: your explanation is shown. Now pose the check for this step by calling noesis.ask. Write no other text; the card carries the question.";
+
+/// The stages between a mixed teacher reply and a check card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CardStage {
+    /// A card with prose beside it is held and the prose dropped; any other is posed.
+    Open,
+    /// Explain without posing the card.
+    Explaining,
+    /// Replies show no text; the card is posed.
+    Posing,
+}
 
 impl<E: Engine> Teaching<'_, E> {
     /// Run the session's agent until it waits, and on a hand-off run the new
@@ -116,6 +133,11 @@ impl<E: Engine> Teaching<'_, E> {
             }
         }
         debug_assert_eq!(turn.steps.len(), MAX_STEPS);
+        if turn.needs_card() {
+            return Err(
+                EngineError::Stalled("the teaching turn ended before its check".into()).into(),
+            );
+        }
         Ok(TurnEnd::StepLimit)
     }
 
@@ -128,12 +150,18 @@ impl<E: Engine> Teaching<'_, E> {
         step: Step,
         turn: &mut Turn,
     ) -> Result<(Option<TurnEnd>, Vec<ToolResult>), TeachError> {
+        let mut step = step;
         let own: Vec<String> = step.calls.iter().flat_map(seal::call_secrets).collect();
+        turn.own.extend(own.iter().cloned());
+        let moved_on = self.route_card_stage(caller, &mut step, turn)?;
         let mut pending = PendingStep {
             text: step.text,
             calls: Vec::with_capacity(step.calls.len()),
         };
-        turn.own.extend(own.iter().cloned());
+        if moved_on {
+            turn.steps.push(pending);
+            return Ok((None, Vec::new()));
+        }
         if step.calls.is_empty() {
             return self.finish_without_calls(session, caller, pending, turn);
         }
@@ -166,6 +194,9 @@ impl<E: Engine> Teaching<'_, E> {
             turn.steps.push(pending);
             return Ok((None, Vec::new()));
         }
+        if turn.stage == CardStage::Posing {
+            return self.pose_again(caller, pending, turn);
+        }
         if db::unjudged_recall(self.conn(), session)?.is_some() {
             turn.steps.push(pending);
             return Ok((None, Vec::new()));
@@ -173,7 +204,7 @@ impl<E: Engine> Teaching<'_, E> {
         if turn.answer_turn && self.has_next_plan_step(session)? {
             turn.continuation_attempts += 1;
             if turn.continuation_attempts > CHECK_ATTEMPTS {
-                return Err(EngineError::Failed(
+                return Err(EngineError::Stalled(
                     "the teaching agent could not continue the plan".into(),
                 )
                 .into());
@@ -186,6 +217,29 @@ impl<E: Engine> Teaching<'_, E> {
         }
         turn.steps.push(pending);
         Ok((Some(TurnEnd::AwaitingLearner), Vec::new()))
+    }
+
+    /// A reply that posed nothing after the explanation: ask again, a bounded
+    /// number of times, rather than leave the lesson without its check.
+    fn pose_again(
+        &mut self,
+        caller: &Caller,
+        mut pending: PendingStep,
+        turn: &mut Turn,
+    ) -> Result<(Option<TurnEnd>, Vec<ToolResult>), TeachError> {
+        debug_assert!(pending.calls.is_empty() && turn.stage == CardStage::Posing);
+        turn.pose_attempts += 1;
+        if turn.pose_attempts > CHECK_ATTEMPTS {
+            return Err(EngineError::Stalled(
+                "the teaching agent did not pose the check after explaining".into(),
+            )
+            .into());
+        }
+        self.engine
+            .deliver(&caller.agent, Input::Guidance(POSE_GUIDANCE.into()))?;
+        pending.text.clear();
+        turn.steps.push(pending);
+        Ok((None, Vec::new()))
     }
 
     pub(super) fn mark_answer_turn(
@@ -229,13 +283,67 @@ impl<E: Engine> Teaching<'_, E> {
         session: &str,
         turn: &Turn,
     ) -> Result<ReplyText, TeachError> {
+        let row = db::session(self.conn(), session)?;
+        if role_of(driving_agent(&row)) != role_of(crate::prompts::Agent::Teacher) {
+            return Ok(ReplyText::new(
+                self.shown_text(session, turn)?,
+                AskPolicy::Pose,
+            ));
+        }
+        Ok(match turn.stage {
+            CardStage::Explaining => ReplyText::new(TextPolicy::Explanation, AskPolicy::Withhold),
+            CardStage::Posing => ReplyText::new(TextPolicy::Suppress, AskPolicy::Pose),
+            CardStage::Open => ReplyText::new(self.shown_text(session, turn)?, AskPolicy::Hold),
+        })
+    }
+
+    fn shown_text(&self, session: &str, turn: &Turn) -> Result<TextPolicy, TeachError> {
         if turn.recovering_check() {
-            return Ok(ReplyText::Suppress);
+            return Ok(TextPolicy::Suppress);
         }
         if turn.answer_turn && self.has_next_plan_step(session)? {
-            return Ok(ReplyText::SuppressWithoutCalls);
+            return Ok(TextPolicy::SuppressWithoutCalls);
         }
-        Ok(ReplyText::Keep)
+        Ok(TextPolicy::Keep)
+    }
+
+    /// Route a mixed reply to explanation, then to the card.
+    fn route_card_stage(
+        &mut self,
+        caller: &Caller,
+        step: &mut Step,
+        turn: &mut Turn,
+    ) -> Result<bool, TeachError> {
+        if !agent_for_teacher(caller) {
+            return Ok(false);
+        }
+        let (next, guidance) = match turn.stage {
+            CardStage::Open if asks_with_prose(step) => {
+                turn.card_context = held_card_context(step);
+                step.text.clear();
+                (CardStage::Explaining, EXPLAIN_GUIDANCE)
+            }
+            CardStage::Explaining if step.text.trim().is_empty() => {
+                turn.explain_attempts += 1;
+                if turn.explain_attempts > CHECK_ATTEMPTS {
+                    return Err(EngineError::Stalled(
+                        "the teaching agent did not explain the step before its check".into(),
+                    )
+                    .into());
+                }
+                (CardStage::Explaining, EXPLAIN_GUIDANCE)
+            }
+            CardStage::Explaining => (CardStage::Posing, POSE_GUIDANCE),
+            _ => return Ok(false),
+        };
+        step.calls.retain(|call| !is_ask(call));
+        turn.stage = next;
+        self.engine.deliver(
+            &caller.agent,
+            Input::Guidance(format!("{guidance}{}", turn.card_context)),
+        )?;
+        debug_assert!(!step.calls.iter().any(is_ask), "no ask runs unrouted");
+        Ok(step.calls.is_empty())
     }
 
     fn execute_calls(
@@ -288,7 +396,7 @@ impl<E: Engine> Teaching<'_, E> {
             return Ok(());
         }
         if turn.check_attempts > CHECK_ATTEMPTS {
-            return Err(EngineError::Failed(
+            return Err(EngineError::Stalled(
                 "the teaching agent could not pose a fresh check".into(),
             )
             .into());
@@ -542,6 +650,10 @@ pub(super) struct Turn {
     check_attempts: usize,
     answer_turn: bool,
     continuation_attempts: usize,
+    stage: CardStage,
+    card_context: String,
+    explain_attempts: usize,
+    pose_attempts: usize,
     /// Where the turn's events start in the pending event list.
     pub(super) events_from: usize,
 }
@@ -558,6 +670,10 @@ impl std::fmt::Debug for Turn {
 }
 
 impl Turn {
+    pub(super) fn needs_card(&self) -> bool {
+        self.stage != CardStage::Open || self.recovering_check()
+    }
+
     pub(super) fn recovering_check(&self) -> bool {
         self.check_attempts > 0
     }
@@ -569,6 +685,10 @@ impl Turn {
             check_attempts: 0,
             answer_turn: false,
             continuation_attempts: 0,
+            stage: CardStage::Open,
+            card_context: String::new(),
+            explain_attempts: 0,
+            pose_attempts: 0,
             events_from,
         }
     }
@@ -615,6 +735,25 @@ impl Turn {
         debug_assert_eq!(steps.len(), count, "every step is published");
         steps
     }
+}
+
+fn held_card_context(step: &Step) -> String {
+    let Some(args) = step.calls.iter().find_map(|call| {
+        if !is_ask(call) {
+            return None;
+        }
+        match tools::parse(ToolName::Ask, call.input.clone()) {
+            Ok(tools::ToolArgs::Ask(args)) => Some(args),
+            _ => None,
+        }
+    }) else {
+        return String::new();
+    };
+    let prompt: String = args.prompt.chars().take(2_000).collect();
+    let node = args.plan_node.as_deref().unwrap_or("unspecified");
+    format!(
+        " The withheld check targets plan node {node:?} and asks: {prompt:?}. Teach that topic without giving away the answer or repeating the question."
+    )
 }
 
 fn agent_for_teacher(caller: &Caller) -> bool {

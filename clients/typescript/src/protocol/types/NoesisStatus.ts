@@ -21,6 +21,7 @@ export interface NoesisStatus {
   "models"?: Array<NoesisModelOffer>;
   "prompt_overrides": Array<string>;
   "settings": NoesisSettingsView;
+  "settings_pending"?: boolean;
   "spend_today": SpendToday;
   "teaching_model"?: NoesisModelChoice | null;
 }

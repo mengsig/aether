@@ -8,7 +8,7 @@ from .. import protocol as _protocol
 
 class EventKindNoesisSessionStalled(TypedDict, total=False):
     """
-    A turn stopped before any model call; the session carries it too.
+    A turn stopped before completion; the session carries it too.
     """
     session: str
     stall: _protocol.SessionStall

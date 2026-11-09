@@ -189,6 +189,7 @@ export class AetherSync {
       const stale = [...this.deltaSubs].find(([agent]) => !this.watched.includes(agent));
       if (stale) {
         this.deltaSubs.delete(stale[0]);
+        this.ctx.store.updateAether(this.ctx.conn, (state) => discardUnwatchedLessonStreams(state, stale[0]));
         await this.ctx.request(aether.unsubscribe({ id: stale[1] }));
         continue;
       }
@@ -282,6 +283,15 @@ export class AetherSync {
     this.ctx.store.report(`Could not refresh ${what} in time; retrying: ${errorText(error)}`, this.ctx.conn, "timeout");
     this.scheduleStale();
   }
+}
+
+function discardUnwatchedLessonStreams(state: AetherConnState, agent: string): AetherConnState {
+  const lessonAgent = Object.values(state.learn.sessions).some((session) =>
+    session.agent === agent || session.agents?.some((entry) => entry.agent === agent),
+  );
+  if (!lessonAgent) return state;
+  const streams = Object.fromEntries(Object.entries(state.streams).filter(([, stream]) => stream.agent !== agent));
+  return Object.keys(streams).length === Object.keys(state.streams).length ? state : { ...state, streams };
 }
 
 /** Installs a refetched agent row and keeps the root index in step with its parent. */

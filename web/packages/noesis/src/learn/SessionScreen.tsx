@@ -38,14 +38,14 @@ function SessionView({ conn, status, session, reload }: OpenGate & { session: ae
   const learn = useLearn(conn);
   const operate = useOperateRefusal(conn);
   const canRetryTurn = useSelector(useCallback((state) => state.connections[conn]?.features.includes("noesis_retry_turn") === true, [conn]));
-  const transcripts = useLessonTranscripts(conn, session);
+  const { transcripts, resumed } = useLessonTranscripts(conn, session);
   const live = useLiveText(conn, session.agent);
-  const writing = useTeacherWriting(conn, session.agent);
+  const writing = useTeacherWriting(conn, session.agent) || resumed;
   const items = useMemo(() => buildTimeline(session, transcripts, learn), [session, transcripts, learn]);
   const streamed = live.map((item) => (item.kind === "message" ? item.text : "")).join("");
   const turn = useLessonTurn(conn, session, items, streamed);
   const budget = exhaustedBudget(status);
-  const refusal = session.stalled ? spentRefusal(session, budget) : turn.refusal ?? spentRefusal(session, budget);
+  const refusal = session.stalled ? stallOrBudgetRefusal(session, budget) : turn.refusal ?? stallOrBudgetRefusal(session, budget);
   const retry = operate !== null || turn.pending !== null ? undefined : session.stalled
     ? (canRetryTurn ? () => void turn.act({ cmd: "noesis_retry_turn", session: session.id }) : undefined)
     : turn.retry ?? undefined;
@@ -61,22 +61,22 @@ function SessionView({ conn, status, session, reload }: OpenGate & { session: ae
           <p className="learn-session-goal">{session.goal}</p>
           <p className="learn-muted">{PHASE_LABEL[session.phase]}</p>
         </header>
-        <Transcript items={[...items, ...live]} live={live.length > 0} writing={writing} pending={turn.pending} onAnswer={operate === null ? answer : undefined} onCheck={checkAgain}>
+        <Transcript items={[...items, ...live]} live={live.length > 0} writing={writing} pending={turn.pending} settingsPending={status.settings_pending === true} onAnswer={operate === null ? answer : undefined} onCheck={checkAgain}>
           {session.context && session.context.items.length > 0 && <SourcesCard bundle={session.context} />}
           {planComplete(session.plan) && <CompletionCard conn={conn} session={session} />}
           {refusal !== null && <RefusalNote refusal={refusal} budget={refusal.kind === "budget" ? budget : null} onRetry={retry} />}
         </Transcript>
         <Composer sessionId={session.id} waiting={session.open_question != null} problem={session.active_problem != null} reason={pausedBy(session.stalled != null || budget !== null)}
-          disabled={operate !== null || turn.pending !== null || session.stalled != null || budget !== null} onSend={(text) => turn.act({ cmd: "noesis_send", session: session.id, text })} />
+          disabled={operate !== null || writing || turn.pending !== null || session.stalled != null || budget !== null} onSend={(text) => turn.act({ cmd: "noesis_send", session: session.id, text })} />
       </section>
       <SessionAside conn={conn} session={session} items={items} disabled={operate !== null} />
     </div>
   );
 }
 
-/** The daemon's own record of a turn it stopped for the budget speaks first; today's status is the fallback. */
-function spentRefusal(session: aether.NoesisSession, budget: BudgetUse | null): Refusal | null {
-  if (session.stalled) return { kind: "budget", message: session.stalled.message };
+/** A recorded stall speaks first; today's budget is the fallback. */
+function stallOrBudgetRefusal(session: aether.NoesisSession, budget: BudgetUse | null): Refusal | null {
+  if (session.stalled) return { kind: session.stalled.reason === "engine_stalled" ? "other" : "budget", message: session.stalled.message };
   return budget === null ? null : BUDGET_REFUSAL;
 }
 
@@ -120,12 +120,13 @@ interface TranscriptProps {
   readonly live: boolean;
   readonly writing: boolean;
   readonly pending: { readonly stalled: boolean } | null;
+  readonly settingsPending: boolean;
   readonly onAnswer: AnswerFn | undefined;
   readonly onCheck: () => void;
   readonly children: ReactNode;
 }
 
-function Transcript({ items, live, writing, pending, onAnswer, onCheck, children }: TranscriptProps) {
+function Transcript({ items, live, writing, pending, settingsPending, onAnswer, onCheck, children }: TranscriptProps) {
   const { ref, away, onScroll, jump } = useFollowLatest(items, pending);
   return (
     <div className="learn-transcript">
@@ -134,7 +135,9 @@ function Transcript({ items, live, writing, pending, onAnswer, onCheck, children
           {items.map((item) => <li key={item.key} className="learn-timeline-item"><TimelineEntry item={item} onAnswer={onAnswer} /></li>)}
         </ol>
         {items.length === 0 && pending === null && !writing && <p className="learn-muted">Your teacher is getting ready. The conversation shows here.</p>}
-        {!live && (writing || pending !== null) && <Working stalled={!writing && pending?.stalled === true} onCheck={onCheck} />}
+        {!live && (writing || pending !== null) && (settingsPending && !writing
+          ? <p className="learn-working" role="status">Waiting for saved settings to take effect…</p>
+          : <Working stalled={!writing && pending?.stalled === true} onCheck={onCheck} />)}
         {children}
       </div>
       {away && <button type="button" className="learn-jump" data-testid="learn-jump-latest" onClick={jump}>Jump to latest ↓</button>}

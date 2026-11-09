@@ -187,6 +187,33 @@ fn a_spent_budget_stalls_the_session_until_a_turn_runs() {
 }
 
 #[test]
+fn a_stalled_engine_leaves_a_recoverable_session() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Learn derivatives", Mode::Teach, &[])
+        .unwrap()
+        .id;
+    t.take_events();
+    t.engine_mut()
+        .fail_next(Agent::Prober, EngineError::Stalled("no progress".into()))
+        .script(Agent::Prober, "Let's begin.", vec![]);
+
+    assert!(t.advance(&id).is_err());
+    let stall = session(&t, &id).stalled.expect("stalled");
+    assert_eq!(stall.reason, StallReason::EngineStalled);
+    assert!(stall.message.contains("Try again"));
+    assert!(t.sessions_pending_turns().unwrap().is_empty());
+    assert!(t.take_events().iter().any(|event| matches!(event,
+        NoesisEvent::SessionStalled { stall: announced, .. } if *announced == stall)));
+
+    t.retry_turn(&id).unwrap();
+    t.advance(&id).unwrap();
+    assert!(session(&t, &id).stalled.is_none());
+    assert!(t.sessions_pending_turns().unwrap().is_empty());
+}
+
+#[test]
 fn pending_turn_survives_a_new_teaching_loop_and_clears_after_completion() {
     let (_dir, noesis) = fixture();
     let mut first = Teaching::new(&noesis, FauxEngine::new());

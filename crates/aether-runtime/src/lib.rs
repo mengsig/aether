@@ -320,6 +320,7 @@ pub struct Runtime {
     pub(crate) engines: engine_access::EngineCatalog,
     /// Engine turns in flight, keyed by agent, for routing bridge calls.
     pub(crate) engine_turns: parking_lot::Mutex<HashMap<AgentId, turn_engine::EngineTurnHandle>>,
+    noesis_calls: parking_lot::Mutex<HashMap<AgentId, noesis_guard::NoesisLane>>,
     /// Closed by [`Runtime::shutdown`] before it sweeps agent processes, so
     /// no engine starts after that sweep.
     pub(crate) engine_spawns: aether_engine::SpawnGate,
@@ -467,6 +468,7 @@ impl Runtime {
             client_override,
             engines,
             engine_turns: parking_lot::Mutex::new(HashMap::new()),
+            noesis_calls: parking_lot::Mutex::new(HashMap::new()),
             store,
             models,
             tools,
@@ -789,7 +791,16 @@ impl Runtime {
     }
 
     /// Announce a Noesis model call without publishing its unsealed content.
-    pub fn noesis_turn_started(&self, agent: AgentId) -> DeltaStream {
+    pub fn noesis_turn_started(
+        &self,
+        agent: AgentId,
+        lane: noesis_guard::NoesisLane,
+    ) -> DeltaStream {
+        let previous = self.noesis_calls.lock().insert(agent, lane);
+        debug_assert!(
+            previous.is_none(),
+            "an agent runs one Noesis call at a time"
+        );
         let mut stream = DeltaStream::new(
             aether_core::id::InvocationId::new(),
             noesis_seal::StreamSeal::Noesis,
@@ -801,6 +812,8 @@ impl Runtime {
 
     /// Close the matching transient Noesis turn announcement.
     pub fn noesis_turn_finished(&self, agent: AgentId, stream: &mut DeltaStream) {
+        let previous = self.noesis_calls.lock().remove(&agent);
+        debug_assert!(previous.is_some(), "every call that finished started");
         self.bus
             .publish_delta(agent, stream, DeltaKind::TurnFinished);
     }

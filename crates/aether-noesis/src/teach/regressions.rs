@@ -40,19 +40,30 @@ fn teaching_recovers_from_a_plan_that_already_shows_the_check_answer() {
     teacher.script(
         Agent::Teacher,
         "Let's start step 1: four right angles make one full turn.",
-        vec![(ASK, first)],
+        vec![(ASK, first.clone())],
     );
+    teacher.script(
+        Agent::Teacher,
+        "Four right angles make one full turn.",
+        vec![],
+    );
+    teacher.script(Agent::Teacher, "", vec![(ASK, first)]);
     teacher.script(
         Agent::Teacher,
         "My checks were blocked; say when ready.",
         vec![],
     );
-    teacher.script(Agent::Teacher, "Try this check.", vec![(ASK, fresh)]);
+    teacher.script(Agent::Teacher, "", vec![(ASK, fresh)]);
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
-    assert!(report.steps[0].calls[0].is_error);
-    assert!(report.steps[1].text.is_empty());
-    assert!(!report.steps[2].calls[0].is_error);
+    assert!(report.steps[0].text.is_empty() && report.steps[0].calls.is_empty());
+    assert_eq!(
+        report.steps[1].text,
+        "Four right angles make one full turn."
+    );
+    assert!(report.steps[2].calls[0].is_error);
+    assert!(report.steps[3].text.is_empty());
+    assert!(!report.steps[4].calls[0].is_error);
     let agent = session(&t, &id).agent;
     let inputs = t.engine().inputs_of(&agent);
     assert!(
@@ -87,6 +98,10 @@ fn teaching_check_recovery_is_bounded_when_the_teacher_never_retries() {
     assert!(error.to_string().contains("could not pose a fresh check"));
     assert_eq!(t.engine().steps_run - before, 4);
     assert!(session(&t, &id).open_question.is_none());
+    assert_eq!(
+        session(&t, &id).stalled.unwrap().reason,
+        StallReason::EngineStalled
+    );
 }
 
 #[test]
@@ -115,19 +130,40 @@ fn a_passed_check_continues_to_the_next_step_without_a_readiness_message() {
     let mut first = capital_question();
     first["plan_node"] = json!("a");
     t.engine_mut()
-        .script(Agent::Teacher, "First step.", vec![(ASK, first)]);
+        .script(Agent::Teacher, "", vec![(ASK, first)]);
     assert_eq!(t.advance(&id).unwrap()[0].end, TurnEnd::AwaitingAnswer);
     assert_eq!(answer_choice(&mut t, &id, &["Paris"]).correct, Some(true));
     let mut next = recall("What is the capital of Italy?", "Rome");
     next["plan_node"] = json!("b");
     t.engine_mut()
         .script(Agent::Teacher, "Are you ready for step two?", vec![]);
-    t.engine_mut()
-        .script(Agent::Teacher, "Next step.", vec![(ASK, next)]);
+    let teacher = t.engine_mut();
+    teacher.script(
+        Agent::Teacher,
+        "Next step. Name the capital of Italy.",
+        vec![(ASK, next.clone())],
+    );
+    teacher.script(
+        Agent::Teacher,
+        "Italy's seat of government is a coastal-free inland city.",
+        vec![],
+    );
+    teacher.script(Agent::Teacher, "", vec![(ASK, next)]);
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingAnswer);
     assert!(report.steps[0].text.is_empty());
-    assert!(!report.steps[1].calls[0].is_error);
+    assert!(report.steps[1].text.is_empty() && report.steps[1].calls.is_empty());
+    assert_eq!(
+        report.steps[2].text,
+        "Italy's seat of government is a coastal-free inland city."
+    );
+    assert!(!report.steps[3].calls[0].is_error);
+    assert!(
+        report
+            .steps
+            .iter()
+            .all(|step| !step.text.contains("Name the capital"))
+    );
     assert_eq!(
         session(&t, &id).open_question.unwrap().plan_node.as_deref(),
         Some("b")
@@ -460,7 +496,7 @@ fn a_pose_whose_key_an_earlier_step_showed_is_refused() {
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingLearner, "{report:?}");
     assert_eq!(report.steps[0].text, "The answer is mitochondria.");
-    assert_eq!(report.steps[1].text, "One question:");
+    assert_eq!(report.steps[1].text, "", "an ask never shows prose");
     assert!(report.steps[1].calls[0].is_error, "{report:?}");
     assert_eq!(t.engine().reminders, 0, "a refused pose is no leak");
     assert!(session(&t, &id).open_question.is_none());
@@ -482,7 +518,7 @@ fn a_search_result_showing_a_key_posed_later_in_the_turn_is_sealed() {
     teacher.script(Agent::Teacher, "", vec![(PLAN, three_steps())]);
     let mut tagged = recall("Which organelle makes ATP?", SECRET);
     tagged["plan_node"] = json!("a");
-    teacher.script(Agent::Teacher, "Now a check:", vec![(ASK, tagged)]);
+    teacher.script(Agent::Teacher, "", vec![(ASK, tagged)]);
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
     let search = &report.steps[0].calls[0];
@@ -543,7 +579,7 @@ fn a_numeric_key_shown_with_a_unit_before_the_pose_is_refused() {
         vec![("noesis.graph_search", json!({"query": "42kg"}))],
     );
     let question = recall("Convert 42000 grams to kilograms; give the number.", "42");
-    teacher.script(Agent::Teacher, "Your turn:", vec![(ASK, question)]);
+    teacher.script(Agent::Teacher, "", vec![(ASK, question)]);
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingLearner, "{report:?}");
     assert!(report.steps[1].calls[0].is_error, "{report:?}");
@@ -568,7 +604,7 @@ fn a_rekeyed_option_value_named_before_the_pose_never_reaches_the_question() {
         &[("opt-right", "Paris"), ("opt-wrong", "Rome")],
         &["opt-right"],
     );
-    teacher.script(Agent::Teacher, "Pick one:", vec![(ASK, pose)]);
+    teacher.script(Agent::Teacher, "", vec![(ASK, pose)]);
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
     let question = serde_json::to_string(&session(&t, &id).open_question).unwrap();
@@ -780,4 +816,264 @@ fn recall_judgment_refuses_wrong_agent_and_dont_know() {
     let evidence = t.take_evidence();
     assert_eq!(evidence.len(), 1);
     assert_eq!(evidence[0].outcome, EvidenceOutcome::DontKnow);
+}
+
+fn tagged_choice(prompt: &str, options: &[(&str, &str)], key: &[&str], node: &str) -> Value {
+    let mut question = choice(prompt, options, key);
+    question["plan_node"] = json!(node);
+    question
+}
+
+/// Scripts one taught step: a held reply with prose beside its card, the
+/// explanation-only step, then the card posed alone.
+fn script_taught_step(t: &mut Teaching<FauxEngine>, mixed: &str, lesson: &str, card: &Value) {
+    let teacher = t.engine_mut();
+    teacher.script(Agent::Teacher, mixed, vec![(ASK, card.clone())]);
+    teacher.script(Agent::Teacher, lesson, vec![]);
+    teacher.script(Agent::Teacher, "", vec![(ASK, card.clone())]);
+}
+
+#[test]
+fn prose_beside_a_card_never_asks_a_different_question() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    // (reply text, explanation, plan node, card prompt, correct label, wrong label)
+    let steps = [
+        (
+            "Four corners make a turn. Which shape has three sides?",
+            "Four corners make a turn.",
+            "a",
+            "How many degrees are in a full turn?",
+            "360 degrees",
+            "90 degrees",
+        ),
+        (
+            "A half turn is two quarter turns. Name a shape with three sides",
+            "A half turn is two quarter turns.",
+            "b",
+            "How many sides does a hexagon have?",
+            "6 sides",
+            "8 sides",
+        ),
+        (
+            "Triangles have three corners.\n\nTell me the sum of their angles",
+            "Triangles have three corners.",
+            "c",
+            "What do the angles of a triangle add up to?",
+            "180 degrees",
+            "270 degrees",
+        ),
+    ];
+    for (mixed, lesson, node, prompt, right, wrong) in steps {
+        let card = tagged_choice(prompt, &[("opt1", right), ("opt2", wrong)], &["opt1"], node);
+        let before = t.engine().inputs.len();
+        script_taught_step(&mut t, mixed, lesson, &card);
+        let report = t.advance(&id).unwrap().remove(0);
+        assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
+        let shown: Vec<&str> = report.steps.iter().map(|step| step.text.as_str()).collect();
+        assert_eq!(shown, ["", lesson, ""], "{report:?}");
+        let guidance: Vec<_> = t.engine().inputs[before..]
+            .iter()
+            .filter_map(|(_, input)| match input {
+                Input::Guidance(text) if text.contains("withheld check targets") => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(guidance.len(), 2);
+        assert!(
+            guidance
+                .iter()
+                .all(|text| text.contains(node) && text.contains(prompt))
+        );
+        assert_eq!(session(&t, &id).open_question.unwrap().prompt, prompt);
+        assert_eq!(answer_choice(&mut t, &id, &[right]).correct, Some(true));
+    }
+}
+
+#[test]
+fn a_refused_pose_and_its_replacement_show_no_question_in_prose() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let plan =
+        json!({"nodes": [{"id": "turns", "title": "Right angle = 360° ÷ 4 = 90°"}], "edges": []});
+    assert!(!call(&mut t, &id, PLAN, plan, "").result.is_error);
+    let first = tagged_choice(
+        "How many right angles fit around one point?",
+        &[("opt1", "2"), ("opt2", "4")],
+        &["opt2"],
+        "turns",
+    );
+    let fresh = tagged_choice(
+        "How many degrees are in half a turn?",
+        &[("opt1", "180°"), ("opt2", "270°")],
+        &["opt1"],
+        "turns",
+    );
+    script_taught_step(
+        &mut t,
+        "Four corners make a turn. Pick the count of right angles around a point",
+        "Four corners make a turn.",
+        &first,
+    );
+    t.engine_mut().script(
+        Agent::Teacher,
+        "Different idea. How many sides has a triangle",
+        vec![(ASK, fresh)],
+    );
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
+    assert!(report.steps[2].calls[0].is_error, "{report:?}");
+    let shown: Vec<&str> = report.steps.iter().map(|step| step.text.as_str()).collect();
+    assert_eq!(
+        shown,
+        ["", "Four corners make a turn.", "", ""],
+        "{report:?}"
+    );
+    assert_eq!(
+        session(&t, &id).open_question.unwrap().prompt,
+        "How many degrees are in half a turn?"
+    );
+}
+
+fn held_card_session(t: &mut Teaching<FauxEngine>) -> (String, Value) {
+    let id = teacher_session(t);
+    let card = tagged_choice(
+        "How many sides has a triangle?",
+        &[("opt1", "3"), ("opt2", "4")],
+        &["opt1"],
+        "a",
+    );
+    (id, card)
+}
+
+#[test]
+fn reaching_the_step_limit_mid_card_leaves_a_retryable_stall() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let (id, card) = held_card_session(&mut t);
+    for _ in 0..super::service::MAX_STEPS - 1 {
+        t.engine_mut().script(
+            Agent::Teacher,
+            "",
+            vec![("noesis.graph_search", json!({"query": "shapes"}))],
+        );
+    }
+    t.engine_mut()
+        .script(Agent::Teacher, "Try another question", vec![(ASK, card)]);
+    let error = t.advance(&id).unwrap_err();
+    assert!(error.to_string().contains("before its check"));
+    assert_eq!(
+        session(&t, &id).stalled.unwrap().reason,
+        StallReason::EngineStalled
+    );
+    assert!(session(&t, &id).open_question.is_none());
+}
+
+#[test]
+fn the_explanation_phase_stops_and_recovers_when_it_never_explains() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let (id, card) = held_card_session(&mut t);
+    let teacher = t.engine_mut();
+    teacher.script(
+        Agent::Teacher,
+        "Triangles. Count their sides",
+        vec![(ASK, card.clone())],
+    );
+    for _ in 0..4 {
+        teacher.script(Agent::Teacher, "", vec![(ASK, card.clone())]);
+    }
+    let before = t.engine().steps_run;
+    let error = t.advance(&id).unwrap_err();
+    assert!(
+        error.to_string().contains("did not explain the step"),
+        "{error}"
+    );
+    assert_eq!(t.engine().steps_run - before, 5);
+    assert!(session(&t, &id).open_question.is_none());
+    assert_eq!(
+        session(&t, &id).stalled.unwrap().reason,
+        StallReason::EngineStalled
+    );
+    t.retry_turn(&id).unwrap();
+    script_taught_step(
+        &mut t,
+        "Triangles. Count their sides",
+        "Triangles have three sides.",
+        &card,
+    );
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
+}
+
+#[test]
+fn a_question_in_the_explanation_is_discarded_before_the_card() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let (id, card) = held_card_session(&mut t);
+    let teacher = t.engine_mut();
+    teacher.script(Agent::Teacher, "Try this check", vec![(ASK, card.clone())]);
+    teacher.script(Agent::Teacher, "What is a square?", vec![]);
+    teacher.script(
+        Agent::Teacher,
+        "A triangle has three sides; `value?` is code.",
+        vec![],
+    );
+    teacher.script(Agent::Teacher, "", vec![(ASK, card)]);
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer);
+    assert!(
+        report
+            .steps
+            .iter()
+            .all(|step| !step.text.contains("What is a square"))
+    );
+    assert!(
+        report
+            .steps
+            .iter()
+            .any(|step| step.text == "A triangle has three sides; `value?` is code.")
+    );
+}
+
+#[test]
+fn the_pose_phase_stops_and_recovers_when_no_card_follows_the_explanation() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let (id, card) = held_card_session(&mut t);
+    let teacher = t.engine_mut();
+    teacher.script(
+        Agent::Teacher,
+        "Triangles. Count their sides",
+        vec![(ASK, card.clone())],
+    );
+    teacher.script(Agent::Teacher, "Triangles have three sides.", vec![]);
+    for _ in 0..4 {
+        teacher.script(Agent::Teacher, "Ready?", vec![]);
+    }
+    let before = t.engine().steps_run;
+    let error = t.advance(&id).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("did not pose the check after explaining"),
+        "{error}"
+    );
+    assert_eq!(t.engine().steps_run - before, 6);
+    assert!(session(&t, &id).open_question.is_none());
+    assert_eq!(
+        session(&t, &id).stalled.unwrap().reason,
+        StallReason::EngineStalled
+    );
+    t.retry_turn(&id).unwrap();
+    script_taught_step(
+        &mut t,
+        "Triangles. Count their sides",
+        "Triangles have three sides.",
+        &card,
+    );
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
 }

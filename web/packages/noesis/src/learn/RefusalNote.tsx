@@ -23,7 +23,7 @@ function BudgetNote({ budget, onRetry }: { budget: BudgetUse | null; onRetry: ((
 export function RefusalNote({ refusal, budget = null, onRetry }: { refusal: Refusal; budget?: BudgetUse | null; onRetry?: (() => void) | undefined }) {
   invariant(refusal.message.trim() !== "", "a refusal says why");
   if (refusal.kind === "budget") return <BudgetNote budget={budget} onRetry={onRetry} />;
-  if (refusal.kind === "other") return <p className="learn-callout" role="alert">{refusal.message}</p>;
+  if (refusal.kind === "other") return <div className="learn-callout" role="alert"><p>{refusal.message}</p>{onRetry !== undefined && <Button size="sm" onClick={onRetry}>Try again</Button>}</div>;
   return (
     <div className="learn-callout" role="status" data-kind="model">
       <p className="learn-callout-title">Noesis needs a model it may use</p>

@@ -572,7 +572,7 @@ async fn a_closed_budget_admits_nothing_and_counts_what_it_admitted() {
 }
 
 #[tokio::test]
-async fn a_settings_change_waits_for_turns_in_flight_and_writes_nothing() {
+async fn a_settings_change_is_saved_and_applied_after_an_in_flight_turn() {
     let harness = Harness::new().await;
     harness.configure(enable(true)).await;
     let tutor = noesis_agent(
@@ -589,7 +589,6 @@ async fn a_settings_change_waits_for_turns_in_flight_and_writes_nothing() {
             .admit(&tutor, NoesisLane::Interactive)
             .expect("admitted")
     };
-    let before = harness.daemon.noesis.config.read_noesis().expect("read");
     let raise = NoesisSettingsPatch {
         budget: Some(BudgetPatch {
             interactive_usd_daily: Some(9.0),
@@ -597,25 +596,55 @@ async fn a_settings_change_waits_for_turns_in_flight_and_writes_nothing() {
         }),
         ..Default::default()
     };
-    let error = harness
-        .send(Command::NoesisConfigure {
+    let reply = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        harness.send(Command::NoesisConfigure {
             patch: raise.clone(),
             idempotency_key: None,
-        })
-        .await
-        .expect_err("a turn is in flight");
-    assert_eq!(error.reason.as_deref(), Some("conflict"), "{error:?}");
-    assert_eq!(
-        harness.daemon.noesis.config.read_noesis().expect("read"),
-        before
-    );
+        }),
+    )
+    .await
+    .expect("configure answers promptly")
+    .expect("saved");
+    let Reply::NoesisStatus(status) = reply else {
+        panic!("status")
+    };
+    assert_eq!(status.settings.budget.interactive_usd_daily, 9.0);
+    assert_ne!(status.effective.budget.interactive_usd_daily, 9.0);
+    assert!(status.settings_pending);
     assert!(
         harness.daemon.noesis.gate().is_enabled(),
         "the running service still admits"
     );
+    let latest = harness
+        .configure(NoesisSettingsPatch {
+            budget: Some(BudgetPatch {
+                interactive_usd_daily: Some(11.0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .await;
+    assert_eq!(latest.settings.budget.interactive_usd_daily, 11.0);
+    assert!(latest.settings_pending);
     charge.settle(&Usage::default());
-    let status = harness.configure(raise).await;
-    assert_eq!(status.settings.budget.interactive_usd_daily, 9.0);
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let status = harness
+                .daemon
+                .noesis
+                .status(&harness.daemon.runtime)
+                .await
+                .expect("status");
+            if status.effective.budget.interactive_usd_daily == 11.0 {
+                assert!(!status.settings_pending);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("saved settings became effective");
 }
 
 #[tokio::test]

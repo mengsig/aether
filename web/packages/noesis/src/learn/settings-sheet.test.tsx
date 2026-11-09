@@ -49,6 +49,11 @@ async function optionsOf(h: Harness, sheet: HTMLElement, testid: string): Promis
 const configures = (h: Harness) => h.daemon.sent.filter((c) => c.cmd === "noesis_configure").map((c) => c.patch);
 
 describe("model pickers", () => {
+  test("saved settings say when they are waiting to take effect", async () => {
+    const { sheet } = await openSheet({ ...statusOf(true), settings_pending: true });
+    expect(sheet.textContent).toContain("They will take effect when the current work finishes");
+  });
+
   test("API-billed models are hidden while they are not allowed, and listed once the switch is on", async () => {
     const { h, sheet } = await openSheet(withBilling(false));
     const allow = $(sheet, "[data-testid=noesis-allow-api]");

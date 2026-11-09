@@ -5089,7 +5089,7 @@
           "type": "object"
         },
         {
-          "description": "Retry a stalled teaching turn after changing its budget.",
+          "description": "Retry a stalled teaching turn without repeating the learner's input.",
           "properties": {
             "cmd": {
               "const": "noesis_retry_turn",
@@ -9493,7 +9493,7 @@
           "type": "object"
         },
         {
-          "description": "A turn stopped before any model call; the session carries it too.",
+          "description": "A turn stopped before completion; the session carries it too.",
           "properties": {
             "session": {
               "type": "string"
@@ -13300,7 +13300,7 @@
         },
         "effective": {
           "$ref": "#/$defs/NoesisSettingsView",
-          "description": "After prerequisites: a switch whose prerequisite is off reads off."
+          "description": "In effect after prerequisites; saved changes may still be pending."
         },
         "enabled": {
           "type": "boolean"
@@ -13328,6 +13328,11 @@
         "settings": {
           "$ref": "#/$defs/NoesisSettingsView",
           "description": "As stored."
+        },
+        "settings_pending": {
+          "default": false,
+          "description": "Saved settings are waiting for existing work to finish before applying.",
+          "type": "boolean"
         },
         "spend_today": {
           "$ref": "#/$defs/SpendToday"
@@ -18751,14 +18756,14 @@
       "type": "string"
     },
     "SessionStall": {
-      "description": "A turn that stopped before any model call, and why.",
+      "description": "A turn that stopped before completion, and why.",
       "properties": {
         "at": {
           "format": "date-time",
           "type": "string"
         },
         "message": {
-          "description": "What the learner can do about it, naming the setting to change.",
+          "description": "What the learner can do about it.",
           "type": "string"
         },
         "reason": {
@@ -19039,6 +19044,11 @@
         {
           "const": "budget_exhausted",
           "description": "Today's interactive budget (`noesis.budget.interactive_usd_daily`) is spent.",
+          "type": "string"
+        },
+        {
+          "const": "engine_stalled",
+          "description": "The teacher stopped making progress after an automatic retry.",
           "type": "string"
         }
       ]

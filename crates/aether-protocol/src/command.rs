@@ -753,7 +753,7 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         idempotency_key: Option<String>,
     },
-    /// Retry a stalled teaching turn after changing its budget.
+    /// Retry a stalled teaching turn without repeating the learner's input.
     NoesisRetryTurn {
         session: SessionId,
         #[serde(default, skip_serializing_if = "Option::is_none")]

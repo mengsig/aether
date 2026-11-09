@@ -119,8 +119,8 @@ string_enum!(
 );
 
 string_enum!(
-    /// Why a session's turn stopped before any model call.
-    StallReason { BudgetExhausted = "budget_exhausted" }
+    /// Why a session's turn stopped before completion.
+    StallReason { BudgetExhausted = "budget_exhausted", EngineStalled = "engine_stalled" }
 );
 
 string_enum!(EvidenceOutcome {

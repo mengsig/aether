@@ -54,6 +54,15 @@ struct Done {
 /// so a drain sees it without taking the lock the call holds.
 struct CallGuard(Arc<NoesisService>);
 
+struct SettingsWait<'a>(&'a std::sync::atomic::AtomicUsize);
+
+impl Drop for SettingsWait<'_> {
+    fn drop(&mut self) {
+        let before = self.0.fetch_sub(1, Ordering::SeqCst);
+        debug_assert!(before > 0);
+    }
+}
+
 impl CallGuard {
     fn enter(service: &Arc<NoesisService>) -> Self {
         service.teaching_calls.fetch_add(1, Ordering::SeqCst);
@@ -103,7 +112,9 @@ impl NoesisService {
             .ok_or_else(ErrorReply::noesis_disabled)?;
         let mut desk = if matches!(
             &command,
-            Command::NoesisGetSession { .. } | Command::NoesisListSessions { .. }
+            Command::NoesisGetSession { .. }
+                | Command::NoesisListSessions { .. }
+                | Command::NoesisCreateSession { .. }
         ) {
             ticket.desk.lock().await
         } else {
@@ -117,6 +128,7 @@ impl NoesisService {
             return serde_json::from_value(receipt)
                 .map_err(|e| ErrorReply::internal(format!("decode the teaching receipt: {e}")));
         }
+        self.refuse_create_during_model_change(&command, noesis)?;
         refuse_turn_while_spent(&command, &ticket.budget)?;
         let (done, output) =
             self.with_teaching(&ticket, &mut desk, runtime, |t, _| run_command(t, command))?;
@@ -134,6 +146,33 @@ impl NoesisService {
             self.spawn_advance(runtime, session);
         }
         reply
+    }
+
+    fn refuse_create_during_model_change(
+        &self,
+        command: &Command,
+        noesis: &Noesis,
+    ) -> Result<(), ErrorReply> {
+        let Command::NoesisCreateSession { context, .. } = command else {
+            return Ok(());
+        };
+        if !self.settings_pending.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        let table = self.config.read_noesis().map_err(ErrorReply::internal)?;
+        let saved = aether_noesis::settings::NoesisSettings::from_table(&table)
+            .map_err(|error| ErrorReply::invalid(error.to_string()))?;
+        let active = noesis.settings();
+        if saved.model_strong != active.model_strong
+            || saved.billing_allow_api != active.billing_allow_api
+            || saved.prompt_overrides != active.prompt_overrides
+            || (context.is_some() && saved.engineering_context != active.engineering_context)
+        {
+            return Err(ErrorReply::conflict(
+                "Saved settings are still being applied. Start the session once current work finishes.",
+            ));
+        }
+        Ok(())
     }
 
     /// Queue the new session's engineering extraction when it is automatic;
@@ -203,10 +242,32 @@ impl NoesisService {
         let runtime = runtime.clone();
         tokio::spawn(async move {
             let _call = call;
+            service.wait_for_settings().await;
             if let Err(error) = service.advance(&runtime, &session).await {
                 tracing::warn!(%session, %error.message, "a Noesis teaching turn failed");
             }
         });
+    }
+
+    async fn wait_for_settings(&self) {
+        let mut waiting = None;
+        loop {
+            let ready = self.settings_ready.notified();
+            tokio::pin!(ready);
+            ready.as_mut().enable();
+            let state = self.state.lock().await;
+            if !self.settings_pending.load(Ordering::SeqCst) {
+                drop(waiting.take());
+                drop(state);
+                return;
+            }
+            if waiting.is_none() {
+                self.waiting_settings.fetch_add(1, Ordering::SeqCst);
+                waiting = Some(SettingsWait(&self.waiting_settings));
+            }
+            drop(state);
+            ready.await;
+        }
     }
 
     /// Run the session's turn, unless the service stopped or is draining:

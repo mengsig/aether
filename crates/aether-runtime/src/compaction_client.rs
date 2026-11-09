@@ -541,6 +541,17 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn noesis_cancels_a_silent_engine_before_the_overall_limit() {
+        let start = tokio::time::Instant::now();
+        let failure = failed_isolated_call(Ending::Timeout, true).await;
+        assert_eq!(failure.error.class, ModelErrorClass::Timeout);
+        assert!(failure.error.message.contains("no progress"));
+        assert_eq!(start.elapsed(), Duration::from_secs(90));
+        assert_eq!(failure.partial.usage.input_tokens, 13);
+        assert!(!failure.partial.usage.cost_complete);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn noesis_streaming_failures_preserve_receipts_and_partial_usage() {
         for ending in [
             Ending::Failed,

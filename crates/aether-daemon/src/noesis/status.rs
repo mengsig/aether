@@ -14,7 +14,6 @@ use aether_protocol::noesis::{
     NoesisStatus, SpendToday,
 };
 use aether_runtime::Runtime;
-use aether_runtime::noesis_guard::NoesisLane;
 
 use super::engine::model_offers;
 use super::{NoesisService, budget, view_of};
@@ -36,20 +35,19 @@ impl NoesisService {
             .map_err(crate::connection::store_err)?;
         let (interactive, background) = budget::by_lane(&used);
         let billing = budget::by_billing(used.iter().map(|used| (used.billing, &used.usage)));
-        let jobs_running = runtime
-            .noesis_turns_running()
-            .iter()
-            .filter(|(_, lane)| *lane == NoesisLane::Background)
-            .count();
+        let jobs_running = runtime.noesis_turns_running().iter().count();
         let prompt_overrides = if effective.enabled && effective.prompt_overrides {
             prompt_files(&self.data_dir).map_err(ErrorReply::internal)?
         } else {
             Vec::new()
         };
         let offers = model_offers(runtime, &self.models, self.model_client.is_some()).await;
-        let teaching_model = teaching_choice(&settings, &offers);
+        let teaching_model = teaching_choice(&effective, &offers);
         Ok(NoesisStatus {
             enabled: settings.enabled,
+            settings_pending: self
+                .settings_pending
+                .load(std::sync::atomic::Ordering::SeqCst),
             settings: view_of(&settings)?,
             effective: view_of(&effective)?,
             jobs_running: u32::try_from(jobs_running).unwrap_or(u32::MAX),

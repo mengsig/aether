@@ -94,8 +94,8 @@ fn script_lesson(home: &Home) -> [String; 2] {
     );
     home.model
         .tool("I have what I need.", "noesis_probe_done", probe_done());
-    home.model.tool("A first question.", "noesis_ask", first);
-    home.model.tool("Another one.", "noesis_ask", second);
+    home.model.tool("", "noesis_ask", first);
+    home.model.tool("", "noesis_ask", second);
     home.model.text("Not quite.");
     home.model.text("Thanks for sharing that.");
     explanations
@@ -198,7 +198,6 @@ async fn graded_lesson(home: &mut Home) -> Lesson {
     let send = json!({"cmd": "noesis_send", "session": id, "text": learner_text, "idempotency_key": "send-1"});
     home.ok(send).await;
     home.requests_reach(asked + 5).await;
-    // A Noesis read waits for the turn in flight, so the lesson is settled.
     let settled = home.session(&id).await;
     assert!(settled["open_question"].is_null(), "{settled}");
     Lesson {
@@ -617,7 +616,7 @@ async fn recall_judgment_survives_restart_and_duplicate_calls() {
     home.model
         .tool("Ready to teach.", "noesis_probe_done", probe_done());
     home.model.tool(
-        "A question.",
+        "",
         "noesis_ask",
         json!({
             "kind": "recall", "intent": "predict", "prompt": "What is the capital of France?",

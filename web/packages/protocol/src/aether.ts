@@ -1,7 +1,7 @@
 // The Aether daemon protocol as TypeScript types and command builders.
 // Generated from clients/protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: 1eef750d559f03dfd9d684473dc2814ea1c4ed8cea3c77914ec5f0d30fa5a142
+// Schema SHA-256: 8000e5ca696607a5d810b476d98b6136a3fe7b1c12b92d6e8c0721ae8987f2b8
 
 export const PROTOCOL_VERSION = 26;
 export const MIN_PROTOCOL_VERSION = 17;
@@ -1905,7 +1905,7 @@ export interface EventKindNoesisPracticeConcluded {
 }
 
 /**
- * A turn stopped before any model call; the session carries it too.
+ * A turn stopped before completion; the session carries it too.
  */
 export interface EventKindNoesisSessionStalled {
   "session": string;
@@ -3116,6 +3116,7 @@ export interface NoesisStatus {
   "models"?: Array<NoesisModelOffer>;
   "prompt_overrides": Array<string>;
   "settings": NoesisSettingsView;
+  "settings_pending"?: boolean;
   "spend_today": SpendToday;
   "teaching_model"?: NoesisModelChoice | null;
 }
@@ -4823,7 +4824,7 @@ export type SessionMode = "teach" | "practice";
 export type SessionRole = "prober" | "teacher" | "practitioner";
 
 /**
- * A turn that stopped before any model call, and why.
+ * A turn that stopped before completion, and why.
  */
 export interface SessionStall {
   "at": string;
@@ -4902,7 +4903,7 @@ export interface StaleNote {
   "since": string;
 }
 
-export type StallReason = "budget_exhausted";
+export type StallReason = "budget_exhausted" | "engine_stalled";
 
 /**
  * Why a [`DaemonStatus`] is not fresh, and how old it is.
@@ -6722,7 +6723,7 @@ export function noesisListSessions(args: Omit<NoesisListSessionsCommand, "cmd">)
 }
 
 /**
- * Retry a stalled teaching turn after changing its budget.
+ * Retry a stalled teaching turn without repeating the learner's input.
  */
 export interface NoesisRetryTurnCommand {
   "cmd": "noesis_retry_turn";

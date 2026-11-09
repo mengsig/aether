@@ -262,3 +262,6 @@ async fn a_normal_turn_records_its_usage_turn_and_reply() {
     assert_eq!(asks(&transcript).len(), 1, "the reply is in the transcript");
     harness.close().await;
 }
+
+#[path = "teaching_lanes_tests.rs"]
+mod lanes;
