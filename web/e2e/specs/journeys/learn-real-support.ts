@@ -146,7 +146,7 @@ export async function holdEngine(stack: Stack, cli: "claude" | "codex"): Promise
   const executable = await realpath(path.join(stack.layout.root, "engines", cli));
   const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
   await mkdir(dir, { recursive: true, mode: 0o700 });
-  await writeFile(path.join(dir, cli), `#!/bin/sh\ncase "$*" in *--version*|*--help*) exec ${quote(executable)} "$@";; esac\nif [ -e ${quote(block)} ]; then\n  echo $$ > ${quote(ready)}\n  while [ -e ${quote(block)} ]; do sleep 0.1; done\nfi\nexec ${quote(executable)} "$@"\n`, { mode: 0o700 });
+  await writeFile(path.join(dir, cli), `#!/bin/sh\ncase "$*" in *--version*|*--help*|"auth status"|"login status") exec ${quote(executable)} "$@";; esac\nif [ -e ${quote(block)} ]; then\n  echo $$ > ${quote(ready)}\n  while [ -e ${quote(block)} ]; do sleep 0.1; done\nfi\nexec ${quote(executable)} "$@"\n`, { mode: 0o700 });
   const paths = String(stack.layout.env.PATH).split(":").filter((part) => part !== dir);
   stack.layout.env.PATH = [dir, ...paths].join(":");
   await stack.restart("aether");

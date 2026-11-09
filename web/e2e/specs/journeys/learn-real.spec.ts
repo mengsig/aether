@@ -72,21 +72,27 @@ test("packaged Learn with Haiku and Luna", async () => {
 async function restartPractice(run: ReturnType<typeof journey>, model: string, cli: "claude" | "codex"): Promise<void> {
   const { stack, window } = run;
   const gate = await holdEngine(stack, cli);
-  await connectionsReady(run, false);
-  const id = await startSession(window, "Practise what I know", "Practise solving simple linear equations, beginning with 2x = 8.");
-  const before = await session(stack, id);
-  expect(before.mode).toBe("practice");
-  expect(before.active_problem, "practice has not yet produced its problem").toBeFalsy();
-  await assertModel(stack, id, model);
-  await until(() => access(gate.ready).then(() => true, () => false), Boolean, "practice turn to wait at the engine gate", WAIT_MS);
-  const heldPid = await assertQueuedTurn(stack, id, gate.ready);
-  await stack.aether.stop();
-  await until(() => readFile(`/proc/${heldPid}/stat`, "utf8").then((stat) => stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z "), () => true), Boolean, "the held engine to stop", 15_000);
-  await gate.release();
-  await stack.aether.start();
-  await connectionsReady(run, false);
-  await until(() => session(stack, id), (value) => value.active_problem != null, "practice to resume after restart", WAIT_MS);
-  await until(async () => practiceTurnFinished(stack, id), Boolean, "the resumed turn to finish", WAIT_MS);
-  await expect(window.getByRole("article", { name: "Practice problem" }).first()).toBeVisible({ timeout: WAIT_MS });
-  await capture(window, `${model.split("/")[1]}-practice-resumed`);
+  let released = false;
+  try {
+    await connectionsReady(run, false);
+    const id = await startSession(window, "Practise what I know", "Practise solving simple linear equations, beginning with 2x = 8.");
+    const before = await session(stack, id);
+    expect(before.mode).toBe("practice");
+    expect(before.active_problem, "practice has not yet produced its problem").toBeFalsy();
+    await assertModel(stack, id, model);
+    await until(() => access(gate.ready).then(() => true, () => false), Boolean, "practice turn to wait at the engine gate", WAIT_MS);
+    const heldPid = await assertQueuedTurn(stack, id, gate.ready);
+    await stack.aether.stop();
+    await until(() => readFile(`/proc/${heldPid}/stat`, "utf8").then((stat) => stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z "), () => true), Boolean, "the held engine to stop", 15_000);
+    await gate.release();
+    released = true;
+    await stack.aether.start();
+    await connectionsReady(run, false);
+    await until(() => session(stack, id), (value) => value.active_problem != null, "practice to resume after restart", WAIT_MS);
+    await until(async () => practiceTurnFinished(stack, id), Boolean, "the resumed turn to finish", WAIT_MS);
+    await expect(window.getByRole("article", { name: "Practice problem" }).first()).toBeVisible({ timeout: WAIT_MS });
+    await capture(window, `${model.split("/")[1]}-practice-resumed`);
+  } finally {
+    if (!released) await gate.release();
+  }
 }
