@@ -10,6 +10,7 @@ import { registerAppScheme, startDesktop, type Desktop } from "./start.ts";
 
 app.enableSandbox();
 registerAppScheme();
+app.on("window-all-closed", () => app.quit());
 startSingleInstance(app, start);
 
 function start(): void {
