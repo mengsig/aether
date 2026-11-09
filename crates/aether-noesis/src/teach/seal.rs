@@ -117,6 +117,9 @@ impl Sealer {
     }
 
     pub(super) fn matching(&self, text: &str) -> Option<&str> {
+        if self.secrets.is_empty() {
+            return None;
+        }
         let haystack = normalise(text);
         self.secrets
             .iter()
