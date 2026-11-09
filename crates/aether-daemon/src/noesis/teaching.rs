@@ -301,8 +301,8 @@ impl NoesisService {
         let reservation = desk.reserve_turn(session);
         let (desk, ran, output) = run_segments(&ticket, desk, &host, session).await?;
         publish(&desk, runtime, output, &Actor::System, None)?;
-        drop(desk);
         drop(reservation);
+        drop(desk);
         let queued = self.after_teaching_turn(runtime, session).await;
         ran.map_err(reply_error)?;
         queued.map(|_| ())

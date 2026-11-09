@@ -194,6 +194,17 @@ async fn graded_lesson(home: &mut Home) -> Lesson {
     })
     .await;
     home.requests_reach(asked + 4).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let status = home.ok(json!({"cmd": "noesis_status"})).await;
+            if status["jobs_running"] == 0 {
+                break;
+            }
+            tokio::time::sleep(POLL).await;
+        }
+    })
+    .await
+    .expect("the second answer's teaching turn finishes");
     let learner_text = format!("Roman roads met there, I think {}", ulid::Ulid::generate());
     let send = json!({"cmd": "noesis_send", "session": id, "text": learner_text, "idempotency_key": "send-1"});
     home.ok(send).await;
