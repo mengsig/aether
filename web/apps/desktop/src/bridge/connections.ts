@@ -25,6 +25,7 @@ interface Entry {
   readonly link: DaemonLink;
   /** Taken from the daemon's welcome only, never from a frame the renderer sent. */
   protocol?: number | undefined;
+  readonly reports: Set<string>;
 }
 
 export class ConnectionTable implements Connections {
@@ -53,7 +54,7 @@ export class ConnectionTable implements Connections {
     link.onClose = () => {
       if (this.entries.delete(conn)) this.deps.closed(owner, conn);
     };
-    this.entries.set(conn, { owner, daemon, link });
+    this.entries.set(conn, { owner, daemon, link, reports: new Set() });
     return conn;
   }
 
@@ -65,11 +66,33 @@ export class ConnectionTable implements Connections {
   async request(owner: number, conn: string, frame: Frame, text: string): Promise<Frame> {
     const entry = this.entry(owner, conn);
     const reply = await entry.link.request(text, frame.req as number);
+    if (entry.daemon.kind === "archon" && frame.cmd === "list_reports") this.rememberReports(entry, reply);
     if (frame.cmd !== "hello") return reply;
     const protocol = welcomeProtocol(reply);
     if (protocol === undefined) delete entry.protocol;
     else entry.protocol = protocol;
     return reply;
+  }
+
+  hasReport(owner: number, url: string): boolean {
+    for (const entry of this.entries.values()) {
+      if (entry.owner === owner && entry.link.isOpen && entry.reports.has(url)) return true;
+    }
+    return false;
+  }
+
+  private rememberReports(entry: Entry, reply: Frame): void {
+    const ok = (reply.result as { Ok?: { reply?: unknown; data?: unknown } } | undefined)?.Ok;
+    if (ok?.reply !== "reports" || !Array.isArray(ok.data)) return;
+    // Only the connected Archon daemon's report response may grant this URL; renderer content cannot.
+    entry.reports.clear();
+    for (const report of ok.data) {
+      if (report === null || typeof report !== "object") continue;
+      const location = (report as { location?: unknown }).location;
+      if (typeof location !== "string") continue;
+      const url = URL.parse(location);
+      if (url?.protocol === "http:" && url.username === "" && url.password === "") entry.reports.add(url.href);
+    }
   }
 
   /** Sends the frame; its reply and every frame after it arrive through `push`. */

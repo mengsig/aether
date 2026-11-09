@@ -45,9 +45,10 @@ function SessionView({ conn, status, session, reload }: OpenGate & { session: ae
   const streamed = live.map((item) => (item.kind === "message" ? item.text : "")).join("");
   const turn = useLessonTurn(conn, session, items, streamed);
   const budget = exhaustedBudget(status);
-  const refusal = turn.refusal ?? spentRefusal(session, budget);
-  const retry = operate !== null || turn.pending !== null ? undefined : turn.retry
-    ?? (session.stalled && canRetryTurn ? () => void turn.act({ cmd: "noesis_retry_turn", session: session.id }) : undefined);
+  const refusal = session.stalled ? spentRefusal(session, budget) : turn.refusal ?? spentRefusal(session, budget);
+  const retry = operate !== null || turn.pending !== null ? undefined : session.stalled
+    ? (canRetryTurn ? () => void turn.act({ cmd: "noesis_retry_turn", session: session.id }) : undefined)
+    : turn.retry ?? undefined;
   const answer = (question: string, input: AnswerInput) => turn.act({ cmd: "noesis_answer", session: session.id, question, answer: input });
   const checkAgain = () => {
     reload();
@@ -65,8 +66,8 @@ function SessionView({ conn, status, session, reload }: OpenGate & { session: ae
           {planComplete(session.plan) && <CompletionCard conn={conn} session={session} />}
           {refusal !== null && <RefusalNote refusal={refusal} budget={refusal.kind === "budget" ? budget : null} onRetry={retry} />}
         </Transcript>
-        <Composer sessionId={session.id} waiting={session.open_question != null} problem={session.active_problem != null} reason={pausedBy(budget)}
-          disabled={operate !== null || turn.pending !== null || budget !== null} onSend={(text) => turn.act({ cmd: "noesis_send", session: session.id, text })} />
+        <Composer sessionId={session.id} waiting={session.open_question != null} problem={session.active_problem != null} reason={pausedBy(session.stalled != null || budget !== null)}
+          disabled={operate !== null || turn.pending !== null || session.stalled != null || budget !== null} onSend={(text) => turn.act({ cmd: "noesis_send", session: session.id, text })} />
       </section>
       <SessionAside conn={conn} session={session} items={items} disabled={operate !== null} />
     </div>
@@ -79,8 +80,8 @@ function spentRefusal(session: aether.NoesisSession, budget: BudgetUse | null): 
   return budget === null ? null : BUDGET_REFUSAL;
 }
 
-function pausedBy(budget: BudgetUse | null): string | null {
-  return budget === null ? null : "Teaching is paused: today's budget is spent";
+function pausedBy(paused: boolean): string | null {
+  return paused ? "Teaching is paused: retry the stalled turn" : null;
 }
 
 type AnswerFn = (question: string, input: AnswerInput) => Promise<string | null>;

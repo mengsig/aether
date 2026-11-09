@@ -32,6 +32,7 @@ fn commands() -> Vec<Command> {
         json!({"cmd":"noesis_configure", "patch":{"concurrency":{"background":0}}}),
         json!({"cmd":"noesis_create_session", "goal":"learn rust", "mode":"teach"}),
         json!({"cmd":"noesis_send", "session":"ns_1", "text":"hi"}),
+        json!({"cmd":"noesis_retry_turn", "session":"ns_1"}),
         json!({"cmd":"noesis_answer", "session":"ns_1", "question":"q_1",
             "answer":{"choices":["a"], "text":"t", "dont_know":false, "confidence":70}}),
         json!({"cmd":"noesis_delete_session", "session":"ns_1", "graph":"delete_nodes"}),

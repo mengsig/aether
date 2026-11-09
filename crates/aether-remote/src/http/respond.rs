@@ -69,6 +69,9 @@ enum Answered {
     Mounted(Response<Body>),
 }
 
+#[derive(Clone)]
+struct MermaidFrame;
+
 /// Answer one request. Never fails: every refusal is a response too.
 pub(crate) async fn respond<B>(
     server: &RemoteServer,
@@ -411,6 +414,9 @@ fn asset<B>(path: &str, request: &Request<B>) -> Result<Response<Body>, Refusal>
         .filter_map(|value| value.to_str().ok())
         .any(|validators| assets::is_fresh(validators, &asset));
     let mut response = Response::new(Body::default());
+    if path == super::MERMAID_FRAME_PATH {
+        response.extensions_mut().insert(MermaidFrame);
+    }
     let headers = response.headers_mut();
     headers.insert(ETAG, etag);
     headers.insert(
@@ -486,14 +492,22 @@ fn harden_missing(mut response: Response<Body>) -> Response<Body> {
 
 /// The headers every response carries, whatever it is.
 fn harden(mut response: Response<Body>) -> Response<Body> {
+    let is_frame = response.extensions_mut().remove::<MermaidFrame>().is_some();
     let headers = response.headers_mut();
-    let csp = HeaderValue::from_static(super::CONTENT_SECURITY_POLICY);
+    let csp = HeaderValue::from_static(if is_frame {
+        super::MERMAID_FRAME_CSP
+    } else {
+        super::CONTENT_SECURITY_POLICY
+    });
     headers.insert(CONTENT_SECURITY_POLICY, csp);
     for (name, value) in SECURITY_HEADERS {
         headers.insert(
             HeaderName::from_static(name),
             HeaderValue::from_static(value),
         );
+    }
+    if is_frame {
+        headers.insert("x-frame-options", HeaderValue::from_static("SAMEORIGIN"));
     }
     if !headers.contains_key(CACHE_CONTROL) {
         headers.insert(CACHE_CONTROL, HeaderValue::from_static(NO_STORE));

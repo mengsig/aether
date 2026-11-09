@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Bridge, type BridgeHost } from "../../src/bridge/bridge.ts";
+import type { DaemonLink, Frame } from "../../src/bridge/daemon-link.ts";
 import { externalTarget } from "../../src/native/external.ts";
 import type { Confirmation } from "../../src/security/confirm.ts";
 import { normalizeOrigin, normalizeOriginList, OriginError } from "../../src/security/origins.ts";
@@ -27,7 +28,7 @@ function hostWith(origins: unknown, opened: string[], asked: Confirmation[] = []
     findDaemons: async () => [], openLink: async () => { throw new Error("no daemon"); }, push: () => {}, closed: () => {},
     confirm: async (_owner, confirmation) => { asked.push(confirmation); return answer; },
     openTerminal: async () => {}, notify: () => {},
-    startDaemon: async () => {}, pickDirectory: async () => null,
+    startDaemon: async () => {}, pickDirectory: async () => null, saveMemoryExport: async () => true,
     openExternal: async (url) => { opened.push(`external ${url}`); },
     openReport: async (url) => { opened.push(`report ${url}`); },
     openRemote: async (origin) => { opened.push(origin); },
@@ -95,4 +96,33 @@ test("a renderer-written remote.origins entry never skips the question for a lin
   await assert.rejects(bridge.handle(APP_SENDER, 1, "openExternal", ["https://box.example.ts.net/x"]), /Cancelled/);
   assert.equal(asked.length, 1, "the listed origin was asked about like any other site");
   assert.deepEqual(opened, []);
+});
+
+test("only a live Archon connection's report reply grants its exact http URL", async () => {
+  const opened: string[] = [];
+  const report = "http://node.example.ts.net:47840/session/abc";
+  const linkState = {
+    isOpen: true,
+    request: async (text: string) => {
+      const frame = JSON.parse(text) as Frame;
+      return { result: { Ok: { reply: frame.cmd === "list_reports" ? "reports" : "status", data: [{ location: report }] } } };
+    },
+    close() { linkState.isOpen = false; },
+  };
+  const host = { ...hostWith([], opened),
+    findDaemons: async () => [{ id: "archon:local", kind: "archon" as const, label: "Archon", socket: "/private/archon.sock", reachable: true }],
+    openLink: async () => linkState as unknown as DaemonLink,
+  };
+  const bridge = new Bridge(VALIDATOR, host);
+  const conn = await bridge.handle(APP_SENDER, 1, "connect", ["archon:local"]) as string;
+  const send = (cmd: string) => bridge.handle(APP_SENDER, 1, "request", [conn, { cmd, req: 1 }]);
+  await send("status");
+  await assert.rejects(bridge.handle(APP_SENDER, 1, "openExternal", [report]), /not on this computer/);
+  await send("list_reports");
+  await bridge.handle(APP_SENDER, 1, "openExternal", [report]);
+  assert.deepEqual(opened, [`report ${report}`]);
+  await assert.rejects(bridge.handle(APP_SENDER, 1, "openExternal", [`${report}/other`]), /not on this computer/);
+  await assert.rejects(bridge.handle(APP_SENDER, 2, "openExternal", [report]), /not on this computer/);
+  await bridge.handle(APP_SENDER, 1, "close", [conn]);
+  await assert.rejects(bridge.handle(APP_SENDER, 1, "openExternal", [report]), /not on this computer/);
 });

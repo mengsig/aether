@@ -2,27 +2,49 @@
 // directory the remote listener embeds, and the desktop package holds no UI of its own.
 
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { serveApp } from "../../src/main/app-protocol.ts";
 import { DESKTOP_ROOT, REPO_ROOT, WEB_DIST } from "../../src/main/paths.ts";
-import { APP_CSP } from "../../src/security/csp.ts";
+import { APP_CSP, MERMAID_FRAME_CSP } from "../../src/security/csp.ts";
 import { bundleFiles } from "./bundle-files.ts";
 
 const get = (url: string, method = "GET") => serveApp(WEB_DIST, new Request(url, { method }));
 
 test("app:// returns every web/dist file byte for byte, with the CSP", async () => {
   const files = bundleFiles();
-  assert.ok(files.includes("index.html") && files.includes("sw.js") && files.includes("manifest.webmanifest"));
+  assert.ok(files.includes("index.html") && files.includes("sw.js") && files.includes("manifest.webmanifest") && files.includes("mermaid-frame.html"));
   for (const file of files) {
     const response = await get(`app://aether/${file}`);
     assert.equal(response.status, 200, file);
-    assert.equal(response.headers.get("content-security-policy"), APP_CSP, file);
+    assert.equal(response.headers.get("content-security-policy"), file === "mermaid-frame.html" ? MERMAID_FRAME_CSP : APP_CSP, file);
     assert.ok(Buffer.from(await response.arrayBuffer()).equals(readFileSync(path.join(WEB_DIST, file))), file);
   }
   const root = Buffer.from(await (await get("app://aether/")).arrayBuffer());
   assert.ok(root.equals(readFileSync(path.join(WEB_DIST, "index.html"))));
+});
+
+test("only the dedicated frame receives its isolated policy", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "aether-csp-"));
+  try {
+    for (const file of ["mermaid-frame.html", "mermaid-frame.html.js", "index.html"]) writeFileSync(path.join(dir, file), file);
+    for (const method of ["GET", "HEAD"]) {
+      const frame = await serveApp(dir, new Request("app://aether/mermaid-frame.html?v=1", { method }));
+      assert.equal(frame.headers.get("content-security-policy"), MERMAID_FRAME_CSP);
+      assert.equal(frame.headers.get("x-frame-options"), "SAMEORIGIN");
+      for (const file of ["mermaid-frame.html.js", "index.html", "missing.html"]) {
+        const response = await serveApp(dir, new Request(`app://aether/${file}`, { method }));
+        assert.equal(response.headers.get("content-security-policy"), APP_CSP, file);
+        assert.equal(response.headers.get("x-frame-options"), null, file);
+      }
+    }
+    assert.equal(MERMAID_FRAME_CSP, "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; img-src data:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'");
+    assert.match(APP_CSP, /script-src 'self'; style-src 'self';/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("index.html is the document the listener embeds and serves", () => {

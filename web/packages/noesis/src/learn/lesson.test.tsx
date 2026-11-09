@@ -186,7 +186,7 @@ describe("budget", () => {
     await h.settle(SETTLE_MS);
     expect(root.querySelector(".learn-working")).toBeNull();
     expect($(root, ".learn-callout[data-kind=budget]")).toBeTruthy();
-    expect(($(root, "[data-testid=learn-reply]") as HTMLTextAreaElement).disabled).toBe(false);
+    expect(($(root, "[data-testid=learn-reply]") as HTMLTextAreaElement).disabled).toBe(true);
   });
 
   test("a day whose teaching budget is spent pauses the lesson and says how much", async () => {
@@ -217,6 +217,22 @@ describe("budget", () => {
     expect(h.daemon.sent.filter((command) => command.cmd === "noesis_retry_turn")).toMatchObject([{ session: LESSON.id, idempotency_key: expect.any(String) }]);
     expect(root.querySelector(".learn-callout[data-kind=budget]")).toBeNull();
     expect(root.querySelector(".learn-working")).not.toBeNull();
+  });
+
+  test("a stall takes precedence over a previously refused message", async () => {
+    const h = await start({ retryTurn: true });
+    const root = await open(h);
+    h.daemon.refuseTurns = "the session is stalled; retry its turn first";
+    await type(h, $(root, "[data-testid=learn-reply]"), "Go on");
+    await click(h, byText(root, "button", "Send"));
+    h.daemon.stall(LESSON.id, { reason: "budget_exhausted", message: "today's Noesis interactive budget is spent", at: "2026-01-01T00:00:09Z" });
+    await h.settle(SETTLE_MS);
+    expect(($(root, "[data-testid=learn-reply]") as HTMLTextAreaElement).disabled).toBe(true);
+    h.daemon.refuseTurns = undefined;
+    await click(h, byText($(root, ".learn-callout[data-kind=budget]"), "button", "Try again"));
+    await h.settle(SETTLE_MS);
+    expect(h.daemon.sent.filter((command) => command.cmd === "noesis_retry_turn")).toHaveLength(1);
+    expect(h.daemon.sent.filter((command) => command.cmd === "noesis_send")).toHaveLength(1);
   });
 });
 

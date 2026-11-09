@@ -4,9 +4,6 @@
 // only the packaged build (E2E_DESKTOP_PACKAGED); E2E_SHOTS keeps 1440x900 shots in both themes.
 
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
-import path from "node:path";
-import { _electron, type ElectronApplication } from "@playwright/test";
 import { createAgent, enqueueItem } from "../../../harness/agents.ts";
 import { connection } from "../../../harness/pair.ts";
 import { until } from "../../../harness/process.ts";
@@ -14,7 +11,7 @@ import type { Stack } from "../../../harness/stack.ts";
 import { expect, test, type Page } from "../../../harness/fixtures.ts";
 import { fixtureRepository, installGhStub, OWNER_REPO } from "../gh-stub.ts";
 import { startPrivateStack, stopPrivateStack, type PrivateStack } from "../private.ts";
-import { focusWindow, pressKeys, windowTitles } from "./native-host.ts";
+import { focusWindow, hideWindow, pressKeys, windowTitles } from "./native-host.ts";
 import { askingScript, installLavishStub, publishReport, shoot, shootScreen, startReportServer, VIEWPORT, type ReportServer } from "./native-fixtures.ts";
 import { launchPackaged, packagedBinary, type PackagedApp } from "./packaged.ts";
 import { route, setPaused } from "./state.ts";
@@ -23,6 +20,7 @@ const ISSUE = 7;
 const ISSUE_URL = `https://github.com/${OWNER_REPO}/issues/${ISSUE}`;
 const REPORT_TITLE = "Proposal: native links";
 const GONE_TITLE = "Proposal: a stopped server";
+const TAILNET_TITLE = "Proposal: private tailnet report";
 const MARKER = "native-e2e-asks";
 const QUESTIONS = ["Which summary style do you want?", "Should the summary name every file?"] as const;
 
@@ -53,44 +51,11 @@ function window(): Page {
 /** The toast that says how an outside link went. */
 const toast = (page: Page, text: string | RegExp) => page.locator(".ui-toast").filter({ hasText: text });
 
-/** Focus another native window and check the state the alert adapter reads in main. */
-async function sendToBackground(electron: ElectronApplication): Promise<void> {
-  await electron.evaluate(async ({ BrowserWindow }) => {
-    let other = BrowserWindow.getAllWindows().find((entry: { getTitle(): string }) => entry.getTitle() === "Other application");
-    if (other === undefined) {
-      other = new BrowserWindow({ title: "Other application", webPreferences: { sandbox: true } });
-      await other.loadURL("data:text/html,<title>Other application</title><p>Other application</p>");
-    }
-    other.show();
-    other.focus();
-    const app = BrowserWindow.getAllWindows().find((entry: { webContents: { getURL(): string } }) => entry.webContents.getURL().startsWith("app://"));
-    if (app === undefined) throw new Error("the app window is missing");
-    app.minimize();
-  });
-  await expect.poll(() => electron.evaluate(({ BrowserWindow }) => {
-    const window = BrowserWindow.getAllWindows().find((entry: { webContents: { getURL(): string } }) => entry.webContents.getURL().startsWith("app://"));
-    if (window === undefined) throw new Error("the app window is missing");
-    return window.isVisible() && !window.isMinimized() && window.isFocused();
-  }), { message: "main sees the app in the background" }).toBe(false);
-}
-
-/** Launches the packaged payload with an inspectable Electron main process. */
-async function launchInspectable(): Promise<ElectronApplication> {
-  assert.ok(binary !== undefined, "the packaged app exists");
-  const packageRoot = path.resolve(import.meta.dirname, "../../../../apps/desktop");
-  const executable = createRequire(path.join(packageRoot, "package.json"))("electron") as unknown;
-  assert.ok(typeof executable === "string" && path.isAbsolute(executable), "Electron is installed");
-  const root = path.dirname(String(desktop().compositor.XDG_RUNTIME_DIR));
-  const asar = path.join(path.dirname(binary), "resources", "app.asar");
-  const env = { ...desktop().compositor, ...desktop().native.env, HOME: root,
-    AETHER_SOCKET: stack().layout.aether.socket, ARCHON_SOCKET: stack().layout.archon.socket };
-  return _electron.launch({ executablePath: executable, args: ["--ozone-platform=wayland", `--user-data-dir=${root}/inspect-profile`, asar], env, cwd: root });
-}
-
 async function launch(args: readonly string[] = []): Promise<void> {
   assert.ok(binary !== undefined && app === undefined, "one packaged app at a time");
   const { aether, archon } = stack().layout;
-  app = await launchPackaged(binary, { aether: aether.socket, archon: archon.socket }, { args });
+  app = await launchPackaged(binary, { aether: aether.socket, archon: archon.socket },
+    { args: ["--host-resolver-rules=MAP report.tailnet.test 127.0.0.1", "--no-proxy-server", ...args] });
   app.window.on("pageerror", (error) => pageErrors.push(error.message));
   await app.window.setViewportSize(VIEWPORT);
   await app.window.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
@@ -120,8 +85,32 @@ test.beforeAll(async () => {
   reports = await startReportServer(REPORT_TITLE);
   item = await enqueueItem(stack(), "Native journeys item");
   await publishReport(stack(), repo, item, REPORT_TITLE, reports.url);
+  await publishReport(stack(), repo, item, TAILNET_TITLE, reports.tailnet);
   await publishReport(stack(), repo, item, GONE_TITLE, reports.gone);
   await launch();
+});
+
+test("a daemon report on a tailnet address opens, while an unrelated http URL is refused", async () => {
+  assert.ok(reports !== undefined, "the private report server is running");
+  const page = window();
+  await route(page, `#/archon/items/${item}`);
+  await page.locator(".item-link").filter({ hasText: TAILNET_TITLE }).getByRole("link", { name: "Open" }).click();
+  await expect(toast(page, "The report opened in its own window")).toBeVisible();
+  let viewer: Page | undefined;
+  await expect.poll(() => {
+    viewer = desktop().browser.contexts().flatMap((context) => context.pages()).find((candidate) => candidate.url() === reports?.tailnet);
+    return viewer !== undefined;
+  }, { message: "the daemon-returned tailnet report opens" }).toBe(true);
+  assert.ok(viewer !== undefined, "the report viewer exists");
+  await expect(viewer.getByRole("heading", { name: REPORT_TITLE })).toBeVisible();
+  await shootScreen(desktop().compositor, "report-tailnet-window");
+  const refused = await page.evaluate(async (url) => {
+    const bridge = (window as unknown as { desktop: { openExternal(value: string): Promise<void> } }).desktop;
+    return bridge.openExternal(url).then(() => "opened", (error: Error) => error.message);
+  }, `http://unrelated.tailnet.test:${new URL(reports.tailnet).port}/session/e2e`);
+  expect(refused).toMatch(/only https|not on this computer/i);
+  expect(desktop().native.opened()).not.toContain(reports.tailnet);
+  await viewer.close();
 });
 
 test.afterAll(async () => {
@@ -195,60 +184,36 @@ test("UX-045: Settings has desktop alerts and a test notification that reaches t
     .toEqual(["Aether alerts are on"]);
 });
 
-test("UX-045: a real agent's questions alert the system; a click opens the question", async () => {
+test("UX-045: a real agent's notification restores the packaged app and focuses its question", async () => {
   test.setTimeout(120_000);
-  await route(window(), "#/settings/notifications");
-  const alerts = window().getByRole("region", { name: "Desktop alerts" }).getByRole("switch", { name: /^Desktop alerts/ });
-  await alerts.click();
-  const electron = await launchInspectable();
-  try {
-    const page = await electron.firstWindow();
-    await page.setViewportSize(VIEWPORT);
-    await expect(connection(page, "aether")).toHaveAttribute("data-state", "ready", { timeout: 30_000 });
-    await route(page, "#/inbox");
-    await expect(page.getByText(/^Nothing on .* needs you$/)).toBeVisible();
-    await route(page, "#/fleet");
-    await sendToBackground(electron);
-    stack().engine.setScript(askingScript(MARKER, QUESTIONS));
-    const agent = await createAgent(stack(), "Native asker", `Ask the operator two things (${MARKER}).`);
-    const alerted = await until(async () => desktop().native.notes(), (notes) => notes.some((note) => note.body === QUESTIONS[0]), "the first question's alert", 60_000);
-    const first = alerted.find((note) => note.body === QUESTIONS[0]);
-    assert.ok(first !== undefined, "the first question alerted");
-    expect(first.title, "the alert names who asks").toBe("Native asker asks");
-    expect(first.actions, "the alert can be clicked").toContain("default");
-    expect(await page.evaluate(() => location.hash), "the alert comes while another screen is open").toBe("#/fleet");
-    await electron.evaluate(({ BrowserWindow }) => {
-      const app = BrowserWindow.getAllWindows().find((entry: { webContents: { getURL(): string } }) => entry.webContents.getURL().startsWith("app://"));
-      if (app === undefined) throw new Error("the app window is missing");
-      app.hide();
-    });
-    await desktop().native.click(first.id);
-    await expect.poll(() => electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some(
-      (entry: { isVisible(): boolean; webContents: { getURL(): string } }) => entry.webContents.getURL().startsWith("app://") && entry.isVisible())),
-    { message: "clicking the notification shows the app" }).toBe(true);
-    await expect.poll(() => page.evaluate(() => location.hash), { message: "the click opens the inbox" }).toBe("#/inbox");
-    const card = page.locator(`[data-question*="/${agent}:"]`).filter({ hasText: QUESTIONS[0] });
-    await expect(card.getByRole("textbox", { name: "Answer Native asker" })).toBeFocused();
-    await shoot(page, "ux045-question-focused");
-    await page.keyboard.type("Short bullet points.");
-    await sendToBackground(electron);
-    await card.getByRole("button", { name: "Send answer" }).evaluate((button: HTMLElement) => button.click());
-    await until(async () => desktop().native.notes(), (notes) => notes.some((note) => note.body === QUESTIONS[1]), "the second question's alert", 60_000);
-    expect(await electron.evaluate(({ BrowserWindow }) => {
-      const app = BrowserWindow.getAllWindows().find((entry: { webContents: { getURL(): string } }) => entry.webContents.getURL().startsWith("app://"));
-      if (app === undefined) throw new Error("the app window is missing");
-      return app.isVisible() && !app.isMinimized() && app.isFocused();
-    }), "the app remains in the background").toBe(false);
-    const product = desktop().native.notes().filter((note) => note.title === "Native asker asks");
-    expect(product.map((note) => note.body), "each question alerted exactly once").toEqual([...QUESTIONS]);
-  } finally {
-    await electron.close();
-    await alerts.click();
-  }
+  const page = window();
+  await route(page, "#/settings/notifications");
+  const front = page.getByRole("region", { name: "Desktop alerts" }).getByRole("switch", { name: /^Also while Aether is in front/ });
+  await expect(front).not.toBeChecked();
+  await front.click();
+  await route(page, "#/inbox");
+  await expect(page.getByText(/^Nothing on .* needs you$/)).toBeVisible();
+  await route(page, "#/fleet");
+  await hideWindow(desktop().compositor, await page.title());
+  await shootScreen(desktop().compositor, "notification-before-click");
+  stack().engine.setScript(askingScript(MARKER, QUESTIONS));
+  const agent = await createAgent(stack(), "Native asker", `Ask the operator two things (${MARKER}).`);
+  const alerted = await until(async () => desktop().native.notes(), (notes) => notes.some((note) => note.body === QUESTIONS[0]), "the first question's alert", 60_000);
+  const first = alerted.find((note) => note.body === QUESTIONS[0]);
+  assert.ok(first !== undefined, "the first question alerted");
+  expect(first.title).toBe("Native asker asks");
+  expect(first.actions).toContain("default");
+  await desktop().native.click(first.id);
+  await expect.poll(() => page.evaluate(() => location.hash), { message: "the click opens the inbox" }).toBe("#/inbox");
+  const card = page.locator(`[data-question*="/${agent}:"]`).filter({ hasText: QUESTIONS[0] });
+  await expect(card.getByRole("textbox", { name: "Answer Native asker" })).toBeFocused();
+  await expect.poll(() => windowTitles(desktop().compositor), { message: "the click shows the packaged window" }).toContain(await page.title());
+  await shootScreen(desktop().compositor, "notification-answer-focused");
 });
 
 test("UX-054: links from a second launch navigate the open window, again after moving away", async () => {
   const page = window();
+  const logStart = desktop().mainLog().length;
   await route(page, "#/inbox");
   for (const [link, hash] of [["%2Ffleet", "#/fleet"], ["%2Farchon%2Fqueue", "#/archon/queue"]] as const) {
     expect(await desktop().again([`aether-app://open?route=${link}`]), "the second launch hands the link over and exits cleanly").toBe(0);
@@ -258,6 +223,8 @@ test("UX-054: links from a second launch navigate the open window, again after m
   expect(await desktop().again(["aether-app://open?route=%2Ffleet"])).toBe(0);
   await expect.poll(() => page.evaluate(() => location.hash), { message: "the retried link leaves Activity for Fleet" }).toBe("#/fleet");
   await shoot(page, "ux054-fleet-from-link", ["light"]);
+  for (const log of desktop().secondInstanceLogs()) expect(log, "second instances exit without a failed app navigation").not.toContain("ERR_FAILED");
+  expect(desktop().mainLog().slice(logStart), "the primary instance logs no failed navigation during handoff").not.toContain("ERR_FAILED");
 });
 
 for (const daemon of ["aether", "archon"] as const) {

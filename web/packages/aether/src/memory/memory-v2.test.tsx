@@ -201,6 +201,18 @@ test("export offers the artifact as a download with its record count and digest"
   createObjectURL.mockRestore();
 });
 
+test("desktop export uses the native save dialog and reports save errors", async () => {
+  const saveMemoryExport = vi.fn().mockRejectedValue(new Error("Disk full"));
+  const desktop = { version: 1, connect: async () => "bridge", close: async () => {},
+    getPreference: async () => false, saveMemoryExport } as unknown as DesktopBridge;
+  const root = await screen("local", V2_FEATURES, desktop);
+  const tools = section(root, "Maintenance") as HTMLElement;
+  await click(h, tools, "Export memories");
+  await click(h, tools, "Download aether-memories-5d41402abc4b.jsonl");
+  expect(saveMemoryExport).toHaveBeenCalledWith("5d41402abc4b2a76b9719d911017c592ae2f5b0c3a7e0f1d2c4b6a8e9f0d1c2b");
+  expect(tools.querySelector('[role="alert"]')?.textContent).toContain("Disk full");
+});
+
 test("observers and paired devices see the refusal, not the host-only tools, but read the store status", async () => {
   for (const role of ["observer", "operator"] as const) {
     const root = await screen(role);

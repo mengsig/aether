@@ -91,7 +91,7 @@ function hold(conn, callback) {
   };
 }
 
-/** @type {import("@aether-ui/protocol").DesktopBridge & import("@aether-ui/protocol").DesktopSetup} */
+/** @type {import("@aether-ui/protocol").DesktopBridge & import("@aether-ui/protocol").DesktopSetup & import("@aether-ui/protocol").DesktopMemoryExport} */
 const desktop = {
   version: 1,
   discover: () => call("discover"),
@@ -133,6 +133,7 @@ const desktop = {
   privileged: (action) => call("privileged", action),
   startDaemon: (kind) => call("startDaemon", kind),
   pickDirectory: (purpose) => call("pickDirectory", purpose),
+  saveMemoryExport: (digest) => call("saveMemoryExport", digest),
   // Typed void in CONTRACTS.md §2.4; main's answer is still returned, so a refusal reaches the page.
   notify: (note) => call("notify", note),
   openExternal: (url) => call("openExternal", url),

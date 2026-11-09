@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { net, session, type IpcMainInvokeEvent } from "electron";
 import { buildSync } from "esbuild";
-import { APP_CSP } from "../../../src/security/csp.ts";
+import { APP_CSP, MERMAID_FRAME_CSP } from "../../../src/security/csp.ts";
 import { senderOf } from "../../../src/main/host.ts";
 import { WEB_DIST } from "../../../src/main/paths.ts";
 import { bundleFiles } from "../bundle-files.ts";
@@ -33,7 +33,7 @@ export async function appWindowChecks(ctx: Context): Promise<void> {
     assert.deepEqual(seen, {
       type: "object", frozen: true, require: "undefined", process: "undefined",
       keys: ["close", "connect", "diagnostics", "discover", "getPreference", "notify", "onClose", "onDeepLink", "openExternal",
-        "openRemote", "pickDirectory", "privileged", "request", "setPreference", "setup", "startDaemon", "subscribe", "version"],
+        "openRemote", "pickDirectory", "privileged", "request", "saveMemoryExport", "setPreference", "setup", "startDaemon", "subscribe", "version"],
     });
   });
   await ctx.check("app:// serves web/dist byte for byte", async () => {
@@ -42,7 +42,7 @@ export async function appWindowChecks(ctx: Context): Promise<void> {
     for (const file of files) {
       const response = await net.fetch(`app://aether/${file}`);
       assert.equal(response.status, 200, file);
-      assert.equal(response.headers.get("content-security-policy"), APP_CSP, file);
+      assert.equal(response.headers.get("content-security-policy"), file === "mermaid-frame.html" ? MERMAID_FRAME_CSP : APP_CSP, file);
       assert.ok(Buffer.from(await response.arrayBuffer()).equals(readFileSync(path.join(WEB_DIST, file))), file);
     }
     const root = Buffer.from(await (await net.fetch("app://aether/")).arrayBuffer());

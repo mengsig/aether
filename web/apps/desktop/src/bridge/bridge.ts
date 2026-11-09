@@ -6,6 +6,7 @@ import type { LocalDaemon, PreferenceKey, PrivilegedAction, SetupResult, SetupSt
 import { revokedRule, type DaemonKind } from "../security/classes.ts";
 import { confirmation, daemonSlot, labelSlot, TEMPLATES, valueSlot, type Confirmation } from "../security/confirm.ts";
 import { externalTarget } from "../native/external.ts";
+import { MemoryExports } from "../native/memory-exports.ts";
 import { normalizeOrigin } from "../security/origins.ts";
 import { BridgeConnectionLost, BridgeRefusal, Validator, type Sender, type ValidCall } from "../security/validate.ts";
 import { ConnectionTable, type LocalDaemonRecord } from "./connections.ts";
@@ -26,6 +27,7 @@ export interface BridgeHost {
   startDaemon(kind: DaemonKind): Promise<void>;
   /** The native folder picker; an opaque single-use grant for the choice, or null. */
   pickDirectory(owner: number, purpose: string): Promise<string | null>;
+  saveMemoryExport(owner: number, name: string, artifact: string): Promise<boolean>;
   /** Opens an https: URL main checked in the system browser. */
   openExternal(url: string): Promise<void>;
   /** Opens a loopback report page main checked in a report window. */
@@ -58,6 +60,7 @@ export async function requestWithRefusal(handle: () => Promise<unknown>, frame: 
 
 export class Bridge {
   readonly connections: ConnectionTable;
+  readonly memoryExports = new MemoryExports();
   private readonly validator: Validator;
   private readonly host: BridgeHost;
 
@@ -77,10 +80,17 @@ export class Bridge {
     switch (call.method) {
       case "discover": return (await this.host.findDaemons()).map(publicDaemon);
       case "connect": return this.connections.connect(owner, await this.daemon(call.daemon));
-      case "request":
+      case "request": {
         await this.refuseGlobalRuleRevocation(owner, call.conn, call.frame);
         await this.confirmMemoryAccess(owner, call.conn, call.frame);
-        return this.connections.request(owner, call.conn, call.frame, call.text);
+        if (call.frame.cmd === "memory_export") this.memoryExports.forget(owner);
+        const reply = await this.connections.request(owner, call.conn, call.frame, call.text);
+        if (call.frame.cmd === "memory_export") {
+          this.connections.daemonOf(owner, call.conn);
+          this.memoryExports.remember(owner, reply);
+        }
+        return reply;
+      }
       case "subscribe":
         await this.refuseGlobalRuleRevocation(owner, call.conn, call.frame);
         await this.confirmMemoryAccess(owner, call.conn, call.frame);
@@ -89,6 +99,10 @@ export class Bridge {
       case "privileged": return this.privileged(owner, call.action);
       case "startDaemon": return this.host.startDaemon(call.kind);
       case "pickDirectory": return this.host.pickDirectory(owner, call.purpose);
+      case "saveMemoryExport": {
+        const artifact = this.memoryExports.get(owner, call.digest);
+        return this.host.saveMemoryExport(owner, `aether-memories-${call.digest.slice(0, 12)}.jsonl`, artifact);
+      }
       case "notify": return this.host.notify(owner, call.note);
       case "openExternal": return this.openExternal(owner, call.url);
       case "openRemote": return this.openRemote(call.origin);
@@ -172,7 +186,7 @@ export class Bridge {
 
   /** GitHub opens at once, another https: site after a native question, a local report in its window. */
   private async openExternal(owner: number, value: string): Promise<void> {
-    const target = externalTarget(value);
+    const target = externalTarget(value, this.connections.hasReport(owner, value));
     if (target.kind === "report") return this.host.openReport(target.url);
     if (!target.trusted) {
       const asked = confirmation(TEMPLATES["external.open"], { origin: valueSlot(target.origin), url: labelSlot(target.url) });

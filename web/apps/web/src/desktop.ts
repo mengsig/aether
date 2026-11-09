@@ -63,22 +63,30 @@ export function interceptOutsideLinks(doc: Document, open: (href: string) => voi
 export function focusQuestion(doc: Document, anchor: string, frame: (step: () => void) => void, tries = FOCUS_TRIES): void {
   if (anchor === "" || tries < 0) throw new Error("a question anchor is not empty, with tries left");
   const entry = [...doc.querySelectorAll<HTMLElement>("[data-question]")].find((element) => element.dataset.question === anchor);
-  if (entry === undefined) {
+  const answer = entry?.querySelector<HTMLTextAreaElement>("textarea:not(:disabled)");
+  if (entry === undefined || answer === null || answer === undefined) {
     if (tries > 0) frame(() => focusQuestion(doc, anchor, frame, tries - 1));
     return;
   }
   entry.scrollIntoView({ block: "center" });
-  (entry.querySelector<HTMLElement>("textarea, button") ?? entry).focus();
+  answer.focus();
 }
 
 /** A route main sent (an OS link or a notification click) becomes the app's own navigation. */
 export function followDeepLinks(desktop: Pick<DesktopBridge, "onDeepLink">, alerts: DesktopAlerts, doc: Document): () => void {
-  return desktop.onDeepLink((route) => {
+  let generation = 0;
+  const unsubscribe = desktop.onDeepLink((route) => {
     if (typeof route !== "string" || !route.startsWith("/")) throw new Error(`main sends app routes, not ${String(route)}`);
+    const current = ++generation;
     const { hash, anchor } = alerts.landing(route);
     navigate(hash);
-    if (anchor !== undefined) focusQuestion(doc, anchor, (step) => requestAnimationFrame(step));
+    if (anchor === undefined) return;
+    const frame = (step: () => void) => requestAnimationFrame(() => {
+      if (generation === current && doc.defaultView?.location.hash === hash) step();
+    });
+    frame(() => focusQuestion(doc, anchor, frame));
   });
+  return () => { generation += 1; unsubscribe(); };
 }
 
 /** Connects the desktop's native surfaces to `app`; the returned function undoes it. */

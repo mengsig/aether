@@ -18,6 +18,7 @@
   .md-codebar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3); border-block-end: 1px solid var(--color-border); }
   .md-lang { color: var(--color-text-muted); font: var(--weight-medium) var(--text-xs) / 1 var(--font-mono); }
   .md-pre { overflow: auto; max-block-size: calc(var(--leading-normal) * 30em); margin: 0; padding: var(--space-3); font: var(--text-sm) / var(--leading-normal) var(--font-mono); tab-size: 2; }
+  .md-diagram-chat { display: grid; gap: var(--space-2); min-inline-size: 0; justify-items: start; }
 
   .md-table-wrap { overflow-x: auto; min-inline-size: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
   .md-table { inline-size: 100%; border-collapse: collapse; font: var(--text-sm) / var(--leading-normal) var(--font-ui); font-variant-numeric: tabular-nums; }

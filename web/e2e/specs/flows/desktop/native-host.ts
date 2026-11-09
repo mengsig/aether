@@ -99,6 +99,29 @@ export async function pressKeys(compositor: NodeJS.ProcessEnv, keys: readonly st
   await exec("/usr/bin/xdotool", ["key", "--delay", "150", ...keys], { env: { ...process.env, ...compositor }, timeout: 10_000 });
 }
 
+/** Enters an absolute save path in the focused native file chooser. */
+export async function enterSavePath(compositor: NodeJS.ProcessEnv, file: string): Promise<void> {
+  assert.ok(path.isAbsolute(file), "the save path is absolute");
+  assert.match(String(compositor.DISPLAY ?? ""), /^:\d+$/, "the chooser uses the private Xwayland display");
+  assert.equal(path.dirname(file), path.dirname(String(compositor.XDG_RUNTIME_DIR)), "the chooser starts in its private home");
+  const env = { ...process.env, ...compositor };
+  await exec("/usr/bin/xdotool", ["key", "ctrl+a"], { env, timeout: 10_000 });
+  await exec("/usr/bin/xdotool", ["type", "--clearmodifiers", "--", path.basename(file)], { env, timeout: 10_000 });
+  const { stdout } = await exec("/usr/bin/xdotool", ["getactivewindow", "getwindowgeometry", "--shell"], { env, timeout: 10_000 });
+  const geometry = Object.fromEntries([...stdout.matchAll(/^(X|Y|WIDTH|HEIGHT)=(\d+)$/gm)].map((match) => [match[1], Number(match[2])]));
+  const { X: x, Y: y, WIDTH: width, HEIGHT: height } = geometry;
+  assert.ok(x !== undefined && y !== undefined && width !== undefined && height !== undefined, "the chooser reports its geometry");
+  assert.ok(width > 100 && height > 50, "the chooser has room for its save button");
+  await exec("/usr/bin/xdotool", ["mousemove", "--sync", String(x + width - 54), String(y + height - 25), "click", "1"], { env, timeout: 10_000 });
+}
+
+/** Hides the app window on the private Xwayland display. */
+export async function hideWindow(compositor: NodeJS.ProcessEnv, title: string): Promise<void> {
+  assert.match(String(compositor.DISPLAY ?? ""), /^:\d+$/, "the display is the private Xwayland");
+  await focusWindow(compositor, title);
+  await exec("/usr/bin/xdotool", ["getactivewindow", "windowunmap"], { env: { ...process.env, ...compositor }, timeout: 10_000 });
+}
+
 /** The titles of every window on the run's own compositor. */
 export async function windowTitles(compositor: NodeJS.ProcessEnv): Promise<string[]> {
   const ipc = String(compositor.SWAYSOCK ?? "");
@@ -117,7 +140,7 @@ export async function windowTitles(compositor: NodeJS.ProcessEnv): Promise<strin
 export async function focusWindow(compositor: NodeJS.ProcessEnv, title: string): Promise<void> {
   const ipc = String(compositor.SWAYSOCK ?? "");
   assert.ok(ipc.startsWith("/"), "the private compositor's IPC socket is known");
-  assert.ok(/^[A-Za-z0-9: ]+$/.test(title), "the window title is a safe exact match");
+  assert.ok(title.length > 0, "the window has a title");
   const tree = await exec("/usr/bin/swaymsg", ["-s", ipc, "-t", "get_tree"], { timeout: 10_000 });
   type Node = { id: number; name?: string; nodes?: Node[]; floating_nodes?: Node[] };
   const find = (node: Node): Node | undefined => node.name === title ? node

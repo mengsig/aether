@@ -17,3 +17,6 @@ export type SetupResult =
 
 /** The setup half of the bridge; a refusal's message is plain language the app shows as it is. */
 export interface DesktopSetup { setup(step: SetupStep): Promise<SetupResult> }
+
+/** A native save dialog for a memory export returned to this app window. */
+export interface DesktopMemoryExport { saveMemoryExport(digest: string): Promise<boolean> }

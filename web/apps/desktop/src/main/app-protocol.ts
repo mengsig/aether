@@ -3,7 +3,7 @@
 
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { APP_HEADERS, APP_HOST, APP_SCHEME } from "../security/csp.ts";
+import { APP_HEADERS, APP_HOST, APP_SCHEME, MERMAID_FRAME_CSP, MERMAID_FRAME_PATH } from "../security/csp.ts";
 
 const SEGMENT = /^[A-Za-z0-9_~-][A-Za-z0-9._~-]*$/;
 
@@ -50,6 +50,9 @@ export async function serveApp(distDir: string, request: Request): Promise<Respo
     if ((error as NodeJS.ErrnoException).code === "ENOENT" || (error as NodeJS.ErrnoException).code === "EISDIR") return notFound();
     throw new Error(`Reading ${file} for ${request.url}`, { cause: error });
   }
-  const headers = { ...APP_HEADERS, "content-type": contentType(file) };
+  const pathname = new URL(request.url).pathname;
+  const isFrame = pathname === MERMAID_FRAME_PATH;
+  const headers = { ...APP_HEADERS, "content-type": contentType(file),
+    ...(isFrame ? { "content-security-policy": MERMAID_FRAME_CSP, "x-frame-options": "SAMEORIGIN" } : {}) };
   return new Response(request.method === "HEAD" ? null : new Uint8Array(body), { status: 200, headers });
 }

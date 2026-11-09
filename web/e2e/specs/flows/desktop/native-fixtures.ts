@@ -19,6 +19,7 @@ export const VIEWPORT = { width: 1440, height: 900 } as const;
 export interface ReportServer {
   /** The page a published report shows, on this computer's loopback. */
   readonly url: string;
+  readonly tailnet: string;
   /** A loopback URL nothing listens on, for a report whose server is gone. */
   readonly gone: string;
   close(): Promise<void>;
@@ -44,6 +45,7 @@ export async function startReportServer(title: string): Promise<ReportServer> {
   await new Promise<void>((resolve) => probe.close(() => resolve()));
   return {
     url: `http://127.0.0.1:${port}/session/e2e`,
+    tailnet: `http://report.tailnet.test:${port}/session/e2e`,
     gone: `http://127.0.0.1:${free}/session/gone`,
     close: () => new Promise<void>((resolve, reject) => {
       server.closeAllConnections();

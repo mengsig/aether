@@ -825,7 +825,8 @@ that the budget stops records why on the session as `stalled`
 `noesis.session_stalled`. After raising the budget, send `noesis_retry_turn`
 with `session` and an optional `idempotency_key` to resume that turn without
 adding a message. Check for the `noesis_retry_turn` feature before sending it.
-Stalled turns do not automatically retry when the service restarts.
+While a turn is stalled, `noesis_send` returns a conflict; retry the stalled
+turn first. Stalled turns do not automatically retry when the service restarts.
 
 `noesis_get_session` returns the session's whole history: `agents` (each
 agent that ran it, in order, with its `role` and, as `internal`, the
