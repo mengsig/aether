@@ -128,6 +128,12 @@ async fn g14_an_interactive_turn_in_flight_finishes_within_the_grace() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn g14_an_interactive_turn_in_flight_is_cancelled_after_the_grace() {
+    tokio::time::timeout(Duration::from_secs(20), cancelled_after_grace())
+        .await
+        .expect("the cancellation journey completes within 20 seconds");
+}
+
+async fn cancelled_after_grace() {
     let mut home = Home::start("").await;
     home.enable_with_grace(1).await;
     let _never_opened = home.model.hold(held_question());
