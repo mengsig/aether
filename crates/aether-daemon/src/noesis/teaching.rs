@@ -87,7 +87,7 @@ struct Ticket {
 
 enum Admission<'a> {
     Desk(tokio::sync::MutexGuard<'a, Desk>),
-    Replay(Reply),
+    Replay(Box<Reply>),
 }
 
 async fn admit<'a>(
@@ -109,7 +109,7 @@ async fn admit<'a>(
                 let reply = serde_json::from_value(receipt).map_err(|e| {
                     ErrorReply::internal(format!("decode the teaching receipt: {e}"))
                 })?;
-                return Ok(Admission::Replay(reply));
+                return Ok(Admission::Replay(Box::new(reply)));
             }
             if desk.turn.session.lock().as_deref() == Some(session) {
                 return Err(ErrorReply::conflict(
@@ -150,7 +150,7 @@ impl NoesisService {
             .ok_or_else(ErrorReply::noesis_disabled)?;
         let mut desk = match admit(&ticket, runtime, &command, submission).await? {
             Admission::Desk(desk) => desk,
-            Admission::Replay(reply) => return Ok(reply),
+            Admission::Replay(reply) => return Ok(*reply),
         };
         let Some(noesis) = &desk.noesis else {
             return Err(ErrorReply::noesis_disabled());
