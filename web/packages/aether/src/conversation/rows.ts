@@ -23,6 +23,8 @@ export type Part =
 export interface InvocationMeta {
   readonly model: string | null;
   readonly usage: aether.Usage | null;
+  readonly turnUsage?: boolean;
+  readonly usagePending?: boolean;
   readonly durationMs: number | null;
   readonly error: string | null;
 }
@@ -191,20 +193,40 @@ export function liveRows(streams: Readonly<Record<string, StreamState>>, agent: 
 
 const modelOf = (ref: aether.ModelRef): string => `${ref.provider}/${ref.model}`;
 
+function reportedUsage(usage: aether.Usage): boolean {
+  return usage.cost_complete || usage.cost_usd !== 0 || usage.input_tokens !== 0 || usage.output_tokens !== 0
+    || usage.cache_read_tokens !== 0 || usage.cache_write_tokens !== 0 || (usage.reasoning_tokens ?? 0) !== 0
+    || (usage.estimated_cost_usd ?? 0) !== 0;
+}
+
 /** Model, cost and timing per invocation of this agent, from the durable events core keeps. */
-export function invocationMeta(events: readonly aether.Event[], agent: string): ReadonlyMap<string, InvocationMeta> {
+export function invocationMeta(events: readonly aether.Event[], agent: string, historyLoaded = true): ReadonlyMap<string, InvocationMeta> {
   const meta = new Map<string, InvocationMeta>();
+  let turn: string[] = [];
+  let turnUsage: aether.Usage | null = null;
+  const finishTurn = () => {
+    for (const invocation of turn) {
+      const receipt = meta.get(invocation);
+      invariant(receipt !== undefined, "turn invocations have a receipt");
+      if (receipt.usage === null && turnUsage !== null) meta.set(invocation, { ...receipt, usage: turnUsage, turnUsage: true });
+    }
+    turn = [];
+    turnUsage = null;
+  };
   for (const event of events) {
     if (event.agent_id !== agent) continue;
     const kind = event.kind;
-    if (kind.type === "invocation.completed") {
-      const u = kind.usage;
-      const absent = !u.cost_complete && u.cost_usd === 0 && u.input_tokens === 0 && u.output_tokens === 0 && u.cache_read_tokens === 0 && u.cache_write_tokens === 0 && (u.reasoning_tokens ?? 0) === 0 && (u.estimated_cost_usd ?? 0) === 0;
-      meta.set(kind.invocation, { model: modelOf(kind.model), usage: absent ? null : u, durationMs: kind.duration_ms, error: null });
+    if (kind.type === "agent.started") finishTurn();
+    else if (kind.type === "agent.usage_updated") {
+      if (reportedUsage(kind.turn_usage)) turnUsage = kind.turn_usage;
+    } else if (kind.type === "invocation.completed") {
+      meta.set(kind.invocation, { model: modelOf(kind.model), usage: reportedUsage(kind.usage) ? kind.usage : null, durationMs: kind.duration_ms, error: null, ...(!historyLoaded ? { usagePending: true } : {}) });
+      turn.push(kind.invocation);
     } else if (kind.type === "invocation.failed") {
       meta.set(kind.invocation, { model: null, usage: null, durationMs: null, error: kind.error });
-    }
+    } else if (kind.type === "agent.turn_completed" || kind.type === "agent.interrupted") finishTurn();
   }
+  finishTurn();
   return meta;
 }
 

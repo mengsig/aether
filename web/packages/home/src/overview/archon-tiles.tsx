@@ -32,7 +32,7 @@ function Outcomes({ view }: { readonly view: HomeView }) {
   return (
     <ol className="home-list" aria-label="Recent outcomes">
       {view.outcomes.map((outcome) => (
-        <li key={outcome.id} className="home-row">
+        <li key={outcome.id} className="home-row home-outcome-row">
           <a className="ui-link home-row-name" href={routeHref("#/archon/items/:item", { item: outcome.id })}>{outcome.title}</a>
           <StatusPill status={outcome.kind} label={OUTCOME_LABEL[outcome.kind]} />
           {outcome.at === "" ? null : <time className="home-row-time" dateTime={outcome.at}>{relativeTime(outcome.at, view.now)}</time>}

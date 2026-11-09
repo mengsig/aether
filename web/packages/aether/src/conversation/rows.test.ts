@@ -66,3 +66,21 @@ test("an unreported invocation is shown as missing usage, not zero spend", () =>
   expect(invocationMeta(events, AGENT).get("inv_a")?.usage).toBeNull();
   expect(invocationMeta(events, AGENT).get("inv_a")?.model).toBe("p/m");
 });
+
+test("turn usage follows turn boundaries and never replaces a reported receipt", () => {
+  const empty = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: 0, cost_complete: false };
+  const first = { ...empty, input_tokens: 12, cost_usd: 1, cost_complete: true };
+  const second = { ...first, input_tokens: 34, cost_usd: 2 };
+  const completed = (invocation: string, usage: aether.Usage) => ({ type: "invocation.completed", invocation, usage, model: { provider: "p", model: "m" }, duration_ms: 10 });
+  const events = [
+    { type: "agent.started", turn: 1 }, completed("a", empty), completed("b", first),
+    { type: "agent.usage_updated", turn_usage: second }, { type: "agent.turn_completed", turn: 1 },
+    { type: "agent.started", turn: 2 }, completed("c", empty), { type: "agent.turn_completed", turn: 2 },
+    { type: "agent.started", turn: 3 }, { type: "agent.usage_updated", turn_usage: first }, completed("d", empty),
+  ].map((kind, seq) => ({ seq, agent_id: AGENT, kind })) as unknown as aether.Event[];
+  const meta = invocationMeta(events, AGENT);
+  expect(meta.get("a")).toMatchObject({ usage: second, turnUsage: true });
+  expect(meta.get("b")).toMatchObject({ usage: first });
+  expect(meta.get("c")?.usage).toBeNull();
+  expect(meta.get("d")).toMatchObject({ usage: first, turnUsage: true });
+});
