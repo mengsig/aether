@@ -90,6 +90,24 @@ fn teaching_check_recovery_is_bounded_when_the_teacher_never_retries() {
 }
 
 #[test]
+fn a_check_refusal_identifies_the_overlapping_fields_without_quoting_the_key() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let mut question = recall("What makes ATP?", SECRET);
+    question["plan_node"] = json!("a");
+    question["concepts"] = json!(["cells", SECRET]);
+    let result = call(&mut t, &id, ASK, question, "");
+    let reason = error_of(&result);
+    assert!(
+        reason.contains("concepts[1] overlaps answer_key[0]"),
+        "{reason}"
+    );
+    assert!(!reason.contains(SECRET), "{reason}");
+    assert!(session(&t, &id).open_question.is_none());
+}
+
+#[test]
 fn a_stringified_argument_escaping_the_active_solution_is_discarded() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());

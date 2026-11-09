@@ -208,59 +208,56 @@ pub(super) fn shown_fields_reveal(args: &AskArgs) -> bool {
 }
 
 fn shown_fields_overlap(args: &AskArgs) -> Option<String> {
-    let explanation = Sealer::new(args.explanation.iter());
-    let key: Vec<String> = match args.kind {
-        QuestionKind::Choice => args
-            .options
-            .iter()
-            .filter(|option| args.answer_key.contains(&option.label))
-            .map(|option| option.label.clone())
-            .collect(),
-        _ => args.answer_key.clone(),
-    };
-    let key = Sealer::new(&key);
-    // A choice shows its labels, correct ones included, so only its prompt
-    // is held against its key.
-    let mut prose = vec![("prompt", args.prompt.as_str())];
-    if args.kind != QuestionKind::Choice {
-        prose.extend(
-            args.options
-                .iter()
-                .map(|option| ("option label", option.label.as_str())),
-        );
+    if let Some(found) = field_secret_overlap("prompt", &args.prompt, args, true) {
+        return Some(found);
     }
-    let overlap = |field: &str, text: &str, sealer: &Sealer, source: &str| {
-        sealer
-            .holds(text)
-            .then(|| format!("{field} overlaps {source}"))
-    };
-    for (field, text) in prose {
-        if let Some(found) = overlap(field, text, &key, "answer_key")
-            .or_else(|| overlap(field, text, &explanation, "explanation"))
+    for (index, option) in args.options.iter().enumerate() {
+        let label = format!("options[{index}].label");
+        let value = format!("options[{index}].value");
+        if let Some(found) = field_secret_overlap(
+            &label,
+            &option.label,
+            args,
+            args.kind != QuestionKind::Choice,
+        )
+        .or_else(|| field_secret_overlap(&value, &option.value, args, false))
         {
             return Some(found);
         }
     }
-    for option in &args.options {
-        if let Some(found) = overlap("option value", &option.value, &explanation, "explanation")
-            .or_else(|| overlap("option label", &option.label, &explanation, "explanation"))
+    for (index, concept) in args.concepts.iter().enumerate() {
+        if let Some(found) =
+            field_secret_overlap(&format!("concepts[{index}]"), concept, args, true)
         {
             return Some(found);
         }
     }
-    for (field, text) in args
-        .concepts
-        .iter()
-        .map(|text| ("concept", text.as_str()))
-        .chain(args.plan_node.as_deref().map(|text| ("plan node", text)))
-    {
-        if let Some(found) = overlap(field, text, &key, "answer_key")
-            .or_else(|| overlap(field, text, &explanation, "explanation"))
-        {
-            return Some(found);
+    args.plan_node
+        .as_deref()
+        .and_then(|node| field_secret_overlap("plan_node", node, args, true))
+}
+
+fn field_secret_overlap(
+    field: &str,
+    text: &str,
+    args: &AskArgs,
+    check_key: bool,
+) -> Option<String> {
+    if check_key {
+        for (index, key) in args.answer_key.iter().enumerate() {
+            if args.kind == QuestionKind::Choice
+                && !args.options.iter().any(|option| &option.label == key)
+            {
+                continue;
+            }
+            if Sealer::new([key]).holds(text) {
+                return Some(format!("{field} overlaps answer_key[{index}]"));
+            }
         }
     }
-    None
+    Sealer::new(args.explanation.iter())
+        .holds(text)
+        .then(|| format!("{field} overlaps explanation"))
 }
 
 /// Whether the posing turn's visible text holds a correct option's label or
