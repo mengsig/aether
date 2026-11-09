@@ -170,7 +170,7 @@ function mainWindowManager(options: DesktopOptions, bridge: Bridge, appWindowIds
     });
     try {
       await window.loadURL(APP_ENTRY);
-      if (window.isDestroyed()) throw new Error("The app window closed while loading");
+      if (window.isDestroyed() || window.webContents.isCrashed()) throw new Error("The app window closed or crashed while loading");
       if (!options.offscreen) window.show();
       deepLinks.attach(windowTarget(window, remapX11));
       return window;
@@ -181,8 +181,10 @@ function mainWindowManager(options: DesktopOptions, bridge: Bridge, appWindowIds
   };
   const ensureMainWindow = (): Promise<BrowserWindow> => {
     if (creating !== undefined) return creating;
-    if (current !== undefined && !current.isDestroyed()) return Promise.resolve(current);
+    if (current !== undefined && !current.isDestroyed() && !current.webContents.isCrashed()) return Promise.resolve(current);
+    const previous = current;
     creating = createWindow().finally(() => { creating = undefined; });
+    if (previous !== undefined && !previous.isDestroyed()) previous.destroy();
     return creating;
   };
   const getMainWindow = (): BrowserWindow => {

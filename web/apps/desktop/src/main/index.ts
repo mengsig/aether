@@ -17,7 +17,10 @@ function start(): void {
   // Links can arrive before the window exists: on macOS through open-url, elsewhere in argv.
   const recover = () => {
     void Promise.resolve().then(() => desktopReady).then((desktop) => desktop.ensureMainWindow())
-      .then(() => deepLinks.focus()).catch((error: unknown) => console.error("The app window could not be restored:", error));
+      .then((window) => {
+        if (window.isDestroyed() || window.webContents.isCrashed()) throw new Error("The restored app window is unavailable");
+        deepLinks.focus();
+      }).catch((error: unknown) => console.error("The app window could not be restored:", error));
   };
   const deepLinks = new DeepLinkRouter(recover);
   const build = readBuildInfo();

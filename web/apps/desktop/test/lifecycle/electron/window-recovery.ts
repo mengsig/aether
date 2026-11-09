@@ -67,7 +67,19 @@ app.whenReady().then(async () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   assert.equal(await restored.webContents.executeJavaScript("location.hash"), "#/inbox");
-  restored.destroy();
+  Object.defineProperty(restored.webContents, "isCrashed", { value: () => true });
+  assert.equal(links.acceptLink("aether-app://open?route=/fleet"), true);
+  const afterCrash = await recovery;
+  assert.ok(afterCrash);
+  assert.notEqual(afterCrash, restored);
+  assert.equal(restored.isDestroyed(), true);
+  assert.equal(desktop.appWindow, afterCrash);
+  for (let attempt = 0; attempt < 50; attempt++) {
+    if (await afterCrash.webContents.executeJavaScript("location.hash") === "#/fleet") break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.equal(await afterCrash.webContents.executeJavaScript("location.hash"), "#/fleet");
+  afterCrash.destroy();
   const original = BrowserWindow.prototype.loadURL;
   BrowserWindow.prototype.loadURL = async () => { throw new Error("injected load failure"); };
   try {
