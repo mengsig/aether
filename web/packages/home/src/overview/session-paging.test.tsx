@@ -2,6 +2,7 @@
 import type { aether } from "@aether-ui/protocol";
 import { expect, test } from "vitest";
 import { deriveHome } from "./derive.ts";
+import { LearnTile } from "./archon-tiles.tsx";
 import { selectHomeSources } from "./sources.ts";
 import { harness } from "./fixture/harness.test-util.tsx";
 import { AETHER_CONN, aetherInfo, NOW, seedWorld, SESSIONS } from "./fixture/world.ts";
@@ -34,4 +35,24 @@ test("an incomplete list is loading even when individual sessions are cached", a
   const view = deriveHome(selectHomeSources(0)(h.app.store.get()), NOW, 0, {});
   expect(view.learn.state).toBe("loading");
   expect(view.learn.session).toBeNull();
+});
+
+test("Learn distinguishes session loading and failure from mastery", async () => {
+  const h = harness();
+  seedWorld(h.app.store, [aetherInfo()], true);
+  await h.frame();
+  const sources = selectHomeSources(0)(h.app.store.get());
+  const loading = deriveHome(sources, NOW, 0, {});
+  const container = await h.mount(<LearnTile view={loading} />);
+  expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+  expect(container.textContent).not.toContain("No session yet");
+  await h.unmount();
+  const failed = deriveHome(sources, NOW, 0, { [`${AETHER_CONN} noesis:all-sessions`]: "Connection lost" });
+  expect(failed.learn.mastery.state).not.toBe("problem");
+  const error = await h.mount(<LearnTile view={failed} />);
+  expect(error.textContent).toContain("Sessions could not be read");
+  expect(error.textContent).toContain("Connection lost");
+  expect(error.textContent).not.toContain("Mastery could not be read");
+  expect(error.querySelector('a[href="#/learn"]')).not.toBeNull();
+  await h.unmount();
 });

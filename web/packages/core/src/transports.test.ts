@@ -62,6 +62,30 @@ function fromBase64url(text: string): Uint8Array<ArrayBuffer> {
 }
 
 describe("ws-aether", () => {
+  it("cancels a socket awaiting its authentication challenge", async () => {
+    const store = memoryIdentity({ ...(await newIdentity()), deviceId: "dev_1" });
+    const { made, factory } = sockets();
+    const controller = new AbortController();
+    const opening = aetherSocketTransport({ identity: store, origin: ORIGIN, socket: factory }).open("wss://h/ws", () => {}, () => {}, controller.signal);
+    await tick();
+    const rejected = expect(opening).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await rejected;
+    expect(made[0]?.closedWith).toBe(1000);
+  });
+
+  it("cancels a socket before it opens", async () => {
+    const store = memoryIdentity({ ...(await newIdentity()), deviceId: "dev_1" });
+    const { made, factory } = sockets();
+    const controller = new AbortController();
+    const opening = aetherSocketTransport({ identity: store, origin: ORIGIN, socket: factory }).open("wss://h/ws", () => {}, () => {}, controller.signal);
+    await Promise.resolve();
+    const rejected = expect(opening).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await rejected;
+    expect(made[0]?.closedWith).toBe(1000);
+  });
+
   it("signs the challenge into the hello and pins the daemon id on welcome", async () => {
     const identity = { ...(await newIdentity()), deviceId: "dev_1" };
     const store = memoryIdentity(identity);

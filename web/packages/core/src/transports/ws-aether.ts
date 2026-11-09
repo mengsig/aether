@@ -101,20 +101,27 @@ export function aetherSocketTransport(options: AetherSocketOptions): Transport {
   const factory = options.socket ?? browserSocket;
   return {
     id: "ws-aether",
-    async open(target, onFrame, onClose) {
+    async open(target, onFrame, onClose, signal) {
       const url = checkSocketUrl(target, "/ws");
       const identity = await options.identity.load();
+      signal?.throwIfAborted();
       const deviceId = identity?.deviceId;
       if (!identity || !deviceId) throw new DaemonError("unpaired", "Pair this browser with your daemon");
       const handshake = new Handshake({ ...identity, deviceId }, options.identity, { onFrame, onClose });
-      const socket = (handshake.socket = await openSocket(factory, url, "aether", { onText: handshake.onText, onClose: handshake.onClose }));
+      const socket = (handshake.socket = await openSocket(factory, url, "aether", { onText: handshake.onText, onClose: handshake.onClose }, signal));
       const timer = setTimeout(() => handshake.refuse(new Error("Challenge timed out")), options.challengeTimeoutMs ?? 15_000);
+      let abort = () => {};
+      const cancelled = new Promise<never>((_, reject) => {
+        abort = () => reject(new DOMException("Connection attempt cancelled", "AbortError"));
+        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) abort();
+      });
       try {
-        const received = await handshake.challenge;
+        const received = await Promise.race([handshake.challenge, cancelled]);
         if (identity.daemonId && identity.daemonId !== received.instance) {
           throw new DaemonError("identity_changed", "Daemon identity changed; verify and pair again");
         }
-        const signature = await signChallenge(identity, { ...received, origin: options.origin });
+        const signature = await Promise.race([signChallenge(identity, { ...received, origin: options.origin }), cancelled]);
         return {
           send(frame: unknown) {
             const command = object(frame, "client frame");
@@ -127,6 +134,7 @@ export function aetherSocketTransport(options: AetherSocketOptions): Transport {
         throw error;
       } finally {
         clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
       }
     },
   };

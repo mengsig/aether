@@ -82,6 +82,10 @@ export function LearnTile({ view }: { readonly view: HomeView }) {
     invariant(step !== null, "Noesis that is not on always has a next step");
     return <StatTile label="Learn" value={value} hint="Noesis teaches from what your agents do" tone="neutral" href="#/learn"><NextStep step={step} /></StatTile>;
   }
+  if (learn.sessionList.state === "loading") return <LoadingTile label="Learn" />;
+  if (learn.sessionList.state === "problem") {
+    return <StatTile label="Learn" value="Unknown" hint="Sessions could not be read" tone="danger" href="#/learn"><p className="home-problem">{learn.sessionList.problem}</p><a className="ui-link" href="#/learn">Open Learn to retry</a></StatTile>;
+  }
   const session = learn.session;
   const hint = session === null ? "No session yet" : `${PHASE[session.phase] ?? session.phase}: ${session.goal}`;
   return (

@@ -132,7 +132,7 @@ function learnView(sources: HomeSources, failures: Readonly<Record<string, strin
   const ids = (list?.value.ids as string[] | undefined) ?? [];
   const listed = Object.fromEntries(ids.flatMap((id) => source.learn.sessions[id] ? [[id, source.learn.sessions[id]]] : []));
   const sessions = Object.keys(listed).length;
-  return { state, conn: source.info.id, session: currentSession(listed), sessions, sessionList: listFailure ? { state: "problem", problem: listFailure } : { state: "ready", value: sessions }, mastery: listFailure ? { state: "problem", problem: listFailure } : mastery };
+  return { state, conn: source.info.id, session: currentSession(listed), sessions, sessionList: listFailure ? { state: "problem", problem: listFailure } : { state: "ready", value: sessions }, mastery };
 }
 
 export function deriveHome(sources: HomeSources, now: number, dayStart: number, failures: Readonly<Record<string, string>>): HomeView {
