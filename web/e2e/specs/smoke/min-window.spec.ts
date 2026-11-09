@@ -55,6 +55,8 @@ async function openModelTab(page: Page): Promise<void> {
 
 /** The effort choice sits below the model, and the apply button below the effort, never beside them. */
 async function expectStacked(page: Page): Promise<void> {
+  await expect(page.getByRole("radiogroup", { name: "Effort" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Apply model", exact: true })).toBeVisible();
   const bounds = await page.evaluate(() => {
     const model = document.querySelector('[data-testid="configure-model"]');
     const effort = document.querySelector('[role="radiogroup"][aria-label="Effort"]');
