@@ -16,6 +16,25 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("browser discovery recovery", () => {
+  it("restarts existing Aether and discovered Archon connections after stop", async () => {
+    const fetcher = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url).includes("/api/health")) return health(true);
+      return new Promise<Response>(() => {});
+    });
+    const app = createApp({ kind: "browser", storage }, { fetch: fetcher as typeof fetch, identities, scheduler: (f) => f() });
+    await app.start(); await flush();
+    const connections = [...app.manager.all()];
+    expect(connections.map((c) => c.endpoint.daemon)).toEqual(["aether", "archon"]);
+    app.stop();
+    expect(connections.map((c) => c.current.state)).toEqual(["closed", "closed"]);
+    const starts = connections.map((c) => vi.spyOn(c, "start"));
+    await app.start(); await flush();
+    expect(app.manager.all()).toEqual(connections);
+    expect(starts.map((start) => start.mock.calls.length)).toEqual([1, 1]);
+    expect(connections.every((c) => c.current.state !== "closed")).toBe(true);
+    app.stop();
+  });
+
   it.each(["fetch", "body"])("starts Aether while health %s hangs and retries", async (stage) => {
     const never = new Promise<never>(() => {});
     const fetcher = vi.fn(() => stage === "fetch" ? never : Promise.resolve({ ok: true, json: () => never } as unknown as Response));

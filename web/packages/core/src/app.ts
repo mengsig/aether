@@ -192,6 +192,7 @@ export function createApp(host: HostAdapter, options: AppOptions = {}): App {
       active = true;
       if (!host.desktop && options.endpoints === undefined) {
         addFresh([browserAetherEndpoint(identities)]);
+        manager.start();
         globalThis.addEventListener?.("online", online);
         void browserDiscovery();
         return;
