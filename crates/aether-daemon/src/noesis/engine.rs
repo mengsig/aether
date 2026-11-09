@@ -304,7 +304,7 @@ impl AetherEngine<'_> {
                 blocks.push(ContentBlock::Text { text: learner });
                 blocks
             }
-            Input::Guidance(_) | Input::Failure(_) | Input::AcceptedText(_) => Vec::new(),
+            Input::Guidance(_) | Input::Failure(_) | Input::StandaloneText(_) => Vec::new(),
         }
     }
 
@@ -635,7 +635,7 @@ impl Engine for AetherEngine<'_> {
             return Ok(None);
         }
         let row = self.agent(agent)?;
-        if let Input::Failure(text) | Input::AcceptedText(text) = input {
+        if let Input::Failure(text) | Input::StandaloneText(text) = input {
             return self
                 .record(
                     &row,

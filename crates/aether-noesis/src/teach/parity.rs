@@ -113,7 +113,12 @@ fn t02_probe_done_is_refused_while_a_question_is_open_and_on_a_second_call() {
     assert!(!report.steps[0].calls[0].is_error);
     let handoff = t.engine().inputs_of(&view.agent);
     assert!(matches!(handoff[0], Input::Handoff(text) if text.contains("epsilon-delta")));
-    assert_eq!(handoff.len(), 2, "the hand-off and the plan's result");
+    assert_eq!(
+        handoff.len(),
+        3,
+        "the hand-off, plan result and explanation"
+    );
+    assert!(matches!(handoff[2], Input::StandaloneText(text) if text == "Plan:"));
 }
 
 #[test]

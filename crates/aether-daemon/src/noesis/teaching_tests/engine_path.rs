@@ -67,9 +67,14 @@ async fn a_passed_check_resumes_the_plan_without_a_learner_message() {
         !transcript.contains("Name the capital of Italy"),
         "{transcript}"
     );
+    assert!(!transcript.contains("Italy's capital is in the Lazio region"));
     assert!(
-        transcript.contains("Italy's capital is in the Lazio region"),
-        "{transcript}"
+        second
+            .open_question
+            .as_ref()
+            .unwrap()
+            .prompt
+            .starts_with("Italy's capital is in the Lazio region.\n\n")
     );
     assert!(
         cli.launches()
@@ -113,7 +118,15 @@ async fn teaching_check_recovery_never_records_internal_chatter() {
     let check = harness.posed(&created.id).await;
     harness.settled().await;
     let transcript = serde_json::to_string(&harness.transcript(agent_of(&check))).unwrap();
-    assert!(transcript.contains("A half turn is half a full rotation."));
+    assert!(!transcript.contains("A half turn is half a full rotation."));
+    assert!(
+        check
+            .open_question
+            .as_ref()
+            .unwrap()
+            .prompt
+            .starts_with("A half turn is half a full rotation.\n\n")
+    );
     assert!(!transcript.contains("checks were blocked"), "{transcript}");
     assert!(!transcript.contains("say when ready"), "{transcript}");
     assert!(!transcript.contains("overlaps answer_key"), "{transcript}");

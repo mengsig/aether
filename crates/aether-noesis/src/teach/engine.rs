@@ -79,8 +79,8 @@ impl std::fmt::Debug for ToolResult {
 /// are persisted before inference and survive a failed turn.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
-    /// Accepted text accompanying a posed check.
-    AcceptedText(String),
+    /// A sealed explanation from a turn that posed no check.
+    StandaloneText(String),
     /// The learner's own message.
     Learner(String),
     /// A session's first input: its goal, practice targets and any bundle.
@@ -194,14 +194,9 @@ impl ReplyText {
     pub fn shape(self, step: &mut Step) -> Shaped {
         let had_text = !(step.text.is_empty() && step.text_blocks.is_empty());
         if self.text == TextPolicy::Deferred {
-            let mut asks = step.calls.iter().filter(|call| is_ask(call));
-            let first = asks.next();
-            let lead_in = first
-                .filter(|_| asks.next().is_none() && step.calls.len() == 1)
-                .and_then(|call| call.input.get("lead_in"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            step.text = lead_in.to_owned();
+            if step.calls.iter().any(is_ask) {
+                step.text.clear();
+            }
             step.text_blocks.clear();
             return Shaped {
                 text_dropped: had_text,

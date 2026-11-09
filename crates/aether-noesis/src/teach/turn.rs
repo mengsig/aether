@@ -83,7 +83,7 @@ impl<E: Engine> Teaching<'_, E> {
         };
         let end = ran?;
         if agent_for_teacher(&caller) {
-            self.publish_check_text(&caller.agent, &mut turn, &sealer)?;
+            self.publish_standalone_text(&caller.agent, end, &mut turn, &sealer)?;
         }
         let steps = turn.seal(&sealer);
         debug_assert!(end != TurnEnd::StepLimit || steps.len() == MAX_STEPS);
@@ -141,12 +141,8 @@ impl<E: Engine> Teaching<'_, E> {
         let own: Vec<String> = step.calls.iter().flat_map(seal::call_secrets).collect();
         turn.own.extend(own.iter().cloned());
         let teacher = agent_for_teacher(caller);
-        let single_check = step
-            .calls
-            .iter()
-            .filter(|call| is_ask_name(&call.name))
-            .count()
-            == 1;
+        let attempts_check = teacher && step.calls.iter().any(|call| is_ask_name(&call.name));
+        turn.attempted_check |= attempts_check;
         let mut pending = PendingStep {
             text: step.text,
             calls: Vec::with_capacity(step.calls.len()),
@@ -154,18 +150,14 @@ impl<E: Engine> Teaching<'_, E> {
         if step.calls.is_empty() {
             return self.finish_without_calls(session, caller, pending, turn);
         }
-        // Each step is kept as it ends, so a pose is checked against all the
-        // turn has kept, not only its own step's text.
-        let shown = turn.shown_with(&pending.text);
+        // Teacher prose stays private until the turn ends; tool output is already visible.
+        let shown = turn.shown_with(&pending.text, !teacher);
         let (end, owed) =
             self.execute_calls(session, caller, step.calls, &shown, &mut pending, turn)?;
-        let accepted = pending
-            .calls
-            .iter()
-            .any(|call| is_ask_name(&call.name) && !call.is_error);
-        if teacher && (end != Some(TurnEnd::AwaitingAnswer) || !single_check || !accepted) {
+        if attempts_check {
             pending.text.clear();
-        } else if end == Some(TurnEnd::AwaitingAnswer) {
+        }
+        if end == Some(TurnEnd::AwaitingAnswer) {
             turn.check_attempts = 0;
         }
         let results = self.engine_results(session, &own, &pending, &owed)?;
@@ -269,27 +261,23 @@ impl<E: Engine> Teaching<'_, E> {
         Ok(TextPolicy::Keep)
     }
 
-    pub(super) fn publish_check_text(
+    pub(super) fn publish_standalone_text(
         &mut self,
         agent: &str,
+        end: TurnEnd,
         turn: &mut Turn,
         sealer: &Sealer,
     ) -> Result<(), TeachError> {
         for step in &mut turn.steps {
-            if step.text.is_empty()
-                || !step
-                    .calls
-                    .iter()
-                    .any(|call| is_ask_name(&call.name) && !call.is_error)
-            {
+            if step.text.is_empty() {
                 continue;
             }
-            if sealer.holds(&step.text) {
+            if turn.attempted_check || end == TurnEnd::AwaitingAnswer || sealer.holds(&step.text) {
                 step.text.clear();
                 continue;
             }
             self.engine
-                .deliver(agent, Input::AcceptedText(step.text.clone()))?;
+                .deliver(agent, Input::StandaloneText(step.text.clone()))?;
         }
         Ok(())
     }
@@ -422,7 +410,9 @@ impl<E: Engine> Teaching<'_, E> {
             // seal its reason and the agent still reads what to fix.
             if call.is_error {
                 committed.refusal(&mut content);
-                if check_refusal(&call.name, &call.input, &call.result, true).is_some() {
+                if check_refusal(&call.name, &call.input, &call.result, true)
+                    .is_some_and(|reason| reason.contains("gives away"))
+                {
                     content = json!({"error": "The check overlaps material already shown; ask a different question."});
                 }
             } else {
@@ -598,6 +588,7 @@ pub(super) struct Turn {
     check_attempts: usize,
     answer_turn: bool,
     continuation_attempts: usize,
+    attempted_check: bool,
     /// Where the turn's events start in the pending event list.
     pub(super) events_from: usize,
 }
@@ -629,17 +620,18 @@ impl Turn {
             check_attempts: 0,
             answer_turn: false,
             continuation_attempts: 0,
+            attempted_check: false,
             events_from,
         }
     }
 
-    /// Every text the turn has kept: its earlier steps' text, unknown tool
-    /// names and inputs as the transcript keeps them, and `current`, one per
-    /// line so no phrase spans two.
-    fn shown_with(&self, current: &str) -> String {
+    /// Text already exposed by the turn, one field per line.
+    fn shown_with(&self, current: &str, include_text: bool) -> String {
         let mut shown: Vec<String> = Vec::new();
         for step in &self.steps {
-            shown.push(step.text.clone());
+            if include_text {
+                shown.push(step.text.clone());
+            }
             for call in &step.calls {
                 // A known tool's name is the engine's own, so it shows nothing the model chose.
                 if ToolName::parse(&call.name).is_none() {
@@ -652,7 +644,9 @@ impl Turn {
                 }
             }
         }
-        shown.push(current.to_string());
+        if include_text {
+            shown.push(current.to_string());
+        }
         shown.join("\n")
     }
 
@@ -699,10 +693,9 @@ fn check_refusal<'a>(
     {
         return None;
     }
-    result
-        .get("error")
-        .and_then(Value::as_str)
-        .filter(|text| text.contains("gives away"))
+    result.get("error").and_then(Value::as_str).filter(|text| {
+        text.contains("gives away") || text.contains("`lead_in` must not contain a question mark")
+    })
 }
 
 /// A call as it may be published: a pose's input withheld whole, since its

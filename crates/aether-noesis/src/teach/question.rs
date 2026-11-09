@@ -41,6 +41,7 @@ pub fn author(
     visible_text: &str,
 ) -> Result<Authored, Vec<String>> {
     let mut problems = Vec::new();
+    check_lead_in(args, &mut problems);
     if let Some(node) = &args.plan_node {
         match plan {
             None => problems.push("`plan_node` needs a plan; call noesis.plan first".to_string()),
@@ -86,6 +87,27 @@ pub fn author(
         Ok(authored)
     } else {
         Err(problems)
+    }
+}
+
+fn check_lead_in(args: &AskArgs, problems: &mut Vec<String>) {
+    let Some(lead_in) = &args.lead_in else {
+        return;
+    };
+    if lead_in
+        .chars()
+        .any(|character| matches!(character, '?' | '？' | '¿'))
+    {
+        problems.push("`lead_in` must not contain a question mark; rewrite it as an explanation and put the question in `prompt`".to_string());
+    }
+    let card_text = format!("{lead_in}\n\n{}", args.prompt);
+    if key_overlap(args, &card_text).is_some()
+        || Sealer::new(args.explanation.iter()).holds(&card_text)
+    {
+        problems.push(
+            "the combined lead-in and prompt gives away the answer or explanation; rewrite them"
+                .to_string(),
+        );
     }
 }
 

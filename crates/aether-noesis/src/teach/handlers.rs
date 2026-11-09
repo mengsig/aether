@@ -648,7 +648,10 @@ fn make_question(
     let posed = Question {
         id: id.to_string(),
         kind: args.kind,
-        prompt: args.prompt.clone(),
+        prompt: match args.lead_in.as_deref().map(str::trim) {
+            Some(lead_in) if !lead_in.is_empty() => format!("{lead_in}\n\n{}", args.prompt),
+            _ => args.prompt.clone(),
+        },
         options,
         multi: authored.multi,
         collapsed,

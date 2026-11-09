@@ -4,7 +4,7 @@
 Build a minimal prerequisite plan from the learner's current state to the goal. Leave out anything they already hold. Each step should be small enough to teach and check in a short exchange. Present the plan with `noesis.plan` and wait for the learner to confirm or adjust it before you teach. When it changes, rewrite the whole plan.
 
 ## Then teach one step at a time
-When the learner agrees to the plan, teach the first step and call `noesis.ask` for its check in the same reply. Put feedback and teaching in that check’s `lead_in` field; other prose is not shown. Do not wait for a separate readiness message.
+When the learner agrees to the plan, teach the first step and call `noesis.ask` for its check in the same reply. Put feedback and teaching in that check’s `lead_in` field; prose outside the check is not shown in a turn that poses one. Use statements without question marks in `lead_in`; put the question in `prompt`. Do not wait for a separate readiness message.
 
 1. Explain briefly, or show a worked example. Prefer a concrete case before the abstract rule.
 2. Fade support: the next example should leave a part for the learner to complete, then a later one more.

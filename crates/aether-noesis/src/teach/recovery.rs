@@ -29,7 +29,7 @@ fn teaching_with_an_overlapping_check_is_retried_as_a_lesson() {
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingLearner);
     assert_eq!(report.steps.len(), 1);
-    assert!(report.steps[0].text.is_empty());
+    assert_eq!(report.steps[0].text, lesson);
     assert!(report.steps[0].calls.is_empty());
     assert!(session(&t, &id).open_question.is_none());
     assert_eq!(t.engine().reminders, 1);

@@ -33,6 +33,20 @@ const reveal = (root: HTMLElement) => root.querySelector(".learn-reveal")?.textC
 const BUDGET = "noesis.budget.interactive_usd_daily: the interactive budget of $5.00 is spent for today";
 
 describe("grades", () => {
+  test("a check's introduction and question stay together on its card", async () => {
+    const h = await start({ transcripts: {} });
+    const root = await open(h);
+    h.daemon.pose(LESSON.id, { ...VOTE_QUESTION, question: {
+      ...VOTE_QUESTION.question,
+      prompt: "A turn is a rotation.\n\nHow many degrees are in a half turn?",
+    } });
+    await h.settle(SETTLE_MS);
+    const card = $(root, ".learn-q[data-state=open]");
+    expect(card.textContent).toContain("A turn is a rotation.");
+    expect(card.textContent).toContain("How many degrees are in a half turn?");
+    expect(root.querySelector('.learn-bubble[data-role="teacher"]')?.textContent ?? "").not.toContain("A turn is a rotation.");
+  });
+
   test("a right answer shows its grade from the session reread, with no answer event", async () => {
     const h = await start();
     h.daemon.answerEvents = false;

@@ -176,6 +176,7 @@ fn a_learner_message_after_a_passed_check_can_still_receive_a_plain_reply() {
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingLearner);
     assert_eq!(report.steps.len(), 1);
+    assert_eq!(report.steps[0].text, "Here is an explanation.");
 }
 
 #[test]
@@ -248,7 +249,7 @@ fn a_reply_whose_plan_shows_its_own_key_is_discarded_in_either_order() {
             .script(Agent::Teacher, "Let us rethink.", vec![]);
         let report = t.advance(&id).unwrap().remove(0);
         assert_eq!(t.engine().reminders, turn + 1, "{report:?}");
-        assert!(report.steps[0].text.is_empty());
+        assert_eq!(report.steps[0].text, "Let us rethink.");
         assert!(report.steps[0].calls.is_empty(), "{report:?}");
         assert!(session(&t, &id).open_question.is_none());
     }
@@ -363,7 +364,7 @@ fn the_models_option_values_never_reach_a_reader_so_text_cannot_name_the_key() {
     t.engine_mut().script(Agent::Teacher, "Rethinking.", vec![]);
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(t.engine().reminders, 1, "{report:?}");
-    assert!(report.steps[0].text.is_empty(), "{report:?}");
+    assert_eq!(report.steps[0].text, "Rethinking.", "{report:?}");
     assert!(session(&t, &id).open_question.is_none());
 
     let clean = json!({"nodes": [{"id": "pick", "title": "Capitals"}], "edges": []});
@@ -556,7 +557,7 @@ fn a_numeric_key_shown_with_a_unit_before_the_pose_is_refused() {
     );
     teacher.script(Agent::Teacher, "Roughly 42.", vec![]);
     let report = t.advance(&id).unwrap().remove(0);
-    assert!(report.steps[0].text.is_empty());
+    assert_eq!(report.steps[0].text, "It comes to 42 kg.");
 
     let teacher = t.engine_mut();
     teacher.script(
@@ -634,7 +635,7 @@ fn a_malformed_sibling_call_does_not_hide_its_reply_s_leak() {
     t.engine_mut().script(Agent::Teacher, "Again.", vec![]);
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(t.engine().reminders, 1, "{report:?}");
-    assert!(report.steps[0].text.is_empty());
+    assert_eq!(report.steps[0].text, "Again.");
     assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
 }
 
@@ -855,8 +856,11 @@ fn prose_beside_a_card_never_asks_a_different_question() {
         let report = t.advance(&id).unwrap().remove(0);
         assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
         let shown: Vec<&str> = report.steps.iter().map(|step| step.text.as_str()).collect();
-        assert_eq!(shown, [lesson], "{report:?}");
-        assert_eq!(session(&t, &id).open_question.unwrap().prompt, prompt);
+        assert_eq!(shown, [""], "{report:?}");
+        assert_eq!(
+            session(&t, &id).open_question.unwrap().prompt,
+            format!("{lesson}\n\n{prompt}")
+        );
         assert_eq!(answer_choice(&mut t, &id, &[right]).correct, Some(true));
     }
 }
@@ -936,9 +940,13 @@ fn an_accepted_check_at_the_step_limit_keeps_only_its_lead_in() {
             .iter()
             .all(|step| step.text.is_empty())
     );
-    assert_eq!(
-        report.steps.last().unwrap().text,
-        "A polygon has straight sides."
+    assert!(report.steps.last().unwrap().text.is_empty());
+    assert!(
+        session(&t, &id)
+            .open_question
+            .unwrap()
+            .prompt
+            .starts_with("A polygon has straight sides.\n\n")
     );
 }
 
@@ -980,21 +988,27 @@ fn teaching_publishes_only_text_from_the_accepted_check_attempt() {
         assert!(report.steps[0].text.is_empty());
         assert!(report.steps[1].text.is_empty());
         assert!(report.steps[1].calls[0].is_error);
-        assert_eq!(report.steps[2].text, "A half turn is half a full rotation.");
+        assert!(report.steps[2].text.is_empty());
+        assert_eq!(
+            session(&teaching, &id).open_question.unwrap().prompt,
+            "A half turn is half a full rotation.\n\nHow many degrees are in a half turn?"
+        );
         let agent = session(&teaching, &id).agent;
         let published: Vec<_> = teaching
             .engine()
             .inputs_of(&agent)
             .into_iter()
             .filter_map(|input| {
-                if let Input::AcceptedText(text) = input {
+                if let Input::StandaloneText(text) = input {
                     Some(text)
                 } else {
                     None
                 }
             })
             .collect();
-        assert_eq!(published, vec!["A half turn is half a full rotation."]);
+        assert!(published.iter().all(|text| !text.contains("A half turn")
+            && !text.contains("A discarded lesson")
+            && !text.contains(earlier)));
     }
 }
 
@@ -1011,4 +1025,36 @@ fn check_lead_in_cannot_reveal_its_answer_or_explanation() {
         assert!(result.result.is_error, "{leak}");
         assert!(session(&teaching, &id).open_question.is_none());
     }
+}
+
+#[test]
+fn lead_in_question_marks_receive_actionable_refusals() {
+    let (_dir, noesis) = fixture();
+    let mut teaching = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut teaching);
+    for mark in ['?', '？', '¿'] {
+        let mut card = capital_question();
+        card["lead_in"] = json!(format!("Another question{mark}"));
+        let result = call(&mut teaching, &id, ASK, card, "");
+        assert!(result.result.is_error);
+        assert!(
+            result.result.content["error"]
+                .as_str()
+                .unwrap()
+                .contains("rewrite it as an explanation")
+        );
+        assert!(session(&teaching, &id).open_question.is_none());
+    }
+}
+
+#[test]
+fn lead_in_and_prompt_cannot_combine_to_reveal_a_key() {
+    let (_dir, noesis) = fixture();
+    let mut teaching = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut teaching);
+    let mut card = recall("turn", "half turn");
+    card["lead_in"] = json!("half");
+    let result = call(&mut teaching, &id, ASK, card, "");
+    assert!(result.result.is_error);
+    assert!(session(&teaching, &id).open_question.is_none());
 }
