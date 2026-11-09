@@ -337,3 +337,51 @@ fn judgment_accepts_prompt_or_omitted_id_and_refuses_other_ids() {
         assert_eq!(result.correct, Some(true));
     }
 }
+
+#[test]
+fn teacher_judges_the_perimeter_answer_by_its_prompt_and_continues() {
+    const PROMPT: &str = "A rectangle has length 8 and width 3. What is its perimeter, and what calculation did you use?";
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let mut first = recall(
+        PROMPT,
+        "22 units; add all four sides: 8+3+8+3, or use 2(8+3).",
+    );
+    first["plan_node"] = json!("a");
+    t.engine_mut()
+        .script(Agent::Teacher, "", vec![(ASK, first)]);
+    assert_eq!(t.advance(&id).unwrap()[0].end, TurnEnd::AwaitingAnswer);
+    let question = session(&t, &id).open_question.unwrap().id;
+    t.answer(
+        &id,
+        &question,
+        &Answer {
+            text: Some("22 units, because 8 + 3 + 8 + 3 = 2(8 + 3) = 22.".into()),
+            ..Answer::default()
+        },
+    )
+    .unwrap();
+    let mut next = recall(
+        "A rectangle is 5 units long and 4 units wide. What is its area, and what unit would you use?",
+        "20 square units",
+    );
+    next["plan_node"] = json!("b");
+    t.engine_mut().script(
+        Agent::Teacher,
+        "",
+        vec![
+            (JUDGE, json!({"question": PROMPT, "correct": true})),
+            (ASK, next),
+        ],
+    );
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer);
+    assert!(report.steps[0].calls.iter().all(|call| !call.is_error));
+    let view = session(&t, &id);
+    assert_eq!(
+        view.questions[0].result.as_ref().unwrap().correct,
+        Some(true)
+    );
+    assert!(view.open_question.is_some());
+}
