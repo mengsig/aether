@@ -76,6 +76,7 @@ function CodePairing({ daemon }: { readonly daemon: Daemon }) {
       <Field label="Name for this device" value={name} onChange={(event) => setName(event.currentTarget.value)} required
         {...(nameError === null ? {} : { error: nameError })} />
       <Button type="submit" variant="primary" disabled={busy || code.trim() === ""}>{busy ? "Pairing…" : "Pair"}</Button>
+      {busy && <Button type="button" variant="quiet" onClick={() => flow.cancel()}>Cancel</Button>}
     </form>
   );
 }

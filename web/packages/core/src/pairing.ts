@@ -91,7 +91,36 @@ async function send(fetcher: typeof fetch, path: string, init: RequestInit, sign
   }
 }
 
-async function post(fetcher: typeof fetch, path: string, body: Json, signal: AbortSignal, credentials: RequestCredentials): Promise<Json> {
+const REQUEST_TIMEOUT_MS = 30_000;
+const expired = () => new Error("Pairing expired before host confirmation. Start a new pairing on the host.");
+
+async function bounded<T>(signal: AbortSignal, deadline: number, reason: Error, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  invariant(Number.isFinite(deadline), "pairing deadline is finite");
+  const controller = new AbortController();
+  const abort = () => controller.abort(signal.reason);
+  if (signal.aborted) abort();
+  else signal.addEventListener("abort", abort, { once: true });
+  const timer = setTimeout(() => controller.abort(reason), Math.max(0, deadline - Date.now()));
+  let rejectAbort: (reason: unknown) => void = () => {};
+  const interrupted = new Promise<never>((_, reject) => { rejectAbort = reject; });
+  const interrupt = () => rejectAbort(controller.signal.reason);
+  controller.signal.addEventListener("abort", interrupt, { once: true });
+  try {
+    if (controller.signal.aborted) throw controller.signal.reason;
+    if (Date.now() >= deadline) throw reason;
+    const result = await Promise.race([run(controller.signal), interrupted]);
+    if (controller.signal.aborted) throw controller.signal.reason;
+    if (Date.now() >= deadline) throw reason;
+    return result;
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", abort);
+    controller.signal.removeEventListener("abort", interrupt);
+    if (!controller.signal.aborted && Date.now() >= deadline) controller.abort(reason);
+  }
+}
+
+async function postResponse(fetcher: typeof fetch, path: string, body: Json, signal: AbortSignal, credentials: RequestCredentials): Promise<Json> {
   invariant(path.startsWith("/"), "pairing posts to a path of this origin");
   const response = await send(fetcher, path, { method: "POST", credentials, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }, signal);
   invariant(Number.isSafeInteger(response.status), "a response has an HTTP status");
@@ -106,6 +135,12 @@ async function post(fetcher: typeof fetch, path: string, body: Json, signal: Abo
   const retryAfter = response.status === 429 && Number.isSafeInteger(retry) && retry > 0 && retry <= 3600 ? retry : undefined;
   const text = pairingMessage(code, typeof message === "string" ? message : "", retryAfter);
   throw new DaemonError(code, text, retryAfter ? { retry_after: retryAfter } : {});
+}
+
+function post(fetcher: typeof fetch, path: string, body: Json, signal: AbortSignal, credentials: RequestCredentials): Promise<Json> {
+  return bounded(signal, Date.now() + REQUEST_TIMEOUT_MS,
+    new Error("The pairing request timed out. Check the connection and try again."),
+    (requestSignal) => postResponse(fetcher, path, body, requestSignal, credentials));
 }
 
 function pause(ms: number, signal: AbortSignal): Promise<void> {
@@ -128,20 +163,23 @@ export function aetherPairing(identities: IdentityStore, fetcher: typeof fetch =
     const fingerprint = string(claim.fingerprint, "claim.fingerprint");
     if (fingerprint !== expected) throw new Error("Pairing fingerprint does not match this browser key");
     const deadline = Math.min(Date.parse(string(claim.expires_at, "claim.expires_at")), Date.now() + 300_000);
-    if (!Number.isFinite(deadline) || deadline <= Date.now()) throw new Error("Pairing code has expired");
-    progress({ phrase: string(claim.phrase, "claim.phrase"), fingerprint });
-    while (Date.now() < deadline) {
-      await pause(pollMs, signal);
-      const status = await post(fetcher, "/api/pair/status", { pairing: string(claim.pairing, "claim.pairing") }, signal, "omit");
-      const state = string(status.state, "pairing state");
-      if (state === "claimed") continue;
-      if (state !== "enrolled") throw new Error(`${own(ENDED, state) ?? `The pairing ended as ${state}.`} Start a new pairing on the host to try again.`);
-      const device = object(status.device, "enrolled device");
-      if (device.role !== "operator" && device.role !== "observer") throw new Error("Invalid enrolled role");
-      await identities.save({ ...identity, deviceId: string(device.id, "device id"), name: string(device.name, "device name"), role: device.role });
-      return device;
-    }
-    throw new Error("Pairing expired before host confirmation");
+    if (!Number.isFinite(deadline) || deadline <= Date.now()) throw expired();
+    return bounded(signal, deadline, expired(), async (confirmationSignal) => {
+      progress({ phrase: string(claim.phrase, "claim.phrase"), fingerprint });
+      while (true) {
+        await pause(pollMs, confirmationSignal);
+        const status = await post(fetcher, "/api/pair/status", { pairing: string(claim.pairing, "claim.pairing") }, confirmationSignal, "omit");
+        if (confirmationSignal.aborted) throw confirmationSignal.reason;
+        if (Date.now() >= deadline) throw expired();
+        const state = string(status.state, "pairing state");
+        if (state === "claimed") continue;
+        if (state !== "enrolled") throw new Error(`${own(ENDED, state) ?? `The pairing ended as ${state}.`} Start a new pairing on the host to try again.`);
+        const device = object(status.device, "enrolled device");
+        if (device.role !== "operator" && device.role !== "observer") throw new Error("Invalid enrolled role");
+        await identities.save({ ...identity, deviceId: string(device.id, "device id"), name: string(device.name, "device name"), role: device.role });
+        return device;
+      }
+    });
   };
 }
 
@@ -178,7 +216,7 @@ export class PairingFlow {
     const abort = (this.abort = new AbortController());
     this.set({ phase: "claiming" });
     try {
-      const device = await this.run(code, name, (p) => this.set({ phase: "confirm", ...p }), abort.signal);
+      const device = await this.run(code, name, (p) => { if (!abort.signal.aborted) this.set({ phase: "confirm", ...p }); }, abort.signal);
       if (abort.signal.aborted) return;
       this.set({ phase: "paired", device });
       this.onPaired();
@@ -191,6 +229,7 @@ export class PairingFlow {
 
   cancel(): void {
     this.abort?.abort(new Error("Pairing cancelled"));
+    this.abort = null;
     this.set({ phase: "idle" });
   }
 
