@@ -1,4 +1,4 @@
-//! Forward isolated engine text while retaining final receipt accounting.
+//! Publish the final isolated engine response with receipt accounting.
 
 use aether_core::model::{BlockStart, ModelError, ModelErrorClass, ModelRequest, StreamEvent};
 use aether_engine::{EngineEvent, EngineRun, EngineTurn};
@@ -69,7 +69,7 @@ async fn produce(
     let turn = checkpoint_turn(client.turn.clone(), &request);
     let run = tokio::time::timeout(
         client.timeout,
-        collect(&client, turn, &cancel, &mut accounting, &mut output),
+        collect(&client, turn, &cancel, &mut accounting),
     );
     let result = tokio::select! {
         result = run => result.unwrap_or_else(|_| Err(ModelError::new(ModelErrorClass::Timeout, format!("{} engine timed out", client.purpose)))),
@@ -106,7 +106,6 @@ async fn collect(
     turn: EngineTurn,
     cancel: &CancellationToken,
     accounting: &mut Accounting,
-    output: &mut TextOutput,
 ) -> Result<String, ModelError> {
     debug_assert!(turn.session.is_none());
     debug_assert!(accounting.usage.is_none());
@@ -125,6 +124,7 @@ async fn collect(
         failure(error.to_string())
     })?;
     let mut final_text = String::new();
+    let mut streamed_text = String::new();
     let mut deadline = tokio::time::Instant::now() + IDLE_TIMEOUT;
     loop {
         let event = match tokio::time::timeout_at(deadline, run.events.recv()).await {
@@ -139,8 +139,15 @@ async fn collect(
         if is_progress(&event) {
             deadline = tokio::time::Instant::now() + IDLE_TIMEOUT;
         }
-        if let Some(text) =
-            observe(event, &run, client, accounting, output, &mut final_text).await?
+        if let Some(text) = observe(
+            event,
+            &run,
+            client,
+            accounting,
+            &mut streamed_text,
+            &mut final_text,
+        )
+        .await?
         {
             return Ok(text);
         }
@@ -215,7 +222,7 @@ async fn observe(
     run: &EngineRun,
     client: &CompactionClient,
     accounting: &mut Accounting,
-    output: &mut TextOutput,
+    streamed_text: &mut String,
     final_text: &mut String,
 ) -> Result<Option<String>, ModelError> {
     debug_assert!(
@@ -224,15 +231,16 @@ async fn observe(
     );
     debug_assert!(!client.purpose.is_empty());
     match event {
-        EngineEvent::Delta(StreamEvent::TextDelta { text, .. }) => output.append(&text).await?,
+        EngineEvent::Delta(StreamEvent::TextDelta { text, .. }) => streamed_text.push_str(&text),
         EngineEvent::Delta(StreamEvent::BlockStart {
             block: BlockStart::Text { text },
             ..
-        }) => output.append(&text).await?,
+        }) => streamed_text.push_str(&text),
         EngineEvent::Assistant { content, usage, .. } => {
             let text = aether_core::model::text_of(&content);
             if !text.trim().is_empty() {
                 *final_text = text;
+                streamed_text.clear();
             }
             if let Some(usage) = usage {
                 accounting.reported(usage);
@@ -254,8 +262,8 @@ async fn observe(
         }
         EngineEvent::Done(outcome) => {
             accounting.close(&outcome);
-            if final_text.is_empty() {
-                final_text.clone_from(&output.text);
+            if !streamed_text.is_empty() {
+                final_text.clone_from(streamed_text);
             }
             return Ok(Some(checkpoint_result(
                 outcome,

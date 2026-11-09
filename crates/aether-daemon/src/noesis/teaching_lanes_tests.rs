@@ -252,6 +252,42 @@ async fn two_timeouts_stall_the_session_and_retry_can_recover() {
     harness.close().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn engine_failure_stalls_visibly_and_retry_can_recover() {
+    let home = Home::new();
+    let client = Arc::new(ScriptedClient::new());
+    client.push(Err(ModelError::new(
+        aether_core::model::ModelErrorClass::Unknown,
+        "engine failed",
+    )));
+    client.push(ScriptedClient::tool_call(ASK, capital_question()));
+    let harness = Harness::open(&home, client.clone()).await;
+    harness.configure(teaching_on(|_| {})).await;
+    let created = harness.create(json!({})).await;
+    harness.settled().await;
+    let stalled = harness.session(&created.id).await.unwrap();
+    assert_eq!(
+        stalled.stalled.unwrap().reason,
+        aether_core::noesis::StallReason::EngineStalled
+    );
+    assert!(!harness.daemon.runtime.turn_in_flight(created.agent));
+    assert!(
+        harness
+            .events()
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::NoesisSessionStalled { .. }))
+    );
+    harness
+        .send_json(json!({"cmd": "noesis_retry_turn", "session": created.id}))
+        .await
+        .expect("retry");
+    let resumed = harness.posed(&created.id).await;
+    harness.settled().await;
+    assert!(resumed.stalled.is_none());
+    assert_eq!(client.requests().len(), 2);
+    harness.close().await;
+}
+
 async fn assert_configure_saves_promptly(harness: &Harness) {
     let change = Command::NoesisConfigure {
         patch: NoesisSettingsPatch {

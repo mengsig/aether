@@ -371,6 +371,107 @@ mod tests {
         caller: CancellationToken,
     }
 
+    struct RevisedEngine {
+        delta_only_final: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl Engine for RevisedEngine {
+        fn kind(&self) -> EngineKind {
+            EngineKind::CLAUDE_CODE
+        }
+
+        fn adapter(&self) -> String {
+            "revised-fixture".into()
+        }
+
+        async fn run(
+            &self,
+            _turn: EngineTurn,
+            _cancel: CancellationToken,
+        ) -> Result<EngineRun, EngineError> {
+            let (tx, events) = mpsc::channel(8);
+            for (index, text) in ["intermediate reply", "final reply"]
+                .into_iter()
+                .enumerate()
+            {
+                tx.send(EngineEvent::Delta(StreamEvent::TextDelta {
+                    index: 0,
+                    text: text.into(),
+                }))
+                .await
+                .unwrap();
+                if index == 0 || !self.delta_only_final {
+                    tx.send(EngineEvent::Assistant {
+                        content: vec![aether_core::model::ContentBlock::Text { text: text.into() }],
+                        usage: None,
+                        model: None,
+                    })
+                    .await
+                    .unwrap();
+                }
+            }
+            tx.send(EngineEvent::Done(EngineOutcome {
+                text: (!self.delta_only_final).then(|| "final reply".into()),
+                closing_accounting: true,
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+            Ok(EngineRun {
+                events,
+                input: None,
+                decisions: None,
+                stop: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn noesis_publishes_only_the_final_revised_engine_reply() {
+        for delta_only_final in [false, true] {
+            assert_final_revision(delta_only_final).await;
+        }
+    }
+
+    async fn assert_final_revision(delta_only_final: bool) {
+        let client = StreamingClient(CompactionClient {
+            context: aether_engine::EngineLaunchContext {
+                run_id: aether_core::id::RunId::new(),
+                agent_id: aether_core::id::AgentId::new(),
+                task_id: None,
+                spawns: Default::default(),
+            },
+            pricing: TurnPricing::default(),
+            purpose: "Noesis",
+            timeout: CHECKPOINT_TIMEOUT,
+            session_pricing: None,
+            engine: Arc::new(RevisedEngine { delta_only_final }),
+            turn: fixture_turn(),
+        });
+        let request = ModelRequest::new(
+            ModelRef::new("codex", "luna"),
+            vec![Message::user_text("teach")],
+        );
+        let stream = client
+            .stream(request, CancellationToken::new())
+            .await
+            .unwrap();
+        let mut observed = String::new();
+        let response = aether_model::collect_partial(stream, |event| {
+            if let StreamEvent::TextDelta { text, .. } = event {
+                observed.push_str(text);
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(observed, "final reply");
+        assert_eq!(
+            aether_core::model::text_of(&response.content),
+            "final reply"
+        );
+    }
+
     #[async_trait::async_trait]
     impl Engine for CheckpointEngine {
         fn kind(&self) -> EngineKind {

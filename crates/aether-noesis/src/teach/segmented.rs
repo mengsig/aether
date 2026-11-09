@@ -102,10 +102,10 @@ impl<E: Engine> Teaching<'_, E> {
             return progressed;
         }
         let error = progressed.as_ref().err();
-        if matches!(error, Some(TeachError::Engine(EngineError::Stalled(_)))) {
-            self.stall_engine(&advance.session)?;
-        } else if let Some(message) = error.and_then(budget_stall) {
+        if let Some(message) = error.and_then(budget_stall) {
             self.stall_session(&advance.session, message)?;
+        } else if matches!(error, Some(TeachError::Engine(_))) {
+            self.stall_engine(&advance.session)?;
         } else {
             history::clear_stall(self.conn(), &advance.session)?;
         }
