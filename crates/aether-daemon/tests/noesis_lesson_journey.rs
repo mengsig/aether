@@ -610,7 +610,7 @@ async fn j3_an_ended_extraction_reaches_a_noesis_subscriber_typed_and_the_graph_
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn recall_judgment_survives_restart_and_duplicate_calls() {
     let mut home = Home::start("").await;
     home.enable().await;
@@ -620,8 +620,9 @@ async fn recall_judgment_survives_restart_and_duplicate_calls() {
         "A question.",
         "noesis_ask",
         json!({
-            "kind": "recall", "prompt": "What is the capital of France?",
-            "answer_key": "Paris", "explanation": "Paris is the capital."
+            "kind": "recall", "intent": "predict", "prompt": "What is the capital of France?",
+            "answer_key": "Paris", "explanation": "Paris is the capital.",
+            "concepts": ["Learn geography"]
         }),
     );
     let created = home.create_session("teach", "Learn geography").await;
@@ -659,6 +660,7 @@ async fn recall_judgment_survives_restart_and_duplicate_calls() {
             .iter()
             .any(|request| request.to_string().contains("London"))
     );
+    wait_for_learner_update(&mut home).await;
     home = home.restart().await;
     let restored = home.session(&id).await;
     assert_recall_evidence(&mut home).await;
@@ -669,11 +671,27 @@ async fn recall_judgment_survives_restart_and_duplicate_calls() {
     );
 }
 
+async fn wait_for_learner_update(home: &mut Home) {
+    for _ in 0..400 {
+        let learner = home
+            .ok(json!({"cmd": "noesis_learner", "query": "Learn geography"}))
+            .await;
+        if learner["concepts"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty())
+        {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("recall evidence was not published before restart");
+}
+
 async fn assert_recall_evidence(home: &mut Home) {
     let learner = home
         .ok(json!({"cmd": "noesis_learner", "query": "Learn geography"}))
         .await;
-    let concept = learner["concepts"][0]["id"]
+    let concept = learner["concepts"][0]["concept"]["id"]
         .as_str()
         .expect("a learner concept");
     let evidence = home

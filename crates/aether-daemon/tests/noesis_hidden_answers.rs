@@ -422,7 +422,12 @@ async fn h1_an_open_question_s_key_is_hidden_from_every_reader_until_answered() 
     home.ok(answer).await;
     home.requests_reach(asked + 2).await;
     let recorded = noesis_events(&mut home, "noesis.answer_recorded").await;
-    assert_eq!(recorded.len(), 1, "one answer recorded: {recorded:?}");
+    assert_eq!(
+        recorded.len(),
+        2,
+        "answer and judgment recorded: {recorded:?}"
+    );
+    assert_eq!(recorded[1]["kind"]["payload"]["result"]["correct"], true);
     let revealed = recorded[0].to_string();
     assert!(
         revealed.contains(&key) && revealed.contains(&explanation),

@@ -36,6 +36,7 @@ fn refused_commands() -> Vec<Value> {
     vec![
         json!({"cmd": "noesis_create_session", "goal": "Learn limits", "mode": "teach", "idempotency_key": "k1"}),
         json!({"cmd": "noesis_send", "session": "ns_x", "text": "hello", "idempotency_key": "k2"}),
+        json!({"cmd": "noesis_retry_turn", "session": "ns_x", "idempotency_key": "retry-1"}),
         json!({"cmd": "noesis_answer", "session": "ns_x", "question": "q_x", "answer": {"dont_know": true}, "idempotency_key": "k3"}),
         json!({"cmd": "noesis_get_session", "session": "ns_x"}),
         json!({"cmd": "noesis_list_sessions"}),
