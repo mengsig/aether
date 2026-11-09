@@ -25,9 +25,9 @@ mod streaming;
 #[path = "engine_step_text.rs"]
 mod text;
 
-/// A step tries the engine twice: one corrective retry when a reply is not
-/// the JSON object asked for. Each attempt is gated and charged on its own.
-pub(super) const ATTEMPTS: usize = 2;
+/// Two attempts for a step, followed by one retry of the failed step.
+/// Each malformed reply is discarded, gated and charged independently.
+pub(super) const ATTEMPTS: usize = 4;
 
 const MALFORMED_REPLY: &str = "the engine's reply was not the JSON object asked for";
 
@@ -106,6 +106,7 @@ fn protocol(tools: &[ToolSpec]) -> String {
          use it to assess their reasoning. An answered recall question includes its \
          expected answer in the tool result.\n\
          - Put `text` first, as a JSON string, so the learner can read it as you generate it.\n\
+         - Escape double quotes, backslashes and line breaks inside JSON strings.\n\
          - Each `input` follows its tool's input schema below.\n\
          - What the learner must not see yet (an answer key, an explanation, a solution) \
          goes only in a tool's input, never in `text`.\n\n## Tools\n",

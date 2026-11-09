@@ -344,9 +344,8 @@ impl AetherEngine<'_> {
         })
     }
 
-    /// One reply to `request`, retried once with a corrective note when an
-    /// engine's reply is not the object asked for; each attempt is gated,
-    /// and what it spent is added to the agent's admission.
+    /// Retry malformed replies with a corrective note, including one retry
+    /// of a failed step. Each attempt is gated and its spend recorded.
     fn reply(
         &mut self,
         row: &Agent,
@@ -621,6 +620,12 @@ impl Engine for AetherEngine<'_> {
                     self.record_spend(&row, spent)?;
                 }
                 with_note(&mut request.messages, reminder);
+                request
+                    .tools
+                    .retain(|tool| !matches!(tool.name.as_str(), "noesis_ask" | "noesis_problem"));
+                debug_assert!(request.tools.iter().all(|tool| {
+                    !matches!(tool.name.as_str(), "noesis_ask" | "noesis_problem")
+                }));
             }
             let response = self.reply(&row, &mut request)?;
             unrecorded = Some(response.usage);

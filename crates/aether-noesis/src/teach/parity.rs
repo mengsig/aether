@@ -271,6 +271,36 @@ fn t04_an_invalid_pose_returns_an_error_and_the_model_may_retry() {
 }
 
 #[test]
+fn a_practitioner_refuses_a_graph_write_and_continues() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Practise sums", Mode::Practice, &[])
+        .unwrap()
+        .id;
+    let available = tools::tools_for(Agent::Practitioner);
+    assert!(available.contains(&tools::ToolName::GraphSearch));
+    assert!(
+        !available
+            .iter()
+            .any(|tool| tool.as_str().contains("extract"))
+    );
+    t.engine_mut().script(
+        Agent::Practitioner,
+        "",
+        vec![("noesis.extract", json!({"session": id}))],
+    );
+    let problem = json!({"statement": "Add two and three.", "mode": "recall", "solution": "five"});
+    t.engine_mut()
+        .script(Agent::Practitioner, "", vec![(PROBLEM, problem)]);
+    let report = t.advance(&id).unwrap().remove(0);
+    assert!(report.steps[0].calls[0].is_error);
+    assert!(!report.steps[1].calls[0].is_error);
+    assert_eq!(report.end, TurnEnd::AwaitingLearner);
+    assert!(session(&t, &id).active_problem.is_some());
+}
+
+#[test]
 fn t05_question_authoring_reports_every_problem() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
@@ -369,7 +399,8 @@ fn rekey_preserves_the_correct_option_in_both_orders_and_id_bases() {
                 .iter()
                 .find(|option| option.label == "Circle")
                 .unwrap();
-            assert_eq!(key, [square.value.clone()]);
+            assert_eq!(key.len(), 1);
+            assert_eq!(key[0], square.value);
             let posed = question::Posed {
                 kind: QuestionKind::Choice,
                 multi: false,

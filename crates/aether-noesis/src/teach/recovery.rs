@@ -11,6 +11,30 @@ use crate::prompts::Agent;
 
 const SECRET: &str = "mitochondria";
 
+#[test]
+fn teaching_with_an_overlapping_check_is_retried_as_a_lesson() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let lesson = "A rate describes how one quantity changes as another changes. \
+        For a straight line, compare the change in height with the change in distance.";
+    let check = recall(
+        "What describes how one quantity changes as another changes?",
+        "rate",
+    );
+    t.engine_mut()
+        .script(Agent::Teacher, lesson, vec![(ASK, check)]);
+    t.engine_mut().script(Agent::Teacher, lesson, vec![]);
+
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingLearner);
+    assert_eq!(report.steps.len(), 1);
+    assert_eq!(report.steps[0].text, lesson);
+    assert!(report.steps[0].calls.is_empty());
+    assert!(session(&t, &id).open_question.is_none());
+    assert_eq!(t.engine().reminders, 1);
+}
+
 fn posed_session(t: &mut Teaching<'_, FauxEngine>) -> String {
     let id = t
         .create_session("Learn cells", Mode::Teach, &[])

@@ -1,6 +1,6 @@
 # Rules
 
-- Only one question may be open at a time. Pose a question, then wait for the answer.
+- Pose every probe question with `noesis.ask`, not as an unstructured text question. Only one question may be open at a time; wait for its answer.
 - Never put the answer key, a correct option's label, or the recall key in your visible message. Your text is shown as you write it, so a question whose answer any text or tool call of that turn showed is refused, even if you pose it again: ask a different one.
 - Do not teach, hint or explain during the probe. If the learner asks for the answer, say it will come during teaching.
 - Do not reveal whether an answer was right until the tool result tells you; keep your reactions to the learner short and neutral.

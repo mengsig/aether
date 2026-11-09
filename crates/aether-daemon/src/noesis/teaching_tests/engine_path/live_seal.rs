@@ -62,6 +62,9 @@ async fn a_reply_giving_its_own_key_away_is_discarded_and_made_again() {
     assert_never_kept(&harness, prober, KEY);
     assert_never_kept(&harness, prober, "Hint:");
     assert_eq!(reminded(&cli), 1, "the retry was told why");
+    let launches = cli.launches();
+    assert!(launches[0].system.contains("### noesis_ask"));
+    assert!(!launches[1].system.contains("### noesis_ask"));
     harness.close().await;
 }
 
@@ -184,6 +187,15 @@ async fn a_reply_naming_a_live_solution_is_discarded() {
     assert!(transcript.contains("Over to you."), "{transcript}");
     assert!(!transcript.contains("Let me look."), "{transcript}");
     assert_eq!(reminded(&cli), 1);
+    let launches = cli.launches();
+    assert!(launches[0].system.contains("### noesis_problem"));
+    assert!(
+        !launches
+            .last()
+            .unwrap()
+            .system
+            .contains("### noesis_problem")
+    );
     harness.close().await;
 }
 
@@ -327,5 +339,53 @@ async fn a_malformed_attempt_shows_nothing_and_its_retry_poses() {
         "the retry's question opened"
     );
     assert_never_kept(&harness, prober, KEY);
+    harness.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_step_is_retried_after_two_malformed_replies() {
+    let home = Home::new();
+    let cli = Arc::new(FauxCli::default());
+    let broken = format!(r#"{{"text": "It is {KEY}.", "tool_calls": [{{"name": "noesis_ask""#);
+    for _ in 0..2 {
+        cli.queue("prober", Value::String(broken.clone()));
+    }
+    cli.queue(
+        "prober",
+        json!({"text": "Your turn:", "tool_calls": [tool_call("noesis_ask", ask())]}),
+    );
+    let harness = engine_harness(&home, cli.clone()).await;
+    let created = harness.create(json!({})).await;
+    harness.settled().await;
+    let session = harness.session(&created.id).await.expect("session");
+    assert!(
+        session.open_question.is_some(),
+        "the retried step posed a question"
+    );
+    assert_eq!(cli.launches().len(), 3, "the failed step was retried once");
+    assert_never_kept(&harness, agent_of(&created), KEY);
+    harness.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repeated_malformed_replies_stop_after_the_bounded_step_retry() {
+    let home = Home::new();
+    let cli = Arc::new(FauxCli::default());
+    for _ in 0..4 {
+        cli.queue("prober", Value::String(format!(r#"{{"text":"{KEY}"#)));
+    }
+    let harness = engine_harness(&home, cli.clone()).await;
+    let created = harness.create(json!({})).await;
+    harness.settled().await;
+    assert_eq!(cli.launches().len(), 4, "only one failed step retry");
+    assert!(
+        harness
+            .session(&created.id)
+            .await
+            .unwrap()
+            .open_question
+            .is_none()
+    );
+    assert_never_kept(&harness, agent_of(&created), KEY);
     harness.close().await;
 }

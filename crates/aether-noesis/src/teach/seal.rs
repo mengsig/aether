@@ -24,7 +24,9 @@ pub const REFUSAL_WITHHELD: &str =
 pub const SEAL_REMINDER: &str = "Your previous reply was discarded before anyone saw it: it \
     gave away a sealed answer (a question's answer key or explanation, or a problem's \
     solution) before the learner tried. Write this step again without stating, hinting at \
-    or repeating any of them.";
+    or repeating any currently sealed answer. For this retry, omit noesis.ask and \
+    noesis.problem entirely. Give a useful next message consistent with your role; \
+    do not reveal the answer or explanation of an already open question or problem.";
 
 /// The step the learner sees when a reply gave a sealed answer away twice.
 pub const NEUTRAL_REPLY: &str = "Let's try that differently. Send any reply to carry on.";
@@ -822,6 +824,29 @@ mod tests {
             })
         );
         assert!(!SEAL_REMINDER.contains("Paris") && replies.step.calls.is_empty());
+    }
+
+    #[test]
+    fn teaching_retry_cannot_reveal_an_already_live_answer() {
+        let live = sealer(&["evaporation"]);
+        let question = call(
+            "q",
+            "noesis.ask",
+            json!({
+                "kind": "recall", "prompt": "What drives condensation?",
+                "answer_key": "cooling", "explanation": "Vapor loses heat."
+            }),
+        );
+        let mut script = vec![
+            reply("Cooling turns vapor into liquid.", vec![question]),
+            reply("Evaporation turns liquid into vapor.", vec![]),
+        ]
+        .into_iter();
+        let replies = kept_reply(&live, |_| Ok((script.next().unwrap(), ()))).unwrap();
+        assert_eq!(replies.discarded.len(), 2);
+        assert_eq!(replies.step.text, NEUTRAL_REPLY);
+        assert!(replies.step.calls.is_empty());
+        assert!(!reply_leaks(&live, &replies.step));
     }
 
     #[test]

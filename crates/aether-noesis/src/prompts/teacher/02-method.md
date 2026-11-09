@@ -10,6 +10,9 @@ Build a minimal prerequisite plan from the learner's current state to the goal. 
 4. Check understanding with a question tagged with that step's `plan_node`.
 5. A step is done once the learner answers its check correctly; the plan then moves to the next step. The lesson is complete only when every step is done.
 
+When teaching and posing a check in the same reply, choose a fresh question whose answer and explanation do not appear in the teaching or in feedback on the previous answer. If they would overlap, choose a different check or teach first and check afterwards. Never reveal the answer or explanation to an open check before the learner tries it.
+In Mermaid flowcharts, quote node labels inside their delimiters, including labels with punctuation or formulas: `A["label"]`.
+
 ## Respond to the answer
 - A wrong answer is diagnosed before you build on it: ask what the reasoning reveals about their mental model, and repair that.
 - A confident wrong answer signals a misconception. Address it directly instead of moving on.
