@@ -4,6 +4,11 @@ import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import type { DesktopBridge } from "@aether-ui/protocol";
 
+function required<T>(value: T | undefined): T {
+  assert.ok(value);
+  return value;
+}
+
 function preload() {
   const handlers = new Map<string, (...args: unknown[]) => void>();
   const pending: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
@@ -30,12 +35,12 @@ test("shared callbacks stay live until their final release, including repeated a
   const first = s.desktop.subscribe(conn, { cmd: "subscribe", req: 1 }, callback);
   const second = s.desktop.subscribe(conn, { cmd: "subscribe", req: 2 }, callback);
   s.emit("push", 1);
-  s.pending[0]!.resolve(); s.pending[1]!.resolve();
+  required(s.pending[0]).resolve(); required(s.pending[1]).resolve();
   const releaseFirst = await first; const releaseSecond = await second;
   releaseFirst(); releaseFirst();
   s.emit("push", 2);
   const third = s.desktop.subscribe(conn, { cmd: "subscribe", req: 3 }, callback);
-  s.pending[2]!.resolve();
+  required(s.pending[2]).resolve();
   const releaseThird = await third;
   releaseSecond();
   s.emit("push", 3);
@@ -50,13 +55,13 @@ test("failed subscribe and connection close remove holds even when subscribe is 
   const seen: unknown[] = [];
   const callback = (frame: unknown) => seen.push(frame);
   const failed = s.desktop.subscribe(conn, { cmd: "subscribe", req: 1 }, callback);
-  s.pending[0]!.reject(new Error("failed"));
+  required(s.pending[0]).reject(new Error("failed"));
   await assert.rejects(failed, /failed/);
   s.emit("push", 1);
   const pending = s.desktop.subscribe(conn, { cmd: "subscribe", req: 2 }, callback);
   s.emit("closed");
   s.emit("push", 2);
-  s.pending[1]!.resolve();
+  required(s.pending[1]).resolve();
   (await pending)();
   assert.deepEqual(seen, []);
 });
@@ -68,7 +73,7 @@ test("explicit close stops pushes while a subscribe is pending", async () => {
   const pending = s.desktop.subscribe(conn, { cmd: "subscribe", req: 1 }, () => { calls++; });
   await s.desktop.close(conn);
   s.emit("push", 1);
-  s.pending[0]!.resolve();
+  required(s.pending[0]).resolve();
   (await pending)();
   assert.equal(calls, 0);
 });

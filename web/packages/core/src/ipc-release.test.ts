@@ -1,10 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DesktopBridge } from "@aether-ui/protocol";
 import { ipcTransport } from "./transports/ipc.ts";
+import { invariant } from "./guards.ts";
+
+function required<T>(value: T | undefined): T {
+  invariant(value !== undefined, "test fixture exists");
+  return value;
+}
 
 function setup() {
   const callbacks: Array<(frame: unknown) => void> = [];
-  const releases: Array<ReturnType<typeof vi.fn>> = [];
+  const releases: Array<() => void> = [];
   const resolves: Array<(release: () => void) => void> = [];
   const requests = new Map<number, (frame: unknown) => void>();
   let closed = () => {};
@@ -35,20 +41,20 @@ describe("IPC subscription releases", () => {
     const link = await ipcTransport(s.desktop, vi.fn()).open("local", (f) => s.frames.push(f), s.onClose);
     link.send({ cmd: "subscribe", req: 1 });
     link.send({ cmd: "subscribe", req: 2 });
-    s.callbacks[0]!(reply(2, subscribed(20)));
-    s.callbacks[0]!(reply(1, subscribed(10)));
-    s.resolves[0]!(s.releases[0]!); s.resolves[1]!(s.releases[1]!);
+    required(s.callbacks[0])(reply(2, subscribed(20)));
+    required(s.callbacks[0])(reply(1, subscribed(10)));
+    required(s.resolves[0])(required(s.releases[0])); required(s.resolves[1])(required(s.releases[1]));
     await tick();
     for (let i = 0; i < 3; i++) {
       const req = 3 + i * 2;
       link.send({ cmd: "unsubscribe", req, id: 10 + i });
-      s.requests.get(req)!(reply(req, ok));
+      required(s.requests.get(req))(reply(req, ok));
       await tick();
       expect(s.releases[i === 0 ? 0 : i + 1]).toHaveBeenCalledTimes(1);
       expect(s.releases[1]).not.toHaveBeenCalled();
       link.send({ cmd: "subscribe", req: req + 1 });
-      s.callbacks[0]!(reply(req + 1, subscribed(11 + i)));
-      s.resolves[i + 2]!(s.releases[i + 2]!);
+      required(s.callbacks[0])(reply(req + 1, subscribed(11 + i)));
+      required(s.resolves[i + 2])(required(s.releases[i + 2]));
       await tick();
     }
     link.close();
@@ -60,16 +66,16 @@ describe("IPC subscription releases", () => {
     const s = setup();
     const link = await ipcTransport(s.desktop, vi.fn()).open("local", (f) => s.frames.push(f), s.onClose);
     link.send({ cmd: "subscribe", req: 1 });
-    s.callbacks[0]!(reply(1, subscribed(10)));
+    required(s.callbacks[0])(reply(1, subscribed(10)));
     link.send({ cmd: "unsubscribe", req: 2, id: 10 });
-    s.requests.get(2)!(reply(2, ok));
+    required(s.requests.get(2))(reply(2, ok));
     await tick();
-    s.resolves[0]!(s.releases[0]!);
+    required(s.resolves[0])(required(s.releases[0]));
     await tick();
     expect(s.releases[0]).toHaveBeenCalledTimes(1);
     link.send({ cmd: "subscribe_feed", req: 3 });
     s.closed();
-    s.resolves[1]!(s.releases[1]!);
+    required(s.resolves[1])(required(s.releases[1]));
     await tick();
     expect(s.releases[1]).toHaveBeenCalledTimes(1);
     expect(s.onClose).toHaveBeenCalledTimes(1);
@@ -81,15 +87,15 @@ describe("IPC subscription releases", () => {
     const link = await ipcTransport(s.desktop, vi.fn()).open("local", (f) => s.frames.push(f), s.onClose);
     link.send({ cmd: "subscribe_changes", req: 1 });
     link.send({ cmd: "subscribe_feed", req: 2 });
-    s.callbacks[0]!(reply(1, subscribed(10)));
-    s.callbacks[0]!(reply(2, err));
-    s.resolves[0]!(s.releases[0]!); s.resolves[1]!(s.releases[1]!);
+    required(s.callbacks[0])(reply(1, subscribed(10)));
+    required(s.callbacks[0])(reply(2, err));
+    required(s.resolves[0])(required(s.releases[0])); required(s.resolves[1])(required(s.releases[1]));
     await tick();
     expect(s.releases[1]).toHaveBeenCalledTimes(1);
     link.send({ cmd: "unsubscribe", req: 3, id: 10 });
-    s.requests.get(3)!(reply(3, err));
+    required(s.requests.get(3))(reply(3, err));
     link.send({ cmd: "unsubscribe", req: 4, id: 10 });
-    s.requests.get(4)!(reply(999, ok));
+    required(s.requests.get(4))(reply(999, ok));
     await tick();
     expect(s.releases[0]).not.toHaveBeenCalled();
     expect(s.frames).toEqual([reply(1, subscribed(10)), reply(2, err), reply(3, err), reply(999, ok)]);
@@ -101,16 +107,16 @@ describe("IPC subscription releases", () => {
     const s = setup();
     const link = await ipcTransport(s.desktop, vi.fn()).open("local", () => {}, s.onClose);
     link.send({ cmd: "subscribe", req: 1 });
-    s.callbacks[0]!(reply(1, subscribed(10)));
-    s.resolves[0]!(s.releases[0]!);
+    required(s.callbacks[0])(reply(1, subscribed(10)));
+    required(s.resolves[0])(required(s.releases[0]));
     link.send({ cmd: "unsubscribe", req: 2, id: 10 });
     link.send({ cmd: "unsubscribe", req: 3, id: 10 });
-    s.requests.get(3)!(reply(3, ok));
+    required(s.requests.get(3))(reply(3, ok));
     await tick();
     link.send({ cmd: "subscribe", req: 4 });
-    s.callbacks[0]!(reply(4, subscribed(10)));
-    s.resolves[1]!(s.releases[1]!);
-    s.requests.get(2)!(reply(2, ok));
+    required(s.callbacks[0])(reply(4, subscribed(10)));
+    required(s.resolves[1])(required(s.releases[1]));
+    required(s.requests.get(2))(reply(2, ok));
     await tick();
     expect(s.releases[0]).toHaveBeenCalledTimes(1);
     expect(s.releases[1]).not.toHaveBeenCalled();
@@ -126,8 +132,8 @@ describe("IPC subscription releases", () => {
     s.desktop.request = vi.fn().mockRejectedValue(new Error("BridgeRefusal: denied"));
     const link = await ipcTransport(s.desktop, vi.fn()).open("local", (f) => s.frames.push(f), s.onClose);
     link.send({ cmd: "subscribe", req: 1 });
-    s.callbacks[0]!(reply(1, subscribed(10)));
-    s.resolves[0]!(s.releases[0]!);
+    required(s.callbacks[0])(reply(1, subscribed(10)));
+    required(s.resolves[0])(required(s.releases[0]));
     link.send({ cmd: "subscribe", req: 2 });
     link.send({ cmd: "unsubscribe", req: 3, id: 10 });
     await tick();
