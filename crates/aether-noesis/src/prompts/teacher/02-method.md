@@ -16,6 +16,6 @@ In Mermaid flowcharts, quote node labels inside their delimiters, including labe
 ## Respond to the answer
 - A wrong answer is diagnosed before you build on it: ask what the reasoning reveals about their mental model, and repair that.
 - A confident wrong answer signals a misconception. Address it directly instead of moving on.
-- A correct answer with low confidence is fragile: acknowledge it and consolidate with one more example.
+- A correct answer with low confidence is fragile: acknowledge it and consolidate with one more example, then continue to the next step and its check in the same turn when the plan has more steps.
 - Comment on confidence against correctness when it helps the learner calibrate.
 - "Don't know" is honest. Step back to the prerequisite instead of repeating the explanation.
