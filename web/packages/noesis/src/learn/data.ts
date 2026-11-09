@@ -43,13 +43,14 @@ export function useLearn(conn: string): NoesisCache {
 
 /** The status key a read waits on: a query of the graph goes stale with the graph. */
 function versionKey(read: NoesisReadRequest): string {
-  return read.kind === "session" ? noesisKey.session(read.id) : noesisKey[read.kind];
+  return read.kind === "session" ? noesisKey.session(read.id) : read.kind === "all-sessions" ? noesisKey.sessions : noesisKey[read.kind];
 }
 
 export interface ReadState {
   /** Why the last reread failed; the store keeps the last good reply beside it. */
   readonly error: string | null;
   readonly reload: () => void;
+  readonly loading: boolean;
 }
 
 /**
@@ -62,20 +63,21 @@ export function useNoesisRead(conn: string, read: NoesisReadRequest | null): Rea
   const key = read === null ? null : versionKey(read);
   const version = useSelector(useCallback((state) => (key === null ? 0 : state.aether[conn]?.learn.versions[key] ?? 0), [conn, key]));
   const [nonce, setNonce] = useState(0);
-  const [failure, setFailure] = useState<{ for: string; text: string } | null>(null);
+  const [result, setResult] = useState<{ for: string; version: number; nonce: number; error: string | null } | null>(null);
   useEffect(() => {
     if (text === null) return;
     let live = true;
     const timer = setTimeout(() => {
       app.manager.readNoesis(conn, JSON.parse(text) as NoesisReadRequest).then(
-        () => { if (live) setFailure(null); },
-        (error: unknown) => { if (live) setFailure({ for: text, text: errorText(error) }); },
+        () => { if (live) setResult({ for: text, version, nonce, error: null }); },
+        (error: unknown) => { if (live) setResult({ for: text, version, nonce, error: errorText(error) }); },
       );
     }, version === 0 && nonce === 0 ? 0 : SETTLE_MS);
     return () => { live = false; clearTimeout(timer); };
   }, [app, conn, text, version, nonce]);
   const reload = useCallback(() => setNonce((n) => n + 1), []);
-  return { error: failure !== null && failure.for === text ? failure.text : null, reload };
+  const current = result !== null && result.for === text && result.version === version && result.nonce === nonce;
+  return { error: current ? result.error : null, reload, loading: text !== null && !current };
 }
 
 export type ChangeResult = { readonly ok: true; readonly reply: Record<string, unknown> } | { readonly ok: false; readonly error: string };

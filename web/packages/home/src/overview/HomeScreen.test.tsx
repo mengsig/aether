@@ -23,6 +23,13 @@ afterEach(async () => {
 async function open(connections: readonly ConnectionInfo[], data: boolean, replies: Replies = REPLIES) {
   h = harness(replies);
   seedWorld(h.app.store, connections, data);
+  const readNoesis = h.app.manager.readNoesis;
+  h.app.manager.readNoesis = async (conn, read) => {
+    await readNoesis(conn, read);
+    if (read.kind === "all-sessions") h?.app.store.updateAether(conn, (state) => ({
+      ...state, learn: { ...state.learn, reads: { ...state.learn.reads, "all-sessions": { ticket: 1, value: { ids: Object.keys(state.learn.sessions) } } } },
+    }));
+  };
   const container = await h.mount(<HomeScreen />);
   await h.frame();
   return { h, container };
@@ -133,7 +140,7 @@ describe("with seeded data", () => {
   test("reads once per connection, not on every change, and again only when a connection comes back", async () => {
     const { h } = await open([aetherInfo(), archonInfo()], true);
     expect([...h.sent].sort()).toEqual([
-      `${AETHER_CONN} noesis:learner`, `${AETHER_CONN} noesis:sessions`, `${AETHER_CONN} status`, `${AETHER_CONN} usage_breakdown`,
+      `${AETHER_CONN} noesis:all-sessions`, `${AETHER_CONN} noesis:learner`, `${AETHER_CONN} status`, `${AETHER_CONN} usage_breakdown`,
       `${ARCHON_CONN} github_watcher`, `${ARCHON_CONN} list_questions`,
     ]);
     const [first] = fixtureEvents();

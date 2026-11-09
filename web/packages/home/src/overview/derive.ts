@@ -9,7 +9,7 @@ import {
   recentOutcomes, spendFromAgents, spendFromBreakdowns, watcherSummary, type ActivityRow, type AgentCounts, type NeedsYou, type Outcome,
   type Parsed, type QueueCounts, type Spend, type WatcherSummary,
 } from "./model.ts";
-import { noesisFailure, USAGE_FEATURE, type HomeSources } from "./sources.ts";
+import { noesisFailure, NOESIS_LOADING, USAGE_FEATURE, type HomeSources } from "./sources.ts";
 import { noesisState, presence, type Facts, type NoesisState } from "./steps.ts";
 
 /** A read the tile waits on: still loading, failed with nothing held, or a checked value. */
@@ -29,6 +29,7 @@ export interface LearnView {
   readonly conn: string | null;
   readonly session: aether.NoesisSession | null;
   readonly sessions: number;
+  readonly sessionList: Loaded<number>;
   readonly mastery: Loaded<(ChartPoint & { tone: ChartTone })[]>;
 }
 
@@ -119,14 +120,19 @@ function learnView(sources: HomeSources, failures: Readonly<Record<string, strin
   const info = noesisConnection(sources.connections);
   const source = sources.aether.find((candidate) => candidate.info.id === info?.id);
   const state = noesisState(info, source?.noesis ?? null);
-  if (source === undefined || state !== "on") return { state, conn: info?.id ?? null, session: null, sessions: 0, mastery: { state: "loading" } };
+  if (source === undefined || state !== "on") return { state, conn: info?.id ?? null, session: null, sessions: 0, sessionList: { state: "loading" }, mastery: { state: "loading" } };
   const failure = noesisFailure(failures, source.info.id);
   const learner = source.learn.reads.learner;
   const parsed = learner === undefined ? null : masterySlices(learner.value);
   const mastery: Loaded<(ChartPoint & { tone: ChartTone })[]> = failure !== null && parsed === null ? { state: "problem", problem: failure }
     : parsed === null ? { state: "loading" } : "problem" in parsed ? { state: "problem", problem: parsed.problem } : { state: "ready", value: parsed.value };
-  const sessions = Object.keys(source.learn.sessions).length;
-  return { state, conn: source.info.id, session: currentSession(source.learn.sessions), sessions, mastery };
+  const list = source.learn.reads["all-sessions"];
+  const listFailure = failures[`${source.info.id} noesis:all-sessions`];
+  if (listFailure === NOESIS_LOADING || (list === undefined && listFailure === undefined)) return { state: "loading", conn: source.info.id, session: null, sessions: 0, sessionList: { state: "loading" }, mastery };
+  const ids = (list?.value.ids as string[] | undefined) ?? [];
+  const listed = Object.fromEntries(ids.flatMap((id) => source.learn.sessions[id] ? [[id, source.learn.sessions[id]]] : []));
+  const sessions = Object.keys(listed).length;
+  return { state, conn: source.info.id, session: currentSession(listed), sessions, sessionList: listFailure ? { state: "problem", problem: listFailure } : { state: "ready", value: sessions }, mastery: listFailure ? { state: "problem", problem: listFailure } : mastery };
 }
 
 export function deriveHome(sources: HomeSources, now: number, dayStart: number, failures: Readonly<Record<string, string>>): HomeView {
@@ -137,9 +143,10 @@ export function deriveHome(sources: HomeSources, now: number, dayStart: number, 
   const questions = joinReads(sources.archon.filter((s) => s.info.state === "ready").map((s) => s.questions), countQuestions);
   const github = joinReads(sources.archon.filter((s) => s.info.state === "ready").map((s) => s.watcher), watcherSummary);
   const learn = learnView(sources, failures);
+  const listReady = sources.aether.find((source) => source.info.id === learn.conn)?.learn.reads["all-sessions"] !== undefined;
   const facts: Facts = {
     aether: presence(sources.connections, "aether"), archon: presence(sources.connections, "archon"), agents: agents.length, events: events.length,
-    items: items.length, noesis: learn.state, sessions: learn.sessions, watched: github.state === "ready" ? github.value.repos : 0,
+    items: items.length, noesis: learn.state === "on" && !listReady ? "loading" : learn.state, sessions: learn.sessions, watched: github.state === "ready" ? github.value.repos : 0,
   };
   const view: HomeView = {
     now, facts, agents: agentCounts(agents), buckets: hourlyBuckets(events, now),

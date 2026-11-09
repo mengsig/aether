@@ -96,7 +96,7 @@ export function homeReads(sources: HomeSources, dayStart: number, noesisConn: st
     if (info.state === "ready") reads.push({ kind: "reread", conn: info.id, key: LIFETIME_KEY, command: { cmd: "status" }, tags: ["status"] });
   }
   if (noesisConn !== null) {
-    reads.push({ kind: "noesis", conn: noesisConn, read: { kind: "sessions", limit: 20 } }, { kind: "noesis", conn: noesisConn, read: { kind: "learner" } });
+    reads.push({ kind: "noesis", conn: noesisConn, read: { kind: "all-sessions" } }, { kind: "noesis", conn: noesisConn, read: { kind: "learner" } });
   }
   invariant(new Set(reads.map(readId)).size === reads.length, "each read is asked for once");
   return reads;
@@ -106,6 +106,7 @@ const errorText = (error: unknown): string => (error instanceof Error ? error.me
 
 /** How often the overview rereads what no event keeps current, while its window is visible. */
 export const HOME_REFRESH_MS = 120_000;
+export const NOESIS_LOADING = "__loading__";
 
 /** Counts the refreshes due so far: one every HOME_REFRESH_MS, skipped while the window is hidden. */
 function useRefreshRound(): number {
@@ -126,6 +127,7 @@ export function useHomeReads(reads: readonly HomeRead[]): Readonly<Record<string
   const app = useApp();
   const round = useRefreshRound();
   const sent = useRef({ round: 0, ids: new Set<string>() });
+  const generations = useRef(new Map<string, number>());
   const [failures, setFailures] = useState<Readonly<Record<string, string>>>({});
   const text = JSON.stringify(reads);
   useEffect(() => {
@@ -141,9 +143,14 @@ export function useHomeReads(reads: readonly HomeRead[]): Readonly<Record<string
         void app.reread(read.conn, read.key, read.command as Parameters<typeof app.reread>[2], read.tags);
         continue;
       }
-      app.manager.readNoesis(read.conn, read.read).then(
-        () => setFailures((held) => (id in held ? omit(held, id) : held)),
-        (error: unknown) => setFailures((held) => ({ ...held, [id]: errorText(error) })),
+      const generation = (generations.current.get(id) ?? 0) + 1;
+      generations.current.set(id, generation);
+      Promise.resolve().then(() => {
+        if (read.read.kind === "all-sessions") setFailures((held) => ({ ...held, [id]: NOESIS_LOADING }));
+        return app.manager.readNoesis(read.conn, read.read);
+      }).then(
+        () => { if (generations.current.get(id) === generation) setFailures((held) => (id in held ? omit(held, id) : held)); },
+        (error: unknown) => { if (generations.current.get(id) === generation) setFailures((held) => ({ ...held, [id]: errorText(error) })); },
       );
     }
   }, [app, text, round]);
@@ -155,7 +162,7 @@ function omit(record: Readonly<Record<string, string>>, key: string): Readonly<R
 }
 
 export const noesisFailure = (failures: Readonly<Record<string, string>>, conn: string): string | null =>
-  failures[`${conn} noesis:learner`] ?? failures[`${conn} noesis:sessions`] ?? null;
+  failures[`${conn} noesis:learner`] ?? null;
 
 /** The ready connection Noesis is on, whose sessions and mastery the overview reads; null when there is none. */
 export function noesisReadConn(sources: HomeSources): string | null {
