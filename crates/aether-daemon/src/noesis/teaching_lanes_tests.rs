@@ -1,6 +1,68 @@
 use super::*;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn another_sessions_answer_finishes_while_a_turn_is_held() {
+    let home = Home::new();
+    let client = Arc::new(ScriptedClient::new());
+    client.push(ScriptedClient::tool_call(ASK, capital_question()));
+    client.push(ScriptedClient::tool_call(ASK, capital_question()));
+    let release = client.hold_response_at(2);
+    let _free = release.clone().drop_guard();
+    let harness = Harness::open(&home, client.clone()).await;
+    harness.configure(teaching_on(|_| {})).await;
+    let first = harness.create(json!({})).await;
+    let first = harness.posed(&first.id).await;
+    harness.settled().await;
+    let second = harness.create(json!({})).await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while client.requests().len() < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the second session reached its held call");
+    assert!(harness.daemon.runtime.turn_in_flight(second.agent));
+    let desk = {
+        let state = harness.daemon.noesis.state.lock().await;
+        let State::Running(live) = &*state else {
+            panic!("service running")
+        };
+        live.desk.clone()
+    };
+    desk.lock().await.undelivered.insert(
+        "agt_other".into(),
+        [aether_noesis::teach::Input::Learner("still owed".into())].into(),
+    );
+    let conflict = tokio::time::timeout(
+        Duration::from_secs(2),
+        harness.send_json(json!({
+            "cmd": "noesis_send", "session": second.id,
+            "text": "Please continue.", "idempotency_key": "same-session-send"
+        })),
+    )
+    .await
+    .expect("the active session answers promptly")
+    .expect_err("a turn cannot be changed while it runs");
+    assert_eq!(conflict.reason.as_deref(), Some("conflict"));
+    let answer = tokio::time::timeout(Duration::from_secs(2), harness.answer(&first, "Paris"))
+        .await
+        .expect("the answer did not wait for another session")
+        .expect("the answer was recorded");
+    assert!(matches!(answer, Reply::Ok));
+    let recorded = harness
+        .session(&first.id)
+        .await
+        .expect("the first session is visible");
+    assert!(recorded.open_question.is_none());
+    assert!(recorded.questions[0].answer.is_some());
+    release.cancel();
+    harness.posed(&second.id).await;
+    harness.settled().await;
+    assert_eq!(desk.lock().await.undelivered["agt_other"].len(), 1);
+    harness.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn independent_commands_finish_while_a_teaching_call_is_held() {
     let home = Home::new();
     let (harness, gated, first) = held_call(&home).await;

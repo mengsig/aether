@@ -110,15 +110,27 @@ impl NoesisService {
             .ticket()
             .await
             .ok_or_else(ErrorReply::noesis_disabled)?;
-        let mut desk = if matches!(
-            &command,
+        let mut desk = match &command {
             Command::NoesisGetSession { .. }
-                | Command::NoesisListSessions { .. }
-                | Command::NoesisCreateSession { .. }
-        ) {
-            ticket.desk.lock().await
-        } else {
-            super::writable_desk(&ticket.desk).await
+            | Command::NoesisListSessions { .. }
+            | Command::NoesisCreateSession { .. } => ticket.desk.lock().await,
+            Command::NoesisSend { session, .. }
+            | Command::NoesisAnswer { session, .. }
+            | Command::NoesisRetryTurn { session, .. } => {
+                let desk = ticket.desk.lock().await;
+                if let Some(receipt) = runtime.noesis_receipt(submission).map_err(map_err)? {
+                    return serde_json::from_value(receipt).map_err(|e| {
+                        ErrorReply::internal(format!("decode the teaching receipt: {e}"))
+                    });
+                }
+                if desk.turn.session.lock().as_deref() == Some(session) {
+                    return Err(ErrorReply::conflict(
+                        "This session is still responding. Try again when the turn finishes.",
+                    ));
+                }
+                desk
+            }
+            _ => super::writable_desk(&ticket.desk).await,
         };
         let Some(noesis) = &desk.noesis else {
             return Err(ErrorReply::noesis_disabled());
@@ -286,7 +298,7 @@ impl NoesisService {
             return Ok(());
         }
         let host = self.turn_host(&ticket, &mut desk, runtime)?;
-        let reservation = desk.reserve_turn();
+        let reservation = desk.reserve_turn(session);
         let (desk, ran, output) = run_segments(&ticket, desk, &host, session).await?;
         publish(&desk, runtime, output, &Actor::System, None)?;
         drop(desk);
@@ -415,17 +427,17 @@ fn run_segment<'a>(
 ) -> Result<Segment<'a>, ErrorReply> {
     debug_assert!(desk.turn.active.load(Ordering::SeqCst));
     debug_assert!(!first || result.is_none());
-    let undelivered = first.then(|| std::mem::take(&mut desk.undelivered));
+    if desk.noesis.is_none() {
+        return Err(ErrorReply::internal("teaching store stopped during a turn"));
+    }
+    let undelivered = std::mem::take(&mut desk.undelivered);
     let noesis = desk
         .noesis
         .as_ref()
         .ok_or_else(|| ErrorReply::internal("teaching store stopped during a turn"))?;
     let mut teaching = Teaching::new(noesis, engine);
     teaching.restore_buffer(buffer);
-    if let Some(undelivered) = undelivered {
-        teaching.restore_undelivered(undelivered);
-    }
-    let mut undelivered = None;
+    teaching.restore_undelivered(undelivered);
     let outcome = match teaching.advance_until_call(state, result) {
         Ok(Some(call)) => SegmentOutcome::Call(call),
         done => {
@@ -433,17 +445,15 @@ fn run_segment<'a>(
                 events: teaching.take_events(),
                 evidence: teaching.take_evidence(),
             };
-            undelivered = Some(teaching.take_undelivered());
             SegmentOutcome::Done {
                 result: done.map(|_| ()),
                 output,
             }
         }
     };
+    let undelivered = teaching.take_undelivered();
     let (engine, buffer) = teaching.into_parts();
-    if let Some(undelivered) = undelivered {
-        desk.undelivered = undelivered;
-    }
+    desk.undelivered = undelivered;
     Ok(Segment {
         engine,
         buffer,

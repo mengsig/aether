@@ -76,6 +76,7 @@ struct Desk {
 #[derive(Default)]
 struct TurnReservation {
     active: std::sync::atomic::AtomicBool,
+    session: parking_lot::Mutex<Option<String>>,
     changed: tokio::sync::Notify,
 }
 
@@ -83,22 +84,30 @@ struct ReservedTurn(Arc<TurnReservation>);
 
 impl Drop for ReservedTurn {
     fn drop(&mut self) {
+        let mut session = self.0.session.lock();
         let was_active = self
             .0
             .active
             .swap(false, std::sync::atomic::Ordering::SeqCst);
         debug_assert!(was_active);
+        debug_assert!(session.is_some());
+        *session = None;
+        drop(session);
         self.0.changed.notify_waiters();
     }
 }
 
 impl Desk {
-    fn reserve_turn(&self) -> ReservedTurn {
+    fn reserve_turn(&self, session: &str) -> ReservedTurn {
+        let mut held = self.turn.session.lock();
         let was_active = self
             .turn
             .active
             .swap(true, std::sync::atomic::Ordering::SeqCst);
         debug_assert!(!was_active);
+        debug_assert!(held.is_none());
+        *held = Some(session.to_owned());
+        drop(held);
         ReservedTurn(self.turn.clone())
     }
 }
