@@ -26,6 +26,7 @@
   display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto; align-items: center; gap: var(--space-3);
   min-block-size: var(--space-7); font-size: var(--text-sm);
 }
+.home-outcome-row { grid-template-columns: minmax(0, 1fr) auto auto; min-inline-size: 0; }
 .home-row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-row-text { overflow: hidden; color: var(--color-text-muted); text-overflow: ellipsis; white-space: nowrap; }
 .home-row-time { color: var(--color-text-faint); font-size: var(--text-xs); white-space: nowrap; }

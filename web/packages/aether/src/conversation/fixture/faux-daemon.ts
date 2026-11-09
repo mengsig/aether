@@ -78,6 +78,10 @@ export class FauxDaemon {
     this.event(agent, { type: "invocation.completed", invocation, usage, model, duration_ms: 4200, snapshot: "snap_faux" }, false);
   }
 
+  usageUpdated(agent: string, usage: aether.Usage): void {
+    this.event(agent, { type: "agent.usage_updated", total: usage, turn_usage: usage }, false);
+  }
+
   /** Pushes a delta frame on the agent's delta subscription, if the client has one. */
   delta(agent: string, invocation: string, order: number, delta: aether.Delta): void {
     const sub = this.deltaSubs.get(agent);
@@ -165,6 +169,7 @@ export class FauxDaemon {
       }
       case "list_tasks": return ok("tasks", this.tasks.filter((task) => task.owner === (command.query as { owner?: string }).owner));
       case "get_transcript_page": return ok("transcript_page", this.page(command));
+      case "get_events": return ok("events", this.events.filter(event => event.seq > Number(command.after) && event.agent_id === (command.query as Json).agent).slice(0, Number(command.limit)));
       case "send_message": return ok("ok", null);
       default: return { reply: { Err: { code: "invalid_argument", message: `the faux daemon has no ${String(command.cmd)}` } }, then: [] };
     }

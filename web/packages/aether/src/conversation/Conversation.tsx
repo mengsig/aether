@@ -12,6 +12,7 @@ import "./conversation.css";
 import "./markdown.css";
 import { MeasuredList, type ListHandle } from "./MeasuredList.tsx";
 import { AgentNameContext, estimateRow, MessageView, type MessageContext } from "./Message.tsx";
+import { useConversationHistory } from "./history.ts";
 import type { ModeRules } from "./modes.ts";
 import { entryRows, invocationMeta, liveRows, pairTools, toolActivity, type ConversationRow, type ToolActivity } from "./rows.ts";
 import { SearchBar, useTranscriptSearch } from "./SearchBar.tsx";
@@ -59,11 +60,12 @@ export interface ConversationRows {
 export function useConversationRows(conn: ConnId, agent: string): ConversationRows {
   const transcript = useSelector(useMemo(() => selectTranscript(conn, agent), [conn, agent]));
   const streams = useSelector(useMemo(() => selectStreams(conn), [conn]));
-  const events = useSelector(useMemo(() => selectEvents(conn), [conn]));
+  const liveEvents = useSelector(useMemo(() => selectEvents(conn), [conn]));
+  const { events, loaded: historyLoaded } = useConversationHistory(conn, agent, liveEvents);
   const entries = transcript?.entries ?? NO_ENTRIES;
   const pairing = useMemo(() => pairTools(entries), [entries]);
-  const meta = useMemo(() => invocationMeta(events, agent), [events, agent]);
-  const activity = useMemo(() => toolActivity(events, agent), [events, agent]);
+  const meta = useMemo(() => invocationMeta(events, agent, historyLoaded), [events, agent, historyLoaded]);
+  const activity = useMemo(() => toolActivity(liveEvents, agent), [liveEvents, agent]);
   const committed = useMemo(() => entryRows(entries, pairing, meta), [entries, pairing, meta]);
   const live = useMemo(() => liveRows(streams, agent, pairing.committed), [streams, agent, pairing]);
   const rows = useMemo(() => (live.length === 0 ? committed : [...committed, ...live]), [committed, live]);

@@ -137,7 +137,44 @@ describe("the conversation joins deltas to their committed message", () => {
     h.daemon.completed(FAUX_AGENT, INV, usage(0.0123), MODEL);
     await h.settle();
     const meta = container.querySelector(`.conv-msg[data-invocation="${INV}"] .conv-meta`)?.textContent;
-    expect(meta).toBe("claude-code/opus · $0.012 · 12k in · 900 out · 4.2 s");
+    expect(meta).toBe("claude-code/opus · $0.012 · 52k in · 900 out · 4.2 s");
+  });
+
+  test("shows turn usage after an empty receipt, and missing usage only until it arrives", async () => {
+    const { h, container } = await open();
+    h.daemon.commit(FAUX_AGENT, text("assistant", "Answer"), INV);
+    h.daemon.completed(FAUX_AGENT, INV, { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: 0, cost_complete: false, cost_gap: "unreported" }, MODEL);
+    await h.settle();
+    const meta = () => container.querySelector(`.conv-msg[data-invocation="${INV}"] .conv-meta`)?.textContent;
+    expect(meta()).toContain("Usage not reported");
+    h.daemon.usageUpdated(FAUX_AGENT, usage(0.0123));
+    await h.settle();
+    expect(meta()).toContain("Turn usage · $0.012 · 52k in · 900 out");
+    expect(meta()).not.toContain("Usage not reported");
+  });
+
+  test("reads usage for a conversation completed before opening it", async () => {
+    const h = await connected({ instance: "faux-1", agents: [fauxAgent(FAUX_PARENT), fauxAgent()] });
+    current = h;
+    h.daemon.commit(FAUX_AGENT, text("assistant", "Earlier answer"), INV);
+    h.daemon.completed(FAUX_AGENT, INV, { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: 0, cost_complete: false }, MODEL);
+    h.daemon.usageUpdated(FAUX_AGENT, usage(0.0123));
+    const container = await h.mount(<Conversation conn={h.conn} agent={FAUX_AGENT} />);
+    await h.settle();
+    const meta = container.querySelector(`.conv-msg[data-invocation="${INV}"] .conv-meta`)?.textContent;
+    expect(meta).toContain("Turn usage · $0.012 · 52k in · 900 out");
+    expect(meta).not.toContain("Usage not reported");
+  });
+
+  test("labels an estimated subscription cost separately from unreported cost", async () => {
+    const { h, container } = await open();
+    h.daemon.commit(FAUX_AGENT, text("assistant", "Estimated"), INV);
+    h.daemon.completed(FAUX_AGENT, INV, { ...usage(0), cost_complete: false, estimated_cost_usd: 0.02 }, MODEL);
+    await h.settle();
+    const meta = container.querySelector(`.conv-msg[data-invocation="${INV}"] .conv-meta`)?.textContent;
+    expect(meta).toContain("Estimated ≈$0.020+");
+    expect(meta).toContain("Cost not reported");
+    expect(meta).not.toContain("Usage not reported");
   });
 });
 

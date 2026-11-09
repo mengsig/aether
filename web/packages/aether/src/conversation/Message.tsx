@@ -75,11 +75,19 @@ function ViewPartView({ view, context, ...part }: { readonly view: ViewPart; rea
 function MetaLine({ meta, usage }: { readonly meta: InvocationMeta; readonly usage: boolean }) {
   const bits: string[] = [];
   if (meta.model && usage) bits.push(meta.model);
-  if (meta.usage && usage) bits.push(formatCost(meta.usage), `${formatTokens(meta.usage.input_tokens)} in · ${formatTokens(meta.usage.output_tokens)} out`);
-  if (!meta.usage && meta.model && usage) bits.push("Usage not reported");
+  if (meta.usage && usage) {
+    const u = meta.usage;
+    const input = u.input_tokens + u.cache_read_tokens + u.cache_write_tokens;
+    if (meta.turnUsage) bits.push("Turn usage");
+    if (u.cost_complete || u.cost_usd > 0) bits.push(formatCost(u));
+    else bits.push("Cost not reported");
+    if (u.estimated_cost_usd != null) bits.push(`Estimated ${formatCost({ ...u, cost_usd: u.estimated_cost_usd, cost_basis: "list_price" })}`);
+    bits.push(`${formatTokens(input)} in · ${formatTokens(u.output_tokens)} out`);
+  }
+  if (!meta.usage && meta.model && usage && !meta.usagePending) bits.push("Usage not reported");
   if (meta.durationMs !== null && usage) bits.push(formatDuration(meta.durationMs));
   return (
-    <span className="conv-meta">
+    <span className="conv-meta" title={meta.usage ? "Input includes cache reads and writes" : undefined}>
       {bits.join(" · ")}
       {meta.error === null ? null : <Badge tone="danger">Failed: {meta.error}</Badge>}
     </span>
