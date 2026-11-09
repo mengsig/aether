@@ -49,14 +49,11 @@ impl<E: Engine> Teaching<'_, E> {
         let (mut content, is_error, ends) = match handled {
             Ok((content, ends)) => (content, false, ends),
             Err(mut problem) => {
-                if ToolName::parse(&call.name) == Some(ToolName::JudgeRecall) {
-                    if let Some(id) = db::unjudged_recall(self.conn(), session)? {
-                        if !problem.contains(&id) {
-                            problem.push_str(&format!(
-                                "; use question ID {id} from the answer result"
-                            ));
-                        }
-                    }
+                if ToolName::parse(&call.name) == Some(ToolName::JudgeRecall)
+                    && let Some(id) = db::unjudged_recall(self.conn(), session)?
+                    && !problem.contains(&id)
+                {
+                    problem.push_str(&format!("; use question ID {id} from the answer result"));
                 }
                 (json!({ "error": problem }), true, None)
             }
