@@ -309,10 +309,13 @@ pub fn kept_reply<R>(
 ) -> Result<Replies<R>, EngineError> {
     let mut discarded = Vec::new();
     let mut spent = Spend::default();
+    let mut attempted_check = false;
     for reminder in [None, Some(SEAL_REMINDER)] {
         let (mut step, raw) = attempt(reminder)?;
+        attempted_check |= step.attempted_check || step.calls.iter().any(super::engine::is_ask);
         if !reply_leaks(live, &step) {
             step.usage += spent;
+            step.attempted_check = attempted_check;
             return Ok(Replies {
                 step,
                 kept: Some(raw),
@@ -323,8 +326,10 @@ pub fn kept_reply<R>(
         discarded.push(raw);
     }
     debug_assert_eq!(discarded.len(), 2, "both attempts were discarded");
+    let mut step = neutral_step(spent);
+    step.attempted_check = attempted_check;
     Ok(Replies {
-        step: neutral_step(spent),
+        step,
         kept: None,
         discarded,
     })
@@ -338,6 +343,7 @@ pub fn neutral_step(spent: Spend) -> Step {
         text_blocks: vec![NEUTRAL_REPLY.to_string()],
         calls: Vec::new(),
         usage: spent,
+        attempted_check: false,
     };
     debug_assert!(!reply_leaks(&Sealer::default(), &step));
     step

@@ -87,9 +87,12 @@ fn no_tool_replies_are_bounded_and_leave_the_recall_recoverable() {
     assert_eq!(t.engine().steps_run - before, 3);
     assert!(!t.turn_pending(&id).unwrap());
     let agent = session(&t, &id).agent;
-    assert!(t.engine().inputs_of(&agent).iter().any(
-        |input| matches!(input, Input::Failure(text) if text.contains("send a message to retry"))
-    ));
+    assert!(
+        t.engine()
+            .inputs_of(&agent)
+            .iter()
+            .any(|input| matches!(input, Input::Failure(text) if text.contains("Try again")))
+    );
     assert_eq!(
         session(&t, &id).questions[0]
             .result
@@ -104,7 +107,7 @@ fn no_tool_replies_are_bounded_and_leave_the_recall_recoverable() {
         vec![(JUDGE, json!({"question": question, "correct": true}))],
     );
     t.engine_mut().script(Agent::Prober, "Well done", vec![]);
-    t.send(&id, "Please retry").unwrap();
+    t.retry_turn(&id).unwrap();
     assert_eq!(t.advance(&id).unwrap()[0].end, TurnEnd::AwaitingLearner);
     assert_eq!(
         session(&t, &id).questions[0]

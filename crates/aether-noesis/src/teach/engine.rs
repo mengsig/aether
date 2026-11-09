@@ -107,6 +107,8 @@ pub struct Step {
     pub text_blocks: Vec<String>,
     pub calls: Vec<ToolCall>,
     pub usage: Spend,
+    /// Whether any raw reply for this step attempted a check, including discarded replies.
+    pub attempted_check: bool,
 }
 
 /// Debug omits the text, which may hold a sealed answer until it is checked.

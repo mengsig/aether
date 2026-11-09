@@ -83,7 +83,7 @@ async fn missing_judgment_stops_with_a_visible_retry_and_can_recover() {
     assert!(view.open_question.is_none());
     let transcript = harness.transcript(posed.agent);
     assert!(transcript.iter().any(|message| message.role == MessageRole::Assistant &&
-        message.content.iter().any(|block| matches!(block, ContentBlock::Text { text } if text.contains("send a message to retry")))));
+        message.content.iter().any(|block| matches!(block, ContentBlock::Text { text } if text.contains("Try again")))));
     assert!(
         !serde_json::to_string(&transcript)
             .unwrap()
@@ -98,8 +98,8 @@ async fn missing_judgment_stops_with_a_visible_retry_and_can_recover() {
     );
     cli.queue("prober", json!({"text": "Well done"}));
     harness
-        .send_json(json!({"cmd": "noesis_send", "session": created.id,
-        "text": "Please retry", "idempotency_key": "retry"}))
+        .send_json(json!({"cmd": "noesis_retry_turn", "session": created.id,
+        "idempotency_key": "retry"}))
         .await
         .expect("retry");
     harness.settled().await;

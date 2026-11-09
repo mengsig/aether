@@ -295,7 +295,7 @@ impl<E: Engine> Teaching<'_, E> {
         };
         let end = ran?;
         let mut turn = current.turn;
-        if super::turn::agent_for_teacher(&current.caller) {
+        if super::turn::agent_for_deferred_prose(&current.caller) {
             self.publish_standalone_text(&current.caller.agent, end, &mut turn, &sealer)?;
         }
         let steps = turn.seal(&sealer);

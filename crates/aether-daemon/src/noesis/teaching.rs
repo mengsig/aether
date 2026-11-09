@@ -319,12 +319,13 @@ impl NoesisService {
         }
         let host = self.turn_host(&ticket, &mut desk, runtime)?;
         let reservation = desk.reserve_turn(session);
-        let Some((desk, ran, output)) = run_segments(&ticket, desk, &host, session).await? else {
-            return Ok(());
-        };
+        let (desk, ran, output, interrupted) = run_segments(&ticket, desk, &host, session).await?;
         publish(&desk, runtime, output, &Actor::System, None)?;
         drop(reservation);
         drop(desk);
+        if interrupted {
+            return Ok(());
+        }
         let queued = self.after_teaching_turn(runtime, session).await;
         ran.map_err(reply_error)?;
         queued.map(|_| ())
@@ -397,11 +398,12 @@ async fn run_segments<'a>(
     host: &EngineHost,
     session: &str,
 ) -> Result<
-    Option<(
+    (
         tokio::sync::MutexGuard<'a, Desk>,
         Result<(), TeachError>,
         Output,
-    )>,
+        bool,
+    ),
     ErrorReply,
 > {
     let mut engine = AetherEngine::new(host);
@@ -418,14 +420,36 @@ async fn run_segments<'a>(
                 buffer = segment.buffer;
                 drop(desk);
                 result = Some(call.run(&mut engine));
-                if ticket.cancel.is_cancelled() {
-                    return Ok(None);
-                }
                 desk = ticket.desk.lock().await;
+                if ticket.cancel.is_cancelled() {
+                    let output = interrupted_output(&mut desk, engine, buffer)?;
+                    return Ok((desk, Ok(()), output, true));
+                }
             }
-            SegmentOutcome::Done { result, output } => return Ok(Some((desk, result, output))),
+            SegmentOutcome::Done { result, output } => return Ok((desk, result, output, false)),
         }
     }
+}
+
+fn interrupted_output(
+    desk: &mut Desk,
+    engine: AetherEngine<'_>,
+    buffer: TeachingBuffer,
+) -> Result<Output, ErrorReply> {
+    let undelivered = std::mem::take(&mut desk.undelivered);
+    let noesis = desk
+        .noesis
+        .as_ref()
+        .ok_or_else(|| ErrorReply::internal("teaching store stopped during a turn"))?;
+    let mut teaching = Teaching::new(noesis, engine);
+    teaching.restore_buffer(buffer);
+    teaching.restore_undelivered(undelivered);
+    let output = Output {
+        events: teaching.take_events(),
+        evidence: teaching.take_evidence(),
+    };
+    desk.undelivered = teaching.take_undelivered();
+    Ok(output)
 }
 
 struct Segment<'a> {

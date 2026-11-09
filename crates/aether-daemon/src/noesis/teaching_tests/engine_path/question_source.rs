@@ -61,6 +61,93 @@ async fn standalone_explanations_are_visible_without_a_check() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn probe_prose_is_discarded_before_an_accepted_or_replaced_card() {
+    for refused in [false, true] {
+        let home = Home::new();
+        let cli = Arc::new(FauxCli::default());
+        cli.queue(
+            "prober",
+            json!({"text": "Name a triangle", "tool_calls": [
+            tool_call("noesis_learner_read", json!({}))]}),
+        );
+        if refused {
+            let mut bad = capital_question();
+            bad["lead_in"] = json!("Which shape has three sides?");
+            cli.queue(
+                "prober",
+                json!({"text": "Tell me the wrong thing",
+                "tool_calls": [tool_call(ASK, bad)]}),
+            );
+        }
+        cli.queue(
+            "prober",
+            json!({"text": "Name a different city",
+            "tool_calls": [tool_call(ASK, capital_question())]}),
+        );
+        let harness = engine_harness(&home, cli).await;
+        let created = harness.create(json!({})).await;
+        let posed = harness.posed(&created.id).await;
+        harness.settled().await;
+        let text = assistant_texts(&harness, posed.agent).join("\n");
+        assert!(!text.contains("Name a triangle"), "{text}");
+        assert!(!text.contains("Tell me the wrong thing"), "{text}");
+        assert!(!text.contains("Name a different city"), "{text}");
+        assert!(
+            posed
+                .open_question
+                .unwrap()
+                .prompt
+                .contains("capital of France")
+        );
+        harness.close().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn seal_discarded_checks_suppress_earlier_and_retry_prose() {
+    for neutral in [false, true] {
+        let home = Home::new();
+        let cli = Arc::new(FauxCli::default());
+        let plan = json!({"nodes": [{"id": "turns", "title": "Turns"}], "edges": []});
+        let harness = engine_harness(&home, cli.clone()).await;
+        let id = start_teaching(&harness, &cli, plan).await;
+        cli.queue(
+            "teacher",
+            json!({"text": "Name a triangle", "tool_calls": [
+            tool_call("noesis_graph_search", json!({"query": "turns"}))]}),
+        );
+        let bad = check("How many degrees in a half turn?", "180°", "270°", "turns");
+        cli.queue(
+            "teacher",
+            json!({"text": "The answer is 180°.", "tool_calls": [tool_call(ASK, bad.clone())]}),
+        );
+        if neutral {
+            cli.queue(
+                "teacher",
+                json!({"text": "The answer is 180°.", "tool_calls": [tool_call(ASK, bad)]}),
+            );
+        } else {
+            cli.queue("teacher", json!({"text": "Name a square"}));
+        }
+        harness
+            .send_json(json!({"cmd": "noesis_send", "session": id,
+            "text": "Go", "idempotency_key": "seal-check"}))
+            .await
+            .expect("send");
+        tokio::time::timeout(Duration::from_secs(5), harness.settled())
+            .await
+            .expect("the turn ends");
+        let session = harness.session(&id).await.unwrap();
+        let text = assistant_texts(&harness, session.agent).join("\n");
+        assert!(!text.contains("Name a triangle"), "{text}");
+        assert!(!text.contains("Name a square"), "{text}");
+        assert!(text.contains("Let's try that differently"), "{text}");
+        assert!(session.open_question.is_none());
+        harness.close().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn final_feedback_is_visible_after_the_last_check() {
     let home = Home::new();
     let cli = Arc::new(FauxCli::default());

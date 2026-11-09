@@ -277,6 +277,8 @@ looks like a boundary and is not one.
 - The Noesis seal matches whole phrases. A very short or common answer, such
   as one digit, can make an innocent reply look like a leak; the step is then
   run again and may end with "Let's try that differently."
+- A check's lead-in is screened for question marks and answer leakage, but
+  its relevance to the question is not checked. It may discuss another topic.
 - A Noesis lesson started before the session history was kept (store N3)
   lists only its current agent. A lesson handed off to the Teacher before the
   upgrade therefore no longer shows the Prober's conversation. The client

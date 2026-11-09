@@ -12,7 +12,7 @@ use crate::prompts::Agent;
 const SECRET: &str = "mitochondria";
 
 #[test]
-fn teaching_with_an_overlapping_check_is_retried_as_a_lesson() {
+fn teaching_with_an_overlapping_check_does_not_publish_retry_prose() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = teacher_session(&mut t);
@@ -29,10 +29,17 @@ fn teaching_with_an_overlapping_check_is_retried_as_a_lesson() {
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingLearner);
     assert_eq!(report.steps.len(), 1);
-    assert_eq!(report.steps[0].text, lesson);
+    assert_eq!(report.steps[0].text, "");
     assert!(report.steps[0].calls.is_empty());
     assert!(session(&t, &id).open_question.is_none());
     assert_eq!(t.engine().reminders, 1);
+    let agent = session(&t, &id).agent;
+    assert!(
+        t.engine()
+            .inputs_of(&agent)
+            .iter()
+            .any(|input| matches!(input, Input::Failure(text) if text == NEUTRAL_REPLY))
+    );
 }
 
 fn posed_session(t: &mut Teaching<'_, FauxEngine>) -> String {
@@ -148,10 +155,17 @@ fn a_second_leaking_reply_becomes_the_neutral_step() {
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingLearner);
     let texts: Vec<&str> = report.steps.iter().map(|s| s.text.as_str()).collect();
-    assert_eq!(texts, [NEUTRAL_REPLY]);
+    assert_eq!(texts, [""]);
     assert!(report.steps[0].calls.is_empty(), "no call of either ran");
     assert!(session(&t, &id).open_question.is_none());
     assert_eq!(t.engine().steps_run, 2, "one retry, no more");
+    let agent = session(&t, &id).agent;
+    assert!(
+        t.engine()
+            .inputs_of(&agent)
+            .iter()
+            .any(|input| matches!(input, Input::Failure(text) if text == NEUTRAL_REPLY))
+    );
 }
 
 /// Each step is kept as it ends, so a key an earlier call of the turn named

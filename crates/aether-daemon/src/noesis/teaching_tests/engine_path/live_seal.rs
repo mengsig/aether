@@ -122,8 +122,7 @@ async fn a_pose_carrying_its_answer_streams_nothing_that_holds_it() {
     harness.close().await;
 }
 
-/// Two replies in a row that give the key away become the neutral step:
-/// nothing of either is kept, no question opens and the learner is asked on.
+/// Two leaking replies are discarded and a neutral prompt lets the learner continue.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_second_leaking_reply_becomes_the_neutral_step() {
     let home = Home::new();

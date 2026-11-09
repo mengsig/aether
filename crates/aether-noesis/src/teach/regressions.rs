@@ -249,7 +249,7 @@ fn a_reply_whose_plan_shows_its_own_key_is_discarded_in_either_order() {
             .script(Agent::Teacher, "Let us rethink.", vec![]);
         let report = t.advance(&id).unwrap().remove(0);
         assert_eq!(t.engine().reminders, turn + 1, "{report:?}");
-        assert_eq!(report.steps[0].text, "Let us rethink.");
+        assert_eq!(report.steps[0].text, "");
         assert!(report.steps[0].calls.is_empty(), "{report:?}");
         assert!(session(&t, &id).open_question.is_none());
     }
@@ -364,7 +364,7 @@ fn the_models_option_values_never_reach_a_reader_so_text_cannot_name_the_key() {
     t.engine_mut().script(Agent::Teacher, "Rethinking.", vec![]);
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(t.engine().reminders, 1, "{report:?}");
-    assert_eq!(report.steps[0].text, "Rethinking.", "{report:?}");
+    assert_eq!(report.steps[0].text, "", "{report:?}");
     assert!(session(&t, &id).open_question.is_none());
 
     let clean = json!({"nodes": [{"id": "pick", "title": "Capitals"}], "edges": []});
@@ -464,7 +464,7 @@ fn a_numeric_key_or_solution_followed_by_a_unit_is_still_sealed() {
 }
 
 #[test]
-fn a_pose_whose_key_an_earlier_step_showed_is_refused() {
+fn earlier_probe_prose_does_not_reach_a_later_check() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = t
@@ -484,12 +484,12 @@ fn a_pose_whose_key_an_earlier_step_showed_is_refused() {
         vec![(ASK, recall("Which organelle makes ATP?", SECRET))],
     );
     let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.end, TurnEnd::AwaitingLearner, "{report:?}");
-    assert_eq!(report.steps[0].text, "The answer is mitochondria.");
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
+    assert_eq!(report.steps[0].text, "");
     assert_eq!(report.steps[1].text, "", "an ask never shows prose");
-    assert!(report.steps[1].calls[0].is_error, "{report:?}");
-    assert_eq!(t.engine().reminders, 0, "a refused pose is no leak");
-    assert!(session(&t, &id).open_question.is_none());
+    assert!(!report.steps[1].calls[0].is_error, "{report:?}");
+    assert_eq!(t.engine().reminders, 0);
+    assert!(session(&t, &id).open_question.is_some());
 }
 
 #[test]
@@ -646,7 +646,7 @@ fn a_malformed_sibling_call_does_not_hide_its_reply_s_leak() {
     t.engine_mut().script(Agent::Teacher, "Again.", vec![]);
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(t.engine().reminders, 1, "{report:?}");
-    assert_eq!(report.steps[0].text, "Again.");
+    assert_eq!(report.steps[0].text, "");
     assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
 }
 

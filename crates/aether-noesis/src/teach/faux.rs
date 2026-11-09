@@ -60,6 +60,7 @@ impl FauxEngine {
                 tokens: 100,
             },
             text_blocks: Vec::new(),
+            attempted_check: false,
         };
         self.scripts.entry(agent).or_default().push_back(Ok(step));
         self

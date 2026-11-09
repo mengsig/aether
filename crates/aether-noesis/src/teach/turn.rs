@@ -82,7 +82,7 @@ impl<E: Engine> Teaching<'_, E> {
             }
         };
         let end = ran?;
-        if agent_for_teacher(&caller) {
+        if agent_for_deferred_prose(&caller) {
             self.publish_standalone_text(&caller.agent, end, &mut turn, &sealer)?;
         }
         let steps = turn.seal(&sealer);
@@ -140,8 +140,9 @@ impl<E: Engine> Teaching<'_, E> {
     ) -> Result<(Option<TurnEnd>, Vec<ToolResult>), TeachError> {
         let own: Vec<String> = step.calls.iter().flat_map(seal::call_secrets).collect();
         turn.own.extend(own.iter().cloned());
-        let teacher = agent_for_teacher(caller);
-        let attempts_check = teacher && step.calls.iter().any(|call| is_ask_name(&call.name));
+        let deferred = agent_for_deferred_prose(caller);
+        let kept_check = step.calls.iter().any(|call| is_ask_name(&call.name));
+        let attempts_check = deferred && (step.attempted_check || kept_check);
         turn.attempted_check |= attempts_check;
         let mut pending = PendingStep {
             text: step.text,
@@ -151,7 +152,7 @@ impl<E: Engine> Teaching<'_, E> {
             return self.finish_without_calls(session, caller, pending, turn);
         }
         // Teacher prose stays private until the turn ends; tool output is already visible.
-        let shown = turn.shown_with(&pending.text, !teacher);
+        let shown = turn.shown_with(&pending.text, !deferred);
         let (end, owed) =
             self.execute_calls(session, caller, step.calls, &shown, &mut pending, turn)?;
         if attempts_check {
@@ -242,7 +243,10 @@ impl<E: Engine> Teaching<'_, E> {
         turn: &Turn,
     ) -> Result<ReplyText, TeachError> {
         let row = db::session(self.conn(), session)?;
-        if role_of(driving_agent(&row)) != role_of(crate::prompts::Agent::Teacher) {
+        let role = role_of(driving_agent(&row));
+        if role != role_of(crate::prompts::Agent::Teacher)
+            && role != role_of(crate::prompts::Agent::Prober)
+        {
             return Ok(ReplyText::new(
                 self.shown_text(session, turn)?,
                 AskPolicy::Pose,
@@ -268,6 +272,10 @@ impl<E: Engine> Teaching<'_, E> {
         turn: &mut Turn,
         sealer: &Sealer,
     ) -> Result<(), TeachError> {
+        if turn.attempted_check && end == TurnEnd::AwaitingLearner {
+            self.engine
+                .deliver(agent, Input::Failure(super::seal::NEUTRAL_REPLY.into()))?;
+        }
         for step in &mut turn.steps {
             if step.text.is_empty() {
                 continue;
@@ -355,7 +363,7 @@ impl<E: Engine> Teaching<'_, E> {
         };
         turn.judgment_attempts += 1;
         if turn.judgment_attempts >= JUDGMENT_ATTEMPTS {
-            let message = "I couldn't assess your recall answer. Please send a message to retry.";
+            let message = "I couldn't assess your recall answer. Select Try again to continue.";
             self.engine.deliver(agent, Input::Failure(message.into()))?;
             super::sessions::set_turn_pending(self.conn(), session, false)?;
             return Err(EngineError::Failed(format!(
@@ -669,6 +677,10 @@ fn is_ask_name(name: &str) -> bool {
 
 pub(super) fn agent_for_teacher(caller: &Caller) -> bool {
     caller.role == role_of(crate::prompts::Agent::Teacher)
+}
+
+pub(super) fn agent_for_deferred_prose(caller: &Caller) -> bool {
+    agent_for_teacher(caller) || caller.role == role_of(crate::prompts::Agent::Prober)
 }
 
 fn check_refusal<'a>(

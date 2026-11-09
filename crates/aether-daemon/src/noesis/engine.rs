@@ -422,7 +422,8 @@ impl AetherEngine<'_> {
                 CallEnd::Broke(mut spent, error)
                     if failures == 0
                         && attempt <= engine_step::ATTEMPTS
-                        && error.class != ModelErrorClass::Cancelled =>
+                        && !engine_step::is_malformed(&error)
+                        && !self.host.cancel.is_cancelled() =>
                 {
                     spent.mark_cost_gap(CostGap::Interrupted);
                     self.charge_spent(row, spent).map_err(failed)?;
@@ -880,13 +881,28 @@ async fn read_reply(
         if let StreamEvent::Usage { usage: reading } = &event {
             usage = *reading;
         }
-        reply
-            .apply(&event)
-            .map_err(|e| failed(format!("malformed model stream: {e}")))?;
+        if let Err(error) = reply.apply(&event) {
+            return Ok(CallEnd::Broke(
+                usage,
+                ModelError::new(
+                    ModelErrorClass::Unknown,
+                    format!("malformed model stream: {error}"),
+                ),
+            ));
+        }
     }
-    let response = reply
-        .finish()
-        .map_err(|e| failed(format!("malformed model stream: {e}")))?;
+    let response = match reply.finish() {
+        Ok(response) => response,
+        Err(error) => {
+            return Ok(CallEnd::Broke(
+                usage,
+                ModelError::new(
+                    ModelErrorClass::Unknown,
+                    format!("malformed model stream: {error}"),
+                ),
+            ));
+        }
+    };
     debug_assert_eq!(response.usage, usage, "the reply carries the last reading");
     Ok(CallEnd::Replied(response))
 }
@@ -1121,6 +1137,7 @@ fn step_of(response: &ModelResponse) -> Step {
         text_blocks,
         calls,
         usage: spend_of(&response.usage),
+        attempted_check: false,
     }
 }
 

@@ -37,6 +37,109 @@ async fn shutdown_during_a_held_call_resumes_the_turn_after_restart() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn shutdown_preserves_judgment_events_and_evidence_before_resuming() {
+    let home = Home::new();
+    let first = Arc::new(ScriptedClient::new());
+    let (harness, created) = hold_after_recall_judgment(&home, &first).await;
+    tokio::time::timeout(Duration::from_secs(5), harness.close())
+        .await
+        .expect("shutdown cancels the held call");
+
+    let second = Arc::new(ScriptedClient::new());
+    second.push(ScriptedClient::text("Continue."));
+    let reopened = Harness::open(&home, second.clone()).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while second.requests().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        reopened.settled().await;
+    })
+    .await
+    .expect("the pending turn resumes");
+    assert_judgment_published_once(&home, &reopened, &created.id);
+    assert!(
+        reopened
+            .session(&created.id)
+            .await
+            .unwrap()
+            .stalled
+            .is_none()
+    );
+    reopened.close().await;
+}
+
+async fn hold_after_recall_judgment(
+    home: &Home,
+    first: &Arc<ScriptedClient>,
+) -> (Harness, NoesisSession) {
+    first.push(ScriptedClient::tool_call(
+        ASK,
+        json!({
+            "kind": "recall", "prompt": "What is 2 + 2?", "answer_key": "four"
+        }),
+    ));
+    let harness = Harness::open(home, first.clone()).await;
+    harness.configure(teaching_on(|_| {})).await;
+    let created = harness.create(json!({})).await;
+    let posed = harness.posed(&created.id).await;
+    harness.settled().await;
+    let question = posed.open_question.unwrap().id;
+    first.push(ScriptedClient::tool_call(
+        "noesis_judge_recall",
+        json!({
+            "question": question, "correct": true
+        }),
+    ));
+    first.push(ScriptedClient::text("Continue."));
+    let _held = first.hold_response_at(3);
+    harness
+        .send_json(json!({"cmd": "noesis_answer", "session": created.id,
+        "question": question, "answer": {"text": "four", "dont_know": false},
+        "idempotency_key": "recall-before-shutdown"}))
+        .await
+        .expect("answer");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while first.requests().len() < 3 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("judgment completed and the next call is held");
+    assert_eq!(
+        harness.session(&created.id).await.unwrap().questions[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .correct,
+        Some(true)
+    );
+    assert!(harness.daemon.runtime.turn_in_flight(created.agent));
+    (harness, created)
+}
+
+fn assert_judgment_published_once(home: &Home, reopened: &Harness, session: &str) {
+    let events = reopened.events();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(&event.kind,
+        EventKind::NoesisAnswerRecorded { session: event_session, result }
+            if event_session == session && result.correct == Some(true)))
+            .count(),
+        1
+    );
+    let conn = rusqlite::Connection::open(home.data.path().join("noesis.db")).unwrap();
+    let count: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM evidence WHERE session = ?1 AND kind = 'probe_answer'",
+            [session],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 1, "the judgment's learner evidence is appended once");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn another_sessions_answer_finishes_while_a_turn_is_held() {
     let home = Home::new();
     let client = Arc::new(ScriptedClient::new());
@@ -305,6 +408,59 @@ async fn one_engine_failure_retries_automatically() {
     assert!(posed.stalled.is_none());
     assert_eq!(client.requests().len(), 2);
     harness.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn malformed_streams_retry_and_keep_reported_usage() {
+    for invalid_input in [false, true] {
+        let home = Home::new();
+        let client = Arc::new(ScriptedClient::new());
+        let usage = StreamEvent::Usage {
+            usage: Usage {
+                cost_usd: 0.05,
+                ..Usage::default()
+            },
+        };
+        let mut events = vec![usage];
+        if invalid_input {
+            events.push(StreamEvent::BlockStart {
+                index: 0,
+                block: aether_core::model::BlockStart::ToolUse {
+                    id: "bad".into(),
+                    name: ASK.into(),
+                    input: None,
+                },
+            });
+            events.push(StreamEvent::ToolInputDelta {
+                index: 0,
+                partial_json: "{".into(),
+            });
+        } else {
+            events.push(StreamEvent::TextDelta {
+                index: 7,
+                text: "orphan".into(),
+            });
+        }
+        client.push(Ok(events));
+        client.push(ScriptedClient::tool_call(ASK, capital_question()));
+        let harness = Harness::open(&home, client.clone()).await;
+        harness.configure(teaching_on(|_| {})).await;
+        let created = harness.create(json!({})).await;
+        let posed = tokio::time::timeout(Duration::from_secs(5), harness.posed(&created.id))
+            .await
+            .expect("malformed stream is retried");
+        harness.settled().await;
+        assert!(posed.stalled.is_none());
+        assert_eq!(client.requests().len(), 2);
+        let Reply::NoesisStatus(status) = harness.send(Command::NoesisStatus).await.unwrap() else {
+            panic!("status");
+        };
+        assert!(
+            status.spend_today.interactive.cost_usd >= 0.05,
+            "reported usage is charged"
+        );
+        harness.close().await;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
