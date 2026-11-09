@@ -304,7 +304,7 @@ impl AetherEngine<'_> {
                 blocks.push(ContentBlock::Text { text: learner });
                 blocks
             }
-            Input::Guidance(_) | Input::Failure(_) => Vec::new(),
+            Input::Guidance(_) | Input::Failure(_) | Input::AcceptedText(_) => Vec::new(),
         }
     }
 
@@ -635,7 +635,7 @@ impl Engine for AetherEngine<'_> {
             return Ok(None);
         }
         let row = self.agent(agent)?;
-        if let Input::Failure(text) = input {
+        if let Input::Failure(text) | Input::AcceptedText(text) = input {
             return self
                 .record(
                     &row,
@@ -723,6 +723,9 @@ impl Engine for AetherEngine<'_> {
         };
         let mut step = replies.step;
         let shaped = text_policy.shape(&mut step);
+        if text_policy.text == aether_noesis::teach::engine::TextPolicy::Deferred {
+            strip_teaching_lead_ins(&mut content);
+        }
         if shaped.text_dropped {
             content.retain(|block| !matches!(block, ContentBlock::Text { .. }));
         }
@@ -735,6 +738,36 @@ impl Engine for AetherEngine<'_> {
             self.record_reply(&row, usage, content)?;
         }
         Ok(step)
+    }
+}
+
+fn strip_teaching_lead_ins(content: &mut [ContentBlock]) {
+    for block in content {
+        let ContentBlock::ToolUse { name, input, .. } = block else {
+            continue;
+        };
+        if tool_name(name) != ToolName::Ask.as_str() {
+            continue;
+        }
+        let Some(fields) = input.as_object_mut() else {
+            *input = serde_json::json!({});
+            continue;
+        };
+        fields.retain(|key, _| {
+            matches!(
+                key.as_str(),
+                "kind"
+                    | "prompt"
+                    | "options"
+                    | "answer_key"
+                    | "explanation"
+                    | "plan_node"
+                    | "concepts"
+                    | "multi"
+                    | "intent"
+            )
+        });
+        debug_assert!(!fields.contains_key("lead_in"));
     }
 }
 
@@ -994,9 +1027,13 @@ fn last_calls(history: &[Message]) -> (Vec<(String, String)>, Vec<String>) {
     else {
         return (Vec::new(), Vec::new());
     };
-    let calls: Vec<(String, String)> = history[last]
-        .content
+    let mut first = last;
+    while first > 0 && history[first - 1].role == MessageRole::Assistant {
+        first -= 1;
+    }
+    let calls: Vec<(String, String)> = history[first..=last]
         .iter()
+        .flat_map(|message| &message.content)
         .filter_map(|block| match block {
             ContentBlock::ToolUse { id, name, .. } => Some((id.clone(), name.clone())),
             _ => None,

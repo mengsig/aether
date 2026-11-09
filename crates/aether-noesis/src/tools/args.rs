@@ -29,6 +29,7 @@ pub struct OptionArg {
 pub struct AskArgs {
     pub kind: QuestionKind,
     pub prompt: String,
+    pub lead_in: Option<String>,
     pub options: Vec<OptionArg>,
     pub answer_key: Vec<String>,
     pub explanation: Option<String>,
@@ -188,6 +189,7 @@ const EDGE_FIELDS: &[Field] = &[field("from", Kind::Text), field("to", Kind::Tex
 const ASK_FIELDS: &[Field] = &[
     field("kind", Kind::Enum(QuestionKind::NAMES)),
     field("prompt", Kind::Text),
+    field("lead_in", Kind::Text),
     field("options", Kind::Objects(OPTION_FIELDS)),
     field("answer_key", Kind::Texts),
     field("explanation", Kind::Text),
@@ -311,6 +313,7 @@ fn read_ask(reader: &mut Reader) -> AskArgs {
             QuestionKind::Goal,
         ),
         prompt: reader.text("prompt"),
+        lead_in: reader.opt_text("lead_in"),
         options,
         answer_key: reader.texts("answer_key"),
         explanation: reader.opt_text("explanation"),

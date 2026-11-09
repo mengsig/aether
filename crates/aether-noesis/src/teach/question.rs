@@ -61,7 +61,7 @@ pub fn author(
         } else {
             String::new()
         };
-        problems.push(format!("the prompt, an option, a concept or the plan node gives away the answer or its explanation{detail}; rewrite the overlapping field or ask a different question"));
+        problems.push(format!("the prompt, lead-in, an option, a concept or the plan node gives away the answer or its explanation{detail}; rewrite the overlapping field or ask a different question"));
     }
     if let Some(key) = key_overlap(args, visible_text) {
         let detail = if args.plan_node.is_some() {
@@ -231,6 +231,13 @@ fn shown_fields_overlap(args: &AskArgs) -> Option<String> {
         {
             return Some(found);
         }
+    }
+    if let Some(found) = args
+        .lead_in
+        .as_deref()
+        .and_then(|text| field_secret_overlap("lead_in", text, args, true))
+    {
+        return Some(found);
     }
     args.plan_node
         .as_deref()

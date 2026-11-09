@@ -105,7 +105,8 @@ fn input_text(input: &Input) -> &str {
         | Input::Opening(text)
         | Input::Handoff(text)
         | Input::Guidance(text)
-        | Input::Failure(text) => text,
+        | Input::Failure(text)
+        | Input::AcceptedText(text) => text,
         other => panic!("a text input, got {other:?}"),
     }
 }

@@ -44,7 +44,7 @@ async fn a_passed_check_resumes_the_plan_without_a_learner_message() {
     harness.answer(&probe, "Paris").await.unwrap();
     let first_check = harness.posed(&created.id).await;
     harness.settled().await;
-    let next = json!({"kind": "choice", "prompt": "Which city is Italy's capital?", "options": [{"value": "opt1", "label": "Rome"}, {"value": "opt2", "label": "Berlin"}], "answer_key": ["Rome"], "plan_node": "b"});
+    let next = json!({"kind": "choice", "prompt": "Which city is Italy's capital?", "options": [{"value": "opt1", "label": "Rome"}, {"value": "opt2", "label": "Berlin"}], "answer_key": ["Rome"], "plan_node": "b", "lead_in": "Italy's capital is in the Lazio region."});
     cli.queue(
         "teacher",
         json!({"text": "Are you ready for the next step?"}),
@@ -53,11 +53,6 @@ async fn a_passed_check_resumes_the_plan_without_a_learner_message() {
         "teacher",
         json!({"text": "Next step. Name the capital of Italy.", "tool_calls": [tool_call(ASK, next.clone())]}),
     );
-    cli.queue(
-        "teacher",
-        json!({"text": "Italy's capital is in the Lazio region."}),
-    );
-    cli.queue("teacher", json!({"tool_calls": [tool_call(ASK, next)]}));
     harness.answer(&first_check, "Paris").await.unwrap();
     let second = harness.posed(&created.id).await;
     harness.settled().await;
@@ -101,13 +96,11 @@ async fn teaching_check_recovery_never_records_internal_chatter() {
     harness.answer(&probe, "Paris").await.expect("probe answer");
     harness.settled().await;
     let first = json!({"kind": "choice", "prompt": "How many right angles fit around one point?", "options": [{"value": "opt1", "label": "2"}, {"value": "opt2", "label": "4"}], "answer_key": ["4"], "plan_node": "turns"});
-    let fresh = json!({"kind": "choice", "prompt": "How many degrees in half a turn?", "options": [{"value": "opt1", "label": "180°"}, {"value": "opt2", "label": "270°"}], "answer_key": ["180°"], "plan_node": "turns"});
+    let fresh = json!({"kind": "choice", "prompt": "How many degrees in half a turn?", "options": [{"value": "opt1", "label": "180°"}, {"value": "opt2", "label": "270°"}], "answer_key": ["180°"], "plan_node": "turns", "lead_in": "A half turn is half a full rotation."});
     cli.queue(
         "teacher",
         json!({"text": "Four corners make a turn. Pick how many right angles fit around a point", "tool_calls": [tool_call(ASK, first.clone())]}),
     );
-    cli.queue("teacher", json!({"text": "Four corners make a turn."}));
-    cli.queue("teacher", json!({"tool_calls": [tool_call(ASK, first)]}));
     cli.queue(
         "teacher",
         json!({"text": "My checks were blocked; say when ready."}),
@@ -120,7 +113,7 @@ async fn teaching_check_recovery_never_records_internal_chatter() {
     let check = harness.posed(&created.id).await;
     harness.settled().await;
     let transcript = serde_json::to_string(&harness.transcript(agent_of(&check))).unwrap();
-    assert!(transcript.contains("Four corners make a turn"));
+    assert!(transcript.contains("A half turn is half a full rotation."));
     assert!(!transcript.contains("checks were blocked"), "{transcript}");
     assert!(!transcript.contains("say when ready"), "{transcript}");
     assert!(!transcript.contains("overlaps answer_key"), "{transcript}");

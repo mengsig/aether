@@ -79,6 +79,8 @@ impl std::fmt::Debug for ToolResult {
 /// are persisted before inference and survive a failed turn.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Input {
+    /// Accepted text accompanying a posed check.
+    AcceptedText(String),
     /// The learner's own message.
     Learner(String),
     /// A session's first input: its goal, practice targets and any bundle.
@@ -139,7 +141,7 @@ pub enum EngineError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextPolicy {
     Keep,
-    Explanation,
+    Deferred,
     Suppress,
     SuppressWithoutCalls,
 }
@@ -186,12 +188,26 @@ impl ReplyText {
     pub fn suppressed(self, step: &Step) -> bool {
         self.text == TextPolicy::Suppress
             || (self.text == TextPolicy::SuppressWithoutCalls && step.calls.is_empty())
-            || (self.text == TextPolicy::Explanation && has_prose_question_mark(&step.text))
     }
 
     /// Keep a held reply for routing while dropping it from the transcript.
     pub fn shape(self, step: &mut Step) -> Shaped {
         let had_text = !(step.text.is_empty() && step.text_blocks.is_empty());
+        if self.text == TextPolicy::Deferred {
+            let mut asks = step.calls.iter().filter(|call| is_ask(call));
+            let first = asks.next();
+            let lead_in = first
+                .filter(|_| asks.next().is_none() && step.calls.len() == 1)
+                .and_then(|call| call.input.get("lead_in"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            step.text = lead_in.to_owned();
+            step.text_blocks.clear();
+            return Shaped {
+                text_dropped: had_text,
+                asks_dropped: false,
+            };
+        }
         if self.asks == AskPolicy::Hold && asks_with_prose(step) {
             return Shaped {
                 text_dropped: true,
@@ -213,18 +229,6 @@ impl ReplyText {
             asks_dropped: attempts && self.asks == AskPolicy::Withhold,
         }
     }
-}
-
-fn has_prose_question_mark(text: &str) -> bool {
-    let mut code = false;
-    for character in text.chars() {
-        if character == '`' {
-            code = !code;
-        } else if !code && matches!(character, '?' | '？' | '¿') {
-            return true;
-        }
-    }
-    false
 }
 
 pub trait Engine {

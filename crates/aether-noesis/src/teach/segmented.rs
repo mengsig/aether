@@ -294,7 +294,11 @@ impl<E: Engine> Teaching<'_, E> {
             }
         };
         let end = ran?;
-        let steps = current.turn.seal(&sealer);
+        let mut turn = current.turn;
+        if super::turn::agent_for_teacher(&current.caller) {
+            self.publish_check_text(&current.caller.agent, &mut turn, &sealer)?;
+        }
+        let steps = turn.seal(&sealer);
         debug_assert!(end != TurnEnd::StepLimit || steps.len() == MAX_STEPS);
         advance.reports.push(TurnReport {
             agent: current.caller.agent,

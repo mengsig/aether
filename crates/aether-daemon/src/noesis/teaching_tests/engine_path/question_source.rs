@@ -40,125 +40,23 @@ async fn start_teaching(harness: &Harness, cli: &FauxCli, plan: Value) -> String
     created.id
 }
 
-/// One taught step as the model produces it: a reply with prose beside its
-/// card, the explanation it is then asked for, and the card posed alone.
-fn queue_step(cli: &FauxCli, mixed: &str, lesson: &str, card: &Value) {
-    cli.queue(
-        "teacher",
-        json!({"text": mixed, "tool_calls": [tool_call(ASK, card.clone())]}),
-    );
-    cli.queue("teacher", json!({"text": lesson}));
-    cli.queue(
-        "teacher",
-        json!({"tool_calls": [tool_call(ASK, card.clone())]}),
-    );
-}
-
-fn taught_steps() -> [(
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-); 3] {
-    [
-        (
-            "Four corners make a turn. Which shape has three sides?",
-            "Four corners make a turn.",
-            "a",
-            "How many degrees are in a full turn?",
-            "360 degrees",
-            "90 degrees",
-        ),
-        (
-            "A half turn is two quarter turns. Name a shape with three sides",
-            "A half turn is two quarter turns.",
-            "b",
-            "How many sides does a hexagon have?",
-            "6 sides",
-            "8 sides",
-        ),
-        (
-            "Triangles have three corners. Tell me the sum of their angles",
-            "Triangles have three corners.",
-            "c",
-            "What do the angles of a triangle add up to?",
-            "180 degrees",
-            "270 degrees",
-        ),
-    ]
-}
-
 #[tokio::test(flavor = "multi_thread")]
-async fn go_and_each_passed_check_teach_then_pose_with_no_prose_question() {
+async fn only_prose_from_the_accepted_check_reaches_the_transcript() {
     let home = Home::new();
     let cli = Arc::new(FauxCli::default());
-    let plan = json!({"nodes": [{"id": "a", "title": "Turns"}, {"id": "b", "title": "Sides"}, {"id": "c", "title": "Sums"}],
-        "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}]});
+    let plan = json!({"nodes": [{"id": "turns", "title": "Turns"}], "edges": []});
     let harness = engine_harness(&home, cli.clone()).await;
-    let id = start_teaching(&harness, &cli, plan).await;
-    let steps = taught_steps();
-    for (mixed, lesson, node, prompt, right, wrong) in &steps {
-        queue_step(&cli, mixed, lesson, &check(prompt, right, wrong, node));
-    }
-    for (index, (_, _, _, prompt, right, _)) in steps.iter().enumerate() {
-        if index == 0 {
-            harness
-                .send_json(json!({"cmd": "noesis_send", "session": id, "text": "Go", "idempotency_key": "go"}))
-                .await
-                .expect("go");
-        }
-        let posed = harness.posed(&id).await;
-        harness.settled().await;
-        assert_eq!(
-            posed.open_question.as_ref().expect("a card").prompt,
-            *prompt
-        );
-        harness.answer(&posed, right).await.expect("answer");
-        harness.settled().await;
-    }
-    let agent = agent_of(&harness.session(&id).await.expect("session"));
-    let texts = assistant_texts(&harness, agent);
-    for (_, lesson, ..) in steps {
-        assert!(
-            texts.iter().any(|text| text == lesson),
-            "{lesson} missing from {texts:?}"
-        );
-    }
-    for question in ["Which shape", "Name a shape", "Tell me the sum"] {
-        assert!(
-            texts.iter().all(|text| !text.contains(question)),
-            "{question} in {texts:?}"
-        );
-    }
-    harness.close().await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_refused_pose_and_its_replacement_leave_no_prose_question() {
-    let home = Home::new();
-    let cli = Arc::new(FauxCli::default());
-    let plan =
-        json!({"nodes": [{"id": "turns", "title": "Right angle = 360° ÷ 4 = 90°"}], "edges": []});
-    let harness = engine_harness(&home, cli.clone()).await;
-    let id = start_teaching(&harness, &cli, plan).await;
-    let first = check(
-        "How many right angles fit around one point?",
-        "4",
-        "2",
-        "turns",
+    let id = start_teaching(&harness, &cli, plan.clone()).await;
+    cli.queue(
+        "teacher",
+        json!({"text": "Name a triangle", "tool_calls": [tool_call("noesis_plan", plan)]}),
     );
-    let fresh = check(
-        "How many degrees are in half a turn?",
-        "180°",
-        "270°",
-        "turns",
+    let mut card = check("How many degrees in a half turn?", "180°", "270°", "turns");
+    card["lead_in"] = json!("A half turn is half a full rotation.");
+    cli.queue(
+        "teacher",
+        json!({"text": "Which shape has three sides?", "tool_calls": [tool_call(ASK, card)]}),
     );
-    cli.queue("teacher", json!({"text": "Four corners make a turn. Pick the count of right angles around a point", "tool_calls": [tool_call(ASK, first.clone())]}));
-    cli.queue("teacher", json!({"text": "Four corners make a turn."}));
-    cli.queue("teacher", json!({"tool_calls": [tool_call(ASK, first)]}));
-    cli.queue("teacher", json!({"text": "Different idea. How many sides has a triangle", "tool_calls": [tool_call(ASK, fresh)]}));
     harness
         .send_json(
             json!({"cmd": "noesis_send", "session": id, "text": "Go", "idempotency_key": "go"}),
@@ -168,11 +66,80 @@ async fn a_refused_pose_and_its_replacement_leave_no_prose_question() {
     let posed = harness.posed(&id).await;
     harness.settled().await;
     let texts = assistant_texts(&harness, agent_of(&posed)).join("\n");
-    assert!(texts.contains("Four corners make a turn."), "{texts}");
-    for question in ["Pick the count", "How many sides", "Different idea"] {
-        assert!(!texts.contains(question), "{question} recorded in {texts}");
-    }
-    let shown = posed.open_question.expect("the replacement is open");
-    assert_eq!(shown.prompt, "How many degrees are in half a turn?");
+    assert!(!texts.contains("Name a triangle"), "{texts}");
+    assert!(!texts.contains("Which shape has three sides?"), "{texts}");
+    assert!(
+        texts.contains("A half turn is half a full rotation."),
+        "{texts}"
+    );
+    assert_eq!(
+        posed.open_question.as_ref().expect("card").prompt,
+        "How many degrees in a half turn?"
+    );
+    harness.answer(&posed, "180°").await.expect("answer");
+    harness.settled().await;
+    let transcript = harness.transcript(agent_of(&posed));
+    assert!(transcript.iter().any(|message| message.role == MessageRole::User
+        && message.content.iter().any(|block| matches!(block, ContentBlock::ToolResult { is_error: false, .. }))
+        && message.content.iter().any(|block| matches!(block, ContentBlock::Text { text } if text.starts_with("The learner answered:")))));
+    harness.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn refused_check_prose_is_not_recorded_before_a_replacement() {
+    let home = Home::new();
+    let cli = Arc::new(FauxCli::default());
+    let plan =
+        json!({"nodes": [{"id": "turns", "title": "Right angle = 360° ÷ 4 = 90°"}], "edges": []});
+    let harness = engine_harness(&home, cli.clone()).await;
+    let id = start_teaching(&harness, &cli, plan).await;
+    let mut first = check(
+        "How many right angles fit around one point?",
+        "4",
+        "2",
+        "turns",
+    );
+    let mut fresh = check(
+        "How many degrees are in half a turn?",
+        "180°",
+        "270°",
+        "turns",
+    );
+    first["lead_in"] = json!("The refused lesson must not appear.");
+    cli.queue("teacher", json!({"text": "Pick the count of right angles around a point", "tool_calls": [tool_call(ASK, first)]}));
+    fresh["lead_in"] = json!("A half turn is half a full rotation.");
+    cli.queue(
+        "teacher",
+        json!({"text": "Name a shape with three sides", "tool_calls": [tool_call(ASK, fresh)]}),
+    );
+    harness
+        .send_json(
+            json!({"cmd": "noesis_send", "session": id, "text": "Go", "idempotency_key": "go"}),
+        )
+        .await
+        .expect("go");
+    let posed = harness.posed(&id).await;
+    harness.settled().await;
+    let texts = assistant_texts(&harness, agent_of(&posed)).join("\n");
+    assert!(!texts.contains("Pick the count"), "{texts}");
+    assert!(
+        !texts.contains("The refused lesson must not appear."),
+        "{texts}"
+    );
+    let transcript = format!("{:?}", harness.transcript(agent_of(&posed)));
+    assert!(
+        !transcript.contains("The refused lesson must not appear."),
+        "{transcript}"
+    );
+    assert!(!transcript.contains("lead_in"), "{transcript}");
+    assert!(!texts.contains("Name a shape with three sides"), "{texts}");
+    assert!(
+        texts.contains("A half turn is half a full rotation."),
+        "{texts}"
+    );
+    assert_eq!(
+        posed.open_question.expect("replacement").prompt,
+        "How many degrees are in half a turn?"
+    );
     harness.close().await;
 }

@@ -326,6 +326,7 @@ fn ask_schema() -> Value {
         json!({
             "kind": names(QuestionKind::NAMES),
             "prompt": text(),
+            "lead_in": {"type": "string", "description": "For a teaching check, the brief explanation or worked example shown only if this check is accepted. Do not pose another question here."},
             "options": {"type": "array", "items": option, "minItems": 2},
             "answer_key": {"anyOf": [text(), texts()], "description": "For choice questions, provide the exact label of each correct option, not its value or position. For recall, provide the expected answer text. Omit for goal questions."},
             "explanation": text(),
