@@ -302,6 +302,16 @@ impl<E: Engine> Teaching<'_, E> {
     }
 
     fn pose_plan_overlap(&self, plan: Option<&plan::PlanDag>, args: &AskArgs) -> Option<String> {
+        debug_assert!(
+            args.kind != super::records::QuestionKind::Choice
+                || args
+                    .answer_key
+                    .iter()
+                    .all(|key| args.options.iter().any(|option| &option.label == key))
+        );
+        debug_assert!(
+            args.kind != super::records::QuestionKind::Goal || args.answer_key.is_empty()
+        );
         let mut sealed: Vec<(String, String)> = args
             .answer_key
             .iter()
@@ -623,6 +633,10 @@ fn make_question(
     authored: question::Authored,
     id: &str,
 ) -> QuestionRow {
+    debug_assert!(!id.is_empty());
+    debug_assert!(
+        authored.options.is_empty() || authored.answer_key.len() <= authored.options.len()
+    );
     let (options, answer_key) = if authored.options.is_empty() {
         (None, authored.answer_key)
     } else {
@@ -643,8 +657,6 @@ fn make_question(
         posed_at: db::now(),
         step: Some(question::step(row.phase, args.kind, collapsed)),
     };
-    debug_assert!(!posed.id.is_empty());
-    debug_assert!(posed.step.is_some());
     QuestionRow {
         question: posed,
         answer_key,
