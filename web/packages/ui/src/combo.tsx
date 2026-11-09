@@ -2,7 +2,7 @@
 // autocomplete). The text stays the value; a suggestion only fills it in. For open values that
 // still have known candidates: paths, timezones, repository roots.
 
-import { useId, useRef, useState, type InputHTMLAttributes, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type InputHTMLAttributes, type KeyboardEvent, type ReactNode } from "react";
 import { useDismissOnOutside } from "./outside.ts";
 import { classes, invariant } from "./classes.ts";
 import { moveIndex, type PickerOption } from "./picker-model.ts";
@@ -93,8 +93,13 @@ interface ComboListProps {
 /** The suggestion list under the input; a press on a row never takes focus from the input. */
 function ComboList({ id, label, suggestions, active, status, emptyText, onHover, onPick }: ComboListProps) {
   invariant(active >= -1 && active < Math.max(suggestions.length, 1), `combo cursor ${active} is out of range`);
+  const list = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    const node = list.current?.querySelector<HTMLElement>('[role="option"][data-active="true"]');
+    if (node !== undefined && node !== null && typeof node.scrollIntoView === "function") node.scrollIntoView({ block: "nearest" });
+  }, [active]);
   return (
-    <ul className="ui-picker-pop ui-picker-list ui-combo-list" id={`${id}-list`} role="listbox" aria-label={`${label} suggestions`}>
+    <ul ref={list} className="ui-picker-pop ui-picker-list ui-combo-list" id={`${id}-list`} role="listbox" aria-label={`${label} suggestions`}>
       {suggestions.map((option, index) => (
         <li key={option.id} id={`${id}-option-${index}`} role="option" className="ui-picker-option" aria-selected={index === active} aria-disabled={option.disabled || undefined}
           data-active={index === active ? "true" : undefined} onPointerMove={() => onHover(index)} onMouseDown={(event) => event.preventDefault()} onClick={() => onPick(option)}>
