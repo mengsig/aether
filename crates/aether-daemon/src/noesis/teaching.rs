@@ -319,7 +319,9 @@ impl NoesisService {
         }
         let host = self.turn_host(&ticket, &mut desk, runtime)?;
         let reservation = desk.reserve_turn(session);
-        let (desk, ran, output) = run_segments(&ticket, desk, &host, session).await?;
+        let Some((desk, ran, output)) = run_segments(&ticket, desk, &host, session).await? else {
+            return Ok(());
+        };
         publish(&desk, runtime, output, &Actor::System, None)?;
         drop(reservation);
         drop(desk);
@@ -395,11 +397,11 @@ async fn run_segments<'a>(
     host: &EngineHost,
     session: &str,
 ) -> Result<
-    (
+    Option<(
         tokio::sync::MutexGuard<'a, Desk>,
         Result<(), TeachError>,
         Output,
-    ),
+    )>,
     ErrorReply,
 > {
     let mut engine = AetherEngine::new(host);
@@ -416,9 +418,12 @@ async fn run_segments<'a>(
                 buffer = segment.buffer;
                 drop(desk);
                 result = Some(call.run(&mut engine));
+                if ticket.cancel.is_cancelled() {
+                    return Ok(None);
+                }
                 desk = ticket.desk.lock().await;
             }
-            SegmentOutcome::Done { result, output } => return Ok((desk, result, output)),
+            SegmentOutcome::Done { result, output } => return Ok(Some((desk, result, output))),
         }
     }
 }

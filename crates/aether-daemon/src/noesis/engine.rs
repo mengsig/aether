@@ -382,10 +382,22 @@ impl AetherEngine<'_> {
         row: &Agent,
         request: &mut ModelRequest,
     ) -> Result<ModelResponse, EngineError> {
-        let mut stalls = 0;
+        let mut failures = 0;
         for attempt in 1..=engine_step::ATTEMPTS + 1 {
             self.gate(row)?;
-            match self.invoke(row, request.clone())? {
+            let end = match self.invoke(row, request.clone()) {
+                Ok(end) => end,
+                Err(EngineError::NotSent(_))
+                    if failures == 0
+                        && attempt <= engine_step::ATTEMPTS
+                        && !self.host.cancel.is_cancelled() =>
+                {
+                    failures += 1;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            match end {
                 CallEnd::Replied(response) => {
                     if let Some(open) = self.charge.as_mut() {
                         open.spent += response.usage;
@@ -396,8 +408,8 @@ impl AetherEngine<'_> {
                 CallEnd::Broke(mut spent, error) if error.class == ModelErrorClass::Timeout => {
                     spent.mark_cost_gap(CostGap::Interrupted);
                     self.charge_spent(row, spent).map_err(failed)?;
-                    stalls += 1;
-                    if stalls >= 2 {
+                    failures += 1;
+                    if failures >= 2 || attempt > engine_step::ATTEMPTS {
                         return Err(EngineError::Stalled(error.to_string()));
                     }
                 }
@@ -406,6 +418,15 @@ impl AetherEngine<'_> {
                 {
                     self.charge_spent(row, spent).map_err(failed)?;
                     with_note(&mut request.messages, engine_step::RETRY_NOTE);
+                }
+                CallEnd::Broke(mut spent, error)
+                    if failures == 0
+                        && attempt <= engine_step::ATTEMPTS
+                        && error.class != ModelErrorClass::Cancelled =>
+                {
+                    spent.mark_cost_gap(CostGap::Interrupted);
+                    self.charge_spent(row, spent).map_err(failed)?;
+                    failures += 1;
                 }
                 CallEnd::Broke(spent, error) => {
                     return Err(self.record_broken(row, spent, error.to_string()));

@@ -1,6 +1,42 @@
 use super::*;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn shutdown_during_a_held_call_resumes_the_turn_after_restart() {
+    let home = Home::new();
+    let first = Arc::new(ScriptedClient::new());
+    let _held = first.hold_next_response();
+    first.push(ScriptedClient::tool_call(ASK, capital_question()));
+    let harness = Harness::open(&home, first.clone()).await;
+    harness.configure(teaching_on(|_| {})).await;
+    let created = harness.create(json!({})).await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while first.requests().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the teaching call started");
+    assert!(harness.daemon.runtime.turn_in_flight(created.agent));
+    tokio::time::timeout(Duration::from_secs(5), harness.close())
+        .await
+        .expect("shutdown cancels the held call");
+
+    let second = Arc::new(ScriptedClient::new());
+    second.push(ScriptedClient::tool_call(ASK, capital_question()));
+    let reopened = Harness::open(&home, second.clone()).await;
+    let posed = tokio::time::timeout(Duration::from_secs(5), reopened.posed(&created.id))
+        .await
+        .expect("the interrupted turn resumes");
+    assert!(
+        posed.stalled.is_none(),
+        "shutdown must not record a failure"
+    );
+    assert!(posed.open_question.is_some());
+    assert_eq!(second.requests().len(), 1);
+    reopened.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn another_sessions_answer_finishes_while_a_turn_is_held() {
     let home = Home::new();
     let client = Arc::new(ScriptedClient::new());
@@ -253,7 +289,7 @@ async fn two_timeouts_stall_the_session_and_retry_can_recover() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn engine_failure_stalls_visibly_and_retry_can_recover() {
+async fn one_engine_failure_retries_automatically() {
     let home = Home::new();
     let client = Arc::new(ScriptedClient::new());
     client.push(Err(ModelError::new(
@@ -264,12 +300,34 @@ async fn engine_failure_stalls_visibly_and_retry_can_recover() {
     let harness = Harness::open(&home, client.clone()).await;
     harness.configure(teaching_on(|_| {})).await;
     let created = harness.create(json!({})).await;
+    let posed = harness.posed(&created.id).await;
+    harness.settled().await;
+    assert!(posed.stalled.is_none());
+    assert_eq!(client.requests().len(), 2);
+    harness.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn engine_failure_stalls_visibly_and_retry_can_recover() {
+    let home = Home::new();
+    let client = Arc::new(ScriptedClient::new());
+    for _ in 0..2 {
+        client.push(Err(ModelError::new(
+            aether_core::model::ModelErrorClass::Unknown,
+            "engine failed",
+        )));
+    }
+    client.push(ScriptedClient::tool_call(ASK, capital_question()));
+    let harness = Harness::open(&home, client.clone()).await;
+    harness.configure(teaching_on(|_| {})).await;
+    let created = harness.create(json!({})).await;
     harness.settled().await;
     let stalled = harness.session(&created.id).await.unwrap();
     assert_eq!(
         stalled.stalled.unwrap().reason,
         aether_core::noesis::StallReason::EngineStalled
     );
+    assert_eq!(client.requests().len(), 2, "one automatic retry");
     assert!(!harness.daemon.runtime.turn_in_flight(created.agent));
     assert!(
         harness
@@ -284,7 +342,7 @@ async fn engine_failure_stalls_visibly_and_retry_can_recover() {
     let resumed = harness.posed(&created.id).await;
     harness.settled().await;
     assert!(resumed.stalled.is_none());
-    assert_eq!(client.requests().len(), 2);
+    assert_eq!(client.requests().len(), 3);
     harness.close().await;
 }
 
