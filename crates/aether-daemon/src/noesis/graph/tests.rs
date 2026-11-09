@@ -430,6 +430,15 @@ async fn sessions_are_queued_after_a_teaching_turn_only_in_auto_mode() {
     harness.configure(auto).await;
     let error = service.after_teaching_turn(runtime, "ns_missing").await;
     assert!(error.is_err(), "auto mode reads the session: {error:?}");
+    seed_session(
+        &side_store(&harness),
+        "ns_practice",
+        "practice",
+        "agt_unused",
+    );
+    let practice = service.after_teaching_turn(runtime, "ns_practice").await;
+    assert_eq!(practice.expect("practice needs no extraction"), None);
+    assert!(jobs(&harness).await.is_empty(), "practice queues no job");
     let spec = CreateAgentSpec {
         role: "worker".into(),
         ..Default::default()

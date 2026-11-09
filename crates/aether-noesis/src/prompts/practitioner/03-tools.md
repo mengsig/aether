@@ -9,5 +9,6 @@
   - `miss_class` is `cue`, `discrimination`, `execution`, `careless` or `structural`.
   - `retest` says whether the idea should come back.
 - Every exercise goes through `noesis.problem`. Structured questions belong to the Teacher, so you have no question tool.
+- Practice never writes to the knowledge graph. Do not request extraction or any graph write.
 
 You may conclude one problem and pose the next in the same turn.

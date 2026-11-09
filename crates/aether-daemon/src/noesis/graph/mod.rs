@@ -110,8 +110,15 @@ impl NoesisService {
             return Ok(None);
         };
         let store = noesis.store();
-        let corpus = jobs::StoreCorpus::new(store, runtime);
         let effective = noesis.effective();
+        if !extract::trigger::auto_enabled(&effective) {
+            return Ok(None);
+        }
+        let origin = extract::session_origin(store.connection(), session).map_err(extract_error)?;
+        if origin.is_some_and(|origin| origin.practice) {
+            return Ok(None);
+        }
+        let corpus = jobs::StoreCorpus::new(store, runtime);
         let queued = extract::after_teaching_turn(store.connection(), &effective, &corpus, session)
             .map_err(extract_error)?;
         let Some(job) = queued else {
