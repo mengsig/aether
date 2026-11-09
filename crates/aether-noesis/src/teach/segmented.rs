@@ -28,6 +28,7 @@ struct CurrentTurn {
 pub struct ModelCall {
     agent: String,
     live: Sealer,
+    suppress_text: bool,
     admission: Option<Admission>,
 }
 
@@ -36,7 +37,7 @@ impl ModelCall {
     pub fn run<E: Engine>(self, engine: &mut E) -> Result<Step, TeachError> {
         debug_assert!(!self.agent.is_empty());
         debug_assert_eq!(self.admission.is_none(), engine.charges_own_calls());
-        let result = engine.step(&self.agent, &self.live);
+        let result = engine.step(&self.agent, &self.live, self.suppress_text);
         match (self.admission, result) {
             (Some(admission), Ok(step)) => {
                 admission.settle(step.usage);
@@ -203,6 +204,7 @@ impl<E: Engine> Teaching<'_, E> {
         Ok(ModelCall {
             agent: current.caller.agent.clone(),
             live,
+            suppress_text: current.turn.recovering_check(),
             admission,
         })
     }
@@ -226,6 +228,7 @@ impl<E: Engine> Teaching<'_, E> {
                     Some(Input::ToolResults(results)),
                 )?;
             }
+            self.require_teaching_check(&current.caller.agent, &mut current.turn)?;
             self.require_recall_judgment(
                 &advance.session,
                 &current.caller.agent,

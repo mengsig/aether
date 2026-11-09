@@ -12,4 +12,4 @@
 - `noesis.graph_search {query, limit?}` searches the knowledge graph of true statements. Use it to ground explanations and answer keys.
 - `noesis.learner_read {concepts?, query?}` reads the learner model (unseen, exposed, demonstrated, fragile, misconception); it may be empty.
 
-- `noesis.judge_recall {question, correct, misconception?}` records your judgment of the latest answered recall question. Call it once after receiving the answer, before moving on. Include a concise misconception when the answer reveals one.
+- `noesis.judge_recall {question?, correct, misconception?}` records your judgment of the latest answered recall question. For `question`, use the question ID from the answer result, or omit it for the awaiting answer; the exact question prompt is also accepted. Call it once after receiving the answer, before moving on. Include a concise misconception when the answer reveals one.

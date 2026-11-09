@@ -153,5 +153,10 @@ pub trait Engine {
     /// buffered whole, never streamed, and kept only as
     /// [`super::seal::kept_reply`] decides against `live`, the secrets the
     /// session holds unrevealed as the step starts.
-    fn step(&mut self, agent: &str, live: &Sealer) -> Result<Step, EngineError>;
+    fn step(
+        &mut self,
+        agent: &str,
+        live: &Sealer,
+        suppress_text: bool,
+    ) -> Result<Step, EngineError>;
 }

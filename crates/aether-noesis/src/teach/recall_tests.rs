@@ -276,3 +276,64 @@ fn budget_interruption_and_store_restart_preserve_the_obligation() {
         Some(true)
     );
 }
+
+#[test]
+fn judgment_accepts_prompt_or_omitted_id_and_refuses_other_ids() {
+    const PROMPT: &str = "A rectangle has length 8 and width 3. What is its perimeter, and what calculation did you use?";
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    for supplied in [Some(PROMPT), None] {
+        let id = t
+            .create_session("Learn perimeter", Mode::Teach, &[])
+            .unwrap()
+            .id;
+        t.engine_mut()
+            .script(Agent::Prober, "", vec![(ASK, recall(PROMPT, "22"))]);
+        assert_eq!(t.advance(&id).unwrap()[0].end, TurnEnd::AwaitingAnswer);
+        let question = session(&t, &id).open_question.unwrap().id;
+        t.answer(
+            &id,
+            &question,
+            &Answer {
+                text: Some("22".into()),
+                ..Answer::default()
+            },
+        )
+        .unwrap();
+        let wrong = call(
+            &mut t,
+            &id,
+            JUDGE,
+            json!({"question": "q_other", "correct": false}),
+            "",
+        );
+        assert!(wrong.result.is_error);
+        assert!(
+            wrong.result.content["error"]
+                .as_str()
+                .unwrap()
+                .contains(&question)
+        );
+        let result = session(&t, &id).questions[0].result.clone().unwrap();
+        assert_eq!(result.correct, None);
+        assert!(
+            call(
+                &mut t,
+                &id,
+                JUDGE,
+                json!({"question": "", "correct": false}),
+                ""
+            )
+            .result
+            .is_error
+        );
+        let args = match supplied {
+            Some(prompt) => json!({"question": prompt, "correct": true}),
+            None => json!({"correct": true}),
+        };
+        assert!(!call(&mut t, &id, JUDGE, args.clone(), "").result.is_error);
+        assert!(call(&mut t, &id, JUDGE, args, "").result.is_error);
+        let result = session(&t, &id).questions[0].result.clone().unwrap();
+        assert_eq!(result.correct, Some(true));
+    }
+}

@@ -12,6 +12,84 @@ use crate::prompts::Agent;
 const SECRET: &str = "mitochondria";
 
 #[test]
+fn teaching_recovers_from_a_plan_that_already_shows_the_check_answer() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let plan = json!({"nodes": [
+        {"id": "four-right-angles", "title": "Four right angles make one full turn"},
+        {"id": "quarter-turn-formula", "title": "Right angle = 360° ÷ 4 = 90°"}
+    ], "edges": [{"from": "four-right-angles", "to": "quarter-turn-formula"}]});
+    assert!(!call(&mut t, &id, PLAN, plan, "").result.is_error);
+    t.take_events();
+    let mut first = choice(
+        "How many right angles (square corners) fit around one point to make a full turn?",
+        &[("opt1", "2"), ("opt2", "3"), ("opt3", "4"), ("opt4", "6")],
+        &["opt3"],
+    );
+    first["plan_node"] = json!("four-right-angles");
+    first["intent"] = json!("predict");
+    first["concepts"] = json!(["right-angle", "full-turn", "quarter-turn"]);
+    let mut fresh = choice(
+        "How many degrees are in a half turn?",
+        &[("opt1", "180°"), ("opt2", "270°")],
+        &["opt1"],
+    );
+    fresh["plan_node"] = json!("four-right-angles");
+    let teacher = t.engine_mut();
+    teacher.script(
+        Agent::Teacher,
+        "Let's start step 1: four right angles make one full turn.",
+        vec![(ASK, first)],
+    );
+    teacher.script(
+        Agent::Teacher,
+        "My checks were blocked; say when ready.",
+        vec![],
+    );
+    teacher.script(Agent::Teacher, "Try this check.", vec![(ASK, fresh)]);
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
+    assert!(report.steps[0].calls[0].is_error);
+    assert!(report.steps[1].text.is_empty());
+    assert!(!report.steps[2].calls[0].is_error);
+    let agent = session(&t, &id).agent;
+    let inputs = t.engine().inputs_of(&agent);
+    assert!(
+        inputs
+            .iter()
+            .any(|input| matches!(input, Input::Guidance(text)
+        if text.contains("fresh check") && text.contains("plan node[1].title")
+            && text.contains("answer_key[0]")))
+    );
+    let result = answer_choice(&mut t, &id, &["180°"]);
+    assert_eq!(result.correct, Some(true));
+}
+
+#[test]
+fn teaching_check_recovery_is_bounded_when_the_teacher_never_retries() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let plan = json!({"nodes": [{"id": "a", "title": "Paris"}], "edges": []});
+    assert!(!call(&mut t, &id, PLAN, plan, "").result.is_error);
+    t.take_events();
+    let mut question = capital_question();
+    question["plan_node"] = json!("a");
+    t.engine_mut()
+        .script(Agent::Teacher, "", vec![(ASK, question)]);
+    for _ in 0..3 {
+        t.engine_mut()
+            .script(Agent::Teacher, "Please reply.", vec![]);
+    }
+    let before = t.engine().steps_run;
+    let error = t.advance(&id).unwrap_err();
+    assert!(error.to_string().contains("could not pose a fresh check"));
+    assert_eq!(t.engine().steps_run - before, 4);
+    assert!(session(&t, &id).open_question.is_none());
+}
+
+#[test]
 fn a_stringified_argument_escaping_the_active_solution_is_discarded() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());

@@ -10,4 +10,4 @@
   - The key is committed before the learner sees the question and is hidden from them.
 - `noesis.probe_done {strands: [{strand, floor, ceiling, misconceptions, start}], summary?}` ends the probe and hands the session to the Teacher. Call it exactly once, and never while a question is open. It returns a short fixed acknowledgement.
 
-- `noesis.judge_recall {question, correct, misconception?}` records your judgment of the latest answered recall question. Call it once after receiving the answer, before moving on. Include a concise misconception when the answer reveals one.
+- `noesis.judge_recall {question?, correct, misconception?}` records your judgment of the latest answered recall question. For `question`, use the question ID from the answer result, or omit it for the awaiting answer; the exact question prompt is also accepted. Call it once after receiving the answer, before moving on. Include a concise misconception when the answer reveals one.

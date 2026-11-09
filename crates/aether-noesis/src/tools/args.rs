@@ -116,7 +116,7 @@ pub struct LearnerReadArgs {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct JudgeRecallArgs {
-    pub question: String,
+    pub question: Option<String>,
     pub correct: bool,
     pub misconception: Option<String>,
 }
@@ -245,7 +245,11 @@ pub fn parse(tool: ToolName, input: Value) -> Result<ToolArgs, ArgError> {
     let args = match tool {
         ToolName::Ask => ToolArgs::Ask(read_ask(&mut reader)),
         ToolName::JudgeRecall => ToolArgs::JudgeRecall(JudgeRecallArgs {
-            question: reader.text("question"),
+            question: if reader.object.contains_key("question") {
+                Some(reader.text("question"))
+            } else {
+                None
+            },
             correct: reader.boolean("correct"),
             misconception: reader.opt_text("misconception"),
         }),

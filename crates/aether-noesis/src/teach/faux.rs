@@ -145,7 +145,12 @@ impl Engine for FauxEngine {
 
     /// Each reply replays the agent's next scripted step, kept as the
     /// daemon's are; an agent without one replies with nothing and waits.
-    fn step(&mut self, agent: &str, live: &Sealer) -> Result<Step, EngineError> {
+    fn step(
+        &mut self,
+        agent: &str,
+        live: &Sealer,
+        suppress_text: bool,
+    ) -> Result<Step, EngineError> {
         let kind = self.kind_of(agent).expect("a step for a spawned agent");
         self.step_seals.push(live.clone());
         let replies = kept_reply(live, |reminder| {
@@ -156,6 +161,11 @@ impl Engine for FauxEngine {
                 .map(|step| (step, ()))
         })?;
         debug_assert!(replies.discarded.len() <= 2);
-        Ok(replies.step)
+        let mut step = replies.step;
+        if suppress_text {
+            step.text.clear();
+            step.text_blocks.clear();
+        }
+        Ok(step)
     }
 }

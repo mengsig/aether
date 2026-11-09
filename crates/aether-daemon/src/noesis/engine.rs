@@ -600,7 +600,12 @@ impl Engine for AetherEngine<'_> {
     /// The step's reply is kept only as [`kept_reply`] decides: a reply
     /// that gives a sealed answer away is charged and discarded, never
     /// recorded, and made once more with the seal's reminder.
-    fn step(&mut self, agent: &str, live: &Sealer) -> Result<Step, EngineError> {
+    fn step(
+        &mut self,
+        agent: &str,
+        live: &Sealer,
+        suppress_text: bool,
+    ) -> Result<Step, EngineError> {
         let row = self.agent(agent)?;
         if row.status.is_terminal() {
             return Err(not_sent(format!("agent {agent} is {}", row.status.kind())));
@@ -631,13 +636,23 @@ impl Engine for AetherEngine<'_> {
             unrecorded = Some(response.usage);
             Ok((step_of(&response), response))
         })?;
-        let (usage, content) = match (&replies.kept, replies.discarded.last()) {
+        let (usage, mut content) = match (&replies.kept, replies.discarded.last()) {
             (Some(kept), _) => (kept.usage, kept_content(kept)),
             (None, Some(last)) => (last.usage, text_content(&replies.step.text)),
             (None, None) => unreachable!("a step without a kept reply discarded two"),
         };
-        self.record_reply(&row, usage, content)?;
-        Ok(replies.step)
+        let mut step = replies.step;
+        if suppress_text {
+            content.retain(|block| !matches!(block, ContentBlock::Text { .. }));
+            step.text.clear();
+            step.text_blocks.clear();
+        }
+        if content.is_empty() {
+            self.record_spend(&row, usage)?;
+        } else {
+            self.record_reply(&row, usage, content)?;
+        }
+        Ok(step)
     }
 }
 

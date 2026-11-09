@@ -254,10 +254,10 @@ fn definition(tool: ToolName) -> ToolDef {
             ask_schema(),
         ),
         ToolName::JudgeRecall => (
-            "Judge the latest answered recall question once, after receiving its answer.",
+            "Judge the latest answered recall question once, after receiving its answer. Use the question ID from the answer result, or omit question to judge the awaiting answer.",
             object(
-                json!({"question": text(), "correct": {"type": "boolean"}, "misconception": text()}),
-                &["question", "correct"],
+                json!({"question": {"type": "string", "description": "Question ID from the answer result; omit for the awaiting answer. The exact question prompt is also accepted."}, "correct": {"type": "boolean"}, "misconception": text()}),
+                &["correct"],
             ),
         ),
         ToolName::ProbeDone => (

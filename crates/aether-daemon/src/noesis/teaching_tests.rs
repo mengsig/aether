@@ -711,7 +711,12 @@ impl Engine for Unreachable {
         aether_noesis::budget::Spend::default()
     }
 
-    fn step(&mut self, _agent: &str, _live: &Sealer) -> Result<Step, EngineError> {
+    fn step(
+        &mut self,
+        _agent: &str,
+        _live: &Sealer,
+        _suppress_text: bool,
+    ) -> Result<Step, EngineError> {
         Err(EngineError::NotSent("unreachable".into()))
     }
 }

@@ -55,22 +55,32 @@ pub fn author(
         QuestionKind::Recall => author_recall(args, &mut problems),
         QuestionKind::Goal => author_goal(args, &mut problems),
     };
-    if shown_fields_reveal(args) {
-        problems.push(
-            "the prompt, an option, a concept or the plan node gives away the answer or its explanation; rewrite it"
-                .to_string(),
-        );
+    if let Some(overlap) = shown_fields_overlap(args) {
+        let detail = if args.plan_node.is_some() {
+            format!(": {overlap}")
+        } else {
+            String::new()
+        };
+        problems.push(format!("the prompt, an option, a concept or the plan node gives away the answer or its explanation{detail}; rewrite the overlapping field or ask a different question"));
     }
-    if reveals_key(args, visible_text) {
-        problems.push(
-            "what your turn has shown gives away the answer; ask a different question".to_string(),
-        );
+    if let Some(key) = key_overlap(args, visible_text) {
+        let detail = if args.plan_node.is_some() {
+            format!(" (answer_key[{key}])")
+        } else {
+            String::new()
+        };
+        problems.push(format!("what your turn has shown gives away the answer{detail}; ask a different question with an answer not already shown"));
     }
-    if Sealer::new(args.explanation.iter()).holds(visible_text) {
-        problems.push(
-            "what your turn has shown gives away the explanation; keep it until the learner answers"
-                .to_string(),
-        );
+    let explanation = Sealer::new(args.explanation.iter());
+    if explanation.holds(visible_text) {
+        let detail = if args.plan_node.is_some() {
+            " (explanation)".to_string()
+        } else {
+            String::new()
+        };
+        problems.push(format!(
+            "what your turn has shown gives away the explanation{detail}; use an explanation not already shown"
+        ));
     }
     if problems.is_empty() {
         Ok(authored)
@@ -194,6 +204,10 @@ pub(super) fn model_key_values(args: &AskArgs) -> Vec<String> {
 /// Whether a field the learner sees repeats a sealed text: the explanation
 /// anywhere, a recall key in the prompt or a label, any key in a tag.
 pub(super) fn shown_fields_reveal(args: &AskArgs) -> bool {
+    shown_fields_overlap(args).is_some()
+}
+
+fn shown_fields_overlap(args: &AskArgs) -> Option<String> {
     let explanation = Sealer::new(args.explanation.iter());
     let key: Vec<String> = match args.kind {
         QuestionKind::Choice => args
@@ -207,44 +221,61 @@ pub(super) fn shown_fields_reveal(args: &AskArgs) -> bool {
     let key = Sealer::new(&key);
     // A choice shows its labels, correct ones included, so only its prompt
     // is held against its key.
-    let mut prose = vec![args.prompt.as_str()];
+    let mut prose = vec![("prompt", args.prompt.as_str())];
     if args.kind != QuestionKind::Choice {
-        prose.extend(args.options.iter().map(|option| option.label.as_str()));
+        prose.extend(
+            args.options
+                .iter()
+                .map(|option| ("option label", option.label.as_str())),
+        );
     }
-    let in_values = args
-        .options
+    let overlap = |field: &str, text: &str, sealer: &Sealer, source: &str| {
+        sealer
+            .holds(text)
+            .then(|| format!("{field} overlaps {source}"))
+    };
+    for (field, text) in prose {
+        if let Some(found) = overlap(field, text, &key, "answer_key")
+            .or_else(|| overlap(field, text, &explanation, "explanation"))
+        {
+            return Some(found);
+        }
+    }
+    for option in &args.options {
+        if let Some(found) = overlap("option value", &option.value, &explanation, "explanation")
+            .or_else(|| overlap("option label", &option.label, &explanation, "explanation"))
+        {
+            return Some(found);
+        }
+    }
+    for (field, text) in args
+        .concepts
         .iter()
-        .any(|option| explanation.holds(&option.value));
-    let mut tags: Vec<&str> = args.concepts.iter().map(String::as_str).collect();
-    tags.extend(args.plan_node.as_deref());
-    let in_prose = prose
-        .iter()
-        .any(|text| key.holds(text) || explanation.holds(text))
-        || args
-            .options
-            .iter()
-            .any(|option| explanation.holds(&option.label));
-    let in_tags = tags
-        .iter()
-        .any(|tag| key.holds(tag) || explanation.holds(tag));
-    in_prose || in_tags || in_values
+        .map(|text| ("concept", text.as_str()))
+        .chain(args.plan_node.as_deref().map(|text| ("plan node", text)))
+    {
+        if let Some(found) = overlap(field, text, &key, "answer_key")
+            .or_else(|| overlap(field, text, &explanation, "explanation"))
+        {
+            return Some(found);
+        }
+    }
+    None
 }
 
 /// Whether the posing turn's visible text holds a correct option's label or
 /// the recall key, as a whole phrase and ignoring case.
 pub fn reveals_key(args: &AskArgs, visible_text: &str) -> bool {
-    let secrets: Vec<&str> = match args.kind {
-        QuestionKind::Choice => args
-            .options
-            .iter()
-            .filter(|option| args.answer_key.contains(&option.label))
-            .map(|option| option.label.as_str())
-            .collect(),
-        QuestionKind::Recall => args.answer_key.iter().map(String::as_str).collect(),
-        QuestionKind::Goal => Vec::new(),
-    };
-    debug_assert!(args.kind != QuestionKind::Goal || secrets.is_empty());
-    Sealer::new(secrets).holds(visible_text)
+    key_overlap(args, visible_text).is_some()
+}
+
+fn key_overlap(args: &AskArgs, visible_text: &str) -> Option<usize> {
+    if args.kind == QuestionKind::Goal {
+        return None;
+    }
+    args.answer_key
+        .iter()
+        .position(|secret| Sealer::new([secret]).holds(visible_text))
 }
 
 /// A stored question's key as the learner would recognise it: a choice key

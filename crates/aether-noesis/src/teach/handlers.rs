@@ -48,7 +48,18 @@ impl<E: Engine> Teaching<'_, E> {
         let handled = self.handle(session, caller, call, visible_text)?;
         let (mut content, is_error, ends) = match handled {
             Ok((content, ends)) => (content, false, ends),
-            Err(problem) => (json!({ "error": problem }), true, None),
+            Err(mut problem) => {
+                if ToolName::parse(&call.name) == Some(ToolName::JudgeRecall) {
+                    if let Some(id) = db::unjudged_recall(self.conn(), session)? {
+                        if !problem.contains(&id) {
+                            problem.push_str(&format!(
+                                "; use question ID {id} from the answer result"
+                            ));
+                        }
+                    }
+                }
+                (json!({ "error": problem }), true, None)
+            }
         };
         // A result never repeats a committed sealed text, even where a refusal
         // quotes the model; a refused call committed nothing of its own.
@@ -139,8 +150,7 @@ impl<E: Engine> Teaching<'_, E> {
         };
         let question = &asked.question;
         let expected_step = question::step(row.phase, question.kind, question.collapsed);
-        if question.id != args.question
-            || question.kind != super::records::QuestionKind::Recall
+        if question.kind != super::records::QuestionKind::Recall
             || question.step != Some(expected_step)
         {
             return refuse("only the latest recall answer from this phase can be judged");
@@ -148,11 +158,24 @@ impl<E: Engine> Teaching<'_, E> {
         let (Some(answer), Some(mut result)) = (asked.answer, asked.result) else {
             return refuse("the recall question has not been answered");
         };
+        if db::unjudged_recall(self.conn(), &row.id)?.as_deref() != Some(&question.id) {
+            return refuse("the recall answer is not available for judgment");
+        }
+        if args
+            .question
+            .as_deref()
+            .is_some_and(|supplied| supplied != question.id && supplied != question.prompt)
+        {
+            return refuse(format!(
+                "use question ID {} from the answer result, or omit question",
+                question.id
+            ));
+        }
         let tx = self.conn().unchecked_transaction()?;
         if !db::judge_recall(
             &tx,
             &row.id,
-            &args.question,
+            &question.id,
             args.correct,
             args.misconception.as_deref(),
         )? {
@@ -265,46 +288,41 @@ impl<E: Engine> Teaching<'_, E> {
             }
         };
         let id = db::fresh_id("q");
-        let (options, answer_key) = if authored.options.is_empty() {
-            (None, authored.answer_key)
-        } else {
-            let shuffled = question::shuffle(&id, &authored.options);
-            let (shown, key) = question::rekey(&shuffled, &authored.answer_key);
-            (Some(shown), key)
-        };
-        let collapsed = question::collapsed(row.phase, args.kind, args.intent);
-        let posed = Question {
-            id: id.clone(),
-            kind: args.kind,
-            prompt: args.prompt.clone(),
-            options,
-            multi: authored.multi,
-            collapsed,
-            plan_node: args.plan_node.clone(),
-            concepts: dedup(&args.concepts),
-            posed_at: db::now(),
-            step: Some(question::step(row.phase, args.kind, collapsed)),
-        };
-        let stored = QuestionRow {
-            question: posed,
-            answer_key,
-            explanation: args.explanation.clone(),
-        };
-        // The plan is shown in full while the question is open, and plan
-        // events not yet published go out with this pose.
-        let mut sealed = question::shown_key(&stored);
-        sealed.extend(stored.explanation.iter().cloned());
-        sealed.extend(question::model_key_values(args));
-        let sealer = Sealer::new(&sealed);
-        let shown_plan = plan.as_ref().is_some_and(|plan| plan_holds(plan, &sealer));
-        if shown_plan || self.pending_plans_hold(&sealer) {
-            return refuse(
-                "the plan gives away this question's answer or explanation; rewrite the plan or the question",
-            );
+        let stored = make_question(row, args, authored, &id);
+        if let Some(overlap) = self.pose_plan_overlap(plan.as_ref(), args) {
+            if args.plan_node.is_none() {
+                return refuse(
+                    "the plan gives away this question's answer or explanation; ask a different question",
+                );
+            }
+            return refuse(format!(
+                "the plan gives away this question's answer or explanation: {overlap}; ask a different question with an answer and explanation not already shown"
+            ));
         }
         self.commit_pose(row, stored)?;
         let reply = json!({ "question": id, "status": "posed", "next": "the learner's answer arrives as this call's result" });
         Ok(Ok((reply, Some(TurnEnd::AwaitingAnswer))))
+    }
+
+    fn pose_plan_overlap(&self, plan: Option<&plan::PlanDag>, args: &AskArgs) -> Option<String> {
+        let mut sealed: Vec<(String, String)> = args
+            .answer_key
+            .iter()
+            .enumerate()
+            .map(|(index, secret)| (format!("answer_key[{index}]"), secret.clone()))
+            .collect();
+        sealed.extend(
+            args.explanation
+                .iter()
+                .map(|secret| ("explanation".into(), secret.clone())),
+        );
+        sealed.extend(
+            question::model_key_values(args)
+                .into_iter()
+                .map(|secret| ("correct option value".into(), secret)),
+        );
+        plan.and_then(|plan| plan_overlap(plan, &sealed))
+            .or_else(|| self.pending_plan_overlap(&sealed))
     }
 
     /// Store a pose, advance plan to teach on a tagged question, and emit.
@@ -437,13 +455,21 @@ impl<E: Engine> Teaching<'_, E> {
 
     /// Whether a plan event not yet taken for publishing shows a secret of
     /// `sealer`; a superseded revision posted earlier in the turn counts.
-    fn pending_plans_hold(&self, sealer: &Sealer) -> bool {
-        self.events.iter().any(|event| match event {
-            NoesisEvent::PlanUpdated { plan, .. } => plan
-                .nodes
-                .iter()
-                .any(|node| sealer.holds(&node.id) || sealer.holds(&node.title)),
-            _ => false,
+    fn pending_plan_overlap(&self, sealed: &[(String, String)]) -> Option<String> {
+        self.events.iter().find_map(|event| match event {
+            NoesisEvent::PlanUpdated { plan, .. } => {
+                plan.nodes.iter().enumerate().find_map(|(index, node)| {
+                    field_overlap(&format!("pending plan node[{index}].id"), &node.id, sealed)
+                        .or_else(|| {
+                            field_overlap(
+                                &format!("pending plan node[{index}].title"),
+                                &node.title,
+                                sealed,
+                            )
+                        })
+                })
+            }
+            _ => None,
         })
     }
 
@@ -594,12 +620,55 @@ pub(super) fn problem_shows_solution(args: &ProblemArgs) -> bool {
     solution.holds(&args.statement) || args.targets.iter().any(|t| solution.holds(t))
 }
 
-/// Whether a node id or title of `plan` holds any of `secrets`; edges name
-/// only node ids, so the nodes cover everything a plan shows.
-fn plan_holds(plan: &plan::PlanDag, sealer: &Sealer) -> bool {
-    plan.nodes
-        .iter()
-        .any(|node| sealer.holds(&node.id) || sealer.holds(&node.title))
+fn make_question(
+    row: &SessionRow,
+    args: &AskArgs,
+    authored: question::Authored,
+    id: &str,
+) -> QuestionRow {
+    let (options, answer_key) = if authored.options.is_empty() {
+        (None, authored.answer_key)
+    } else {
+        let shuffled = question::shuffle(id, &authored.options);
+        let (shown, key) = question::rekey(&shuffled, &authored.answer_key);
+        (Some(shown), key)
+    };
+    let collapsed = question::collapsed(row.phase, args.kind, args.intent);
+    let posed = Question {
+        id: id.to_string(),
+        kind: args.kind,
+        prompt: args.prompt.clone(),
+        options,
+        multi: authored.multi,
+        collapsed,
+        plan_node: args.plan_node.clone(),
+        concepts: dedup(&args.concepts),
+        posed_at: db::now(),
+        step: Some(question::step(row.phase, args.kind, collapsed)),
+    };
+    debug_assert!(!posed.id.is_empty());
+    debug_assert!(posed.step.is_some());
+    QuestionRow {
+        question: posed,
+        answer_key,
+        explanation: args.explanation.clone(),
+    }
+}
+
+/// Edges only name node ids, so nodes cover everything a plan shows.
+fn plan_overlap(plan: &plan::PlanDag, sealed: &[(String, String)]) -> Option<String> {
+    plan.nodes.iter().enumerate().find_map(|(index, node)| {
+        field_overlap(&format!("plan node[{index}].id"), &node.id, sealed)
+            .or_else(|| field_overlap(&format!("plan node[{index}].title"), &node.title, sealed))
+    })
+}
+
+fn field_overlap(field: &str, text: &str, sealed: &[(String, String)]) -> Option<String> {
+    sealed.iter().find_map(|(source, secret)| {
+        Sealer::new([secret])
+            .holds(text)
+            .then(|| format!("{field} overlaps {source}"))
+    })
 }
 
 fn strand_problems(args: &ProbeDoneArgs) -> Vec<String> {

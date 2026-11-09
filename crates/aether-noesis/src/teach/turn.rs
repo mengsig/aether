@@ -2,7 +2,7 @@
 //! run, results delivered in order even after a failed delivery, and the
 //! turn's tool results sealed once at its end.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::db;
 use super::engine::{Engine, EngineError, Input, Step, ToolResult};
@@ -18,6 +18,7 @@ use crate::budget::{INTERACTIVE_BUDGET_SETTING, Lane, Refusal};
 use crate::tools::{self, SEALED, ToolName};
 
 const JUDGMENT_ATTEMPTS: usize = 3;
+const CHECK_ATTEMPTS: usize = 3;
 
 impl<E: Engine> Teaching<'_, E> {
     /// Run the session's agent until it waits, and on a hand-off run the new
@@ -100,12 +101,13 @@ impl<E: Engine> Teaching<'_, E> {
         }
         self.guide_recall_judgment(session, &caller.agent)?;
         for _ in 0..MAX_STEPS {
-            let step = self.model_step(session, &caller.agent)?;
+            let step = self.model_step(session, &caller.agent, turn.recovering_check())?;
             let (end, results) = self.run_calls(session, caller, step, turn)?;
             if !results.is_empty() {
                 let input = Input::ToolResults(results);
                 self.deliver_queued(session, &caller.agent, Some(input))?;
             }
+            self.require_teaching_check(&caller.agent, turn)?;
             self.require_recall_judgment(session, &caller.agent, turn)?;
             if let Some(end) = end {
                 return Ok(end);
@@ -131,6 +133,11 @@ impl<E: Engine> Teaching<'_, E> {
         };
         turn.own.extend(own.iter().cloned());
         if step.calls.is_empty() {
+            if turn.check_attempts > 0 {
+                pending.text.clear();
+                turn.steps.push(pending);
+                return Ok((None, Vec::new()));
+            }
             if db::unjudged_recall(self.conn(), session)?.is_some() {
                 turn.steps.push(pending);
                 return Ok((None, Vec::new()));
@@ -141,10 +148,45 @@ impl<E: Engine> Teaching<'_, E> {
         // Each step is kept as it ends, so a pose is checked against all the
         // turn has kept, not only its own step's text.
         let shown = turn.shown_with(&pending.text);
+        let recovering_check = turn.check_attempts > 0;
+        let (end, owed) =
+            self.execute_calls(session, caller, step.calls, &shown, &mut pending, turn)?;
+        if recovering_check && end != Some(TurnEnd::AwaitingAnswer) {
+            pending.text.clear();
+        } else if end == Some(TurnEnd::AwaitingAnswer) {
+            turn.check_attempts = 0;
+        }
+        let results = self.engine_results(session, &own, &pending, &owed)?;
+        turn.steps.push(pending);
+        Ok((end, results))
+    }
+
+    fn execute_calls(
+        &mut self,
+        session: &str,
+        caller: &Caller,
+        calls: Vec<super::engine::ToolCall>,
+        shown: &str,
+        pending: &mut PendingStep,
+        turn: &mut Turn,
+    ) -> Result<(Option<TurnEnd>, Vec<usize>), TeachError> {
+        debug_assert!(!calls.is_empty());
+        debug_assert!(pending.calls.is_empty());
         let mut end = None;
         let mut owed = Vec::new();
-        for call in step.calls {
-            let outcome = self.call_tool(session, caller, &call, &shown)?;
+        for call in calls {
+            let outcome = self.call_tool(session, caller, &call, shown)?;
+            if agent_for_teacher(caller)
+                && check_refusal(
+                    &call.name,
+                    &call.input,
+                    &outcome.result.content,
+                    outcome.result.is_error,
+                )
+                .is_some()
+            {
+                turn.check_attempts = turn.check_attempts.max(1);
+            }
             if outcome.ends.is_none() {
                 owed.push(pending.calls.len());
             }
@@ -157,9 +199,35 @@ impl<E: Engine> Teaching<'_, E> {
                 is_error: outcome.result.is_error,
             });
         }
-        let results = self.engine_results(session, &own, &pending, &owed)?;
-        turn.steps.push(pending);
-        Ok((end, results))
+        Ok((end, owed))
+    }
+
+    pub(super) fn require_teaching_check(
+        &mut self,
+        agent: &str,
+        turn: &mut Turn,
+    ) -> Result<(), TeachError> {
+        if turn.check_attempts == 0 {
+            return Ok(());
+        }
+        if turn.check_attempts > CHECK_ATTEMPTS {
+            return Err(EngineError::Failed(
+                "the teaching agent could not pose a fresh check".into(),
+            )
+            .into());
+        }
+        let detail = turn.steps.last().and_then(|step| {
+            step.calls.iter().find_map(|call| {
+                check_refusal(&call.name, &call.input, &call.result, call.is_error)
+            })
+        });
+        let guidance = format!(
+            "System guidance, not a learner message: {} Continue this turn by calling noesis.ask with a fresh check whose answer and explanation are not already shown. Do not discuss tool refusals or ask the learner to prompt you.",
+            detail.unwrap_or("The check still needs to be posed.")
+        );
+        self.engine.deliver(agent, Input::Guidance(guidance))?;
+        turn.check_attempts += 1;
+        Ok(())
     }
 
     pub(super) fn require_recall_judgment(
@@ -221,6 +289,9 @@ impl<E: Engine> Teaching<'_, E> {
             // seal its reason and the agent still reads what to fix.
             if call.is_error {
                 committed.refusal(&mut content);
+                if check_refusal(&call.name, &call.input, &call.result, true).is_some() {
+                    content = json!({"error": "The check overlaps material already shown; ask a different question."});
+                }
             } else {
                 all.value(&mut content);
             }
@@ -323,11 +394,16 @@ impl<E: Engine> Teaching<'_, E> {
     /// One model step, admitted before it is made and settled after, and
     /// checked against what `session` holds unrevealed as it starts, so no
     /// reply holding a live secret is kept.
-    fn model_step(&mut self, session: &str, agent: &str) -> Result<Step, TeachError> {
+    fn model_step(
+        &mut self,
+        session: &str,
+        agent: &str,
+        suppress_text: bool,
+    ) -> Result<Step, TeachError> {
         let solution = db::active_problem(self.conn(), session)?.map(|row| row.solution);
         let live = Sealer::live(self.live_secrets(session)?, solution.as_deref());
         if self.engine.charges_own_calls() {
-            return Ok(self.engine.step(agent, &live)?);
+            return Ok(self.engine.step(agent, &live, suppress_text)?);
         }
         let today = chrono::Local::now().date_naive();
         let estimate = self.engine.estimate(agent);
@@ -335,7 +411,7 @@ impl<E: Engine> Teaching<'_, E> {
             .noesis
             .accountant()
             .admit(Lane::Interactive, estimate, today)?;
-        match self.engine.step(agent, &live) {
+        match self.engine.step(agent, &live, suppress_text) {
             Ok(step) => {
                 admission.settle(step.usage);
                 Ok(step)
@@ -386,6 +462,7 @@ pub(super) struct Turn {
     /// Every sealed text the turn's calls carried.
     own: Vec<String>,
     judgment_attempts: usize,
+    check_attempts: usize,
     /// Where the turn's events start in the pending event list.
     pub(super) events_from: usize,
 }
@@ -402,11 +479,15 @@ impl std::fmt::Debug for Turn {
 }
 
 impl Turn {
+    pub(super) fn recovering_check(&self) -> bool {
+        self.check_attempts > 0
+    }
     pub(super) fn new(events_from: usize) -> Self {
         Self {
             steps: Vec::new(),
             own: Vec::new(),
             judgment_attempts: 0,
+            check_attempts: 0,
             events_from,
         }
     }
@@ -423,7 +504,11 @@ impl Turn {
                 if ToolName::parse(&call.name).is_none() {
                     shown.push(call.name.clone());
                 }
-                shown.extend(tools::visible_texts(&call.name, &call.input));
+                if !call.is_error
+                    || tools::sealed_texts(&call.name, &call.input).is_none_or(|s| s.is_empty())
+                {
+                    shown.extend(tools::visible_texts(&call.name, &call.input));
+                }
             }
         }
         shown.push(current.to_string());
@@ -449,6 +534,30 @@ impl Turn {
         debug_assert_eq!(steps.len(), count, "every step is published");
         steps
     }
+}
+
+fn agent_for_teacher(caller: &Caller) -> bool {
+    caller.role == role_of(crate::prompts::Agent::Teacher)
+}
+
+fn check_refusal<'a>(
+    name: &str,
+    input: &Value,
+    result: &'a Value,
+    is_error: bool,
+) -> Option<&'a str> {
+    if !is_error || ToolName::parse(name) != Some(ToolName::Ask) {
+        return None;
+    }
+    if !matches!(tools::parse(ToolName::Ask, input.clone()),
+        Ok(tools::ToolArgs::Ask(args)) if args.plan_node.is_some())
+    {
+        return None;
+    }
+    result
+        .get("error")
+        .and_then(Value::as_str)
+        .filter(|text| text.contains("gives away"))
 }
 
 /// A call as it may be published: a pose's input withheld whole, since its

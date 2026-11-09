@@ -21,6 +21,60 @@ const ENGINE_MODEL: &str = "faux-engine/tutor";
 const KEY_SECRET: &str = "Paris has been the capital since 987.";
 const SOLUTION_SECRET: &str = "SOLUTION-FIVE-41";
 
+#[tokio::test(flavor = "multi_thread")]
+async fn teaching_check_recovery_never_records_internal_chatter() {
+    let home = Home::new();
+    let cli = Arc::new(FauxCli::default());
+    cli.queue(
+        "prober",
+        json!({"tool_calls": [tool_call(ASK, capital_question())]}),
+    );
+    cli.queue("prober", json!({"tool_calls": [tool_call("noesis_probe_done", json!({"strands": [{"strand": "angles", "floor": "knows corners", "ceiling": "turns", "start": "turns"}]}))]}));
+    cli.queue("teacher", json!({"text": "Here is the plan.", "tool_calls": [tool_call("noesis_plan", json!({"nodes": [{"id": "turns", "title": "Right angle = 360° ÷ 4 = 90°"}], "edges": []}))]}));
+    cli.queue("teacher", json!({"text": "Say go to start."}));
+    let harness = engine_harness(&home, cli.clone()).await;
+    let created = harness.create(json!({"goal": "Learn angles"})).await;
+    let probe = harness.posed(&created.id).await;
+    harness.answer(&probe, "Paris").await.expect("probe answer");
+    harness.settled().await;
+    let first = json!({"kind": "choice", "prompt": "How many right angles fit around one point?", "options": [{"value": "opt1", "label": "2"}, {"value": "opt2", "label": "4"}], "answer_key": ["4"], "plan_node": "turns"});
+    let fresh = json!({"kind": "choice", "prompt": "How many degrees in half a turn?", "options": [{"value": "opt1", "label": "180°"}, {"value": "opt2", "label": "270°"}], "answer_key": ["180°"], "plan_node": "turns"});
+    cli.queue(
+        "teacher",
+        json!({"text": "Four corners make a turn.", "tool_calls": [tool_call(ASK, first)]}),
+    );
+    cli.queue(
+        "teacher",
+        json!({"text": "My checks were blocked; say when ready."}),
+    );
+    cli.queue(
+        "teacher",
+        json!({"text": "My checks were blocked.", "tool_calls": [tool_call(ASK, fresh)]}),
+    );
+    harness.send_json(json!({"cmd": "noesis_send", "session": created.id, "text": "Go", "idempotency_key": "go"})).await.expect("go");
+    let check = harness.posed(&created.id).await;
+    harness.settled().await;
+    let transcript = serde_json::to_string(&harness.transcript(agent_of(&check))).unwrap();
+    assert!(transcript.contains("Four corners make a turn"));
+    assert!(!transcript.contains("checks were blocked"), "{transcript}");
+    assert!(!transcript.contains("say when ready"), "{transcript}");
+    assert!(!transcript.contains("overlaps answer_key"), "{transcript}");
+    harness.answer(&check, "180°").await.expect("check answer");
+    harness.settled().await;
+    let view = harness.session(&created.id).await.unwrap();
+    assert_eq!(
+        view.questions
+            .last()
+            .unwrap()
+            .result
+            .as_ref()
+            .unwrap()
+            .correct,
+        Some(true)
+    );
+    harness.close().await;
+}
+
 /// The builtin engines are switched off so the test does not depend on
 /// this machine's logins; `unkeyed` is an API provider with no key set.
 const PROVIDERS: &str = r#"

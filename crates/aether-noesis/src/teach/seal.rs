@@ -113,13 +113,15 @@ impl Sealer {
 
     /// Whether `text` holds any secret.
     pub fn holds(&self, text: &str) -> bool {
-        if self.secrets.is_empty() {
-            return false;
-        }
+        self.matching(text).is_some()
+    }
+
+    pub(super) fn matching(&self, text: &str) -> Option<&str> {
         let haystack = normalise(text);
         self.secrets
             .iter()
-            .any(|secret| contains_phrase(&haystack, secret))
+            .find(|secret| contains_phrase(&haystack, secret))
+            .map(String::as_str)
     }
 
     /// Replace `value` whole by [`tools::SEALED`] when any part of it holds a
