@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { access, mkdir, realpath, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { Stack } from "../../harness/stack.ts";
 import { until } from "../../harness/process.ts";
 import { agent } from "./daemon.ts";
@@ -129,6 +129,22 @@ export async function startSession(page: Page, mode: "Learn something new" | "Pr
   const id = decodeURIComponent(page.url().split("/").at(-1) ?? "");
   assert.ok(id.length > 0);
   return id;
+}
+
+export async function recallQuestion(page: Page, model: string): Promise<Locator> {
+  const recall = page.getByRole("article", { name: "Recall question" }).filter({ has: page.getByTestId("learn-answer") }).last();
+  const goal = page.getByRole("article", { name: "Your goal question" }).filter({ has: page.getByTestId("learn-answer") }).last();
+  let answeredGoal = false;
+  await until(async () => {
+    if (await recall.isVisible()) return true;
+    if (!answeredGoal && await goal.isVisible()) {
+      await (await textField(await need(goal, "learn-answer"))).fill("Solve simple equations and explain each step.");
+      await goal.getByRole("button", { name: "Answer", exact: true }).click();
+      answeredGoal = true;
+    }
+    return false;
+  }, Boolean, `${model} to pose a recall question`, WAIT_MS);
+  return recall;
 }
 
 export async function assertModel(stack: Stack, id: string, model: string): Promise<void> {

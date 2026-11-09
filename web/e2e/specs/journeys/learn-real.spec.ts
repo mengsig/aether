@@ -5,7 +5,7 @@ import { REAL_MODELS } from "../../harness/real-engine.ts";
 import { until } from "../../harness/process.ts";
 import { connectionsReady, journeyHooks } from "./journey.ts";
 import { assistantText } from "./daemon.ts";
-import { assertModel, assertQueuedTurn, attachSlowRequests, capture, checkBinaries, configure, endStreamProbe, holdEngine, turnFinished, sampleReads, session, startSession, warmBudget, WAIT_MS } from "./learn-real-support.ts";
+import { assertModel, assertQueuedTurn, attachSlowRequests, capture, checkBinaries, configure, endStreamProbe, holdEngine, recallQuestion, turnFinished, sampleReads, session, startSession, warmBudget, WAIT_MS } from "./learn-real-support.ts";
 import { need, textField } from "./ui.ts";
 
 const real = process.env.JOURNEY_ENGINE === "real";
@@ -33,8 +33,7 @@ test("packaged Learn with Haiku and Luna", async () => {
       const id = await startSession(window, "Learn something new", GOAL, true);
       stopReads = sampleReads(stack, id);
       await assertModel(stack, id, name);
-      const question = window.getByRole("article", { name: "Recall question" }).filter({ has: window.getByTestId("learn-answer") }).last();
-      await expect(question, `${name} poses a recall question`).toBeVisible({ timeout: WAIT_MS });
+      const question = await recallQuestion(window, name);
       await endStreamProbe(window, model.model);
       await capture(window, `${model.model}-question`);
       await configure(stack, name, 0.01);
