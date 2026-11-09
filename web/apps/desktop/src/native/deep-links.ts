@@ -62,6 +62,9 @@ export interface RouteTarget {
 export class DeepLinkRouter {
   private target: RouteTarget | undefined;
   private pending: string | undefined;
+  private readonly recover: (() => void) | undefined;
+
+  constructor(recover?: () => void) { this.recover = recover; }
 
   /** Accepts a link; true when it named an allowed route. */
   acceptLink(link: string): boolean {
@@ -80,6 +83,7 @@ export class DeepLinkRouter {
     if (!isAllowedRoute(route)) throw new Error(`${route.slice(0, 80)} is not an allowed route`);
     if (this.target === undefined || !this.target.isReady()) {
       this.pending = route;
+      this.recover?.();
       return;
     }
     this.target.show(route);
@@ -88,6 +92,7 @@ export class DeepLinkRouter {
   /** Brings the app window forward, as a click on a notification with no route does. */
   focus(): void {
     if (this.target !== undefined && this.target.isReady()) this.target.focus();
+    else this.recover?.();
   }
 
   /** The app window has loaded: it takes the waiting route, then every later one. */

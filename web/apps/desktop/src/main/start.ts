@@ -53,6 +53,7 @@ export interface DesktopOptions {
 
 export interface Desktop {
   readonly appWindow: BrowserWindow;
+  ensureMainWindow(): Promise<BrowserWindow>;
   readonly bridge: Bridge;
   readonly remote: RemoteWindows;
   readonly reports: ReportWindows;
@@ -148,6 +149,49 @@ function host(options: DesktopOptions, parts: HostParts): BridgeHost {
   };
 }
 
+function mainWindowManager(options: DesktopOptions, bridge: Bridge, appWindowIds: Set<number>, deepLinks: DeepLinkRouter) {
+  const extra = options.offscreen ? { offscreen: true } : {};
+  const hint = app.commandLine.getSwitchValue("ozone-platform-hint") || options.env.ELECTRON_OZONE_PLATFORM_HINT || "";
+  const remapX11 = x11Session(process.platform, app.commandLine.getSwitchValue("ozone-platform"), hint, options.env);
+  let current: BrowserWindow | undefined;
+  let creating: Promise<BrowserWindow> | undefined;
+  const createWindow = async (): Promise<BrowserWindow> => {
+    const base = appWindowOptions(PRELOAD);
+    const window = new BrowserWindow({ ...base, webPreferences: { ...base.webPreferences, ...extra } });
+    const id = window.webContents.id;
+    current = window;
+    appWindowIds.add(id);
+    pinContents(window.webContents, APP_ORIGIN);
+    window.on("closed", () => {
+      appWindowIds.delete(id);
+      bridge.connections.closeOwner(id);
+      bridge.memoryExports.forget(id);
+      if (current === window) current = undefined;
+    });
+    try {
+      await window.loadURL(APP_ENTRY);
+      if (window.isDestroyed()) throw new Error("The app window closed while loading");
+      if (!options.offscreen) window.show();
+      deepLinks.attach(windowTarget(window, remapX11));
+      return window;
+    } catch (error) {
+      if (!window.isDestroyed()) window.destroy();
+      throw error;
+    }
+  };
+  const ensureMainWindow = (): Promise<BrowserWindow> => {
+    if (creating !== undefined) return creating;
+    if (current !== undefined && !current.isDestroyed()) return Promise.resolve(current);
+    creating = createWindow().finally(() => { creating = undefined; });
+    return creating;
+  };
+  const getMainWindow = (): BrowserWindow => {
+    if (current === undefined || current.isDestroyed()) throw new Error("The app window is no longer available");
+    return current;
+  };
+  return { ensureMainWindow, getMainWindow };
+}
+
 export async function startDesktop(options: DesktopOptions): Promise<Desktop> {
   if (!app.isReady()) throw new Error("startDesktop runs once the app is ready");
   const schemas = compileSchemas(readProtocolSchema(AETHER_SCHEMA), readProtocolSchema(ARCHON_SCHEMA));
@@ -171,20 +215,12 @@ export async function startDesktop(options: DesktopOptions): Promise<Desktop> {
     closed: (owner, conn) => { if (!pushClosed(owner, conn)) bridge.connections.closeOwner(owner); },
   }));
   registerIpc(ipcMain, bridge, appWindowIds);
-  const base = appWindowOptions(PRELOAD);
-  const appWindow = new BrowserWindow({ ...base, webPreferences: { ...base.webPreferences, ...extra } });
-  const id = appWindow.webContents.id;
-  appWindowIds.add(id);
-  pinContents(appWindow.webContents, APP_ORIGIN);
-  appWindow.on("closed", () => {
-    appWindowIds.delete(id);
-    bridge.connections.closeOwner(id);
-    bridge.memoryExports.forget(id);
-  });
-  await appWindow.loadURL(APP_ENTRY);
-  if (!options.offscreen) appWindow.show();
-  const hint = app.commandLine.getSwitchValue("ozone-platform-hint") || options.env.ELECTRON_OZONE_PLATFORM_HINT || "";
-  const remapX11 = x11Session(process.platform, app.commandLine.getSwitchValue("ozone-platform"), hint, options.env);
-  deepLinks.attach(windowTarget(appWindow, remapX11));
-  return { appWindow, bridge, remote, reports, preferences, appWindowIds, deepLinks, folders };
+  const { ensureMainWindow, getMainWindow } = mainWindowManager(options, bridge, appWindowIds, deepLinks);
+  await ensureMainWindow();
+  return {
+    get appWindow() {
+      return getMainWindow();
+    },
+    ensureMainWindow, bridge, remote, reports, preferences, appWindowIds, deepLinks, folders,
+  };
 }
