@@ -35,7 +35,7 @@ impl NoesisService {
             .map_err(crate::connection::store_err)?;
         let (interactive, background) = budget::by_lane(&used);
         let billing = budget::by_billing(used.iter().map(|used| (used.billing, &used.usage)));
-        let jobs_running = runtime.noesis_turns_running().iter().count();
+        let jobs_running = runtime.noesis_turns_running().len();
         let prompt_overrides = if effective.enabled && effective.prompt_overrides {
             prompt_files(&self.data_dir).map_err(ErrorReply::internal)?
         } else {
