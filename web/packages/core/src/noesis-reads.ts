@@ -3,12 +3,13 @@
 
 import type { aether } from "@aether-ui/protocol";
 import { invariant, object, string, type Json } from "./guards.ts";
-import { installRead, installSession, installSessionList, noesisKey, removeSession, type NoesisCache } from "./noesis-cache.ts";
+import { installAllSessions, installRead, installSession, installSessionList, sessionMembership, noesisKey, removeSession, type NoesisCache } from "./noesis-cache.ts";
 import { replyObject } from "./replies.ts";
 import type { AetherConnState } from "./store.ts";
 
 export type NoesisReadRequest =
   | { readonly kind: "status" }
+  | { readonly kind: "all-sessions" }
   | { readonly kind: "sessions"; readonly limit?: number }
   | { readonly kind: "session"; readonly id: string }
   | { readonly kind: "graph"; readonly query?: string; readonly limit?: number }
@@ -16,14 +17,15 @@ export type NoesisReadRequest =
   | { readonly kind: "jobs" };
 
 const REPLY_TAGS: Readonly<Record<NoesisReadRequest["kind"], string>> = {
-  status: "noesis_status", sessions: "noesis_sessions", session: "noesis_session", graph: "noesis_graph", learner: "noesis_learner", jobs: "noesis_jobs",
+  "all-sessions": "noesis_sessions", status: "noesis_status", sessions: "noesis_sessions", session: "noesis_session", graph: "noesis_graph", learner: "noesis_learner", jobs: "noesis_jobs",
 };
 
 /** The command a read sends. */
 export function noesisReadCommand(read: NoesisReadRequest): Json {
   switch (read.kind) {
     case "status": return { cmd: "noesis_status" };
-    case "sessions": return { cmd: "noesis_list_sessions", limit: read.limit ?? 200 };
+    case "all-sessions":
+    case "sessions": return { cmd: "noesis_list_sessions", limit: read.kind === "sessions" ? read.limit ?? 200 : 200 };
     case "session": return { cmd: "noesis_get_session", session: string(read.id, "session id") };
     case "graph": return { cmd: "noesis_graph", limit: read.limit ?? 2000, ...(read.query ? { query: read.query } : {}) };
     case "learner": return { cmd: "noesis_learner", limit: read.limit ?? 1000 };
@@ -46,6 +48,7 @@ export function installNoesisRead(state: AetherConnState, read: NoesisReadReques
     invariant(data.id === read.id, "noesis_get_session answers the session asked for");
     return withLearn(state, installSession(state.learn, data as unknown as aether.NoesisSession));
   }
+  if (read.kind === "all-sessions") return withLearn(state, installAllSessions(state.learn, data, ticket));
   if (read.kind === "sessions") return withLearn(state, installSessionList(state.learn, data, ticket));
   return withLearn(state, installRead(state.learn, noesisReadKey(read), data, ticket));
 }
@@ -62,7 +65,10 @@ function installStatus(state: AetherConnState, status: Json, ticket: number): Ae
 export function installNoesisChange(state: AetherConnState, command: Json, reply: Json, ticket: number): AetherConnState {
   const cmd = string(command.cmd, "command.cmd");
   if (cmd === "noesis_configure") return installStatus(state, replyObject(reply, "noesis_status"), ticket);
-  if (cmd === "noesis_create_session") return withLearn(state, installSession(state.learn, replyObject(reply, "noesis_session") as unknown as aether.NoesisSession));
+  if (cmd === "noesis_create_session") {
+    const session = replyObject(reply, "noesis_session") as unknown as aether.NoesisSession;
+    return withLearn(state, sessionMembership(installSession(state.learn, session), session.id, true));
+  }
   if (cmd === "noesis_delete_session") return withLearn(state, removeSession(state.learn, string(command.session, "noesis_delete_session.session")));
   if (cmd === "noesis_delete_proposition" || cmd === "noesis_delete_source") return withLearn(state, stale(state.learn, noesisKey.graph));
   object(reply, "reply");

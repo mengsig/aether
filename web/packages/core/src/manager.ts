@@ -8,9 +8,11 @@ import { computeCapabilities, sameCapabilities } from "./capabilities.ts";
 import { aetherAccess, archonAccess, checkAllowed, withIdempotencyKey } from "./commands.ts";
 import { Connection, type Endpoint } from "./connection.ts";
 import { codeOf, DaemonError, RefusedError } from "./errors.ts";
-import { errorText, invariant, omit, string, type Json } from "./guards.ts";
+import { array, errorText, invariant, object, omit, string, type Json } from "./guards.ts";
 import { nextTicket } from "./noesis-cache.ts";
+import { replyObject } from "./replies.ts";
 import { installNoesisChange, installNoesisRead, noesisReadCommand, type NoesisReadRequest } from "./noesis-reads.ts";
+import { compareStamps } from "./stamps.ts";
 import { dropConnection, type State, type Store, type Submission } from "./store.ts";
 
 export interface ManagerOptions {
@@ -177,9 +179,43 @@ export class ConnectionManager {
   /** Reads one Noesis entity into the store (noesis-reads.ts); the caller sees the failure. */
   async readNoesis(conn: ConnId, read: NoesisReadRequest): Promise<void> {
     const ticket = this.noesisTicket(conn);
-    const reply = await this.send(conn, noesisReadCommand(read));
+    const reply = read.kind === "all-sessions" ? await this.readAllSessions(conn) : await this.send(conn, noesisReadCommand(read));
     this.options.store.updateAether(conn, (s) => installNoesisRead(s, read, reply, ticket));
     if (read.kind === "status") this.refreshCapabilities();
+  }
+
+  private async readAllSessions(conn: ConnId): Promise<Json> {
+    const rows: unknown[] = [];
+    const cursors = new Set<string>();
+    const ids = new Set<string>();
+    let after: string | undefined;
+    for (;;) {
+      const reply = await this.send(conn, { cmd: "noesis_list_sessions", limit: 200, ...(after === undefined ? {} : { after }) });
+      const page = replyObject(reply, "noesis_sessions");
+      const sessions = array(page.sessions, "noesis_sessions.sessions");
+      invariant(sessions.length <= 200, "a session page has at most 200 rows");
+      for (const row of sessions) {
+        const session = object(row, "noesis session");
+        const id = string(session.id, "noesis session.id");
+        string(session.agent, "noesis session.agent");
+        string(session.goal, "noesis session.goal");
+        invariant(session.mode === "teach" || session.mode === "practice", "session mode is valid");
+        invariant(["probe", "plan", "teach", "practice"].includes(string(session.phase, "noesis session.phase")), "session phase is valid");
+        const created = string(session.created_at, "noesis session.created_at");
+        const updated = string(session.updated_at, "noesis session.updated_at");
+        compareStamps(created, updated);
+        invariant(!ids.has(id), "session pages contain unique IDs");
+        ids.add(id);
+        rows.push(session);
+      }
+      if (page.next_after == null) return { reply: "noesis_sessions", data: { sessions: rows } };
+      const cursor = string(page.next_after, "noesis_sessions.next_after");
+      invariant(!cursors.has(cursor), "session page cursor advances");
+      invariant(sessions.length > 0, "a continuing session page is not empty");
+      invariant(cursors.size < 10_000, "session list page limit is not exceeded");
+      cursors.add(cursor);
+      after = cursor;
+    }
   }
 
   /** Lands the reply of a Noesis change a screen sent through useCommand, so the screen derives it from the store. */

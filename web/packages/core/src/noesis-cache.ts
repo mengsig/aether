@@ -23,6 +23,7 @@ export interface NoesisProblemEntry {
 
 export interface NoesisCache {
   readonly sessions: Readonly<Record<string, aether.NoesisSession>>;
+  readonly sessionChanges: Readonly<Record<string, { readonly ticket: number; readonly present: boolean }>>;
   /** Sessions deleted from this client: a reply asked before the delete cannot bring one back. */
   readonly deleted: readonly string[];
   readonly reads: Readonly<Record<string, NoesisRead>>;
@@ -39,13 +40,14 @@ export interface NoesisCache {
 }
 
 export const EMPTY_NOESIS: NoesisCache = Object.freeze({
-  sessions: {}, deleted: [], reads: {}, questions: {}, problems: {}, results: {}, conclusions: {}, versions: {}, ticket: 0,
+  sessions: {}, sessionChanges: {}, deleted: [], reads: {}, questions: {}, problems: {}, results: {}, conclusions: {}, versions: {}, ticket: 0,
 });
 
 /** Keys of the stale versions and stamped reads. */
 export const noesisKey = {
   session: (id: string): string => `session:${id}`,
   sessions: "sessions",
+  "all-sessions": "all-sessions",
   graph: "graph",
   learner: "learner",
   jobs: "jobs",
@@ -69,15 +71,41 @@ export function installRead(cache: NoesisCache, key: string, value: Json, ticket
 
 /** Installs a session whole when it is at least as new as the one held; a deleted one stays gone. */
 export function installSession(cache: NoesisCache, session: aether.NoesisSession): NoesisCache {
-  const id = string(session.id, "noesis_session.id");
-  string(session.updated_at, "noesis_session.updated_at");
-  if (cache.deleted.includes(id)) return cache;
-  const held = cache.sessions[id];
-  if (held && compareStamps(held.updated_at, session.updated_at) > 0) return cache;
-  let next: NoesisCache = { ...cache, sessions: { ...cache.sessions, [id]: withHeldHistory(held, session) } };
-  if (session.open_question) next = withQuestion(next, id, session.open_question);
-  if (session.active_problem) next = withProblem(next, id, session.active_problem);
-  return next;
+  return installSessionRows(cache, [session]);
+}
+
+function installSessionRows(cache: NoesisCache, rows: readonly aether.NoesisSession[]): NoesisCache {
+  const sessions = Object.assign(Object.create(null) as Record<string, aether.NoesisSession>, cache.sessions);
+  let questions: Record<string, NoesisQuestionEntry> | undefined;
+  let problems: Record<string, NoesisProblemEntry> | undefined;
+  const deleted = new Set(cache.deleted);
+  let changed = false;
+  for (const session of rows) {
+    const id = string(session.id, "noesis_session.id");
+    string(session.updated_at, "noesis_session.updated_at");
+    if (deleted.has(id)) continue;
+    const held = sessions[id];
+    if (held && compareStamps(held.updated_at, session.updated_at) > 0) continue;
+    sessions[id] = withHeldHistory(held, session);
+    if (session.open_question) {
+      const question = session.open_question;
+      const key = string(question.id, "question.id");
+      if ((questions ?? cache.questions)[key]?.question !== question) {
+        questions ??= Object.assign(Object.create(null) as Record<string, NoesisQuestionEntry>, cache.questions);
+        questions[key] = { session: id, question };
+      }
+    }
+    if (session.active_problem) {
+      const problem = session.active_problem;
+      const key = string(problem.id, "problem.id");
+      if ((problems ?? cache.problems)[key]?.problem !== problem) {
+        problems ??= Object.assign(Object.create(null) as Record<string, NoesisProblemEntry>, cache.problems);
+        problems[key] = { session: id, problem };
+      }
+    }
+    changed = true;
+  }
+  return changed ? { ...cache, sessions, questions: questions ?? cache.questions, problems: problems ?? cache.problems } : cache;
 }
 
 const HISTORY = ["agents", "questions", "problems", "usage", "context"] as const;
@@ -96,14 +124,45 @@ function withHeldHistory(held: aether.NoesisSession | undefined, session: aether
 /** Installs a page of `noesis_list_sessions`: each row whole by its own stamp, and the page as a read. */
 export function installSessionList(cache: NoesisCache, page: Json, ticket: number): NoesisCache {
   const rows = array(page.sessions, "noesis_sessions.sessions").map((row) => object(row, "noesis session") as unknown as aether.NoesisSession);
-  const installed = rows.reduce(installSession, cache);
+  const installed = installSessionRows(cache, rows);
   return installRead(installed, noesisKey.sessions, page, ticket);
+}
+
+
+/** Installs one completed list, retaining membership changes made after it was requested. */
+export function installAllSessions(cache: NoesisCache, page: Json, ticket: number): NoesisCache {
+  const held = cache.reads[noesisKey["all-sessions"]];
+  if (held && held.ticket > ticket) return cache;
+  const rows = array(page.sessions, "noesis_sessions.sessions").map((row) => object(row, "noesis session") as unknown as aether.NoesisSession);
+  const ids = new Set(rows.map((row) => string(row.id, "noesis session.id")));
+  for (const [id, change] of Object.entries(cache.sessionChanges)) {
+    if (change.ticket <= ticket) continue;
+    if (change.present) ids.add(id); else ids.delete(id);
+  }
+  const installed = installSessionRows(cache, rows);
+  for (const id of installed.deleted) ids.delete(id);
+  return installRead(installed, noesisKey["all-sessions"], { ids: [...ids] }, ticket);
+}
+
+/** Records membership changes so an in-flight complete list cannot undo them. */
+export function sessionMembership(cache: NoesisCache, id: string, present: boolean): NoesisCache {
+  string(id, "session id");
+  const ticket = cache.ticket + 1;
+  invariant(Number.isSafeInteger(ticket), "session change ticket is a safe integer");
+  const read = cache.reads[noesisKey["all-sessions"]];
+  let reads = cache.reads;
+  if (read) {
+    const ids = new Set(array(read.value.ids, "all-sessions.ids").map((value) => string(value, "session id")));
+    if (present) ids.add(id); else ids.delete(id);
+    reads = { ...reads, [noesisKey["all-sessions"]]: { ...read, value: { ids: [...ids] } } };
+  }
+  return { ...cache, ticket, reads, sessionChanges: { ...cache.sessionChanges, [id]: { ticket, present } } };
 }
 
 export function removeSession(cache: NoesisCache, id: string): NoesisCache {
   string(id, "session id");
   const deleted = [...cache.deleted.filter((held) => held !== id), id].slice(-MAX_DELETED);
-  return { ...cache, sessions: omit(cache.sessions, id), deleted, versions: bump(cache.versions, noesisKey.sessions) };
+  return sessionMembership({ ...cache, sessions: omit(cache.sessions, id), deleted, versions: bump(cache.versions, noesisKey.sessions) }, id, false);
 }
 
 function withQuestion(cache: NoesisCache, session: string, question: aether.Question): NoesisCache {
@@ -133,7 +192,7 @@ export function applyNoesisEvent(cache: NoesisCache, kind: Json, agent: string |
   let next = cache;
   if (type === "noesis.session_created") {
     const created = object(kind.session, "noesis.session_created.session") as unknown as aether.NoesisSession;
-    next = { ...installSession(next, created), versions: bump(next.versions, noesisKey.sessions) };
+    next = sessionMembership({ ...installSession(next, created), versions: bump(next.versions, noesisKey.sessions) }, created.id, true);
   } else if (type === "noesis.question_posed" && session) {
     next = withQuestion(next, session, object(kind.question, "noesis.question_posed.question") as unknown as aether.Question);
   } else if (type === "noesis.problem_posed" && session) {

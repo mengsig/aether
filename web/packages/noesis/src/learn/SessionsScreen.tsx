@@ -22,10 +22,10 @@ export const MODES: readonly { readonly id: aether.SessionMode; readonly label: 
 const EMPTY_GOAL: { readonly goal: string; readonly mode: aether.SessionMode } = { goal: "", mode: "teach" };
 
 export function SessionsScreen({ conn }: OpenGate) {
-  const read = useNoesisRead(conn, { kind: "sessions" });
+  const read = useNoesisRead(conn, { kind: "all-sessions" });
   const learn = useLearn(conn);
-  const listed = learn.reads.sessions !== undefined;
-  const sessions = useMemo(() => sortSessions(Object.values(learn.sessions)), [learn.sessions]);
+  const listed = learn.reads["all-sessions"] !== undefined;
+  const sessions = useMemo(() => sortSessions(((learn.reads["all-sessions"]?.value.ids as string[] | undefined) ?? []).flatMap((id) => learn.sessions[id] ? [learn.sessions[id]] : [])), [learn.sessions, learn.reads]);
   return (
     <div className="learn-columns">
       <div className="learn-start">
@@ -34,9 +34,9 @@ export function SessionsScreen({ conn }: OpenGate) {
       </div>
       <section className="learn-list" aria-label="Your sessions">
         <h2 className="learn-subtitle">Your sessions</h2>
-        {read.error !== null && sessions.length === 0 && <ErrorState title="Could not load your sessions" message={read.error} onRetry={read.reload} />}
-        {read.error === null && !listed && sessions.length === 0 && <p className="learn-muted" aria-busy="true">Loading sessions…</p>}
-        {listed && sessions.length === 0 && (
+        {read.error !== null && <ErrorState title="Could not load your sessions" message={read.error} onRetry={read.reload} />}
+        {read.error === null && (read.loading || !listed) && <p className="learn-muted" aria-busy="true">Loading sessions…</p>}
+        {listed && !read.loading && read.error === null && sessions.length === 0 && (
           <EmptyState title="No sessions yet">Name something you want to learn on the left, and Noesis starts by finding out what you already know.</EmptyState>
         )}
         <ul className="learn-cards">
