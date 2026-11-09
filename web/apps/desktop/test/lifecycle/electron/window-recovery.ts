@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
 import { app, BrowserWindow } from "electron";
-import { registerAppScheme, startDesktop, type Desktop } from "../../../src/main/start.ts";
+import { registerAppScheme, startDesktop } from "../../../src/main/start.ts";
 import { DeepLinkRouter } from "../../../src/native/deep-links.ts";
 
 registerAppScheme();
 app.whenReady().then(async () => {
-  let desktop: Desktop;
   let recovery: Promise<BrowserWindow> | undefined;
   const links = new DeepLinkRouter(() => { recovery = desktop.ensureMainWindow(); });
-  desktop = await startDesktop({ offscreen: true, env: process.env, deepLinks: links });
+  const desktop = await startDesktop({ offscreen: true, env: process.env, deepLinks: links });
   const first = desktop.appWindow;
   const firstId = first.webContents.id;
   const closedOwners: number[] = [];
