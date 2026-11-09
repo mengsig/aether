@@ -11,6 +11,18 @@ use crate::prompts::Agent;
 
 const SECRET: &str = "mitochondria";
 
+fn assert_plan_recovery_guidance(t: &Teaching<FauxEngine>, id: &str) {
+    let agent = session(t, id).agent;
+    let inputs = t.engine().inputs_of(&agent);
+    assert!(
+        inputs
+            .iter()
+            .any(|input| matches!(input, Input::Guidance(text)
+        if text.contains("fresh check") && text.contains("plan node[1].title")
+            && text.contains("answer_key[0]")))
+    );
+}
+
 #[test]
 fn teaching_recovers_from_a_plan_that_already_shows_the_check_answer() {
     let (_dir, noesis) = fixture();
@@ -64,15 +76,7 @@ fn teaching_recovers_from_a_plan_that_already_shows_the_check_answer() {
     assert!(report.steps[2].calls[0].is_error);
     assert!(report.steps[3].text.is_empty());
     assert!(!report.steps[4].calls[0].is_error);
-    let agent = session(&t, &id).agent;
-    let inputs = t.engine().inputs_of(&agent);
-    assert!(
-        inputs
-            .iter()
-            .any(|input| matches!(input, Input::Guidance(text)
-        if text.contains("fresh check") && text.contains("plan node[1].title")
-            && text.contains("answer_key[0]")))
-    );
+    assert_plan_recovery_guidance(&t, &id);
     let result = answer_choice(&mut t, &id, &["180°"]);
     assert_eq!(result.correct, Some(true));
 }

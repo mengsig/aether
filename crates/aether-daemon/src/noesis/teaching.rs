@@ -85,6 +85,44 @@ struct Ticket {
     cancel: tokio_util::sync::CancellationToken,
 }
 
+enum Admission<'a> {
+    Desk(tokio::sync::MutexGuard<'a, Desk>),
+    Replay(Reply),
+}
+
+async fn admit<'a>(
+    ticket: &'a Ticket,
+    runtime: &Runtime,
+    command: &Command,
+    submission: Option<&Submission>,
+) -> Result<Admission<'a>, ErrorReply> {
+    debug_assert_eq!(group_of(command), Group::Teaching);
+    let desk = match command {
+        Command::NoesisGetSession { .. }
+        | Command::NoesisListSessions { .. }
+        | Command::NoesisCreateSession { .. } => ticket.desk.lock().await,
+        Command::NoesisSend { session, .. }
+        | Command::NoesisAnswer { session, .. }
+        | Command::NoesisRetryTurn { session, .. } => {
+            let desk = ticket.desk.lock().await;
+            if let Some(receipt) = runtime.noesis_receipt(submission).map_err(map_err)? {
+                let reply = serde_json::from_value(receipt).map_err(|e| {
+                    ErrorReply::internal(format!("decode the teaching receipt: {e}"))
+                })?;
+                return Ok(Admission::Replay(reply));
+            }
+            if desk.turn.session.lock().as_deref() == Some(session) {
+                return Err(ErrorReply::conflict(
+                    "This session is still responding. Try again when the turn finishes.",
+                ));
+            }
+            desk
+        }
+        _ => super::writable_desk(&ticket.desk).await,
+    };
+    Ok(Admission::Desk(desk))
+}
+
 impl NoesisService {
     /// Answer a validated teaching command; a retry under the same key
     /// replays the first reply.
@@ -110,27 +148,9 @@ impl NoesisService {
             .ticket()
             .await
             .ok_or_else(ErrorReply::noesis_disabled)?;
-        let mut desk = match &command {
-            Command::NoesisGetSession { .. }
-            | Command::NoesisListSessions { .. }
-            | Command::NoesisCreateSession { .. } => ticket.desk.lock().await,
-            Command::NoesisSend { session, .. }
-            | Command::NoesisAnswer { session, .. }
-            | Command::NoesisRetryTurn { session, .. } => {
-                let desk = ticket.desk.lock().await;
-                if let Some(receipt) = runtime.noesis_receipt(submission).map_err(map_err)? {
-                    return serde_json::from_value(receipt).map_err(|e| {
-                        ErrorReply::internal(format!("decode the teaching receipt: {e}"))
-                    });
-                }
-                if desk.turn.session.lock().as_deref() == Some(session) {
-                    return Err(ErrorReply::conflict(
-                        "This session is still responding. Try again when the turn finishes.",
-                    ));
-                }
-                desk
-            }
-            _ => super::writable_desk(&ticket.desk).await,
+        let mut desk = match admit(&ticket, runtime, &command, submission).await? {
+            Admission::Desk(desk) => desk,
+            Admission::Replay(reply) => return Ok(reply),
         };
         let Some(noesis) = &desk.noesis else {
             return Err(ErrorReply::noesis_disabled());
