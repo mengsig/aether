@@ -66,6 +66,20 @@ test("ordinary prose, malformed and lookalike envelopes, and teacher messages re
   ] } } as aether.TranscriptEntry);
   const messages = buildTimeline({ ...LESSON, questions: [], open_question: null }, [{ agent, entries }], EMPTY_NOESIS)
     .filter((item) => item.kind === "message");
-  expect(messages.map((item) => item.text)).toEqual([...texts.map((text) => text.trim()), 'The learner answered: {"dont_know":true}', 'The learner answered: {"dont_know":true}\n\nMore context']);
+  expect(messages.map((item) => item.text)).toEqual([...texts.map((text) => text.trim()), 'The learner answered: {"dont_know":true}', "More context"]);
   expect(messages.at(-2)?.role).toBe("teacher");
+});
+
+test("graded answers hide the learner envelope beside a tool result while preserving other text", () => {
+  const agent: aether.SessionAgent = { agent: "agt_t", role: "teacher", internal: [1] };
+  const result = { type: "tool_result" as const, tool_use_id: "ask_1", content: [{ type: "text" as const, text: '{"question":"q_vote","correct":true}' }] };
+  const envelope = { type: "text" as const, text: 'The learner answered: {"chosen":["Refuses"],"dont_know":false,"confidence":70}' };
+  const entries: aether.TranscriptEntry[] = [
+    { ...entry(2, "user", ""), message: { role: "user", content: [result, envelope] } },
+    { ...entry(3, "user", ""), message: { role: "user", content: [result, envelope, { type: "text", text: "More context" }] } },
+  ];
+  const messages = buildTimeline({ ...LESSON, questions: [], open_question: null }, [{ agent, entries }], EMPTY_NOESIS)
+    .filter((item) => item.kind === "message");
+  expect(messages).toHaveLength(1);
+  expect(messages[0]).toMatchObject({ role: "learner", text: "More context" });
 });
