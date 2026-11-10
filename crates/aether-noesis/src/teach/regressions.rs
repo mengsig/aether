@@ -11,6 +11,61 @@ use crate::prompts::Agent;
 
 const SECRET: &str = "mitochondria";
 
+#[test]
+fn choice_requires_a_sealed_nonblank_explanation() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    for explanation in [None, Some(""), Some(" \n\t ")] {
+        let mut pose = capital_question();
+        match explanation {
+            Some(text) => pose["explanation"] = json!(text),
+            None => {
+                pose.as_object_mut().unwrap().remove("explanation");
+            }
+        }
+        let error = error_of(&call(&mut t, &id, ASK, pose, ""));
+        assert!(error.contains("nonblank sealed `explanation`"), "{error}");
+        assert_choice_retry_guidance(&error);
+        assert!(session(&t, &id).open_question.is_none());
+    }
+    let mut pose = capital_question();
+    pose["explanation"] = json!("It is the seat of the French government.");
+    assert!(!call(&mut t, &id, ASK, pose, "").result.is_error);
+    let answer = answer_choice(&mut t, &id, &["Paris"]);
+    assert_eq!(
+        answer.explanation.as_deref(),
+        Some("It is the seat of the French government.")
+    );
+}
+
+fn assert_choice_retry_guidance(error: &str) {
+    for phrase in [
+        "re-solve the exact prompt",
+        "check every option",
+        "ensure a correct option exists",
+        "options and exact-label `answer_key` together",
+    ] {
+        assert!(error.contains(phrase), "missing {phrase}: {error}");
+    }
+    assert!(!error.contains("Paris"), "refusal exposed the key: {error}");
+}
+
+#[test]
+fn choice_key_refusals_include_recovery_guidance() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    for key in [json!([]), json!(["opt1"]), json!(["Paris", "Rome"])] {
+        let mut pose = capital_question();
+        pose["answer_key"] = key;
+        pose["multi"] = json!(false);
+        let error = error_of(&call(&mut t, &id, ASK, pose, ""));
+        assert_choice_retry_guidance(&error);
+        assert!(session(&t, &id).open_question.is_none());
+    }
+}
+
 fn assert_plan_recovery_guidance(t: &Teaching<FauxEngine>, id: &str) {
     let agent = session(t, id).agent;
     let inputs = t.engine().inputs_of(&agent);

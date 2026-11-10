@@ -104,8 +104,8 @@ async fn probe_prose_is_discarded_before_an_accepted_or_replaced_card() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn seal_discarded_checks_suppress_earlier_and_retry_prose() {
-    for neutral in [false, true] {
+async fn seal_discarded_checks_recover_with_a_fresh_card_on_go() {
+    for rejected in [1, 2] {
         let home = Home::new();
         let cli = Arc::new(FauxCli::default());
         let plan = json!({"nodes": [{"id": "turns", "title": "Turns"}], "edges": []});
@@ -117,18 +117,20 @@ async fn seal_discarded_checks_suppress_earlier_and_retry_prose() {
             tool_call("noesis_graph_search", json!({"query": "turns"}))]}),
         );
         let bad = check("How many degrees in a half turn?", "180°", "270°", "turns");
-        cli.queue(
-            "teacher",
-            json!({"text": "The answer is 180°.", "tool_calls": [tool_call(ASK, bad.clone())]}),
-        );
-        if neutral {
+        for _ in 0..rejected {
             cli.queue(
                 "teacher",
-                json!({"text": "The answer is 180°.", "tool_calls": [tool_call(ASK, bad)]}),
+                json!({"text": "The answer is 180°.", "tool_calls": [tool_call(ASK, bad.clone())]}),
             );
-        } else {
+        }
+        if rejected == 1 {
             cli.queue("teacher", json!({"text": "Name a square"}));
         }
+        let fresh = check("How many sides has a pentagon?", "5", "6", "turns");
+        cli.queue(
+            "teacher",
+            json!({"text": "Fresh card prose", "tool_calls": [tool_call(ASK, fresh)]}),
+        );
         harness
             .send_json(json!({"cmd": "noesis_send", "session": id,
             "text": "Go", "idempotency_key": "seal-check"}))
@@ -137,12 +139,22 @@ async fn seal_discarded_checks_suppress_earlier_and_retry_prose() {
         tokio::time::timeout(Duration::from_secs(5), harness.settled())
             .await
             .expect("the turn ends");
-        let session = harness.session(&id).await.unwrap();
+        let session = harness.session(&id).await.expect("session");
         let text = assistant_texts(&harness, session.agent).join("\n");
-        assert!(!text.contains("Name a triangle"), "{text}");
-        assert!(!text.contains("Name a square"), "{text}");
-        assert!(text.contains("Let's try that differently"), "{text}");
-        assert!(session.open_question.is_none());
+        for withheld in [
+            "Name a triangle",
+            "The answer is 180°.",
+            "Name a square",
+            "Fresh card prose",
+            "Let's try that differently",
+        ] {
+            assert!(!text.contains(withheld), "{withheld}: {text}");
+        }
+        assert_eq!(
+            session.open_question.expect("fresh card").prompt,
+            "How many sides has a pentagon?"
+        );
+        assert!(session.stalled.is_none());
         harness.close().await;
     }
 }

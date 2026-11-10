@@ -69,6 +69,44 @@ fn discarded_checks_recover_for_both_roles_and_turn_paths() {
     }
 }
 
+#[test]
+fn blank_choice_explanation_recovers_without_revealing_the_correction() {
+    for role in [Agent::Teacher, Agent::Prober] {
+        let (_dir, noesis) = fixture();
+        let mut t = Teaching::new(&noesis, FauxEngine::new());
+        let id = if role == Agent::Teacher {
+            teacher_session(&mut t)
+        } else {
+            t.create_session("Learn geography", Mode::Teach, &[])
+                .unwrap()
+                .id
+        };
+        let mut invalid = capital_question();
+        invalid["explanation"] = json!("  ");
+        if role == Agent::Teacher {
+            invalid["plan_node"] = json!("a");
+        }
+        let mut corrected = invalid.clone();
+        corrected["explanation"] = json!("Paris is the French capital; Rome and Madrid are not.");
+        t.engine_mut()
+            .script(role, "Refused prose", vec![(ASK, invalid)]);
+        t.engine_mut()
+            .script(role, "Accepted prose", vec![(ASK, corrected)]);
+        let report = t.advance(&id).unwrap().remove(0);
+        assert_eq!(report.end, TurnEnd::AwaitingAnswer);
+        assert!(report.steps[0].calls[0].is_error);
+        assert!(!report.steps[1].calls[0].is_error);
+        let visible = format!("{:?} {:?}", report, session(&t, &id));
+        assert!(!visible.contains("French capital; Rome"));
+        assert!(!visible.contains("Refused prose"));
+        let result = answer_choice(&mut t, &id, &["Paris"]);
+        assert_eq!(
+            result.explanation.as_deref(),
+            Some("Paris is the French capital; Rome and Madrid are not.")
+        );
+    }
+}
+
 fn posed_session(t: &mut Teaching<'_, FauxEngine>) -> String {
     let id = t
         .create_session("Learn cells", Mode::Teach, &[])

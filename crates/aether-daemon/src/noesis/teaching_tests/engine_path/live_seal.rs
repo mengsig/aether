@@ -1,6 +1,6 @@
 //! The one seal check on a scripted engine: a lesson reply is buffered
 //! whole, and one that gives a sealed answer away is discarded unseen,
-//! made once more with a reminder, then replaced by the neutral step.
+//! made again with a reminder, and recovered as a fresh check.
 
 use aether_noesis::teach::{NEUTRAL_REPLY, SEAL_REMINDER};
 use tokio::sync::broadcast::error::TryRecvError;
@@ -122,30 +122,98 @@ async fn a_pose_carrying_its_answer_streams_nothing_that_holds_it() {
     harness.close().await;
 }
 
-/// Two leaking replies are discarded and a neutral prompt lets the learner continue.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_second_leaking_reply_becomes_the_neutral_step() {
-    let home = Home::new();
-    let cli = Arc::new(FauxCli::default());
-    let search = tool_call("noesis_graph_search", json!({"query": KEY}));
-    for _ in 0..2 {
+async fn discarded_probe_checks_recover_with_a_fresh_card() {
+    for rejected in [1, 2] {
+        let home = Home::new();
+        let cli = Arc::new(FauxCli::default());
+        let search = tool_call("noesis_graph_search", json!({"query": KEY}));
+        for _ in 0..rejected {
+            cli.queue(
+                "prober",
+                json!({"text": "Discarded probe prose", "tool_calls": [search.clone(), tool_call("noesis_ask", ask())]}),
+            );
+        }
+        if rejected == 1 {
+            cli.queue("prober", json!({"text": "Safe retry prose"}));
+        }
+        let fresh = json!({"kind": "recall", "prompt": "Name the color", "answer_key": "blue"});
         cli.queue(
             "prober",
-            json!({"text": "One question:", "tool_calls": [search.clone(), tool_call("noesis_ask", ask())]}),
+            json!({"text": "Fresh probe prose", "tool_calls": [tool_call("noesis_ask", fresh)]}),
         );
+        let harness = engine_harness(&home, cli.clone()).await;
+        let created = harness.create(json!({})).await;
+        tokio::time::timeout(Duration::from_secs(5), harness.settled())
+            .await
+            .expect("the turn ends");
+
+        let prober = agent_of(&created);
+        let session = harness.session(&created.id).await.expect("session");
+        assert_eq!(
+            session.open_question.expect("fresh card").prompt,
+            "Name the color"
+        );
+        assert!(session.stalled.is_none());
+        assert_never_kept(&harness, prober, KEY);
+        let transcript = serde_json::to_string(&harness.transcript(prober)).expect("json");
+        for withheld in [
+            "Discarded probe prose",
+            "Safe retry prose",
+            "Fresh probe prose",
+            NEUTRAL_REPLY,
+        ] {
+            assert!(!transcript.contains(withheld), "{withheld}: {transcript}");
+        }
+        assert_eq!(cli.launches().len(), 3);
+        harness.close().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn discarded_probe_without_a_replacement_stalls_and_can_retry() {
+    let home = Home::new();
+    let cli = Arc::new(FauxCli::default());
+    cli.queue(
+        "prober",
+        json!({"text": format!("Hint: {KEY}"), "tool_calls": [tool_call("noesis_ask", ask())]}),
+    );
+    for _ in 0..15 {
+        cli.queue("prober", json!({"text": "Safe retry prose"}));
     }
     let harness = engine_harness(&home, cli.clone()).await;
     let created = harness.create(json!({})).await;
-    harness.settled().await;
-
-    let prober = agent_of(&created);
+    tokio::time::timeout(Duration::from_secs(5), harness.settled())
+        .await
+        .expect("the turn ends");
     let session = harness.session(&created.id).await.expect("session");
-    assert!(session.open_question.is_none() && session.questions.is_empty());
-    assert_never_kept(&harness, prober, KEY);
-    let transcript = serde_json::to_string(&harness.transcript(prober)).expect("json");
-    assert!(transcript.contains(NEUTRAL_REPLY), "{transcript}");
-    assert!(!transcript.contains("One question:"), "{transcript}");
-    assert_eq!(cli.launches().len(), 2, "one retry, no more");
+    assert!(session.open_question.is_none());
+    assert_eq!(
+        session.stalled.expect("retryable stall").reason,
+        aether_core::noesis::StallReason::EngineStalled
+    );
+    assert_never_kept(&harness, agent_of(&created), KEY);
+    let transcript = serde_json::to_string(&harness.transcript(agent_of(&created))).expect("json");
+    assert!(!transcript.contains("Safe retry prose"), "{transcript}");
+    assert!(!transcript.contains(NEUTRAL_REPLY), "{transcript}");
+    cli.replies
+        .lock()
+        .get_mut("prober")
+        .expect("queued replies")
+        .clear();
+    cli.queue(
+        "prober",
+        json!({"tool_calls": [tool_call("noesis_ask", ask())]}),
+    );
+    harness.send_json(json!({"cmd": "noesis_retry_turn", "session": created.id, "idempotency_key": "retry-discarded"}))
+        .await.expect("retry");
+    harness.settled().await;
+    let retried = harness.session(&created.id).await.expect("retried session");
+    assert!(retried.stalled.is_none());
+    assert_eq!(
+        retried.open_question.expect("retry card").prompt,
+        "Name the code"
+    );
     harness.close().await;
 }
 

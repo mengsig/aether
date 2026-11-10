@@ -14,6 +14,7 @@ use crate::tools::args::AskArgs;
 
 pub const MAX_OPTIONS: usize = 12;
 pub const MAX_ANSWER_TEXT: usize = 20_000;
+const CHOICE_RETRY: &str = "re-solve the exact prompt, check every option, ensure a correct option exists, and update the options and exact-label `answer_key` together";
 
 /// A question that passed authoring, ready to store.
 #[derive(Clone, PartialEq, Eq)]
@@ -132,12 +133,7 @@ fn author_choice(args: &AskArgs, problems: &mut Vec<String>) -> Authored {
         problems.push("option labels must be distinct and non-empty".to_string());
     }
     let key_labels: BTreeSet<&str> = args.answer_key.iter().map(String::as_str).collect();
-    if key_labels.is_empty() {
-        problems.push("a choice question needs an `answer_key` of exact option labels".to_string());
-    }
-    if !key_labels.iter().all(|label| labels.contains(label)) {
-        problems.push("each `answer_key` entry must be the exact label of a correct option, not its value or position; update it whenever options change".to_string());
-    }
+    check_choice_commitment(args, &labels, &key_labels, problems);
     let key: Vec<String> = options
         .iter()
         .filter(|option| key_labels.contains(option.label.as_str()))
@@ -151,14 +147,37 @@ fn author_choice(args: &AskArgs, problems: &mut Vec<String>) -> Authored {
     }
     let multi = args.multi.unwrap_or(key_labels.len() > 1);
     if !multi && key_labels.len() > 1 {
-        problems.push(
-            "a single-answer question has exactly one `answer_key` entry; set `multi`".to_string(),
-        );
+        problems.push(format!("a single-answer question has exactly one `answer_key` entry; set `multi` if appropriate; {CHOICE_RETRY}"));
     }
     Authored {
         options,
         answer_key: key,
         multi,
+    }
+}
+
+fn check_choice_commitment(
+    args: &AskArgs,
+    labels: &BTreeSet<&str>,
+    key_labels: &BTreeSet<&str>,
+    problems: &mut Vec<String>,
+) {
+    if key_labels.is_empty() {
+        problems.push(format!(
+            "a choice question needs an `answer_key` of exact option labels; {CHOICE_RETRY}"
+        ));
+    }
+    if !key_labels.iter().all(|label| labels.contains(label)) {
+        problems.push(format!("each `answer_key` entry must be the exact label of a correct option, not its value or position; {CHOICE_RETRY}"));
+    }
+    if args
+        .explanation
+        .as_deref()
+        .is_none_or(|text| text.trim().is_empty())
+    {
+        problems.push(format!(
+            "a choice question needs a nonblank sealed `explanation` verifying the exact prompt against every option; {CHOICE_RETRY}"
+        ));
     }
 }
 
