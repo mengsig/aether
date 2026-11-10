@@ -874,7 +874,7 @@ fn publish_judgments(desk: &Desk, runtime: &Runtime, session: &str) -> Result<()
     let ids =
         aether_noesis::learner::append_pending_judgments(conn, session, chrono::Utc::now())
             .map_err(|error| ErrorReply::internal(format!("append judgment evidence: {error}")))?;
-    let concepts = evidence_concepts(conn, &ids)?;
+    let concepts = evidence_concepts(noesis, &ids)?;
     if !concepts.is_empty() {
         let mut commit = Commit::new();
         commit.push_event(EventDraft::new(
@@ -898,13 +898,11 @@ fn append_evidence(
     let now = chrono::Utc::now();
     let ids = aether_noesis::learner::append_drafts(conn, drafts, now)
         .map_err(|e| ErrorReply::internal(format!("append learner evidence: {e}")))?;
-    evidence_concepts(conn, &ids)
+    evidence_concepts(noesis, &ids)
 }
 
-fn evidence_concepts(
-    conn: &rusqlite::Connection,
-    ids: &[u64],
-) -> Result<Vec<ConceptId>, ErrorReply> {
+fn evidence_concepts(noesis: &Noesis, ids: &[u64]) -> Result<Vec<ConceptId>, ErrorReply> {
+    let conn = noesis.store().connection();
     let mut concepts = Vec::with_capacity(ids.len());
     for id in ids {
         let id = i64::try_from(*id).map_err(ErrorReply::internal)?;
