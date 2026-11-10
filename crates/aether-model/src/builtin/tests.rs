@@ -239,7 +239,7 @@ fn claude_one_hour_cache_writes_cost_twice_input_and_no_other_family_has_them() 
             }
         }
     }
-    assert_eq!(claude, 8, "four API models and four priced engine models");
+    assert_eq!(claude, 10, "five API models and five priced engine models");
     let haiku = all
         .iter()
         .find(|p| p.id == "claude-code")
