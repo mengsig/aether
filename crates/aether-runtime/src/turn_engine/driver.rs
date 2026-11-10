@@ -1030,13 +1030,21 @@ pub(super) async fn drive(
                 outcome.interrupted.then(|| {
                     outcome
                         .error
-                        .clone()
+                        .as_ref()
+                        .filter(|error| !error.trim().is_empty())
+                        .cloned()
                         .unwrap_or_else(|| "engine interruption".into())
                 })
             },
         )
     {
         let mut commit = Commit::new();
+        if outcome.interrupted
+            || !state.calls.is_empty()
+            || (cancel.is_cancelled() && outcome.text.is_none())
+        {
+            crate::tool_interruption::push_turn_note(&mut commit, &ctx.agent, &cause);
+        }
         for call in state.calls.values() {
             if crate::tool_interruption::denial_reason(runtime, ctx.agent.id, call.id)?.is_some() {
                 continue;
@@ -1280,7 +1288,7 @@ fn interruption_cause(
         ));
     }
     if runtime.shutdown.is_cancelled() {
-        return Some("daemon stop or restart".into());
+        return Some("a system daemon stop or restart, not requested by the user".into());
     }
     if let Some(budget) = budget {
         return Some(format!("budget stop: {}", budget.reason));

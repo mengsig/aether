@@ -9,6 +9,29 @@ use crate::{Result, Runtime};
 pub(crate) const NATIVE_DENIED: &str = "tool.native_denied";
 
 pub(crate) const EVENT: &str = "tool.interrupted";
+const TURN_EVENT: &str = "turn.interruption_reason";
+
+pub(crate) fn push_turn_note(commit: &mut Commit, agent: &Agent, cause: &str) {
+    let cause = aether_model::http::safe_provider_text(cause, 1024);
+    let cause = if cause.trim().is_empty() {
+        "an unspecified interruption".to_owned()
+    } else {
+        cause
+    };
+    let note = format!("Your previous turn was interrupted by {cause}.");
+    commit.push_event(
+        EventDraft::new(
+            Actor::System,
+            EventKind::Custom {
+                name: TURN_EVENT.into(),
+                payload: serde_json::json!({"cause": cause, "note": note}),
+            },
+        )
+        .agent(agent.id)
+        .parent(agent.parent)
+        .run(agent.run),
+    );
+}
 
 pub(crate) fn record(
     commit: &mut Commit,
@@ -144,7 +167,7 @@ pub(crate) fn resume_notes(runtime: &Runtime, agent: aether_core::id::AgentId) -
         after = last.seq;
         for event in &events {
             if let EventKind::Custom { name, payload } = &event.kind
-                && name == EVENT
+                && (name == EVENT || name == TURN_EVENT)
                 && let Some(note) = payload["note"].as_str()
             {
                 notes.push('\n');

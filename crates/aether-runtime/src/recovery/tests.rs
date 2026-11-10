@@ -14,6 +14,47 @@ async fn headless_fixture() -> (Arc<Runtime>, tempfile::TempDir, Agent) {
     fixture_with(false).await
 }
 
+#[tokio::test]
+async fn recovery_supplies_a_turn_note_even_without_an_open_tool() {
+    for (restart, expected) in [
+        (
+            Restart::Daemon,
+            "system daemon stop or restart, not requested by the user",
+        ),
+        (Restart::Reboot, "system restart, not requested by the user"),
+        (Restart::Live, "runtime recovery of an interrupted turn"),
+    ] {
+        let (runtime, _dir, agent) = fixture().await;
+        let lease = runtime.store.lease(agent.id).unwrap().unwrap();
+        recover_agent(&runtime, lease, agent.clone(), restart, None).unwrap();
+        let note = crate::tool_interruption::resume_notes(&runtime, agent.id).unwrap();
+        assert!(note.contains(expected), "{note}");
+        assert!(note.contains("Your previous turn was interrupted"));
+    }
+}
+
+#[tokio::test]
+async fn retained_session_receives_each_interruption_cause() {
+    for cause in [
+        "turn interrupt",
+        "a system daemon stop or restart, not requested by the user",
+        "runtime recovery of an interrupted turn",
+        "scheduler stop: deadline exceeded",
+        "budget stop: budget exhausted",
+        "agent cancellation: stage deadline exceeded",
+        "harness ended the turn",
+        "engine interruption",
+    ] {
+        let (runtime, _dir, agent) = fixture().await;
+        let mut commit = Commit::new();
+        crate::tool_interruption::push_turn_note(&mut commit, &agent, cause);
+        runtime.apply(commit).unwrap();
+        let prompt = crate::tool_interruption::resume_notes(&runtime, agent.id).unwrap();
+        assert!(prompt.contains(cause), "{prompt}");
+        assert!(prompt.contains("Your previous turn was interrupted"));
+    }
+}
+
 async fn fixture_with(interactive: bool) -> (Arc<Runtime>, tempfile::TempDir, Agent) {
     let (runtime, dir) = crate::test_runtime(|_| {}).await;
     runtime.shutdown().await;
@@ -503,11 +544,9 @@ async fn recovery_carries_an_interruption_correction_only_for_in_flight_tools() 
 
     let (runtime, _dir, agent) = fixture().await;
     recover(&runtime).unwrap();
-    assert!(
-        crate::tool_interruption::resume_notes(&runtime, agent.id)
-            .unwrap()
-            .is_empty()
-    );
+    let note = crate::tool_interruption::resume_notes(&runtime, agent.id).unwrap();
+    assert!(note.contains("system daemon stop or restart"));
+    assert!(!note.contains("previous tool call"));
 }
 
 /// Raise a pending approval in the agent's turn, on a link that ran `model`.
