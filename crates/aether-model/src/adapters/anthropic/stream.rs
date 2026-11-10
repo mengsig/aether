@@ -73,6 +73,37 @@ fn update_usage(out: &mut Usage, usage: &Value) {
     }
 }
 
+fn thinking_drops(value: &Value) -> [usize; 3] {
+    let mut counts = [0; 3];
+    if let Some(items) = value.get("input_transformations").and_then(Value::as_array) {
+        for item in items {
+            if item.get("type").and_then(Value::as_str) != Some("thinking_dropped") {
+                continue;
+            }
+            let index = match item.get("reason").and_then(Value::as_str) {
+                Some("prefix_binding_mismatch") => 0,
+                Some("model_binding_mismatch") => 1,
+                Some("organization_binding_mismatch") => 2,
+                _ => continue,
+            };
+            counts[index] += 1;
+        }
+    }
+    counts
+}
+
+fn log_thinking_drops(value: &Value) {
+    let [prefix, model, organization] = thinking_drops(value);
+    if prefix + model + organization > 0 {
+        tracing::debug!(
+            prefix,
+            model,
+            organization,
+            "Anthropic dropped preserved thinking blocks"
+        );
+    }
+}
+
 impl EventMapper for AnthropicMapper {
     fn map(&mut self, event: &SseEvent) -> Result<Vec<StreamEvent>, ModelError> {
         let data: Value = serde_json::from_str(&event.data).map_err(|e| {
@@ -94,6 +125,7 @@ impl EventMapper for AnthropicMapper {
             "message_start" => {
                 self.started = true;
                 let message = &data["message"];
+                log_thinking_drops(message);
                 out.push(StreamEvent::MessageStart {
                     provider_message_id: message
                         .get("id")
@@ -196,6 +228,7 @@ impl EventMapper for AnthropicMapper {
                 out.push(StreamEvent::BlockStop { index });
             }
             "message_delta" => {
+                log_thinking_drops(&data);
                 if let Some(usage) = data.get("usage") {
                     self.absorb_usage(usage);
                     out.push(StreamEvent::Usage {
@@ -316,6 +349,20 @@ mod tests {
     use crate::adapters::streaming::mapped_stream;
     use crate::client::collect;
     use serde_json::json;
+
+    #[test]
+    fn counts_known_thinking_drops_only() {
+        let input = json!({"input_transformations": [
+            {"type": "thinking_dropped", "reason": "prefix_binding_mismatch"},
+            {"type": "thinking_dropped", "reason": "prefix_binding_mismatch"},
+            {"type": "thinking_dropped", "reason": "model_binding_mismatch"},
+            {"type": "thinking_dropped", "reason": "organization_binding_mismatch"},
+            {"type": "thinking_dropped", "reason": "future_reason"},
+            {"type": "other", "reason": "prefix_binding_mismatch"}
+        ]});
+        assert_eq!(thinking_drops(&input), [2, 1, 1]);
+        assert_eq!(thinking_drops(&json!({})), [0, 0, 0]);
+    }
 
     fn sse(event: &str, data: Value) -> SseEvent {
         SseEvent {

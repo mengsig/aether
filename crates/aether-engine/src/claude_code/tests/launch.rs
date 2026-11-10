@@ -690,6 +690,22 @@ fn args_for_resume_and_bypass() {
     assert!(!joined.contains("--model"));
 }
 
+#[test]
+fn resumed_turns_with_hoisted_state_do_not_change_the_appended_prompt() {
+    let engine = ClaudeCodeEngine::new("claude", "2.1.322");
+    let mut turn = turn();
+    turn.session = Some("existing".into());
+    turn.system_prompt.clear();
+    turn.prompt = "first state".into();
+    let first = engine.args(&turn);
+    turn.prompt = "changed state".into();
+    let second = engine.args(&turn);
+    for args in [&first, &second] {
+        assert!(!args.iter().any(|arg| arg == "--append-system-prompt"));
+        assert!(args.windows(2).any(|pair| pair == ["--resume", "existing"]));
+    }
+}
+
 /// Every spawn goes through Aether's `delegate`, never the
 /// CLI's own subagent tool - on the default path and under
 /// bypass-permissions, where nothing else would gate it either.

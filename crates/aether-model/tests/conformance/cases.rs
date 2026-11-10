@@ -1,6 +1,70 @@
 use super::*;
 
 #[tokio::test]
+async fn rejected_thinking_binding_beta_retries_once_without_preserved_thinking() {
+    use aether_core::model::{ContentBlock, Message, ModelRef};
+    use aether_model::adapters::anthropic::AnthropicClient;
+
+    let beta = "thinking-binding-controls-2026-08-01";
+    let server = FixtureServer::start(Canned::error(
+        400,
+        format!(r#"{{"error":{{"message":"invalid beta {beta}"}}}}"#),
+        None,
+    ))
+    .await;
+    let config = AdapterConfig::new(server.base_url(), RequestAuth::None).with_capability(
+        "claude-fable-5-2",
+        CapabilityProfile {
+            thinking: ThinkingSupport::Adaptive,
+            ..profile()
+        },
+    );
+    let client = AnthropicClient::new(config).unwrap();
+    let req = ModelRequest::new(
+        ModelRef::new("anthropic", "claude-fable-5-2"),
+        vec![
+            Message::user_text("hi"),
+            Message::assistant_blocks(vec![
+                ContentBlock::Thinking {
+                    text: "thought".into(),
+                    signature: Some("sig".into()),
+                    redacted: false,
+                },
+                ContentBlock::text("answer"),
+            ]),
+            Message::user_text("continue"),
+        ],
+    );
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client.stream(req, CancellationToken::new()),
+    )
+    .await
+    .unwrap();
+    assert!(result.is_err());
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].header("anthropic-beta").unwrap().contains(beta));
+    assert!(
+        !requests[1]
+            .header("anthropic-beta")
+            .unwrap_or("")
+            .contains(beta)
+    );
+    let first: Value = serde_json::from_str(&requests[0].body).unwrap();
+    let second: Value = serde_json::from_str(&requests[1].body).unwrap();
+    assert_eq!(
+        first["thinking"]["block_binding"]["prefix_mismatch_behavior"],
+        "drop_block"
+    );
+    assert!(second.get("thinking").is_none());
+    assert_eq!(
+        second["messages"][1]["content"],
+        json!([{"type":"text","text":"answer"}])
+    );
+}
+
+#[tokio::test]
 async fn anthropic_budget_validation_respects_the_effective_body() {
     use aether_core::model::ThinkingMode;
     use aether_model::adapters::anthropic::AnthropicClient;

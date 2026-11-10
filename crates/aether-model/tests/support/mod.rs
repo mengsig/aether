@@ -126,6 +126,13 @@ impl FixtureServer {
             .cloned()
             .expect("the adapter sent no request")
     }
+
+    pub fn requests(&self) -> Vec<RecordedRequest> {
+        self.requests
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
 }
 
 impl Drop for FixtureServer {

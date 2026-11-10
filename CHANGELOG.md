@@ -43,6 +43,8 @@ before updating.
 
 - Claude Fable 5.2 is available on Anthropic and Claude Code; `fable` now
   selects it, while `fable-5-1` continues to select Fable 5.1.
+- Anthropic thinking requests drop invalidated preserved thinking when the
+  request prefix changes, keeping resumed turns usable.
 
 ### Before updating
 

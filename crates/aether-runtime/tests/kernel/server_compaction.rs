@@ -115,7 +115,10 @@ fn assert_replay_and_cost(h: &Harness, agent: &Agent, summary_usage: Usage) {
         json!({"type": "compaction", "content": "Remember saffron", "signature": "opaque-signature"})
     );
     assert!(wire.body.get("context_management").is_none());
-    assert_eq!(wire.betas, ["compact-2026-09-04"]);
+    assert_eq!(
+        wire.betas,
+        ["compact-2026-09-04", "thinking-binding-controls-2026-08-01"]
+    );
     let invocations = h.store.invocations_for_agent(agent.id).unwrap();
     let expected_cost =
         summary_usage.cost_usd + invocations.iter().map(|i| i.usage.cost_usd).sum::<f64>();

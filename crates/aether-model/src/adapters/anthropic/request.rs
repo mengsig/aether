@@ -17,6 +17,7 @@ const DEFAULT_THINKING_BUDGET: u32 = 8_192;
 /// Beta for server-side compaction (`compact_20260112`).
 pub const COMPACTION_BETA: &str = "compact-2026-01-12";
 pub const SUMMARIZE_BETA: &str = "compact-2026-09-04";
+pub const THINKING_BINDING_BETA: &str = "thinking-binding-controls-2026-08-01";
 /// The API refuses a compaction trigger below this many input tokens.
 const MIN_COMPACTION_TRIGGER: u32 = 50_000;
 
@@ -155,8 +156,38 @@ pub fn build(req: &ModelRequest, profile: &CapabilityProfile) -> Result<BuiltReq
     }
 
     configure_compaction(obj, &mut betas, req)?;
+    configure_thinking_binding(obj, &mut betas);
 
     Ok(BuiltRequest { body, betas })
+}
+
+fn configure_thinking_binding(body: &mut serde_json::Map<String, Value>, betas: &mut Vec<String>) {
+    let checked = matches!(
+        body.get("model").and_then(Value::as_str),
+        Some(
+            "claude-fable-5-1"
+                | "claude-fable-5-2"
+                | "claude-mythos-5-1"
+                | "claude-mythos-5-2"
+                | "claude-opus-5-5"
+                | "claude-sonnet-5-5"
+        )
+    );
+    let Some(thinking) = body.get_mut("thinking") else {
+        return;
+    };
+    if !checked || thinking.get("type").and_then(Value::as_str) != Some("adaptive") {
+        return;
+    }
+    if let Some(thinking) = thinking.as_object_mut() {
+        thinking.insert(
+            "block_binding".into(),
+            json!({"prefix_mismatch_behavior": "drop_block"}),
+        );
+        if !betas.iter().any(|beta| beta == THINKING_BINDING_BETA) {
+            betas.push(THINKING_BINDING_BETA.to_owned());
+        }
+    }
 }
 
 fn configure_compaction(
@@ -424,6 +455,54 @@ mod tests {
     }
 
     #[test]
+    fn binding_controls_apply_only_to_affected_adaptive_models() {
+        for model in [
+            "claude-fable-5-1",
+            "claude-fable-5-2",
+            "claude-mythos-5-1",
+            "claude-mythos-5-2",
+            "claude-opus-5-5",
+            "claude-sonnet-5-5",
+            "other",
+        ] {
+            let mut req = ModelRequest::new(
+                ModelRef::new("anthropic", model),
+                vec![Message::user_text("hi")],
+            );
+            let built = build(&req, &adaptive_profile()).unwrap();
+            let affected = model != "other";
+            assert_eq!(
+                built.betas.contains(&THINKING_BINDING_BETA.to_owned()),
+                affected,
+                "{model}"
+            );
+            assert_eq!(
+                built.body["thinking"].get("block_binding").is_some(),
+                affected,
+                "{model}"
+            );
+            req.thinking = Some(ThinkingMode::Off);
+            let off = build(&req, &adaptive_profile()).unwrap();
+            assert!(!off.betas.contains(&THINKING_BINDING_BETA.to_owned()));
+            assert!(off.body.get("thinking").is_none());
+        }
+        let req = ModelRequest::new(
+            ModelRef::new("anthropic", "claude-fable-5-2"),
+            vec![Message::user_text("hi")],
+        );
+        let budget = CapabilityProfile {
+            thinking: ThinkingSupport::Budget,
+            ..adaptive_profile()
+        };
+        let mut req = req;
+        req.thinking = Some(ThinkingMode::Budget { tokens: 2000 });
+        let built = build(&req, &budget).unwrap();
+        assert_eq!(built.body["thinking"]["type"], "enabled");
+        assert!(built.body["thinking"].get("block_binding").is_none());
+        assert!(!built.betas.contains(&THINKING_BINDING_BETA.to_owned()));
+    }
+
+    #[test]
     fn summarize_request_uses_the_new_beta_and_removes_incompatible_parameters() {
         let mut req = ModelRequest::new(
             ModelRef::new("anthropic", "claude-opus-5-5"),
@@ -452,7 +531,7 @@ mod tests {
             json!(true),
         );
         let built = build(&req, &profile).unwrap();
-        assert_eq!(built.betas, [SUMMARIZE_BETA]);
+        assert_eq!(built.betas, [SUMMARIZE_BETA, THINKING_BINDING_BETA]);
         assert_eq!(
             built.body["compaction"],
             req.extensions["anthropic.compaction"]
@@ -499,7 +578,7 @@ mod tests {
             json!({"output_config": {"task_budget": {"total": 9, "remaining": 5}}}),
         );
         let built = build(&req, &profile).unwrap();
-        assert_eq!(built.betas, [SUMMARIZE_BETA]);
+        assert_eq!(built.betas, [SUMMARIZE_BETA, THINKING_BINDING_BETA]);
         assert!(built.body.get("context_management").is_none());
         assert_eq!(
             built.body["output_config"]["task_budget"],
@@ -638,7 +717,7 @@ mod tests {
         req.metadata.insert("user_id".into(), "u1".into());
 
         let built = build(&req, &adaptive_profile()).expect("build");
-        assert_eq!(built.betas, vec!["beta-a", "beta-b"]);
+        assert_eq!(built.betas, vec!["beta-a", "beta-b", THINKING_BINDING_BETA]);
         let expected = json!({
             "model": "claude-opus-5-5",
             "max_tokens": 16000,
@@ -663,7 +742,7 @@ mod tests {
                 "strict": true
             }],
             "tool_choice": {"type": "auto"},
-            "thinking": {"type": "adaptive"},
+            "thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}},
             "output_config": {"effort": "xhigh"},
             "metadata": {"user_id": "u1"},
             "fallbacks": "default"
