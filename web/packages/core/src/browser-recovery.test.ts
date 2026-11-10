@@ -16,6 +16,44 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("browser discovery recovery", () => {
+  it.each([true, false])("clears only discovery failures after automatic health recovery (mounted: %s)", async (mounted) => {
+    let healthCalls = 0;
+    const fetcher = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url).includes("/archon/api/session")) return { ok: false, status: 401 } as Response;
+      if (++healthCalls === 1) throw new Error("health refused");
+      return health(mounted);
+    });
+    const app = createApp({ kind: "browser", storage }, { fetch: fetcher as typeof fetch, identities, scheduler: (f) => f() });
+    await app.start(); await flush();
+    expect(app.manager.all()[0]?.current.state).toBe("pairing");
+    expect(app.store.get().reports.map((r) => r.message)).toContain("Could not discover Archon: health refused");
+    app.store.report("Unrelated failure");
+    app.store.report("Could not discover Archon: health refused", "another-connection");
+    await vi.advanceTimersByTimeAsync(500);
+    expect(healthCalls).toBe(2);
+    expect(app.store.get().reports.map((r) => r.message)).toEqual(["Unrelated failure", "Could not discover Archon: health refused"]);
+    expect(app.manager.all()[0]?.current.state).toBe("pairing");
+    expect(app.manager.all().map((c) => c.endpoint.daemon)).toEqual(mounted ? ["aether", "archon"] : ["aether"]);
+    app.stop();
+  });
+
+  it("keeps a discovery failure when a late successful response arrives after stop", async () => {
+    let resolve!: (response: Response) => void;
+    const fetcher = vi.fn().mockRejectedValueOnce(new Error("offline"))
+      .mockImplementationOnce(() => new Promise<Response>((done) => { resolve = done; }));
+    const app = createApp({ kind: "browser", storage }, { fetch: fetcher as typeof fetch, identities, scheduler: (f) => f() });
+    await app.start(); await flush();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    app.stop();
+    const stopped = app.store.get();
+    resolve(health(true)); await flush();
+    expect(app.store.get()).toBe(stopped);
+    expect(stopped.reports.map((r) => r.message)).toContain("Could not discover Archon: offline");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it("restarts existing Aether and discovered Archon connections after stop", async () => {
     const fetcher = vi.fn(async (url: RequestInfo | URL) => {
       if (String(url).includes("/api/health")) return health(true);

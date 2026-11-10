@@ -78,6 +78,7 @@ export function createApp(host: HostAdapter, options: AppOptions = {}): App {
   let discoveryTimer: ReturnType<typeof setTimeout> | undefined;
   let discoveryAbort: AbortController | undefined;
   let discovering: Promise<number> | undefined;
+  const discoveryReports = new Set<number>();
   const known = (endpoint: Endpoint) => manager.all().some((c) => c.endpoint.daemon === endpoint.daemon && c.endpoint.target === endpoint.target);
   const addFresh = (found: readonly Endpoint[]) => {
     let added = 0;
@@ -105,12 +106,22 @@ export function createApp(host: HostAdapter, options: AppOptions = {}): App {
       try {
         const mounted = await archonMounted(fetcher, controller.signal);
         if (!active || generation !== discoveryGeneration) return 0;
+        if (discoveryReports.size > 0) {
+          store.update((state) => ({ ...state, reports: state.reports.filter((report) => !discoveryReports.has(report.id)) }));
+          discoveryReports.clear();
+        }
         if (!mounted) { scheduleDiscovery(); return 0; }
         discoveryAttempt = 0;
         return addFresh([browserArchonEndpoint(fetcher)]);
       } catch (error) {
         if (active && generation === discoveryGeneration) {
-          store.report(`Could not discover Archon: ${errorText(error)}`);
+          const previousId = store.get().reports.at(-1)?.id ?? 0;
+          const message = `Could not discover Archon: ${errorText(error)}`;
+          store.report(message);
+          const reports = store.get().reports;
+          const report = reports.find((entry) => entry.id > previousId);
+          if (report?.message === message) discoveryReports.add(report.id);
+          for (const id of discoveryReports) if (!reports.some((entry) => entry.id === id)) discoveryReports.delete(id);
           scheduleDiscovery();
         }
         return 0;
