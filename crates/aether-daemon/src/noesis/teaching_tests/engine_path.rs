@@ -668,19 +668,18 @@ async fn session_and_learner_reads_finish_while_a_model_step_is_running() {
         Duration::from_secs(1),
         harness.send_json(json!({"cmd": "noesis_learner"})),
     );
-    let mut deletion = Box::pin(harness.send_json(
-        json!({"cmd": "noesis_delete_session", "session": created.id,
-        "graph": "preserve", "idempotency_key": "delete-while-running"}),
-    ));
-    let blocked = tokio::time::timeout(Duration::from_millis(200), &mut deletion);
-    let (session, learner, blocked) = tokio::join!(session, learner, blocked);
+    let deletion = json!({"cmd": "noesis_delete_session", "session": created.id,
+        "graph": "preserve", "idempotency_key": "delete-while-running"});
+    let conflict =
+        tokio::time::timeout(Duration::from_secs(2), harness.send_json(deletion.clone()));
+    let (session, learner, conflict) = tokio::join!(session, learner, conflict);
     harness
         .daemon
         .runtime
         .cancel_agent(created.agent, Some("stop".into()), Actor::user())
         .expect("cancelled");
-    let deleted = tokio::time::timeout(Duration::from_secs(2), &mut deletion).await;
-    drop(deletion);
+    harness.settled().await;
+    let deleted = tokio::time::timeout(Duration::from_secs(2), harness.send_json(deletion)).await;
     harness.close().await;
 
     assert!(
@@ -700,7 +699,10 @@ async fn session_and_learner_reads_finish_while_a_model_step_is_running() {
         learner.expect("learner read timed out"),
         Ok(Reply::NoesisLearner { .. })
     ));
-    assert!(blocked.is_err(), "deletion must wait for the turn");
+    let conflict = conflict
+        .expect("deletion did not answer promptly")
+        .expect_err("the active session is protected");
+    assert_eq!(conflict.reason.as_deref(), Some("conflict"));
     assert!(matches!(deleted, Ok(Ok(Reply::Ok))), "{deleted:?}");
 }
 

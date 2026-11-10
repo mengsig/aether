@@ -18,7 +18,7 @@ pub fn append_drafts(
     drafts: &[EvidenceDraft],
     now: Timestamp,
 ) -> Result<Vec<u64>, LearnerError> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
     let mut items = Vec::new();
     for draft in drafts {
         assert_eq!(

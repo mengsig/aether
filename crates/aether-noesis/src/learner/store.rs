@@ -131,7 +131,7 @@ pub fn append(
     items: &[NewEvidence],
     now: Timestamp,
 ) -> Result<Vec<u64>, LearnerError> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
     let ids = append_within(&tx, items, now)?;
     tx.commit()?;
     Ok(ids)
@@ -255,7 +255,7 @@ pub fn correct(
             "a correction's reason is 1 to {MAX_REASON_CHARS} characters"
         )));
     }
-    let tx = conn.unchecked_transaction()?;
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
     let target = known_concept(&tx, concept)?;
     let correction = NewEvidence {
         concept: target.id.clone(),
@@ -332,7 +332,7 @@ pub fn rebuild(
     concepts: &[ConceptId],
     now: Timestamp,
 ) -> Result<Vec<ConceptState>, LearnerError> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
     let mut rebuilt = Vec::with_capacity(concepts.len());
     for id in concepts {
         rebuilt.push(rebuild_one(&tx, &known_concept(&tx, id)?, now)?);
