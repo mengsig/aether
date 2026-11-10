@@ -160,6 +160,7 @@ fn request(
         memories: &state.memories,
         notes: &state.notes.notes,
         notes_omitted: state.notes.omitted,
+        interruption_notes: "",
         tools,
         model_profile: profile.as_deref(),
         engine_policy: None,

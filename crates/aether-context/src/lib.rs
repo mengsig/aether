@@ -56,6 +56,8 @@ pub struct ContextInputs<'a> {
     pub notes: &'a [aether_core::note::Note],
     /// Older such notes left out of `notes`.
     pub notes_omitted: usize,
+    /// Durable interruption context awaiting a successful model response.
+    pub interruption_notes: &'a str,
     pub tools: Vec<ToolSpec>,
     /// Model-family instructions from the registry, if any.
     pub model_profile: Option<&'a str>,
@@ -180,9 +182,11 @@ impl ContextManager {
             Some(render::role_task(inputs.agent, inputs.task)),
             1,
         );
+        let mut runtime_state = render::runtime_state(&inputs);
+        runtime_state.push_str(inputs.interruption_notes);
         push_text(
             LayerKind::RuntimeState,
-            Some(render::runtime_state(&inputs)),
+            Some(runtime_state),
             (inputs.children.len() + inputs.child_tasks.len()) as u32,
         );
         push_text(
