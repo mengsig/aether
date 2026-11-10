@@ -217,11 +217,11 @@ test('tasks use an existing owner and compact preserves the selected agent',asyn
 test('system appearance updates browser chrome while a manual theme stays selected',async ({page}) => {
   await pair(page);
   await page.emulateMedia({colorScheme:'dark'});
-  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content','#0d1216');
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content','#0c0d0f');
   await page.goto('/#settings');
   await page.getByRole('combobox',{name:'Theme',exact:true}).selectOption('light');
   await page.getByRole('button',{name:'Save appearance',exact:true}).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme','light');
   await page.emulateMedia({colorScheme:'light'}); await page.emulateMedia({colorScheme:'dark'});
-  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content','#f6f7f9');
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute('content','#f4f5f7');
 });

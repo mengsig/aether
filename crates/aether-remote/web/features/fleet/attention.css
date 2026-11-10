@@ -46,3 +46,6 @@
   .fleet-attention-meta { flex-wrap: wrap; }
   .fleet-attention-meta time { margin-inline-start: auto; }
 }
+@media (min-width: 1100px) {
+  .fleet-inbox { display: grid; max-width: none; grid-template-columns: repeat(auto-fill, minmax(520px, 1fr)); align-items: start; gap: 20px; }
+}

@@ -11,6 +11,7 @@ release is also the text of its GitHub release.
 - `list_view_modes` serves the shared TUI's transcript-mode catalog,
   including scoped user modes and file diagnostics, to any authenticated reader.
   The `view_modes` handshake feature announces it.
+
 ### Fixed
 
 - Daemon shutdown reaps live agents' detached servers before the final store
@@ -89,8 +90,19 @@ before updating.
 ### Changed
 
 - **Versions.** The workspace and the Python and TypeScript clients are 1.3.0.
+- **A light facelift for the phone app.** Same tabs, screens and actions as
+  1.2.11, with a higher-contrast palette, a near-black dark mode, 44px touch
+  targets and a shimmering fleet skeleton. From 1100px wide the navigation
+  becomes a sidebar, Attention and Settings lay their cards out in a grid and
+  a conversation spans the window.
+
 ### Fixed
 
+- **An installed phone app no longer answers for a mount.** Its service worker
+  serves the cached shell only for the app's own pages, so a failing `/archon/`
+  shows Archon's error instead of Aether.
+- **A bare mount prefix works.** The listener redirects `/archon` to `/archon/`
+  (`308`, query kept), so the mounted app's relative URLs resolve under it.
 - **`status` and `get_tree` on a large, long-lived store.** The fleet's
   usage and each run's are one row each, kept by triggers as agents are
   written, which count exactly the agents the store can read, so a

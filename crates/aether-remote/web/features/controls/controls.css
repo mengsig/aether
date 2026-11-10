@@ -42,3 +42,10 @@
   .controls-details dd + dt { margin-top: 8px; }
   .controls-metrics { grid-template-columns: minmax(0, 1fr); }
 }
+@media (min-width: 1100px) {
+  .controls-screen { max-width: none; }
+  .controls-screen:has(> .card) { display: grid; grid-template-columns: repeat(auto-fit, minmax(520px, 1fr)); align-items: start; gap: 20px 24px; }
+  .controls-screen:has(> .card) > :not(.card) { grid-column: 1 / -1; }
+  .controls-screen > div > .stack:has(> .card + .card) { display: grid; grid-template-columns: repeat(auto-fit, minmax(520px, 1fr)); align-items: start; }
+  .controls-screen > div > .stack:has(> .card + .card) > :not(.card) { grid-column: 1 / -1; }
+}

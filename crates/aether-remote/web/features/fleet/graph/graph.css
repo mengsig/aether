@@ -79,7 +79,7 @@
 .fleet-sheet-actions .button { flex: 1; }
 .fleet-sheet-actions .primary { flex-basis: 100%; }
 .fleet-graph-skeleton { display: grid; grid-template-columns: repeat(3, 1fr); justify-items: center; align-content: center; gap: 70px 20px; min-height: 420px; background: var(--surface); border: 1px solid var(--border); border-radius: 24px; }
-.fleet-graph-skeleton span { width: 48px; height: 48px; border-radius: 50%; background: var(--surface-soft); }
+.fleet-graph-skeleton span { width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(90deg, var(--surface-soft) 30%, var(--surface) 50%, var(--surface-soft) 70%) 0 0 / 300% 100%; animation: shimmer 1.6s ease-in-out infinite; }
 .fleet-graph-skeleton span:first-child { grid-column: 1 / -1; }
 .fleet-graph-skeleton p { grid-column: 1 / -1; font-size: .8125rem; }
 @keyframes fleet-node-arrive { from { opacity: 0; } }
