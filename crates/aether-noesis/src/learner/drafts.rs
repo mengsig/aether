@@ -58,17 +58,32 @@ pub fn append_pending_judgments(
         ));
     }
     let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    let ids = append_pending_within(&tx, Some(session), now)?;
+    tx.commit()?;
+    Ok(ids)
+}
+
+pub(super) fn append_pending_within(
+    tx: &Connection,
+    session: Option<&str>,
+    now: Timestamp,
+) -> Result<Vec<u64>, LearnerError> {
+    debug_assert!(!tx.is_autocommit());
     let pending = {
         let mut query = tx.prepare(
-            "SELECT question, drafts FROM judgment_evidence WHERE session = ?1 AND appended = 0 ORDER BY rowid",
+            "SELECT session, question, drafts FROM judgment_evidence WHERE (?1 IS NULL OR session = ?1) AND appended = 0 ORDER BY rowid",
         )?;
         let rows = query.query_map([session], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         })?;
         rows.collect::<Result<Vec<_>, _>>()?
     };
     let mut ids = Vec::new();
-    for (question, json) in pending {
+    for (session, question, json) in pending {
         let drafts: Vec<EvidenceDraft> = serde_json::from_str(&json).map_err(|error| {
             LearnerError::Corrupt(format!("invalid judgment evidence: {error}"))
         })?;
@@ -85,7 +100,6 @@ pub fn append_pending_judgments(
         let changed = tx.execute("UPDATE judgment_evidence SET appended = 1 WHERE session = ?1 AND question = ?2 AND appended = 0", rusqlite::params![session, question])?;
         assert_eq!(changed, 1);
     }
-    tx.commit()?;
     Ok(ids)
 }
 

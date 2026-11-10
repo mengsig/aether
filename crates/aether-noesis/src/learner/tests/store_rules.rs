@@ -178,6 +178,58 @@ fn a_correction_is_evidence_not_an_overwrite() {
 }
 
 #[test]
+fn correction_drains_failed_judgments_before_it_wins() {
+    let (dir, store) = open_temp();
+    let conn = store.connection();
+    let concept = topic(conn, "ordering");
+    conn.execute_batch("INSERT INTO sessions (id, goal, mode, phase, agent, created_at, updated_at) VALUES ('ns_1', 'ordering', 'teach', 'teach', 'agent', 'now', 'now');
+        INSERT INTO questions (id, session, kind, prompt, answer_key, posed_at) VALUES ('q_1', 'ns_1', 'recall', 'question', '{}', 'now');") .unwrap();
+    let drafts = serde_json::json!([{
+        "source_question": "q_1", "session": "ns_1", "concepts": [concept.id],
+        "kind": "probe_answer", "outcome": "correct", "dont_know": false
+    }]);
+    conn.execute(
+        "INSERT INTO judgment_evidence (session, question, drafts) VALUES ('ns_1', 'q_1', ?1)",
+        [drafts.to_string()],
+    )
+    .unwrap();
+    conn.execute_batch("CREATE TRIGGER fail_evidence BEFORE INSERT ON evidence BEGIN SELECT RAISE(ABORT, 'injected'); END;").unwrap();
+    assert!(learner::append_pending_judgments(conn, "ns_1", day(1, 1)).is_err());
+    assert!(
+        correct(
+            conn,
+            &concept.id,
+            ConceptStateKind::Unseen,
+            "correction",
+            day(1, 2)
+        )
+        .is_err()
+    );
+    assert!(history(conn, &concept.id).is_empty());
+    conn.execute_batch("DROP TRIGGER fail_evidence;").unwrap();
+    correct(
+        conn,
+        &concept.id,
+        ConceptStateKind::Unseen,
+        "correction",
+        day(1, 2),
+    )
+    .unwrap();
+    drop(store);
+    let reopened = NoesisStore::open(&dir.path().join("noesis.db")).unwrap();
+    let conn = reopened.connection();
+    assert!(
+        learner::append_pending_judgments(conn, "ns_1", day(1, 3))
+            .unwrap()
+            .is_empty()
+    );
+    let records = history(conn, &concept.id);
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[1].kind, EvidenceKind::OperatorCorrection);
+    assert_eq!(cached_state(conn, &concept).state, ConceptStateKind::Unseen);
+}
+
+#[test]
 fn appends_are_validated_at_the_boundary() {
     let (_dir, store) = open_temp();
     let conn = store.connection();

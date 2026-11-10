@@ -257,6 +257,7 @@ pub fn correct(
     }
     let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
     let target = known_concept(&tx, concept)?;
+    super::drafts::append_pending_within(&tx, None, now)?;
     let correction = NewEvidence {
         concept: target.id.clone(),
         session: None,
