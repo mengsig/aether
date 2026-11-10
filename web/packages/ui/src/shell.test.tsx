@@ -270,3 +270,23 @@ test("a failed palette load keeps the shell usable and retries with a fresh load
   expect(container.querySelector("[role=combobox]")).not.toBeNull();
   error.mockRestore();
 });
+
+
+test("a persistent palette failure can be closed and reopened", async () => {
+  const loadPalette = vi.fn().mockRejectedValue(new Error("Chunk unavailable"));
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const { container, unmount } = await render(shell({ loadPalette }).node);
+  await click(byText(container, "button", "Jump to"));
+  await settle();
+  expect(container.querySelector(".ui-palette-failure")).not.toBeNull();
+  await click(byText(container, "button", "Close"));
+  expect(container.querySelector(".ui-palette-failure")).toBeNull();
+  await click(byText(container, "button", "Jump to"));
+  await settle();
+  expect(loadPalette).toHaveBeenCalledTimes(2);
+  expect(container.querySelector(".ui-palette-failure")).not.toBeNull();
+  await press(container, "Escape");
+  expect(container.querySelector(".ui-palette-failure")).toBeNull();
+  await unmount();
+  error.mockRestore();
+});

@@ -53,3 +53,18 @@ test("the palette reports a failed chunk in a visible overlay and retries", asyn
   await expect(failure).toHaveCount(0);
   expect(failedChunkRequests).toBeGreaterThanOrEqual(2);
 });
+
+test("a persistent palette failure can be dismissed and reopened", async ({ page }) => {
+  await page.route(/\/assets\/(?:command-palette|entity-palette)-[^/]+\.js(?:\?.*)?$/, (route) => route.abort("failed"));
+  await page.goto(origin);
+  const trigger = page.getByRole("button", { name: /Jump to/ });
+  const failure = page.locator(".ui-palette-failure[role=alert]");
+  await trigger.click();
+  await expect(failure).toBeInViewport({ ratio: 1 });
+  await failure.getByRole("button", { name: "Close" }).click();
+  await expect(failure).toHaveCount(0);
+  await trigger.click();
+  await expect(failure).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(failure).toHaveCount(0);
+});

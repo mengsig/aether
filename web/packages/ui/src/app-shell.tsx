@@ -59,9 +59,26 @@ export class PaletteBoundary extends Component<CommandPaletteProps & { readonly 
     this.setState({ failure: null });
   }
   override render(): ReactNode {
-    if (this.state.failure !== null) return <ErrorState className="ui-palette-failure" title="The palette failed" message={this.state.failure} onRetry={() => this.retry()} />;
+    if (this.state.failure !== null) return <PaletteFailure message={this.state.failure} onRetry={() => this.retry()} onClose={this.props.onClose} />;
     return <Suspense fallback={null}>{createElement(this.palette, this.props)}</Suspense>;
   }
+}
+
+function PaletteFailure({ message, onRetry, onClose }: { readonly message: string; readonly onRetry: () => void; readonly onClose: () => void }) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); onClose(); }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+  return (
+    <section className="ui-state ui-palette-failure" data-kind="error" role="alert">
+      <h2 className="ui-state-title">The palette failed</h2>
+      <p className="ui-state-body">{message}</p>
+      <div className="ui-state-action"><Button onClick={onRetry}>Try again</Button><Button onClick={onClose}>Close</Button></div>
+    </section>
+  );
 }
 
 type RouteComponent = ComponentType<RouteProps>;
