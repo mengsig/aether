@@ -24,6 +24,15 @@ fn check(prompt: &str, right: &str, wrong: &str, node: &str) -> Value {
 }
 
 async fn start_teaching(harness: &Harness, cli: &FauxCli, plan: Value) -> String {
+    start_teaching_with_reply(harness, cli, plan, None).await
+}
+
+async fn start_teaching_with_reply(
+    harness: &Harness,
+    cli: &FauxCli,
+    plan: Value,
+    reply: Option<&str>,
+) -> String {
     cli.queue(
         "prober",
         json!({"tool_calls": [tool_call(ASK, capital_question())]}),
@@ -33,11 +42,63 @@ async fn start_teaching(harness: &Harness, cli: &FauxCli, plan: Value) -> String
         "teacher",
         json!({"text": "Here is the plan.", "tool_calls": [tool_call("noesis_plan", plan)]}),
     );
+    if let Some(text) = reply {
+        cli.queue("teacher", json!({"text": text}));
+    }
     let created = harness.create(json!({"goal": "Learn angles"})).await;
     let probe = harness.posed(&created.id).await;
     harness.answer(&probe, "Paris").await.expect("probe answer");
     harness.settled().await;
     created.id
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn plan_approval_is_published_once_and_revisions_remain_visible() {
+    let home = Home::new();
+    let cli = Arc::new(FauxCli::default());
+    let plan = json!({"nodes": [{"id": "turns", "title": "Turns"}], "edges": []});
+    let harness = engine_harness(&home, cli.clone()).await;
+    let id =
+        start_teaching_with_reply(&harness, &cli, plan, Some("First learn turns. Ready?")).await;
+    let session = harness.session(&id).await.expect("session");
+    let texts = assistant_texts(&harness, agent_of(&session));
+    assert!(
+        !texts.iter().any(|text| text == "Here is the plan."),
+        "{texts:?}"
+    );
+    assert_eq!(
+        texts
+            .iter()
+            .filter(|text| *text == "First learn turns. Ready?")
+            .count(),
+        1
+    );
+    assert!(session.open_question.is_none());
+
+    let revised = json!({"nodes": [{"id": "angles", "title": "Angles"}], "edges": []});
+    cli.queue(
+        "teacher",
+        json!({"text": "Draft revision", "tool_calls": [tool_call("noesis_plan", revised)]}),
+    );
+    cli.queue("teacher", json!({"text": "Now learn angles. Ready?"}));
+    harness.send_json(json!({"cmd": "noesis_send", "session": id, "text": "Change it", "idempotency_key": "revise-plan"})).await.expect("revision");
+    harness.settled().await;
+    let session = harness.session(&id).await.expect("revised session");
+    let texts = assistant_texts(&harness, agent_of(&session));
+    assert!(texts.iter().any(|text| text == "First learn turns. Ready?"));
+    assert_eq!(
+        texts
+            .iter()
+            .filter(|text| *text == "Now learn angles. Ready?")
+            .count(),
+        1
+    );
+    assert!(
+        !texts.iter().any(|text| text == "Draft revision"),
+        "{texts:?}"
+    );
+    assert!(session.open_question.is_none());
+    harness.close().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

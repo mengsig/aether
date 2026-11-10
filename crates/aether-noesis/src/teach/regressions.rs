@@ -12,6 +12,26 @@ use crate::prompts::Agent;
 const SECRET: &str = "mitochondria";
 
 #[test]
+fn plan_reply_prefers_the_final_message_on_both_turn_paths() {
+    for segmented in [false, true] {
+        let (_dir, noesis) = fixture();
+        let mut t = Teaching::new(&noesis, FauxEngine::new());
+        let id = teacher_session(&mut t);
+        t.engine_mut()
+            .script(Agent::Teacher, "Earlier order", vec![(PLAN, three_steps())]);
+        t.engine_mut().script(Agent::Teacher, "Final order", vec![]);
+        let report = if segmented {
+            t.advance(&id).unwrap().pop().unwrap()
+        } else {
+            t.run_turn(&id).unwrap()
+        };
+        assert_eq!(report.end, TurnEnd::AwaitingLearner);
+        assert_eq!(report.steps[0].text, "");
+        assert_eq!(report.steps[1].text, "Final order");
+    }
+}
+
+#[test]
 fn choice_requires_a_sealed_nonblank_explanation() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());

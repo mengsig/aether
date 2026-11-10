@@ -278,6 +278,9 @@ impl<E: Engine> Teaching<'_, E> {
             self.engine
                 .deliver(agent, Input::Failure(super::seal::NEUTRAL_REPLY.into()))?;
         }
+        if end == TurnEnd::AwaitingLearner && !turn.attempted_check {
+            turn.prefer_final_plan_reply(sealer);
+        }
         for step in &mut turn.steps {
             if step.text.is_empty() {
                 continue;
@@ -603,6 +606,27 @@ impl std::fmt::Debug for Turn {
 }
 
 impl Turn {
+    fn prefer_final_plan_reply(&mut self, sealer: &Sealer) {
+        let Some(final_step) = self.steps.last() else {
+            return;
+        };
+        if !final_step.calls.is_empty()
+            || final_step.text.trim().is_empty()
+            || sealer.holds(&final_step.text)
+        {
+            return;
+        }
+        for step in &mut self.steps {
+            if step
+                .calls
+                .iter()
+                .any(|call| !call.is_error && ToolName::parse(&call.name) == Some(ToolName::Plan))
+            {
+                step.text.clear();
+            }
+        }
+    }
+
     pub(super) fn needs_card(&self) -> bool {
         self.recovering_check()
     }
