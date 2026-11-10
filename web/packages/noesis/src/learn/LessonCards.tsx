@@ -5,7 +5,7 @@ import type { aether } from "@aether-ui/protocol";
 import { Button } from "@aether-ui/ui";
 import { useState } from "react";
 import { useNoesisChange } from "./data.ts";
-import { billingWords, invariant, planRows } from "./model.ts";
+import { billingWords, invariant, planComplete, planRows } from "./model.ts";
 import { QUEUED_NOTE, useExtract } from "./SessionActions.tsx";
 
 const STATUS_LABEL: Readonly<Record<aether.EvidenceStatus, string>> = { verified: "Verified", reviewed: "Reviewed", preliminary: "Preliminary" };
@@ -39,7 +39,8 @@ export function CompletionCard({ conn, session }: { conn: string; session: aethe
   const change = useNoesisChange(conn);
   const extract = useExtract(conn, session.id);
   const [note, setNote] = useState<string | null>(null);
-  invariant(session.plan != null && session.plan.nodes.every((node) => node.status === "visited"), "a lesson completes when its plan is done");
+  invariant(session.plan != null && planComplete(session.plan), "a lesson completes when its plan is done");
+  invariant(session.open_question == null, "a completed lesson has no open question");
   const steps = planRows(session.plan);
   const practise = async () => {
     const result = await change({ cmd: "noesis_create_session", goal: session.goal, mode: "practice" });

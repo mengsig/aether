@@ -63,7 +63,7 @@ function SessionView({ conn, status, session, reload }: OpenGate & { session: ae
         </header>
         <Transcript items={[...items, ...live]} live={live.length > 0} writing={writing} pending={turn.pending} settingsPending={status.settings_pending === true} onAnswer={operate === null ? answer : undefined} onCheck={checkAgain}>
           {session.context && session.context.items.length > 0 && <SourcesCard bundle={session.context} />}
-          {planComplete(session.plan) && <CompletionCard conn={conn} session={session} />}
+          {planComplete(session.plan) && session.open_question == null && <CompletionCard conn={conn} session={session} />}
           {refusal !== null && <RefusalNote refusal={refusal} budget={refusal.kind === "budget" ? budget : null} onRetry={retry} />}
         </Transcript>
         <Composer sessionId={session.id} waiting={session.open_question != null} problem={session.active_problem != null} reason={pausedBy(session.stalled != null || budget !== null)}
