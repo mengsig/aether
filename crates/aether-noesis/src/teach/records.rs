@@ -375,8 +375,11 @@ impl NoesisEvent {
 /// One piece of learner evidence for the learner model (F4) to append.
 /// `concepts` names what it bears on: the question's concepts, else its plan
 /// node; empty means the session's goal topic.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct EvidenceDraft {
+    /// Identifies a judgment already persisted for durable delivery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_question: Option<String>,
     pub session: String,
     pub concepts: Vec<String>,
     pub kind: EvidenceKind,

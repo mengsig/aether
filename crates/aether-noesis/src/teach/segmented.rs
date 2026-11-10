@@ -75,7 +75,8 @@ impl Advance {
 }
 
 impl<E: Engine> Teaching<'_, E> {
-    fn stall_engine(&mut self, session: &str) -> Result<(), TeachError> {
+    /// Record a recoverable failure after a turn cannot publish its output.
+    pub fn stall_engine(&mut self, session: &str) -> Result<(), TeachError> {
         debug_assert!(!session.is_empty());
         let stall = SessionStall {
             reason: StallReason::EngineStalled,

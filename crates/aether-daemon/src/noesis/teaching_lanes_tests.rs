@@ -100,6 +100,7 @@ async fn evidence_append_failure_still_publishes_committed_judgment() {
                 .result
                 .as_ref()
                 .is_some_and(|result| result.correct == Some(true))
+                && session.stalled.is_some()
                 && !harness.daemon.runtime.turn_in_flight(created.agent)
             {
                 break;
@@ -110,10 +111,31 @@ async fn evidence_append_failure_still_publishes_committed_judgment() {
     .await
     .expect("the failed segment ends");
     assert_judgment_event_once(&harness, &created.id);
+    let stalled = harness
+        .session(&created.id)
+        .await
+        .unwrap()
+        .stalled
+        .expect("failed append stalls the turn");
+    assert_eq!(
+        stalled.reason,
+        aether_core::noesis::StallReason::EngineStalled
+    );
     harness.close().await;
+
+    assert_failed_judgment_recovers(&home, &conn, &created.id).await;
+}
+
+async fn assert_failed_judgment_recovers(home: &Home, conn: &rusqlite::Connection, session: &str) {
+    conn.execute_batch("DROP TRIGGER fail_evidence").unwrap();
     let next = Arc::new(ScriptedClient::new());
     next.push(ScriptedClient::text("Continue."));
-    let reopened = Harness::open(&home, next.clone()).await;
+    let reopened = Harness::open(home, next.clone()).await;
+    assert!(reopened.session(session).await.unwrap().stalled.is_some());
+    assert!(next.requests().is_empty(), "a stalled turn waits for retry");
+    let retry =
+        json!({"cmd":"noesis_retry_turn", "session":session, "idempotency_key":"retry-evidence"});
+    reopened.send_json(retry.clone()).await.unwrap();
     tokio::time::timeout(Duration::from_secs(5), async {
         while next.requests().is_empty() {
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -121,8 +143,17 @@ async fn evidence_append_failure_still_publishes_committed_judgment() {
         reopened.settled().await;
     })
     .await
-    .expect("the interrupted turn resumes");
-    assert_judgment_event_once(&reopened, &created.id);
+    .expect("retry finishes");
+    reopened.send_json(retry).await.unwrap();
+    let replayed =
+        aether_noesis::learner::append_pending_judgments(conn, session, chrono::Utc::now())
+            .unwrap();
+    assert!(
+        replayed.is_empty(),
+        "replaying the evidence outbox appends nothing"
+    );
+    assert!(reopened.session(session).await.unwrap().stalled.is_none());
+    assert_judgment_published_once(home, &reopened, session);
     reopened.close().await;
 }
 

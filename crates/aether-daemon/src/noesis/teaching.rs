@@ -325,8 +325,22 @@ impl NoesisService {
         }
         let host = self.turn_host(&ticket, &mut desk, runtime)?;
         let reservation = desk.reserve_turn(session);
-        let (desk, ran, output, interrupted) = run_segments(&ticket, desk, &host, session).await?;
-        publish(&desk, runtime, output, &Actor::System, None)?;
+        if let Err(error) = publish_judgments(&desk, runtime, session) {
+            return Err(self.stall_publication(&ticket, &mut desk, runtime, session, error));
+        }
+        let segments = run_segments(&ticket, desk, &host, session).await;
+        let (mut desk, ran, output, interrupted) = match segments {
+            Ok(result) => result,
+            Err(error) => {
+                let mut desk = ticket.desk.lock().await;
+                return Err(self.stall_publication(&ticket, &mut desk, runtime, session, error));
+            }
+        };
+        let judgments = publish_judgments(&desk, runtime, session);
+        let published = publish(&desk, runtime, output, &Actor::System, None);
+        if let Err(error) = combine_publications(judgments, published) {
+            return Err(self.stall_publication(&ticket, &mut desk, runtime, session, error));
+        }
         drop(reservation);
         drop(desk);
         if interrupted {
@@ -335,6 +349,30 @@ impl NoesisService {
         let queued = self.after_teaching_turn(runtime, session).await;
         ran.map_err(reply_error)?;
         queued.map(|_| ())
+    }
+
+    fn stall_publication(
+        &self,
+        ticket: &Ticket,
+        desk: &mut Desk,
+        runtime: &Arc<Runtime>,
+        session: &str,
+        original: ErrorReply,
+    ) -> ErrorReply {
+        let stalled = (|| {
+            let (result, output) = self.with_teaching(ticket, desk, runtime, |teaching, _| {
+                teaching.stall_engine(session)
+            })?;
+            result.map_err(reply_error)?;
+            publish(desk, runtime, output, &Actor::System, None)
+        })();
+        match stalled {
+            Ok(()) => original,
+            Err(error) => ErrorReply::internal(format!(
+                "{}; also failed to stall the turn: {}",
+                original.message, error.message
+            )),
+        }
     }
 
     fn turn_host(
@@ -422,6 +460,7 @@ async fn run_segments<'a>(
         first = false;
         match segment.outcome {
             SegmentOutcome::Call(call) => {
+                let judgments = publish_judgments(&desk, &host.runtime, session);
                 let published = publish(
                     &desk,
                     &host.runtime,
@@ -432,7 +471,7 @@ async fn run_segments<'a>(
                     &Actor::System,
                     None,
                 );
-                if let Err(error) = published {
+                if let Err(error) = combine_publications(judgments, published) {
                     let output = interrupted_output(&mut desk, segment.engine, segment.buffer)?;
                     if let Err(events_error) =
                         publish(&desk, &host.runtime, output, &Actor::System, None)
@@ -541,6 +580,19 @@ fn run_segment<'a>(
     })
 }
 
+fn combine_publications(
+    first: Result<(), ErrorReply>,
+    second: Result<(), ErrorReply>,
+) -> Result<(), ErrorReply> {
+    match (first, second) {
+        (Ok(()), result) | (result, Ok(())) => result,
+        (Err(first), Err(second)) => Err(ErrorReply::internal(format!(
+            "{}; also failed to publish teaching output: {}",
+            first.message, second.message
+        ))),
+    }
+}
+
 /// Append the evidence and record the events (and a receipt) in one
 /// commit. Events are recorded even when the evidence append failed.
 fn publish(
@@ -553,7 +605,12 @@ fn publish(
     let Some(noesis) = &desk.noesis else {
         return Err(ErrorReply::internal("publishing after the service stopped"));
     };
-    let appended = append_evidence(noesis, &output.evidence);
+    let drafts: Vec<_> = output
+        .evidence
+        .into_iter()
+        .filter(|draft| draft.source_question.is_none())
+        .collect();
+    let appended = append_evidence(noesis, &drafts);
     let mut commit = Commit::new();
     for event in &output.events {
         commit.push_event(EventDraft::new(by.clone(), event_kind(event)?));
@@ -808,6 +865,27 @@ fn answer_of(input: AnswerInput) -> Answer {
     }
 }
 
+fn publish_judgments(desk: &Desk, runtime: &Runtime, session: &str) -> Result<(), ErrorReply> {
+    let noesis = desk
+        .noesis
+        .as_ref()
+        .ok_or_else(ErrorReply::noesis_disabled)?;
+    let conn = noesis.store().connection();
+    let ids =
+        aether_noesis::learner::append_pending_judgments(conn, session, chrono::Utc::now())
+            .map_err(|error| ErrorReply::internal(format!("append judgment evidence: {error}")))?;
+    let concepts = evidence_concepts(conn, &ids)?;
+    if !concepts.is_empty() {
+        let mut commit = Commit::new();
+        commit.push_event(EventDraft::new(
+            Actor::System,
+            EventKind::NoesisLearnerUpdated { concepts },
+        ));
+        runtime.apply(commit).map_err(map_err)?;
+    }
+    Ok(())
+}
+
 /// Append the drafts to the learner model; the concepts they touched.
 fn append_evidence(
     noesis: &Noesis,
@@ -820,8 +898,15 @@ fn append_evidence(
     let now = chrono::Utc::now();
     let ids = aether_noesis::learner::append_drafts(conn, drafts, now)
         .map_err(|e| ErrorReply::internal(format!("append learner evidence: {e}")))?;
+    evidence_concepts(conn, &ids)
+}
+
+fn evidence_concepts(
+    conn: &rusqlite::Connection,
+    ids: &[u64],
+) -> Result<Vec<ConceptId>, ErrorReply> {
     let mut concepts = Vec::with_capacity(ids.len());
-    for id in &ids {
+    for id in ids {
         let id = i64::try_from(*id).map_err(ErrorReply::internal)?;
         let concept: String = conn
             .query_row("SELECT concept FROM evidence WHERE id = ?1", [id], |row| {

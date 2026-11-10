@@ -40,6 +40,7 @@ fn the_migrations_create_every_table_the_contract_names() {
         "evidence_bundles",
         "evidence_items",
         "jobs",
+        "judgment_evidence",
         "meta",
         "plans",
         "problems",

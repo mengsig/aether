@@ -19,6 +19,17 @@ pub fn append_drafts(
     now: Timestamp,
 ) -> Result<Vec<u64>, LearnerError> {
     let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    let ids = append_drafts_within(&tx, drafts, now)?;
+    tx.commit()?;
+    Ok(ids)
+}
+
+fn append_drafts_within(
+    tx: &Connection,
+    drafts: &[EvidenceDraft],
+    now: Timestamp,
+) -> Result<Vec<u64>, LearnerError> {
+    debug_assert!(!tx.is_autocommit());
     let mut items = Vec::new();
     for draft in drafts {
         assert_eq!(
@@ -26,13 +37,55 @@ pub fn append_drafts(
             draft.outcome.as_str() == "dont_know",
             "a draft's don't-know flag and outcome agree"
         );
-        for concept in concepts_of(&tx, draft, now)? {
+        for concept in concepts_of(tx, draft, now)? {
             items.push(new_evidence(draft, concept)?);
         }
     }
-    let ids = append_within(&tx, &items, now)?;
-    tx.commit()?;
+    let ids = append_within(tx, &items, now)?;
     debug_assert_eq!(ids.len(), items.len());
+    Ok(ids)
+}
+
+/// Append committed recall judgments once, atomically with their delivery marker.
+pub fn append_pending_judgments(
+    conn: &Connection,
+    session: &str,
+    now: Timestamp,
+) -> Result<Vec<u64>, LearnerError> {
+    if session.is_empty() {
+        return Err(LearnerError::Invalid(
+            "judgment evidence requires a session".into(),
+        ));
+    }
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    let pending = {
+        let mut query = tx.prepare(
+            "SELECT question, drafts FROM judgment_evidence WHERE session = ?1 AND appended = 0 ORDER BY rowid",
+        )?;
+        let rows = query.query_map([session], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    let mut ids = Vec::new();
+    for (question, json) in pending {
+        let drafts: Vec<EvidenceDraft> = serde_json::from_str(&json).map_err(|error| {
+            LearnerError::Corrupt(format!("invalid judgment evidence: {error}"))
+        })?;
+        if drafts.is_empty()
+            || drafts.iter().any(|draft| {
+                draft.session != session || draft.source_question.as_deref() != Some(&question)
+            })
+        {
+            return Err(LearnerError::Corrupt(
+                "judgment evidence has a mismatched source".into(),
+            ));
+        }
+        ids.extend(append_drafts_within(&tx, &drafts, now)?);
+        let changed = tx.execute("UPDATE judgment_evidence SET appended = 1 WHERE session = ?1 AND question = ?2 AND appended = 0", rusqlite::params![session, question])?;
+        assert_eq!(changed, 1);
+    }
+    tx.commit()?;
     Ok(ids)
 }
 

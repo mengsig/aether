@@ -349,6 +349,7 @@ fn teaching_drafts_land_once_per_concept_they_bear_on() {
     )
     .unwrap();
     let draft = |concepts: &[&str], outcome, confidence| EvidenceDraft {
+        source_question: None,
         session: "ns_1".into(),
         concepts: concepts.iter().map(|c| c.to_string()).collect(),
         kind: teach::EvidenceKind::ProbeAnswer,
@@ -388,6 +389,7 @@ fn teaching_drafts_land_once_per_concept_they_bear_on() {
         ]
     );
     let unknown = EvidenceDraft {
+        source_question: None,
         session: "ns_missing".into(),
         ..draft(&[], teach::EvidenceOutcome::Correct, None)
     };

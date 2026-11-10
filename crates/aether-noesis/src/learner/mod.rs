@@ -23,7 +23,7 @@ pub use derive::{
     Derived, INITIAL_HALF_LIFE_DAYS, MASTERY_STRENGTH, MAX_HALF_LIFE_DAYS, MIN_HALF_LIFE_DAYS,
     brier, derive,
 };
-pub use drafts::append_drafts;
+pub use drafts::{append_drafts, append_pending_judgments};
 pub use store::{
     DEFAULT_EVIDENCE_LIMIT, DEFAULT_STATES_LIMIT, EvidencePage, Selection, append, concept,
     correct, ensure_concept, evidence_page, learner_calibration, rebuild, rebuild_all,

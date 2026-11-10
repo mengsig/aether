@@ -494,6 +494,7 @@ impl<'a, E: Engine> Teaching<'a, E> {
             posed.concepts.clone()
         };
         self.evidence.push(EvidenceDraft {
+            source_question: None,
             session: row.id.clone(),
             concepts,
             kind,

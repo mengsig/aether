@@ -168,6 +168,39 @@ impl<E: Engine> Teaching<'_, E> {
                 question.id
             ));
         }
+        let drafts = Self::recall_evidence(row, question, &answer, args);
+        if !self.commit_recall_judgment(row, question, args, &drafts)? {
+            return refuse("the recall answer is not available for judgment");
+        }
+        result.correct = Some(args.correct);
+        result.misconception = args.misconception.clone();
+        self.events.push(NoesisEvent::AnswerRecorded {
+            session: row.id.clone(),
+            result,
+        });
+        self.evidence.extend(drafts);
+        if question.plan_node.is_some() {
+            self.push_plan_event(&row.id)?;
+        }
+        Ok(Ok((json!({"judged": true}), None)))
+    }
+
+    fn commit_recall_judgment(
+        &self,
+        row: &SessionRow,
+        question: &Question,
+        args: &JudgeRecallArgs,
+        drafts: &[EvidenceDraft],
+    ) -> Result<bool, TeachError> {
+        debug_assert!(!drafts.is_empty());
+        debug_assert!(
+            drafts
+                .iter()
+                .all(|draft| draft.source_question.as_deref() == Some(&question.id))
+        );
+        let serialized = serde_json::to_string(drafts).map_err(|error| {
+            TeachError::Corrupt(format!("serialize judgment evidence: {error}"))
+        })?;
         let tx = self.conn().unchecked_transaction()?;
         if !db::judge_recall(
             &tx,
@@ -176,30 +209,23 @@ impl<E: Engine> Teaching<'_, E> {
             args.correct,
             args.misconception.as_deref(),
         )? {
-            return refuse("the recall answer is not available for judgment");
+            return Ok(false);
         }
+        tx.execute(
+            "INSERT INTO judgment_evidence (session, question, drafts) VALUES (?1, ?2, ?3)",
+            rusqlite::params![row.id, question.id, serialized],
+        )?;
         db::touch(&tx, &row.id)?;
         tx.commit()?;
-        result.correct = Some(args.correct);
-        result.misconception = args.misconception.clone();
-        self.events.push(NoesisEvent::AnswerRecorded {
-            session: row.id.clone(),
-            result,
-        });
-        self.record_recall_evidence(row, question, &answer, args);
-        if question.plan_node.is_some() {
-            self.push_plan_event(&row.id)?;
-        }
-        Ok(Ok((json!({"judged": true}), None)))
+        Ok(true)
     }
 
-    fn record_recall_evidence(
-        &mut self,
+    fn recall_evidence(
         row: &SessionRow,
         question: &Question,
         answer: &super::records::RecordedAnswer,
         args: &JudgeRecallArgs,
-    ) {
+    ) -> Vec<EvidenceDraft> {
         debug_assert_eq!(question.kind, super::records::QuestionKind::Recall);
         debug_assert!(!answer.dont_know);
         let concepts = if question.concepts.is_empty() {
@@ -214,7 +240,8 @@ impl<E: Engine> Teaching<'_, E> {
         } else {
             EvidenceKind::PredictAnswer
         };
-        self.evidence.push(EvidenceDraft {
+        let mut drafts = vec![EvidenceDraft {
+            source_question: Some(question.id.clone()),
             session: row.id.clone(),
             concepts: concepts.clone(),
             kind,
@@ -229,9 +256,10 @@ impl<E: Engine> Teaching<'_, E> {
             hint_rung: None,
             miss_class: None,
             note: args.misconception.clone(),
-        });
+        }];
         if let Some(misconception) = &args.misconception {
-            self.evidence.push(EvidenceDraft {
+            drafts.push(EvidenceDraft {
+                source_question: Some(question.id.clone()),
                 session: row.id.clone(),
                 concepts,
                 kind: EvidenceKind::MisconceptionObserved,
@@ -244,6 +272,7 @@ impl<E: Engine> Teaching<'_, E> {
                 note: Some(misconception.clone()),
             });
         }
+        drafts
     }
 
     /// The learner model's current states, decay applied, for the agent.
@@ -699,6 +728,7 @@ fn strand_problems(args: &ProbeDoneArgs) -> Vec<String> {
 
 fn observed(session: &str, strand: &str, misconception: &str) -> EvidenceDraft {
     EvidenceDraft {
+        source_question: None,
         session: session.to_string(),
         concepts: vec![strand.to_string()],
         kind: EvidenceKind::MisconceptionObserved,
@@ -724,6 +754,7 @@ fn practice_evidence(
         Outcome::Dismissed => return None,
     };
     Some(EvidenceDraft {
+        source_question: None,
         session: session.to_string(),
         concepts: problem.targets.clone(),
         kind: EvidenceKind::PracticeConclude,

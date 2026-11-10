@@ -309,10 +309,20 @@ UPDATE sessions SET turn_pending = 1 WHERE id IN (
 );
 "#;
 
-pub(crate) const MIGRATIONS: &[&str] = &[N1, N2, N3, N4, N5];
+const N6: &str = r#"
+CREATE TABLE judgment_evidence (
+    session TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    question TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+    drafts TEXT NOT NULL CHECK (json_valid(drafts)),
+    appended INTEGER NOT NULL DEFAULT 0 CHECK (appended IN (0, 1)),
+    PRIMARY KEY (session, question)
+) STRICT;
+"#;
+
+pub(crate) const MIGRATIONS: &[&str] = &[N1, N2, N3, N4, N5, N6];
 
 /// The schema version this binary writes and reads.
-pub const SCHEMA_VERSION: u32 = 5;
+pub const SCHEMA_VERSION: u32 = 6;
 
 const _: () = assert!(MIGRATIONS.len() == SCHEMA_VERSION as usize);
 
