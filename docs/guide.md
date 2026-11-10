@@ -59,13 +59,13 @@ reached it is printed as already resolved, and the run goes on.
 When the run delegates, it also prints the subtree usage including descendants;
 the JSON result adds `subtree_usage` alongside the root's own `usage`.
 
-Built-in Claude models are Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1, on
-both `claude-code/...` (native harness) and `anthropic/...` (API). Opus 5.5 is
+Built-in Claude models are Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable 5.2 and
+Fable 5.1, on both `claude-code/...` (native harness) and `anthropic/...` (API). Opus 5.5 is
 preferred: `opus` resolves to `claude-opus-5-5`, and automatic Claude selection
 uses it; explicit model defaults remain respected. Sonnet 5.5 (`sonnet`) is the
 lower-cost option for balanced work and Haiku 5.5 (`haiku`) the cheapest. `fable`
-resolves to `claude-fable-5-1`. Claude Code receives these explicit ids rather
-than its own floating aliases; `claude-code/default` leaves model selection to
+resolves to `claude-fable-5-2`; `fable-5-1` still selects Fable 5.1. Claude
+Code receives these explicit ids rather than its own floating aliases; `claude-code/default` leaves model selection to
 Claude Code itself.
 
 Built-in GPT models are GPT-6 Astra, GPT-6.1 Terra, GPT-6.1 Sol and GPT-6 Luna,

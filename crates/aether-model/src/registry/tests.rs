@@ -165,7 +165,7 @@ fn a_session_prices_the_default_model_the_engine_actually_picked() {
         .cost
         .expect("fable is priced");
     assert_eq!(
-        reg.session_model_price(&claude, "claude-fable-5-1"),
+        reg.session_model_price(&claude, "claude-fable-5-2"),
         Some(ModelPrice::Billed(fable)),
         "the session named a model this engine prices"
     );

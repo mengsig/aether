@@ -169,7 +169,7 @@ session stays with the CLI (see below).
 Whether the CLI grants the larger window, and how its use is charged, depends
 on your account and plan; keeping more history also spends more of a plan's
 allowance on every turn. Only `claude-opus-5-5[1m]` was observed working on a
-real account. An entry for `claude-sonnet-5-5[1m]` or `claude-fable-5-1[1m]`
+real account. An entry for `claude-sonnet-5-5[1m]` or `claude-fable-5-2[1m]`
 would be written the same way, but those ids were not tried on an account:
 they rest on Claude Code's documentation of the `[1m]` suffix. That
 documentation lists no `[1m]` variant of Haiku 5.5.

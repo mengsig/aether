@@ -41,6 +41,9 @@ serves 17 to 26) and store schema 33. Read the
 [upgrade notes](https://github.com/mengsig/aether/blob/main/docs/upgrading.md)
 before updating.
 
+- Claude Fable 5.2 is available on Anthropic and Claude Code; `fable` now
+  selects it, while `fable-5-1` continues to select Fable 5.1.
+
 ### Before updating
 
 - **Store schema 33.** Five migrations run when the daemon first opens the
