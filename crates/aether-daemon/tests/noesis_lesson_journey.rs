@@ -25,7 +25,7 @@ const RIVERS: [&str; 3] = ["Seine", "Loire", "Rhone"];
 /// The Prober's reply in the extraction journey: the only prose it reads.
 const PROSE: &str = "A limit is the value a function approaches as its input nears a point.";
 
-/// The features `web/packages/core/src/connection.ts` says hello with.
+/// The features a browser client says hello with.
 const WEB_FEATURES: &[&str] = &[
     "deltas",
     "artifact_bytes",

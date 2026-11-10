@@ -1,0 +1,51 @@
+@layer shell {
+  .start-form { gap: 24px; padding-bottom: 12px; }
+  .start-form .start-objective { min-height: 132px; padding: 18px; font-size: 1.125rem; line-height: 1.5; border-radius: 18px; }
+  .start-form > .field > .field-label { font-size: .875rem; }
+  .start-agent-fields { gap: 24px; }
+  .start-workspace { min-width: 0; display: grid; gap: 8px; }
+  .start-workspace-heading, .start-sheet-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .start-workspace-heading .button { padding-block: 6px; }
+  .start-workspace-selected { justify-content: flex-start; min-width: 0; width: 100%; overflow-wrap: anywhere; text-align: left; background: var(--surface); }
+  .start-recents { display: flex; flex-wrap: wrap; gap: 8px; }
+  .start-recents .start-recent { width: 100%; max-width: 100%; justify-content: flex-start; border-radius: 14px; padding: 12px 14px; font-size: .8125rem; overflow-wrap: anywhere; }
+  .start-recent span, .start-workspace-selected span { min-width: 0; text-align: left; }
+  .start-recent[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .start-workspace-status:empty { display: none; }
+  .start-choice { padding: 0; margin: 0; border: 0; min-width: 0; }
+  .start-choice legend { padding: 0; margin-bottom: 8px; }
+  .start-segments { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; background: var(--surface-soft); border-radius: 14px; }
+  .start-segment { position: relative; display: flex; flex: 1 1 auto; min-width: 44px; max-width: 100%; cursor: pointer; }
+  .start-segment input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: inherit; }
+  .start-segment span { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 44px; padding: 8px 10px; border-radius: 10px; font-size: .8125rem; text-align: center; overflow-wrap: anywhere; color: var(--muted); }
+  .start-segment input:checked + span { color: var(--text); background: var(--surface); box-shadow: var(--shadow); font-weight: 650; }
+  .start-segment input:focus-visible + span { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .start-segment input:disabled + span { opacity: .5; }
+  .start-effort .start-segment { flex: 1 1 2.5rem; }
+  .start-effort .start-segment span { padding-inline: 2px; }
+  .start-model { min-width: 0; position: relative; }
+  .start-model:has(.start-more:not([hidden])) legend { min-height: 44px; display: flex; align-items: center; padding-right: 7rem; }
+  .start-more { position: absolute; top: 0; right: 0; font-size: .8125rem; }
+  .start-options { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  .start-options summary { min-height: 52px; padding: 14px 0; cursor: pointer; font-weight: 600; font-size: .875rem; }
+  .start-options-body { padding: 4px 0 20px; }
+  .start-action { position: sticky; z-index: 21; bottom: calc(80px + env(safe-area-inset-bottom)); padding: 12px 0; background: var(--bg); }
+  .start-action .button { width: 100%; min-height: 52px; border-radius: 16px; }
+  .start-action.keyboard-open { bottom: var(--start-keyboard-inset); }
+  .start-sheet { inset: auto 0 0; width: min(100%,600px); max-width: 100%; max-height: 88dvh; margin: 0 auto; padding: 20px 20px calc(24px + env(safe-area-inset-bottom)); overflow: auto; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 24px 24px 0 0; }
+  .start-sheet::backdrop { background: #0d121680; }
+  .start-sheet-heading { position: sticky; top: -20px; z-index: 1; padding: 8px 0 16px; background: var(--surface); flex-wrap: wrap; }
+  .start-sheet-heading h2 { flex: 1 1 180px; }
+  .start-sheet-body { display: grid; gap: 20px; }
+  .start-sheet .start-segments { flex-direction: column; }
+  .start-sheet .start-segment span { justify-content: flex-start; text-align: left; }
+  .start-directory-results { display: grid; gap: 8px; }
+  .start-folder-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; }
+  .start-folder-row .workspace-choice { overflow-wrap: anywhere; }
+  @media (min-width: 800px) { .start-action { bottom: 0; } }
+  @media (max-width: 359px) {
+    .start-form, .start-agent-fields { gap: 20px; }
+    .start-sheet { padding-inline: 16px; }
+    .start-segment span { padding-inline: 8px; }
+  }
+}

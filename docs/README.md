@@ -7,8 +7,7 @@ Start with the [README](../README.md) for prerequisites, installation, and a fir
 - [Install, update, uninstall](install.md): the installer, `aether update`,
   checksums, where files live, and building from source.
 - [Upgrading](upgrading.md): what an update from 1.2.11 to 1.3.0 asks of you,
-  in order: protocol 26, the schema 33 migration, Memory 2.0, Noesis, the web
-  app, the desktop app and the mount.
+  in order: protocol 26, the schema 33 migration, Memory 2.0, Noesis and the mount.
 - [User guide](guide.md): models, delegation, supervision, automation, and recovery.
 - [Prerequisite details](prerequisites.md): optional programs and feature-specific setup.
 - [Configuration](configuration.md): common settings, defaults, and storage paths.
@@ -36,10 +35,8 @@ Start with the [README](../README.md) for prerequisites, installation, and a fir
   and 19 changed, and images on a message.
 - [Phone setup](remote-setup.md): the guided `aether remote setup` for a
   non-technical reader, with troubleshooting and what protects you.
-- [Remote control](remote.md): the web app's contract (endpoints, device
+- [Remote control](remote.md): the phone web app's contract (endpoints, device
   handshake, pairing, authorization matrix, push, reconnect) and SSH remotes.
-- [Desktop app](desktop.md): building, signing, installing and updating the
-  desktop packages, and what "unsigned build" means.
 - [GitHub watcher](github-watcher.md): fixed/per-thread routing, permissions,
   matching, and live configuration.
 - [Terminal UI](tui.md): layout, the agents board, approvals, keys, and
@@ -54,7 +51,7 @@ Start with the [README](../README.md) for prerequisites, installation, and a fir
 - [Known limitations](known-limitations.md): security boundaries and remaining gaps.
 - [Daemon state audit](audits/daemon-state-robustness.md): where stored rows,
   recovery and connections assert, and how each failure surfaces.
-- [vNext security audit](security/vnext-audit.md): the Electron shell, remote
+- [vNext security audit](security/vnext-audit.md): remote
   access, the Archon mount and Noesis data boundaries, with evidence.
 - [Benchmarks against the native harnesses](#benchmark-reports): dated
   reports with their method, raw tables and limits.

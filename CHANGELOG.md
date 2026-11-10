@@ -8,20 +8,9 @@ release is also the text of its GitHub release.
 
 ### Added
 
-- `list_view_modes` serves the shared TUI and desktop transcript-mode catalog,
+- `list_view_modes` serves the shared TUI's transcript-mode catalog,
   including scoped user modes and file diagnostics, to any authenticated reader.
   The `view_modes` handshake feature announces it.
-- The web palette (Ctrl+K) now switches context: it finds agents on every
-  connection by name, role or id, Archon items, initiatives, pull requests and
-  Learn sessions, and lists recent destinations first when the query is empty.
-- The desktop chat has the TUI's view modes: a picker, `/mode`, `/calm` and
-  `/focus`, Details (Ctrl+T) and the choice remembered per agent; Archon's
-  orchestrator opens in its Calm mode. Both apply one set of rules, pinned by a
-  shared fixture. Delegations and messages to other agents are cards that link to
-  the other agent, inbox turns are drawn verbatim, open questions and approvals
-  stay pinned until answered, and a composer with a `/` menu sends, stops and
-  keeps unsent drafts.
-
 ### Fixed
 
 - Daemon shutdown reaps live agents' detached servers before the final store
@@ -32,9 +21,7 @@ release is also the text of its GitHub release.
 
 ## 1.3.0
 
-Released with Archon 1.5.0. One web app now serves every screen, from
-Aether's remote listener and in a new desktop app, and replaces the phone
-app. Archon can be mounted on the same listener at `/archon`. Memory 2.0
+Released with Archon 1.5.0. Archon can be mounted on the same listener at `/archon`. Memory 2.0
 gives memories a standing, an opt-in relevance cutoff and export and import.
 Noesis, a learning service, ships turned off. Protocol 26 (the daemon
 serves 17 to 26) and store schema 33. Read the
@@ -58,10 +45,6 @@ before updating.
   33 is newer than supported 28`). To go back, stop the daemon and restore
   that backup with the older binary; changes made since are lost.
 - **Restart the daemon** after the update (`aether stop`, then `aether`).
-- **The phone app is gone.** The listener now serves the new web app at the
-  same address. A browser that paired with 1.2.11 keeps its pairing; open
-  the address again. The old app's paths (`/app.js`, `/ui/…`,
-  `/asset-manifest.json`) answer 404.
 - **Memory retrieval can inject less.** `[memory.retrieval] min_score`
   (0, off, by default) is the relevance a memory needs to reach a turn,
   pinned ones excepted. A value of 0.05 trades recall for fewer injected
@@ -77,16 +60,6 @@ before updating.
 
 ### Added
 
-- **One web app (A1–A5).** `web/` builds the app the listener serves and the
-  desktop app shows, committed as `web/dist/` and compiled into the binary,
-  so a release build needs no Node. It keeps the listener's strict CSP, and
-  `/pair#code=` opens pairing with the code filled in.
-- **Its screens (B1–B3, C1–C2, D4).** The fleet and its delegation
-  topology; an agent's facts and its conversation, streaming and paged; the
-  agent controls, the attention inbox, activity, memory review and settings,
-  covering everything the phone app did; Archon's queue, items, pipelines,
-  task graph, initiatives and history; and a page per GitHub issue and pull
-  request. An observer device sees every control disabled with the reason.
 - **Protocol 26 (AE-P).** `list_agents_page`, `get_tree`'s `root` and
   `role_prefix`, `get_transcript_page` and `usage_breakdown`; deltas carry
   `invocation_seq` and `tool_input` its `tool_use_id`. Each is behind a
@@ -96,14 +69,6 @@ before updating.
   refused while Tailscale Funnel is on or its state is unknown, Funnel is
   refused while a mount exists, and mounted traffic stops within seconds of
   a Funnel appearing.
-- **The desktop app (E1–E3).** `web/apps/desktop` packages an Electron app
-  (AppImage and deb on Linux, dmg and zip on macOS) that shows the same
-  `web/dist`. It finds the local daemons, never stops one, starts one only
-  when managed start is turned on, confirms every privileged action in a
-  native dialog and keeps credentials out of the page. Updates come only
-  from this repository's releases, each download and install confirmed. A
-  build without signing credentials says "unsigned build". See
-  [Desktop app](https://github.com/mengsig/aether/blob/main/docs/desktop.md).
 - **Memory 2.0 (G1–G4).** Each memory has a tier and a state (candidate,
   active, superseded, retracted) with support, verification and refs;
   admission stays immediate by default. Retrieval ranks against a cutoff,
@@ -114,23 +79,16 @@ before updating.
   [Memory 2.0](https://github.com/mengsig/aether/blob/main/docs/memory/MEMORY-V2.md).
 - **Noesis (F1–F8), off by default.** A learning service: teaching sessions
   with questions, plans and practice, a learner model, a knowledge graph
-  built from sessions and imported sources, and "Learn from this" on item,
-  run, agent and PR pages. With `[noesis] enabled = true` it keeps its own
+  built from sessions and imported sources. With `[noesis] enabled = true` it keeps its own
   `noesis.db` and its own daily budgets; while off it opens nothing and
-  spends nothing. Answer keys never reach a page before the answer.
-- **Checks.** `make bench-memory` (G0), `make e2e` with seven cross-daemon
-  flows against a real aetherd and archond (H1, H4), and `make web-perf` with
-  54 frontend budgets (H2). None is part of `make ci`.
+  spends nothing. Answer keys never reach a client before the answer.
+- **Checks.** `make bench-memory` (G0), not part of `make ci`.
 
 ### Security
 
-- **The vNext audit (H3).** `docs/security/vnext-audit.md` checks the
-  desktop app, remote access, the mount and Noesis. Three high findings are
-  fixed: the desktop page's Archon connections may greet only as
-  `archon-web`, so it cannot claim the CLI's standing or lift a hard pause;
-  the desktop bridge refuses to change the GitHub watcher's operators or
-  revoke an approval rule for every agent; and `noesis_import_source` masks
-  an artifact as `read_artifact` does. `docs/remote.md` lists the access
+- **The vNext audit (H3).** `docs/security/vnext-audit.md` checks remote
+  access, the mount and Noesis. One high finding is fixed:
+  `noesis_import_source` masks an artifact as `read_artifact` does. `docs/remote.md` lists the access
   class of all 134 commands, kept in step by a test.
 - **Host-only Memory 2.0 and Noesis commands.** A paired device cannot
   explain, consolidate, export or import memories, or turn Noesis on or
@@ -138,57 +96,9 @@ before updating.
 
 ### Changed
 
-- **Release checks.** CI fails when the committed `web/dist/` differs from
-  a fresh build (`make web-dist-check`).
-- **Versions.** The workspace, the Python and TypeScript clients and the web
-  and desktop packages are 1.3.0; the web app reports 1.3.0 in its hello.
-- **One look on every screen.** The web app's screens share one page kit in
-  `@aether-ui/ui`: one header, card, label, empty, loading and error pattern,
-  a header that names every screen and one entrance motion. See
-  [the before and after report](https://github.com/mengsig/aether/blob/main/docs/design/vnext-polish/index.html).
-- **A quieter, sharper web app.** The final pass before 1.3.0: one system
-  type family at a seven-step scale, tabular numerals, a cooler neutral
-  palette with one green accent and AA contrast in both themes, lists parted
-  by hairlines instead of boxes in boxes, borderless buttons and chips, a
-  navigation rail on the page's own ground, and motion that runs only on the
-  kit's duration tokens and stops under `prefers-reduced-motion`. See
-  [the final pass report](https://github.com/mengsig/aether/blob/main/docs/design/vnext-final/index.html).
-- **Guided inputs, kept drafts and a home dashboard.** Every choice in the
-  web app is a picker fed by the daemon: models grouped by provider with
-  readiness and billing, workspaces with a folder dialog, agents, tools,
-  cron presets and time zones, repositories and pipelines; typing stays only
-  for prose. Forms keep their drafts across screens and reloads until they
-  submit. The sidebar reads as group labels over links, the landing screen
-  is an overview dashboard, the agent screen is a full-height chat with
-  folded tool calls, find and a composer, graphs get styled nodes, controls
-  and legends, and a GitHub overview joins the navigation. See
-  [the UX overhaul report](https://github.com/mengsig/aether/blob/main/docs/design/vnext-ux/index.html).
-
+- **Versions.** The workspace and the Python and TypeScript clients are 1.3.0.
 ### Fixed
 
-- **The desktop app can register a repository, and the GitHub overview
-  reads without the watcher.** Its bridge refused `repo_add`, so
-  registration always failed, and every launch with archond raised watcher
-  toasts. Only `repo_add` with `auto_merge` or `github_watch` stays with the
-  archon CLI, as does the watcher view itself, which archond keeps from
-  every remote device: the overview now reads the cached issues and pull
-  requests of the repositories the items link to, and guides to importing
-  an issue when none does. A screen's background read that fails shows its
-  error in place instead of a toast that covered the composer; registration
-  offers "Keep it local" for a checkout without an origin remote. An
-  agent's page names the task it holds, which
-  the daemon had kept in the agent's context alone; the home's GitHub tile
-  reads the watcher's "kept for the CLI" answer as a neutral tile rather
-  than a failure; the chat's transcript, not its composer, takes the free
-  height; narrow pages no longer scroll sideways behind the rail; an empty
-  inbox and the New item sheet guide instead of a faint line or errors
-  before anything was typed; a missing item is told in place, without a
-  refresh toast over it. Repeated failures fold into one toast that counts
-  them, the newest few show at once, each goes after a while, and a
-  "Dismiss all" clears them; the controls' model form stacks at narrow
-  widths instead of overlapping, and no screen scrolls sideways at the
-  smallest window; Activity says each event in words, with its time as
-  "3 min ago" and the exact moment on hover.
 - **`status` and `get_tree` on a large, long-lived store.** The fleet's
   usage and each run's are one row each, kept by triggers as agents are
   written, which count exactly the agents the store can read, so a

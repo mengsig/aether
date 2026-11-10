@@ -15,7 +15,7 @@ use std::time::Duration;
 use noesis_support::{Home, answer_of};
 use serde_json::{Value, json};
 
-/// The features `web/packages/core/src/connection.ts` says hello with.
+/// The features a browser client says hello with.
 const WEB_FEATURES: &[&str] = &[
     "deltas",
     "artifact_bytes",

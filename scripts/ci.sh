@@ -49,8 +49,8 @@ run_lint() {
   step "sh -n install.sh"; sh -n install.sh
   step "scripts/ci_slot_test.sh (host CI slots)"; sh scripts/ci_slot_test.sh
   if command -v shellcheck >/dev/null; then
-    step "shellcheck (installer, release, CI slot and e2e scripts)"
-    shellcheck install.sh scripts/release.sh scripts/ci_scope.sh scripts/ci_slot.sh scripts/ci_slot_test.sh scripts/e2e.sh scripts/check_web_dist.sh
+    step "shellcheck (installer, release and CI slot scripts)"
+    shellcheck install.sh scripts/release.sh scripts/ci_scope.sh scripts/ci_slot.sh scripts/ci_slot_test.sh
   else
     printf '\n\033[1;33m==> shellcheck of install.sh skipped (needs shellcheck)\033[0m\n'
   fi
@@ -172,8 +172,6 @@ check_python_suites() {
     python3 -m unittest discover -s scripts -p test_release_install_check.py
     step "link check tests"
     python3 -m unittest discover -s scripts -p test_check_links.py
-    step "web/dist drift check tests"
-    python3 -m unittest discover -s scripts -p test_check_web_dist.py
     step "upgrade lane tests (release choice, schema rewind, fake engine)"
     python3 -m unittest discover -s scripts -p test_upgrade_compat.py
     step "CI scope tests (which changes skip the Rust checks)"
@@ -203,23 +201,21 @@ check_typescript_client() {
   fi
 }
 
-check_web_live() {
+check_remote_web() {
   if command -v node >/dev/null && command -v npm >/dev/null; then
-    step "web: the release binary serves web/dist; live pairing (Chromium where installed)"
-    case "$AETHER_CI_BINARY" in
-      /*) binary="$AETHER_CI_BINARY" ;;
-      *) binary="$PWD/$AETHER_CI_BINARY" ;;
-    esac
+    step "remote web: typecheck + unit tests + available browser checks"
     (
-      cd web
-      # A fresh checkout gets the locked install; an existing one is reused.
+      cd crates/aether-remote/web
+      # npm ci removes node_modules, including locally downloaded browsers.
+      # Bootstrap fresh checkouts; preserve existing local test dependencies.
       if [ ! -f node_modules/.package-lock.json ]; then
-        npm ci --no-audit --no-fund
+        npm ci --cache node_modules/.npm-cache
       fi
-      node dev/live/run.ts "$binary"
     )
+    # The web runner adds npm run test:live -- <binary> with Python and Chromium.
+    AETHER_BINARY="$AETHER_CI_BINARY" node crates/aether-remote/web/scripts/ci.js
   else
-    printf '\n\033[1;33m==> web live checks skipped (needs node and npm)\033[0m\n'
+    printf '\n\033[1;33m==> remote web checks skipped (needs node and npm)\033[0m\n'
   fi
 }
 
@@ -344,7 +340,7 @@ run_binary() {
   check_client_drift
   check_python_suites
   check_typescript_client
-  check_web_live
+  check_remote_web
   check_release_gates
   check_release_install
   check_container_backend

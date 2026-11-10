@@ -147,49 +147,6 @@ async fn every_response_carries_the_csp_and_the_security_headers() {
 }
 
 #[tokio::test]
-async fn only_the_dedicated_asset_receives_the_frame_policy() {
-    let site = site().await;
-    let frame_path = crate::http::MERMAID_FRAME_PATH;
-    let expected_csp = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; img-src data:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
-    assert_eq!(crate::http::MERMAID_FRAME_CSP, expected_csp);
-    assert!(
-        assets::resolve(frame_path).is_some(),
-        "the bundle contains the renderer frame"
-    );
-    for method in [Method::GET, Method::HEAD] {
-        let answer = site
-            .send(
-                site.get(format!("{frame_path}?v=1").as_str())
-                    .method(method),
-                "",
-            )
-            .await;
-        assert_eq!(answer.head.status, StatusCode::OK);
-        assert_eq!(answer.header(CONTENT_SECURITY_POLICY), expected_csp);
-        assert_eq!(answer.header("x-frame-options"), "SAMEORIGIN");
-    }
-    for path in [
-        "/",
-        "/index.html",
-        "/mermaid-frame.html.js",
-        "/nested/mermaid-frame.html",
-    ] {
-        let answer = site.send(site.get(path), "").await;
-        assert_eq!(
-            answer.header(CONTENT_SECURITY_POLICY),
-            crate::http::CONTENT_SECURITY_POLICY,
-            "{path}"
-        );
-        assert_eq!(answer.header("x-frame-options"), "DENY", "{path}");
-    }
-    let mut response = Response::new(Body::default());
-    response.extensions_mut().insert(MermaidFrame);
-    let response = harden(response);
-    assert_eq!(response.headers()[CONTENT_SECURITY_POLICY], expected_csp);
-    assert_eq!(response.headers()["x-frame-options"], "SAMEORIGIN");
-}
-
-#[tokio::test]
 async fn a_host_this_listener_is_not_known_by_is_refused_first() {
     let site = site().await;
     let nameless = Request::builder().uri(HEALTH);
@@ -454,12 +411,9 @@ async fn the_shell_is_served_with_a_validator_and_revalidated() {
         .await;
     assert_eq!(stale.head.status, StatusCode::OK);
 
-    let worker = site.send(site.get("/sw.js"), "").await;
-    assert_eq!(worker.head.status, StatusCode::OK);
-    assert_eq!(worker.header(CACHE_CONTROL), assets::CACHE_CONTROL);
-    // The legacy app's generated precache table went with it.
-    let legacy = site.send(site.get("/asset-manifest.json"), "").await;
-    assert_eq!(legacy.refused(), HttpErrorCode::NotFound);
+    let manifest = site.send(site.get(assets::MANIFEST), "").await;
+    assert_eq!(manifest.header(CONTENT_TYPE), "application/json");
+    assert_eq!(manifest.header(CACHE_CONTROL), assets::CACHE_CONTROL);
 }
 
 #[tokio::test]

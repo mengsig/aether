@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "allowJs": true, "checkJs": true, "noEmit": true, "strict": true,
+    "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"], "types": [], "skipLibCheck": true
+  },
+  "include": ["boot.js", "app.js", "types.js", "ui/**/*.js", "core/**/*.js", "features/**/*.js"],
+  "exclude": ["**/*.test.js"]
+}

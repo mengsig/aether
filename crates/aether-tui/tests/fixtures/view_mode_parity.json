@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "about": "One transcript and what each view mode draws of each row. The TUI (tests/view_modes.rs) and the desktop chat (web/packages/aether/src/conversation) both check their rules against it. Outcomes: full, compact (one line), line (a failed call's one-line row) or hidden. Quiet omits user_text: the operator's own text is drawn in every mode.",
+  "about": "One transcript and what each view mode draws of each row. The TUI (tests/view_modes.rs) checks its rules against it. Outcomes: full, compact (one line), line (a failed call's one-line row) or hidden. Quiet omits user_text: the operator's own text is drawn in every mode.",
   "modes": {
     "standard": null,
     "focus": {

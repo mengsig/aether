@@ -163,7 +163,7 @@ different lifecycles.
 | `aether-net` | Shared network-safety boundaries |
 | `aether-protocol` | Versioned daemon commands and replies |
 | `aether-daemon` | Connections and daemon lifecycle |
-| `aether-remote` | Phone listener, WebSocket carrier, device pairing, embedded web app, Web Push; the daemon serves it through `RemoteHost` |
+| `aether-remote` | Phone listener, WebSocket carrier, device pairing, embedded phone web app, Web Push; the daemon serves it through `RemoteHost` |
 | `aether-client` | Rust client and integration surfaces |
 | `aether-tui` | Terminal projections, input, inspection, themes |
 | `aether` | CLI and binary entry point |
