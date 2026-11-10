@@ -40,7 +40,7 @@ async fn shutdown_during_a_held_call_resumes_the_turn_after_restart() {
 async fn shutdown_preserves_judgment_events_and_evidence_before_resuming() {
     let home = Home::new();
     let first = Arc::new(ScriptedClient::new());
-    let (harness, created) = hold_after_recall_judgment(&home, &first).await;
+    let (harness, created, _release) = hold_after_recall_judgment(&home, &first).await;
     tokio::time::timeout(Duration::from_secs(5), harness.close())
         .await
         .expect("shutdown cancels the held call");
@@ -71,7 +71,7 @@ async fn shutdown_preserves_judgment_events_and_evidence_before_resuming() {
 async fn hold_after_recall_judgment(
     home: &Home,
     first: &Arc<ScriptedClient>,
-) -> (Harness, NoesisSession) {
+) -> (Harness, NoesisSession, CancellationToken) {
     first.push(ScriptedClient::tool_call(
         ASK,
         json!({
@@ -91,7 +91,7 @@ async fn hold_after_recall_judgment(
         }),
     ));
     first.push(ScriptedClient::text("Continue."));
-    let _held = first.hold_response_at(3);
+    let release = first.hold_response_at(3);
     harness
         .send_json(json!({"cmd": "noesis_answer", "session": created.id,
         "question": question, "answer": {"text": "four", "dont_know": false},
@@ -114,7 +114,90 @@ async fn hold_after_recall_judgment(
         Some(true)
     );
     assert!(harness.daemon.runtime.turn_in_flight(created.agent));
-    (harness, created)
+    (harness, created, release)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn correction_after_judgment_remains_newest_after_completion_or_shutdown() {
+    for interrupted in [false, true] {
+        let home = Home::new();
+        let client = Arc::new(ScriptedClient::new());
+        let (harness, created, release) = hold_after_recall_judgment(&home, &client).await;
+        let concept = {
+            let state = harness.daemon.noesis.state.lock().await;
+            let State::Running(live) = &*state else {
+                panic!("running")
+            };
+            let desk = live.desk.lock().await;
+            let conn = desk.noesis.as_ref().unwrap().store().connection();
+            aether_noesis::learner::ensure_concept(
+                conn,
+                aether_protocol::noesis::ConceptKind::Topic,
+                &created.goal,
+                &created.goal,
+                chrono::Utc::now(),
+            )
+            .unwrap()
+            .id
+        };
+        held_write(
+            &harness,
+            json!({"cmd":"noesis_correct_learner", "concept":concept,
+            "state":"fragile", "reason":"Review this", "idempotency_key":"ordered-correction"}),
+        )
+        .await;
+        if interrupted {
+            tokio::time::timeout(Duration::from_secs(5), harness.close())
+                .await
+                .unwrap();
+            let next = Arc::new(ScriptedClient::new());
+            next.push(ScriptedClient::text("Continue."));
+            let reopened = Harness::open(&home, next.clone()).await;
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while next.requests().is_empty() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                reopened.settled().await;
+            })
+            .await
+            .expect("the interrupted turn resumes");
+            assert_correction_newest(&home, &created.id, &concept);
+            assert_judgment_published_once(&home, &reopened, &created.id);
+            reopened.close().await;
+        } else {
+            release.cancel();
+            harness.settled().await;
+            assert_correction_newest(&home, &created.id, &concept);
+            assert_judgment_published_once(&home, &harness, &created.id);
+            harness.close().await;
+        }
+    }
+}
+
+fn assert_correction_newest(home: &Home, session: &str, concept: &str) {
+    let conn = rusqlite::Connection::open(home.data.path().join("noesis.db")).unwrap();
+    let kinds: Vec<String> = conn
+        .prepare("SELECT kind FROM evidence WHERE concept = ?1 ORDER BY id")
+        .unwrap()
+        .query_map([concept], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(kinds, ["probe_answer", "operator_correction"], "{session}");
+    let state = aether_noesis::learner::states(
+        &conn,
+        &aether_noesis::learner::Selection {
+            concepts: Some(vec![concept.to_owned()]),
+            query: None,
+            limit: None,
+        },
+        chrono::Utc::now(),
+    )
+    .unwrap();
+    assert_eq!(
+        state[0].state,
+        aether_protocol::noesis::ConceptStateKind::Fragile
+    );
 }
 
 fn assert_judgment_published_once(home: &Home, reopened: &Harness, session: &str) {

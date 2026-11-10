@@ -422,6 +422,16 @@ async fn run_segments<'a>(
         first = false;
         match segment.outcome {
             SegmentOutcome::Call(call) => {
+                publish(
+                    &desk,
+                    &host.runtime,
+                    Output {
+                        events: Vec::new(),
+                        evidence: segment.evidence,
+                    },
+                    &Actor::System,
+                    None,
+                )?;
                 engine = segment.engine;
                 buffer = segment.buffer;
                 drop(desk);
@@ -461,6 +471,7 @@ fn interrupted_output(
 struct Segment<'a> {
     engine: AetherEngine<'a>,
     buffer: TeachingBuffer,
+    evidence: Vec<EvidenceDraft>,
     outcome: SegmentOutcome,
 }
 
@@ -506,12 +517,14 @@ fn run_segment<'a>(
             }
         }
     };
+    let evidence = teaching.take_evidence();
     let undelivered = teaching.take_undelivered();
     let (engine, buffer) = teaching.into_parts();
     desk.undelivered = undelivered;
     Ok(Segment {
         engine,
         buffer,
+        evidence,
         outcome,
     })
 }
