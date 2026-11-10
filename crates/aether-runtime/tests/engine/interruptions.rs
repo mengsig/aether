@@ -134,7 +134,7 @@ impl Engine for InFlightEngine {
             })
             .await
             .unwrap();
-            if first {
+            if first && !tool.is_empty() {
                 tx.send(EngineEvent::Assistant {
                     content: vec![ContentBlock::ToolUse {
                         id: "running-call".into(),
@@ -165,6 +165,8 @@ impl Engine for InFlightEngine {
                     .await
                     .unwrap();
                 }
+            } else if first {
+                cancel.cancelled().await;
             } else {
                 tx.send(EngineEvent::Assistant {
                     content: vec![ContentBlock::text("resumed")],
@@ -284,6 +286,7 @@ async fn interrupt_corrects_synthetic_denial_and_delivers_note_on_resume() {
         assert!(prompts[1].contains("not denied"));
         assert!(prompts[1].contains("make ci"));
         assert!(prompts[1].contains("turn interrupt"));
+        assert!(prompts[1].contains("Your previous turn was interrupted by turn interrupt"));
         h.runtime
             .send_message(id, vec![ContentBlock::text("one more")], Actor::user())
             .unwrap();
@@ -370,7 +373,50 @@ async fn daemon_restart_delivers_interrupted_tool_note_to_retained_session() {
     .await;
     let prompts = h.prompts.lock().unwrap().clone();
     assert!(prompts[1].contains("daemon stop or restart"));
+    assert!(prompts[1].contains("not requested by the user"));
     assert!(prompts[1].contains("not denied"));
+    restarted.shutdown().await;
+}
+
+#[tokio::test]
+async fn daemon_restart_explains_a_retained_session_without_an_open_tool() {
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let engine: Arc<dyn Engine> = Arc::new(InFlightEngine {
+        prompts: prompts.clone(),
+        result: None,
+        wait_for_stop: true,
+        tool: "",
+    });
+    let h = harness_with_engine(engine.clone(), prompts.clone(), Arc::default()).await;
+    let id = chat_agent(&h);
+    h.runtime
+        .send_message(id, vec![ContentBlock::text("go")], Actor::user())
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while h.store.agent(id).unwrap().unwrap().engine_session.is_none() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("engine session recorded");
+    h.runtime.shutdown().await;
+    let restarted = Runtime::start_with_engines(
+        h.runtime.config().clone(),
+        h.store.clone(),
+        h.runtime.models().clone(),
+        h.runtime.tools().clone(),
+        None,
+        HashMap::from([(EngineKind::CLAUDE_CODE, engine)]),
+    )
+    .await
+    .unwrap();
+    wait_for(h.store.as_ref(), id, |a| {
+        a.stats.turns >= 2 && a.status.kind() == AgentStatusKind::Waiting
+    })
+    .await;
+    let captured = prompts.lock().unwrap().clone();
+    assert!(captured[1].contains("system daemon stop or restart"));
+    assert!(captured[1].contains("not requested by the user"));
     restarted.shutdown().await;
 }
 
