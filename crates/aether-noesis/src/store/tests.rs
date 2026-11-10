@@ -509,6 +509,7 @@ fn an_n2_store_upgrades_to_n3_keeping_every_row() {
                 | "sessions"
                 | "questions"
                 | "session_agents"
+                | "judgment_evidence"
         )
     };
     assert_eq!(
@@ -516,7 +517,7 @@ fn an_n2_store_upgrades_to_n3_keeping_every_row() {
         before.iter().filter(unchanged).collect::<Vec<_>>(),
         "N3 keeps every N1 and N2 row as it was"
     );
-    for table in ["evidence_bundles", "evidence_items"] {
+    for table in ["evidence_bundles", "evidence_items", "judgment_evidence"] {
         let rows = &after.iter().find(|(t, _)| t == table).unwrap().1;
         assert!(rows.is_empty(), "{table} starts empty");
     }
