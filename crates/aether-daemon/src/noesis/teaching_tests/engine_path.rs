@@ -44,7 +44,7 @@ async fn a_passed_check_resumes_the_plan_without_a_learner_message() {
     harness.answer(&probe, "Paris").await.unwrap();
     let first_check = harness.posed(&created.id).await;
     harness.settled().await;
-    let next = json!({"kind": "choice", "prompt": "Which city is Italy's capital?", "options": [{"value": "opt1", "label": "Rome"}, {"value": "opt2", "label": "Berlin"}], "answer_key": ["Rome"], "plan_node": "b", "lead_in": "Italy's capital is in the Lazio region."});
+    let next = json!({"kind": "choice", "prompt": "Which city is Italy's capital?", "options": [{"value": "opt1", "label": "Rome"}, {"value": "opt2", "label": "Berlin"}], "answer_key": ["Rome"], "explanation": "Rome is Italy’s capital; Berlin is Germany’s capital.", "plan_node": "b", "lead_in": "Italy's capital is in the Lazio region."});
     cli.queue(
         "teacher",
         json!({"text": "Are you ready for the next step?"}),
@@ -100,8 +100,8 @@ async fn teaching_check_recovery_never_records_internal_chatter() {
     let probe = harness.posed(&created.id).await;
     harness.answer(&probe, "Paris").await.expect("probe answer");
     harness.settled().await;
-    let first = json!({"kind": "choice", "prompt": "How many right angles fit around one point?", "options": [{"value": "opt1", "label": "2"}, {"value": "opt2", "label": "4"}], "answer_key": ["4"], "plan_node": "turns"});
-    let fresh = json!({"kind": "choice", "prompt": "How many degrees in half a turn?", "options": [{"value": "opt1", "label": "180°"}, {"value": "opt2", "label": "270°"}], "answer_key": ["180°"], "plan_node": "turns", "lead_in": "A half turn is half a full rotation."});
+    let first = json!({"kind": "choice", "prompt": "How many right angles fit around one point?", "options": [{"value": "opt1", "label": "2"}, {"value": "opt2", "label": "4"}], "answer_key": ["4"], "explanation": "Four right angles fill a turn; two fill only half.", "plan_node": "turns"});
+    let fresh = json!({"kind": "choice", "prompt": "How many degrees in half a turn?", "options": [{"value": "opt1", "label": "180°"}, {"value": "opt2", "label": "270°"}], "answer_key": ["180°"], "explanation": "180° is half of 360°; 270° is three quarters.", "plan_node": "turns", "lead_in": "A half turn is half a full rotation."});
     cli.queue(
         "teacher",
         json!({"text": "Four corners make a turn. Pick how many right angles fit around a point", "tool_calls": [tool_call(ASK, first.clone())]}),
