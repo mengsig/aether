@@ -30,6 +30,8 @@ export interface AppShellProps {
   readonly notices?: readonly ToastMessage[];
   readonly onDismissNotice?: (id: ToastMessage["id"]) => void;
   readonly onDismissAllNotices?: () => void;
+  /** Optional palette implementation, loaded when the palette opens. */
+  readonly loadPalette?: PaletteLoader;
   /** Extra palette commands, after navigation and theme. */
   readonly commands?: readonly Command[];
   /** The palette's recent destinations (command ids, newest first) to start from, and where each change is saved. */
@@ -134,7 +136,7 @@ export function AppShell(props: AppShellProps) {
           </main>
         </div>
         <ToastRegion toasts={props.notices ?? []} onDismiss={props.onDismissNotice ?? (() => undefined)} onDismissAll={props.onDismissAllNotices} />
-        {paletteOpen ? <PaletteBoundary load={loadPalette} open onClose={() => setPaletteOpen(false)} commands={commands} recents={recents} onRun={remember} /> : null}
+        {paletteOpen ? <PaletteBoundary load={props.loadPalette ?? loadPalette} open onClose={() => setPaletteOpen(false)} commands={commands} recents={recents} onRun={remember} /> : null}
       </div>
     </EntityActionProvider>
   );

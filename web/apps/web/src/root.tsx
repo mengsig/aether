@@ -6,10 +6,10 @@ import { AppShell, type ToastMessage } from "@aether-ui/ui";
 import { lazy, Suspense, useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { useNoticeLifetime } from "./notice-lifetime.ts";
 import { noticesOf } from "./notices.ts";
-import { entityCommands, routeOffered, selectPaletteSources, sameSources } from "./palette-entities.ts";
 import { screenTitles } from "./titles.ts";
 
 // Setup's screens and the home tiles load on demand: the entry paints the shell before either.
+const loadEntityPalette = () => import("./entity-palette.tsx").then((module) => ({ default: module.EntityPalette }));
 const HomeScreen = lazy(() => loadHomeScreen().then((module) => ({ default: module.HomeScreen })));
 const Welcome = lazy(() => loadWelcome().then((module) => ({ default: module.Welcome })));
 const ArchonToolsNotice = lazy(() => loadArchonToolsNotice().then((module) => ({ default: module.ArchonToolsNotice })));
@@ -42,15 +42,10 @@ export function ShellRoot({ initialRecents, onRecentsChange }: ShellRootProps) {
   const hash = useSyncExternalStore(subscribeHash, readHash, () => "#/");
   const connectionMap = useSelector(selectConnections);
   const reports = useSelector(selectReports);
-  const sources = useSelector(selectPaletteSources, sameSources);
   const [dismissed, setDismissed] = useState<ReadonlySet<ToastMessage["id"]>>(() => new Set());
 
   const connections = useMemo(() => Object.values(connectionMap), [connectionMap]);
   const notices = useMemo(() => noticesOf(reports, dismissed), [reports, dismissed]);
-  const paletteEntities = useMemo(
-    () => entityCommands(sources, { navigate, offered: (pattern) => routeOffered(routes, capabilities, pattern) }),
-    [sources, routes, capabilities],
-  );
   const dismiss = useCallback((id: ToastMessage["id"]) => setDismissed((old) => new Set([...old, id])), []);
   const dismissAll = useCallback(() => setDismissed((old) => new Set([...old, ...notices.map((notice) => notice.id)])), [notices]);
   useNoticeLifetime(notices, dismiss);
@@ -61,6 +56,6 @@ export function ShellRoot({ initialRecents, onRecentsChange }: ShellRootProps) {
   return (
     <AppShell routes={routes} actions={actions} capabilities={capabilities} match={match} hash={hash}
       onNavigate={navigate} onActionError={onActionError} connections={connections} notices={notices} onDismissNotice={dismiss} onDismissAllNotices={dismissAll} titles={screenTitles}
-      home={<Suspense fallback={null}><Welcome connected={<HomeScreen />} /></Suspense>} banner={bannerFor(hash)} commands={paletteEntities} initialRecents={initialRecents} onRecentsChange={onRecentsChange} />
+      home={<Suspense fallback={null}><Welcome connected={<HomeScreen />} /></Suspense>} banner={bannerFor(hash)} loadPalette={loadEntityPalette} initialRecents={initialRecents} onRecentsChange={onRecentsChange} />
   );
 }
