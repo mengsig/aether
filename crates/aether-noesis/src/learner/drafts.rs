@@ -96,7 +96,7 @@ pub(super) fn append_pending_within(
                 "judgment evidence has a mismatched source".into(),
             ));
         }
-        ids.extend(append_drafts_within(&tx, &drafts, now)?);
+        ids.extend(append_drafts_within(tx, &drafts, now)?);
         let changed = tx.execute("UPDATE judgment_evidence SET appended = 1 WHERE session = ?1 AND question = ?2 AND appended = 0", rusqlite::params![session, question])?;
         assert_eq!(changed, 1);
     }
