@@ -85,6 +85,14 @@ pub(crate) fn find(
     }))
 }
 
+/// The prefix `path` names exactly, with no trailing slash. A mounted app's relative URLs
+/// resolve from the directory, so such a request is redirected rather than forwarded.
+pub(crate) fn bare_prefix<'a>(mounts: &'a [RemoteMount], path: &str) -> Option<&'a str> {
+    let mount = mounts.iter().find(|mount| mount.prefix == path)?;
+    debug_assert!(!mount.prefix.ends_with('/'), "{}", mount.prefix);
+    Some(mount.prefix.as_str())
+}
+
 /// Whether `path` is the prefix itself or below it, never merely starting with its letters.
 fn under(path: &str, prefix: &str) -> bool {
     debug_assert!(

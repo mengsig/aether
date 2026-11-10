@@ -666,8 +666,31 @@ async fn paths_under_a_mount_that_are_not_clean_are_refused_and_never_forwarded(
     }
     raw(mounted.bound, &get("/archonx")).await;
     assert!(seen.requests.lock().is_empty(), "nothing reached archond");
-    let (status, _, body) = raw(mounted.bound, &get("/archon")).await;
+    let (status, _, body) = raw(mounted.bound, &get("/archon/")).await;
     assert_eq!((status, body.as_str()), (200, "archond /"));
+}
+
+#[tokio::test]
+async fn a_bare_prefix_is_redirected_to_its_directory_and_never_forwarded() {
+    let (target, seen) = archond().await;
+    let mounted = mounted(target).await;
+    for (path, location) in [
+        ("/archon", "/archon/"),
+        ("/archon?pair=x&y=%2F", "/archon/?pair=x&y=%2F"),
+    ] {
+        let (status, headers, _) = raw(mounted.bound, &get(path)).await;
+        assert_eq!(status, 308, "{path}");
+        assert_eq!(header(&headers, "location"), Some(location), "{path}");
+        assert!(
+            header(&headers, "content-security-policy").is_some(),
+            "{path}"
+        );
+    }
+    assert!(seen.requests.lock().is_empty(), "nothing reached archond");
+    let (status, _, body) = raw(mounted.bound, &get("/archon/")).await;
+    assert_eq!((status, body.as_str()), (200, "archond /"));
+    let (status, _, _) = raw(mounted.bound, &get("/archonx")).await;
+    assert_ne!(status, 308, "a longer path is not the prefix");
 }
 
 #[tokio::test]

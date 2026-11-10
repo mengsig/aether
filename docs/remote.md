@@ -314,9 +314,11 @@ successful claim.
 
 ### Mounts
 
-A request whose path is a mount's prefix or lies below it (`/archon`,
-`/archon/…`, never `/archonx`) is forwarded to the mount's loopback target
-with the prefix stripped (`/archon` becomes `/`) and the query unchanged,
+A request for a bare prefix (`/archon`) is answered `308` with `Location:
+/archon/` and the query kept, so a mounted app's relative URLs resolve under
+its prefix. A request whose path lies below a mount's prefix (`/archon/…`,
+never `/archonx`) is forwarded to the mount's loopback target
+with the prefix stripped (`/archon/` becomes `/`) and the query unchanged,
 after the Host check and before every route but the listener's own
 endpoints (`/ws` and everything under `/api`), which no mount takes over. A
 prefix the listener serves itself (`/api`, `/ws`, the pairing page `/pair`,

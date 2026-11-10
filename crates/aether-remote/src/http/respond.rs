@@ -11,7 +11,7 @@ use http_body_util::{BodyExt as _, Full, LengthLimitError, Limited};
 use hyper::body::Body as HttpBody;
 use hyper::header::{
     ALLOW, CACHE_CONTROL, CONNECTION, CONTENT_LENGTH, CONTENT_SECURITY_POLICY, CONTENT_TYPE, ETAG,
-    HOST, HeaderMap, HeaderName, HeaderValue, IF_NONE_MATCH, ORIGIN, RETRY_AFTER,
+    HOST, HeaderMap, HeaderName, HeaderValue, IF_NONE_MATCH, LOCATION, ORIGIN, RETRY_AFTER,
     SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_PROTOCOL, UPGRADE,
 };
 use hyper::upgrade::OnUpgrade;
@@ -106,6 +106,9 @@ where
     }
     let mounts = live.settings.mounts.as_deref().unwrap_or_default();
     let uri = request.uri();
+    if let Some(prefix) = mount::bare_prefix(mounts, uri.path()) {
+        return slash_redirect(prefix, uri.query()).map(Answered::Own);
+    }
     let found = match mount::is_endpoint(uri.path()) {
         true => None,
         false => mount::find(mounts, uri.path(), uri.query()),
@@ -117,6 +120,26 @@ where
     endpoint(server, live, request, upgrade)
         .await
         .map(Answered::Own)
+}
+
+/// A 308 from a bare mount prefix to the prefix with a trailing slash, the query kept, so
+/// the mounted app's `<base href="./">` resolves under its prefix and not at `/`.
+fn slash_redirect(prefix: &str, query: Option<&str>) -> Result<Response<Body>, Refusal> {
+    debug_assert!(
+        prefix.starts_with('/') && !prefix.ends_with('/'),
+        "{prefix}"
+    );
+    let location = match query {
+        Some(query) => format!("{prefix}/?{query}"),
+        None => format!("{prefix}/"),
+    };
+    let location = HeaderValue::try_from(location)
+        .map_err(|_| bad_request("the request path is not one this listener forwards"))?;
+    let mut response = Response::new(Body::default());
+    *response.status_mut() = StatusCode::PERMANENT_REDIRECT;
+    response.headers_mut().insert(LOCATION, location);
+    debug_assert!(response.status().is_redirection());
+    Ok(response)
 }
 
 /// A request under a mount: forwarded to its daemon, whose answer is passed on.
