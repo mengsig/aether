@@ -12,34 +12,61 @@ use crate::prompts::Agent;
 const SECRET: &str = "mitochondria";
 
 #[test]
-fn teaching_with_an_overlapping_check_does_not_publish_retry_prose() {
-    let (_dir, noesis) = fixture();
-    let mut t = Teaching::new(&noesis, FauxEngine::new());
-    let id = teacher_session(&mut t);
-    let lesson = "A rate describes how one quantity changes as another changes. \
-        For a straight line, compare the change in height with the change in distance.";
-    let check = recall(
-        "What describes how one quantity changes as another changes?",
-        "rate",
-    );
-    t.engine_mut()
-        .script(Agent::Teacher, lesson, vec![(ASK, check)]);
-    t.engine_mut().script(Agent::Teacher, lesson, vec![]);
-
-    let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.end, TurnEnd::AwaitingLearner);
-    assert_eq!(report.steps.len(), 1);
-    assert_eq!(report.steps[0].text, "");
-    assert!(report.steps[0].calls.is_empty());
-    assert!(session(&t, &id).open_question.is_none());
-    assert_eq!(t.engine().reminders, 1);
-    let agent = session(&t, &id).agent;
-    assert!(
-        t.engine()
-            .inputs_of(&agent)
-            .iter()
-            .any(|input| matches!(input, Input::Failure(text) if text == NEUTRAL_REPLY))
-    );
+fn discarded_checks_recover_for_both_roles_and_turn_paths() {
+    for role in [Agent::Teacher, Agent::Prober] {
+        for segmented in [false, true] {
+            for rejected in [1, 2] {
+                let (_dir, noesis) = fixture();
+                let mut t = Teaching::new(&noesis, FauxEngine::new());
+                let id = if role == Agent::Teacher {
+                    teacher_session(&mut t)
+                } else {
+                    t.create_session("Learn cells", Mode::Teach, &[])
+                        .unwrap()
+                        .id
+                };
+                t.send(&id, "Go").unwrap();
+                let check = recall("Name the powerhouse of the cell", SECRET);
+                for _ in 0..rejected {
+                    t.engine_mut().script(
+                        role,
+                        &format!("Hint: {SECRET}."),
+                        vec![(ASK, check.clone())],
+                    );
+                }
+                if rejected == 1 {
+                    t.engine_mut()
+                        .script(role, "Discard this retry prose.", vec![]);
+                }
+                let mut fresh = recall("What does a cell need?", "energy");
+                if role == Agent::Teacher {
+                    fresh["plan_node"] = json!("a");
+                }
+                t.engine_mut()
+                    .script(role, "Discard this card prose.", vec![(ASK, fresh)]);
+                let report = if segmented {
+                    t.advance(&id).unwrap().remove(0)
+                } else {
+                    t.run_turn(&id).unwrap()
+                };
+                assert_eq!(
+                    report.end,
+                    TurnEnd::AwaitingAnswer,
+                    "{role:?} {segmented} {rejected}"
+                );
+                assert_eq!(
+                    session(&t, &id).open_question.unwrap().prompt,
+                    "What does a cell need?"
+                );
+                assert!(report.steps.iter().all(|step| step.text.is_empty()));
+                let agent = session(&t, &id).agent;
+                let inputs = format!("{:?}", t.engine().inputs_of(&agent));
+                assert!(!inputs.contains(NEUTRAL_REPLY));
+                assert!(!inputs.contains("Discard this retry prose"));
+                assert!(!inputs.contains(SECRET));
+            }
+        }
+    }
 }
 
 fn posed_session(t: &mut Teaching<'_, FauxEngine>) -> String {
@@ -135,37 +162,33 @@ fn a_reply_giving_its_own_key_away_is_discarded_and_made_again() {
     assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
 }
 
-/// A second leaking reply becomes the neutral step: no question opens and
-/// the turn waits for the learner.
 #[test]
-fn a_second_leaking_reply_becomes_the_neutral_step() {
-    let (_dir, noesis) = fixture();
-    let mut t = Teaching::new(&noesis, FauxEngine::new());
-    let id = t
-        .create_session("Learn cells", Mode::Teach, &[])
-        .unwrap()
-        .id;
-    let leaky = format!("Hint: it is the {SECRET}.");
-    let question = recall("Name the powerhouse of the cell", SECRET);
-    let prober = t.engine_mut();
-    for _ in 0..2 {
-        prober.script(Agent::Prober, &leaky, vec![(ASK, question.clone())]);
+fn discarded_check_then_probe_done_hands_off() {
+    for segmented in [false, true] {
+        let (_dir, noesis) = fixture();
+        let mut t = Teaching::new(&noesis, FauxEngine::new());
+        let id = t
+            .create_session("Learn cells", Mode::Teach, &[])
+            .unwrap()
+            .id;
+        let question = recall("Name the powerhouse of the cell", SECRET);
+        t.engine_mut().script(
+            Agent::Prober,
+            &format!("Hint: {SECRET}."),
+            vec![(ASK, question)],
+        );
+        t.engine_mut().script(Agent::Prober, "Retry prose", vec![]);
+        t.engine_mut()
+            .script(Agent::Prober, "", vec![(PROBE_DONE, strands())]);
+        let report = if segmented {
+            t.advance(&id).unwrap().remove(0)
+        } else {
+            t.run_turn(&id).unwrap()
+        };
+        assert_eq!(report.end, TurnEnd::HandedOff);
+        assert_eq!(session(&t, &id).phase, Phase::Plan);
+        assert!(report.steps.iter().all(|step| step.text.is_empty()));
     }
-    prober.script(Agent::Prober, "Not reached.", vec![]);
-    let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.end, TurnEnd::AwaitingLearner);
-    let texts: Vec<&str> = report.steps.iter().map(|s| s.text.as_str()).collect();
-    assert_eq!(texts, [""]);
-    assert!(report.steps[0].calls.is_empty(), "no call of either ran");
-    assert!(session(&t, &id).open_question.is_none());
-    assert_eq!(t.engine().steps_run, 2, "one retry, no more");
-    let agent = session(&t, &id).agent;
-    assert!(
-        t.engine()
-            .inputs_of(&agent)
-            .iter()
-            .any(|input| matches!(input, Input::Failure(text) if text == NEUTRAL_REPLY))
-    );
 }
 
 /// Each step is kept as it ends, so a key an earlier call of the turn named
@@ -424,7 +447,7 @@ fn a_tagged_probe_is_refused_then_corrected_within_the_turn() {
 }
 
 #[test]
-fn repeated_tagged_probes_stop_at_the_existing_step_limit() {
+fn repeated_tagged_probes_stall_and_allow_retry() {
     let (_dir, noesis) = fixture();
     let mut t = Teaching::new(&noesis, FauxEngine::new());
     let id = t
@@ -437,11 +460,16 @@ fn repeated_tagged_probes_stop_at_the_existing_step_limit() {
         t.engine_mut()
             .script(Agent::Prober, "", vec![(ASK, tagged.clone())]);
     }
-    let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.end, TurnEnd::StepLimit);
-    assert_eq!(report.steps.len(), service::MAX_STEPS);
-    assert!(report.steps.iter().all(|step| step.calls[0].is_error));
+    assert!(matches!(
+        t.advance(&id),
+        Err(TeachError::Engine(EngineError::Stalled(_)))
+    ));
+    let stall = session(&t, &id).stalled.unwrap();
+    assert_eq!(stall.reason, StallReason::EngineStalled);
+    assert!(stall.message.contains("Try again"));
     assert!(session(&t, &id).open_question.is_none());
+    t.retry_turn(&id).unwrap();
+    assert!(session(&t, &id).stalled.is_none());
 }
 
 #[test]
@@ -692,8 +720,13 @@ fn a_plan_whose_ids_hold_the_key_its_reply_poses_is_discarded() {
             (ASK, recall("Which organelle makes ATP?", SECRET)),
         ],
     );
+    t.engine_mut().script(Agent::Teacher, "", vec![]);
+    let mut fresh = recall("What does a cell need?", "energy");
+    fresh["plan_node"] = json!("a");
+    t.engine_mut()
+        .script(Agent::Teacher, "", vec![(ASK, fresh)]);
     let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(report.end, TurnEnd::AwaitingLearner, "nothing was posed");
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer);
     assert_eq!(t.engine().reminders, 1, "{report:?}");
     assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
     let agent = session(&t, &id).agent;

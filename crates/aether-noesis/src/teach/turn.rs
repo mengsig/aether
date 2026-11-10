@@ -144,6 +144,9 @@ impl<E: Engine> Teaching<'_, E> {
         let kept_check = step.calls.iter().any(|call| is_ask_name(&call.name));
         let attempts_check = deferred && (step.attempted_check || kept_check);
         turn.attempted_check |= attempts_check;
+        if attempts_check {
+            turn.check_attempts = turn.check_attempts.max(1);
+        }
         let mut pending = PendingStep {
             text: step.text,
             calls: Vec::with_capacity(step.calls.len()),
@@ -153,12 +156,11 @@ impl<E: Engine> Teaching<'_, E> {
         }
         // Teacher prose stays private until the turn ends; tool output is already visible.
         let shown = turn.shown_with(&pending.text, !deferred);
-        let (end, owed) =
-            self.execute_calls(session, caller, step.calls, &shown, &mut pending, turn)?;
+        let (end, owed) = self.execute_calls(session, caller, step.calls, &shown, &mut pending)?;
         if attempts_check {
             pending.text.clear();
         }
-        if end == Some(TurnEnd::AwaitingAnswer) {
+        if matches!(end, Some(TurnEnd::AwaitingAnswer | TurnEnd::HandedOff)) {
             turn.check_attempts = 0;
         }
         let results = self.engine_results(session, &own, &pending, &owed)?;
@@ -297,7 +299,6 @@ impl<E: Engine> Teaching<'_, E> {
         calls: Vec<super::engine::ToolCall>,
         shown: &str,
         pending: &mut PendingStep,
-        turn: &mut Turn,
     ) -> Result<(Option<TurnEnd>, Vec<usize>), TeachError> {
         debug_assert!(!calls.is_empty());
         debug_assert!(pending.calls.is_empty());
@@ -305,9 +306,6 @@ impl<E: Engine> Teaching<'_, E> {
         let mut owed = Vec::new();
         for call in calls {
             let outcome = self.call_tool(session, caller, &call, shown)?;
-            if agent_for_teacher(caller) && is_ask_name(&call.name) && outcome.result.is_error {
-                turn.check_attempts = turn.check_attempts.max(1);
-            }
             if outcome.ends.is_none() {
                 owed.push(pending.calls.len());
             }

@@ -232,10 +232,6 @@ fn a_stringified_argument_escaping_the_active_solution_is_discarded() {
 
 #[test]
 fn a_reply_whose_plan_shows_its_own_key_is_discarded_in_either_order() {
-    let (_dir, noesis) = fixture();
-    let mut t = Teaching::new(&noesis, FauxEngine::new());
-    let id = teacher_session(&mut t);
-    t.take_events();
     let leaky_plan = json!({"nodes": [{"id": "cell", "title": SECRET}], "edges": []});
     let mut tagged = recall("Which organelle makes ATP?", SECRET);
     tagged["plan_node"] = json!("cell");
@@ -243,18 +239,26 @@ fn a_reply_whose_plan_shows_its_own_key_is_discarded_in_either_order() {
         vec![(PLAN, leaky_plan.clone()), (ASK, tagged.clone())],
         vec![(ASK, tagged), (PLAN, leaky_plan)],
     ];
-    for (turn, calls) in orders.into_iter().enumerate() {
+    for calls in orders {
+        let (_dir, noesis) = fixture();
+        let mut t = Teaching::new(&noesis, FauxEngine::new());
+        let id = teacher_session(&mut t);
+        t.take_events();
         t.engine_mut().script(Agent::Teacher, "", calls);
         t.engine_mut()
             .script(Agent::Teacher, "Let us rethink.", vec![]);
+        let mut fresh = recall("What does a cell need?", "energy");
+        fresh["plan_node"] = json!("a");
+        t.engine_mut()
+            .script(Agent::Teacher, "", vec![(ASK, fresh)]);
         let report = t.advance(&id).unwrap().remove(0);
-        assert_eq!(t.engine().reminders, turn + 1, "{report:?}");
+        assert_eq!(t.engine().reminders, 1, "{report:?}");
         assert_eq!(report.steps[0].text, "");
         assert!(report.steps[0].calls.is_empty(), "{report:?}");
-        assert!(session(&t, &id).open_question.is_none());
+        assert!(session(&t, &id).open_question.is_some());
+        let events = serde_json::to_string(&t.take_events()).unwrap();
+        assert!(!events.contains(SECRET), "the plan never ran: {events}");
     }
-    let events = serde_json::to_string(&t.take_events()).unwrap();
-    assert!(!events.contains(SECRET), "the plan never ran: {events}");
 }
 
 #[test]
@@ -362,11 +366,6 @@ fn the_models_option_values_never_reach_a_reader_so_text_cannot_name_the_key() {
         vec![(PLAN, leaky_plan), (ASK, pose(Some("pick")))],
     );
     t.engine_mut().script(Agent::Teacher, "Rethinking.", vec![]);
-    let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(t.engine().reminders, 1, "{report:?}");
-    assert_eq!(report.steps[0].text, "", "{report:?}");
-    assert!(session(&t, &id).open_question.is_none());
-
     let clean = json!({"nodes": [{"id": "pick", "title": "Capitals"}], "edges": []});
     t.engine_mut().script(
         Agent::Teacher,
@@ -375,6 +374,8 @@ fn the_models_option_values_never_reach_a_reader_so_text_cannot_name_the_key() {
     );
     let report = t.advance(&id).unwrap().remove(0);
     assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
+    assert_eq!(t.engine().reminders, 1, "{report:?}");
+    assert_eq!(report.steps[0].text, "", "{report:?}");
     let events = serde_json::to_string(&t.take_events()).unwrap();
     let view = serde_json::to_string(&session(&t, &id)).unwrap();
     let shown = format!("{events}{view}");
@@ -644,7 +645,12 @@ fn a_malformed_sibling_call_does_not_hide_its_reply_s_leak() {
         ],
     );
     t.engine_mut().script(Agent::Teacher, "Again.", vec![]);
+    let mut fresh = recall("What does a cell need?", "energy");
+    fresh["plan_node"] = json!("a");
+    t.engine_mut()
+        .script(Agent::Teacher, "", vec![(ASK, fresh)]);
     let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer);
     assert_eq!(t.engine().reminders, 1, "{report:?}");
     assert_eq!(report.steps[0].text, "");
     assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
