@@ -1041,6 +1041,7 @@ pub(super) async fn drive(
         let mut commit = Commit::new();
         if outcome.interrupted
             || !state.calls.is_empty()
+            || budget_stop.is_some()
             || (cancel.is_cancelled() && outcome.text.is_none())
         {
             crate::tool_interruption::push_turn_note(&mut commit, &ctx.agent, &cause);
