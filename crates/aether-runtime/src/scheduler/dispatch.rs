@@ -1,5 +1,4 @@
 use super::{Runnable, hard_stop::Reserve, lineage::Lineage};
-use crate::noesis_guard::{AdmittedTurn, Dispatch};
 use crate::{RunningTurn, Runtime, SchedulerState};
 use aether_core::{agent::Agent, id::AgentId, model::ModelRef};
 use std::{
@@ -19,73 +18,15 @@ pub(super) fn dispatch(
     lineage: &Lineage,
     reserve: &mut Reserve,
 ) {
-    let (ready, mut admitted) = admit_noesis(runtime, ready);
-    start_turns(runtime, ready, lineage, reserve, &mut admitted);
-    // Settled outside `sched`: a budget may read the runtime back.
-    for (_, unstarted) in admitted {
-        unstarted.release();
-    }
+    start_turns(runtime, ready, lineage, reserve);
 }
 
-/// The Noesis guard over this pass's candidates, before the scheduler lock:
-/// a refused Noesis agent leaves the list, an admitted one carries its charge.
-fn admit_noesis(
-    runtime: &Runtime,
-    ready: Vec<Runnable>,
-) -> (Vec<Runnable>, HashMap<AgentId, AdmittedTurn>) {
-    let candidates = ready.len();
-    let startable = startable_now(runtime, &ready);
-    let mut admitted = HashMap::new();
-    let mut kept = Vec::with_capacity(candidates);
-    for runnable in ready {
-        let may_start = startable.contains(&runnable.agent.id);
-        match runtime.noesis_dispatch(&runnable.agent, may_start) {
-            Dispatch::Ordinary => kept.push(runnable),
-            Dispatch::Admitted(turn) => {
-                admitted.insert(runnable.agent.id, turn);
-                kept.push(runnable);
-            }
-            Dispatch::Withheld => {}
-        }
-    }
-    debug_assert!(kept.len() <= candidates);
-    debug_assert!(
-        admitted
-            .keys()
-            .all(|id| kept.iter().any(|r| r.agent.id == *id))
-    );
-    (kept, admitted)
-}
-
-/// The candidates `pick` could start now by its checks that need no store
-/// read: not running, not held back, and a global slot free or a person waiting.
-fn startable_now(runtime: &Runtime, ready: &[Runnable]) -> HashSet<AgentId> {
-    let sched = runtime.sched.lock();
-    let at = Instant::now();
-    let global_full = sched.on_provider().count() >= runtime.config.max_concurrent_turns;
-    ready
-        .iter()
-        .filter(|r| !sched.running.contains_key(&r.agent.id))
-        .filter(|r| {
-            r.addressed
-                || (!global_full
-                    && sched
-                        .entry_refused_until
-                        .get(&r.agent.id)
-                        .is_none_or(|until| *until <= at))
-        })
-        .map(|r| r.agent.id)
-        .collect()
-}
-
-/// Start the turns `pick` selects, under one hold of the scheduler lock. A
-/// started Noesis turn takes its charge out of `admitted`.
+/// Start the turns `pick` selects, under one hold of the scheduler lock.
 fn start_turns(
     runtime: &Arc<Runtime>,
     ready: Vec<Runnable>,
     lineage: &Lineage,
     reserve: &mut Reserve,
-    admitted: &mut HashMap<AgentId, AdmittedTurn>,
 ) {
     let limits = provider_limits(runtime, &ready);
     let engines = engine_providers(runtime, &ready);
@@ -102,14 +43,6 @@ fn start_turns(
     while let Some(index) = pick(runtime, &remaining, &sched, lineage, &limits, &engines) {
         // Not swap_remove: `pick`'s index tiebreak is the ready order.
         let Runnable { agent, addressed } = remaining.remove(index);
-        // Admitted before this lock: once the gate has left Enabled, or an
-        // older generation's admission meets a newer service, it must not
-        // start - a cancel that read `running` already went past it.
-        if let Some(turn) = admitted.get(&agent.id)
-            && !turn.may_start(runtime)
-        {
-            continue;
-        }
         // Only a turn selected to start reserves spend under the hard stop.
         if !reserve.try_start(agent.run) {
             continue;
@@ -122,7 +55,6 @@ fn start_turns(
             .unwrap_or(&agent.model)
             .provider
             .clone();
-        let noesis = admitted.remove(&agent.id);
         sched.running.insert(
             agent.id,
             RunningTurn {
@@ -135,29 +67,20 @@ fn start_turns(
                 engine: engines.contains(&provider),
                 provider,
                 on_provider: true,
-                noesis: noesis.as_ref().map(AdmittedTurn::turn),
             },
         );
-        spawn_turn(runtime.clone(), agent.id, cancel, interrupt, noesis);
+        spawn_turn(runtime.clone(), agent.id, cancel, interrupt);
     }
 }
 
-/// Run the turn on its own task; an admitted Noesis turn settles its charge after.
+/// Run the turn on its own task.
 fn spawn_turn(
     runtime: Arc<Runtime>,
     id: AgentId,
     cancel: CancellationToken,
     interrupt: CancellationToken,
-    noesis: Option<AdmittedTurn>,
 ) {
-    tokio::spawn(async move {
-        match noesis {
-            None => crate::turn::run(runtime, id, cancel, interrupt).await,
-            Some(turn) => {
-                crate::noesis_guard::run_admitted(runtime, id, cancel, interrupt, turn).await
-            }
-        }
-    });
+    tokio::spawn(crate::turn::run(runtime, id, cancel, interrupt));
 }
 
 /// Configured concurrency cap per provider any candidate could land on -

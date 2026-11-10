@@ -62,7 +62,6 @@ pub(crate) fn map_err(e: RuntimeError) -> ErrorReply {
         }
         RuntimeError::Model(m) => ErrorReply::new(ErrorCode::Unavailable, m.to_string()),
         RuntimeError::Store(e) => store_err(e),
-        RuntimeError::NoesisDisabled(_) => ErrorReply::noesis_disabled(),
         other => ErrorReply::internal(other),
     }
 }
@@ -164,8 +163,6 @@ where
     let history_expired = Arc::new(AtomicBool::new(false));
     // Whether the hello listed `features::DELTA_ORDER`; shared the same way.
     let delta_order = Arc::new(AtomicBool::new(false));
-    // Whether the hello listed `features::NOESIS`; shared the same way.
-    let noesis = Arc::new(AtomicBool::new(false));
     let memory_v2 = Arc::new(AtomicBool::new(false));
 
     let (auth_tx, auth_rx) = tokio::sync::watch::channel::<Option<AuthContext>>(None);
@@ -176,7 +173,6 @@ where
             version: version.clone(),
             history_expired: history_expired.clone(),
             delta_order: delta_order.clone(),
-            noesis: noesis.clone(),
             memory_v2: memory_v2.clone(),
         },
         auth_rx,
@@ -332,13 +328,6 @@ where
                                         .any(|feature| feature == features::DELTA_ORDER),
                                     Ordering::SeqCst,
                                 );
-                                noesis.store(
-                                    hello
-                                        .features
-                                        .iter()
-                                        .any(|feature| feature == features::NOESIS),
-                                    Ordering::SeqCst,
-                                );
                                 memory_v2.store(
                                     hello
                                         .features
@@ -430,8 +419,6 @@ where
                                                     features::USAGE_BREAKDOWN.into(),
                                                     features::VIEW_MODES.into(),
                                                     features::REMOTE_MOUNTS.into(),
-                                                    features::NOESIS.into(),
-                                                    features::NOESIS_RETRY_TURN.into(),
                                                 ],
                                                 daemon_protocol_version: Some(
                                                     aether_protocol::PROTOCOL_VERSION,

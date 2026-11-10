@@ -148,7 +148,6 @@ async fn explicit_requests_do_not_replace_a_pending_model_handoff() {
         user_reply_pending: false,
         reply_given_unrecorded: false,
         start_handoff: None,
-        noesis: None,
     };
     let outcome = apply_action(
         &runtime,
@@ -206,11 +205,7 @@ async fn compaction_without_usage_reports_a_live_gap() {
         usage: None,
         error: None,
     };
-    assert!(
-        record_compaction_usage(&h.runtime, &mut h.ctx, &attempt)
-            .unwrap()
-            .is_continue()
-    );
+    record_compaction_usage(&h.runtime, &mut h.ctx, &attempt).unwrap();
     assert!(!h.ctx.turn_usage.cost_complete);
     assert_eq!(
         h.ctx.turn_usage.cost_gap,
@@ -289,64 +284,17 @@ async fn delegating_onto_an_unusable_engine_names_its_probe_reason() {
 }
 
 #[tokio::test]
-async fn ordinary_compaction_ignores_the_disabled_noesis_gate_and_records_usage() {
+async fn compaction_records_usage() {
     let (mut h, _dir) = ComposeHarness::new().await;
-    assert!(!h.runtime.noesis_gate().is_enabled());
-    assert!(h.ctx.noesis.is_none());
-    assert!(!stopped_before_compaction_attempt(&h.runtime, &h.ctx));
     let attempt = aether_context::CompactionAttempt {
         model: ModelRef::new("claude-code", "haiku"),
         usage: None,
         error: None,
     };
-    assert!(
-        record_compaction_usage(&h.runtime, &mut h.ctx, &attempt)
-            .unwrap()
-            .is_continue()
-    );
+    record_compaction_usage(&h.runtime, &mut h.ctx, &attempt).unwrap();
     assert_eq!(
         h.ctx.turn_usage.cost_gap,
         Some(aether_core::model::CostGap::Unreported)
-    );
-    h.runtime.shutdown().await;
-}
-
-struct SpentNoesisCharge;
-
-impl crate::noesis_guard::NoesisCharge for SpentNoesisCharge {
-    fn is_current(&self) -> bool {
-        true
-    }
-    fn before_invocation(&self, _: &aether_core::model::Usage) -> Option<String> {
-        Some("spent".into())
-    }
-    fn refuses_model(&self, _: &ModelRef) -> Option<String> {
-        None
-    }
-    fn settle(&self, _: &aether_core::model::Usage) {}
-}
-
-#[tokio::test]
-async fn compaction_checks_noesis_budget_only_for_an_admitted_noesis_turn() {
-    let (mut h, _dir) = ComposeHarness::new().await;
-    let visits = || crate::noesis_guard::BOUNDARY_VISITS.with(|count| count.get());
-    let before = visits();
-    assert!(!stopped_before_compaction_attempt(&h.runtime, &h.ctx));
-    assert_eq!(
-        visits(),
-        before,
-        "ordinary compaction never enters the guard"
-    );
-    h.ctx.noesis = Some(crate::noesis_guard::NoesisTurn {
-        lane: crate::noesis_guard::NoesisLane::Interactive,
-        generation: 1,
-        charge: Arc::new(SpentNoesisCharge),
-    });
-    assert!(stopped_before_compaction_attempt(&h.runtime, &h.ctx));
-    assert_eq!(
-        visits(),
-        before + 1,
-        "an admitted Noesis turn enters the guard"
     );
     h.runtime.shutdown().await;
 }

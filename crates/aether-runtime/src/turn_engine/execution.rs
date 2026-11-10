@@ -283,15 +283,6 @@ pub(crate) async fn execute(
         mcp: None,
     };
 
-    // Everything above awaited (availability, handoff, compaction): an
-    // admission the gate or a newer generation has outdated starts no engine.
-    if let Some(turn) = ctx.noesis.as_ref()
-        && let Some(reason) = crate::noesis_guard::engine_start_refusal(runtime, ctx, turn)
-    {
-        tracing::info!(agent = %ctx.agent.id, %reason, "the Noesis engine turn is not started");
-        return Ok(EngineLink::Done(Next::Interrupted));
-    }
-
     let mut effects = ToolEffects::default();
     // The last context size the engine reported, from the turn before this
     // one - `record_context_usage` only overwrites it once this turn reports

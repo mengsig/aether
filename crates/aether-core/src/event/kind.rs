@@ -14,10 +14,6 @@ use crate::inbox::InboxItem;
 use crate::lease::Lease;
 use crate::memory::MemoryCandidate;
 use crate::model::{Billing, ContentBlock, MessageRole, ModelRef, StopReason, Usage};
-use crate::noesis::{
-    ConceptId, Job, JobId, JobStats, MissClass, NoesisSession, NoesisSettingsView, Phase, PlanTree,
-    PracticeOutcome, Problem, Question, QuestionResult, SessionId, SessionStall,
-};
 use crate::provider::QuotaWindow;
 use crate::snapshot::ContextLayer;
 use crate::task::{Priority, TaskResult};
@@ -549,63 +545,6 @@ pub enum EventKind {
         #[serde(default)]
         background_processes_stopped: usize,
     },
-    // ----- noesis ----------------------------------------------------------
-    #[serde(rename = "noesis.session_created")]
-    NoesisSessionCreated { session: NoesisSession },
-    #[serde(rename = "noesis.phase_changed")]
-    NoesisPhaseChanged {
-        session: SessionId,
-        from: Phase,
-        to: Phase,
-    },
-    #[serde(rename = "noesis.question_posed")]
-    NoesisQuestionPosed {
-        session: SessionId,
-        question: Question,
-    },
-    #[serde(rename = "noesis.answer_recorded")]
-    NoesisAnswerRecorded {
-        session: SessionId,
-        result: QuestionResult,
-    },
-    #[serde(rename = "noesis.plan_updated")]
-    NoesisPlanUpdated { session: SessionId, plan: PlanTree },
-    #[serde(rename = "noesis.problem_posed")]
-    NoesisProblemPosed {
-        session: SessionId,
-        problem: Problem,
-    },
-    /// The only place a problem's sealed solution is revealed.
-    #[serde(rename = "noesis.practice_concluded")]
-    NoesisPracticeConcluded {
-        session: SessionId,
-        problem: String,
-        outcome: PracticeOutcome,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        rung: Option<u8>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        miss_class: Option<MissClass>,
-        retest: bool,
-        solution: String,
-    },
-    /// A turn stopped before completion; the session carries it too.
-    #[serde(rename = "noesis.session_stalled")]
-    NoesisSessionStalled {
-        session: SessionId,
-        stall: SessionStall,
-    },
-    #[serde(rename = "noesis.job_updated")]
-    NoesisJobUpdated { job: Job },
-    #[serde(rename = "noesis.graph_merged")]
-    NoesisGraphMerged { job: JobId, stats: JobStats },
-    #[serde(rename = "noesis.learner_updated")]
-    NoesisLearnerUpdated { concepts: Vec<ConceptId> },
-    #[serde(rename = "noesis.settings_changed")]
-    NoesisSettingsChanged {
-        settings: NoesisSettingsView,
-        effective: NoesisSettingsView,
-    },
-
     /// Escape hatch for orchestration layers to record their own events.
     #[serde(rename = "custom")]
     Custom { name: String, payload: Value },

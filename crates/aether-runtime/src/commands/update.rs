@@ -67,10 +67,6 @@ impl Runtime {
                 "agent {id} was restarted as {successor}; update that agent instead"
             )));
         }
-        // A model change can hand off through a fold, which calls a model.
-        if update.model.is_some() || update.fallbacks.is_some() {
-            self.refuse_noesis_while_off(&agent)?;
-        }
         let (deadline_patched, budget_patched) =
             (update.deadline.is_some(), update.cost_budget.is_some());
         if let Some(name) = &update.name {

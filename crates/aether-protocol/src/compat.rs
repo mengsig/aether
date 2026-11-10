@@ -10,10 +10,8 @@ use aether_core::replay::{ReplayFrame, TurnOutcome};
 use serde_json::Value;
 
 mod memory_v2;
-mod noesis;
 mod v26;
 pub use memory_v2::withhold_memory_standing;
-pub use noesis::withhold_noesis_events;
 pub use v26::withhold_delta_order;
 
 /// Oldest protocol version this build still serves. Existing frame rewrites
@@ -575,25 +573,6 @@ mod tests {
             ("memory_import", &["artifact", "dry_run"]),
             ("memory_migration_status", &[]),
             ("memory_retrieval_explain", &[]),
-            ("noesis_answer", &["answer", "question", "session"]),
-            ("noesis_cancel_job", &["job"]),
-            ("noesis_configure", &["patch"]),
-            ("noesis_correct_learner", &["concept", "reason", "state"]),
-            ("noesis_create_session", &["goal", "mode"]),
-            ("noesis_delete_proposition", &["proposition"]),
-            ("noesis_delete_session", &["graph", "session"]),
-            ("noesis_delete_source", &["graph", "source"]),
-            ("noesis_extract", &[]),
-            ("noesis_get_session", &["session"]),
-            ("noesis_graph", &[]),
-            ("noesis_import_source", &["artifact", "name"]),
-            ("noesis_jobs", &[]),
-            ("noesis_learner", &[]),
-            ("noesis_learner_evidence", &["concept"]),
-            ("noesis_list_sessions", &[]),
-            ("noesis_retry_turn", &["session"]),
-            ("noesis_send", &["session", "text"]),
-            ("noesis_status", &[]),
             ("pause", &["agent"]),
             ("pin_memory", &["id", "pinned"]),
             ("ping", &[]),

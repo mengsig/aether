@@ -147,21 +147,7 @@ impl StreamState {
             .is_some_and(|call| call.tool == format!("mcp__aether__{name}") && &call.input == input)
     }
 
-    /// An unsealed stream's state, for tests of the accounting it carries.
-    #[cfg(test)]
     pub(super) fn new(pricing: TurnPricing, configured: ResolvedModel) -> Self {
-        Self::sealed(
-            pricing,
-            configured,
-            crate::noesis_seal::StreamSeal::Ordinary,
-        )
-    }
-
-    pub(super) fn sealed(
-        pricing: TurnPricing,
-        configured: ResolvedModel,
-        seal: crate::noesis_seal::StreamSeal,
-    ) -> Self {
         Self {
             calls: BTreeMap::new(),
             interruption: None,
@@ -179,7 +165,7 @@ impl StreamState {
             configured,
             protocol_notes: 0,
             invocation_since: tokio::time::Instant::now(),
-            deltas: DeltaStream::new(InvocationId::new(), seal),
+            deltas: DeltaStream::new(InvocationId::new()),
             thinking: String::new(),
             thinking_truncated: false,
             text: String::new(),
@@ -538,7 +524,7 @@ pub(super) fn handle_event(
                         .retry_policy()
                         .record_key
                         .then(|| IdempotencyKey::derive(name, input));
-                    let mut call = ToolCall {
+                    let call = ToolCall {
                         id: ToolCallId::new(),
                         provider_call_id: id.clone(),
                         name: name.clone(),
@@ -550,7 +536,6 @@ pub(super) fn handle_event(
                         idempotency_key,
                         requested_at: at,
                     };
-                    crate::noesis_seal::seal_call_key(&mut call);
                     state.calls.insert(
                         id.clone(),
                         PendingCall {

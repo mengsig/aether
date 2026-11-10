@@ -73,25 +73,6 @@ import type {
   MemoryImportCommand,
   MemoryMigrationStatusCommand,
   MemoryRetrievalExplainCommand,
-  NoesisAnswerCommand,
-  NoesisCancelJobCommand,
-  NoesisConfigureCommand,
-  NoesisCorrectLearnerCommand,
-  NoesisCreateSessionCommand,
-  NoesisDeletePropositionCommand,
-  NoesisDeleteSessionCommand,
-  NoesisDeleteSourceCommand,
-  NoesisExtractCommand,
-  NoesisGetSessionCommand,
-  NoesisGraphCommand,
-  NoesisImportSourceCommand,
-  NoesisJobsCommand,
-  NoesisLearnerCommand,
-  NoesisLearnerEvidenceCommand,
-  NoesisListSessionsCommand,
-  NoesisRetryTurnCommand,
-  NoesisSendCommand,
-  NoesisStatusCommand,
   PauseCommand,
   PinMemoryCommand,
   PingCommand,
@@ -212,25 +193,6 @@ export type Command =
   | MemoryImportCommand
   | MemoryMigrationStatusCommand
   | MemoryRetrievalExplainCommand
-  | NoesisAnswerCommand
-  | NoesisCancelJobCommand
-  | NoesisConfigureCommand
-  | NoesisCorrectLearnerCommand
-  | NoesisCreateSessionCommand
-  | NoesisDeletePropositionCommand
-  | NoesisDeleteSessionCommand
-  | NoesisDeleteSourceCommand
-  | NoesisExtractCommand
-  | NoesisGetSessionCommand
-  | NoesisGraphCommand
-  | NoesisImportSourceCommand
-  | NoesisJobsCommand
-  | NoesisLearnerCommand
-  | NoesisLearnerEvidenceCommand
-  | NoesisListSessionsCommand
-  | NoesisRetryTurnCommand
-  | NoesisSendCommand
-  | NoesisStatusCommand
   | PauseCommand
   | PinMemoryCommand
   | PingCommand

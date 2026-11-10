@@ -885,25 +885,6 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `resolve_notification` | operate | |
 | `answer_notification` | operate | |
 | `refresh_provider_usage` | operate | |
-| `noesis_status` | observe | Answers while Noesis is off. |
-| `noesis_configure` | operate | `host_only` when the patch sets `enabled`, a budget, `billing.allow_api` or `prompts.overrides`. |
-| `noesis_create_session` | operate | |
-| `noesis_send` | operate | |
-| `noesis_answer` | operate | |
-| `noesis_retry_turn` | operate | Retries a stalled turn. |
-| `noesis_get_session` | observe | Never carries an open question's key or an active problem's solution; its history reveals them once answered or concluded. |
-| `noesis_list_sessions` | observe | Never carries a sealed answer key or solution. |
-| `noesis_delete_session` | operate | |
-| `noesis_graph` | observe | |
-| `noesis_delete_proposition` | operate | |
-| `noesis_delete_source` | operate | |
-| `noesis_extract` | operate | |
-| `noesis_import_source` | operate | Reads a published artifact, masked as `read_artifact` masks it. |
-| `noesis_jobs` | observe | |
-| `noesis_cancel_job` | operate | |
-| `noesis_learner` | observe | |
-| `noesis_learner_evidence` | observe | |
-| `noesis_correct_learner` | operate | |
 | `resolve_submission` | operate | Read-only. Takes the class of the `command` it names when that is stricter, and every condition in that command's row: asking is permitted exactly when sending it would be. |
 
 What no device can do, whatever its role: stop the daemon; enable, disable

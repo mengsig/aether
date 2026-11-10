@@ -334,7 +334,6 @@ async fn completed_projection_with_running_turn_is_preserved() {
             provider: "mock".into(),
             engine: true,
             on_provider: false,
-            noesis: None,
         },
     );
     f.assert_kept("live or resumable");

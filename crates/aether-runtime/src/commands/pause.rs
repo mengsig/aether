@@ -97,7 +97,6 @@ impl Runtime {
             return Ok(receipt);
         }
         let mut agent = self.live_agent(root, "resume target")?;
-        self.refuse_noesis_while_off(&agent)?;
         let at = now();
         let run = agent.run;
         let mut commit = Commit::new();
@@ -207,10 +206,6 @@ impl Runtime {
             return Ok(receipt);
         }
         let targets = self.resume_targets(root)?;
-        // Checked for every agent the sweep would move, before any of them moves.
-        for agent in targets.iter().filter(|a| a.paused || suspended(a)) {
-            self.refuse_noesis_while_off(agent)?;
-        }
         let at = now();
         let mut commit = Commit::new();
         let mut changed = Vec::new();

@@ -81,7 +81,6 @@ async fn operator_admission_survives_backoff_only_for_its_reserved_link() {
             provider: "claude-code".into(),
             engine: true,
             on_provider: true,
-            noesis: None,
         },
     );
     assert!(claim_link(&runtime, agent.id, "claude-code").is_ok());

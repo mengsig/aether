@@ -493,7 +493,7 @@ turn's totals, which reconcile what streamed. An engine turn's
 and its spend arrives as `agent.usage_updated` with the agent's and the turn's
 totals. Each such record also says what paid for the use it adds, `billing`:
 `subscription` on an engine, `api` on a provider billed per request. Records
-written before Aether kept it have none, and Noesis counts their use as unknown.
+written before Aether kept it have none.
 
 Claude Code's [`result` fields have different scopes](https://code.claude.com/docs/en/agent-sdk/cost-tracking#track-costs-in-streaming-input-mode):
 `usage` covers one user turn, while `total_cost_usd` and `modelUsage` include

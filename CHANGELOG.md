@@ -23,8 +23,7 @@ release is also the text of its GitHub release.
 
 Released with Archon 1.5.0. Archon can be mounted on the same listener at `/archon`. Memory 2.0
 gives memories a standing, an opt-in relevance cutoff and export and import.
-Noesis, a learning service, ships turned off. Protocol 26 (the daemon
-serves 17 to 26) and store schema 33. Read the
+Protocol 26 (the daemon serves 17 to 26) and store schema 33. Read the
 [upgrade notes](https://github.com/mengsig/aether/blob/main/docs/upgrading.md)
 before updating.
 
@@ -77,22 +76,15 @@ before updating.
   into one survivor; `aether memory explain`, `export`, `import` and
   `migration-status` come with it, behind the `memory_v2` feature. See
   [Memory 2.0](https://github.com/mengsig/aether/blob/main/docs/memory/MEMORY-V2.md).
-- **Noesis (F1–F8), off by default.** A learning service: teaching sessions
-  with questions, plans and practice, a learner model, a knowledge graph
-  built from sessions and imported sources. With `[noesis] enabled = true` it keeps its own
-  `noesis.db` and its own daily budgets; while off it opens nothing and
-  spends nothing. Answer keys never reach a client before the answer.
 - **Checks.** `make bench-memory` (G0), not part of `make ci`.
 
 ### Security
 
 - **The vNext audit (H3).** `docs/security/vnext-audit.md` checks remote
-  access, the mount and Noesis. One high finding is fixed:
-  `noesis_import_source` masks an artifact as `read_artifact` does. `docs/remote.md` lists the access
-  class of all 134 commands, kept in step by a test.
-- **Host-only Memory 2.0 and Noesis commands.** A paired device cannot
-  explain, consolidate, export or import memories, or turn Noesis on or
-  change its budgets, billing or prompts.
+  access and the mount. `docs/remote.md` lists the access
+  class of every command, kept in step by a test.
+- **Host-only Memory 2.0 commands.** A paired device cannot
+  explain, consolidate, export or import memories.
 
 ### Changed
 
@@ -148,13 +140,6 @@ before updating.
   now hands its parent that object as `structured`, not only as summary
   text. Codex models do this often; Archon read such a review as missing
   its verdict and repaired the stage.
-- **Noesis on subscription engines.** Teaching and extraction run on
-  `claude-code` and `codex` with `billing.allow_api = false`, with the same
-  tools, sealing and budgets; a step on a `default` engine model is priced
-  from the model its session reports. Engine models were never offered as ready, and
-  API models were ready without credentials. `noesis_status` now reports
-  each model's readiness and billing and the resolved teaching model, and
-  each posed question carries its step (`measure`, `check`, …).
 
 ## 1.2.11
 

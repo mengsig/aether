@@ -1,12 +1,11 @@
 # vNext security audit: Aether (H3)
 
 Task H3 of the vNext plan (mengsig/archon#388, umbrella mengsig/archon#377).
-It covers the Aether side of four areas:
+It covers the Aether side of three areas:
 
 - remote access (§d);
 - the `/archon` path mount (AE-M);
 - pairing across the shared origin;
-- Noesis data boundaries (§g, `CONTRACTS.md` §6.2–6.3).
 
 The Archon side is audited separately, in the Archon repository's own
 `docs/security/vnext-audit.md`.
@@ -26,7 +25,7 @@ The Archon side is audited separately, in the Archon repository's own
 
 | Level | Meaning |
 | --- | --- |
-| high | A remote or observer role can read secrets or sealed data, or write, run or escalate beyond its class.  |
+| high | A remote or observer role can read secrets, or write, run or escalate beyond its class.  |
 | medium | A defence that §d names is missing, but another layer still blocks the attack. |
 | low | Hardening, documentation drift, or a residual risk the spec accepts. |
 
@@ -34,61 +33,23 @@ The Archon side is audited separately, in the Archon repository's own
 
 | Id | Severity | Area | Status |
 | --- | --- | --- | --- |
-| H3-A1 | high | Noesis / remote | Fixed in this change: `noesis_import_source` masks the artifact as `read_artifact` does |
-| H3-A2 | low | Remote docs | Fixed in this change: the matrix in `docs/remote.md` now lists all 134 commands, enforced by a test |
+| H3-A2 | low | Remote docs | Fixed in this change: the matrix in `docs/remote.md` now lists every command, enforced by a test |
 | H3-L6 | low | Mount | Follow-up |
-| H3-L7 | low | Noesis | Follow-up (residual risk §g accepts) |
-| H3-L8 | low | Noesis | Follow-up |
-| H3-L9 | low | Noesis | Follow-up |
-| H3-L10 | low | Noesis | Follow-up |
-| H3-L11 | low | Noesis tests | Follow-up |
-| H3-L13 | low | Noesis settings | Follow-up (spec question) |
 
 No medium finding was found. No high finding is open.
 
-### H3-A1 (high, fixed): an imported source bypassed artifact masking
-
-`read_artifact` masks every reply with the runtime redactor
-(`crates/aether-daemon/src/connection/dispatch/reads.rs`, `read_artifact`). A
-client's published artifact is stored as sent (`crates/aether-runtime/src/artifacts.rs`
-module doc). `noesis_import_source` (operate) read the same bytes with no
-mask, in `jobs::read_source` (`crates/aether-daemon/src/noesis/graph/jobs.rs`).
-The extraction worker then put the text verbatim into its extractor agent's
-task objective (`AgentModel::invoke`, same file). The task row and its
-`task.created` event are readable by every observer (`get_task`,
-`list_tasks`, `get_events` are `observe`).
-
-**Scenario.** The host publishes notes that contain a GitHub token. An observer
-device reading the artifact sees `[REDACTED:github_token]`. Then an operator
-device, or the host, imports the artifact as a Noesis source. Every observer
-can now read the raw token from the extractor's task objective. The model
-provider also receives it.
-
-**Fix.** `read_source` takes the runtime's redactor and returns the masked
-text. `StoreCorpus` carries the redactor too, so the source ID derivation, the
-worker's prompt and the task objective all see only masked text. Two sources
-that differ only in a masked secret now derive the same text, and so the same
-source ID; that is intended.
-
-**Test.** `noesis::graph::tests::an_imported_source_reaches_its_extractor_masked_as_read_artifact_shows_it`.
-It publishes a token and imports it. It then asserts two things: the
-extractor task's objective holds `[REDACTED:github_token]` and not the token,
-and no stored event carries the token. Without the fix, the first assertion
-fails.
-
-### H3-A2 (low, fixed): the remote matrix omitted 27 commands
+### H3-A2 (low, fixed): the remote matrix omitted 9 commands
 
 `docs/remote.md` says its matrix is exhaustive, but it had no row for:
 
 - `storage_status` and `storage_gc`;
 - the six notification commands;
 - `refresh_provider_usage`;
-- all 18 `noesis_*` commands.
 
 Enforcement was right, because the classes come from code. The document was
 not.
 
-**Fix.** The rows are added, with the field rule for `noesis_configure`.
+**Fix.** The rows are added.
 
 **Test.** `authz::tests::the_documented_matrix_names_every_command_with_its_class`
 reads the matrix and requires one row per fixture case of
@@ -106,8 +67,8 @@ reads the matrix and requires one row per fixture case of
 | d6 | Pairing codes and phrases | ✅ | 40-bit Crockford code from the CSPRNG, 120 s expiry, single use, host confirmation required (`crates/aether-remote/src/pairing.rs`). Guesses are rate-limited to `MAX_GUESSES_PER_SECOND = 10` (so at most 1200 over a code's life), each wrong code waits 250 ms, and the compare is constant-time (`pairing.rs:20-37,380`; `crates/aether-protocol/src/auth.rs:16-21`). The three-word comparison phrase hashes the pairing id and the device's public key (`phrase`, `pairing.rs:87-99`). Tests `pairing/tests.rs`: `a_code_is_forty_bits_of_crockford_base32`, `a_code_is_single_use`, `an_unclaimed_code_expires_and_so_does_an_unconfirmed_claim`, `a_flood_gets_no_more_guesses_than_the_documented_bound`. |
 | d7 | Device identity | ✅ | Aether devices hold no bearer token. They hold a non-extractable P-256 key in IndexedDB (`crates/aether-remote/web/core/identity.js:30-36`). The daemon stores only the public point and verifies ECDSA over a 32-byte nonce bound to origin, instance and device (`crates/aether-remote/src/auth.rs:64-77,104-117`). The legacy `[listen]` token uses a constant-time compare (`crates/aether-daemon/src/listen.rs`). |
 | d8 | Role chosen by the host at pairing | ✅ | `start_pairing {role}` is `remote_admin` (Unix socket only). The role is stored at enrolment and never taken from the claimant (`pairing.rs`). |
-| d9 | Access classes of every command, including G3 and Noesis | ✅ | `Command::access` is one exhaustive match with no wildcard (`crates/aether-protocol/src/access.rs:78-150`). The matrix is `permits` in `crates/aether-daemon/src/authz.rs:113-126`. `authz::tests::every_command_has_an_explicit_role_decision` derives all 134 tags from the generated schema and checks each against `authz/command_cases.json` in every context. G3: `memory_export`, `memory_import` (both `dry_run`), `memory_feedback`, `memory_retrieval_explain`, `record_memory_feedback`, `retract_memory_feedback`, `consolidate_memories` and `memories_in_context` are host_only; `memory_migration_status` is observe (test `memory_v2_host_commands_refuse_every_paired_role_and_status_admits_observers`). Noesis: reads are observe and mutations operate. `noesis_configure` is host_only when it sets `enabled`, a budget, `billing.allow_api` or `prompts.overrides` (`configure_access`, `crates/aether-protocol/src/noesis.rs:186`, as `CONTRACTS.md` §6.1 says; tests `host_only_keys_make_the_patch_host_only`, `the_other_keys_and_an_empty_patch_are_operate`). `docs/remote.md` now agrees row by row (H3-A2). |
-| d10 | Observer limits | ✅ | An observer reaches only `observe` and `device_self` (`permits`). Remote-admin events reach non-local readers as `remote.restricted` (`crates/aether-daemon/src/authz.rs:49-57`). Proposed memories are excluded from `memories` (`crates/aether-store/src/sqlite/memories.rs`). The memory-retrieval trace is stripped from every snapshot read (`crates/aether-daemon/src/connection/dispatch/reads.rs:83-91`). Artifact reads are masked. The Noesis import path now is too (H3-A1). |
+| d9 | Access classes of every command, including G3 | ✅ | `Command::access` is one exhaustive match with no wildcard (`crates/aether-protocol/src/access.rs:78-150`). The matrix is `permits` in `crates/aether-daemon/src/authz.rs:113-126`. `authz::tests::every_command_has_an_explicit_role_decision` derives every tag from the generated schema and checks each against `authz/command_cases.json` in every context. G3: `memory_export`, `memory_import` (both `dry_run`), `memory_feedback`, `memory_retrieval_explain`, `record_memory_feedback`, `retract_memory_feedback`, `consolidate_memories` and `memories_in_context` are host_only; `memory_migration_status` is observe (test `memory_v2_host_commands_refuse_every_paired_role_and_status_admits_observers`). `docs/remote.md` now agrees row by row (H3-A2). |
+| d10 | Observer limits | ✅ | An observer reaches only `observe` and `device_self` (`permits`). Remote-admin events reach non-local readers as `remote.restricted` (`crates/aether-daemon/src/authz.rs:49-57`). Proposed memories are excluded from `memories` (`crates/aether-store/src/sqlite/memories.rs`). The memory-retrieval trace is stripped from every snapshot read (`crates/aether-daemon/src/connection/dispatch/reads.rs:83-91`). Artifact reads are masked. |
 | d11 | Revocation | ✅ | `revoke_device` sets `revoked_at`, cancels the device's sessions and forgets its push subscription (`revoke`, `crates/aether-daemon/src/remote/admin.rs:309-338`). Auth rechecks after registering the cancel (`admit`, `crates/aether-remote/src/auth.rs:213-247`). Each command checks cancellation first (`authorize`, `crates/aether-daemon/src/authz.rs:129-135`). The socket closes with 4403. Tests `a_device_pairs_connects_runs_a_command_and_is_revoked` (`crates/aether-daemon/tests/remote.rs`), `revoking_a_device_closes_its_connection_with_4403`, `revocation_discards_a_stalled_large_response_and_ends_the_carrier`. |
 | d12 | A remote browser cannot reach a Unix socket | ✅ | The listener's only routes are `/api/health`, pairing, `/ws`, the assets and mounts (`http.rs` `route`). Mount targets are loopback TCP only (d14). |
 | d13 | Mounts configured only by host-only commands or the CLI, at most 4, fixed lowercase prefixes | ✅ | `configure_remote` is `remote_admin`. `validate_mounts` enforces the limit of 4, the lowercase segment and the loopback target (`crates/aether-protocol/src/remote/mounts.rs:29`; tests `loopback_mounts_with_one_lowercase_segment_are_accepted`, `more_than_four_mounts_or_a_repeated_prefix_is_refused`). A prefix over the listener's own paths is refused (`is_served_here`, `crates/aether-remote/src/mount.rs`; test `prefixes_the_listener_serves_itself_cannot_be_mounted`). |
@@ -135,19 +96,6 @@ reads the matrix and requires one row per fixture case of
 | p2 | Archon credentials cannot be read across apps | ✅ | Archond's cookie is `HttpOnly; SameSite=Strict; Path=/archon`, plus `Secure` on https (Archon `http/api.rs` `credential_cookie`). JavaScript cannot read it, and the browser never sends it to Aether's `/ws` or `/api/*`. |
 | p3 | The two pairings cannot be confused | ✅ | Aether pairs at `/api/pair/*` and authenticates by signature on `/ws`. Archon pairs and authenticates under `/archon/api/*` and `/archon/ws` by cookie (`crates/aether-remote/src/mount/forward.rs`). The listener refuses a mount over `/api` or `/ws` (d13). An Aether signature covers origin, instance and nonce, and Archon accepts no signature, so neither credential is accepted by the other daemon. |
 
-## Noesis data boundaries
-
-| # | Check | Status | Evidence |
-| --- | --- | --- | --- |
-| n1 | Sealed fields are replaced where the call is persisted | ✅ | `seal_commit` runs in `Runtime::apply_held_by` before write and publish, and `seal_import` on import (`crates/aether-runtime/src/lib.rs`). `seal_event` and `seal_mutations` name every variant with no wildcard (`crates/aether-runtime/src/noesis_seal.rs`). `answer_key`, `explanation` and `solution` become `"<sealed>"`. Tests in `crates/aether-runtime/tests/kernel/noesis_seal.rs` and `noesis_seal/tests.rs`. |
-| n2 | No `tool_input` delta for a sealed call; no thinking for Noesis agents; no sequence gap | ✅ | `StreamSeal::admits` decides before a delta is numbered (`noesis_seal.rs`, `bus.rs`). Tests `a_stream_withholds_sealed_input_and_noesis_thinking_only` and `assert_deltas_sealed_and_gapless` (`crates/aether-daemon/src/noesis/teaching_tests.rs`). Noesis teaching turns publish no deltas at all (`crates/aether-daemon/src/noesis/engine.rs`). |
-| n3 | No read before reveal | ✅ | `Question` and `Problem` have no key or solution field (`crates/aether-core/src/noesis.rs`). `QuestionResult` is built only after the answer commits. `solution` appears only in `noesis.practice_concluded`, after the conclusion commits. Tests `t11_answer_keys_are_sealed_until_the_answer_is_recorded`, `t11_the_solution_is_sealed_on_every_read_path_until_conclude_and_practice_never_writes_the_graph` (`crates/aether-noesis/src/teach/parity.rs`). |
-| n4 | Not in logs or error text | ✅ | No `tracing` call prints a tool input. Argument errors show the shape only (`crates/aether-noesis/src/tools/args.rs`). Unknown argument names are never echoed. `Sealer`'s `Debug` prints only a count. |
-| n5 | Evidence bundle ≤ 32 KiB, shape checked, refused before storing | ✅ | `validate_bundle` (`crates/aether-protocol/src/noesis.rs`) and `evidence::validate` (`crates/aether-noesis/src/evidence/mod.rs`); refused unless `engineering_context` is in effect. Tests in `crates/aether-noesis/src/evidence/tests.rs`. |
-| n6 | Noesis never fetches; the bundle holds only what the user could read | ✅ | `aether-noesis` has no network or process dependency. Test `teach/evidence_flow.rs` compares the socket table before and after. |
-| n7 | Disabled by default | ✅ | Every non-service group returns `noesis_disabled` before validation (`crates/aether-daemon/src/noesis/mod.rs`); tests in `noesis/tests.rs` and `teaching_tests.rs`. See H3-L11. |
-| n8 | Imported sources hold no secret a reader could not already see | ✅ after H3-A1 | H3-A1. |
-
 ## Low findings (follow-ups)
 
 - **H3-L6 (mount).** A mounted answer keeps whatever CSP archond sends
@@ -155,36 +103,6 @@ reads the matrix and requires one row per fixture case of
   weaker archond CSP would apply to a page on the origin that holds Aether's
   device key. *Follow-up:* send Aether's CSP as an additional header on
   mounted answers, so the browser enforces both.
-- **H3-L7 (Noesis, resolved).** A model's visible text that restated an answer
-  was stored verbatim in the transcript. Each reply is now checked whole by
-  `reply_leaks` before `AetherEngine::record_reply` commits anything of it
-  (`crates/aether-noesis/src/teach/seal.rs`). A leaking reply is discarded and
-  the step runs again once with a reminder, then falls back to a neutral step.
-  Tests `a_reply_giving_its_own_key_away_is_discarded_and_made_again` and
-  `a_second_leaking_reply_becomes_the_neutral_step` (`teach/recovery.rs` and
-  `crates/aether-daemon/src/noesis/teaching_tests/engine_path/live_seal.rs`).
-- **H3-L8 (Noesis).** An approval's `argument` is computed from the raw input,
-  so a sealed-named MCP tool with a remembered rule would record it unsealed
-  (`crates/aether-runtime/src/turn/tools.rs`). This is contrived, because
-  Noesis tools are not MCP tools. *Follow-up:* compute it from `sealed_view`.
-- **H3-L9 (Noesis).** A `ToolInput` delta with an empty tool name (no
-  `BlockStart` seen) is admitted, because `sealed_fields("")` is `None`.
-  Teaching turns publish no deltas, so no sealed call streams today.
-  *Follow-up:* withhold nameless `ToolInput` deltas for sealing-capable agents.
-- **H3-L10 (Noesis, privacy).** The learner's optional `thinking` reaches the
-  teacher's transcript as part of the answer tool result, where any observer
-  can read it. *Follow-up:* decide in `CONTRACTS.md` §6.2 whether it is
-  delivered, and document it on `AnswerInput.thinking`.
-- **H3-L11 (Noesis tests).** The disabled-by-default sample lists omit five
-  commands: `noesis_learner_evidence`, `noesis_correct_learner`,
-  `noesis_delete_proposition`, `noesis_delete_source` and
-  `noesis_import_source`. `routes.rs` falls back to `Group::Service` by
-  wildcard; this fails safe. *Follow-up:* sample every `is_noesis()` command,
-  and match exhaustively.
-- **H3-L13 (Noesis settings, spec question).** `engineering_context` and
-  `models.*` are `operate`, as `CONTRACTS.md` §6.1 says. So an operator device
-  can choose which configured provider receives session data and bundles.
-  *Follow-up:* the spec owner decides whether these keys become host_only.
 ## For the other repository
 
 Read in a read-only clone of mengsig/archon, on branch

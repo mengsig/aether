@@ -17,7 +17,6 @@ unchanged from 1.2.11.
 | Store schema (`aether.db`) | 28 | 33, one-way migration with a backup |
 | Remote listener | the phone app | the same phone app, unchanged |
 | Archon | 1.4.x served its own web app | Archon 1.5.0 is mounted at `/archon` on this listener |
-| Noesis | none | present, off by default; `noesis.db` only once turned on |
 
 ### Protocol 26 and the clients
 
@@ -41,7 +40,7 @@ The first start of 1.3.0 on a schema 28 store migrates it to 33 in one step:
 
 | Version | What it does |
 | --- | --- |
-| V29 | `agents.subsystem` (set once at creation, `noesis` for Noesis agents) and the indexes for paging and `usage_breakdown` |
+| V29 | `agents.subsystem` (set once at creation) and the indexes for paging and `usage_breakdown` |
 | V30 | Memory tiers and states, support, verification and refs; every existing memory becomes active, unchanged |
 | V31 | `memory_stale` and `memory_holdouts` |
 | V32 | No table change: only the version stamp moves |
@@ -87,17 +86,10 @@ without `--dry-run` it merges them, keeping the others as `superseded`.
 stores. All of these are host only. See
 [Memory 2.0](memory/MEMORY-V2.md).
 
-### Noesis, off by default
+### A leftover `[noesis]` section
 
-Noesis, the learning service, does nothing until it is turned on: no
-`noesis.db`, no model call, no spend, and every `noesis_*` command but
-`noesis_status` and `noesis_configure` answers `unavailable`. To turn it on,
-set `[noesis] enabled = true` in `config.toml` and restart the daemon.
-
-Turning it on is host only, as are its budgets, billing and prompt
-overrides; a paired device cannot. Check the daily budgets under
-`[noesis.budget]` first (see [Configuration](configuration.md#noesis)).
-`billing.allow_api = false` keeps it off API-billed models.
+A `[noesis]` section in `config.toml` is ignored with a warning in the daemon
+log. Delete it; any other unknown setting is still an error.
 
 ### The phone app on the listener
 
@@ -124,10 +116,8 @@ device key and pairing.
 The [vNext security audit](security/vnext-audit.md) changed these:
 
 - A paired device cannot run `memory_retrieval_explain`,
-  `consolidate_memories`, `memory_export` or `memory_import`, or turn Noesis
-  on, change its budgets, billing or prompts. Observers can read
+  `consolidate_memories`, `memory_export` or `memory_import`. Observers can read
   `memory_migration_status`.
-- `noesis_import_source` masks an artifact as `read_artifact` does.
 
 [Remote control](remote.md#authorization) lists every command's class.
 
@@ -145,4 +135,3 @@ The [vNext security audit](security/vnext-audit.md) changed these:
 5. **Reopen the phone app** on each paired browser at the same address.
 6. **Archon, if you use it.** Update to Archon 1.5.0 and follow its upgrade
    notes; `archon remote setup` then mounts it at `/archon`.
-7. **Optionally** turn on Noesis.

@@ -11,11 +11,6 @@ use super::{
     Welcome, WriteStats,
 };
 
-/// [`ErrorReply::reason`] of a Noesis command refused while Noesis is disabled.
-pub const NOESIS_DISABLED: &str = "noesis_disabled";
-/// [`ErrorReply::reason`] of a Noesis command refused because today's
-/// interactive budget (`noesis.budget.interactive_usd_daily`) is spent.
-pub const NOESIS_BUDGET_EXHAUSTED: &str = "noesis_budget_exhausted";
 /// [`ErrorReply::reason`] of a command that conflicts with work in progress.
 pub const CONFLICT: &str = "conflict";
 
@@ -501,41 +496,6 @@ pub enum Reply {
     Devices(Vec<Device>),
     PushConfig(PushConfig),
     SubmissionResolved(SubmissionResolution),
-    NoesisStatus(crate::noesis::NoesisStatus),
-    NoesisSession(crate::noesis::NoesisSession),
-    /// `next_after` is the cursor for the next page, absent on the last one.
-    NoesisSessions {
-        sessions: Vec<crate::noesis::NoesisSession>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        next_after: Option<String>,
-    },
-    /// `truncated` is set when `limit` cut the graph short.
-    NoesisGraph {
-        nodes: Vec<crate::noesis::Proposition>,
-        chains: Vec<crate::noesis::Chain>,
-        clusters: Vec<crate::noesis::Cluster>,
-        truncated: bool,
-    },
-    NoesisJob {
-        job: crate::noesis::Job,
-    },
-    NoesisImport {
-        source: crate::noesis::SourceId,
-        job: crate::noesis::Job,
-    },
-    NoesisJobs {
-        jobs: Vec<crate::noesis::Job>,
-    },
-    NoesisLearner {
-        concepts: Vec<crate::noesis::ConceptState>,
-    },
-    /// `next_before` is the cursor for the next page, absent on the last one.
-    NoesisEvidence {
-        evidence: Vec<crate::noesis::Evidence>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        next_before: Option<u64>,
-    },
-    ConceptState(crate::noesis::ConceptState),
 }
 
 /// What became of a keyed command, as far as the daemon can prove. Each
@@ -601,7 +561,7 @@ pub struct ErrorReply {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seq: Option<u64>,
     /// Why the command was refused, for a client that tells causes of one
-    /// code apart, e.g. [`NOESIS_DISABLED`].
+    /// code apart, e.g. [`CONFLICT`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
@@ -614,17 +574,6 @@ impl ErrorReply {
             first_seq: None,
             last_seq: None,
             reason: None,
-        }
-    }
-
-    /// A Noesis command arrived while Noesis is disabled.
-    pub fn noesis_disabled() -> Self {
-        Self {
-            reason: Some(NOESIS_DISABLED.into()),
-            ..Self::new(
-                ErrorCode::Unavailable,
-                "Noesis is disabled; enable it with noesis_configure",
-            )
         }
     }
 

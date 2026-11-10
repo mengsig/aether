@@ -51,7 +51,7 @@ pub struct CreateAgentSpec {
     pub approval: Option<ApprovalPolicy>,
     pub run: Option<RunId>,
     pub start: bool,
-    /// The subsystem the agent belongs to (`noesis`), fixed at creation and
+    /// The subsystem the agent belongs to , fixed at creation and
     /// never changed. Set by the subsystem's own code, never by a client.
     pub subsystem: Option<String>,
 }

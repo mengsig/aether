@@ -73,7 +73,7 @@ The boundaries Aether does maintain, where a bypass is a security bug:
   native-engine bridge tool replies, refusals and denial notes, approval and
   rule notes and revocation reasons as they are recorded, the full-output
   artifacts tools store, `read_artifact` replies to any
-  connection, the artifacts Noesis imports as sources, and run exports. What
+  connection, the and run exports. What
   the masking cannot see is listed in
   [known limitations](docs/known-limitations.md#security-boundaries).
 - **External triggers.** The GitHub watcher and signed webhooks only dispatch

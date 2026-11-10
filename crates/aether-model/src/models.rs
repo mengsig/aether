@@ -738,7 +738,6 @@ mod tests {
             remote: Default::default(),
             serve: Default::default(),
             update: Default::default(),
-            noesis: Default::default(),
         };
         // Engine providers consult the real CLIs on this machine; keep the
         // test independent of what is installed or logged in here.

@@ -214,7 +214,6 @@ pub(super) async fn daemon_with_config(
     .expect("runtime");
     (
         Daemon {
-            noesis: crate::noesis::NoesisService::detached(&runtime, &models),
             runtime,
             models,
             instance_id: "inst".into(),

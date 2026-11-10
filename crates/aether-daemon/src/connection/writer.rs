@@ -16,8 +16,6 @@ pub(super) struct Speaking {
     pub history_expired: Arc<AtomicBool>,
     /// The client listed `features::DELTA_ORDER`.
     pub delta_order: Arc<AtomicBool>,
-    /// The client listed `features::NOESIS`.
-    pub noesis: Arc<AtomicBool>,
     /// The client listed `features::MEMORY_V2`.
     pub memory_v2: Arc<AtomicBool>,
 }
@@ -39,9 +37,6 @@ pub(super) async fn run<W: AsyncWrite + Unpin>(
             }
             if !speaking.delta_order.load(Ordering::SeqCst) {
                 compat::withhold_delta_order(&mut frame);
-            }
-            if !speaking.noesis.load(Ordering::SeqCst) {
-                compat::withhold_noesis_events(&mut frame);
             }
             if !speaking.memory_v2.load(Ordering::SeqCst) {
                 compat::withhold_memory_standing(&mut frame);
@@ -172,7 +167,6 @@ mod tests {
             version: Arc::new(AtomicU32::new(aether_protocol::PROTOCOL_VERSION)),
             history_expired: Arc::new(AtomicBool::new(true)),
             delta_order: Arc::new(AtomicBool::new(delta_order)),
-            noesis: Arc::new(AtomicBool::new(true)),
             memory_v2: Arc::new(AtomicBool::new(true)),
         };
         let (_auth, auth) = watch::channel(None);

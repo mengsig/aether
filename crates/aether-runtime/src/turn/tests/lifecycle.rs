@@ -321,7 +321,6 @@ async fn an_unwinding_turn_takes_its_engine_slot_with_it() {
             provider: "claude-code".into(),
             engine: true,
             on_provider: true,
-            noesis: None,
         },
     );
     assert_eq!(runtime.sched.lock().on_engine(), 1, "the slot is held");
