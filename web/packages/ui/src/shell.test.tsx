@@ -251,3 +251,20 @@ describe("entity actions", () => {
     expect(onActionError).toHaveBeenCalledWith(actions[3], failure);
   });
 });
+
+test("a failed palette load keeps the shell usable and retries with a fresh load", async () => {
+  const { PaletteBoundary } = await import("./app-shell.tsx");
+  const loadPalette = vi.fn()
+    .mockRejectedValueOnce(new Error("Chunk unavailable"))
+    .mockResolvedValueOnce({ default: CommandPalette });
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const { container } = await render(<><button>Shell remains usable</button><PaletteBoundary load={loadPalette} open onClose={() => {}} commands={[]} /></>);
+  await settle();
+  expect(container.textContent).toContain("Chunk unavailable");
+  expect(byText(container, "button", "Shell remains usable")).toBeTruthy();
+  await click(byText(container, "button", "Try again"));
+  await settle();
+  expect(loadPalette).toHaveBeenCalledTimes(2);
+  expect(container.querySelector("[role=combobox]")).not.toBeNull();
+  error.mockRestore();
+});

@@ -2,7 +2,7 @@ import { Component, createElement, lazy, Suspense, useCallback, useEffect, useMe
 import type { Capabilities, ConnectionInfo, EntityAction, RouteDef, RouteProps } from "@aether-ui/protocol";
 import { Button } from "./button.tsx";
 import { invariant } from "./classes.ts";
-import type { Command } from "./command-palette.tsx";
+import type { Command, CommandPaletteProps } from "./command-palette.tsx";
 import { pushRecent } from "./palette-recents.ts";
 import { EntityActionProvider } from "./entity-actions.tsx";
 import { navSections, NavRail, type NavSection } from "./nav-rail.tsx";
@@ -43,7 +43,24 @@ export interface AppShellProps {
   readonly banner?: ReactNode;
 }
 
-const CommandPalette = lazy(() => import("./command-palette.tsx").then((module) => ({ default: module.CommandPalette })));
+type PaletteLoader = () => Promise<{ default: ComponentType<CommandPaletteProps> }>;
+const loadPalette: PaletteLoader = () => import("./command-palette.tsx").then((module) => ({ default: module.CommandPalette }));
+
+export class PaletteBoundary extends Component<CommandPaletteProps & { readonly load: PaletteLoader }, { failure: string | null }> {
+  override state = { failure: null as string | null };
+  private palette = lazy(this.props.load);
+
+  static getDerivedStateFromError(error: unknown) { return { failure: failureMessage(error) }; }
+  override componentDidCatch(error: unknown, info: ErrorInfo) { console.error("The palette failed to render", error, info.componentStack); }
+  private retry() {
+    this.palette = lazy(this.props.load);
+    this.setState({ failure: null });
+  }
+  override render(): ReactNode {
+    if (this.state.failure !== null) return <ErrorState title="The palette failed" message={this.state.failure} onRetry={() => this.retry()} />;
+    return <Suspense fallback={null}>{createElement(this.palette, this.props)}</Suspense>;
+  }
+}
 
 type RouteComponent = ComponentType<RouteProps>;
 const screens = new WeakMap<RouteDef, LazyExoticComponent<RouteComponent>>();
@@ -117,7 +134,7 @@ export function AppShell(props: AppShellProps) {
           </main>
         </div>
         <ToastRegion toasts={props.notices ?? []} onDismiss={props.onDismissNotice ?? (() => undefined)} onDismissAll={props.onDismissAllNotices} />
-        {paletteOpen ? <Suspense fallback={null}><CommandPalette open onClose={() => setPaletteOpen(false)} commands={commands} recents={recents} onRun={remember} /></Suspense> : null}
+        {paletteOpen ? <PaletteBoundary load={loadPalette} open onClose={() => setPaletteOpen(false)} commands={commands} recents={recents} onRun={remember} /> : null}
       </div>
     </EntityActionProvider>
   );
