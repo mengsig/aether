@@ -16,13 +16,21 @@ function AgentLink({ conn, id, children }: { readonly conn: ConnId; readonly id:
   return <a className="ui-link" href={routeHref("#/agents/:conn/:agent", { conn, agent: id })}>{children}</a>;
 }
 
-function AgentHeader({ conn, agent }: { readonly conn: ConnId; readonly agent: aether.Agent }) {
+function AgentHeader({ conn, agent, facts }: { readonly conn: ConnId; readonly agent: aether.Agent; readonly facts: Fact[] }) {
   const status = agentStatus(agent);
   const attention = useSelector(useMemo(() => selectAttention(conn), [conn]));
   const waitingApproval = attention?.approvals.some(request => request.agent_id === agent.id && request.status.state === "pending") ?? false;
   const role = roleLabel(agent.role);
   const parent = useSelector(useMemo(() => selectAgent(conn, agent.parent ?? ""), [conn, agent.parent]));
   const detail = statusDetail(agent.status);
+  const metadata = <>
+    <p className="agent-sub">
+      <span title={agent.role}>{role.kind === "agent" ? role.text || "No role" : <Badge tone="accent">{role.text}</Badge>}</span>
+      <code className="agent-id">{agent.id}</code>
+      {agent.parent ? <span>Delegated by <AgentLink conn={conn} id={agent.parent}>{parent?.name ?? agent.parent}</AgentLink></span> : null}
+    </p>
+    {waitingApproval ? <p className="agent-detail"><a className="ui-link" href="#/inbox">Review approval in Inbox</a></p> : detail ? <p className="agent-detail" data-state={status.state}>{detail}</p> : null}
+  </>;
   return (
     <header className="agent-head">
       <div className="agent-title">
@@ -31,13 +39,12 @@ function AgentHeader({ conn, agent }: { readonly conn: ConnId; readonly agent: a
         {agent.paused ? <Badge tone="warning">Paused</Badge> : null}
         {agent.archived ? <Badge>Archived</Badge> : null}
         <EntityActionMenu entity={{ kind: "agent", conn, id: agent.id }} />
+        <details className="agent-compact-details">
+          <summary>Agent details</summary>
+          <div className="agent-compact-panel">{metadata}<AgentFacts facts={facts} compact /></div>
+        </details>
       </div>
-      <p className="agent-sub">
-        <span title={agent.role}>{role.kind === "agent" ? role.text || "No role" : <Badge tone="accent">{role.text}</Badge>}</span>
-        <code className="agent-id">{agent.id}</code>
-        {agent.parent ? <span>Delegated by <AgentLink conn={conn} id={agent.parent}>{parent?.name ?? agent.parent}</AgentLink></span> : null}
-      </p>
-      {waitingApproval ? <p className="agent-detail"><a className="ui-link" href="#/inbox">Review approval in Inbox</a></p> : detail ? <p className="agent-detail" data-state={status.state}>{detail}</p> : null}
+      <div className="agent-wide-metadata">{metadata}</div>
     </header>
   );
 }
@@ -52,12 +59,11 @@ function useFacts(conn: ConnId, agent: aether.Agent): Fact[] {
   }, [agent, listed]);
 }
 
-function AgentFacts({ conn, agent }: { readonly conn: ConnId; readonly agent: aether.Agent }) {
-  const facts = useFacts(conn, agent);
+function AgentFacts({ facts, compact = false }: { readonly facts: Fact[]; readonly compact?: boolean }) {
   return (
     <dl className="ui-card agent-facts">
       {facts.map((fact) => (
-        <div key={fact.label} className="agent-fact" data-testid={`agent-fact-${fact.label.toLowerCase()}`}>
+        <div key={fact.label} className="agent-fact" data-testid={compact ? undefined : `agent-fact-${fact.label.toLowerCase()}`}>
           <dt>{fact.label}</dt>
           <dd title={fact.hint}>{fact.value}{fact.hint ? <span className="agent-hint">{fact.hint}</span> : null}</dd>
         </div>
@@ -101,11 +107,16 @@ export function AgentScreen({ conn, id }: { readonly conn: ConnId; readonly id: 
   }
   if (!agent && info.state !== "ready") return <AgentLoading />;
   if (!agent) return <MissingAgent key={`${conn}/${id}`} conn={conn} id={id} />;
+  return <LoadedAgent conn={conn} agent={agent} />;
+}
+
+function LoadedAgent({ conn, agent }: { readonly conn: ConnId; readonly agent: aether.Agent }) {
+  const facts = useFacts(conn, agent);
   return (
     <section className="ui-page agent" aria-label={`Agent ${agent.name}`}>
-      <AgentHeader conn={conn} agent={agent} />
-      <AgentFacts conn={conn} agent={agent} />
-      <Chat key={`${conn}/${id}`} conn={conn} agent={agent} />
+      <AgentHeader conn={conn} agent={agent} facts={facts} />
+      <div className="agent-wide-facts"><AgentFacts facts={facts} /></div>
+      <Chat key={`${conn}/${agent.id}`} conn={conn} agent={agent} />
     </section>
   );
 }

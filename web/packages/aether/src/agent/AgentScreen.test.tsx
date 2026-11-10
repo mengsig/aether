@@ -60,7 +60,7 @@ describe("the agent screen", () => {
       task("tsk_new", "Write the release note.", "active", "2026-11-04T09:00:00Z"),
     ];
     const held = await screen(fauxAgent(FAUX_AGENT, { current_task: "tsk_old" }), FAUX_AGENT, tasks);
-    expect(held.container.querySelector(".agent-fact")?.getAttribute("data-testid")).toBe("agent-fact-task");
+    expect(held.container.querySelector(".agent-wide-facts .agent-fact")?.getAttribute("data-testid")).toBe("agent-fact-task");
     expect(fact(held.container, "Task")).toBe("Write the parser.assigned");
     held.h.unmount();
     const idle = await screen(fauxAgent(), FAUX_AGENT, tasks);
@@ -68,7 +68,7 @@ describe("the agent screen", () => {
     idle.h.unmount();
     const { container } = await screen(fauxAgent(), FAUX_AGENT, tasks.slice(0, 1));
     expect(fact(container, "Task")).toBeUndefined();
-    expect(container.querySelector(".agent-fact")?.getAttribute("data-testid")).toBe("agent-fact-model");
+    expect(container.querySelector(".agent-wide-facts .agent-fact")?.getAttribute("data-testid")).toBe("agent-fact-model");
   });
 
   test("updates from the store when a refetched row replaces the agent", async () => {
