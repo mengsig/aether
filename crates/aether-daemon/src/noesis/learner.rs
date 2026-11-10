@@ -38,11 +38,7 @@ impl NoesisService {
             };
             live.desk.clone()
         };
-        let desk = if matches!(&command, Command::NoesisCorrectLearner { .. }) {
-            super::writable_desk(&desk).await
-        } else {
-            desk.lock().await
-        };
+        let desk = desk.lock().await;
         let Some(noesis) = &desk.noesis else {
             return Err(ErrorReply::noesis_disabled());
         };

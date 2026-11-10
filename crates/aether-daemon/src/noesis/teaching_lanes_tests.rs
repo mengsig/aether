@@ -275,6 +275,168 @@ async fn assert_extract_queued(harness: &Harness, session: &str) {
     assert_eq!(job.target, session);
 }
 
+async fn held_write(harness: &Harness, command: Value) -> Reply {
+    let first = tokio::time::timeout(Duration::from_secs(2), harness.send_json(command.clone()))
+        .await
+        .expect("write did not wait for the teaching turn")
+        .expect("write succeeded");
+    let replay = tokio::time::timeout(Duration::from_secs(2), harness.send_json(command))
+        .await
+        .expect("receipt did not wait for the teaching turn")
+        .expect("receipt replayed");
+    assert_eq!(first, replay);
+    first
+}
+
+async fn publish_notes(harness: &Harness) -> aether_core::id::ArtifactId {
+    use aether_core::artifact::ArtifactKind;
+    use aether_runtime::{CreateAgentSpec, artifacts::ArtifactPublication};
+    let runtime = &harness.daemon.runtime;
+    let (agent, task) = runtime
+        .create_agent(
+            CreateAgentSpec {
+                role: "worker".into(),
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .expect("agent");
+    let artifact = runtime
+        .publish_artifact(
+            ArtifactPublication {
+                kind: ArtifactKind::File,
+                name: "notes.md".into(),
+                summary: "notes".into(),
+                content_type: Some("text/markdown".into()),
+                bytes: b"Alpha holds. Beta follows.".to_vec(),
+                agent: agent.id,
+                task: task.map(|task| task.id),
+            },
+            Actor::user(),
+        )
+        .await
+        .expect("artifact");
+    artifact.id
+}
+
+async fn seed_writable_rows(harness: &Harness) -> String {
+    use aether_noesis::learner;
+    use aether_protocol::noesis::ConceptKind;
+    let state = harness.daemon.noesis.state.lock().await;
+    let State::Running(live) = &*state else {
+        panic!("running")
+    };
+    let desk = live.desk.lock().await;
+    let conn = desk.noesis.as_ref().expect("open").store().connection();
+    let concept = learner::ensure_concept(
+        conn,
+        ConceptKind::Topic,
+        "Limits",
+        "Limits",
+        chrono::Utc::now(),
+    )
+    .expect("concept");
+    conn.execute("INSERT INTO propositions(id, name, statement, created_at) VALUES ('p_test', 'Test', 'Test holds', 'now')", []).expect("proposition");
+    conn.execute("INSERT INTO sources(id, name, artifact, imported_at) VALUES ('s_test', 'Test', 'a_test', 'now')", []).expect("source");
+    concept.id
+}
+
+async fn assert_import_and_cancel(harness: &Harness) {
+    use aether_core::noesis::{JobKind, JobState};
+    let job = {
+        let state = harness.daemon.noesis.state.lock().await;
+        let State::Running(live) = &*state else {
+            panic!("running")
+        };
+        let desk = live.desk.lock().await;
+        let conn = desk.noesis.as_ref().expect("open").store().connection();
+        aether_noesis::extract::jobs::create(conn, JobKind::ExtractSource, "s_test")
+            .expect("queued job")
+    };
+    let cancelled = held_write(
+        harness,
+        json!({"cmd":"noesis_cancel_job", "job":job.id, "idempotency_key":"held-cancel"}),
+    )
+    .await;
+    assert!(
+        matches!(cancelled, Reply::NoesisJob { job: ref cancelled } if cancelled.id == job.id && cancelled.state == JobState::Cancelled)
+    );
+    assert!(harness.events().iter().any(|event| matches!(&event.kind, EventKind::NoesisJobUpdated { job: announced } if announced.id == job.id && announced.state == JobState::Cancelled)));
+    let artifact = publish_notes(harness).await;
+    let imported = held_write(harness, json!({"cmd":"noesis_import_source", "name":"Notes", "artifact":artifact, "idempotency_key":"held-import"})).await;
+    let Reply::NoesisImport { source, job } = imported else {
+        panic!("import reply")
+    };
+    assert_eq!(job.target, source);
+    assert!(harness.events().iter().any(|event| matches!(&event.kind, EventKind::NoesisJobUpdated { job: announced } if announced.id == job.id)));
+}
+
+async fn assert_correction_and_deletions(harness: &Harness, concept: &str) {
+    use aether_protocol::noesis::ConceptStateKind;
+    let corrected = held_write(harness, json!({"cmd":"noesis_correct_learner", "concept":concept, "state":"fragile", "reason":"shaky", "idempotency_key":"held-correct"})).await;
+    assert!(
+        matches!(corrected, Reply::ConceptState(ref state) if state.state == ConceptStateKind::Fragile)
+    );
+    assert!(harness.events().iter().any(|event| matches!(&event.kind, EventKind::NoesisLearnerUpdated { concepts } if concepts.iter().any(|id| id == concept))));
+    assert_eq!(held_write(harness, json!({"cmd":"noesis_delete_proposition", "proposition":"p_test", "idempotency_key":"held-proposition"})).await, Reply::Ok);
+    assert_eq!(held_write(harness, json!({"cmd":"noesis_delete_source", "source":"s_test", "graph":"preserve", "idempotency_key":"held-source"})).await, Reply::Ok);
+    let state = harness.daemon.noesis.state.lock().await;
+    let State::Running(live) = &*state else {
+        panic!("running")
+    };
+    let desk = live.desk.lock().await;
+    let conn = desk.noesis.as_ref().expect("open").store().connection();
+    let count: i64 = conn.query_row("SELECT (SELECT count(*) FROM propositions WHERE id = 'p_test') + (SELECT count(*) FROM sources WHERE id = 's_test')", [], |row| row.get(0)).expect("deleted rows");
+    assert_eq!(count, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn graph_and_learner_writes_finish_during_a_held_turn() {
+    let home = Home::new();
+    let (harness, gated, first) = held_call(&home).await;
+    let _free = gated.release.clone().drop_guard();
+    let concept = seed_writable_rows(&harness).await;
+    assert_import_and_cancel(&harness).await;
+    assert_correction_and_deletions(&harness, &concept).await;
+    assert!(harness.daemon.runtime.turn_in_flight(first.agent));
+    gated.release.cancel();
+    harness.posed(&first.id).await;
+    harness.settled().await;
+    harness.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deletion_conflicts_only_with_the_held_session() {
+    let home = Home::new();
+    let (harness, gated, first) = held_call(&home).await;
+    let _free = gated.release.clone().drop_guard();
+    let other = harness.create(json!({})).await;
+    let active = json!({"cmd":"noesis_delete_session", "session":first.id, "graph":"preserve", "idempotency_key":"held-active-delete"});
+    let error = tokio::time::timeout(Duration::from_secs(2), harness.send_json(active))
+        .await
+        .expect("conflict did not wait")
+        .expect_err("active session is protected");
+    assert_eq!(error.reason.as_deref(), Some("conflict"));
+    assert_eq!(
+        harness
+            .session(&first.id)
+            .await
+            .expect("active session remains")
+            .id,
+        first.id
+    );
+    let delete = json!({"cmd":"noesis_delete_session", "session":other.id, "graph":"preserve", "idempotency_key":"held-other-delete"});
+    assert_eq!(held_write(&harness, delete).await, Reply::Ok);
+    assert_eq!(
+        harness.session(&other.id).await.expect_err("deleted").code,
+        ErrorCode::NotFound
+    );
+    gated.release.cancel();
+    harness.posed(&first.id).await;
+    harness.settled().await;
+    harness.close().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn one_timeout_retries_automatically_and_poses_the_question() {
     let home = Home::new();

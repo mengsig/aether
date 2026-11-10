@@ -103,7 +103,8 @@ async fn admit<'a>(
         | Command::NoesisCreateSession { .. } => ticket.desk.lock().await,
         Command::NoesisSend { session, .. }
         | Command::NoesisAnswer { session, .. }
-        | Command::NoesisRetryTurn { session, .. } => {
+        | Command::NoesisRetryTurn { session, .. }
+        | Command::NoesisDeleteSession { session, .. } => {
             let desk = ticket.desk.lock().await;
             if let Some(receipt) = runtime.noesis_receipt(submission).map_err(map_err)? {
                 let reply = serde_json::from_value(receipt).map_err(|e| {
@@ -118,7 +119,7 @@ async fn admit<'a>(
             }
             desk
         }
-        _ => super::writable_desk(&ticket.desk).await,
+        _ => ticket.desk.lock().await,
     };
     Ok(Admission::Desk(desk))
 }
@@ -314,8 +315,13 @@ impl NoesisService {
         }
         let (pending, _) =
             self.with_teaching(&ticket, &mut desk, runtime, |t, _| t.turn_pending(session))?;
-        if !pending.map_err(reply_error)? {
-            return Ok(());
+        match pending {
+            Ok(true) => {}
+            Ok(false)
+            | Err(TeachError::NotFound {
+                what: "session", ..
+            }) => return Ok(()),
+            Err(error) => return Err(reply_error(error)),
         }
         let host = self.turn_host(&ticket, &mut desk, runtime)?;
         let reservation = desk.reserve_turn(session);
