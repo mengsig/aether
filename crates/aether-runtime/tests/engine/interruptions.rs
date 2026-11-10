@@ -98,6 +98,136 @@ async fn engine_interrupted_clamps_an_over_long_adapter_error() {
 const SYNTHETIC_DENIAL: &str =
     "The user doesn't want to proceed with this tool use. The tool use was rejected.";
 
+struct BudgetSessionEngine {
+    turns: Arc<Mutex<Vec<EngineTurn>>>,
+}
+
+#[async_trait::async_trait]
+impl Engine for BudgetSessionEngine {
+    fn kind(&self) -> EngineKind {
+        EngineKind::CLAUDE_CODE
+    }
+
+    fn adapter(&self) -> String {
+        "budget-session/1".into()
+    }
+
+    async fn run(
+        &self,
+        turn: EngineTurn,
+        cancel: CancellationToken,
+    ) -> Result<EngineRun, EngineError> {
+        let first = {
+            let mut turns = self.turns.lock().unwrap();
+            turns.push(turn);
+            turns.len() == 1
+        };
+        let (tx, rx) = mpsc::channel(4);
+        tokio::spawn(async move {
+            if first {
+                tx.send(EngineEvent::Session {
+                    id: "budget-session".into(),
+                    model: None,
+                    tools: vec![],
+                })
+                .await
+                .unwrap();
+                tx.send(EngineEvent::UsageDelta {
+                    usage: aether_core::model::Usage {
+                        input_tokens: 41_000,
+                        ..Default::default()
+                    },
+                })
+                .await
+                .unwrap();
+                cancel.cancelled().await;
+            } else {
+                tx.send(EngineEvent::Assistant {
+                    content: vec![ContentBlock::text("resumed")],
+                    usage: None,
+                    model: None,
+                })
+                .await
+                .unwrap();
+                tx.send(EngineEvent::Done(EngineOutcome {
+                    text: Some("resumed".into()),
+                    ..Default::default()
+                }))
+                .await
+                .unwrap();
+            }
+        });
+        Ok(EngineRun {
+            events: rx,
+            input: None,
+            decisions: None,
+            stop: None,
+        })
+    }
+}
+
+#[tokio::test]
+async fn budget_stop_without_a_tool_reaches_the_retained_session() {
+    let turns = Arc::new(Mutex::new(Vec::new()));
+    let h = harness_with_engine(
+        Arc::new(BudgetSessionEngine {
+            turns: turns.clone(),
+        }),
+        Arc::default(),
+        Arc::default(),
+    )
+    .await;
+    let id = budgeted_agent(&h, 40_000);
+    h.runtime
+        .send_message(id, vec![ContentBlock::text("go")], Actor::user())
+        .unwrap();
+    let stopped = wait_for(h.store.as_ref(), id, |a| !a.is_live()).await;
+    assert!(
+        matches!(stopped.status, AgentStatus::Failed { ref error } if error.contains("token budget of 40000"))
+    );
+    assert_eq!(stopped.engine_session.as_deref(), Some("budget-session"));
+    let events = h
+        .store
+        .events(0, 1000, &EventFilter::own_events(id))
+        .unwrap();
+    assert!(events.iter().any(|event| matches!(&event.kind, EventKind::Custom { name, payload }
+        if name == "turn.interruption_reason" && payload["cause"].as_str().is_some_and(|cause| cause.contains("budget stop:") && cause.contains("40000")))));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::ToolStarted { .. }))
+    );
+    h.runtime
+        .update_agent(
+            id,
+            aether_runtime::AgentUpdate {
+                token_budget: Some(0),
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .unwrap();
+    h.runtime.wake_agent(id, Actor::user()).unwrap();
+    wait_for(h.store.as_ref(), id, |a| {
+        a.stats.turns >= 2 && a.status.kind() == AgentStatusKind::Waiting
+    })
+    .await;
+    {
+        let captured = turns.lock().unwrap();
+        assert_eq!(captured.len(), 2);
+        assert_eq!(captured[1].session.as_deref(), Some("budget-session"));
+        assert!(
+            captured[1]
+                .prompt
+                .contains("Your previous turn was interrupted by budget stop:"),
+            "{}",
+            captured[1].prompt
+        );
+        assert!(captured[1].prompt.contains("40000"));
+    }
+    h.runtime.shutdown().await;
+}
+
 /// Emits Claude's killed-tool result, or Codex's interrupted turn without a result.
 struct InFlightEngine {
     prompts: Arc<Mutex<Vec<String>>>,
