@@ -80,6 +80,7 @@ async fn plan_approval_is_published_once_and_revisions_remain_visible() {
         "teacher",
         json!({"text": "Draft revision", "tool_calls": [tool_call("noesis_plan", revised)]}),
     );
+    cli.queue("teacher", json!({"text": "Ready for the revision?", "tool_calls": [tool_call("noesis_graph_search", json!({"query": "angles"}))]}));
     cli.queue("teacher", json!({"text": "Now learn angles. Ready?"}));
     harness.send_json(json!({"cmd": "noesis_send", "session": id, "text": "Change it", "idempotency_key": "revise-plan"})).await.expect("revision");
     harness.settled().await;
@@ -92,6 +93,10 @@ async fn plan_approval_is_published_once_and_revisions_remain_visible() {
             .filter(|text| *text == "Now learn angles. Ready?")
             .count(),
         1
+    );
+    assert!(
+        !texts.iter().any(|text| text == "Ready for the revision?"),
+        "{texts:?}"
     );
     assert!(
         !texts.iter().any(|text| text == "Draft revision"),

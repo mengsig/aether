@@ -607,21 +607,20 @@ impl std::fmt::Debug for Turn {
 
 impl Turn {
     fn prefer_final_plan_reply(&mut self, sealer: &Sealer) {
-        let Some(final_step) = self.steps.last() else {
-            return;
-        };
-        if !final_step.calls.is_empty()
-            || final_step.text.trim().is_empty()
-            || sealer.holds(&final_step.text)
-        {
-            return;
-        }
-        for step in &mut self.steps {
-            if step
-                .calls
+        let has_plan = self.steps.iter().any(|step| {
+            step.calls
                 .iter()
                 .any(|call| !call.is_error && ToolName::parse(&call.name) == Some(ToolName::Plan))
-            {
+        });
+        if !has_plan {
+            return;
+        }
+        let last_safe = self
+            .steps
+            .iter()
+            .rposition(|step| !step.text.trim().is_empty() && !sealer.holds(&step.text));
+        for (index, step) in self.steps.iter_mut().enumerate() {
+            if Some(index) != last_safe {
                 step.text.clear();
             }
         }

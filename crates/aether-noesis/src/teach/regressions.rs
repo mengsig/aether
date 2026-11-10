@@ -12,22 +12,39 @@ use crate::prompts::Agent;
 const SECRET: &str = "mitochondria";
 
 #[test]
-fn plan_reply_prefers_the_final_message_on_both_turn_paths() {
+fn plan_reply_prefers_one_safe_message_on_both_turn_paths() {
     for segmented in [false, true] {
-        let (_dir, noesis) = fixture();
-        let mut t = Teaching::new(&noesis, FauxEngine::new());
-        let id = teacher_session(&mut t);
-        t.engine_mut()
-            .script(Agent::Teacher, "Earlier order", vec![(PLAN, three_steps())]);
-        t.engine_mut().script(Agent::Teacher, "Final order", vec![]);
-        let report = if segmented {
-            t.advance(&id).unwrap().pop().unwrap()
-        } else {
-            t.run_turn(&id).unwrap()
-        };
-        assert_eq!(report.end, TurnEnd::AwaitingLearner);
-        assert_eq!(report.steps[0].text, "");
-        assert_eq!(report.steps[1].text, "Final order");
+        for final_text in ["Final order", ""] {
+            let (_dir, noesis) = fixture();
+            let mut t = Teaching::new(&noesis, FauxEngine::new());
+            let id = teacher_session(&mut t);
+            t.engine_mut()
+                .script(Agent::Teacher, "Earlier order", vec![(PLAN, three_steps())]);
+            t.engine_mut().script(
+                Agent::Teacher,
+                "Ready to begin?",
+                vec![("noesis.graph_search", json!({"query": "angles"}))],
+            );
+            t.engine_mut().script(Agent::Teacher, final_text, vec![]);
+            let report = if segmented {
+                t.advance(&id).unwrap().pop().unwrap()
+            } else {
+                t.run_turn(&id).unwrap()
+            };
+            assert_eq!(report.end, TurnEnd::AwaitingLearner);
+            let visible: Vec<_> = report
+                .steps
+                .iter()
+                .filter(|step| !step.text.is_empty())
+                .map(|step| step.text.as_str())
+                .collect();
+            let expected = if final_text.is_empty() {
+                "Ready to begin?"
+            } else {
+                final_text
+            };
+            assert_eq!(visible, [expected]);
+        }
     }
 }
 
