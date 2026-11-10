@@ -422,7 +422,7 @@ async fn run_segments<'a>(
         first = false;
         match segment.outcome {
             SegmentOutcome::Call(call) => {
-                publish(
+                let published = publish(
                     &desk,
                     &host.runtime,
                     Output {
@@ -431,7 +431,19 @@ async fn run_segments<'a>(
                     },
                     &Actor::System,
                     None,
-                )?;
+                );
+                if let Err(error) = published {
+                    let output = interrupted_output(&mut desk, segment.engine, segment.buffer)?;
+                    if let Err(events_error) =
+                        publish(&desk, &host.runtime, output, &Actor::System, None)
+                    {
+                        return Err(ErrorReply::internal(format!(
+                            "{}; also failed to publish teaching events: {}",
+                            error.message, events_error.message
+                        )));
+                    }
+                    return Err(error);
+                }
                 engine = segment.engine;
                 buffer = segment.buffer;
                 drop(desk);

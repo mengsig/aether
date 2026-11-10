@@ -68,6 +68,69 @@ async fn shutdown_preserves_judgment_events_and_evidence_before_resuming() {
     reopened.close().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn evidence_append_failure_still_publishes_committed_judgment() {
+    let home = Home::new();
+    let client = Arc::new(ScriptedClient::new());
+    client.push(ScriptedClient::tool_call(
+        ASK,
+        json!({
+            "kind": "recall", "prompt": "What is 2 + 2?", "answer_key": "four"
+        }),
+    ));
+    let harness = Harness::open(&home, client.clone()).await;
+    harness.configure(teaching_on(|_| {})).await;
+    let created = harness.create(json!({})).await;
+    let posed = harness.posed(&created.id).await;
+    harness.settled().await;
+    let question = posed.open_question.unwrap().id;
+    let conn = rusqlite::Connection::open(home.data.path().join("noesis.db")).unwrap();
+    conn.execute_batch("CREATE TRIGGER fail_evidence BEFORE INSERT ON evidence BEGIN SELECT RAISE(ABORT, 'evidence failure'); END;").unwrap();
+    client.push(ScriptedClient::tool_call(
+        "noesis_judge_recall",
+        json!({"question": question, "correct": true}),
+    ));
+    client.push(ScriptedClient::text("Continue."));
+    harness.send_json(json!({"cmd":"noesis_answer", "session":created.id,
+        "question":question, "answer":{"text":"four", "dont_know":false}, "idempotency_key":"failed-evidence"})).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let session = harness.session(&created.id).await.unwrap();
+            if session.questions[0]
+                .result
+                .as_ref()
+                .is_some_and(|result| result.correct == Some(true))
+                && !harness.daemon.runtime.turn_in_flight(created.agent)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the failed segment ends");
+    assert_judgment_event_once(&harness, &created.id);
+    harness.close().await;
+    let next = Arc::new(ScriptedClient::new());
+    next.push(ScriptedClient::text("Continue."));
+    let reopened = Harness::open(&home, next.clone()).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while next.requests().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        reopened.settled().await;
+    })
+    .await
+    .expect("the interrupted turn resumes");
+    assert_judgment_event_once(&reopened, &created.id);
+    reopened.close().await;
+}
+
+fn assert_judgment_event_once(harness: &Harness, session: &str) {
+    assert_eq!(harness.events().iter().filter(|event| matches!(&event.kind,
+        EventKind::NoesisAnswerRecorded { session: id, result } if id == session && result.correct == Some(true))).count(), 1);
+}
+
 async fn hold_after_recall_judgment(
     home: &Home,
     first: &Arc<ScriptedClient>,
