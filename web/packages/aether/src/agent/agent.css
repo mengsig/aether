@@ -2,7 +2,7 @@
   /* The page fills the viewport under the shell header: title, facts card, then the chat, which alone scrolls. */
   .agent {
     grid-template-rows: auto auto minmax(0, 1fr); gap: var(--space-3); max-inline-size: none;
-    block-size: calc(100dvh - 3.5rem - var(--space-6) - var(--space-4)); min-block-size: 30rem;
+    block-size: calc(100dvh - var(--space-12) - var(--space-2) - var(--space-6) - var(--space-4)); min-block-size: 30rem;
     margin-block-end: calc(var(--space-4) - var(--space-12));
   }
   /* Inside the fixed-height page the chat is a column whose transcript takes the space the title, facts and
@@ -45,7 +45,7 @@
     }
   }
   @media (max-width: 48rem) {
-    .agent { block-size: calc(100dvh - 3rem - var(--space-4) - var(--space-3)); margin-block-end: calc(var(--space-3) - var(--space-10)); gap: var(--space-2); }
+    .agent { block-size: calc(100dvh - var(--space-12) - var(--space-4) - var(--space-3)); margin-block-end: calc(var(--space-3) - var(--space-10)); gap: var(--space-2); }
     .agent-name { font-size: var(--text-lg); }
   }
 }
