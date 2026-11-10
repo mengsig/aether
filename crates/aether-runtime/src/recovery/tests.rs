@@ -544,11 +544,9 @@ async fn recovery_carries_an_interruption_correction_only_for_in_flight_tools() 
 
     let (runtime, _dir, agent) = fixture().await;
     recover(&runtime).unwrap();
-    assert!(
-        crate::tool_interruption::resume_notes(&runtime, agent.id)
-            .unwrap()
-            .is_empty()
-    );
+    let note = crate::tool_interruption::resume_notes(&runtime, agent.id).unwrap();
+    assert!(note.contains("system daemon stop or restart"));
+    assert!(!note.contains("previous tool call"));
 }
 
 /// Raise a pending approval in the agent's turn, on a link that ran `model`.
