@@ -104,10 +104,10 @@
   .learn-timeline { display: grid; gap: var(--space-5); margin: 0; padding: 0; list-style: none; }
   @media (min-width: 90rem) {
     .learn-timeline { inline-size: 100%; max-inline-size: 96rem; margin-inline: auto; }
-    .learn-timeline :is(.learn-bubble:not([data-role="learner"]), .learn-q, .learn-lesson-sources, .learn-complete) {
+    .learn-timeline :is(.learn-bubble:not([data-role="learner"]), .learn-q, .learn-lesson-sources) {
       max-inline-size: clamp(46rem, 45vw, 64rem);
     }
-    .learn-scroll > .learn-lesson-sources { max-inline-size: clamp(46rem, 45vw, 64rem); margin-inline-start: max(0px, (100% - 96rem) / 2); }
+    .learn-scroll > :is(.learn-lesson-sources, .learn-complete) { max-inline-size: clamp(46rem, 45vw, 64rem); margin-inline-start: max(0px, (100% - 96rem) / 2); }
   }
   .learn-timeline-item { animation: ui-rise var(--motion-base) var(--ease-standard); }
   /* The teacher reads like a page; your words sit in a bubble on the right. */
