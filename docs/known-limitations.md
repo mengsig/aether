@@ -275,7 +275,6 @@ looks like a boundary and is not one.
 
 ## Platforms
 
-
 Aether supports Linux and macOS. Native Windows is not supported: the daemon
 and its clients talk over Unix sockets, and the process runners rely on Unix
 process groups. Continuous integration runs on Linux for every change; the

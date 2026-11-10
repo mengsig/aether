@@ -16,7 +16,7 @@ The Archon side is audited separately, in the Archon repository's own
   fixed here has a test that fails without its fix.
 
 - **The web UI.** 1.3.0 ships the phone app of 1.2.11 (`crates/aether-remote/web/`)
-  unchanged, under the same CSP, cookies-free pairing and Host and Origin
+  unchanged, under the same CSP, cookie-free pairing and Host and Origin
   checks. The desktop app and the second web UI were removed, so their
   findings and their section of this audit went with them. No daemon-side
   check was loosened for that.
