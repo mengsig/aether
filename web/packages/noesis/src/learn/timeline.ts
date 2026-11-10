@@ -48,9 +48,10 @@ function messageItems({ agent, entries }: AgentTranscript): TimelineItem[] {
     const role = entry.message.role === "assistant" ? "teacher" : entry.message.role === "user" ? "learner" : null;
     // Noesis's own inputs (the opening context, a hand-off) are user-role but never the learner's words.
     if (role === null || (role === "learner" && internal.has(entry.seq))) continue;
-    if (role === "learner" && entry.message.content.length === 1 && entry.message.content[0]?.type === "text"
-      && isAnswerEnvelope(entry.message.content[0].text)) continue;
-    const text = messageText(entry.message);
+    const content = role === "learner"
+      ? entry.message.content.filter((block) => block.type !== "text" || !isAnswerEnvelope(block.text))
+      : entry.message.content;
+    const text = messageText({ ...entry.message, content });
     if (text !== "") items.push({ kind: "message", key: `m${agent.agent}:${entry.seq}`, at: entry.at, role, text, live: false });
   }
   return items;
