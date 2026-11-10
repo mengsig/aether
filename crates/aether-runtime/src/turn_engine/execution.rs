@@ -137,6 +137,7 @@ pub(crate) async fn execute(
         memories: &memory_records,
         notes: &notes.notes,
         notes_omitted: notes.omitted,
+        interruption_notes: "",
         tools,
         model_profile: profile.as_deref(),
         engine_policy: None,

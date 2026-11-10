@@ -225,7 +225,7 @@ pub(crate) fn recover_agent(
         tracing::info!(agent = %agent.id, "agent changed during recovery; leaving it");
         return Ok(Outcome::Changed);
     }
-    let mut commit = interruption_commit(&agent, &lease, &found, &held);
+    let mut commit = interruption_commit(&agent, &lease, &found, &held, restart);
     expire_lost_approvals(runtime, &mut commit, &agent, &found.engine_approvals)?;
     if let Some(reason) = reason {
         commit.push_event(crate::orphans::recovered_event(&agent, reason));
@@ -315,6 +315,7 @@ fn interruption_commit(
     lease: &aether_core::lease::Lease,
     found: &Interrupted,
     held: &[ResourceKey],
+    restart: Restart,
 ) -> Commit {
     let mut commit = Commit::new()
         .event(recovery_event(
@@ -324,6 +325,12 @@ fn interruption_commit(
             },
         ))
         .mutate(Mutation::ClearLease(agent.id));
+    let cause = match restart {
+        Restart::Reboot => "a system restart, not requested by the user",
+        Restart::Daemon => "a system daemon stop or restart, not requested by the user",
+        Restart::Live => "runtime recovery of an interrupted turn",
+    };
+    crate::tool_interruption::push_turn_note(&mut commit, agent, cause);
     record_open_calls(&mut commit, agent, found);
     if let Some((invocation, snapshot)) = found.open_invocation {
         commit.push_event(recovery_event(agent, EventKind::InvocationFailed {

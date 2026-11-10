@@ -48,10 +48,42 @@ function messageItems({ agent, entries }: AgentTranscript): TimelineItem[] {
     const role = entry.message.role === "assistant" ? "teacher" : entry.message.role === "user" ? "learner" : null;
     // Noesis's own inputs (the opening context, a hand-off) are user-role but never the learner's words.
     if (role === null || (role === "learner" && internal.has(entry.seq))) continue;
-    const text = messageText(entry.message);
+    const content = role === "learner"
+      ? entry.message.content.filter((block) => block.type !== "text" || !isAnswerEnvelope(block.text))
+      : entry.message.content;
+    const text = messageText({ ...entry.message, content });
     if (text !== "") items.push({ kind: "message", key: `m${agent.agent}:${entry.seq}`, at: entry.at, role, text, live: false });
   }
   return items;
+}
+
+function isAnswerEnvelope(text: string): boolean {
+  const prefix = "The learner answered: ";
+  if (!text.startsWith(prefix)) return false;
+  let value: unknown;
+  try {
+    value = JSON.parse(text.slice(prefix.length));
+  } catch {
+    return false;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const answer = value as Record<string, unknown>;
+  const allowed = new Set(["choices", "chosen", "text", "dont_know", "confidence", "thinking", "question", "correct", "answer_key"]);
+  if (Object.keys(answer).some((key) => !allowed.has(key)) || typeof answer.dont_know !== "boolean") return false;
+  for (const key of ["choices", "chosen"]) {
+    const field = answer[key];
+    if (field !== undefined && (!Array.isArray(field) || !field.every((item: unknown) => typeof item === "string"))) return false;
+  }
+  for (const key of ["text", "thinking"]) {
+    if (answer[key] != null && typeof answer[key] !== "string") return false;
+  }
+  if (answer.question !== undefined && (typeof answer.question !== "string" || answer.question === "")) return false;
+  if (answer.correct !== undefined && typeof answer.correct !== "boolean") return false;
+  if (answer.answer_key !== undefined && typeof answer.answer_key !== "string") return false;
+  if (answer.confidence != null && (typeof answer.confidence !== "number" || !Number.isInteger(answer.confidence) || answer.confidence < 0 || answer.confidence > 100)) return false;
+  const hasChoice = (Array.isArray(answer.choices) && answer.choices.length > 0) || (Array.isArray(answer.chosen) && answer.chosen.length > 0);
+  const hasText = typeof answer.text === "string" && answer.text.trim() !== "";
+  return answer.dont_know ? !hasChoice && answer.text == null && answer.confidence == null : hasChoice || hasText;
 }
 
 function questionItems(session: aether.NoesisSession, learn: NoesisCache): TimelineItem[] {

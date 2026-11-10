@@ -214,10 +214,10 @@ async fn a_daemon_stop_mid_model_retries_without_cancelling_the_task() {
         .await;
     let h2 = restart_over(
         &h,
-        vec![ScriptedClient::tool_call(
-            "complete_task",
-            json!({"summary": "done"}),
-        )],
+        vec![
+            ScriptedClient::tool_call("read_file", json!({"path": "missing.txt"})),
+            ScriptedClient::tool_call("complete_task", json!({"summary": "done"})),
+        ],
     )
     .await;
     assert_eq!(
@@ -229,6 +229,26 @@ async fn a_daemon_stop_mid_model_retries_without_cancelling_the_task() {
         Some(aether_core::event::RecoveryClass::Retry)
     );
     assert!(!types(h2.store.as_ref(), agent.id).contains(&"agent.cancelled".to_owned()));
+    let requests = h2.client.requests();
+    assert_eq!(requests.len(), 2);
+    let first = requests[0]
+        .system
+        .iter()
+        .map(|block| block.text.as_str())
+        .collect::<String>();
+    let second = requests[1]
+        .system
+        .iter()
+        .map(|block| block.text.as_str())
+        .collect::<String>();
+    assert!(
+        first.contains("system daemon stop or restart, not requested by the user"),
+        "{first}"
+    );
+    assert!(
+        !second.contains("Your previous turn was interrupted"),
+        "{second}"
+    );
     h2.runtime.shutdown().await;
 }
 

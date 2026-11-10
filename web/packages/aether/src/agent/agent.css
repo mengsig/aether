@@ -2,7 +2,7 @@
   /* The page fills the viewport under the shell header: title, facts card, then the chat, which alone scrolls. */
   .agent {
     grid-template-rows: auto auto minmax(0, 1fr); gap: var(--space-3); max-inline-size: none;
-    block-size: calc(100dvh - 3.5rem - var(--space-4) * 2); min-block-size: 30rem;
+    block-size: calc(100dvh - var(--space-12) - var(--space-2) - var(--space-6) - var(--space-4)); min-block-size: 30rem;
     margin-block-end: calc(var(--space-4) - var(--space-12));
   }
   /* Inside the fixed-height page the chat is a column whose transcript takes the space the title, facts and
@@ -19,6 +19,8 @@
   .agent-id { color: var(--color-text-faint); font-family: var(--font-mono); font-size: var(--text-xs); }
   .agent-detail { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); transition: color var(--motion-base) var(--ease-standard); }
   .agent-detail[data-state="failed"] { color: var(--color-danger); }
+  .agent-wide-metadata { display: grid; gap: var(--space-1); }
+  .agent-compact-details { display: none; }
 
   .agent-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: var(--space-4) var(--space-5); margin: 0; }
   .agent-fact { display: grid; gap: var(--space-1); min-inline-size: 0; }
@@ -29,8 +31,21 @@
   @media (min-width: 90rem) {
     .agent-facts { grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
   }
+  @media (max-width: 79.999rem) and (max-height: 50rem) {
+    .agent { grid-template-rows: auto minmax(0, 1fr); }
+    .agent-head { position: relative; z-index: 2; }
+    .agent-wide-metadata, .agent-wide-facts { display: none; }
+    .agent-compact-details { display: block; font-size: var(--text-sm); }
+    .agent-compact-details summary { cursor: pointer; color: var(--color-text-muted); }
+    .agent-compact-panel {
+      position: absolute; inset-block-start: 100%; inset-inline: 0; display: grid; gap: var(--space-3);
+      max-block-size: min(60vh, 30rem); overflow: auto; padding: var(--space-4);
+      border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+      background: var(--color-surface-1); box-shadow: var(--elevation-3);
+    }
+  }
   @media (max-width: 48rem) {
-    .agent { block-size: calc(100dvh - 3rem - var(--space-3) * 2); margin-block-end: calc(var(--space-3) - var(--space-10)); gap: var(--space-2); }
+    .agent { block-size: calc(100dvh - var(--space-12) - var(--space-4) - var(--space-3)); margin-block-end: calc(var(--space-3) - var(--space-10)); gap: var(--space-2); }
     .agent-name { font-size: var(--text-lg); }
   }
 }

@@ -405,6 +405,7 @@ pub(super) async fn run_link(
     model.clone_into(&mut agent_for_link.model);
     agent_for_link.config.effort = resolved.model.effort_for(ctx.agent.config.effort);
     let profile = runtime.model_profile(&resolved);
+    let interruption_notes = crate::tool_interruption::resume_notes(runtime, ctx.agent.id)?;
     let assembled = runtime.context.assemble(ContextInputs {
         agent: &agent_for_link,
         task: ctx.task.as_ref(),
@@ -417,6 +418,7 @@ pub(super) async fn run_link(
         memories: &memory_records,
         notes: &notes.notes,
         notes_omitted: notes.omitted,
+        interruption_notes: &interruption_notes,
         tools,
         model_profile: profile.as_deref(),
         engine_policy: None,
