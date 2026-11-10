@@ -258,10 +258,12 @@ test("a failed palette load keeps the shell usable and retries with a fresh load
     .mockRejectedValueOnce(new Error("Chunk unavailable"))
     .mockResolvedValueOnce({ default: CommandPalette });
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
-  const { container } = await render(<><button>Shell remains usable</button><PaletteBoundary load={loadPalette} open onClose={() => {}} commands={[]} /></>);
+  const home = <PaletteBoundary load={loadPalette} open onClose={() => {}} commands={[]} />;
+  const { container } = await render(shell({ home }).node);
   await settle();
   expect(container.textContent).toContain("Chunk unavailable");
-  expect(byText(container, "button", "Shell remains usable")).toBeTruthy();
+  expect(container.querySelector(".ui-shell .ui-palette-failure[role=alert]")).not.toBeNull();
+  expect(byText(container, "button", "Jump to")).toBeTruthy();
   await click(byText(container, "button", "Try again"));
   await settle();
   expect(loadPalette).toHaveBeenCalledTimes(2);

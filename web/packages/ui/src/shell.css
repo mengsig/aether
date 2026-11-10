@@ -95,6 +95,10 @@
   @keyframes ui-screen-in { from { opacity: 0; translate: 0 var(--space-1); } }
 
   /* The Jump-to palette: one large search field over a list of rows. */
+  .ui-palette-failure {
+    position: fixed; inset: var(--space-6) var(--space-4) auto; z-index: 55;
+    border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1); box-shadow: var(--elevation-3);
+  }
   .ui-palette { inline-size: min(40rem, calc(100% - var(--space-8))); margin-block-start: 12vh; }
   .ui-palette .ui-dialog-frame { gap: var(--space-3); padding: var(--space-4); }
   .ui-palette .ui-dialog-title { color: var(--color-text-muted); font: var(--weight-medium) var(--text-sm) / var(--leading-tight) var(--font-ui); letter-spacing: 0; }

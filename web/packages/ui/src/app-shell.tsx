@@ -57,7 +57,7 @@ export class PaletteBoundary extends Component<CommandPaletteProps & { readonly 
     this.setState({ failure: null });
   }
   override render(): ReactNode {
-    if (this.state.failure !== null) return <ErrorState title="The palette failed" message={this.state.failure} onRetry={() => this.retry()} />;
+    if (this.state.failure !== null) return <ErrorState className="ui-palette-failure" title="The palette failed" message={this.state.failure} onRetry={() => this.retry()} />;
     return <Suspense fallback={null}>{createElement(this.palette, this.props)}</Suspense>;
   }
 }
