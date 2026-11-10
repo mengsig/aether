@@ -36,6 +36,25 @@ impl Locks {
     }
 }
 
+pub(crate) async fn services(
+    noesis: Arc<NoesisService>,
+    runtime: Arc<Runtime>,
+    connections: JoinSet<()>,
+    locks: Locks,
+    #[cfg(test)] before_noesis: Option<Box<dyn FnOnce() + Send>>,
+) -> (bool, bool, bool) {
+    let noesis_stopped = self::noesis(
+        noesis,
+        locks.clone(),
+        #[cfg(test)]
+        before_noesis,
+    )
+    .await;
+    let stopped = self::runtime(runtime, locks.clone()).await;
+    let drained = self::connections(connections, locks).await;
+    (noesis_stopped, stopped, drained)
+}
+
 async fn phase(
     name: &'static str,
     deadline: Duration,
@@ -91,7 +110,15 @@ pub(crate) async fn connections(mut connections: JoinSet<()>, locks: Locks) -> b
     .await
 }
 
-pub(crate) async fn noesis(noesis: Arc<NoesisService>, locks: Locks) -> bool {
+pub(crate) async fn noesis(
+    noesis: Arc<NoesisService>,
+    locks: Locks,
+    #[cfg(test)] before_noesis: Option<Box<dyn FnOnce() + Send>>,
+) -> bool {
+    #[cfg(test)]
+    if let Some(observe) = before_noesis {
+        observe();
+    }
     phase("noesis", DRAIN_DEADLINE, async move {
         let _locks = locks;
         noesis.shutdown().await;

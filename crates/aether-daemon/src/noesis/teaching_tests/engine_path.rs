@@ -635,6 +635,96 @@ struct HoldingCli {
     started: CancellationToken,
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_stops_teaching_before_runtime_and_resumes_the_interrupted_turn() {
+    let home = Home::new();
+    let started = CancellationToken::new();
+    let harness = holding_harness(
+        &home,
+        HoldingCli {
+            spent: Usage::default(),
+            started: started.clone(),
+        },
+    )
+    .await;
+    let created = harness.create(json!({})).await;
+    tokio::time::timeout(Duration::from_secs(10), started.cancelled())
+        .await
+        .expect("the Noesis engine started a model step");
+
+    let runtime = harness.daemon.runtime.clone();
+    let (send, receive) = tokio::sync::oneshot::channel();
+    let observe = observe_noesis_shutdown(runtime.clone(), created.agent, send);
+    let locks = shutdown_locks(&home);
+    let stopping = tokio::spawn(crate::shutdown::services(
+        harness.daemon.noesis.clone(),
+        runtime,
+        tokio::task::JoinSet::new(),
+        locks,
+        Some(observe),
+    ));
+    let (active, stopped) = tokio::time::timeout(Duration::from_secs(5), receive)
+        .await
+        .expect("shutdown reached Noesis within the deadline")
+        .expect("shutdown observer completed");
+    let result = tokio::time::timeout(Duration::from_secs(5), stopping)
+        .await
+        .expect("shutdown completed within the deadline")
+        .expect("shutdown task");
+    assert_eq!(result, (true, true, true), "shutdown phases finish");
+    assert!(!stopped, "runtime shutdown must follow Noesis shutdown");
+    assert!(
+        active,
+        "the real teaching engine must still have a turn in flight"
+    );
+    drop(harness);
+
+    let cli = Arc::new(FauxCli::default());
+    cli.queue(
+        "prober",
+        json!({"tool_calls": [tool_call(ASK, capital_question())]}),
+    );
+    let reopened = engine_harness(&home, cli.clone()).await;
+    let posed = tokio::time::timeout(Duration::from_secs(10), reopened.posed(&created.id))
+        .await
+        .expect("the interrupted engine turn resumes");
+    assert!(posed.stalled.is_none(), "the turn must not stall");
+    assert!(posed.open_question.is_some());
+    reopened.close().await;
+}
+
+fn observe_noesis_shutdown(
+    runtime: Arc<aether_runtime::Runtime>,
+    agent: AgentId,
+    send: tokio::sync::oneshot::Sender<(bool, bool)>,
+) -> Box<dyn FnOnce() + Send> {
+    Box::new(move || {
+        let events = runtime
+            .store()
+            .events(0, 100_000, &aether_store::EventFilter::default())
+            .expect("read runtime events");
+        let stopped = events
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::DaemonStopped { .. }));
+        send.send((runtime.turn_in_flight(agent), stopped))
+            .expect("observer is waiting");
+    })
+}
+
+fn shutdown_locks(home: &Home) -> crate::shutdown::Locks {
+    crate::shutdown::Locks::new(
+        Arc::new(
+            crate::instance_lock::InstanceLock::for_store(&home.data.path().join("aether.db"))
+                .unwrap(),
+        ),
+        Arc::new(
+            crate::instance_lock::InstanceLock::for_socket(&home.data.path().join("daemon.sock"))
+                .unwrap(),
+        ),
+        None,
+    )
+}
+
 async fn holding_harness(home: &Home, cli: HoldingCli) -> Harness {
     std::fs::write(home.config.path().join("providers.toml"), PROVIDERS).expect("providers");
     let mut engines: HashMap<EngineKind, Arc<dyn aether_engine::Engine>> = HashMap::new();

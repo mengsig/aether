@@ -574,9 +574,15 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     tracing::info!("aetherd shutting down");
     shutdown.cancel();
     let locks = shutdown::Locks::new(instance.clone(), socket_lock.clone(), socket_alias);
-    let noesis_stopped = shutdown::noesis(noesis.clone(), locks.clone()).await;
-    let stopped = shutdown::runtime(runtime.clone(), locks.clone()).await;
-    let drained = shutdown::connections(connections, locks.clone()).await;
+    let (noesis_stopped, stopped, drained) = shutdown::services(
+        noesis.clone(),
+        runtime.clone(),
+        connections,
+        locks.clone(),
+        #[cfg(test)]
+        None,
+    )
+    .await;
     drop(runtime);
     drop(noesis);
     drop(store_dyn);
