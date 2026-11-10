@@ -1,9 +1,11 @@
 // An evidence bundle: what the frontend gathered from reads the user can already make, measured and
 // trimmed here so a refused bundle is never sent. The daemon checks the same 32 KiB limit again.
 
-import type { aether, EntityKind } from "@aether-ui/protocol";
+import type { aether } from "@aether-ui/protocol";
 import { invariant } from "../learn/invariant.ts";
 import { isSince } from "./catchup-range.ts";
+import { QUERY_KEY, UNDERSTAND_KINDS, type UnderstandKind, type UnderstandRequest } from "./links.ts";
+export { understandHref, type UnderstandKind, type UnderstandRequest } from "./links.ts";
 
 /** The most excerpt text one bundle may carry, in UTF-8 bytes, as the daemon counts it. */
 export const BUNDLE_LIMIT_BYTES = 32_768;
@@ -14,19 +16,6 @@ export const BRIEF_MAX_BYTES = 6_144;
 /** The daemon's other bounds: items per bundle and title length in characters. */
 export const BUNDLE_MAX_ITEMS = 50;
 export const TITLE_MAX_CHARS = 300;
-
-/** What a bundle is built from, an entity or a repository's catch-up; each has a source in sources.ts. */
-export const UNDERSTAND_KINDS = ["item", "run", "agent", "pull_request", "repository"] as const satisfies readonly (EntityKind | "repository")[];
-export type UnderstandKind = (typeof UNDERSTAND_KINDS)[number];
-
-export interface UnderstandRequest {
-  readonly kind: UnderstandKind;
-  /** The entity's own connection: an Archon one for items, runs and PRs, an Aether one for agents. */
-  readonly conn: string;
-  readonly id: string;
-  /** A repository catch-up's first day, `YYYY-MM-DD`; set for `repository` and no other kind. */
-  readonly since?: string;
-}
 
 export const EVIDENCE_STATUSES: readonly aether.EvidenceStatus[] = ["verified", "reviewed", "preliminary"];
 
@@ -111,16 +100,6 @@ export function formatBytes(bytes: number): string {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KiB`;
 }
 
-const QUERY_KEY = "understand";
-
-/** `#/learn?understand=<kind>&conn=<conn>&id=<id>[&since=<day>]`: routes are frozen, so the sheet rides on F5's `#/learn`. */
-export function understandHref(request: UnderstandRequest): string {
-  invariant(request.conn.length > 0 && request.id.length > 0, "an understand link names a connection and an entity");
-  invariant((request.since !== undefined) === (request.kind === "repository"), "only a repository catch-up has a first day");
-  const query = new URLSearchParams({ [QUERY_KEY]: request.kind, conn: request.conn, id: request.id });
-  if (request.since !== undefined) query.set("since", request.since);
-  return `#/learn?${query.toString()}`;
-}
 
 /** The request a hash carries, or null when it asks for none, names an unknown kind or a catch-up without a valid day. */
 export function parseUnderstand(hash: string): UnderstandRequest | null {

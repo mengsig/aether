@@ -13,7 +13,6 @@ import { applyRead, failRead, markRequested, settleSubmission } from "./reads.ts
 import { registry, type Registry } from "./registry.ts";
 import { Store, INITIAL_STATE, type FrameScheduler, type Submission } from "./store.ts";
 import { indexedDbIdentity, type IdentityStore } from "./transports/identity.ts";
-import { ipcTransport } from "./transports/ipc.ts";
 import { ARCHON_MOUNT, archonSocketTransport } from "./transports/ws-archon.ts";
 import { aetherSocketTransport } from "./transports/ws-aether.ts";
 
@@ -273,6 +272,7 @@ async function runPrivileged(host: HostAdapter, manager: ConnectionManager, conn
 
 async function discover(host: HostAdapter, store: Store): Promise<Endpoint[]> {
   invariant(host.desktop !== undefined, "desktop discovery requires a bridge");
+  const { ipcTransport } = await import("./transports/ipc.ts");
   const transport = ipcTransport(host.desktop, (message) => store.report(message));
   const daemons = await host.desktop.discover();
   return daemons.filter((d) => d.reachable).map((d) => ({ daemon: d.kind, transport, target: d.id, label: d.label }));

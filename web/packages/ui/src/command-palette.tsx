@@ -18,7 +18,7 @@ export interface Command {
 
 /** The most options the palette renders; the rest are reached by typing more. */
 export const MAX_SHOWN = 50;
-export const MAX_RECENTS = 8;
+export { MAX_RECENTS, pushRecent } from "./palette-recents.ts";
 
 interface IndexedCommand {
   readonly command: Command;
@@ -86,12 +86,6 @@ export function browseCommands(index: CommandIndex, recents: readonly string[], 
   const rest = index.entries.filter((entry) => !recentIds.has(entry.command.id)).map((entry) => entry.command);
   invariant(recent.length + rest.length === index.entries.length, "recents and the rest cover every command once");
   return { shown: [...recent, ...rest].slice(0, limit), total: index.entries.length };
-}
-
-/** `id` first, the rest as before without it, at most `max` long. */
-export function pushRecent(recents: readonly string[], id: string, max: number = MAX_RECENTS): string[] {
-  invariant(id.length > 0, "a recent destination has an id");
-  return [id, ...recents.filter((held) => held !== id)].slice(0, max);
 }
 
 export interface CommandPaletteProps {

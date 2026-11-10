@@ -3,7 +3,7 @@
 
 import { navigate } from "@aether-ui/core";
 import type { Capabilities, EntityAction, RouteDef } from "@aether-ui/protocol";
-import { understandHref, type UnderstandKind } from "./bundle.ts";
+import { understandHref, type UnderstandKind } from "./links.ts";
 
 const routes: RouteDef[] = [];
 

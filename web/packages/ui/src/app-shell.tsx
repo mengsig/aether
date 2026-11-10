@@ -2,7 +2,8 @@ import { Component, createElement, lazy, Suspense, useCallback, useEffect, useMe
 import type { Capabilities, ConnectionInfo, EntityAction, RouteDef, RouteProps } from "@aether-ui/protocol";
 import { Button } from "./button.tsx";
 import { invariant } from "./classes.ts";
-import { CommandPalette, pushRecent, type Command } from "./command-palette.tsx";
+import type { Command } from "./command-palette.tsx";
+import { pushRecent } from "./palette-recents.ts";
 import { EntityActionProvider } from "./entity-actions.tsx";
 import { navSections, NavRail, type NavSection } from "./nav-rail.tsx";
 import { ConnectionList, ThemeMenu } from "./shell-parts.tsx";
@@ -41,6 +42,8 @@ export interface AppShellProps {
   /** A notice above the routed screen, such as a fix the current screen needs. */
   readonly banner?: ReactNode;
 }
+
+const CommandPalette = lazy(() => import("./command-palette.tsx").then((module) => ({ default: module.CommandPalette })));
 
 type RouteComponent = ComponentType<RouteProps>;
 const screens = new WeakMap<RouteDef, LazyExoticComponent<RouteComponent>>();
@@ -114,7 +117,7 @@ export function AppShell(props: AppShellProps) {
           </main>
         </div>
         <ToastRegion toasts={props.notices ?? []} onDismiss={props.onDismissNotice ?? (() => undefined)} onDismissAll={props.onDismissAllNotices} />
-        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} recents={recents} onRun={remember} />
+        {paletteOpen ? <Suspense fallback={null}><CommandPalette open onClose={() => setPaletteOpen(false)} commands={commands} recents={recents} onRun={remember} /></Suspense> : null}
       </div>
     </EntityActionProvider>
   );
