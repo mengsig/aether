@@ -60,7 +60,10 @@ laptop ──ssh──▶ aether bridge --stdio ──▶ aetherd.sock          
   secret, and nothing in browser storage that could be copied to another
   machine.
 - A device has a **role**: `operator` (everything an operator at the host can
-  do, minus a host-only set) or `observer` (read-only).
+  do, minus a host-only set) or `observer` (read-only). Pairing as `operator`
+  grants the operator's full power: from the phone app it approves, answers,
+  creates, stops and messages agents and manages schedules as the TUI does.
+  Revoke a lost device at once (`aether remote revoke DEVICE`).
 - An SSH remote is not a device. It reaches the daemon's Unix socket as the
   logged-in user and has exactly the standing a local client has.
 - The `[listen]` TCP transport with its shared token is unchanged. A token
@@ -332,7 +335,8 @@ is not forwarded.
   headers (`Connection` and the headers it names, `Keep-Alive`, `TE`,
   `Trailer`, `Transfer-Encoding`, `Upgrade`, `Proxy-*`) stay behind. Nothing is
   added: no cookie, no header, no device standing. A paired Aether device has
-  no standing on the target; the target authenticates its own users.
+  no standing on the target; the target authenticates its own users, so
+  Archon's own pairing decides what the phone may do in Archon's app.
 - **Answers.** The target's status, end-to-end headers and body come back as
   they are, `Set-Cookie` included; the [response headers](#response-headers)
   are added only where the target set none. Every mounted answer carries
@@ -951,7 +955,7 @@ operator's, and agents treat them so. What changes is the record of who
 acted. Events caused over a device connection carry
 
 ```json
-{"actor": "user", "origin": {"transport": "device", "device": "dev_01J…", "name": "Robin's iPhone", "connection": "01J…"}}
+{"actor": "user", "origin": {"transport": "device", "device": "dev_01J…", "name": "Robin's iPhone", "connection": "01J…", "role": "operator"}}
 ```
 
 and render as `user:device:Robin's iPhone(dev_01J…)#01J…`, beside the
@@ -963,8 +967,22 @@ cannot insert marker delimiters, line breaks or bidi controls. Structured
 records retain the original name. Approval inbox deliveries carry optional
 `by` provenance, rendered alongside the decision; message and question-reply
 inboxes retain their operator actor. Observer connections never get an
-operator-standing actor. A client speaking protocol 17 cannot decode this origin and
+operator-standing actor: their actor is `{"actor": "client", "id": "dev_01J…"}`,
+and every `operate` command they send is `forbidden` with a message that says
+the device is paired as an observer. A client speaking protocol 17 cannot decode this origin and
 receives the same actor as `{"actor": "user", "name": "device:<name>"}`.
+
+`role` is the role the daemon's device store held when the device
+authenticated; re-roling or revoking the device closes that connection, so a
+recorded role is never stale for the connection that wrote it. It is optional:
+events written before 1.3.0 have none, and a reader must treat a device origin
+without `role` as having no operator standing. Nothing the device sends sets
+it: not the message text, not a marker inside it, not a header.
+
+A line an operator device sends to an agent Archon drives reaches archond's
+event stream as the inbox item's `from` actor, with this origin. Archon reads
+`role` to decide whether the line is an operator line; what it then allows is
+Archon's decision, documented in Archon's own `docs/remote.md`.
 
 ### Revocation
 

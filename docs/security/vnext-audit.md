@@ -38,6 +38,7 @@ The Archon side is audited separately, in the Archon repository's own
 | --- | --- | --- | --- |
 | H3-A2 | low | Remote docs | Fixed in this change: the matrix in `docs/remote.md` now lists every command, enforced by a test |
 | H3-L6 | low | Mount | Follow-up |
+| H3-O1 | low | Operator devices | Fixed in this change: device provenance carries the paired role, and an observer's refusal names its role |
 
 No medium finding was found. No high finding is open.
 
@@ -57,6 +58,31 @@ not.
 **Test.** `authz::tests::the_documented_matrix_names_every_command_with_its_class`
 reads the matrix and requires one row per fixture case of
 `authz/command_cases.json`, with the same class.
+
+### H3-O1 (low, fixed): an operator device's line did not say its role
+
+The operator asked that a phone paired as `operator` do what the TUI does,
+including chat lines that reach archond. The audit of the phone app against
+the TUI found no command the server refuses an operator device that the app
+offers: approvals, answers to questions, agent creation, cancel, interrupt
+and pause, messages, and creating, updating and triggering schedules are all
+`operate`, which `permits` grants an operator device. What it keeps refused is
+the documented host-only set and the field ceilings, and the app hides those.
+
+Archon, though, could not tell an operator device's line from an observer's or
+an older Aether's: the device origin named the device but not its role. An
+observer's refusal also said only that the operator role was needed.
+
+**Fix.** `OperatorOrigin::Device` gains an optional `role`, set by
+`AuthContext::actor` from the authenticated session, and an observer's
+refusal says the device is paired as an observer. The field is skipped when
+absent, so protocol 26 and its range are unchanged.
+
+**Tests.** `authz::tests::a_device_origin_carries_the_role_its_session_was_paired_with`,
+`authz::tests::an_observer_refusal_says_the_device_is_an_observer`, and in
+`connection/tests/device_gate/operator_lines.rs`: an operator line carries
+`role: operator` on the wire whatever its text claims, an observer's line is
+refused and reaches no inbox, and a revoked device sends no further line.
 
 ## ARCHITECTURE §d: remote access
 
@@ -88,7 +114,7 @@ reads the matrix and requires one row per fixture case of
 | m3 | Path traversal and prefix confusion | ✅ | `under` matches the prefix or the prefix plus `/`, never a bare letter prefix (`/archonx` is not mounted). The rest must pass `is_clean_path`, which refuses empty, `.` and `..` segments, `%` and `\`. Matching is case-sensitive, so `/ARCHON` is never forwarded. The listener's own endpoints are checked first (`is_endpoint`). Tests `only_the_prefix_and_what_is_below_it_are_mounted`, `paths_under_a_mount_that_are_not_clean_are_refused_and_never_forwarded`, `a_mount_over_the_api_never_takes_health_from_the_listener`. |
 | m4 | Limits | ✅ | Body cap before forwarding (test `a_body_over_the_listener_limit_is_refused_and_never_forwarded`), answers capped at 8 MiB, frame size via `ws::MAX_MESSAGE` (`mount/tunnel.rs`), and a semaphore of mounted connections (`mount_slots`, `crates/aether-remote/src/lib.rs:167`). |
 | m5 | CSRF and Origin on the shared origin | ✅ | Aether's own state-changing routes check Origin and `Sec-Fetch-Site` (d4). Aether authenticates in-band over `/ws` with a signed challenge and uses no ambient credential, so there is nothing to forge cross-site. Mounted requests carry the browser's `Origin`. Archond accepts only its `trusted_origins` when mounted, and its cookie is `SameSite=Strict` (Archon `crates/archon-remote/src/http/checks.rs`, `http/api.rs` `credential_cookie`). |
-| m6 | A paired Aether device gets no extra Archon power | ✅ | The mount adds no credential and no header, and archond does not trust the loopback peer address. Archon's checks use `Host`, `Origin` and its own device cookie, never the peer IP or forwarded headers (Archon `http/checks.rs`). So an Aether pairing alone gets 401 from archond, and an Archon observer stays an observer. |
+| m6 | A paired Aether device gets no extra Archon power | ✅ | The mount adds no credential and no header, and archond does not trust the loopback peer address. Archon's checks use `Host`, `Origin` and its own device cookie, never the peer IP or forwarded headers (Archon `http/checks.rs`). So an Aether pairing alone gets 401 from archond, and an Archon observer stays an observer. A chat line an Aether operator device sends to an agent Archon drives is a different path: it reaches archond as an Aether event whose device origin names the device and its role (H3-O1), and Archon decides what it may do. |
 | m7 | Security headers of mounted answers | ✅ | `harden_missing` fills Aether's CSP and headers where archond sent none (`respond.rs:470-486`). Archond's own CSP is stricter (`default-src 'none'`, no script). See H3-L6. |
 
 ## Pairing across the shared origin

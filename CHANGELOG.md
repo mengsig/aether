@@ -89,6 +89,11 @@ before updating.
   class of every command, kept in step by a test.
 - **Host-only Memory 2.0 commands.** A paired device cannot
   explain, consolidate, export or import memories.
+- **Operator devices name their role.** A paired device's operator origin
+  carries the `role` the daemon paired it with, so archond can take a line
+  from an `operator` phone as the operator's; an observer's refusal says it is
+  an observer. The field is optional and protocol 26 is unchanged.
+  `SECURITY.md` says pairing as operator grants full operator power.
 
 ### Changed
 
