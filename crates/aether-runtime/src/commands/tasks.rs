@@ -48,9 +48,6 @@ impl Runtime {
             Some(id) => Some(self.live_agent(id, "task owner")?),
             None => None,
         };
-        if let Some(owner) = &owner {
-            self.refuse_noesis_while_off(owner)?;
-        }
         let run = owner.as_ref().map(|o| o.run).unwrap_or_default();
         let mut unmet = false;
         for id in &spec.dependencies {

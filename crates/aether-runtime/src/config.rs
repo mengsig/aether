@@ -160,9 +160,6 @@ pub struct RuntimeConfig {
     /// locked stalls no other task. Only on a multi-threaded runtime and
     /// outside a `LocalSet`, where it panics; the daemon sets it.
     pub store_writes_off_worker: bool,
-    /// Whether Noesis agents may take work. Disabled by default; the daemon
-    /// switches it, and sets it before `Runtime::start` runs recovery.
-    pub noesis: crate::noesis_guard::NoesisGate,
 }
 
 /// Where free space is measured, and how much new turns wait for.
@@ -224,7 +221,6 @@ impl Default for RuntimeConfig {
             disk_guard: None,
             redactor: aether_tools::Redactor::default(),
             store_writes_off_worker: false,
-            noesis: crate::noesis_guard::NoesisGate::new(),
         }
     }
 }

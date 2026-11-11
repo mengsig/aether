@@ -206,7 +206,6 @@ async fn completed_projection_is_protected_until_turn_winds_down() {
             provider: "mock".into(),
             engine: true,
             on_provider: false,
-            noesis: None,
         },
     );
     assert_eq!(
@@ -374,7 +373,6 @@ async fn preview_includes_runtime_guards_without_mutating_scheduler_or_resources
                         provider: "mock".into(),
                         engine: true,
                         on_provider: false,
-                        noesis: None,
                     },
                 );
             }

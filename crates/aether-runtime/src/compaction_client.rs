@@ -1,4 +1,4 @@
-//! Run one isolated prompt (checkpoint generation, a Noesis step) in a
+//! Run one isolated prompt (checkpoint generation) in a
 //! fresh engine session without the Aether bridge or any tool.
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,9 +13,6 @@ use aether_engine::{
 };
 use aether_model::{ModelClient, ModelStream};
 use tokio_util::sync::CancellationToken;
-
-mod streaming;
-pub(crate) use streaming::StreamingClient;
 
 #[derive(Clone)]
 pub(crate) struct CompactionClient {
@@ -371,107 +368,6 @@ mod tests {
         caller: CancellationToken,
     }
 
-    struct RevisedEngine {
-        delta_only_final: bool,
-    }
-
-    #[async_trait::async_trait]
-    impl Engine for RevisedEngine {
-        fn kind(&self) -> EngineKind {
-            EngineKind::CLAUDE_CODE
-        }
-
-        fn adapter(&self) -> String {
-            "revised-fixture".into()
-        }
-
-        async fn run(
-            &self,
-            _turn: EngineTurn,
-            _cancel: CancellationToken,
-        ) -> Result<EngineRun, EngineError> {
-            let (tx, events) = mpsc::channel(8);
-            for (index, text) in ["intermediate reply", "final reply"]
-                .into_iter()
-                .enumerate()
-            {
-                tx.send(EngineEvent::Delta(StreamEvent::TextDelta {
-                    index: 0,
-                    text: text.into(),
-                }))
-                .await
-                .unwrap();
-                if index == 0 || !self.delta_only_final {
-                    tx.send(EngineEvent::Assistant {
-                        content: vec![aether_core::model::ContentBlock::Text { text: text.into() }],
-                        usage: None,
-                        model: None,
-                    })
-                    .await
-                    .unwrap();
-                }
-            }
-            tx.send(EngineEvent::Done(EngineOutcome {
-                text: (!self.delta_only_final).then(|| "final reply".into()),
-                closing_accounting: true,
-                ..Default::default()
-            }))
-            .await
-            .unwrap();
-            Ok(EngineRun {
-                events,
-                input: None,
-                decisions: None,
-                stop: None,
-            })
-        }
-    }
-
-    #[tokio::test]
-    async fn noesis_publishes_only_the_final_revised_engine_reply() {
-        for delta_only_final in [false, true] {
-            assert_final_revision(delta_only_final).await;
-        }
-    }
-
-    async fn assert_final_revision(delta_only_final: bool) {
-        let client = StreamingClient(CompactionClient {
-            context: aether_engine::EngineLaunchContext {
-                run_id: aether_core::id::RunId::new(),
-                agent_id: aether_core::id::AgentId::new(),
-                task_id: None,
-                spawns: Default::default(),
-            },
-            pricing: TurnPricing::default(),
-            purpose: "Noesis",
-            timeout: CHECKPOINT_TIMEOUT,
-            session_pricing: None,
-            engine: Arc::new(RevisedEngine { delta_only_final }),
-            turn: fixture_turn(),
-        });
-        let request = ModelRequest::new(
-            ModelRef::new("codex", "luna"),
-            vec![Message::user_text("teach")],
-        );
-        let stream = client
-            .stream(request, CancellationToken::new())
-            .await
-            .unwrap();
-        let mut observed = String::new();
-        let response = aether_model::collect_partial(stream, |event| {
-            if let StreamEvent::TextDelta { text, .. } = event {
-                observed.push_str(text);
-            }
-        })
-        .await
-        .unwrap();
-        assert_eq!(observed, "final reply");
-        assert_eq!(
-            aether_core::model::text_of(&response.content),
-            "final reply"
-        );
-    }
-
     #[async_trait::async_trait]
     impl Engine for CheckpointEngine {
         fn kind(&self) -> EngineKind {
@@ -604,10 +500,10 @@ mod tests {
     }
 
     async fn failed_checkpoint(ending: Ending) -> aether_model::PartialFailure {
-        failed_isolated_call(ending, false).await
+        failed_isolated_call(ending).await
     }
 
-    async fn failed_isolated_call(ending: Ending, streaming: bool) -> aether_model::PartialFailure {
+    async fn failed_isolated_call(ending: Ending) -> aether_model::PartialFailure {
         let cancel = CancellationToken::new();
         let client = CompactionClient {
             context: aether_engine::EngineLaunchContext {
@@ -630,58 +526,10 @@ mod tests {
             ModelRef::new("claude-code", "sonnet"),
             vec![Message::user_text("summarize")],
         );
-        let client: Box<dyn ModelClient> = if streaming {
-            Box::new(StreamingClient(client))
-        } else {
-            Box::new(client)
-        };
         let stream = client.stream(request, cancel).await.expect("stream");
         *aether_model::collect_partial(stream, |_| {})
             .await
             .expect_err("failed checkpoint")
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn noesis_cancels_a_silent_engine_before_the_overall_limit() {
-        let start = tokio::time::Instant::now();
-        let failure = failed_isolated_call(Ending::Timeout, true).await;
-        assert_eq!(failure.error.class, ModelErrorClass::Timeout);
-        assert!(failure.error.message.contains("no progress"));
-        assert_eq!(start.elapsed(), Duration::from_secs(90));
-        assert_eq!(failure.partial.usage.input_tokens, 13);
-        assert!(!failure.partial.usage.cost_complete);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn noesis_streaming_failures_preserve_receipts_and_partial_usage() {
-        for ending in [
-            Ending::Failed,
-            Ending::Cancelled,
-            Ending::Timeout,
-            Ending::Truncated,
-            Ending::NotInstalled,
-            Ending::Unsupported,
-            Ending::Exhausted,
-        ] {
-            let failure = failed_isolated_call(ending, true).await;
-            let usage = failure.partial.usage;
-            match ending {
-                Ending::Failed | Ending::Exhausted => {
-                    assert_eq!(usage.input_tokens, 23);
-                    assert_eq!(usage.cost_usd, 1.25);
-                    assert!(usage.cost_complete);
-                }
-                Ending::Cancelled | Ending::Timeout | Ending::Truncated => {
-                    assert_eq!(usage.input_tokens, 13);
-                    assert_eq!(usage.output_tokens, 5);
-                    assert!(!usage.cost_complete);
-                }
-                Ending::NotInstalled | Ending::Unsupported => {
-                    assert_eq!(usage, Usage::default());
-                    assert!(usage.cost_complete);
-                }
-            }
-        }
     }
 
     #[tokio::test]
@@ -882,7 +730,7 @@ mod tests {
                     spawns: Default::default(),
                 },
                 pricing: unpriced,
-                purpose: "Noesis step",
+                purpose: "Checkpoint",
                 timeout: CHECKPOINT_TIMEOUT,
                 session_pricing: Some(pricing),
                 turn: fixture_turn(),

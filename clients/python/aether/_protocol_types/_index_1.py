@@ -1,87 +1,6 @@
 # Generated from clients/protocol.schema.json by scripts/generate_clients.py.
 # Do not edit: change the Rust types and regenerate.
 
-from ._Pairing import Pairing
-from ._PairingCandidate import PairingCandidate
-from ._PairingState import PairingState
-from ._PathCompletion import PathCompletion
-from ._PathCompletionKind import PathCompletionKind
-from ._PathCompletions import PathCompletions
-from ._PendingArtifactCleanup import PendingArtifactCleanup
-from ._PendingQuestion import PendingQuestion
-from ._Phase import Phase
-from ._PlanEdge import PlanEdge
-from ._PlanNode import PlanNode
-from ._PlanNodeStatus import PlanNodeStatus
-from ._PlanTree import PlanTree
-from ._PosedProblem import PosedProblem
-from ._PracticeOutcome import PracticeOutcome
-from ._Priority import Priority
-from ._PriorityPatch import PriorityPatch
-from ._PrioritySettings import PrioritySettings
-from ._Problem import Problem
-from ._ProblemConclusion import ProblemConclusion
-from ._ProblemMode import ProblemMode
-from ._PromptSettings import PromptSettings
-from ._PromptsPatch import PromptsPatch
-from ._Proposition import Proposition
-from ._Provenance import Provenance
-from ._ProviderBackoff import ProviderBackoff
-from ._ProviderHeadroom import ProviderHeadroom
-from ._ProviderHealth import ProviderHealth
-from ._ProviderInfo import ProviderInfo
-from ._ProviderUsage import ProviderUsage
-from ._PublishArtifact import PublishArtifact
-from ._PushConfig import PushConfig
-from ._PushPayload import PushPayload
-from ._PushSubscription import PushSubscription
-from ._Question import Question
-from ._QuestionKind import QuestionKind
-from ._QuestionOption import QuestionOption
-from ._QuestionResult import QuestionResult
-from ._QuestionStep import QuestionStep
-from ._QuotaWindow import QuotaWindow
-from ._RecordedAnswer import RecordedAnswer
-from ._RecoveryClass import RecoveryClass
-from ._RecurrenceInterval import RecurrenceInterval
-from ._RecurrenceCron import RecurrenceCron
-from ._Recurrence import Recurrence
-from ._RefKind import RefKind
-from ._RememberSpec import RememberSpec
-from ._RemoteMount import RemoteMount
-from ._RemoteSettings import RemoteSettings
-from ._RemoteStatus import RemoteStatus
-from ._ReplayApproval import ReplayApproval
-from ._ReplayContext import ReplayContext
-from ._ReplayFrame import ReplayFrame
-from ._ReplayMessage import ReplayMessage
-from ._ReplayNote import ReplayNote
-from ._ReplayTool import ReplayTool
-from ._ReplyStorageReport import ReplyStorageReport
-from ._ReplyRetentionPreview import ReplyRetentionPreview
-from ._ReplyGithubWatcher import ReplyGithubWatcher
-from ._ReplySchedule import ReplySchedule
-from ._ReplySchedules import ReplySchedules
-from ._ReplyScheduleHistory import ReplyScheduleHistory
-from ._ReplyWelcome import ReplyWelcome
-from ._ReplyStatus import ReplyStatus
-from ._ReplyOk import ReplyOk
-from ._ReplyInterrupted import ReplyInterrupted
-from ._ReplyPaused import ReplyPaused
-from ._ReplyAgent import ReplyAgent
-from ._ReplyAgents import ReplyAgents
-from ._ReplyAgentsPage import ReplyAgentsPage
-from ._ReplyTree import ReplyTree
-from ._ReplyTask import ReplyTask
-from ._ReplyTasks import ReplyTasks
-from ._ReplyMessageSent import ReplyMessageSent
-from ._ReplyNoteAppended import ReplyNoteAppended
-from ._ReplyNotification import ReplyNotification
-from ._ReplyNotifications import ReplyNotifications
-from ._ReplyNotificationAnswered import ReplyNotificationAnswered
-from ._ReplyMessagesSent import ReplyMessagesSent
-from ._ReplyApprovals import ReplyApprovals
-from ._ReplyApprovalRule import ReplyApprovalRule
 from ._ReplyApprovalRules import ReplyApprovalRules
 from ._ReplySubscribed import ReplySubscribed
 from ._ReplyEvents import ReplyEvents
@@ -136,16 +55,6 @@ from ._ReplyDevice import ReplyDevice
 from ._ReplyDevices import ReplyDevices
 from ._ReplyPushConfig import ReplyPushConfig
 from ._ReplySubmissionResolved import ReplySubmissionResolved
-from ._ReplyNoesisStatus import ReplyNoesisStatus
-from ._ReplyNoesisSession import ReplyNoesisSession
-from ._ReplyNoesisSessions import ReplyNoesisSessions
-from ._ReplyNoesisGraph import ReplyNoesisGraph
-from ._ReplyNoesisJob import ReplyNoesisJob
-from ._ReplyNoesisImport import ReplyNoesisImport
-from ._ReplyNoesisJobs import ReplyNoesisJobs
-from ._ReplyNoesisLearner import ReplyNoesisLearner
-from ._ReplyNoesisEvidence import ReplyNoesisEvidence
-from ._ReplyConceptState import ReplyConceptState
 from ._Reply import Reply
 from ._RepositoryAlias import RepositoryAlias
 from ._RepositoryAliasCounts import RepositoryAliasCounts
@@ -197,19 +106,11 @@ from ._ServerFrameEvent import ServerFrameEvent
 from ._ServerFrameDelta import ServerFrameDelta
 from ._ServerFrameChallenge import ServerFrameChallenge
 from ._ServerFrame import ServerFrame
-from ._SessionAgent import SessionAgent
-from ._SessionExtraction import SessionExtraction
-from ._SessionMode import SessionMode
-from ._SessionRole import SessionRole
-from ._SessionStall import SessionStall
-from ._SessionUsage import SessionUsage
 from ._SideEffectClass import SideEffectClass
 from ._SnapshotId import SnapshotId
 from ._SnapshotMemories import SnapshotMemories
 from ._SpawnSpec import SpawnSpec
-from ._SpendToday import SpendToday
 from ._StaleNote import StaleNote
-from ._StallReason import StallReason
 from ._StatusStale import StatusStale
 from ._StopReasonEndTurn import StopReasonEndTurn
 from ._StopReasonToolUse import StopReasonToolUse
@@ -308,20 +209,15 @@ from ._WorkspaceValidation import WorkspaceValidation
 from ._WriteStats import WriteStats
 
 __all__ = [
-    'Pairing', 'PairingCandidate', 'PairingState', 'PathCompletion', 'PathCompletionKind', 'PathCompletions', 'PendingArtifactCleanup', 'PendingQuestion', 'Phase', 'PlanEdge', 'PlanNode', 'PlanNodeStatus', 'PlanTree', 'PosedProblem', 'PracticeOutcome', 'Priority', 'PriorityPatch', 'PrioritySettings', 'Problem', 'ProblemConclusion',
-    'ProblemMode', 'PromptSettings', 'PromptsPatch', 'Proposition', 'Provenance', 'ProviderBackoff', 'ProviderHeadroom', 'ProviderHealth', 'ProviderInfo', 'ProviderUsage', 'PublishArtifact', 'PushConfig', 'PushPayload', 'PushSubscription', 'Question', 'QuestionKind', 'QuestionOption', 'QuestionResult', 'QuestionStep', 'QuotaWindow',
-    'RecordedAnswer', 'RecoveryClass', 'RecurrenceInterval', 'RecurrenceCron', 'Recurrence', 'RefKind', 'RememberSpec', 'RemoteMount', 'RemoteSettings', 'RemoteStatus', 'ReplayApproval', 'ReplayContext', 'ReplayFrame', 'ReplayMessage', 'ReplayNote', 'ReplayTool', 'ReplyStorageReport', 'ReplyRetentionPreview', 'ReplyGithubWatcher', 'ReplySchedule',
-    'ReplySchedules', 'ReplyScheduleHistory', 'ReplyWelcome', 'ReplyStatus', 'ReplyOk', 'ReplyInterrupted', 'ReplyPaused', 'ReplyAgent', 'ReplyAgents', 'ReplyAgentsPage', 'ReplyTree', 'ReplyTask', 'ReplyTasks', 'ReplyMessageSent', 'ReplyNoteAppended', 'ReplyNotification', 'ReplyNotifications', 'ReplyNotificationAnswered', 'ReplyMessagesSent', 'ReplyApprovals',
-    'ReplyApprovalRule', 'ReplyApprovalRules', 'ReplySubscribed', 'ReplyEvents', 'ReplyTranscript', 'ReplyTranscriptPage', 'ReplyUsageBreakdown', 'ReplyInbox', 'ReplySnapshot', 'ReplyInvocation', 'ReplyInvocations', 'ReplyCheckpoint', 'ReplyArtifact', 'ReplyArtifacts', 'ReplyArtifactBytes', 'ReplyMemories', 'ReplyRepositoryAliased', 'ReplyRepositoryAliases', 'ReplyMemoriesInContext', 'ReplyMemory',
-    'ReplyMemoryFeedback', 'ReplyMemoryFeedbackList', 'ReplyMemoryRetrievalExplain', 'ReplyMemoryConsolidation', 'ReplyMemoryExport', 'ReplyMemoryImport', 'ReplyMemoryMigrationStatus', 'ReplyMemorySeeded', 'ReplyRuns', 'ReplyRunReport', 'ReplyReplay', 'ReplyRunExported', 'ReplyRunImported', 'ReplyMcpServers', 'ReplyModels', 'ReplyViewModes', 'ReplyProviders', 'ReplyProviderUsage', 'ReplyAuth', 'ReplyEngineTool',
-    'ReplyEngineTools', 'ReplyAttention', 'ReplyPathCompletions', 'ReplyWorkspaces', 'ReplyWorkspaceValidation', 'ReplyGitSummary', 'ReplyWorkspaceDiff', 'ReplyWorkspaceIntegration', 'ReplyWorkspaceDiscarded', 'ReplyRemote', 'ReplyPairing', 'ReplyDevice', 'ReplyDevices', 'ReplyPushConfig', 'ReplySubmissionResolved', 'ReplyNoesisStatus', 'ReplyNoesisSession', 'ReplyNoesisSessions', 'ReplyNoesisGraph', 'ReplyNoesisJob',
-    'ReplyNoesisImport', 'ReplyNoesisJobs', 'ReplyNoesisLearner', 'ReplyNoesisEvidence', 'ReplyConceptState', 'Reply', 'RepositoryAlias', 'RepositoryAliasCounts', 'RepositoryAliasReport', 'ResourceHolding', 'ResourceKey', 'Result_of_Reply_or_ErrorReply', 'RetentionPreview', 'Retraction', 'RetrievalExplain', 'RetrievalTrace', 'Revocation', 'Role', 'RuleMatch', 'RuleScopeEverywhere',
-    'RuleScopeAgent', 'RuleScopeSubtree', 'RuleScopeRun', 'RuleScope', 'RunBody', 'RunId', 'RunListing', 'RunOutcome', 'RunReport', 'RunRetentionDecisionEligible', 'RunRetentionDecisionProtected', 'RunRetentionDecision', 'RunRetentionPreview', 'RunSummary', 'Schedule', 'ScheduleAction', 'ScheduleId', 'ScheduleOccurrence', 'ScheduleOutcomeDelivered', 'ScheduleOutcomeSpawned',
-    'ScheduleOutcomeSkipped', 'ScheduleOutcomeFailed', 'ScheduleOutcome', 'ScheduleStatusActive', 'ScheduleStatusPaused', 'ScheduleStatusCancelled', 'ScheduleStatusExhausted', 'ScheduleStatusFailed', 'ScheduleStatus', 'Scope', 'SeedReport', 'ServerFrameReply', 'ServerFrameEvent', 'ServerFrameDelta', 'ServerFrameChallenge', 'ServerFrame', 'SessionAgent', 'SessionExtraction', 'SessionMode', 'SessionRole',
-    'SessionStall', 'SessionUsage', 'SideEffectClass', 'SnapshotId', 'SnapshotMemories', 'SpawnSpec', 'SpendToday', 'StaleNote', 'StallReason', 'StatusStale', 'StopReasonEndTurn', 'StopReasonToolUse', 'StopReasonMaxTokens', 'StopReasonStopSequence', 'StopReasonRefusal', 'StopReasonPauseTurn', 'StopReasonOther', 'StopReason', 'SubmissionResolutionExecuted', 'SubmissionResolutionAbsentSafe',
-    'SubmissionResolutionUnknown', 'SubmissionResolution', 'Task', 'TaskId', 'TaskLine', 'TaskQuery', 'TaskResult', 'TaskStatusQueued', 'TaskStatusAssigned', 'TaskStatusActive', 'TaskStatusBlocked', 'TaskStatusCompleted', 'TaskStatusFailed', 'TaskStatusCancelled', 'TaskStatus', 'TaskStatusKind', 'ThinkingModeOff', 'ThinkingModeAdaptive', 'ThinkingModeBudget', 'ThinkingMode',
-    'ThinkingSupport', 'ToolCall', 'ToolCallId', 'ToolExposureAll', 'ToolExposureOnly', 'ToolExposureExcept', 'ToolExposure', 'ToolLine', 'ToolOutcome', 'ToolResultPending', 'ToolResultSucceeded', 'ToolResultFailed', 'ToolResultDenied', 'ToolResultCancelled', 'ToolResultReplayed', 'ToolResult', 'ToolResultBlockText', 'ToolResultBlockImage', 'ToolResultBlock', 'ToolSpec',
-    'TraceCandidate', 'TraceOmitted', 'TraceOutcome', 'TracePolicy', 'TranscriptEntry', 'TreeNode', 'TurnOutcomeRunning', 'TurnOutcomeCompleted', 'TurnOutcomeFailed', 'TurnOutcomeInterrupted', 'TurnOutcomeNotStarted', 'TurnOutcome', 'UnavailableSection', 'UnprovenAbsence', 'Usage', 'UsageBreakdown', 'UsageGroup', 'UsageRow', 'UsageScope', 'UsageWindow',
-    'Verification', 'ViewMode', 'ViewModeCategory', 'ViewModeDensity', 'ViewModeDiagnostic', 'ViewModeScope', 'ViewModes', 'WaitConditionTask', 'WaitConditionApproval', 'WaitConditionMessageFrom', 'WaitConditionInbox', 'WaitConditionDeadline', 'WaitConditionAny', 'WaitConditionAll', 'WaitConditionAtLeast', 'WaitCondition', 'Welcome', 'WindowHeadroom', 'Workspace', 'WorkspaceCommit',
-    'WorkspaceDiff', 'WorkspaceDiscard', 'WorkspaceIntegration', 'WorkspaceValidation', 'WriteStats',
+    'ReplyApprovalRules', 'ReplySubscribed', 'ReplyEvents', 'ReplyTranscript', 'ReplyTranscriptPage', 'ReplyUsageBreakdown', 'ReplyInbox', 'ReplySnapshot', 'ReplyInvocation', 'ReplyInvocations', 'ReplyCheckpoint', 'ReplyArtifact', 'ReplyArtifacts', 'ReplyArtifactBytes', 'ReplyMemories', 'ReplyRepositoryAliased', 'ReplyRepositoryAliases', 'ReplyMemoriesInContext', 'ReplyMemory', 'ReplyMemoryFeedback',
+    'ReplyMemoryFeedbackList', 'ReplyMemoryRetrievalExplain', 'ReplyMemoryConsolidation', 'ReplyMemoryExport', 'ReplyMemoryImport', 'ReplyMemoryMigrationStatus', 'ReplyMemorySeeded', 'ReplyRuns', 'ReplyRunReport', 'ReplyReplay', 'ReplyRunExported', 'ReplyRunImported', 'ReplyMcpServers', 'ReplyModels', 'ReplyViewModes', 'ReplyProviders', 'ReplyProviderUsage', 'ReplyAuth', 'ReplyEngineTool', 'ReplyEngineTools',
+    'ReplyAttention', 'ReplyPathCompletions', 'ReplyWorkspaces', 'ReplyWorkspaceValidation', 'ReplyGitSummary', 'ReplyWorkspaceDiff', 'ReplyWorkspaceIntegration', 'ReplyWorkspaceDiscarded', 'ReplyRemote', 'ReplyPairing', 'ReplyDevice', 'ReplyDevices', 'ReplyPushConfig', 'ReplySubmissionResolved', 'Reply', 'RepositoryAlias', 'RepositoryAliasCounts', 'RepositoryAliasReport', 'ResourceHolding', 'ResourceKey',
+    'Result_of_Reply_or_ErrorReply', 'RetentionPreview', 'Retraction', 'RetrievalExplain', 'RetrievalTrace', 'Revocation', 'Role', 'RuleMatch', 'RuleScopeEverywhere', 'RuleScopeAgent', 'RuleScopeSubtree', 'RuleScopeRun', 'RuleScope', 'RunBody', 'RunId', 'RunListing', 'RunOutcome', 'RunReport', 'RunRetentionDecisionEligible', 'RunRetentionDecisionProtected',
+    'RunRetentionDecision', 'RunRetentionPreview', 'RunSummary', 'Schedule', 'ScheduleAction', 'ScheduleId', 'ScheduleOccurrence', 'ScheduleOutcomeDelivered', 'ScheduleOutcomeSpawned', 'ScheduleOutcomeSkipped', 'ScheduleOutcomeFailed', 'ScheduleOutcome', 'ScheduleStatusActive', 'ScheduleStatusPaused', 'ScheduleStatusCancelled', 'ScheduleStatusExhausted', 'ScheduleStatusFailed', 'ScheduleStatus', 'Scope', 'SeedReport',
+    'ServerFrameReply', 'ServerFrameEvent', 'ServerFrameDelta', 'ServerFrameChallenge', 'ServerFrame', 'SideEffectClass', 'SnapshotId', 'SnapshotMemories', 'SpawnSpec', 'StaleNote', 'StatusStale', 'StopReasonEndTurn', 'StopReasonToolUse', 'StopReasonMaxTokens', 'StopReasonStopSequence', 'StopReasonRefusal', 'StopReasonPauseTurn', 'StopReasonOther', 'StopReason', 'SubmissionResolutionExecuted',
+    'SubmissionResolutionAbsentSafe', 'SubmissionResolutionUnknown', 'SubmissionResolution', 'Task', 'TaskId', 'TaskLine', 'TaskQuery', 'TaskResult', 'TaskStatusQueued', 'TaskStatusAssigned', 'TaskStatusActive', 'TaskStatusBlocked', 'TaskStatusCompleted', 'TaskStatusFailed', 'TaskStatusCancelled', 'TaskStatus', 'TaskStatusKind', 'ThinkingModeOff', 'ThinkingModeAdaptive', 'ThinkingModeBudget',
+    'ThinkingMode', 'ThinkingSupport', 'ToolCall', 'ToolCallId', 'ToolExposureAll', 'ToolExposureOnly', 'ToolExposureExcept', 'ToolExposure', 'ToolLine', 'ToolOutcome', 'ToolResultPending', 'ToolResultSucceeded', 'ToolResultFailed', 'ToolResultDenied', 'ToolResultCancelled', 'ToolResultReplayed', 'ToolResult', 'ToolResultBlockText', 'ToolResultBlockImage', 'ToolResultBlock',
+    'ToolSpec', 'TraceCandidate', 'TraceOmitted', 'TraceOutcome', 'TracePolicy', 'TranscriptEntry', 'TreeNode', 'TurnOutcomeRunning', 'TurnOutcomeCompleted', 'TurnOutcomeFailed', 'TurnOutcomeInterrupted', 'TurnOutcomeNotStarted', 'TurnOutcome', 'UnavailableSection', 'UnprovenAbsence', 'Usage', 'UsageBreakdown', 'UsageGroup', 'UsageRow', 'UsageScope',
+    'UsageWindow', 'Verification', 'ViewMode', 'ViewModeCategory', 'ViewModeDensity', 'ViewModeDiagnostic', 'ViewModeScope', 'ViewModes', 'WaitConditionTask', 'WaitConditionApproval', 'WaitConditionMessageFrom', 'WaitConditionInbox', 'WaitConditionDeadline', 'WaitConditionAny', 'WaitConditionAll', 'WaitConditionAtLeast', 'WaitCondition', 'Welcome', 'WindowHeadroom', 'Workspace',
+    'WorkspaceCommit', 'WorkspaceDiff', 'WorkspaceDiscard', 'WorkspaceIntegration', 'WorkspaceValidation', 'WriteStats',
 ]

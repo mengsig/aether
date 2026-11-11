@@ -1,0 +1,15 @@
+/** @typedef {Record<string, unknown> & {cmd:string, idempotency_key?:string}} Command */
+/** @typedef {{reply:string, data?:unknown}} Reply */
+/** @typedef {{id:string,name:string,parent:string|null,role:string,status:string,paused:boolean,model:string,effort:string,workspace:string,createdAt:string,updatedAt:string,run:string,tokens:number|null,cost:number|null,costComplete:boolean,approval:string,raw:Record<string,unknown>}} Agent */
+/** @typedef {{id:string,kind:'approval'|'question'|'agent_failed'|'agent_blocked',agentId:string,title:string,detail:string,at:string,questionSeq?:number,raw:Record<string,unknown>}} Attention */
+/** @typedef {{seq:number,at:string,agentId:string,kind:string,detail:string}} Activity */
+/** @typedef {{seq:number,at:string,invocation?:string,message:{role:string,content:Array<Record<string,unknown>>}}} TranscriptEntry */
+/** @typedef {{agentId:string,invocation:string,text:string,thinking:string}} Stream */
+/** @typedef {{id:string,agentId:string,text:string,status:'pending'|'sent'|'failed'|'unknown'|'dismissed',error?:string,retentionRisk?:string,horizon?:string|null,unconfirmed?:{reason:string,message:string},decision?:'send_again',attemptId?:string,sendId?:string,wireOrder?:number,createdOrder?:number,recoveryReason?:string,recovery?:'unsupported'|'unknown'|'error'|'resolving',reply?:Reply,command:Command}} Outbox */
+/** @typedef {{ready?:boolean,connection:'offline'|'connecting'|'online'|'reconnecting'|'revoked'|'identity-changed'|'unpaired',connectionDetail:string,role:'operator'|'observer',agents:Agent[],attention:Attention[],activity:Activity[],transcripts:Record<string,TranscriptEntry[]>,streams:Record<string,Stream>,outbox:Outbox[],lastSeq:number,version:string,deviceName:string,daemonId:string,error:string|null}} State */
+/** @typedef {{get:()=>State,subscribe:(listener:()=>void)=>()=>void,patch:(patch:Partial<State>)=>void,dismissReceipt:(id:string,decision?:'delivered'|'discarded')=>Promise<void>,resolvePendingSubmissions?:()=>Promise<void>,loadTranscript:(id:string)=>Promise<void>,refresh:()=>Promise<void>,setDraft:(id:string,text:string)=>void,getDraft:(id:string)=>string}} Store */
+/** @typedef {{phrase:string,fingerprint:string,state:string}} PairProgress */
+/** @typedef {{recovery?:boolean,submissionLock?:import('./core/submission-locks.js').SubmissionLock}} RequestOptions */
+/** @typedef {{request:(command:Command,options?:RequestOptions)=>Promise<Reply>,connect:()=>Promise<void>,disconnect:()=>void,pair:(secret:string,name:string,onProgress?:(progress:PairProgress)=>void)=>Promise<void>,forget:()=>Promise<void>,onFrame:(listener:(frame:Record<string,unknown>)=>void|Promise<void>)=>()=>void,onConnection:(listener:(status:State['connection'],detail:string)=>void)=>()=>void}} Transport */
+/** @typedef {{store:Store,transport:Transport,command:(command:Command)=>Promise<Reply>,navigate:(path:string)=>void,toast:(message:string)=>void,confirm:(title:string,detail:string)=>Promise<boolean>,preferences:{theme:string,motion:string},setPreference:(name:'theme'|'motion',value:string)=>void}} Context */
+export {};

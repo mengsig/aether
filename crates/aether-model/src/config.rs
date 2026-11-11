@@ -110,10 +110,6 @@ pub struct AetherConfig {
     pub remote: RemoteSection,
     pub serve: ServeSection,
     pub update: UpdateSection,
-    /// `[noesis]`, kept as written: the `aether-noesis` crate parses and
-    /// validates it when the service starts or is configured.
-    #[serde(skip_serializing_if = "toml::Table::is_empty")]
-    pub noesis: toml::Table,
 }
 
 /// Default scope for new roots; explicit scopes and existing agents are unchanged.

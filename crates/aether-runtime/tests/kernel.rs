@@ -221,10 +221,6 @@ mod message_limits;
 mod model_effort;
 #[path = "kernel/model_profiles.rs"]
 mod model_profiles;
-#[path = "kernel/noesis.rs"]
-mod noesis;
-#[path = "kernel/noesis_seal.rs"]
-mod noesis_seal;
 #[path = "kernel/notes.rs"]
 mod notes;
 #[path = "kernel/notifications.rs"]

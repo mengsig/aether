@@ -12,7 +12,6 @@ mod env_tests;
 mod instance_lock;
 pub mod listen;
 mod mcp;
-mod noesis;
 mod projections;
 pub mod push;
 pub mod remote;
@@ -191,8 +190,6 @@ pub struct Daemon {
     pub(crate) tree_reads: tree_reads::TreeReads,
     /// The reads behind `get_github_watcher`: one at a time, however many ask.
     pub(crate) watcher_reads: status_reads::StatusReads<aether_core::github::GithubWatcherStatus>,
-    /// Noesis, dormant unless `[noesis] enabled`; the runtime's guard follows it.
-    pub(crate) noesis: Arc<noesis::NoesisService>,
 }
 
 /// Run until `shutdown` fires or a client asks to stop.
@@ -230,7 +227,6 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         ),
     }
     let models = Arc::new(Models::load(config.config_dir.clone())?);
-    aether_noesis::settings::NoesisSettings::from_table(&models.config().noesis)?;
     // Resolved before anything is opened, so a listener the operator asked
     // for and cannot have fails the start rather than the first connection.
     let tcp = match config.tcp.clone() {
@@ -400,20 +396,6 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         unstopped_calls.extend(interrupted.iter().copied());
     }
     clock.finished("containers");
-    // Before recovery, so a Noesis agent resumed at boot meets the guard.
-    let noesis = Arc::new(noesis::NoesisService::new(
-        &config_dir,
-        store_path.parent().unwrap_or(std::path::Path::new(".")),
-        models.clone(),
-        aether_runtime::noesis_guard::NoesisGate::new(),
-    ));
-    let store_dyn: Arc<dyn aether_store::Store> = store.clone();
-    match noesis.start_at_boot(&store_dyn).await {
-        Ok(true) => tracing::info!("Noesis started"),
-        Ok(false) => {}
-        Err(error) => tracing::error!(%error, "Noesis did not start; it stays disabled"),
-    }
-    clock.finished("noesis");
     let runtime = Runtime::start(
         RuntimeConfig {
             holder: format!("aetherd-{}-{}", instance_id, std::process::id()),
@@ -473,7 +455,6 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             redactor,
             // The daemon runs on a multi-threaded runtime and no `LocalSet`.
             store_writes_off_worker: true,
-            noesis: noesis.gate().clone(),
             ..Default::default()
         },
         store.clone(),
@@ -521,9 +502,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             status_reads: Default::default(),
             tree_reads: Default::default(),
             watcher_reads: Default::default(),
-            noesis: noesis.clone(),
         });
-        noesis.resume_teaching(&runtime);
         // Supervised with the connections: it opens the listener the stored
         // settings ask for, and closes it when the daemon stops.
         let remote_control = remote::attach(&daemon, remote_config, shutdown.clone()).await?;
@@ -574,20 +553,9 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     tracing::info!("aetherd shutting down");
     shutdown.cancel();
     let locks = shutdown::Locks::new(instance.clone(), socket_lock.clone(), socket_alias);
-    let (noesis_stopped, stopped, drained) = shutdown::services(
-        noesis.clone(),
-        runtime.clone(),
-        connections,
-        locks.clone(),
-        #[cfg(test)]
-        None,
-    )
-    .await;
+    let (stopped, drained) = shutdown::services(runtime.clone(), connections, locks.clone()).await;
     drop(runtime);
-    drop(noesis);
-    drop(store_dyn);
-    let store_sync =
-        shutdown::store(store, stopped && drained && noesis_stopped, locks.clone()).await;
+    let store_sync = shutdown::store(store, stopped && drained, locks.clone()).await;
     let cleanup = shutdown::Cleanup {
         socket: socket.to_path_buf(),
         socket_published,

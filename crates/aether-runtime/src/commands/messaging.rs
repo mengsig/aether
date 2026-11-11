@@ -182,7 +182,6 @@ impl Runtime {
         if agent.status.is_terminal() {
             return Err(ended_refusal(to, agent.status.kind()));
         }
-        self.refuse_noesis_while_off(&agent)?;
         self.deliver_message_held(hold, &agent, content, images, from, submission)
     }
 
@@ -220,7 +219,6 @@ impl Runtime {
                 "agent {to} is {state}; its question is no longer pending"
             )));
         }
-        self.refuse_noesis_while_off(&agent)?;
         crate::cancellation::check_parent(self, &hold, to)?;
         self.check_pending_question(&hold, to, question_seq)?;
         self.deliver_message_held(hold, &agent, content, &[], from, submission)
@@ -362,9 +360,6 @@ impl Runtime {
         }
         // Completed intermediates still connect live descendants to the root.
         let targets = self.live_targets(root, true, "message recipient")?;
-        for target in &targets {
-            self.refuse_noesis_while_off(target)?;
-        }
         let mut commit = Commit::new();
         let deliveries = self.push_fan_out(&hold, &mut commit, &targets, &content, &from)?;
         if let Some(submission) = &submission {
@@ -473,7 +468,6 @@ impl Runtime {
         if agent.status.is_terminal() {
             return Err(ended_refusal(id, agent.status.kind()));
         }
-        self.refuse_noesis_while_off(&agent)?;
         let mut commit = Commit::new();
         let item = self.push_inbox(
             &hold,

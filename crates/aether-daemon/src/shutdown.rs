@@ -7,7 +7,6 @@ use aether_store::SqliteStore;
 use tokio::task::JoinSet;
 
 use crate::instance_lock::InstanceLock;
-use crate::noesis::NoesisService;
 
 const RUNTIME_DEADLINE: Duration = Duration::from_secs(30);
 const DRAIN_DEADLINE: Duration = Duration::from_secs(3);
@@ -37,22 +36,13 @@ impl Locks {
 }
 
 pub(crate) async fn services(
-    noesis: Arc<NoesisService>,
     runtime: Arc<Runtime>,
     connections: JoinSet<()>,
     locks: Locks,
-    #[cfg(test)] before_noesis: Option<Box<dyn FnOnce() + Send>>,
-) -> (bool, bool, bool) {
-    let noesis_stopped = self::noesis(
-        noesis,
-        locks.clone(),
-        #[cfg(test)]
-        before_noesis,
-    )
-    .await;
+) -> (bool, bool) {
     let stopped = self::runtime(runtime, locks.clone()).await;
     let drained = self::connections(connections, locks).await;
-    (noesis_stopped, stopped, drained)
+    (stopped, drained)
 }
 
 async fn phase(
@@ -105,23 +95,6 @@ pub(crate) async fn connections(mut connections: JoinSet<()>, locks: Locks) -> b
                 tracing::error!(%error, "connection task failed");
             }
         }
-        true
-    })
-    .await
-}
-
-pub(crate) async fn noesis(
-    noesis: Arc<NoesisService>,
-    locks: Locks,
-    #[cfg(test)] before_noesis: Option<Box<dyn FnOnce() + Send>>,
-) -> bool {
-    #[cfg(test)]
-    if let Some(observe) = before_noesis {
-        observe();
-    }
-    phase("noesis", DRAIN_DEADLINE, async move {
-        let _locks = locks;
-        noesis.shutdown().await;
         true
     })
     .await

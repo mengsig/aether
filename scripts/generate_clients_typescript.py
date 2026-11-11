@@ -27,20 +27,13 @@ def exported_names(lines):
     return re.findall(r"^export (?:interface|type|function) (\w+)", "\n".join(lines), re.M)
 
 
-def reply_module(declaration):
-    """Keep the Noesis replies out of Reply.ts, which would pass the line cap."""
-    tag = re.search(r'"reply": "([^"]+)"', "\n".join(declaration))
-    noesis = tag and (tag.group(1).startswith("noesis_") or tag.group(1) == "concept_state")
-    return "protocol/replies/noesis.ts" if noesis else "protocol/types/Reply.ts"
-
-
 def files(schema, definitions, commands, banner):
     """Return paths relative to src, with protocol.ts retaining every export."""
     modules = {}
     for name, lines in definitions.items():
         if name == "Reply":
             for declaration in declarations(lines):
-                modules.setdefault(reply_module(declaration), []).extend(declaration)
+                modules.setdefault("protocol/types/Reply.ts", []).extend(declaration)
             continue
         if name != "EventKind":
             modules[f"protocol/types/{name}.ts"] = lines

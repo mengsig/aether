@@ -116,7 +116,6 @@ impl Runtime {
         {
             return Err(RuntimeError::Invalid("a subsystem must be named".into()));
         }
-        self.check_noesis_creation(&spec.role, subsystem.as_deref())?;
         let PreparedAgent {
             mut agent,
             task,
@@ -153,7 +152,6 @@ impl Runtime {
             return Err(RuntimeError::Invalid(refusal));
         }
         if let Some(parent) = &parent {
-            self.check_noesis_parent(parent, subsystem.as_deref())?;
             self.inherit_from_parent(&hold, parent, &mut agent, preflight.inherit_limits)?;
             crate::cancellation::check_parent(self, &hold, parent.id)?;
         }

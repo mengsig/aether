@@ -495,7 +495,7 @@ const V28: &str = r#"
 CREATE INDEX IF NOT EXISTS approvals_agent ON approvals(agent_id);
 "#;
 
-// The subsystem an agent belongs to (`noesis`), written once by the insert
+// The subsystem an agent belongs to, written once by the insert
 // that creates the row and refused on any later change; the column itself is
 // added by `add_missing_column`, as a rewound stamp replays this block. Plus
 // the indexes the protocol 26 read models scan: agent pages and spend per run.

@@ -59,18 +59,6 @@ import type {
   EventKindMemoryRestored,
   EventKindMemorySuperseded,
   EventKindMessageSent,
-  EventKindNoesisAnswerRecorded,
-  EventKindNoesisGraphMerged,
-  EventKindNoesisJobUpdated,
-  EventKindNoesisLearnerUpdated,
-  EventKindNoesisPhaseChanged,
-  EventKindNoesisPlanUpdated,
-  EventKindNoesisPracticeConcluded,
-  EventKindNoesisProblemPosed,
-  EventKindNoesisQuestionPosed,
-  EventKindNoesisSessionCreated,
-  EventKindNoesisSessionStalled,
-  EventKindNoesisSettingsChanged,
   EventKindProviderBackoff,
   EventKindProviderFallback,
   EventKindProviderQuota,
@@ -183,17 +171,5 @@ export type EventKind =
     EventKindRunHardStop |
     EventKindDaemonStarted |
     EventKindDaemonStopped |
-    EventKindNoesisSessionCreated |
-    EventKindNoesisPhaseChanged |
-    EventKindNoesisQuestionPosed |
-    EventKindNoesisAnswerRecorded |
-    EventKindNoesisPlanUpdated |
-    EventKindNoesisProblemPosed |
-    EventKindNoesisPracticeConcluded |
-    EventKindNoesisSessionStalled |
-    EventKindNoesisJobUpdated |
-    EventKindNoesisGraphMerged |
-    EventKindNoesisLearnerUpdated |
-    EventKindNoesisSettingsChanged |
     EventKindCustom
 ;

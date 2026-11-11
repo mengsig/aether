@@ -165,28 +165,6 @@ from ._protocol_commands.memory import (
     memory_retrieval_explain,
 )
 
-from ._protocol_commands.noesis import (
-    noesis_answer,
-    noesis_cancel_job,
-    noesis_configure,
-    noesis_correct_learner,
-    noesis_create_session,
-    noesis_delete_proposition,
-    noesis_delete_session,
-    noesis_delete_source,
-    noesis_extract,
-    noesis_get_session,
-    noesis_graph,
-    noesis_import_source,
-    noesis_jobs,
-    noesis_learner,
-    noesis_learner_evidence,
-    noesis_list_sessions,
-    noesis_retry_turn,
-    noesis_send,
-    noesis_status,
-)
-
 from ._protocol_commands.pause import (
     pause,
 )

@@ -210,7 +210,8 @@ looks like a boundary and is not one.
   clipboard image and the terminal's own paste still pastes text.
 - Ctrl+V attaches a file copied in a file manager only when it is one image
   file; several files, or a copy on macOS Finder, paste as text.
-- The web app served by the remote listener cannot attach images yet.
+- The phone web app cannot attach images yet. It speaks protocol 18, so it
+  shows an image sent from elsewhere as its `[image: name, size]` line.
 - A host older than protocol 19 (Aether 1.0.2 or before) takes no images: the
   client refuses the message there and nothing is sent.
 
@@ -271,28 +272,8 @@ looks like a boundary and is not one.
   Unknown cost is not zero cost or a reliable dollar-budget guarantee.
 - Retention is not a full disk quota. Native sessions, backups, and workspaces
   have separate lifecycles.
-- A Noesis step on a subscription engine starts a fresh CLI session each
-  turn. A Noesis step's text, on an engine or an API model, arrives in one
-  piece when the step ends, not streamed, so the seal can read it first.
-- The Noesis seal matches whole phrases. A very short or common answer, such
-  as one digit, can make an innocent reply look like a leak; the step is then
-  run again and may end with "Let's try that differently."
-- A check's lead-in is screened for question marks and answer leakage, but
-  its relevance to the question is not checked. It may discuss another topic.
-- A Noesis lesson started before the session history was kept (store N3)
-  lists only its current agent. A lesson handed off to the Teacher before the
-  upgrade therefore no longer shows the Prober's conversation. The client
-  still hides each such agent's first input (the opening or the hand-off) from
-  the learner's side.
-- "Learn from this" finds the session a source started by the id the client
-  remembered. With nothing remembered, it falls back to a matching goal among
-  the sessions in the first page of the list, 200 sessions.
 
 ## Platforms
-
-- On Wayland, the compositor may decline a notification click’s request to focus
-  the Aether window when no activation token is available. The window is shown
-  and the question opens, but you may need to select the window yourself.
 
 Aether supports Linux and macOS. Native Windows is not supported: the daemon
 and its clients talk over Unix sockets, and the process runners rely on Unix

@@ -5,6 +5,7 @@ use super::AetherConfig;
 
 pub(super) fn parse_config(text: &str) -> Result<AetherConfig, String> {
     let mut table = DeTable::parse(text).map_err(|error| syntax_error(text, &error))?;
+    drop_retired_noesis_table(table.get_mut());
     let mut unknown = Vec::new();
     for _ in 0..64 {
         match AetherConfig::deserialize(toml::Deserializer::from(table.clone())) {
@@ -38,6 +39,18 @@ pub(super) fn parse_config(text: &str) -> Result<AetherConfig, String> {
         .map(|(_, path)| format!("`{path}`"))
         .collect::<Vec<_>>();
     Err(format!("unknown settings {}", names.join(", ")))
+}
+
+/// Aether 1.3 has no Noesis. A `[noesis]` table left in an older config is
+/// ignored with a warning instead of refusing to start.
+fn drop_retired_noesis_table(table: &mut DeTable<'_>) {
+    let removed = table.remove("noesis");
+    if removed.is_some() {
+        tracing::warn!(
+            "ignoring the `[noesis]` section in config.toml: Noesis was removed; delete the section"
+        );
+    }
+    debug_assert!(!table.contains_key("noesis"));
 }
 
 fn syntax_error(text: &str, error: &toml::de::Error) -> String {

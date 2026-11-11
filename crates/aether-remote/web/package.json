@@ -1,0 +1,23 @@
+{
+  "name": "aether-remote-web",
+  "version": "1.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node dev/server.js",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json && tsc -p tsconfig.worker.json",
+    "test:unit": "node scripts/unit.js",
+    "test:browser": "node scripts/browser.js",
+    "test:live": "node scripts/live.js",
+    "check": "node scripts/precache.js --check && npm run typecheck && npm run test:unit && npm run test:browser",
+    "precache": "node scripts/precache.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "@types/node": "22.18.10",
+    "@types/ws": "8.18.1",
+    "ajv": "8.17.1",
+    "typescript": "5.9.3",
+    "ws": "8.18.3"
+  }
+}

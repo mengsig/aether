@@ -21,7 +21,6 @@ aether-runtime = { workspace = true }
 aether-engine = { workspace = true }
 aether-protocol = { workspace = true }
 aether-remote = { workspace = true }
-aether-noesis = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }

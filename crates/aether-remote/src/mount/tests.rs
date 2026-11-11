@@ -414,43 +414,26 @@ fn prefixes_the_listener_serves_itself_cannot_be_mounted() {
     assert!(!super::is_endpoint("/archon/api/health"));
 }
 
-/// The reserved prefixes follow the bundle: every top-level directory of `web/dist`, the
-/// endpoints and the pairing page, and no other segment, the legacy app's directories included.
+/// Every embedded file, directory of files, endpoint and the pairing page is reserved, and no
+/// other first segment is.
 #[test]
-fn the_reserved_prefixes_are_the_bundle_directories_and_the_endpoints() {
-    let dist =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::assets::selection::BUNDLE_DIR);
-    let mut directories: Vec<String> = std::fs::read_dir(&dist)
-        .expect("web/dist is readable")
-        .map(|entry| entry.expect("a directory entry").path())
-        .filter(|path| path.is_dir())
-        .filter_map(|path| Some(format!("/{}", path.file_name()?.to_str()?)))
-        .filter(|prefix| crate::assets::selection::is_shipped_name(&prefix[1..]))
-        .collect();
-    directories.sort();
-    assert!(
-        directories.contains(&"/assets".to_owned()),
-        "{directories:?}"
-    );
-    let mut expected = directories.clone();
-    expected.extend(["/api", "/pair", "/ws"].map(String::from));
-    expected.sort();
-
-    // Every first segment the listener could know of, served or not.
-    let mut candidates: Vec<String> = crate::assets::ASSETS
+fn the_reserved_prefixes_are_the_embedded_files_and_the_endpoints() {
+    let mut firsts: Vec<String> = crate::assets::ASSETS
         .iter()
-        .filter_map(|(path, _)| path[1..].split_once('/'))
-        .map(|(first, _)| format!("/{first}"))
-        .chain(["/api", "/ws", "/pair", "/archon", "/index", "/sw"].map(String::from))
-        .chain(["/ui", "/core", "/features", "/dev", "/tests"].map(String::from))
+        .map(|(path, _)| format!("/{}", path[1..].split('/').next().expect("a segment")))
         .collect();
-    candidates.sort();
-    candidates.dedup();
-    let reserved: Vec<&String> = candidates
-        .iter()
-        .filter(|prefix| super::is_served_here(prefix))
-        .collect();
-    assert_eq!(reserved, expected.iter().collect::<Vec<_>>());
+    firsts.extend(["/api", "/ws", "/pair"].map(String::from));
+    firsts.sort();
+    firsts.dedup();
+    for directory in ["/assets", "/ui", "/core", "/features"] {
+        assert!(firsts.contains(&directory.to_owned()), "{directory}");
+    }
+    for reserved in &firsts {
+        assert!(super::is_served_here(reserved), "{reserved}");
+    }
+    for free in ["/archon", "/index", "/sw", "/dev", "/tests", "/app"] {
+        assert!(!super::is_served_here(free), "{free}");
+    }
 }
 
 #[tokio::test]
@@ -683,8 +666,31 @@ async fn paths_under_a_mount_that_are_not_clean_are_refused_and_never_forwarded(
     }
     raw(mounted.bound, &get("/archonx")).await;
     assert!(seen.requests.lock().is_empty(), "nothing reached archond");
-    let (status, _, body) = raw(mounted.bound, &get("/archon")).await;
+    let (status, _, body) = raw(mounted.bound, &get("/archon/")).await;
     assert_eq!((status, body.as_str()), (200, "archond /"));
+}
+
+#[tokio::test]
+async fn a_bare_prefix_is_redirected_to_its_directory_and_never_forwarded() {
+    let (target, seen) = archond().await;
+    let mounted = mounted(target).await;
+    for (path, location) in [
+        ("/archon", "/archon/"),
+        ("/archon?pair=x&y=%2F", "/archon/?pair=x&y=%2F"),
+    ] {
+        let (status, headers, _) = raw(mounted.bound, &get(path)).await;
+        assert_eq!(status, 308, "{path}");
+        assert_eq!(header(&headers, "location"), Some(location), "{path}");
+        assert!(
+            header(&headers, "content-security-policy").is_some(),
+            "{path}"
+        );
+    }
+    assert!(seen.requests.lock().is_empty(), "nothing reached archond");
+    let (status, _, body) = raw(mounted.bound, &get("/archon/")).await;
+    assert_eq!((status, body.as_str()), (200, "archond /"));
+    let (status, _, _) = raw(mounted.bound, &get("/archonx")).await;
+    assert_ne!(status, 308, "a longer path is not the prefix");
 }
 
 #[tokio::test]
