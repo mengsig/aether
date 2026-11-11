@@ -69,9 +69,10 @@ family version; use a full ID to pin a version.
   `claude-opus-5-5`; `sonnet`, `sonnet-5-5`, `sonnet-5.5` →
   `claude-sonnet-5-5`; `haiku`, `haiku-5-5`, `haiku-5.5` →
   `claude-haiku-5-5`; `fable`, `fable-5-2` → `claude-fable-5-2`;
-  `fable-5-1` → `claude-fable-5-1`. The retired `claude-fable-5` still
-  points to Fable 5.1 (`claude-fable-5-1`), not 5.2: it stays so that stored
-  configs naming it fail with the version closest to what they ran.
+  `fable-5-1` → `claude-fable-5-1`. On `anthropic`, the retired
+  `claude-fable-5` still names Fable 5.1 (`claude-fable-5-1`), not 5.2, as
+  the model to use instead; it stays so that stored configs naming it get a
+  pointer to the closest version.
 - `openai`, `openai-responses`, `openai-codex` and `codex`: `astra` →
   `gpt-6-astra`; `terra`, `gpt-5.6-terra` → `gpt-6.1-terra`; `sol` →
   `gpt-6.1-sol`; `luna` → `gpt-6-luna`.

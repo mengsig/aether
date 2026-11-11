@@ -20,9 +20,9 @@ The Archon side is audited separately, in the Archon repository's own
   the same cookie-free pairing and Host and Origin checks. Two fixes came
   with it: a bare mount prefix now answers a 308 to its slashed form, and the
   service worker serves its cached shell only for an allowlist of the app's
-  own pages, leaving every mount to the network. The desktop app and the second web UI were removed, so their
-  findings and their section of this audit went with them. No daemon-side
-  check was loosened for that.
+  own pages, leaving every mount to the network. The desktop app and the
+  second web UI were removed, so their findings and their section of this
+  audit went with them. No daemon-side check was loosened for that.
 
 ## Severity
 
