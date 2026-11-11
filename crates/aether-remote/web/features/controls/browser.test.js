@@ -9,7 +9,7 @@ async function mountHarness(page) {
     const agent = { id: 'agt_test', name: 'Test worker', parent: null, role: 'worker', status: 'running', paused: false,
       model: 'codex/gpt-6-astra', effort: 'high', workspace: '/work', run: 'run_test', approval: 'ask',
       raw: { config: { instructions: 'Keep changes small', approval: { require_for: ['external'] } } } };
-    const state = { outbox: [], connection: 'online', connectionDetail: '', role: 'operator', agents: [agent], lastSeq: 0,
+    const state = { ready: true, outbox: [], connection: 'online', connectionDetail: '', role: 'operator', agents: [agent], lastSeq: 0,
       version: 'test', deviceName: 'Test phone', daemonId: 'daemon_test', error: null };
     const listeners = new Set();
     const sent = [];
@@ -60,6 +60,10 @@ async function verifyObserver(page) {
     form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
   });
   await page.getByText('Observer devices are read only.', { exact: true }).waitFor();
+  await page.getByText('Observer access · changes are disabled.', { exact: true }).waitFor();
+  await page.evaluate(() => window.controlsTest.store.patch({ ready: false }));
+  await page.getByText('Observer access · changes are disabled.', { exact: true }).waitFor({ state: 'hidden' });
+  await page.evaluate(() => window.controlsTest.store.patch({ ready: true }));
   assert.equal(await page.evaluate(() => window.controlsTest.sent.length), before);
   for (const label of ['Artifacts', 'Runs & reports', 'Diagnostics', 'Approval rules', 'Agent']) {
     await page.getByRole('button', { name: label, exact: true }).click();
@@ -109,6 +113,7 @@ async function verifySettings(page) {
   assert.equal(await page.getByRole('button', { name: 'Save appearance', exact: true }).isDisabled(), false);
   assert.equal(await page.getByRole('button', { name: 'Load paired devices', exact: true }).isDisabled(), true);
   await page.getByText('Operators can view paired devices. Changing or revoking access requires the Aether host.').waitFor();
+  await verifyAbout(page);
   await verifyDevices(page);
   await verifyNotifications(page);
   await page.evaluate(() => window.controlsTest.store.patch({ connection: 'offline' }));
@@ -117,6 +122,18 @@ async function verifySettings(page) {
   await page.screenshot({ path: 'node_modules/controls-settings-mobile.png', fullPage: true });
   await page.evaluate(() => window.controlsTest.cleanup());
   assert.equal(await page.evaluate(() => window.controlsTest.listeners.size), 0);
+}
+
+async function verifyAbout(page) {
+  const about = page.locator('section.card').filter({ hasText: 'About Aether' });
+  assert.equal(await about.locator('dd').textContent(), 'test');
+  assert.doesNotMatch(await about.textContent(), /Remote app 1\.0\.1/);
+  const recovery = page.locator('section.card').filter({ hasText: 'Connection and recovery' });
+  await page.evaluate(() => window.controlsTest.store.patch({ ready: false }));
+  assert.equal(await recovery.locator('dt', { hasText: 'Access' }).count(), 0, 'the role stays unnamed until a session confirms it');
+  await page.evaluate(() => window.controlsTest.store.patch({ ready: true, version: '1.3.0', role: 'observer' }));
+  assert.equal(await about.locator('dd').textContent(), '1.3.0');
+  assert.equal(await recovery.locator('dt', { hasText: 'Access' }).locator('xpath=following-sibling::dd[1]').textContent(), 'Observer');
 }
 
 async function verifyDevices(page) {

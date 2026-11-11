@@ -19,7 +19,8 @@ export function mountControls(container, context, agentId) {
   const content = el('div');
   const role = el('p', 'muted');
   const sync = () => {
-    role.hidden = context.store.get().role === 'operator';
+    const state = context.store.get();
+    role.hidden = !state.ready || state.role === 'operator';
     role.textContent = 'Observer access · changes are disabled.';
   };
   /** @type {Record<string,[string,(container:HTMLElement,context:import('../../types.js').Context,agent:string)=>()=>void]>} */

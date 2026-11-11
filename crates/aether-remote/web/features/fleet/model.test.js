@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { approvalCommand, approvalDetails, approvalHeadline, elapsed, fleetRows, questionCommand, usageSummary } from './model.js';
+import { agentLabels, approvalCommand, approvalDetails, approvalHeadline, elapsed, fleetRows, questionCommand, usageSummary } from './model.js';
 
 /** @param {Partial<import('../../types.js').Agent>} [patch] @returns {import('../../types.js').Agent} */
 function agent(patch = {}) {
@@ -114,4 +114,13 @@ test('question replies are conditional and retain exact content', () => {
   assert.throws(() => questionCommand(question, '  '), /Write a reply/);
   assert.throws(() => questionCommand({ ...question, questionSeq: undefined }, 'text'), /sequence/);
   assert.throws(() => questionCommand({ ...question, questionSeq: Number.MAX_SAFE_INTEGER + 1 }, 'text'), /sequence/);
+});
+
+test('agent labels add a short ID only where names repeat',()=>{
+  const labels=agentLabels([agent({id:'agt_000001aaaaaa',name:'worker'}),agent({id:'agt_000002bbbbbb',name:'worker'}),
+    agent({id:'agt_000003cccccc',name:'Release conductor'}),agent({id:'agt_000004dddddd',name:''})]);
+  assert.equal(labels.get('agt_000001aaaaaa'),'worker · aaaaaa');
+  assert.equal(labels.get('agt_000002bbbbbb'),'worker · bbbbbb');
+  assert.equal(labels.get('agt_000003cccccc'),'Release conductor');
+  assert.equal(labels.get('agt_000004dddddd'),'agt_000004dddddd');
 });

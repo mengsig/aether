@@ -101,7 +101,8 @@
   .connection[data-state="online"]::before { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
   .connection[data-state="reconnecting"]::before { background: var(--warning); }
   .main-content { width: 100%; max-width: 1024px; margin: 0 auto; padding: 24px max(24px,env(safe-area-inset-right)) calc(110px + env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left)); }
-  .main-content:focus { outline: none; }
+  /* Focus moved to the page or a heading orients screen readers; it is not a control, so it draws no ring. */
+  .main-content:focus, :is(h1, h2)[tabindex="-1"]:focus { outline: none; }
   .bottom-nav { position: fixed; z-index: 20; bottom: 0; left: 0; right: 0; padding: 8px max(10px,env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left)); background: var(--surface); border-top: 1px solid var(--border); display: flex; justify-content: space-around; gap: 4px; }
   .nav-item { display: flex; position: relative; min-width: 62px; min-height: 52px; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 6px 12px; border-radius: 12px; color: var(--muted); text-decoration: none; font-size: .625rem; font-weight: 600; }
   .nav-item[aria-current="page"] { color: var(--accent); background: var(--accent-soft); }
@@ -113,6 +114,9 @@
   .confirm-dialog::backdrop { background: #0d121680; backdrop-filter: blur(5px); }
   .confirm-dialog p { margin-top: 14px; color: var(--muted); }
   .confirm-dialog .row { margin-top: 28px; justify-content: flex-end; }
+  .confirm-fields { display: grid; gap: 12px; margin: 16px 0 0; max-height: 50dvh; overflow: auto; }
+  .confirm-fields dt { color: var(--muted); font-size: .75rem; font-weight: 600; }
+  .confirm-fields dd { margin: 2px 0 0; font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; font-size: .8125rem; white-space: pre-wrap; overflow-wrap: anywhere; }
   .boot { display: flex; min-height: 100dvh; flex-direction: column; align-items: center; justify-content: center; gap: 20px; text-align: center; padding: 24px; }
   .boot p { color: var(--muted); }
   .pair-intro { padding: 34px 0; }
@@ -203,6 +207,7 @@
     .app-shell[data-screen="pair"] > .topbar, .global-banner { flex-shrink: 0; }
     .main-content:not([data-screen="agent"]) { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 24px; overscroll-behavior-y: contain; scroll-padding-block: 88px 24px; }
     .app-shell[data-screen="new"] .start-action { bottom: 0; }
+    .app-shell[data-screen="new"] .main-content { scroll-padding-bottom: 96px; }
     .app-shell[data-screen="new"] .start-action.keyboard-open { bottom: max(0px,calc(var(--start-keyboard-inset) - var(--navigation-space,88px))); }
   }
 }

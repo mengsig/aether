@@ -11,5 +11,5 @@
 /** @typedef {{phrase:string,fingerprint:string,state:string}} PairProgress */
 /** @typedef {{recovery?:boolean,submissionLock?:import('./core/submission-locks.js').SubmissionLock}} RequestOptions */
 /** @typedef {{request:(command:Command,options?:RequestOptions)=>Promise<Reply>,connect:()=>Promise<void>,disconnect:()=>void,pair:(secret:string,name:string,onProgress?:(progress:PairProgress)=>void)=>Promise<void>,forget:()=>Promise<void>,onFrame:(listener:(frame:Record<string,unknown>)=>void|Promise<void>)=>()=>void,onConnection:(listener:(status:State['connection'],detail:string)=>void)=>()=>void}} Transport */
-/** @typedef {{store:Store,transport:Transport,command:(command:Command)=>Promise<Reply>,navigate:(path:string)=>void,toast:(message:string)=>void,confirm:(title:string,detail:string)=>Promise<boolean>,preferences:{theme:string,motion:string},setPreference:(name:'theme'|'motion',value:string)=>void}} Context */
+/** @typedef {{store:Store,transport:Transport,command:(command:Command)=>Promise<Reply>,navigate:(path:string)=>void,toast:(message:string)=>void,confirm:(title:string,detail:string,fields?:Array<[string,string]>)=>Promise<boolean>,preferences:{theme:string,motion:string},setPreference:(name:'theme'|'motion',value:string)=>void}} Context */
 export {};

@@ -41,8 +41,8 @@ async function checkApproval(page,fixture,decision) {
   await card.getByRole('button',{name:button,exact:true}).click();
   const dialog=page.getByRole('dialog');
   await expect(dialog).toContainText(decision==='approved'?'Approve this exact tool call?':'Deny this tool call?');
-  await expect(dialog).toContainText('Tool: web_fetch');
-  await expect(dialog).toContainText('Side effect: external');
+  await expect(dialog.locator('.confirm-fields div').filter({hasText:'Tool'}).locator('dd').first()).toHaveText('web_fetch');
+  await expect(dialog.locator('.confirm-fields div').filter({hasText:'Side effect'}).locator('dd')).toHaveText('external');
   await expect(dialog).toContainText('https://example.com/changelog');
   await dialog.getByRole('button',{name:'Keep as is',exact:true}).click();
   expect((await pendingApproval(fixture,agent)).id).toBe(approval.id);

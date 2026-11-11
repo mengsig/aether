@@ -103,6 +103,13 @@ before updating.
   targets and a shimmering fleet skeleton. From 1100px wide the navigation
   becomes a sidebar, Attention and Settings lay their cards out in a grid and
   a conversation spans the window.
+- **Phone app polish.** The Approve dialog lists the tool, side effect,
+  arguments and resources on their own labelled lines. Settings > About shows
+  the Aether version the daemon reports. Usage by agent adds a short ID to
+  agents that share a name. From 800px wide the Start button follows the start
+  form instead of covering its last row, and on a phone a focused field
+  scrolls clear of it. An operator device shows no observer label while it
+  connects, and the empty Attention screen lines up with its heading.
 
 ### Fixed
 

@@ -118,6 +118,10 @@ test('operator resources render, lifecycle changes and exact decisions resolve',
   await page.goto('/#attention?item=apr_00000000000000000000000001');
   await page.getByRole('button',{name:'Approve…',exact:true}).click();
   await expect(page.getByRole('dialog')).toContainText('git push origin remote-dashboard');
+  await expect(page.locator('.confirm-fields dt')).toHaveText(['Tool','Side effect','Original arguments','Resources']);
+  const fields=await page.locator('.confirm-fields > div').evaluateAll(rows=>rows.map(row=>row.getBoundingClientRect().top));
+  expect(fields).toEqual([...fields].sort((left,right)=>left-right));
+  expect(new Set(fields).size).toBe(4);
   await page.getByRole('button',{name:'Keep as is'}).click();
   await expect(page.getByRole('button',{name:'Approve…',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Deny…',exact:true}).click();
@@ -138,6 +142,25 @@ test('observer can inspect the fleet and cannot start work',async ({page}) => {
   await expect(page.getByRole('button',{name:'Start agent'})).toHaveCount(0);
   await page.goto('/#attention');
   await expect(page.getByRole('button',{name:/Approve|Deny|Send answer/})).toHaveCount(0);
+  await expect(page.getByText('Observer access · an operator must approve or reply.')).toBeVisible();
+});
+
+test('an operator never sees an observer label while its session connects',async ({page}) => {
+  await pair(page);
+  await page.goto('/#attention');
+  await expect(page.getByRole('heading',{name:'Attention'})).toBeVisible();
+  // Record every observer label the page ever renders across a reload and reconnect.
+  await page.addInitScript(() => {
+    /** @type {string[]} */ const seen=[]; Object.defineProperty(window,'observerLabels',{value:seen});
+    new MutationObserver(()=>{ if (/Observer access/.test(document.body?.innerText ?? '')) seen.push(location.hash); })
+      .observe(document,{subtree:true,childList:true,characterData:true});
+  });
+  for (const route of ['attention','settings','controls/agt_00000000000000000000000001']) {
+    await page.goto(`/#${route}`); await page.reload();
+    await expect(page.locator('.connection[data-state="online"]:visible')).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(await page.evaluate(()=>/** @type {string[]} */ (/** @type {any} */ (window).observerLabels)),route).toEqual([]);
+  }
 });
 
 test('outbox command opens delivery review with keyboard focus',async({page})=>{
