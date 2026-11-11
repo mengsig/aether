@@ -173,6 +173,10 @@ fn configure_thinking_binding(body: &mut serde_json::Map<String, Value>, betas: 
                 | "claude-sonnet-5-5"
         )
     );
+    // A summarize request binds nothing unless it replays signed thinking itself.
+    if body.contains_key("compaction") && !body_replays_thinking(body) {
+        return;
+    }
     let Some(thinking) = body.get_mut("thinking") else {
         return;
     };
@@ -188,6 +192,24 @@ fn configure_thinking_binding(body: &mut serde_json::Map<String, Value>, betas: 
             betas.push(THINKING_BINDING_BETA.to_owned());
         }
     }
+}
+
+/// Whether the built messages carry a thinking block the API will verify.
+pub(super) fn body_replays_thinking(body: &serde_json::Map<String, Value>) -> bool {
+    body.get("messages")
+        .and_then(Value::as_array)
+        .is_some_and(|messages| {
+            messages.iter().any(|message| {
+                message["content"].as_array().is_some_and(|blocks| {
+                    blocks.iter().any(|block| {
+                        matches!(
+                            block["type"].as_str(),
+                            Some("thinking" | "redacted_thinking")
+                        )
+                    })
+                })
+            })
+        })
 }
 
 fn configure_compaction(
@@ -531,7 +553,8 @@ mod tests {
             json!(true),
         );
         let built = build(&req, &profile).unwrap();
-        assert_eq!(built.betas, [SUMMARIZE_BETA, THINKING_BINDING_BETA]);
+        assert_eq!(built.betas, [SUMMARIZE_BETA]);
+        assert_eq!(built.body["thinking"], json!({"type": "adaptive"}));
         assert_eq!(
             built.body["compaction"],
             req.extensions["anthropic.compaction"]
@@ -545,6 +568,44 @@ mod tests {
         assert_eq!(budget["total"], 9);
         assert_eq!(built.body["system"][0]["text"], "policy");
         assert_eq!(built.body["tools"][0]["name"], "read");
+    }
+
+    #[test]
+    fn summarize_request_binds_thinking_only_when_it_replays_signed_thinking() {
+        let thought = |signature: Option<&str>| ContentBlock::Thinking {
+            text: "thought".into(),
+            signature: signature.map(str::to_owned),
+            redacted: false,
+        };
+        let request = |thinking: ContentBlock| {
+            let mut req = ModelRequest::new(
+                ModelRef::new("anthropic", "claude-fable-5-2"),
+                vec![
+                    Message::user_text("hi"),
+                    Message::assistant_blocks(vec![thinking, ContentBlock::text("answer")]),
+                    Message::user_text("summarize"),
+                ],
+            );
+            req.extensions
+                .insert("anthropic.compaction".into(), json!({"type": "summarize"}));
+            req
+        };
+        let unsigned = build(&request(thought(None)), &adaptive_profile()).unwrap();
+        assert_eq!(unsigned.betas, [SUMMARIZE_BETA]);
+        assert_eq!(unsigned.body["thinking"], json!({"type": "adaptive"}));
+
+        let signed = build(&request(thought(Some("sig"))), &adaptive_profile()).unwrap();
+        assert_eq!(signed.betas, [SUMMARIZE_BETA, THINKING_BINDING_BETA]);
+        assert_eq!(
+            signed.body["thinking"],
+            json!({"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}})
+        );
+
+        let mut off = request(thought(Some("sig")));
+        off.thinking = Some(ThinkingMode::Off);
+        let off = build(&off, &adaptive_profile()).unwrap();
+        assert_eq!(off.betas, [SUMMARIZE_BETA]);
+        assert!(off.body.get("thinking").is_none());
     }
 
     #[test]

@@ -104,7 +104,8 @@ before updating.
 - **Changed earlier turns no longer break Anthropic thinking requests.**
   Requests to models that bind thinking to its prefix ask the API to drop
   invalidated preserved thinking instead of failing, and retry once without
-  thinking if an endpoint rejects the control.
+  thinking if an endpoint rejects the control or a replayed block's signature.
+  Summarize requests send the control only when they replay signed thinking.
 - **An installed phone app no longer answers for a mount.** Its service worker
   serves the cached shell only for the app's own pages, so a failing `/archon/`
   shows Archon's error instead of Aether.

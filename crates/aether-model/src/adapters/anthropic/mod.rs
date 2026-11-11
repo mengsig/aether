@@ -3,7 +3,7 @@
 pub mod request;
 pub mod stream;
 
-use aether_core::model::{ContentBlock, ModelError, ModelRequest};
+use aether_core::model::{ContentBlock, MessageRole, ModelError, ModelErrorClass, ModelRequest};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use tokio_util::sync::CancellationToken;
 
@@ -116,6 +116,34 @@ impl AnthropicClient {
         })
         .await
     }
+
+    /// The one fallback attempt: no thinking blocks, no thinking parameter and
+    /// no binding beta. It never retries again, whatever it returns.
+    async fn send_without_thinking(
+        &self,
+        request: &ModelRequest,
+        profile: &aether_core::model::CapabilityProfile,
+        cancel: &CancellationToken,
+    ) -> Result<reqwest::Response, ModelError> {
+        let mut stripped = request.clone();
+        strip_thinking(&mut stripped);
+        let mut fallback = request::build(&stripped, profile)?;
+        let body = fallback.body.as_object_mut().ok_or_else(|| {
+            ModelError::new(
+                ModelErrorClass::Unknown,
+                "Anthropic request body is not an object",
+            )
+        })?;
+        body.remove("thinking");
+        fallback
+            .betas
+            .retain(|beta| beta != request::THINKING_BINDING_BETA);
+        debug_assert!(!request::body_replays_thinking(body));
+        let mut headers = self.headers(&fallback.betas)?;
+        remove_binding_header(&mut headers)?;
+        self.send(&fallback, headers, cancel, http::RetryPolicy::none())
+            .await
+    }
 }
 
 fn strip_thinking(request: &mut ModelRequest) {
@@ -124,6 +152,47 @@ fn strip_thinking(request: &mut ModelRequest) {
             .content
             .retain(|block| !matches!(block, ContentBlock::Thinking { .. }));
     }
+    // Drop emptied assistant turns: the body builder merges the user turns around them, so roles still alternate.
+    request
+        .messages
+        .retain(|message| message.role != MessageRole::Assistant || !message.content.is_empty());
+    debug_assert!(request.messages.iter().all(|message| {
+        !message
+            .content
+            .iter()
+            .any(|block| matches!(block, ContentBlock::Thinking { .. }))
+    }));
+}
+
+/// The 400s the API returns for a replayed thinking block it can no longer
+/// verify: a bad or foreign signature, or an edit to a bound block.
+fn is_thinking_mismatch(error: &ModelError) -> bool {
+    let typed = error
+        .provider_code
+        .as_deref()
+        .is_none_or(|code| code == "invalid_request_error");
+    let message = error.message.as_str();
+    let mismatch = message.contains("Invalid `signature` in `thinking` block")
+        || (message.contains("`thinking`") && message.contains("cannot be modified"));
+    typed && mismatch
+}
+
+/// Whether a failed request earns its single retry without preserved thinking.
+fn should_strip_thinking(error: &ModelError, built: &request::BuiltRequest) -> bool {
+    if error.status != Some(400) || error.class != ModelErrorClass::InvalidRequest {
+        return false;
+    }
+    let sent_beta = built
+        .betas
+        .iter()
+        .any(|beta| beta == request::THINKING_BINDING_BETA);
+    let beta_rejected = sent_beta && error.message.contains(request::THINKING_BINDING_BETA);
+    beta_rejected
+        || (is_thinking_mismatch(error)
+            && built
+                .body
+                .as_object()
+                .is_some_and(request::body_replays_thinking))
 }
 
 fn remove_binding_header(headers: &mut HeaderMap) -> Result<(), ModelError> {
@@ -178,32 +247,10 @@ impl ModelClient for AnthropicClient {
         } else {
             self.config.retry
         };
-        let result = self.send(&built, headers, &cancel, retry).await;
-        let response = match result {
-            Err(error)
-                if error.status == Some(400)
-                    && error.message.contains(request::THINKING_BINDING_BETA)
-                    && built
-                        .betas
-                        .iter()
-                        .any(|beta| beta == request::THINKING_BINDING_BETA) =>
-            {
-                let mut stripped = request.clone();
-                strip_thinking(&mut stripped);
-                let mut fallback = request::build(&stripped, &profile)?;
-                let body = fallback.body.as_object_mut().ok_or_else(|| {
-                    ModelError::new(
-                        aether_core::model::ModelErrorClass::Unknown,
-                        "Anthropic request body is not an object",
-                    )
-                })?;
-                body.remove("thinking");
-                fallback
-                    .betas
-                    .retain(|beta| beta != request::THINKING_BINDING_BETA);
-                let mut headers = self.headers(&fallback.betas)?;
-                remove_binding_header(&mut headers)?;
-                self.send(&fallback, headers, &cancel, http::RetryPolicy::none())
+        let response = match self.send(&built, headers, &cancel, retry).await {
+            Err(error) if should_strip_thinking(&error, &built) => {
+                tracing::warn!(error = %error.message, "retrying once without preserved thinking");
+                self.send_without_thinking(&request, &profile, &cancel)
                     .await?
             }
             other => other?,
@@ -216,7 +263,113 @@ impl ModelClient for AnthropicClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aether_core::model::{Message, ModelRef};
+    use aether_core::model::{CapabilityProfile, Message, ModelRef, ThinkingSupport};
+    use serde_json::json;
+
+    const SIGNATURE_400: &str = r#"{"type":"error","error":{"type":"invalid_request_error","message":"messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation."},"request_id":"req_011CVsigmismatch"}"#;
+    const MODIFIED_400: &str = r#"{"type":"error","error":{"type":"invalid_request_error","message":"messages.1.content.0: `thinking` or `redacted_thinking` blocks in the latest assistant message cannot be modified. These blocks must remain as they were in the original response."},"request_id":"req_011CVmodified"}"#;
+    const BETA_400: &str = r#"{"type":"error","error":{"type":"invalid_request_error","message":"Unexpected value(s) `thinking-binding-controls-2026-08-01` for the `anthropic-beta` header."}}"#;
+    const UNRELATED_400: &str = r#"{"type":"error","error":{"type":"invalid_request_error","message":"messages.0.content.0.text: text content blocks must be non-empty"}}"#;
+
+    fn http_400(body: &str) -> ModelError {
+        crate::http::map_http_error(400, &HeaderMap::new(), body)
+    }
+
+    fn fable_request(thinking_signature: Option<&str>) -> ModelRequest {
+        ModelRequest::new(
+            ModelRef::new("anthropic", "claude-fable-5-2"),
+            vec![
+                Message::user_text("hi"),
+                Message::assistant_blocks(vec![
+                    ContentBlock::Thinking {
+                        text: "thought".into(),
+                        signature: thinking_signature.map(str::to_owned),
+                        redacted: false,
+                    },
+                    ContentBlock::text("answer"),
+                ]),
+                Message::user_text("continue"),
+            ],
+        )
+    }
+
+    fn adaptive() -> CapabilityProfile {
+        CapabilityProfile {
+            thinking: ThinkingSupport::Adaptive,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn compaction_request_sends_no_binding_body_or_header() {
+        let client = AnthropicClient::new(AdapterConfig::new(
+            "http://127.0.0.1:9",
+            RequestAuth::ApiKey("key".into()),
+        ))
+        .unwrap();
+        let mut req = fable_request(None);
+        req.extensions
+            .insert("anthropic.compaction".into(), json!({"type": "summarize"}));
+        let built = request::build(&req, &adaptive()).unwrap();
+        let headers = client.headers(&built.betas).unwrap();
+        assert_eq!(headers["anthropic-beta"], request::SUMMARIZE_BETA);
+        assert_eq!(built.body["compaction"], json!({"type": "summarize"}));
+        assert_eq!(built.body["thinking"], json!({"type": "adaptive"}));
+        assert_eq!(
+            built.body["messages"][1]["content"],
+            json!([{"type": "text", "text": "answer"}]),
+            "the unsigned thinking block is not replayed"
+        );
+    }
+
+    #[test]
+    fn thinking_mismatch_400s_trigger_the_retry_only_when_thinking_is_replayed() {
+        let replaying = request::build(&fable_request(Some("sig")), &adaptive()).unwrap();
+        let mut without_thinking = fable_request(Some("sig"));
+        strip_thinking(&mut without_thinking);
+        let plain = request::build(&without_thinking, &adaptive()).unwrap();
+        for body in [SIGNATURE_400, MODIFIED_400] {
+            let error = http_400(body);
+            assert!(is_thinking_mismatch(&error), "{body}");
+            assert!(should_strip_thinking(&error, &replaying), "{body}");
+            assert!(!should_strip_thinking(&error, &plain), "{body}");
+        }
+        // A rejected beta retries whether or not thinking is replayed, since the beta rode on both.
+        assert!(should_strip_thinking(&http_400(BETA_400), &replaying));
+        assert!(should_strip_thinking(&http_400(BETA_400), &plain));
+        let unrelated = http_400(UNRELATED_400);
+        assert!(!is_thinking_mismatch(&unrelated));
+        assert!(!should_strip_thinking(&unrelated, &replaying));
+        let server = crate::http::map_http_error(500, &HeaderMap::new(), SIGNATURE_400);
+        assert!(!should_strip_thinking(&server, &replaying));
+    }
+
+    #[test]
+    fn stripping_drops_an_assistant_turn_left_empty() {
+        let mut req = ModelRequest::new(
+            ModelRef::new("anthropic", "claude-fable-5-2"),
+            vec![
+                Message::user_text("hi"),
+                Message::assistant_blocks(vec![ContentBlock::Thinking {
+                    text: String::new(),
+                    signature: Some("sig".into()),
+                    redacted: false,
+                }]),
+                Message::user_text("continue"),
+            ],
+        );
+        strip_thinking(&mut req);
+        assert_eq!(req.messages.len(), 2);
+        assert!(req.messages.iter().all(|m| m.role == MessageRole::User));
+        let built = request::build(&req, &adaptive()).unwrap();
+        assert_eq!(
+            built.body["messages"],
+            json!([{"role": "user", "content": [
+                {"type": "text", "text": "hi"},
+                {"type": "text", "text": "continue"}
+            ]}])
+        );
+    }
 
     #[test]
     fn fallback_strips_thinking_and_only_the_binding_beta() {
