@@ -501,7 +501,7 @@ fn assert_acted_as_this_device(
             other => panic!("unexpected {other:?}"),
         };
         assert!(
-            matches!(actor, Actor::User { origin: Some(OperatorOrigin::Device { device, ref name, .. }), .. } if device == carrier.identity.id && name == &carrier.identity.name)
+            matches!(actor, Actor::User { origin: Some(OperatorOrigin::Device { device, ref name, role: Some(DeviceRole::Operator), .. }), .. } if device == carrier.identity.id && name == &carrier.identity.name)
         );
     }
     let decision = carrier
@@ -614,6 +614,7 @@ async fn approval_ceiling_applies_to_explicit_legacy_and_schedule_fields() {
     daemon.runtime.shutdown().await;
 }
 
+mod operator_lines;
 mod resource_limits;
 
 #[tokio::test]

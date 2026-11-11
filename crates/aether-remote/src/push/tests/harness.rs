@@ -235,5 +235,6 @@ pub(super) fn by_device(device: DeviceId) -> Actor {
         device,
         name: "phone".into(),
         connection: "c1".into(),
+        role: Some(aether_core::event::DeviceRole::Operator),
     })
 }

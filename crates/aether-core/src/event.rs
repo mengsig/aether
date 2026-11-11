@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 mod actor;
 mod kind;
 mod triggers;
-pub use actor::{Actor, OperatorOrigin};
+pub use actor::{Actor, DeviceRole, OperatorOrigin};
 pub use kind::EventKind;
 pub use triggers::{CompactionTrigger, RecoveryClass};
 

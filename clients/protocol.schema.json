@@ -11838,6 +11838,17 @@
             "name": {
               "type": "string"
             },
+            "role": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DeviceRole"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The role the daemon's device store held when the device\nauthenticated. Absent on events written before it was recorded."
+            },
             "transport": {
               "const": "device",
               "type": "string"

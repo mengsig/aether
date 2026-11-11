@@ -39,13 +39,34 @@ fn a_device_origin_names_the_device_and_keeps_user_standing() {
         device,
         name: "phone".into(),
         connection: "c1".into(),
+        role: Some(super::DeviceRole::Operator),
     });
     assert!(matches!(actor, super::Actor::User { .. }));
     assert_eq!(actor.label(), format!("user:device:phone({device})#c1"));
     let json = serde_json::to_value(&actor).unwrap();
     assert_eq!(json["origin"]["transport"], "device");
+    assert_eq!(json["origin"]["role"], "operator");
     let back: super::Actor = serde_json::from_value(json).unwrap();
     assert_eq!(back, actor);
+}
+
+/// Events written before the role was recorded read back with none, and an
+/// origin with no role writes none, so older readers see the same shape.
+#[test]
+fn a_device_origin_without_a_role_reads_and_writes_as_before() {
+    let device = crate::id::DeviceId::new();
+    let old = serde_json::json!({"actor": "user", "origin": {
+        "transport": "device", "device": device, "name": "phone", "connection": "c1"}});
+    let actor: super::Actor = serde_json::from_value(old.clone()).unwrap();
+    let super::Actor::User {
+        origin: Some(super::OperatorOrigin::Device { role, .. }),
+        ..
+    } = &actor
+    else {
+        panic!("a device origin: {actor:?}");
+    };
+    assert_eq!(*role, None);
+    assert_eq!(serde_json::to_value(&actor).unwrap(), old);
 }
 
 #[test]

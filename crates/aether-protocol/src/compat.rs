@@ -345,6 +345,7 @@ mod tests {
                     device,
                     name: "phone".into(),
                     connection: "c1".into(),
+                    role: Some(aether_core::event::DeviceRole::Operator),
                 }),
                 content: vec![],
             },
@@ -1118,6 +1119,7 @@ mod tests {
             device: aether_core::id::DeviceId::new(),
             name: "phone".into(),
             connection: "c1".into(),
+            role: Some(aether_core::event::DeviceRole::Operator),
         }));
         let v18 = encode_for(18, &frame).expect("encode");
         assert!(v18.contains(DEVICE_ORIGIN), "{v18}");

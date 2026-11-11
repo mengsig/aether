@@ -229,6 +229,7 @@ async fn a_named_cache_must_be_absolute_and_never_comes_from_a_device() {
         device: aether_core::id::DeviceId::new(),
         name: "phone".into(),
         connection: "device-test".into(),
+        role: Some(aether_core::event::DeviceRole::Operator),
     });
     let refused = h.runtime.create_agent(asked, device).expect_err("device");
     assert!(refused.to_string().contains("paired device"), "{refused}");

@@ -772,6 +772,7 @@ mod inbox_authority_tests {
                 device,
                 name: name.into(),
                 connection: "server-connection".into(),
+                role: Some(aether_core::event::DeviceRole::Operator),
             });
             let kinds = [
                 InboxKind::Message {

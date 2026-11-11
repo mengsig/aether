@@ -94,6 +94,45 @@ fn a_device_acts_as_the_operator_and_is_named_in_the_record() {
     assert!(local.contains("local_socket"), "{local}");
 }
 
+/// Archon reads the role off the event to decide whether a phone line is an
+/// operator line, so it must come from the session, never from the client.
+#[test]
+fn a_device_origin_carries_the_role_its_session_was_paired_with() {
+    let auth = device(DeviceRole::Operator);
+    let identity = auth.device().unwrap().clone();
+    let actor = auth.actor(None, "conn".into());
+    let json = serde_json::to_value(&actor).unwrap();
+    assert_eq!(json["origin"]["transport"], "device");
+    assert_eq!(json["origin"]["role"], "operator");
+    assert_eq!(json["origin"]["device"], identity.id.to_string());
+    let peer: SocketAddr = "192.0.2.7:4000".parse().unwrap();
+    let token = serde_json::to_value(AuthContext::Token.actor(Some(peer), "conn".into())).unwrap();
+    assert_eq!(token["origin"]["transport"], "tcp");
+    assert!(token["origin"].get("role").is_none(), "{token}");
+    let local = serde_json::to_value(AuthContext::Local.actor(None, "conn".into())).unwrap();
+    assert!(local["origin"].get("role").is_none(), "{local}");
+}
+
+#[test]
+fn an_observer_refusal_says_the_device_is_an_observer() {
+    let observer = device(DeviceRole::Observer);
+    let refusal = observer
+        .authorize(&Command::Interrupt {
+            agent: aether_core::id::AgentId::new(),
+            idempotency_key: None,
+        })
+        .unwrap_err();
+    assert_eq!(refusal.code, ErrorCode::Forbidden);
+    assert!(
+        refusal.message.contains("paired as an observer"),
+        "{}",
+        refusal.message
+    );
+    observer.closed().unwrap().cancel();
+    let revoked = observer.authorize(&Command::GetAttention).unwrap_err();
+    assert!(revoked.message.contains("revoked"), "{}", revoked.message);
+}
+
 #[test]
 fn every_command_has_an_explicit_role_decision() {
     let cases: serde_json::Value =
