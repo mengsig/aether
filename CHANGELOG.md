@@ -28,11 +28,6 @@ Protocol 26 (the daemon serves 17 to 26) and store schema 33. Read the
 [upgrade notes](https://github.com/mengsig/aether/blob/main/docs/upgrading.md)
 before updating.
 
-- Claude Fable 5.2 is available on Anthropic and Claude Code; `fable` now
-  selects it, while `fable-5-1` continues to select Fable 5.1.
-- Anthropic thinking requests drop invalidated preserved thinking when the
-  request prefix changes, keeping resumed turns usable.
-
 ### Before updating
 
 - **Store schema 33.** Five migrations run when the daemon first opens the
@@ -83,6 +78,9 @@ before updating.
   `migration-status` come with it, behind the `memory_v2` feature. See
   [Memory 2.0](https://github.com/mengsig/aether/blob/main/docs/memory/MEMORY-V2.md).
 - **Checks.** `make bench-memory` (G0), not part of `make ci`.
+- **Claude Fable 5.2.** Available on Anthropic and Claude Code at $8/$40 per
+  million tokens with a 1M context; `fable` and `fable-5-2` select it, while
+  `fable-5-1` still selects Fable 5.1.
 
 ### Security
 
@@ -103,6 +101,10 @@ before updating.
 
 ### Fixed
 
+- **Changed earlier turns no longer break Anthropic thinking requests.**
+  Requests to models that bind thinking to its prefix ask the API to drop
+  invalidated preserved thinking instead of failing, and retry once without
+  thinking if an endpoint rejects the control.
 - **An installed phone app no longer answers for a mount.** Its service worker
   serves the cached shell only for the app's own pages, so a failing `/archon/`
   shows Archon's error instead of Aether.
