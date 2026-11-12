@@ -187,6 +187,7 @@ fn spend(usd: f64) -> EventKind {
     EventKind::AgentUsageUpdated {
         total: usage(usd),
         turn_usage: usage(0.25),
+        billing: None,
     }
 }
 

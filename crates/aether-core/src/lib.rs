@@ -26,7 +26,10 @@ pub mod lease;
 pub mod limits;
 pub mod mcp;
 pub mod memory;
+pub mod memory_admission;
 pub mod memory_feedback;
+pub mod memory_v2;
+pub mod memory_v2_reports;
 pub mod model;
 pub mod note;
 pub mod notification;
@@ -45,6 +48,7 @@ pub mod text;
 pub mod time;
 pub mod tool;
 pub mod transfer;
+pub mod view_modes;
 pub mod workspace_review;
 pub mod write_stats;
 

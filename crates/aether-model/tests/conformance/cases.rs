@@ -1,6 +1,143 @@
 use super::*;
 
 #[tokio::test]
+async fn rejected_thinking_binding_beta_retries_once_without_preserved_thinking() {
+    use aether_core::model::{ContentBlock, Message, ModelRef};
+    use aether_model::adapters::anthropic::AnthropicClient;
+
+    let beta = "thinking-binding-controls-2026-08-01";
+    let server = FixtureServer::start(Canned::error(
+        400,
+        format!(r#"{{"error":{{"message":"invalid beta {beta}"}}}}"#),
+        None,
+    ))
+    .await;
+    let config = AdapterConfig::new(server.base_url(), RequestAuth::None).with_capability(
+        "claude-fable-5-2",
+        CapabilityProfile {
+            thinking: ThinkingSupport::Adaptive,
+            ..profile()
+        },
+    );
+    let client = AnthropicClient::new(config).unwrap();
+    let req = ModelRequest::new(
+        ModelRef::new("anthropic", "claude-fable-5-2"),
+        vec![
+            Message::user_text("hi"),
+            Message::assistant_blocks(vec![
+                ContentBlock::Thinking {
+                    text: "thought".into(),
+                    signature: Some("sig".into()),
+                    redacted: false,
+                },
+                ContentBlock::text("answer"),
+            ]),
+            Message::user_text("continue"),
+        ],
+    );
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client.stream(req, CancellationToken::new()),
+    )
+    .await
+    .unwrap();
+    assert!(result.is_err());
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].header("anthropic-beta").unwrap().contains(beta));
+    assert!(
+        !requests[1]
+            .header("anthropic-beta")
+            .unwrap_or("")
+            .contains(beta)
+    );
+    let first: Value = serde_json::from_str(&requests[0].body).unwrap();
+    let second: Value = serde_json::from_str(&requests[1].body).unwrap();
+    assert_eq!(
+        first["thinking"]["block_binding"]["prefix_mismatch_behavior"],
+        "drop_block"
+    );
+    assert!(second.get("thinking").is_none());
+    assert_eq!(
+        second["messages"][1]["content"],
+        json!([{"type":"text","text":"answer"}])
+    );
+}
+
+/// Send a Fable 5.2 request replaying one signed thinking block to a server
+/// that answers every request with `status` and `body`.
+async fn fable_replay_against(status: u16, body: &str) -> Vec<support::RecordedRequest> {
+    use aether_core::model::{ContentBlock, Message, ModelRef};
+    use aether_model::adapters::anthropic::AnthropicClient;
+
+    let server = FixtureServer::start(Canned::error(status, body, None)).await;
+    let config = AdapterConfig::new(server.base_url(), RequestAuth::None).with_capability(
+        "claude-fable-5-2",
+        CapabilityProfile {
+            thinking: ThinkingSupport::Adaptive,
+            ..profile()
+        },
+    );
+    let client = AnthropicClient::new(config).unwrap();
+    let req = ModelRequest::new(
+        ModelRef::new("anthropic", "claude-fable-5-2"),
+        vec![
+            Message::user_text("hi"),
+            Message::assistant_blocks(vec![ContentBlock::Thinking {
+                text: String::new(),
+                signature: Some("sig".into()),
+                redacted: false,
+            }]),
+            Message::user_text("continue"),
+        ],
+    );
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client.stream(req, CancellationToken::new()),
+    )
+    .await
+    .unwrap();
+    assert!(result.is_err());
+    server.requests()
+}
+
+#[tokio::test]
+async fn thinking_mismatch_400_retries_once_without_thinking_or_an_empty_assistant() {
+    let recorded = [
+        r#"{"type":"error","error":{"type":"invalid_request_error","message":"messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation."},"request_id":"req_011CVsigmismatch"}"#,
+        r#"{"type":"error","error":{"type":"invalid_request_error","message":"messages.1.content.0: `thinking` or `redacted_thinking` blocks in the latest assistant message cannot be modified. These blocks must remain as they were in the original response."},"request_id":"req_011CVmodified"}"#,
+    ];
+    for body in recorded {
+        let requests = fable_replay_against(400, body).await;
+        assert_eq!(requests.len(), 2, "exactly one retry: {body}");
+        let first: Value = serde_json::from_str(&requests[0].body).unwrap();
+        let second: Value = serde_json::from_str(&requests[1].body).unwrap();
+        assert_eq!(first["messages"][1]["role"], "assistant");
+        assert!(second.get("thinking").is_none());
+        assert_eq!(
+            second["messages"],
+            json!([{"role": "user", "content": [
+                {"type": "text", "text": "hi"},
+                {"type": "text", "text": "continue"}
+            ]}]),
+            "the emptied assistant turn is dropped, not sent empty"
+        );
+        assert!(
+            !requests[1]
+                .header("anthropic-beta")
+                .unwrap_or("")
+                .contains("thinking-binding-controls-2026-08-01")
+        );
+    }
+}
+
+#[tokio::test]
+async fn unrelated_400_is_not_retried_without_thinking() {
+    let body = r#"{"type":"error","error":{"type":"invalid_request_error","message":"messages.0.content.0.text: text content blocks must be non-empty"}}"#;
+    assert_eq!(fable_replay_against(400, body).await.len(), 1);
+}
+
+#[tokio::test]
 async fn anthropic_budget_validation_respects_the_effective_body() {
     use aether_core::model::ThinkingMode;
     use aether_model::adapters::anthropic::AnthropicClient;

@@ -31,6 +31,7 @@ fn status(extra: serde_json::Value) -> RemoteStatus {
 #[test]
 fn enabling_keeps_what_was_not_asked_to_change() {
     let stored = RemoteSettings {
+        mounts: None,
         enabled: false,
         pairing: false,
         public_origins: vec!["https://old.example".into()],

@@ -35,7 +35,7 @@ pub(super) async fn memories_shown_after(
 /// delegates to, which still gets the repository's top-level notes.
 #[tokio::test]
 async fn a_role_directory_note_reaches_its_role_and_not_other_agents_in_the_tree() {
-    let h = harness(vec![
+    let h = harness_uncut(vec![
         ScriptedClient::text("Merging after review."),
         ScriptedClient::text("Running the build."),
     ])
@@ -122,7 +122,7 @@ async fn a_subtree_memory_reaches_descendants_within_the_lineage_bound_only() {
         ScriptedClient::text("Noted."),
     ];
     script.extend((0..5).map(|_| ScriptedClient::text("Done.")));
-    let h = harness(script).await;
+    let h = harness_uncut(script).await;
     let (root, _) = h
         .runtime
         .create_agent(long_lived("orchestrator", None), Actor::user())
@@ -181,7 +181,7 @@ async fn a_subtree_memory_reaches_descendants_within_the_lineage_bound_only() {
 /// own marked block, below the agent's own observations.
 #[tokio::test]
 async fn a_repositorys_notes_are_marked_untrusted_and_kept_below_the_agents_own() {
-    let h = harness(vec![ScriptedClient::text("Understood.")]).await;
+    let h = harness_uncut(vec![ScriptedClient::text("Understood.")]).await;
     let notes = h.workspace_root.join(aether_memory::repo::KNOWLEDGE_DIR);
     std::fs::create_dir_all(&notes).expect("mkdir");
     std::fs::write(

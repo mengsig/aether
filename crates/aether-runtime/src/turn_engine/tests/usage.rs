@@ -19,6 +19,7 @@ pub(super) fn bare_snapshot(agent_id: AgentId) -> InvocationSnapshot {
         params: InvocationParams::default(),
         token_estimate: 0,
         created_at: now(),
+        memory_retrieval: None,
     }
 }
 
@@ -442,7 +443,7 @@ async fn a_session_prices_a_default_turn_the_configured_model_could_not() {
     let mut ctx = started_agent_ctx(&runtime).await;
     let claude = configured(&runtime, "claude-code/default");
     let mut state = StreamState::new(TurnPricing::of(&runtime, &claude), claude);
-    session_then_usage(&runtime, &mut ctx, &mut state, "claude-fable-5-1", usage);
+    session_then_usage(&runtime, &mut ctx, &mut state, "claude-fable-5-2", usage);
     let fable = configured(&runtime, "claude-code/fable")
         .model
         .capabilities

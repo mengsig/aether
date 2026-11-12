@@ -51,7 +51,7 @@ pub fn route(method: &Method, path: &str) -> Result<Route, HttpErrorCode> {
     if !endpoint && path.starts_with(API_PREFIX) {
         return Err(HttpErrorCode::NotFound);
     }
-    if !endpoint && !is_asset_path(path) {
+    if !endpoint && !is_clean_path(path) {
         return Err(HttpErrorCode::BadRequest);
     }
     if !allowed_methods(path).contains(&method.as_str()) {
@@ -76,9 +76,9 @@ pub fn allowed_methods(path: &str) -> &'static [&'static str] {
     }
 }
 
-/// A path that can name an embedded file: absolute, no empty, `.` or `..`
-/// segment, no backslash or percent-escape.
-fn is_asset_path(path: &str) -> bool {
+/// A path that can name an embedded file or a mounted daemon's resource: absolute, no empty,
+/// `.` or `..` segment, no backslash or percent-escape.
+pub(crate) fn is_clean_path(path: &str) -> bool {
     let Some(rest) = path.strip_prefix('/') else {
         return false;
     };
@@ -241,7 +241,7 @@ impl OriginPolicy {
     }
 }
 
-/// The `Content-Security-Policy` of every response. `'self'` covers the socket's `ws:`/`wss:`
+/// The default `Content-Security-Policy`. `'self'` covers the socket's `ws:`/`wss:`
 /// forms, so no host is spelled out (an IPv6 literal is not a valid source).
 pub const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; \
     style-src 'self'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; \

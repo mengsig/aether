@@ -592,6 +592,7 @@ fn outranked_device_memory(store: &SqliteStore) -> MemoryId {
             device: aether_core::id::DeviceId::new(),
             name: "phone".into(),
             connection: "c2".into(),
+            role: Some(aether_core::event::DeviceRole::Operator),
         }),
     };
     let mut operator = memory_by(&MemoryScope::Global, MemoryKind::Fact, actor(device));

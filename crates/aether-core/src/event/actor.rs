@@ -1,6 +1,19 @@
 use crate::id::{AgentId, ApprovalRuleId, DeviceId, ToolCallId};
 use serde::{Deserialize, Serialize};
 
+/// What a paired device may do. See the authorization matrix in docs/remote.md.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceRole {
+    /// Everything an operator at the host can do, minus the host-only set.
+    #[default]
+    Operator,
+    /// Read-only: sees the fleet, changes nothing.
+    Observer,
+}
+
 /// Server-observed connection identity, never a bearer token or client-supplied name.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "transport", rename_all = "snake_case")]
@@ -17,6 +30,10 @@ pub enum OperatorOrigin {
         device: DeviceId,
         name: String,
         connection: String,
+        /// The role the daemon's device store held when the device
+        /// authenticated. Absent on events written before it was recorded.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<DeviceRole>,
     },
 }
 
@@ -98,6 +115,7 @@ impl Actor {
                         device,
                         name,
                         connection,
+                        ..
                     }) => format!(
                         "{user}:device:{}({device})#{connection}",
                         provenance_name(name)

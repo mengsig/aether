@@ -99,8 +99,8 @@ fn login_lists_providers_and_cli_handoffs_require_a_terminal() {
     }
 }
 
-#[test]
-fn malformed_config_fails_auto_start_promptly_and_names_the_key() {
+#[tokio::test]
+async fn malformed_config_fails_auto_start_before_creating_the_store() {
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join("config")).unwrap();
     std::fs::write(
@@ -108,13 +108,41 @@ fn malformed_config_fails_auto_start_promptly_and_names_the_key() {
         "bad_startup_key = true\n",
     )
     .unwrap();
+    let socket = root.path().join("a.sock");
+    let startup_log = aether_protocol::paths::startup_log_path_for(&socket);
+    let mut command =
+        tokio::process::Command::from(super::isolated_command(root.path(), &["models"]));
+    command.kill_on_drop(true);
+    let child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
     let began = Instant::now();
-    let output = run_isolated(root.path(), &["models"]);
-    assert!(began.elapsed() < Duration::from_secs(5));
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while !startup_log.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("daemon did not report its startup failure");
+    let failure_seen = Instant::now();
+    let output = tokio::time::timeout(Duration::from_secs(5), child.wait_with_output())
+        .await
+        .expect("launcher did not report the daemon failure promptly")
+        .unwrap();
+    eprintln!(
+        "startup={:?} report={:?}",
+        failure_seen.duration_since(began),
+        failure_seen.elapsed()
+    );
     assert!(!output.status.success());
     let message = stderr(&output);
     assert!(message.contains("bad_startup_key"), "{message}");
     assert!(message.contains("before it listened"), "{message}");
+    assert!(!root.path().join("data/aether.db").exists());
+    assert!(!root.path().join("data/aether.db-wal").exists());
+    assert!(!root.path().join("data/migration-backups").exists());
 }
 
 #[test]

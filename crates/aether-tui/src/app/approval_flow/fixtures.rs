@@ -66,8 +66,10 @@ pub(crate) fn fleet() -> Fleet {
         (root.id, implementer.id, researcher.id, tester.id);
     let mut app = App::new(TuiOptions::default());
     app.tree = AgentTree {
+        stale: None,
         roots: vec![root_id],
         nodes: BTreeMap::new(),
+        next_after: None,
     };
     insert(&mut app, root, vec![implementer_id, researcher_id]);
     insert(&mut app, implementer, vec![tester_id]);

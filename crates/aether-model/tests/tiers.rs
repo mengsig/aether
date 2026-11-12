@@ -22,6 +22,7 @@ fn every_builtin_model_has_its_declared_tier() {
     let models = load("", "");
     let expected = [
         ("claude-opus-5-5", ModelTier::Strong),
+        ("claude-fable-5-2", ModelTier::Frontier),
         ("claude-fable-5-1", ModelTier::Frontier),
         ("claude-sonnet-5-5", ModelTier::Balanced),
         ("claude-haiku-5-5", ModelTier::Fast),

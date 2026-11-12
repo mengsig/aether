@@ -501,7 +501,7 @@ fn assert_acted_as_this_device(
             other => panic!("unexpected {other:?}"),
         };
         assert!(
-            matches!(actor, Actor::User { origin: Some(OperatorOrigin::Device { device, ref name, .. }), .. } if device == carrier.identity.id && name == &carrier.identity.name)
+            matches!(actor, Actor::User { origin: Some(OperatorOrigin::Device { device, ref name, role: Some(DeviceRole::Operator), .. }), .. } if device == carrier.identity.id && name == &carrier.identity.name)
         );
     }
     let decision = carrier
@@ -614,4 +614,32 @@ async fn approval_ceiling_applies_to_explicit_legacy_and_schedule_fields() {
     daemon.runtime.shutdown().await;
 }
 
+mod operator_lines;
 mod resource_limits;
+
+#[tokio::test]
+async fn an_observer_reads_the_advertised_view_mode_catalog() {
+    let mut carrier = Carrier::open(DeviceRole::Observer).await;
+    let welcome = carrier.greet().await;
+    assert!(
+        welcome
+            .features
+            .iter()
+            .any(|feature| feature == aether_protocol::features::VIEW_MODES)
+    );
+    let Reply::ViewModes(catalog) = carrier.request(2, Command::ListViewModes).await.unwrap()
+    else {
+        panic!("view modes reply");
+    };
+    assert_eq!(
+        catalog
+            .modes
+            .iter()
+            .map(|mode| mode.name.as_str())
+            .collect::<Vec<_>>(),
+        ["standard", "focus"]
+    );
+    assert!(catalog.diagnostics.is_empty());
+    carrier.shutdown.cancel();
+    assert_eq!(carrier.ended().await, Ended::ShuttingDown);
+}

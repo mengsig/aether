@@ -99,10 +99,11 @@ impl Command {
             | Self::LatestCheckpoint { .. } | Self::GetArtifact { .. }
             | Self::ListArtifacts { .. } | Self::ReadArtifact { .. } | Self::Memories { .. }
             | Self::ListRuns { .. } | Self::GetRunReport { .. } | Self::Replay { .. }
-            | Self::ListModels | Self::AuthStatus | Self::Providers | Self::GetAttention
+            | Self::ListModels | Self::ListViewModes | Self::AuthStatus | Self::Providers | Self::GetAttention
             | Self::ListWorkspaces { .. } | Self::GetPushConfig
             | Self::ListRepositoryAliases | Self::ListNotifications { .. }
-            | Self::GetNotification { .. } => Access::Observe,
+            | Self::GetNotification { .. } | Self::ListAgentsPage { .. }
+            | Self::GetTranscriptPage { .. } | Self::UsageBreakdown { .. } | Self::MemoryMigrationStatus => Access::Observe,
 
             Self::CreateAgent(_) | Self::ReplyToQuestion { .. } | Self::SendMessage { .. }
             | Self::AppendNote { .. } | Self::Cancel { .. } | Self::Interrupt { .. }
@@ -125,7 +126,9 @@ impl Command {
             | Self::AliasRepository { .. } | Self::AcceptMemory { .. }
             | Self::RejectMemory { .. } | Self::MemoriesInContext { .. }
             | Self::RecordMemoryFeedback { .. } | Self::RetractMemoryFeedback { .. }
-            | Self::MemoryFeedback { .. } => Access::HostOnly,
+            | Self::MemoryFeedback { .. } | Self::MemoryRetrievalExplain { .. }
+            | Self::ConsolidateMemories { .. } | Self::MemoryExport { .. }
+            | Self::MemoryImport { .. } => Access::HostOnly,
 
             Self::GetRemote | Self::ConfigureRemote { .. } | Self::StartPairing { .. }
             | Self::GetPairing { .. } | Self::ConfirmPairing { .. }

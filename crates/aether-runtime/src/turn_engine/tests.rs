@@ -271,6 +271,7 @@ fn a_permission_request_names_the_tool_it_gates() {
         name: "permission".into(),
         input: json!({"tool_name": "Bash", "tool_use_id": "toolu_1", "input": {}}),
         reply: tx,
+        arrived: std::time::Instant::now(),
     };
     assert_eq!(
         gated_call(&req),
@@ -281,6 +282,7 @@ fn a_permission_request_names_the_tool_it_gates() {
         name: "remember".into(),
         input: json!({"text": "x"}),
         reply: tx,
+        arrived: std::time::Instant::now(),
     };
     assert_eq!(gated_call(&plain), ("remember".to_owned(), None));
 }

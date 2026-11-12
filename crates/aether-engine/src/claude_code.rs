@@ -38,6 +38,11 @@ const NATIVE_COORDINATION_TOOLS: &str = "Task,Agent,ListAgents,SendMessage,Sched
 /// [`ClaudeCodeEngine::limitation`] naming the gap.
 pub const MIN_VERSION: EngineVersion = EngineVersion::new(2, 1, 219);
 
+/// The longest foreground shell command a turn may run, pinned through
+/// `BASH_MAX_TIMEOUT_MS` (Claude Code's own default), so the runtime's bound
+/// on an outstanding tool call never falls inside a command the CLI allows.
+pub const BASH_MAX_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
 #[derive(Debug, Clone)]
 pub struct ClaudeCodeEngine {
     program: String,
@@ -163,6 +168,10 @@ impl ClaudeCodeEngine {
         }
         // Hooks can perform their own I/O outside the requested sandbox.
         let toolless = turn.summary_only || turn.compact_session;
+        if !toolless {
+            settings["env"]["BASH_MAX_TIMEOUT_MS"] =
+                json!(BASH_MAX_TIMEOUT.as_millis().to_string());
+        }
         if toolless || !turn.network_access {
             settings["disableAllHooks"] = json!(true);
         }

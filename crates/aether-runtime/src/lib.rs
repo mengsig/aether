@@ -21,6 +21,7 @@ mod inspection;
 pub mod memory_context;
 pub mod memory_curation;
 mod memory_feedback;
+pub mod memory_v2;
 pub mod notes;
 pub mod notifications;
 mod orphans;
@@ -62,9 +63,10 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 pub use approval::{Gate, Remember};
-pub use bus::{BusMessage, DeltaKind, EventBus};
+pub use bus::{BusMessage, DeltaKind, DeltaStream, EventBus};
 pub use commands::{
-    AgentUpdate, CreateAgentSpec, CreateTaskSpec, MessageDelivery, RuntimeStatus, pending_question,
+    AgentUpdate, CreateAgentSpec, CreateTaskSpec, MessageDelivery, RuntimeStatus, STATUS_DEADLINE,
+    pending_question,
 };
 pub use retention::HistorySweep;
 
@@ -287,6 +289,14 @@ pub(crate) fn withheld_by_position(
     None
 }
 
+/// The known processes left after a runtime shutdown.
+#[derive(Debug, Default)]
+pub struct ShutdownOutcome {
+    /// PIDs still alive after the agent process sweep. This excludes explicitly
+    /// kept processes, foreign agents and processes the scanner could not see.
+    pub surviving_agent_processes: Vec<u32>,
+}
+
 pub struct Runtime {
     /// This runtime, for a task that commits after the call that spawned it returned.
     pub(crate) me: std::sync::Weak<Runtime>,
@@ -340,6 +350,8 @@ pub struct Runtime {
     pub(crate) seeded_repositories: parking_lot::Mutex<std::collections::HashSet<AgentId>>,
     /// Free space on the store's filesystem, as the disk guard last saw it.
     pub(crate) disk: parking_lot::Mutex<disk::DiskState>,
+    /// `status` readers still running, perhaps for a `status` that gave up on them.
+    pub(crate) status_in_flight: parking_lot::Mutex<std::collections::BTreeSet<&'static str>>,
     problems: problems::Problems,
     recovery_failed: std::sync::atomic::AtomicBool,
     workspace_gc_cursor: parking_lot::Mutex<workspace_gc::WorkspaceGcCursor>,
@@ -432,7 +444,9 @@ impl Runtime {
         // Curation commits on its own, so it publishes as `apply` does.
         let memory = {
             let bus = bus.clone();
+            config.memory_retrieval.validate()?;
             MemoryService::new(store.clone(), commit_lock.clone())
+                .with_retrieval(config.memory_retrieval.clone())
                 .with_publisher(Arc::new(move |event| bus.publish_event(event.clone())))
         };
         let runtime = Arc::new_cyclic(|me| Self {
@@ -471,6 +485,7 @@ impl Runtime {
             storage_last_run: parking_lot::Mutex::new(None),
             seeded_repositories: parking_lot::Mutex::new(std::collections::HashSet::new()),
             disk: parking_lot::Mutex::new(disk::DiskState::default()),
+            status_in_flight: Default::default(),
         });
         runtime.apply(Commit::new().event(EventDraft::new(
             Actor::System,
@@ -512,8 +527,7 @@ impl Runtime {
                 "Startup artifact cleanup failed: {error}; periodic maintenance will retry. Run `aether doctor` and `aether diagnose`."
             )),
         }
-        // A daemon that died left what its ended agents detached or handed up
-        // running; a stop would have taken what no live agent holds, so this start does.
+        // A crash left detached processes running; stop those no live agent holds.
         let reaped = runtime.reap_unheld_agent_processes().await;
         if reaped > 0 {
             tracing::info!(
@@ -764,7 +778,7 @@ impl Runtime {
     }
 
     /// Stop scheduling, cancel running turns, and record the stop.
-    pub async fn shutdown(&self) {
+    pub async fn shutdown(&self) -> ShutdownOutcome {
         self.shutdown.cancel();
         let (tokens, interrupted): (Vec<CancellationToken>, HashSet<AgentId>) = {
             let sched = self.sched.lock();
@@ -793,11 +807,13 @@ impl Runtime {
             }
             None => 0,
         };
-        // What left those groups, and what engines detached, is found by agent;
-        // a live agent's stays up for its recovery after a restart.
-        let reaped = self.reap_unheld_agent_processes().await;
-        if reaped > 0 {
-            tracing::info!(reaped, "stopped agent processes with the daemon");
+        // Find processes that escaped those groups, including live agents' servers.
+        let reaped = self.reap_shutdown_agent_processes().await;
+        if !reaped.terminated.is_empty() {
+            tracing::info!(
+                count = reaped.terminated.len(),
+                "stopped agent processes with the daemon"
+            );
         }
         if let Err(e) = self.apply(Commit::new().event(EventDraft::new(
             Actor::System,
@@ -806,6 +822,9 @@ impl Runtime {
             },
         ))) {
             tracing::error!(error = %e, "failed to record daemon stop");
+        }
+        ShutdownOutcome {
+            surviving_agent_processes: reaped.survived,
         }
     }
 }

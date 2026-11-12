@@ -445,6 +445,26 @@ pub fn check_store(paths: &Paths) -> Check {
     }
 }
 
+pub fn check_disk_status(
+    paths: &Paths,
+    floor: Option<DiskFloor>,
+    status: Option<&DaemonStatus>,
+) -> Check {
+    if let Some(reason) =
+        status.and_then(|s| s.unavailable(aether_protocol::status_sections::LOW_DISK))
+    {
+        return Check::warn(
+            "disk",
+            format!("daemon disk hold unavailable: {reason}"),
+            "aether status",
+        );
+    }
+    let held = status
+        .filter(|s| s.stale.is_none())
+        .and_then(|s| s.low_disk.as_ref());
+    check_disk(paths, floor, held)
+}
+
 /// Room to keep writing events, snapshots and artifacts. `floor` is the
 /// free space new turns wait for (`[scheduler] min_free_disk_mib`), `None`
 /// when they never wait; `held` is a running daemon's word that they wait now.
@@ -891,6 +911,15 @@ mod tests;
 
 /// Stored record quarantine and background failures reported by the daemon.
 pub fn check_recovery(status: Option<&DaemonStatus>) -> Check {
+    if let Some(reason) =
+        status.and_then(|s| s.unavailable(aether_protocol::status_sections::PROBLEMS))
+    {
+        return Check::warn(
+            "recovery",
+            format!("unavailable: {reason}"),
+            "aether diagnose",
+        );
+    }
     match status {
         Some(status) if !status.problems.is_empty() => {
             Check::warn("recovery", status.problems.join("\n"), "aether diagnose")

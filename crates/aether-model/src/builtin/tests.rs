@@ -12,7 +12,7 @@ fn claude_cli_and_api_models_share_the_full_window() {
         .find(|provider| provider.id == "anthropic")
         .unwrap();
     for (cli_id, api_id) in [
-        ("fable", "claude-fable-5-1"),
+        ("fable", "claude-fable-5-2"),
         ("opus", "claude-opus-5-5"),
         ("sonnet", "claude-sonnet-5-5"),
         ("haiku", "claude-haiku-5-5"),
@@ -67,7 +67,7 @@ fn claude_code_models_are_priced_like_the_api_models_behind_them() {
         ("opus", "claude-opus-5-5"),
         ("sonnet", "claude-sonnet-5-5"),
         ("haiku", "claude-haiku-5-5"),
-        ("fable", "claude-fable-5-1"),
+        ("fable", "claude-fable-5-2"),
     ] {
         let priced = engine
             .model(engine_id)
@@ -160,13 +160,6 @@ fn builtin_ids_are_unique_and_anthropic_costs_match_the_sheet() {
     assert!(haiku.effort);
     let cost = haiku.cost.expect("haiku 5.5 is priced");
     assert_eq!((cost.input_per_mtok, cost.output_per_mtok), (0.10, 0.50));
-    let fable = anth
-        .model("claude-fable-5-1")
-        .expect("fable")
-        .capabilities
-        .cost
-        .expect("cost");
-    assert_eq!(fable.cache_read_per_mtok, 0.25);
     assert!(
         all.iter()
             .find(|p| p.id == "ollama")
@@ -174,6 +167,47 @@ fn builtin_ids_are_unique_and_anthropic_costs_match_the_sheet() {
             .auth
             .none
     );
+}
+
+#[test]
+fn fable_versions_keep_their_own_prices_on_both_providers() {
+    let all = providers();
+    let anth = all.iter().find(|p| p.id == "anthropic").expect("anthropic");
+    let fable = anth
+        .model("claude-fable-5-1")
+        .expect("fable")
+        .capabilities
+        .cost
+        .expect("cost");
+    assert_eq!(
+        (
+            fable.input_per_mtok,
+            fable.output_per_mtok,
+            fable.cache_read_per_mtok
+        ),
+        (10.0, 50.0, 0.25)
+    );
+    for provider in ["anthropic", "claude-code"] {
+        let provider = all.iter().find(|p| p.id == provider).expect(provider);
+        let old = provider.model("fable-5-1").expect("old alias");
+        assert_eq!(old.id, "claude-fable-5-1");
+        assert_eq!(old.capabilities.cost, Some(fable));
+        let new = provider.model("fable").expect("new alias");
+        assert_eq!(new.id, "claude-fable-5-2");
+        let cost = new.capabilities.cost.expect("new cost");
+        assert_eq!(
+            (
+                cost.input_per_mtok,
+                cost.output_per_mtok,
+                cost.cache_read_per_mtok
+            ),
+            (8.0, 40.0, 0.20)
+        );
+        assert_eq!(
+            (cost.cache_write_per_mtok, cost.cache_write_1h_per_mtok),
+            (10.0, Some(16.0))
+        );
+    }
 }
 
 #[test]
@@ -205,7 +239,7 @@ fn claude_one_hour_cache_writes_cost_twice_input_and_no_other_family_has_them() 
             }
         }
     }
-    assert_eq!(claude, 8, "four API models and four priced engine models");
+    assert_eq!(claude, 10, "five API models and five priced engine models");
     let haiku = all
         .iter()
         .find(|p| p.id == "claude-code")
@@ -245,6 +279,7 @@ fn current_openai_and_engine_models_resolve_by_alias() {
     assert!(by_id("openai-codex").model("default").is_none());
     for (alias, id) in [
         ("fable-5-1", "claude-fable-5-1"),
+        ("fable-5-2", "claude-fable-5-2"),
         ("opus-5-5", "claude-opus-5-5"),
         ("opus-5.5", "claude-opus-5-5"),
         ("sonnet-5-5", "claude-sonnet-5-5"),
@@ -349,6 +384,7 @@ fn first_party_providers_ship_only_the_current_lineup() {
             "claude-opus-5-5",
             "claude-sonnet-5-5",
             "claude-haiku-5-5",
+            "claude-fable-5-2",
             "claude-fable-5-1"
         ]
     );
@@ -357,6 +393,7 @@ fn first_party_providers_ship_only_the_current_lineup() {
         [
             "claude-opus-5-5",
             "default",
+            "claude-fable-5-2",
             "claude-fable-5-1",
             "claude-sonnet-5-5",
             "claude-haiku-5-5"
@@ -499,7 +536,7 @@ fn claude_code_family_aliases_pin_the_newest_explicit_versions() {
     for (family, pinned, name) in [
         ("opus", "claude-opus-5-5", "Claude Opus 5.5"),
         ("sonnet", "claude-sonnet-5-5", "Claude Sonnet 5.5"),
-        ("fable", "claude-fable-5-1", "Claude Fable 5.1"),
+        ("fable", "claude-fable-5-2", "Claude Fable 5.2"),
         ("haiku", "claude-haiku-5-5", "Claude Haiku 5.5"),
     ] {
         for requested in [family, pinned] {

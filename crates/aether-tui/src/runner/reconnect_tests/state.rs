@@ -111,6 +111,7 @@ async fn reconnect_offline_billing_and_budget_match_fresh_snapshots() {
     fixture.commit(vec![EventKind::AgentUsageUpdated {
         total: usage,
         turn_usage: usage,
+        billing: None,
     }]);
     fixture.reconnect(&mut live).await;
     let fresh = fixture.fresh().await;

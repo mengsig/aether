@@ -548,6 +548,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
             } => return cli::compact(endpoint, agent, json, no_wait).await,
             Cmd::Memory { command } => match command {
                 MemoryCmd::Feedback { command } => cli::memory_feedback(endpoint, command).await,
+                MemoryCmd::V2(command) => cli::memory_v2(endpoint, command).await,
                 MemoryCmd::Add { memory, json } => cli::memory_add(endpoint, memory, json).await,
                 MemoryCmd::Accept { id, reason, json } => {
                     cli::memory_accept(endpoint, id, reason, json).await

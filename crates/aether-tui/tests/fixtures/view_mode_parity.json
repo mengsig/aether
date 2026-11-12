@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "about": "One transcript and what each view mode draws of each row. The TUI (tests/view_modes.rs) checks its rules against it. Outcomes: full, compact (one line), line (a failed call's one-line row) or hidden. Quiet omits user_text: the operator's own text is drawn in every mode.",
+  "modes": {
+    "standard": null,
+    "focus": {
+      "version": 1,
+      "label": "Focus",
+      "description": "Coordination without tool detail",
+      "density": "compact",
+      "show": ["user_text", "assistant_text", "delegation", "agent_message", "completion", "status", "question", "approval", "error"]
+    },
+    "calm": {
+      "version": 1,
+      "label": "Calm",
+      "density": "compact",
+      "show": ["user_text", "assistant_text", "delegation", "agent_message", "completion", "status", "question", "approval", "error"],
+      "scope": { "role": "archon-orchestrator" }
+    },
+    "tools": {
+      "version": 1,
+      "label": "Tools",
+      "density": "comfortable",
+      "show": ["user_text", "assistant_text", "tool"]
+    },
+    "quiet": {
+      "version": 1,
+      "label": "Quiet",
+      "density": "compact",
+      "show": ["assistant_text"]
+    }
+  },
+  "rows": [
+    { "id": "header", "kind": "header" },
+    { "id": "operator-text", "kind": "user_operator" },
+    { "id": "task-from-parent", "kind": "user_task" },
+    { "id": "message-from-agent", "kind": "user_message" },
+    { "id": "reply", "kind": "assistant_text" },
+    { "id": "thinking", "kind": "reasoning" },
+    { "id": "tool-ok", "kind": "tool_succeeded" },
+    { "id": "tool-running", "kind": "tool_running" },
+    { "id": "tool-awaiting", "kind": "tool_awaiting" },
+    { "id": "tool-failed", "kind": "tool_failed" },
+    { "id": "tool-denied", "kind": "tool_denied" },
+    { "id": "tool-cancelled", "kind": "tool_cancelled" },
+    { "id": "edit-failed", "kind": "edit_failed" },
+    { "id": "memory", "kind": "memory" },
+    { "id": "spawned", "kind": "spawned" },
+    { "id": "waiting", "kind": "waiting" },
+    { "id": "child-finished", "kind": "child_finished" },
+    { "id": "child-failed", "kind": "child_failed" },
+    { "id": "sent", "kind": "sent" },
+    { "id": "approval", "kind": "approval" },
+    { "id": "question", "kind": "question" },
+    { "id": "turn-error", "kind": "error" },
+    { "id": "provider-backoff", "kind": "notice_error" },
+    { "id": "reconnected", "kind": "notice_status" },
+    { "id": "compacted", "kind": "compaction" },
+    { "id": "compaction-failed", "kind": "compaction_failed" },
+    { "id": "usage", "kind": "usage" }
+  ],
+  "expect": {
+    "standard": {
+      "header": "full", "operator-text": "full", "task-from-parent": "full", "message-from-agent": "full", "reply": "full",
+      "thinking": "full", "tool-ok": "full", "tool-running": "full", "tool-awaiting": "full", "tool-failed": "full",
+      "tool-denied": "full", "tool-cancelled": "full", "edit-failed": "full", "memory": "full", "spawned": "full",
+      "waiting": "full", "child-finished": "full", "child-failed": "full", "sent": "full", "approval": "full",
+      "question": "full", "turn-error": "full", "provider-backoff": "full", "reconnected": "full", "compacted": "full",
+      "compaction-failed": "full", "usage": "full"
+    },
+    "focus": {
+      "header": "full", "operator-text": "full", "task-from-parent": "compact", "message-from-agent": "compact", "reply": "full",
+      "thinking": "hidden", "tool-ok": "hidden", "tool-running": "hidden", "tool-awaiting": "full", "tool-failed": "line",
+      "tool-denied": "full", "tool-cancelled": "full", "edit-failed": "hidden", "memory": "hidden", "spawned": "compact",
+      "waiting": "compact", "child-finished": "compact", "child-failed": "full", "sent": "compact", "approval": "full",
+      "question": "full", "turn-error": "full", "provider-backoff": "full", "reconnected": "compact", "compacted": "hidden",
+      "compaction-failed": "full", "usage": "hidden"
+    },
+    "calm": {
+      "header": "full", "operator-text": "full", "task-from-parent": "compact", "message-from-agent": "compact", "reply": "full",
+      "thinking": "hidden", "tool-ok": "hidden", "tool-running": "hidden", "tool-awaiting": "full", "tool-failed": "line",
+      "tool-denied": "full", "tool-cancelled": "full", "edit-failed": "hidden", "memory": "hidden", "spawned": "compact",
+      "waiting": "compact", "child-finished": "compact", "child-failed": "full", "sent": "compact", "approval": "full",
+      "question": "full", "turn-error": "full", "provider-backoff": "full", "reconnected": "compact", "compacted": "hidden",
+      "compaction-failed": "full", "usage": "hidden"
+    },
+    "tools": {
+      "header": "full", "operator-text": "full", "task-from-parent": "hidden", "message-from-agent": "hidden", "reply": "full",
+      "thinking": "hidden", "tool-ok": "full", "tool-running": "full", "tool-awaiting": "full", "tool-failed": "full",
+      "tool-denied": "full", "tool-cancelled": "full", "edit-failed": "full", "memory": "hidden", "spawned": "hidden",
+      "waiting": "hidden", "child-finished": "hidden", "child-failed": "full", "sent": "hidden", "approval": "full",
+      "question": "full", "turn-error": "full", "provider-backoff": "full", "reconnected": "hidden", "compacted": "hidden",
+      "compaction-failed": "full", "usage": "hidden"
+    },
+    "quiet": {
+      "header": "full", "operator-text": "full", "task-from-parent": "hidden", "message-from-agent": "hidden", "reply": "full",
+      "thinking": "hidden", "tool-ok": "hidden", "tool-running": "hidden", "tool-awaiting": "full", "tool-failed": "line",
+      "tool-denied": "full", "tool-cancelled": "full", "edit-failed": "hidden", "memory": "hidden", "spawned": "hidden",
+      "waiting": "hidden", "child-finished": "hidden", "child-failed": "full", "sent": "hidden", "approval": "full",
+      "question": "full", "turn-error": "full", "provider-backoff": "full", "reconnected": "hidden", "compacted": "hidden",
+      "compaction-failed": "full", "usage": "hidden"
+    }
+  },
+  "scope": [
+    { "mode": "calm", "role": "archon-orchestrator", "name": "archon", "applies": true },
+    { "mode": "calm", "role": "worker", "name": "archon", "applies": false },
+    { "mode": "focus", "role": "worker", "name": null, "applies": true }
+  ]
+}

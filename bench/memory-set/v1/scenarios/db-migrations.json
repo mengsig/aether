@@ -1,0 +1,225 @@
+{
+  "id": "db-migrations",
+  "description": "A Python API on Postgres: migrations, test database and money handling, with a moved test backend and a pool setting that changed.",
+  "repository": "github.com/example-org/ledger-api",
+  "memories": [
+    {
+      "key": "alembic",
+      "class": "durable",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.8,
+      "confidence": 0.9,
+      "age_days": 50,
+      "tags": [
+        "migrations"
+      ],
+      "text": "Schema migrations are Alembic revisions under migrations/versions; create one with `alembic revision --autogenerate -m <name>` and review the generated diff by hand."
+    },
+    {
+      "key": "no-edit-shipped",
+      "class": "durable",
+      "scope": "repository",
+      "kind": "constraint",
+      "importance": 0.9,
+      "confidence": 0.9,
+      "age_days": 45,
+      "tags": [
+        "migrations"
+      ],
+      "text": "Never edit a migration that has shipped to production; add a new revision that changes the schema forward."
+    },
+    {
+      "key": "no-edit-dup",
+      "class": "near_duplicate",
+      "duplicate_of": "no-edit-shipped",
+      "scope": "repository",
+      "kind": "lesson",
+      "importance": 0.8,
+      "confidence": 0.8,
+      "age_days": 10,
+      "tags": [
+        "migrations"
+      ],
+      "text": "Do not modify released Alembic migrations - write a new revision instead, since production has already applied the old one."
+    },
+    {
+      "key": "cents",
+      "class": "durable",
+      "scope": "repository",
+      "kind": "constraint",
+      "importance": 0.9,
+      "confidence": 0.9,
+      "age_days": 120,
+      "tags": [
+        "money"
+      ],
+      "text": "Money is stored as integer cents in BIGINT columns; never use floats or NUMERIC with implicit rounding for amounts."
+    },
+    {
+      "key": "sqlite-tests",
+      "class": "stale",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.7,
+      "confidence": 0.8,
+      "age_days": 310,
+      "tags": [
+        "tests"
+      ],
+      "text": "The test suite uses an in-memory SQLite database, so no database server is needed to run the tests."
+    },
+    {
+      "key": "postgres-tests",
+      "class": "durable",
+      "contradicts": "sqlite-tests",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.7,
+      "confidence": 0.9,
+      "age_days": 35,
+      "tags": [
+        "tests"
+      ],
+      "text": "Tests run against Postgres 16 in a container that `make test-db` starts; pytest reads its URL from LEDGER_TEST_DATABASE_URL."
+    },
+    {
+      "key": "pool-5",
+      "class": "durable",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.6,
+      "confidence": 0.8,
+      "age_days": 200,
+      "tags": [
+        "config"
+      ],
+      "text": "The database connection pool size is hard-coded to 5 in ledger/db.py."
+    },
+    {
+      "key": "pool-env",
+      "class": "durable",
+      "supersedes": "pool-5",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.6,
+      "confidence": 0.9,
+      "age_days": 40,
+      "tags": [
+        "config"
+      ],
+      "text": "The database connection pool size comes from LEDGER_POOL_SIZE (default 20); ledger/db.py no longer hard-codes it."
+    },
+    {
+      "key": "mig-0042",
+      "class": "one_off",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.5,
+      "confidence": 0.9,
+      "age_days": 4,
+      "tags": [
+        "migrations"
+      ],
+      "text": "Migration 0042 took about 3 minutes on the staging snapshot restored on 2026-08-02."
+    },
+    {
+      "key": "pytest-pass",
+      "class": "one_off",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.4,
+      "confidence": 0.9,
+      "age_days": 2,
+      "tags": [
+        "tests"
+      ],
+      "text": "Ran pytest -k refunds after the change and all 38 selected tests passed."
+    },
+    {
+      "key": "staging-ro",
+      "class": "transient",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.6,
+      "confidence": 0.7,
+      "age_days": 1,
+      "text": "The staging database is temporarily read-only while the vendor migrates its storage."
+    },
+    {
+      "key": "refund-endpoint",
+      "class": "durable",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.6,
+      "confidence": 0.8,
+      "age_days": 20,
+      "tags": [
+        "api"
+      ],
+      "text": "HTTP handlers live in ledger/api/<resource>.py and each registers its routes in ledger/api/__init__.py."
+    }
+  ],
+  "queries": [
+    {
+      "id": "add-column",
+      "role": "worker",
+      "query": "Add a refund_reason column to the payments table.",
+      "relevant": [
+        "alembic",
+        "no-edit-shipped"
+      ],
+      "harmful": []
+    },
+    {
+      "id": "db-tests",
+      "role": "worker",
+      "query": "Write tests for the new refund endpoint that exercise the database.",
+      "relevant": [
+        "postgres-tests",
+        "refund-endpoint"
+      ],
+      "harmful": [
+        "sqlite-tests"
+      ]
+    },
+    {
+      "id": "rounding",
+      "role": "worker",
+      "query": "Fix rounding errors in invoice totals.",
+      "relevant": [
+        "cents"
+      ],
+      "harmful": [],
+      "task": {
+        "question": "In which unit and column type does ledger-api store money amounts? Answer in a few words.",
+        "answer": "(?i)cents"
+      }
+    },
+    {
+      "id": "pool-tuning",
+      "role": "worker",
+      "query": "Tune the database connection pool for the API workers under load.",
+      "relevant": [
+        "pool-env"
+      ],
+      "harmful": [
+        "pool-5"
+      ],
+      "task": {
+        "question": "Which environment variable sets ledger-api's database connection pool size? Answer with the variable name only.",
+        "answer": "LEDGER_POOL_SIZE"
+      }
+    },
+    {
+      "id": "fix-old-migration",
+      "role": "worker",
+      "query": "Migration 0031 has a typo in an index name; fix it.",
+      "relevant": [
+        "no-edit-shipped",
+        "alembic"
+      ],
+      "harmful": []
+    }
+  ]
+}

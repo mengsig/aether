@@ -11,4 +11,5 @@ class ServerFrameDelta(TypedDict, total=False):
     delta: _protocol.Delta
     frame: Literal["delta"]
     invocation: _protocol.InvocationId
+    invocation_seq: int | None  # optional
     sub: int

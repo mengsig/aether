@@ -359,8 +359,8 @@ pub(super) async fn run_link(
         .map(|c| c.provenance.to_seq)
         .unwrap_or(0);
     let transcript = runtime.store.transcript(ctx.agent.id, transcript_after)?;
-    let memories = retrieve_memories(runtime, ctx, pending_inbox)?;
-    let memory_records: Vec<_> = memories.iter().map(|m| m.record.clone()).collect();
+    let memories = retrieve_memories(runtime, ctx, pending_inbox, &resolved.model.capabilities)?;
+    let memory_records: Vec<_> = memories.injected.iter().map(|m| m.record.clone()).collect();
     let notes = crate::notes::digest(runtime, ctx.agent.id)?;
     let mut tools = runtime.agent_tool_specs(&ctx.agent);
     // Task-closing tools make no sense without a task; hiding them avoids
@@ -374,6 +374,7 @@ pub(super) async fn run_link(
     model.clone_into(&mut agent_for_link.model);
     agent_for_link.config.effort = resolved.model.effort_for(ctx.agent.config.effort);
     let profile = runtime.model_profile(&resolved);
+    let interruption_notes = crate::tool_interruption::resume_notes(runtime, ctx.agent.id)?;
     let assembled = runtime.context.assemble(ContextInputs {
         agent: &agent_for_link,
         task: ctx.task.as_ref(),
@@ -386,6 +387,7 @@ pub(super) async fn run_link(
         memories: &memory_records,
         notes: &notes.notes,
         notes_omitted: notes.omitted,
+        interruption_notes: &interruption_notes,
         tools,
         model_profile: profile.as_deref(),
         engine_policy: None,
@@ -396,7 +398,8 @@ pub(super) async fn run_link(
         now: now(),
     });
 
-    let snapshot = assembled.snapshot;
+    let mut snapshot = assembled.snapshot;
+    snapshot.memory_retrieval = memories.trace.clone();
     let input_budget = resolved
         .model
         .capabilities
@@ -485,10 +488,13 @@ pub(super) async fn run_link(
                 },
             }));
         }
-        if !memories.is_empty() {
+        if !memories.injected.is_empty() {
             let touched = runtime.memory.touch(&hold, &snapshot.memory_ids)?;
             commit.mutations.extend(touched.mutations);
         }
+        commit
+            .mutations
+            .extend(runtime.memory_holdout_log(&memories, holdout_unit(ctx)));
         runtime.apply_held(hold, commit)?;
     }
 
@@ -497,11 +503,12 @@ pub(super) async fn run_link(
     }
 
     // ---- 4. invoke the model -------------------------------------------------
-    let invocation_id = InvocationId::new();
+    let mut deltas = DeltaStream::new(InvocationId::new());
+    let invocation_id = deltas.invocation();
     let started_at = now();
     runtime.bus.publish_delta(
         ctx.agent.id,
-        invocation_id,
+        &mut deltas,
         DeltaKind::TurnStarted { turn: ctx.turn },
     );
     // Aliases (`sol`) are Aether's; the provider knows only canonical ids. The
@@ -515,7 +522,7 @@ pub(super) async fn run_link(
         Err(e) => {
             runtime
                 .bus
-                .publish_delta(ctx.agent.id, invocation_id, DeltaKind::TurnFinished);
+                .publish_delta(ctx.agent.id, &mut deltas, DeltaKind::TurnFinished);
             return record_failure(
                 runtime,
                 ctx,
@@ -533,31 +540,32 @@ pub(super) async fn run_link(
     };
     let bus = runtime.bus.clone();
     let agent_id = ctx.agent.id;
-    let mut tool_names: BTreeMap<usize, String> = BTreeMap::new();
+    let mut tool_names: BTreeMap<usize, (String, String)> = BTreeMap::new();
     let mut receipt_seen = false;
     let outcome = collect_partial(stream, |event| match event {
         StreamEvent::MessageStop => receipt_seen = true,
         StreamEvent::TextDelta { text, .. } => bus.publish_delta(
             agent_id,
-            invocation_id,
+            &mut deltas,
             DeltaKind::Text { text: text.clone() },
         ),
         StreamEvent::ThinkingDelta { text, .. } => bus.publish_delta(
             agent_id,
-            invocation_id,
+            &mut deltas,
             DeltaKind::Thinking { text: text.clone() },
         ),
         StreamEvent::BlockStart {
             index,
-            block: aether_core::model::BlockStart::ToolUse { name, .. },
+            block: aether_core::model::BlockStart::ToolUse { id, name, .. },
         } => {
-            tool_names.insert(*index, name.clone());
+            tool_names.insert(*index, (name.clone(), id.clone()));
             bus.publish_delta(
                 agent_id,
-                invocation_id,
+                &mut deltas,
                 DeltaKind::ToolInput {
                     name: name.clone(),
                     partial_json: String::new(),
+                    tool_use_id: Some(id.clone()),
                 },
             );
         }
@@ -565,13 +573,14 @@ pub(super) async fn run_link(
             index,
             partial_json,
         } => {
-            let name = tool_names.get(index).cloned().unwrap_or_default();
+            let (name, id) = tool_names.get(index).cloned().unzip();
             bus.publish_delta(
                 agent_id,
-                invocation_id,
+                &mut deltas,
                 DeltaKind::ToolInput {
-                    name,
+                    name: name.unwrap_or_default(),
                     partial_json: partial_json.clone(),
+                    tool_use_id: id,
                 },
             );
         }
@@ -580,7 +589,7 @@ pub(super) async fn run_link(
     .await;
     runtime
         .bus
-        .publish_delta(ctx.agent.id, invocation_id, DeltaKind::TurnFinished);
+        .publish_delta(ctx.agent.id, &mut deltas, DeltaKind::TurnFinished);
 
     let response = match outcome {
         Ok(r) => r,

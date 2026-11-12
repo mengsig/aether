@@ -59,6 +59,7 @@ fn repeated_file_backed_expiry_reuses_payload_pages_and_survives_reopen() {
             params: InvocationParams::default(),
             token_estimate: 0,
             created_at: old,
+            memory_retrieval: None,
         };
         store
             .import(

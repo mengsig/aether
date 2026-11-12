@@ -13,4 +13,5 @@ class OperatorOriginDevice(TypedDict, total=False):
     connection: str
     device: _protocol.DeviceId
     name: str
+    role: _protocol.DeviceRole | None  # optional
     transport: Literal["device"]

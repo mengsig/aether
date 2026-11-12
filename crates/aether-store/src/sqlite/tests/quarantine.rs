@@ -520,3 +520,86 @@ fn damaged_quarantine_notices_do_not_poison_record_lists() {
     assert_eq!(records[0].list(&store), vec![records[0].id.clone()]);
     assert!(store.quarantines().unwrap().is_empty());
 }
+
+/// `status` counts tasks without decoding them, yet counts what listing them
+/// shows: a task quarantined as unreadable is in neither.
+#[test]
+fn a_task_count_counts_what_the_task_list_shows() {
+    use aether_core::task::{TaskStatus, TaskStatusKind};
+    let store = SqliteStore::open_in_memory().unwrap();
+    let damaged = seed(&store);
+    let run = RunId::new();
+    let mut commit = Commit::new();
+    for (n, status) in [
+        TaskStatus::Active,
+        TaskStatus::Assigned,
+        TaskStatus::Queued,
+        TaskStatus::Active,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut task = Task::new(format!("task {n}"), Actor::System, run, now());
+        task.status = status;
+        commit = commit.mutate(Mutation::UpsertTask(task));
+    }
+    store.commit(commit).unwrap();
+    let statuses = [TaskStatusKind::Active, TaskStatusKind::Assigned];
+    let listed = |store: &SqliteStore| {
+        let filter = TaskFilter {
+            statuses: statuses.to_vec(),
+            ..Default::default()
+        };
+        store.tasks(&filter).unwrap().len() as u64
+    };
+    assert_eq!(store.count_tasks(&statuses).unwrap(), 3);
+    assert_eq!(
+        store.count_tasks(&[TaskStatusKind::Queued]).unwrap(),
+        2,
+        "the seed's too"
+    );
+
+    let mut active = serde_json::from_str::<Task>(&damaged[1].body).unwrap();
+    active.status = TaskStatus::Active;
+    store
+        .commit(Commit::new().mutate(Mutation::UpsertTask(active)))
+        .unwrap();
+    assert_eq!(store.count_tasks(&statuses).unwrap(), 4);
+    damaged[1].replace_body(&store, &"{broken");
+    assert_eq!(listed(&store), 3, "the list leaves out and quarantines it");
+    assert_eq!(store.count_tasks(&statuses).unwrap(), listed(&store));
+}
+
+#[test]
+fn a_pending_approval_count_counts_only_the_pending() {
+    use aether_core::id::ApprovalId;
+    use aether_core::tool::{ApprovalRequest, ApprovalStatus, SideEffectClass};
+    let store = SqliteStore::open_in_memory().unwrap();
+    let agent = agent();
+    let approval = |status: ApprovalStatus| ApprovalRequest {
+        id: ApprovalId::new(),
+        agent_id: agent.id,
+        task_id: None,
+        call_id: ToolCallId::new(),
+        tool: "shell".into(),
+        description: "count".into(),
+        argument: None,
+        resources: vec![],
+        side_effect: SideEffectClass::External,
+        requested_at: agent.created_at,
+        status,
+    };
+    let mut commit = Commit::new().mutate(Mutation::UpsertAgent(agent.clone()));
+    let resolved = ApprovalStatus::Resolved {
+        decision: aether_core::tool::ApprovalDecision::Denied,
+        by: Actor::System,
+        at: agent.created_at,
+        note: None,
+    };
+    for status in [ApprovalStatus::Pending, ApprovalStatus::Pending, resolved] {
+        commit = commit.mutate(Mutation::PutApproval(approval(status)));
+    }
+    store.commit(commit).unwrap();
+    assert_eq!(store.count_pending_approvals().unwrap(), 2);
+    assert_eq!(store.pending_approvals().unwrap().len(), 2);
+}

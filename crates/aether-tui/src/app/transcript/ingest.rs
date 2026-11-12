@@ -2361,9 +2361,9 @@ fn cross_agent(transcripts: &mut Transcripts, agent: AgentId, event: &Event, ctx
                 });
             }
         }
-        EventKind::AgentUsageUpdated { total, turn_usage } => {
-            spend(transcripts, ctx, agent, total, turn_usage)
-        }
+        EventKind::AgentUsageUpdated {
+            total, turn_usage, ..
+        } => spend(transcripts, ctx, agent, total, turn_usage),
         EventKind::MessageSent {
             from: Actor::Agent { id: sender },
             to,

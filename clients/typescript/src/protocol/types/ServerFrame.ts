@@ -31,6 +31,7 @@ export interface ServerFrameDelta {
   "delta": Delta;
   "frame": "delta";
   "invocation": InvocationId;
+  "invocation_seq"?: number | null;
   "sub": number;
 }
 

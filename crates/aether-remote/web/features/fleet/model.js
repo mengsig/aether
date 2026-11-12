@@ -120,3 +120,18 @@ export function questionCommand(item, content) {
   invariant(content.trim().length > 0, 'Write a reply before sending');
   return { cmd: 'reply_to_question', to: item.agentId, question_seq: item.questionSeq, content };
 }
+
+/** Labels each agent by name, adding a short ID suffix where several agents share a name. @param {Agent[]} agents */
+export function agentLabels(agents) {
+  invariant(Array.isArray(agents), 'Agent labels require an agent list');
+  /** @type {Map<string,number>} */
+  const counts = new Map();
+  for (const agent of agents) counts.set(agent.name, (counts.get(agent.name) ?? 0) + 1);
+  /** @type {Map<string,string>} */
+  const labels = new Map();
+  for (const agent of agents) {
+    invariant(agent.id.length > 0, 'An agent label requires an ID');
+    labels.set(agent.id, !agent.name ? agent.id : (counts.get(agent.name) ?? 0) > 1 ? `${agent.name} · ${agent.id.slice(-6)}` : agent.name);
+  }
+  return labels;
+}

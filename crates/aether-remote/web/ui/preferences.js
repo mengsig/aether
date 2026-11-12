@@ -20,7 +20,7 @@ export function applyPreferences(preferences) {
   document.documentElement.dataset.theme = preferences.theme;
   document.documentElement.dataset.motion = preferences.motion;
   const dark = preferences.theme === 'dark' || (preferences.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#0d1216' : '#f6f7f9');
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#0c0d0f' : '#f4f5f7');
 }
 
 /** @param {{theme:string,motion:string}} preferences @param {'theme'|'motion'} name @param {string} value */

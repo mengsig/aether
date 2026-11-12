@@ -31,6 +31,10 @@ def files(schema, definitions, commands, banner):
     """Return paths relative to src, with protocol.ts retaining every export."""
     modules = {}
     for name, lines in definitions.items():
+        if name == "Reply":
+            for declaration in declarations(lines):
+                modules.setdefault("protocol/types/Reply.ts", []).extend(declaration)
+            continue
         if name != "EventKind":
             modules[f"protocol/types/{name}.ts"] = lines
             continue

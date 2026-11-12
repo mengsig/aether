@@ -148,6 +148,10 @@ pub struct InvocationSnapshot {
     pub params: InvocationParams,
     pub token_estimate: u32,
     pub created_at: Timestamp,
+    /// What retrieval did for this turn, read by `memory_retrieval_explain`.
+    /// Withheld from every `get_snapshot` reply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_retrieval: Option<crate::memory_v2::RetrievalTrace>,
 }
 
 impl InvocationSnapshot {

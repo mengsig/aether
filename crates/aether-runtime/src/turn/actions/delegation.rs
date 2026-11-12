@@ -165,6 +165,9 @@ async fn delegate(
         crate::commands::Preflight {
             checked: Some((&requested, network)),
             run_budget: true,
+            inherit_limits: true,
+            #[cfg(test)]
+            before_hold: None,
             isolated_workspace: isolated
                 .as_ref()
                 .map(|manifest| manifest.workspace.as_path()),
@@ -462,6 +465,8 @@ fn child_spec(
     isolated: bool,
 ) -> CreateAgentSpec {
     let mut config = ctx.agent.config.clone();
+    config.deadline = None;
+    config.cost_budget = None;
     // None at create_agent means inherit. Delegation instructions
     // belong to this task; inheriting "spawn a child" recursively
     // makes each leaf repeat its parent's orchestration work.
@@ -481,6 +486,7 @@ fn child_spec(
         config.host_context = host_context;
     }
     CreateAgentSpec {
+        subsystem: None,
         role: request.role,
         name: request.name,
         objective: Some(request.objective),

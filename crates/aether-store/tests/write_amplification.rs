@@ -104,6 +104,7 @@ fn coalescing_usage_readings_reduces_commits_and_written_bytes() {
                 EventKind::AgentUsageUpdated {
                     total,
                     turn_usage: total,
+                    billing: None,
                 },
             )
             .agent(agent);

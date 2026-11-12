@@ -84,6 +84,8 @@ impl Fixture {
             push: Some(push),
             remote: Default::default(),
             status_reads: Default::default(),
+            tree_reads: Default::default(),
+            watcher_reads: Default::default(),
         };
         Self {
             daemon,
@@ -101,6 +103,7 @@ impl Fixture {
 
     pub(crate) fn set_push(&self, push: bool) {
         let settings = RemoteSettings {
+            mounts: None,
             enabled: true,
             pairing: false,
             public_origins: vec![ORIGIN.into()],

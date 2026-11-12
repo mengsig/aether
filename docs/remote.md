@@ -60,7 +60,10 @@ laptop ──ssh──▶ aether bridge --stdio ──▶ aetherd.sock          
   secret, and nothing in browser storage that could be copied to another
   machine.
 - A device has a **role**: `operator` (everything an operator at the host can
-  do, minus a host-only set) or `observer` (read-only).
+  do, minus a host-only set) or `observer` (read-only). Pairing as `operator`
+  grants the operator's full power: from the phone app it approves, answers,
+  creates, stops and messages agents and manages schedules as the TUI does.
+  Revoke a lost device at once (`aether remote revoke DEVICE`).
 - An SSH remote is not a device. It reaches the daemon's Unix socket as the
   logged-in user and has exactly the standing a local client has.
 - The `[listen]` TCP transport with its shared token is unchanged. A token
@@ -106,6 +109,7 @@ Unknown keys are refused, as in every other section.
 | `pairing` | bool | `false` | `start_pairing` may open a pairing. |
 | `public_origins` | string[] | `[]` | Exact origins browsers use, e.g. `https://box.tail1234.ts.net`. The Host and Origin allowlist. Each is `https://host[:port]` with no path, query or trailing slash; at most 16. |
 | `push` | bool | `false` | The daemon sends Web Push notifications. |
+| `mounts` | object[] | absent | Local services the listener forwards to, each `{prefix, kind, target}`: `prefix` matches `/[a-z][a-z0-9-]{0,31}`, `kind` is `archon`, `target` is `http://127.0.0.1:<port>` or `http://[::1]:<port>`. At most 4, prefixes distinct. An absent field keeps the saved mounts and an empty list removes them. Needs the `remote_mounts` feature; see [Mounts](#mounts). |
 
 Enabling with no public origin is allowed and reachable only on loopback
 (`http://127.0.0.1:8377`, `http://localhost:8377`), which browsers treat as a
@@ -233,6 +237,7 @@ No authentication. Response `200` (`Health`):
 | `protocol_version` | integer | Newest protocol the daemon speaks. |
 | `min_protocol_version` | integer | Oldest it serves. |
 | `pairing_open` | bool | A pairing is waiting to be claimed. |
+| `mounts` | object[] | Each mount as `{prefix, kind}`; never its target. Always present, `[]` when there are none. |
 
 ### `POST /api/pair/claim`
 
@@ -310,6 +315,62 @@ Poll once a second while `claimed`. An unknown `pairing` is `404 not_found`,
 as is the id of a pairing nobody has claimed: the id is learned only from a
 successful claim.
 
+### Mounts
+
+A request for a bare prefix (`/archon`) is answered `308` with `Location:
+/archon/` and the query kept, so a mounted app's relative URLs resolve under
+its prefix. A request whose path lies below a mount's prefix (`/archon/…`,
+never `/archonx`) is forwarded to the mount's loopback target
+with the prefix stripped (`/archon/` becomes `/`) and the query unchanged,
+after the Host check and before every route but the listener's own
+endpoints (`/ws` and everything under `/api`), which no mount takes over. A
+prefix the listener serves itself (`/api`, `/ws`, the pairing page `/pair`,
+or an embedded file or directory of the web app such as `/assets`) is refused when
+mounts are saved. A path
+below a prefix with an empty, `.` or `..` segment, a `%` or a `\` is `400` and
+is not forwarded.
+
+- **Unchanged.** The method, body and every end-to-end header go as they
+  came, `Origin` and `Cookie` included; `Host` becomes the target. Hop-by-hop
+  headers (`Connection` and the headers it names, `Keep-Alive`, `TE`,
+  `Trailer`, `Transfer-Encoding`, `Upgrade`, `Proxy-*`) stay behind. Nothing is
+  added: no cookie, no header, no device standing. A paired Aether device has
+  no standing on the target; the target authenticates its own users, so
+  Archon's own pairing decides what the phone may do in Archon's app.
+- **Answers.** The target's status, end-to-end headers and body come back as
+  they are, `Set-Cookie` included; the [response headers](#response-headers)
+  are added only where the target set none. Every mounted answer carries
+  `Connection: close`. A target that does not accept a connection within 2 s
+  is `502`; one that does not answer within 30 s is `504`; an answer over
+  8 MiB is `502`.
+- **Limits.** The request head and body limits are the listener's own.
+  A mounted WebSocket takes one of `max_connections` places of its own, so
+  mounts cannot starve device connections; frames are relayed one by one,
+  each up to the carrier's message limit (larger is `1009`), and
+  `Sec-WebSocket-Extensions` is not offered, so frames pass as they are. Close
+  codes pass through; a mount removed or changed closes its WebSockets with
+  `1001`. Ping and Pong belong to each hop and are not relayed: the listener
+  answers each side's pings itself, pings the client every 30 s, and lets a
+  client silent for 90 s go, closing the target's side with `1001`.
+- **The Funnel lease.** Mounted traffic flows only under a lease: a
+  successful read of `tailscale serve status --json` showing no Funnel
+  anywhere on the machine, at most 5 s old. While a mounted connection is
+  open the status is read every 2 s; otherwise an admission waits for a read
+  begun after it arrived. A `tailscale` command that cannot be found (on
+  `PATH` or in the usual install locations) is a failed read, never a
+  private one. When a read shows a Funnel, fails, hangs, or the lease ages
+  out, every open mounted WebSocket closes with `1008` and requests are `503`
+  until a read shows no Funnel again. The target's socket refuses every byte
+  once the lease is over, even before its timer has fired: nothing more, not
+  even a close frame, reaches the target. A refusal is reused for 1 s, so a stream of refused requests does
+  not become a stream of reads.
+- **Host only.** Mounts are set with `aether remote mount` or
+  `configure_remote` from the local socket. Adding one is refused
+  (`invalid_transition`) unless a fresh status read shows no Funnel;
+  removing or keeping one never is. `aether remote setup --funnel`, or setup
+  keeping a Funnel already open on any port, is refused while any mount is
+  present.
+
 ### Assets
 
 `GET` or `HEAD` of any other path serves the embedded web app:
@@ -348,6 +409,9 @@ the directories `dev/`, `tests/`, `scripts/`, `node_modules/`,
 and directories; and package and tool files (`package.json`, lockfiles,
 `tsconfig.json`, `jsconfig.json`, `*.config.*`). The build reruns when a
 file under `web/` is added, removed or changed.
+
+The listener's own prefixes, which no mount may take, are `/api`, `/ws`, `/pair`
+and every embedded path: `/assets`, `/ui`, `/core`, `/features` and the files at the top.
 
 ### Response headers
 
@@ -720,6 +784,9 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `get_agent` | observe | |
 | `list_agents` | observe | |
 | `get_tree` | observe | |
+| `list_agents_page` | observe | |
+| `get_transcript_page` | observe | |
+| `usage_breakdown` | observe | |
 | `update_agent` | operate | `host_only` when `patch.backend` or `patch.tools` is supplied; `subtree` needs nothing more. |
 | `reply_to_question` | operate | |
 | `send_message` | operate | The same with `attachments` (images). |
@@ -779,12 +846,18 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `record_memory_feedback` | host_only | Records evidence on a memory the named task saw. |
 | `retract_memory_feedback` | host_only | Withdraws feedback while preserving the original record. |
 | `memory_feedback` | host_only | Reads recent feedback, including retractions. |
+| `memory_retrieval_explain` | host_only | What retrieval did for each model call of a task or invocation. |
+| `consolidate_memories` | host_only | Merges near-duplicate memories, or plans it with `dry_run`. |
+| `memory_export` | host_only | Every memory of a scope as a JSON Lines artifact. |
+| `memory_import` | host_only | Inserts what an export holds and the store lacks; never overwrites. |
+| `memory_migration_status` | observe | Memory 2.0 migrations, counts and backup file names. |
 | `list_runs` | observe | |
 | `get_run_report` | observe | |
 | `replay` | observe | |
 | `export_run` | host_only | Writes a host path. |
 | `import_run` | host_only | Reads a host path. |
 | `list_models` | observe | |
+| `list_view_modes` | observe | Built-in and user transcript presentation modes. |
 | `auth_status` | observe | |
 | `providers` | observe | |
 | `mcp_servers` | observe | `operate` when `refresh` is `true`. |
@@ -809,6 +882,15 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `subscribe_push` | device_self | |
 | `unsubscribe_push` | device_self | |
 | `test_push` | device_self | |
+| `storage_status` | observe | |
+| `storage_gc` | host_only | Deletes stored history on the host. |
+| `post_notification` | operate | |
+| `list_notifications` | observe | |
+| `get_notification` | observe | |
+| `mark_notification_read` | operate | |
+| `resolve_notification` | operate | |
+| `answer_notification` | operate | |
+| `refresh_provider_usage` | operate | |
 | `resolve_submission` | operate | Read-only. Takes the class of the `command` it names when that is stricter, and every condition in that command's row: asking is permitted exactly when sending it would be. |
 
 What no device can do, whatever its role: stop the daemon; enable, disable
@@ -873,7 +955,7 @@ operator's, and agents treat them so. What changes is the record of who
 acted. Events caused over a device connection carry
 
 ```json
-{"actor": "user", "origin": {"transport": "device", "device": "dev_01J…", "name": "Robin's iPhone", "connection": "01J…"}}
+{"actor": "user", "origin": {"transport": "device", "device": "dev_01J…", "name": "Robin's iPhone", "connection": "01J…", "role": "operator"}}
 ```
 
 and render as `user:device:Robin's iPhone(dev_01J…)#01J…`, beside the
@@ -885,8 +967,22 @@ cannot insert marker delimiters, line breaks or bidi controls. Structured
 records retain the original name. Approval inbox deliveries carry optional
 `by` provenance, rendered alongside the decision; message and question-reply
 inboxes retain their operator actor. Observer connections never get an
-operator-standing actor. A client speaking protocol 17 cannot decode this origin and
+operator-standing actor: their actor is `{"actor": "client", "id": "dev_01J…"}`,
+and every `operate` command they send is `forbidden` with a message that says
+the device is paired as an observer. A client speaking protocol 17 cannot decode this origin and
 receives the same actor as `{"actor": "user", "name": "device:<name>"}`.
+
+`role` is the role the daemon's device store held when the device
+authenticated; re-roling or revoking the device closes that connection, so a
+recorded role is never stale for the connection that wrote it. It is optional:
+events written before 1.3.0 have none, and a reader must treat a device origin
+without `role` as having no operator standing. Nothing the device sends sets
+it: not the message text, not a marker inside it, not a header.
+
+A line an operator device sends to an agent Archon drives reaches archond's
+event stream as the inbox item's `from` actor, with this origin. Archon reads
+`role` to decide whether the line is an operator line; what it then allows is
+Archon's decision, documented in Archon's own `docs/remote.md`.
 
 ### Revocation
 
@@ -1946,6 +2042,9 @@ aether remote pair [--role operator|observer]
 aether remote devices [--all] [--json]
 aether remote revoke DEVICE [--reason TEXT] [--json]
 aether remote rename DEVICE NAME [--json]
+aether remote mount add PREFIX --target URL [--kind archon] [--json]
+aether remote mount remove PREFIX [--json]
+aether remote mount list [--json]
 
 aether remote add NAME --ssh TARGET [--executable PATH] [--remote-socket PATH] [--json]
 aether remote list [--json]

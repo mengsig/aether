@@ -53,6 +53,21 @@ pub(super) async fn harness(responses: Vec<aether_model::testing::ScriptedRespon
     harness_with(responses, |_| {}).await
 }
 
+/// A harness whose retrieval keeps every memory in scope, for tests of
+/// where memories reach rather than which are relevant to a message.
+pub(super) async fn harness_uncut(
+    responses: Vec<aether_model::testing::ScriptedResponse>,
+) -> Harness {
+    harness_configured(
+        responses,
+        |_| {},
+        |config| {
+            config.memory_retrieval.min_score = 0.0;
+        },
+    )
+    .await
+}
+
 pub(super) async fn harness_with(
     responses: Vec<aether_model::testing::ScriptedResponse>,
     seed: impl FnOnce(&dyn Store),

@@ -174,7 +174,10 @@ impl Work {
             (Work::Trigger(wanted), Mutation::DeliverInbox(item)) => {
                 item.agent_id == wanted && matches!(&item.kind, InboxKind::ExternalTrigger { .. })
             }
-            (Work::Agent(wanted), Mutation::UpsertAgent(agent)) => agent.id == wanted,
+            (
+                Work::Agent(wanted),
+                Mutation::UpsertAgent(agent) | Mutation::CreateAgent { agent, .. },
+            ) => agent.id == wanted,
             (Work::Task(wanted), Mutation::UpsertTask(task)) => task.id == wanted,
             (Work::Schedule(wanted), Mutation::UpsertSchedule(job)) => job.id == wanted,
             _ => false,
@@ -415,6 +418,9 @@ impl Store for CommitLog {
     fn subtree_ids(&self, root: AgentId) -> StoreResult<std::collections::BTreeSet<AgentId>> {
         self.inner.subtree_ids(root)
     }
+    fn expired_child_span(&self, parent: AgentId) -> StoreResult<Option<(u64, u64)>> {
+        self.inner.expired_child_span(parent)
+    }
     fn subtree_agents(&self, root: AgentId) -> StoreResult<Vec<Agent>> {
         self.inner.subtree_agents(root)
     }
@@ -446,6 +452,17 @@ impl Store for CommitLog {
     }
     fn agents(&self, filter: &AgentFilter) -> StoreResult<Vec<Agent>> {
         self.inner.agents(filter)
+    }
+    fn agents_page(
+        &self,
+        filter: &AgentFilter,
+        after: Option<AgentId>,
+        limit: usize,
+    ) -> StoreResult<aether_store::AgentPage> {
+        self.inner.agents_page(filter, after, limit)
+    }
+    fn agent_subsystem(&self, id: AgentId) -> StoreResult<Option<String>> {
+        self.inner.agent_subsystem(id)
     }
     fn task(&self, id: TaskId) -> StoreResult<Option<Task>> {
         self.inner.task(id)
@@ -570,6 +587,21 @@ impl Store for CommitLog {
 
     fn memory(&self, id: MemoryId) -> StoreResult<Option<MemoryRecord>> {
         self.inner.memory(id)
+    }
+    fn memory_admission(
+        &self,
+        id: MemoryId,
+    ) -> StoreResult<Option<aether_core::memory_admission::MemoryAdmission>> {
+        self.inner.memory_admission(id)
+    }
+    fn memory_stale_marks(
+        &self,
+        memories: &[MemoryId],
+    ) -> StoreResult<std::collections::BTreeMap<MemoryId, aether_store::MemoryStaleMark>> {
+        self.inner.memory_stale_marks(memories)
+    }
+    fn memory_holdouts(&self, memory: MemoryId) -> StoreResult<Vec<aether_store::MemoryHoldout>> {
+        self.inner.memory_holdouts(memory)
     }
     fn memories(&self, query: &MemoryQuery) -> StoreResult<Vec<MemoryRecord>> {
         self.inner.memories(query)

@@ -179,6 +179,8 @@ check_python_suites() {
     step "release bench tests (statistics, gate, pool, selection; no model calls)"
     python3 -m unittest discover -s evals -p 'test_release_bench*.py'
     check_release_bench_min_python
+    step "memory benchmark tests (dataset, metrics, baseline check; no cargo, no model calls)"
+    python3 -m unittest discover -s evals -p 'test_memory_bench*.py'
     step "client generator layout tests"
     python3 -m unittest discover -s scripts -p 'test_generate_clients_*.py'
     step "python client tests"

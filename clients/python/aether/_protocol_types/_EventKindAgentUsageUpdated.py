@@ -10,6 +10,7 @@ class EventKindAgentUsageUpdated(TypedDict, total=False):
     """
     Absolute billing totals, including corrections from a completed engine run.
     """
+    billing: _protocol.Billing | None  # optional
     total: _protocol.Usage
     turn_usage: _protocol.Usage
     type: Literal["agent.usage_updated"]

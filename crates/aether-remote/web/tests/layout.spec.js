@@ -63,3 +63,43 @@ async function checkActions(page) {
   }
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 }
+
+for (const viewport of [{width:1280,height:800},{width:390,height:844},{width:360,height:640}]) {
+  test(`start form fields stay above the Start bar at ${viewport.width}×${viewport.height}`,async({page})=>{
+    test.setTimeout(60000);
+    await page.setViewportSize(viewport);
+    const server=createMockServer();
+    await new Promise(resolve=>server.http.listen(0,'127.0.0.1',()=>resolve(undefined)));
+    const address=server.http.address();
+    if (!address || typeof address==='string') throw new Error('Expected an isolated mock listener');
+    const origin=`http://127.0.0.1:${address.port}`;
+    try {
+      await page.goto(`${origin}/#pair=aether-demo`);
+      await page.getByRole('button',{name:'Pair this device'}).click();
+      await expect(page.locator('.connection[data-state="online"]:visible')).toBeVisible({timeout:20000});
+      await page.goto(`${origin}/#new`);
+      await expect(page.locator('.start-effort input:checked')).toBeAttached();
+      if (viewport.width>=800) {
+        // Wide screens keep the Start bar in flow, so nothing on first paint sits behind it.
+        const hidden=await page.evaluate(()=>{
+          const dock=document.querySelector('.start-action')?.getBoundingClientRect();
+          return dock ? [...document.querySelectorAll('.start-form fieldset, .start-form .field')].filter(row=>{
+            const box=row.getBoundingClientRect(); return row.checkVisibility() && box.top<dock.bottom && box.bottom>dock.top;
+          }).map(row=>row.className) : ['missing Start bar'];
+        });
+        expect(hidden).toEqual([]);
+      }
+      for (const control of ['.start-objective','.start-workspace button','.start-model input:checked','.start-effort input:checked']) {
+        await page.locator(control).first().focus();
+        const covered=await page.locator(control).first().evaluate(node=>{
+          const row=node.closest('fieldset') ?? node;
+          const box=row.getBoundingClientRect(); const dock=document.querySelector('.start-action')?.getBoundingClientRect();
+          if (!dock) return 'missing Start bar';
+          if (box.top<0 || box.bottom>innerHeight) return `outside the viewport (${box.top}–${box.bottom})`;
+          return box.bottom<=dock.top || box.top>=dock.bottom ? '' : `overlaps the Start bar (${box.bottom} > ${dock.top})`;
+        });
+        expect(covered,`${control} at ${viewport.width}×${viewport.height}`).toBe('');
+      }
+    } finally {await server.close();}
+  });
+}

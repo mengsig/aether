@@ -153,8 +153,12 @@ async fn reconnect_late_old_tree_reply_must_not_restore_pre_outage_status() {
         old.clone(),
         tx,
         Command::GetTree {
+            role_prefix: None,
+            root: None,
             run: None,
             include_archived: false,
+            after: None,
+            limit: None,
         },
         Then::Tree,
     );
@@ -209,6 +213,7 @@ async fn reconnect_late_old_status_reply_must_not_roll_back_usage_totals() {
     fixture.commit(vec![EventKind::AgentUsageUpdated {
         total: usage,
         turn_usage: usage,
+        billing: None,
     }]);
     let current = fixture.reconnect_after(&mut live, &old).await;
     let fresh = fixture.fresh().await;

@@ -20,6 +20,21 @@ export function listAgents(args: Omit<ListAgentsCommand, "cmd">): ListAgentsComm
 }
 
 /**
+ * One page of agents in `AgentId` order, from just after `after`.
+ * `limit` is 1 to 500, 200 when absent. Needs `features::AGENTS_PAGING`.
+ */
+export interface ListAgentsPageCommand {
+  "cmd": "list_agents_page";
+  "after"?: AgentId | null;
+  "limit"?: number | null;
+  "query"?: AgentQuery;
+}
+
+export function listAgentsPage(args: Omit<ListAgentsPageCommand, "cmd">): ListAgentsPageCommand {
+  return { cmd: "list_agents_page", ...args };
+}
+
+/**
  * Remembered decisions, oldest first.
  */
 export interface ListApprovalRulesCommand {
@@ -130,6 +145,17 @@ export interface ListTasksCommand {
 
 export function listTasks(args: Omit<ListTasksCommand, "cmd">): ListTasksCommand {
   return { cmd: "list_tasks", ...args };
+}
+
+/**
+ * Built-in and user transcript modes from the daemon's configuration.
+ */
+export interface ListViewModesCommand {
+  "cmd": "list_view_modes";
+}
+
+export function listViewModes(): ListViewModesCommand {
+  return { cmd: "list_view_modes" };
 }
 
 /**

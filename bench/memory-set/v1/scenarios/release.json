@@ -1,0 +1,198 @@
+{
+  "id": "release",
+  "description": "A Go CLI's release procedure: a reusable procedure stored twice, an operator constraint, a changed signing scheme and a wrong lesson that review marked as hurting.",
+  "repository": "github.com/example-org/cli-tool",
+  "memories": [
+    {
+      "key": "release-proc",
+      "class": "durable",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.8,
+      "confidence": 0.9,
+      "age_days": 70,
+      "tags": [
+        "release"
+      ],
+      "feedback": {
+        "helped": 3
+      },
+      "text": "Release procedure: bump VERSION, move the Unreleased section of CHANGELOG.md under the new version, then push a vX.Y.Z tag; the release workflow builds and publishes the archives."
+    },
+    {
+      "key": "release-dup",
+      "class": "near_duplicate",
+      "duplicate_of": "release-proc",
+      "scope": "repository",
+      "kind": "lesson",
+      "importance": 0.7,
+      "confidence": 0.8,
+      "age_days": 12,
+      "tags": [
+        "release"
+      ],
+      "text": "To cut a release edit VERSION and CHANGELOG.md, then push a tag like v2.3.0; CI then builds the release archives and publishes them."
+    },
+    {
+      "key": "patch-bumps",
+      "class": "durable",
+      "operator": true,
+      "scope": "repository",
+      "kind": "preference",
+      "importance": 0.8,
+      "confidence": 1.0,
+      "age_days": 30,
+      "tags": [
+        "release"
+      ],
+      "text": "Releases are patch bumps (x.y.z+1) unless the maintainer asks for a minor or major release."
+    },
+    {
+      "key": "goreleaser",
+      "class": "durable",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.6,
+      "confidence": 0.9,
+      "age_days": 100,
+      "tags": [
+        "release",
+        "build"
+      ],
+      "text": "Cross-compilation targets are listed in .goreleaser.yaml under builds.targets; a new platform is added there and nowhere else."
+    },
+    {
+      "key": "gpg-sign",
+      "class": "stale",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.7,
+      "confidence": 0.9,
+      "age_days": 500,
+      "tags": [
+        "release",
+        "security"
+      ],
+      "text": "Release archives are signed with the project's GPG key 0x5A1B2C3D; verify a download with gpg --verify."
+    },
+    {
+      "key": "cosign",
+      "class": "durable",
+      "contradicts": "gpg-sign",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.7,
+      "confidence": 0.9,
+      "age_days": 80,
+      "tags": [
+        "release",
+        "security"
+      ],
+      "text": "Release archives are signed with cosign keyless signing; verify with cosign verify-blob and the published .sig and .pem files. GPG signing was dropped."
+    },
+    {
+      "key": "force-tag",
+      "class": "incorrect",
+      "scope": "repository",
+      "kind": "lesson",
+      "importance": 0.6,
+      "confidence": 0.6,
+      "age_days": 25,
+      "tags": [
+        "release"
+      ],
+      "feedback": {
+        "hurt": 2
+      },
+      "text": "Push release tags with git push --force so the workflow re-runs when a tag already exists."
+    },
+    {
+      "key": "macos-rerun",
+      "class": "one_off",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.5,
+      "confidence": 0.9,
+      "age_days": 8,
+      "tags": [
+        "release"
+      ],
+      "text": "The v2.3.1 release workflow had to be re-run once because the macOS runner timed out after 45 minutes."
+    },
+    {
+      "key": "tag-pushed",
+      "class": "one_off",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.5,
+      "confidence": 0.9,
+      "age_days": 8,
+      "tags": [
+        "release"
+      ],
+      "text": "Tagged v2.3.1 at commit 9e41d07 and the release page went live at 14:20."
+    },
+    {
+      "key": "rel-wip",
+      "class": "transient",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.5,
+      "confidence": 0.7,
+      "age_days": 1,
+      "tags": [
+        "release"
+      ],
+      "text": "TODO: finish the 2.4.0 changelog after the windows fix lands."
+    }
+  ],
+  "queries": [
+    {
+      "id": "cut-release",
+      "role": "worker",
+      "query": "Cut the next release of the CLI.",
+      "relevant": [
+        "release-proc",
+        "patch-bumps"
+      ],
+      "harmful": [
+        "force-tag"
+      ]
+    },
+    {
+      "id": "add-platform",
+      "role": "worker",
+      "query": "Add linux/riscv64 to the platforms the release builds for.",
+      "relevant": [
+        "goreleaser"
+      ],
+      "harmful": []
+    },
+    {
+      "id": "verify-download",
+      "role": "worker",
+      "query": "Document how users verify the signature of a downloaded release archive.",
+      "relevant": [
+        "cosign"
+      ],
+      "harmful": [
+        "gpg-sign"
+      ],
+      "task": {
+        "question": "Which tool verifies the signature of a cli-tool release archive? Answer with the tool name only.",
+        "answer": "(?i)cosign"
+      }
+    },
+    {
+      "id": "rerun-release",
+      "role": "worker",
+      "query": "The release workflow failed halfway for an existing tag; get the release published.",
+      "relevant": [
+        "release-proc"
+      ],
+      "harmful": [
+        "force-tag"
+      ]
+    }
+  ]
+}

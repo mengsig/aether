@@ -10,4 +10,5 @@ export interface ErrorReply {
   "first_seq"?: number | null;
   "last_seq"?: number | null;
   "message": string;
+  "reason"?: string | null;
 }

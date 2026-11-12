@@ -34,6 +34,7 @@ fn snapshot() -> InvocationSnapshot {
         params: Default::default(),
         token_estimate: 8,
         created_at: aether_core::time::now(),
+        memory_retrieval: None,
     }
 }
 
@@ -95,6 +96,37 @@ fn retained_state_is_not_repeated_but_session_loss_restores_it() {
     assert_eq!(resumed.messages[0].text(), restored);
     assert_eq!(resumed.layers[0].placement, LayerPlacement::UserTurn);
     assert!(system_prompt(&resumed).is_empty());
+}
+
+#[test]
+fn changing_state_does_not_change_the_native_system_prompt_on_resume() {
+    let mut first = snapshot();
+    let initial = prepare_user_prompt(
+        &mut first,
+        "first",
+        HoistPlan {
+            retained: None,
+            nonce: "12345678",
+        },
+    );
+    let mut second = snapshot();
+    second.layers[0].text = Some("new checkpoint".into());
+    second.layers[1].text = Some("child completed".into());
+    let changed = prepare_user_prompt(
+        &mut second,
+        "second",
+        HoistPlan {
+            retained: Some(&initial.sent),
+            nonce: "abcdefgh",
+        },
+    );
+    assert_eq!(
+        system_prompt(&first).as_bytes(),
+        system_prompt(&second).as_bytes()
+    );
+    assert!(system_prompt(&second).is_empty());
+    assert!(changed.prompt.contains("new checkpoint"));
+    assert!(changed.prompt.contains("child completed"));
 }
 
 #[test]

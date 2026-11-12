@@ -23,6 +23,7 @@ impl Command {
     #[rustfmt::skip]
     pub fn introduced(&self) -> Introduced {
         match self {
+            Self::ListViewModes => Introduced::Feature(features::VIEW_MODES),
             Self::RefreshProviderUsage { .. } => Introduced::Feature(features::PROVIDER_USAGE_REFRESH),
             Self::AcceptMemory { .. } | Self::RejectMemory { .. } => {
                 Introduced::Feature(features::MEMORY_PROPOSALS)
@@ -33,10 +34,25 @@ impl Command {
             Self::MemoriesInContext { .. } => Introduced::Feature(features::MEMORY_CONTEXT),
             Self::RecordMemoryFeedback { .. } | Self::RetractMemoryFeedback { .. }
             | Self::MemoryFeedback { .. } => Introduced::Feature(features::MEMORY_FEEDBACK),
+            Self::MemoryRetrievalExplain { .. } | Self::ConsolidateMemories { .. }
+            | Self::MemoryExport { .. } | Self::MemoryImport { .. }
+            | Self::MemoryMigrationStatus => Introduced::Feature(features::MEMORY_V2),
             Self::StorageStatus | Self::StorageGc { .. } => Introduced::Feature(features::STORAGE),
             Self::WorkspaceDiff { .. } | Self::WorkspaceIntegrate { .. }
             | Self::WorkspaceDiscard { .. } => Introduced::Feature(features::WORKSPACE_REVIEW),
             Self::UpdateAgent { subtree: true, .. } => Introduced::Feature(features::SUBTREE_UPDATE),
+            Self::ListAgentsPage { .. } => Introduced::Feature(features::AGENTS_PAGING),
+            Self::GetTree { after, limit, .. } if after.is_some() || limit.is_some() => {
+                Introduced::Feature(features::TREE_PAGES)
+            }
+            Self::GetTree { role_prefix, root, .. } if role_prefix.is_some() || root.is_some() => {
+                Introduced::Feature(features::AGENTS_PAGING)
+            }
+            Self::GetTranscriptPage { .. } => Introduced::Feature(features::TRANSCRIPT_PAGING),
+            Self::UsageBreakdown { .. } => Introduced::Feature(features::USAGE_BREAKDOWN),
+            Self::ConfigureRemote { settings, .. } if settings.mounts.is_some() => {
+                Introduced::Feature(features::REMOTE_MOUNTS)
+            }
             Self::AppendNote { level, .. } if !level.is_info() => Introduced::Version(24),
             Self::AppendNote { .. } => Introduced::Feature(features::NOTES),
             Self::PostNotification { .. } | Self::ListNotifications { .. }
@@ -128,9 +144,18 @@ mod tests {
                 features::REPOSITORY_ALIASES,
             ),
             (json!({"cmd": "storage_status"}), features::STORAGE),
+            (json!({"cmd": "list_view_modes"}), features::VIEW_MODES),
             (
                 json!({"cmd": "memory_feedback", "memory": memory}),
                 features::MEMORY_FEEDBACK,
+            ),
+            (
+                json!({"cmd": "memory_import", "artifact": "", "dry_run": true}),
+                features::MEMORY_V2,
+            ),
+            (
+                json!({"cmd": "memory_migration_status"}),
+                features::MEMORY_V2,
             ),
             (
                 json!({"cmd": "workspace_discard", "agent": aether_core::id::AgentId::new()}),
@@ -174,6 +199,76 @@ mod tests {
             command(plain).introduced(),
             Introduced::Version(FIRST_VERSION)
         );
+    }
+
+    /// Every protocol 26 read model names the feature that announces it,
+    /// and `get_tree` needs one only when a new filter is set.
+    #[test]
+    fn protocol_26_read_models_name_their_features() {
+        let agent = aether_core::id::AgentId::new();
+        for (wire, feature) in [
+            (
+                json!({"cmd": "list_agents_page", "query": {}}),
+                features::AGENTS_PAGING,
+            ),
+            (
+                json!({"cmd": "get_tree", "run": null, "root": agent}),
+                features::AGENTS_PAGING,
+            ),
+            (
+                json!({"cmd": "get_tree", "run": null, "role_prefix": "x"}),
+                features::AGENTS_PAGING,
+            ),
+            (
+                json!({"cmd": "get_tree", "run": null, "after": agent}),
+                features::TREE_PAGES,
+            ),
+            (
+                json!({"cmd": "get_tree", "run": null, "limit": 10}),
+                features::TREE_PAGES,
+            ),
+            (
+                json!({"cmd": "get_transcript_page", "agent": agent}),
+                features::TRANSCRIPT_PAGING,
+            ),
+            (
+                json!({"cmd": "usage_breakdown", "by": "model"}),
+                features::USAGE_BREAKDOWN,
+            ),
+            (
+                json!({"cmd": "configure_remote", "expected_revision": 1,
+                       "settings": {"mounts": []}}),
+                features::REMOTE_MOUNTS,
+            ),
+        ] {
+            let command = command(wire);
+            assert_eq!(
+                command.introduced(),
+                Introduced::Feature(feature),
+                "{}",
+                command.name()
+            );
+            assert_eq!(
+                command.access(),
+                expected_access(&command),
+                "{}",
+                command.name()
+            );
+        }
+        let plain = json!({"cmd": "get_tree", "run": null});
+        assert_eq!(
+            command(plain).introduced(),
+            Introduced::Version(FIRST_VERSION)
+        );
+        let unmounted = json!({"cmd": "configure_remote", "expected_revision": 1, "settings": {}});
+        assert_eq!(command(unmounted).introduced(), Introduced::Version(18));
+    }
+
+    fn expected_access(command: &Command) -> crate::Access {
+        match command {
+            Command::ConfigureRemote { .. } => crate::Access::RemoteAdmin,
+            _ => crate::Access::Observe,
+        }
     }
 
     #[test]

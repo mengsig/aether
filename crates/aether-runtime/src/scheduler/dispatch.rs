@@ -18,6 +18,16 @@ pub(super) fn dispatch(
     lineage: &Lineage,
     reserve: &mut Reserve,
 ) {
+    start_turns(runtime, ready, lineage, reserve);
+}
+
+/// Start the turns `pick` selects, under one hold of the scheduler lock.
+fn start_turns(
+    runtime: &Arc<Runtime>,
+    ready: Vec<Runnable>,
+    lineage: &Lineage,
+    reserve: &mut Reserve,
+) {
     let limits = provider_limits(runtime, &ready);
     let engines = engine_providers(runtime, &ready);
     let mut sched = runtime.sched.lock();
@@ -59,12 +69,18 @@ pub(super) fn dispatch(
                 on_provider: true,
             },
         );
-        let rt = runtime.clone();
-        let id = agent.id;
-        tokio::spawn(async move {
-            crate::turn::run(rt, id, cancel, interrupt).await;
-        });
+        spawn_turn(runtime.clone(), agent.id, cancel, interrupt);
     }
+}
+
+/// Run the turn on its own task.
+fn spawn_turn(
+    runtime: Arc<Runtime>,
+    id: AgentId,
+    cancel: CancellationToken,
+    interrupt: CancellationToken,
+) {
+    tokio::spawn(crate::turn::run(runtime, id, cancel, interrupt));
 }
 
 /// Configured concurrency cap per provider any candidate could land on -

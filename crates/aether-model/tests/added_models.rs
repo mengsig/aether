@@ -64,8 +64,14 @@ fn a_fresh_configuration_lists_the_claude_code_models_at_1m_with_a_256k_threshol
         ),
         ("default".into(), Vec::new(), 1_000_000, 64_000),
         (
+            "claude-fable-5-2".into(),
+            aliases(&["fable", "fable-5-2"]),
+            1_000_000,
+            128_000,
+        ),
+        (
             "claude-fable-5-1".into(),
-            aliases(&["fable", "fable-5-1"]),
+            aliases(&["fable-5-1"]),
             1_000_000,
             128_000,
         ),

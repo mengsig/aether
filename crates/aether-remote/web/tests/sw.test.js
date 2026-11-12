@@ -26,7 +26,7 @@ async function workerHarness() {
   }};
 }
 
-test('gateway failures recover the cached shell while API requests stay uncached',async () => {
+test('gateway failures recover the cached shell while API and mount requests stay uncached',async () => {
   const harness = await workerHarness();
   try {
     const request = new Request('https://aether.test/');
@@ -39,5 +39,17 @@ test('gateway failures recover the cached shell while API requests stay uncached
     assert.equal(await response.text(),'Cached Aether');
     assert.deepEqual(harness.reads,['./index.html']);
     harness.handle({request:new Request('https://aether.test/api/pair/status'),respondWith:() => assert.fail('API responses must not be cached')});
+    for (const path of ['/archon','/archon/','/archon/index.html','/other/']) {
+      const mounted = new Request(`https://aether.test${path}`);
+      Object.defineProperty(mounted,'mode',{value:'navigate'});
+      harness.handle({request:mounted,respondWith:() => assert.fail(`${path} belongs to a mount, not the Aether shell`)});
+    }
+    for (const path of ['/index.html','/pair']) {
+      const own = new Request(`https://aether.test${path}`);
+      Object.defineProperty(own,'mode',{value:'navigate'});
+      let handled = false;
+      harness.handle({request:own,respondWith:response => { handled = true; void response; }});
+      assert.ok(handled,`${path} is the Aether shell`);
+    }
   } finally { harness.restore(); }
 });

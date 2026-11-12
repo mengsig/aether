@@ -713,6 +713,7 @@ fn error_answers_and_engine_usage_are_summarized_for_what_they_are() {
     let updated = EventKind::AgentUsageUpdated {
         total: api,
         turn_usage: api,
+        billing: None,
     };
     assert_eq!(summarize(&updated), "5 in / 2 out this turn");
 }

@@ -509,7 +509,7 @@ fn before_cursor_uses_the_agent_sequence_index() {
         .unwrap();
     assert!(
         plan.iter()
-            .any(|s| s.contains("INDEX events_agent (agent_id=? AND seq>? AND seq<?)")),
+            .any(|s| s.contains("INDEX events_agent (agent_id=? AND seq<?)")),
         "{plan:?}"
     );
     assert!(!plan.iter().any(|s| s.contains("TEMP B-TREE")), "{plan:?}");
@@ -572,6 +572,7 @@ fn snapshot_memories_follow_the_requested_order_and_match_the_stored_snapshots()
             params: Default::default(),
             token_estimate: 0,
             created_at: now(),
+            memory_retrieval: None,
         };
         store
             .commit(Commit::new().mutate(Mutation::PutSnapshot(snapshot.clone())))

@@ -283,6 +283,8 @@ impl From<MemoryQuerySpec> for aether_store::MemoryQuery {
             include_superseded: q.include_superseded,
             include_forgotten: q.include_forgotten,
             proposed: q.proposed,
+            // Candidates reach the wire with `memory_v2`, not before.
+            include_candidates: false,
             id: q.id,
             limit: q.limit,
         }

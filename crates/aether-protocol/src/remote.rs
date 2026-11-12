@@ -3,24 +3,15 @@
 
 use std::path::PathBuf;
 
+pub use aether_core::event::DeviceRole;
 pub use aether_core::id::DeviceId;
 use aether_core::id::{AgentId, ApprovalId, TaskId};
 use aether_core::time::Timestamp;
 use aether_core::tool::ApprovalRequest;
 use serde::{Deserialize, Serialize};
 
-/// What a paired device may do. See the authorization matrix in docs/remote.md.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum DeviceRole {
-    /// Everything an operator at the host can do, minus the host-only set.
-    #[default]
-    Operator,
-    /// Read-only: sees the fleet, changes nothing.
-    Observer,
-}
+mod mounts;
+pub use mounts::{MAX_MOUNTS, MountKind, RemoteMount, validate_mounts};
 
 /// The device a connection authenticated as, echoed in [`crate::Welcome`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -95,6 +86,11 @@ pub struct RemoteSettings {
     /// Whether the daemon sends Web Push notifications.
     #[serde(default)]
     pub push: bool,
+    /// Listener path mounts, at most [`MAX_MOUNTS`]. In `configure_remote`,
+    /// absent keeps the saved mounts and an empty list removes them; a reply
+    /// omits it when there are none. Needs `features::REMOTE_MOUNTS`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mounts: Option<Vec<RemoteMount>>,
 }
 
 /// Reply to `get_remote` and `configure_remote`.

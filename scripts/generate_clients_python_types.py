@@ -49,10 +49,32 @@ def type_files(source, banner):
         index.append(f"from ._{name} import {name}")
         exports.append(name)
         previous_end = node.end_lineno
-    index.extend(["", "__all__ = ["])
-    # One import line per type is fixed; twenty names a row keeps the index under 600 lines.
-    for offset in range(0, len(exports), 20):
-        index.append("    " + ", ".join(repr(name) for name in exports[offset:offset + 20]) + ",")
-    index.append("]")
-    output["_protocol_types/__init__.py"] = "\n".join(index) + "\n"
+    output.update(index_files(header, index[len(header) + 1:], exports))
     return output, root
+
+
+# One import line per type is fixed, so the index is split in shards that
+# each stay under 600 lines; twenty names a row keeps `__all__` short.
+INDEX_SHARD = 400
+
+
+def index_files(header, imports, exports):
+    assert len(imports) == len(exports), "one import per exported type"
+    output = {}
+    shards = []
+    for offset in range(0, len(exports), INDEX_SHARD):
+        shard = f"_index_{len(shards)}"
+        names = exports[offset:offset + INDEX_SHARD]
+        lines = list(header) + [""] + imports[offset:offset + INDEX_SHARD]
+        lines.extend(["", "__all__ = ["])
+        for row in range(0, len(names), 20):
+            lines.append("    " + ", ".join(repr(name) for name in names[row:row + 20]) + ",")
+        lines.append("]")
+        output[f"_protocol_types/{shard}.py"] = "\n".join(lines) + "\n"
+        shards.append(shard)
+    root = list(header) + [""]
+    root.extend(f"from .{shard} import *" for shard in shards)
+    root.append(f"from . import {', '.join(shards)}")
+    root.extend(["", "__all__ = ["] + [f"    *{shard}.__all__," for shard in shards] + ["]"])
+    output["_protocol_types/__init__.py"] = "\n".join(root) + "\n"
+    return output

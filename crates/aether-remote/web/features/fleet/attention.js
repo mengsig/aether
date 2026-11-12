@@ -27,8 +27,8 @@ async function decide(item, context, inbox, decision) {
   try {
     requireCurrent(context, item);
     const exact = approvalDetails(item);
-    const detail = `Tool: ${exact.tool}\nSide effect: ${exact.effect}\n\nOriginal arguments:\n${exact.argument}\n\nResources:\n${exact.resources}`;
-    const accepted = await context.confirm(decision === 'approved' ? 'Approve this exact tool call?' : 'Deny this tool call?', detail);
+    const fields = /** @type {Array<[string,string]>} */ ([['Tool', exact.tool], ['Side effect', exact.effect], ['Original arguments', exact.argument], ['Resources', exact.resources]]);
+    const accepted = await context.confirm(decision === 'approved' ? 'Approve this exact tool call?' : 'Deny this tool call?', '', fields);
     if (!accepted || !inbox.alive) return;
     requireCurrent(context, item);
     await context.command(approvalCommand(item, decision));
@@ -249,7 +249,7 @@ export function mountAttention(container, context) {
     if (Math.max(approvals,questions,issues) >= 200) container.append(el('p','muted small','The host returns up to 200 items in each category. More may remain after these are resolved.'));
     const notice = connectionNotice(state, context);
     if (notice) container.append(notice);
-    if (state.role === 'observer') container.append(el('p', 'muted attention-readonly', 'Observer access · an operator must approve or reply.'));
+    if (state.ready && state.role === 'observer') container.append(el('p', 'muted attention-readonly', 'Observer access · an operator must approve or reply.'));
     const names = new Map(state.agents.map(agent => [agent.id, agent.name || agent.id]));
     const list = el('div', 'stack fleet-inbox');
     for (const item of state.attention) {
@@ -261,6 +261,7 @@ export function mountAttention(container, context) {
     if (target instanceof HTMLElement) { requested = null; requestAnimationFrame(() => { target.focus(); target.scrollIntoView({block:'center'}); }); }
     if (!state.attention.length && state.connection === 'online') {
       const cleared = empty('You’re all caught up', 'Approvals and questions will appear here when your agents need you.');
+      cleared.classList.add('attention-cleared');
       cleared.append(button('View fleet', () => context.navigate('fleet')));
       container.append(cleared);
     }

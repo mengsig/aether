@@ -282,3 +282,19 @@ async fn delegating_onto_an_unusable_engine_names_its_probe_reason() {
     );
     h.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn compaction_records_usage() {
+    let (mut h, _dir) = ComposeHarness::new().await;
+    let attempt = aether_context::CompactionAttempt {
+        model: ModelRef::new("claude-code", "haiku"),
+        usage: None,
+        error: None,
+    };
+    record_compaction_usage(&h.runtime, &mut h.ctx, &attempt).unwrap();
+    assert_eq!(
+        h.ctx.turn_usage.cost_gap,
+        Some(aether_core::model::CostGap::Unreported)
+    );
+    h.runtime.shutdown().await;
+}

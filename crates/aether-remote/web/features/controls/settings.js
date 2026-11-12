@@ -60,7 +60,9 @@ function connection(view) {
   const update = () => {
     const state = view.context.store.get();
     const expanded = status.querySelector('details')?.open === true;
-    status.replaceChildren(details({ Device: state.deviceName || 'Not paired', Access: words(state.role),
+    // The store starts as an observer placeholder; name the role only once a session has confirmed it.
+    const access = state.ready ? { Access: words(state.role) } : {};
+    status.replaceChildren(details({ Device: state.deviceName || 'Not paired', ...access,
       Connection: state.connectionDetail || words(state.connection) }), rawDetails({ device: state.deviceName,
       role: state.role, connection: state.connection, detail: state.connectionDetail, daemon: state.daemonId,
       version: state.version, last_sequence: state.lastSeq, last_error: state.error }, 'Inspect connection details'));
@@ -81,6 +83,20 @@ function connection(view) {
   return { root, unsubscribe };
 }
 
+/** @param {Panel} view */
+function about(view) {
+  const root = card('About Aether', 'Your agents continue working when you close this app.');
+  const version = el('div');
+  const update = () => {
+    const served = view.context.store.get().version;
+    invariant(typeof served === 'string', 'Daemon version must be text');
+    version.replaceChildren(details({ 'Aether version': served || 'Shown once connected' }));
+  };
+  update();
+  root.append(version);
+  return { root, unsubscribe: view.context.store.subscribe(update) };
+}
+
 /** @param {HTMLElement} container @param {import('../../types.js').Context} context */
 export function mountSettings(container, context) {
   const view = panel(container, context);
@@ -88,14 +104,14 @@ export function mountSettings(container, context) {
   const recovery = connection(view);
   const paired = devices(view);
   const deliveries = deliveryReview(context);
+  const version = about(view);
   view.body.append(heading('Settings', 'Device preferences, notifications and connection health.'), preferences(view),
-    notificationSettings(view), paired.root, deliveries.root, recovery.root,
-    card('About Aether', 'Remote app 1.0.1. Your agents continue working when you close this app.'));
+    notificationSettings(view), paired.root, deliveries.root, recovery.root, version.root);
   view.sync();
   const requested=new URLSearchParams(location.hash.split('?')[1] || '').get('panel');
   const focus=requested==='outbox' ? requestAnimationFrame(()=>{
     if (!view.alive() || !deliveries.root.isConnected) return;
     deliveries.root.tabIndex=-1;deliveries.root.focus({preventScroll:true});deliveries.root.scrollIntoView({block:'start'});
   }) : 0;
-  return () => { cancelAnimationFrame(focus); recovery.unsubscribe(); paired.unsubscribe(); deliveries.destroy(); view.dispose(); };
+  return () => { cancelAnimationFrame(focus); recovery.unsubscribe(); paired.unsubscribe(); version.unsubscribe(); deliveries.destroy(); view.dispose(); };
 }

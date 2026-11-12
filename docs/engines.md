@@ -169,7 +169,7 @@ session stays with the CLI (see below).
 Whether the CLI grants the larger window, and how its use is charged, depends
 on your account and plan; keeping more history also spends more of a plan's
 allowance on every turn. Only `claude-opus-5-5[1m]` was observed working on a
-real account. An entry for `claude-sonnet-5-5[1m]` or `claude-fable-5-1[1m]`
+real account. An entry for `claude-sonnet-5-5[1m]` or `claude-fable-5-2[1m]`
 would be written the same way, but those ids were not tried on an account:
 they rest on Claude Code's documentation of the `[1m]` suffix. That
 documentation lists no `[1m]` variant of Haiku 5.5.
@@ -491,7 +491,9 @@ new tokens as `UsageDelta` and leave `Assistant.usage` empty; `Done` carries the
 turn's totals, which reconcile what streamed. An engine turn's
 `invocation.completed` events therefore carry no usage (zero tokens, unpriced),
 and its spend arrives as `agent.usage_updated` with the agent's and the turn's
-totals.
+totals. Each such record also says what paid for the use it adds, `billing`:
+`subscription` on an engine, `api` on a provider billed per request. Records
+written before Aether kept it have none.
 
 Claude Code's [`result` fields have different scopes](https://code.claude.com/docs/en/agent-sdk/cost-tracking#track-costs-in-streaming-input-mode):
 `usage` covers one user turn, while `total_cost_usd` and `modelUsage` include
@@ -606,9 +608,9 @@ signal is the whole of the containment. Aether sends `SIGTERM` to your process
 group, then `SIGKILL` two seconds later, so the real bound on work after a park
 is the grace plus those two seconds plus the reap - and a grandchild you
 `setsid` into its own process group is not reached by either signal. It lives
-until your agent ends, when Aether stops everything its engines left running;
-a daemon stop or restart leaves it to your agent while that agent is live
-(see [agent processes](configuration.md#agent-processes)).
+until your agent ends or the daemon stops, when Aether sweeps its processes.
+A start after a crash leaves it to a live agent unless it belongs to the
+interrupted engine (see [agent processes](configuration.md#agent-processes)).
 
 Strip `turn.hidden_env` from the child's environment. The engine drives its
 own shell, so a credential left there is one `printenv` away.
@@ -1007,7 +1009,7 @@ When an engine has produced nothing (no stream, message, tool result or
 bridge request) for `[scheduler] engine_stall_minutes` (15 by default; `0`
 turns the watchdog off) and no tool call is running, no background task is
 owed and no harness action is winding the turn down, the turn is stalled. A
-running tool is not silence: it keeps its own timeout.
+running tool is not silence here: it has its own bound, below.
 
 A stall emits an `agent.stalled` event with `agent`, `engine`, `model`,
 `silent_secs` and `attempt` (1 for the first stall of the turn), so clients can
@@ -1019,6 +1021,44 @@ tool result - restarts that count, even after the eight outages whose window
 progress resets, so a long turn is not ended by stalls hours apart; the agent goes idle and a message resumes its session. While
 an agent is stalled, `aether status` lists it under "Needs attention", and the
 TUI and `aether run` print a notice for each stall.
+
+### Tool calls that never return
+
+A tool call the engine runs should end within the engine's own tool timeout.
+Aether pins Claude Code's shell cap, `BASH_MAX_TIMEOUT_MS`, at 600000 (10
+minutes, the longest foreground command a turn may run), so a model cannot ask
+for more. Aether's own `bash` stops sooner. When an engine leaves a call
+outstanding anyway, its turn would hold the agent's inbox for good, so Aether
+bounds it. Once a call has gone the longest foreground command plus a 5-minute
+grace (15 minutes in all) without a result, and the engine has shown no sign
+of life over that time, Aether stops the engine and ends the turn interrupted.
+A sign of life is anything that restarts the stall watchdog above, such as a
+model message, a tool result, a bridge request or a background task report.
+The turn ends once the engine process has exited, within the same 5-second
+reap a harness stop allows, so the next turn never resumes a session still
+being killed. Bridge calls made in that window are refused.
+
+The stop records an `agent.tool_call_overdue` event. Its fields are `agent`,
+`engine`, `tool`, `call`, `outstanding_secs`, `silent_secs`, `bound_secs` and
+`resumed`. The usual `engine.interrupted` notice and the closed call follow,
+each giving the reason. Aether then wakes the agent with a message: the
+call's result is lost, it may still have had effects, and it must not be
+repeated unchanged. The inbox, with any message sent during the stuck turn, is
+delivered in that fresh turn. A message the stuck engine was handed but never
+acknowledged stays unread until then. If the turn the wake started is stopped
+the same way with nothing new in the inbox, `resumed` is `false` and no
+further wake is sent. The agent waits for a message, and the next one resumes
+it.
+
+Some long calls are not bounded:
+
+- A background job, whose call returns as soon as it starts.
+- A command the engine reports live as a background task under its call's id,
+  as Codex reports its commands.
+- A call Aether holds open itself: a `wait_for`, a question, an approval, or a
+  harness action winding the turn down.
+- A tool Aether serves itself through the bridge, which keeps that tool's own
+  timeout.
 
 ### Running agents with no turn
 

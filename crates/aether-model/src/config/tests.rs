@@ -731,6 +731,7 @@ fn every_owned_config_section_rejects_unknown_keys() {
         "network",
         "scheduler",
         "memory",
+        "memory.retrieval",
         "mcp",
         "artifacts",
         "web",
@@ -947,4 +948,86 @@ fn quoted_unknown_keys_keep_distinct_paths() {
         "{error}"
     );
     assert!(error.contains("Remove or rename them"), "{error}");
+}
+
+#[test]
+fn a_retired_noesis_table_is_ignored_while_other_unknown_settings_still_fail() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "[noesis]\nenabled = true\n[noesis.budget]\ninteractive_usd_daily = 2.5\n";
+    std::fs::write(dir.path().join("config.toml"), text).unwrap();
+    let config = load_config(dir.path()).unwrap();
+    assert_eq!(config, AetherConfig::default());
+
+    std::fs::write(
+        dir.path().join("config.toml"),
+        format!("{text}[bogus]\nx = 1\n"),
+    )
+    .unwrap();
+    let error = load_config(dir.path()).unwrap_err().to_string();
+    assert!(
+        error.contains("`bogus`") && !error.contains("noesis"),
+        "{error}"
+    );
+}
+
+#[test]
+fn memory_retrieval_defaults_to_the_contract_and_refuses_values_out_of_range() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("config.toml"), "").unwrap();
+    let defaults = load_config(dir.path()).unwrap().memory.retrieval;
+    assert_eq!(defaults, MemoryRetrievalSection::default());
+    assert_eq!((defaults.max_items, defaults.holdout_rate), (6, 0.0));
+
+    std::fs::write(
+        dir.path().join("config.toml"),
+        "[memory.retrieval]\nmin_score = 0.2\nholdout_rate = 0.05\nholdout_seed = 9\n",
+    )
+    .unwrap();
+    let set = load_config(dir.path()).unwrap().memory.retrieval;
+    assert_eq!(
+        (set.min_score, set.holdout_rate, set.holdout_seed),
+        (0.2, 0.05, 9)
+    );
+
+    for (line, key) in [
+        ("holdout_rate = 1.5", "holdout_rate"),
+        ("min_score = -1", "min_score"),
+        ("max_items = 0", "max_items"),
+    ] {
+        std::fs::write(
+            dir.path().join("config.toml"),
+            format!("[memory.retrieval]\n{line}\n"),
+        )
+        .unwrap();
+        let error = load_config(dir.path()).expect_err(line);
+        assert!(
+            error.reason.contains(&format!("memory.retrieval.{key}")),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn concurrent_template_writers_publish_complete_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            let barrier = barrier.clone();
+            let path = dir.path();
+            scope.spawn(move || {
+                barrier.wait();
+                super::ensure_templates(path).unwrap();
+                crate::Models::load(Some(path.to_path_buf())).unwrap();
+            });
+        }
+    });
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("config.toml")).unwrap(),
+        super::CONFIG_TEMPLATE
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("providers.toml")).unwrap(),
+        super::templates::providers_template()
+    );
 }

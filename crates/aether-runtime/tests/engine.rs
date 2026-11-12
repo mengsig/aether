@@ -112,6 +112,8 @@ mod stop_sweep;
 mod telemetry;
 #[path = "engine/temp_dir.rs"]
 mod temp_dir;
+#[path = "engine/tool_bound.rs"]
+mod tool_bound;
 #[path = "engine/tool_surface.rs"]
 mod tool_surface;
 #[path = "engine/transient_retry.rs"]

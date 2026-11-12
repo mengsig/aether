@@ -39,6 +39,7 @@ impl Enable {
             self.origins
         };
         RemoteSettings {
+            mounts: None,
             enabled: true,
             pairing: self.pairing,
             public_origins,
@@ -107,6 +108,10 @@ fn describe(status: &RemoteStatus) -> String {
         status.devices, status.connections
     );
     line("devices", &devices);
+    for (index, mount) in settings.mounts.iter().flatten().enumerate() {
+        let shown = format!("{} → {}", sane(&mount.prefix), sane(&mount.target));
+        line(if index == 0 { "mounts" } else { "" }, &shown);
+    }
     out
 }
 

@@ -3,6 +3,7 @@
 
 mod admin;
 mod devices;
+mod publication;
 
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
@@ -19,6 +20,7 @@ use crate::listen::{ConnectionPolicy, HANDSHAKE_TIMEOUT};
 use crate::{Daemon, connection};
 
 pub use admin::AdminError;
+pub use publication::TailscaleStatus;
 
 /// The `[remote]` stanza as the listener takes it. Refused here, at start,
 /// rather than when the operator first runs `aether remote enable`.
@@ -45,6 +47,8 @@ pub struct DeviceConnections {
     daemon: Weak<Daemon>,
     instance_id: String,
     config: RemoteConfig,
+    /// What says whether the listener is published through Funnel.
+    publication: TailscaleStatus,
 }
 
 /// Manual: the runtime behind the daemon prints far more than a log line wants.
@@ -58,11 +62,12 @@ impl std::fmt::Debug for DeviceConnections {
 }
 
 impl DeviceConnections {
-    pub fn new(daemon: &Arc<Daemon>, config: RemoteConfig) -> Self {
+    pub fn new(daemon: &Arc<Daemon>, config: RemoteConfig, publication: TailscaleStatus) -> Self {
         Self {
             daemon: Arc::downgrade(daemon),
             instance_id: daemon.instance_id.clone(),
             config,
+            publication,
         }
     }
 }
@@ -95,6 +100,10 @@ impl RemoteHost for DeviceConnections {
             device: Some(gate),
         };
         connection::serve(daemon, stream, policy, None, None, shutdown).await
+    }
+
+    async fn publication(&self) -> Result<aether_remote::mount::Publication, String> {
+        self.publication.read().await
     }
 }
 
@@ -142,7 +151,7 @@ pub async fn attach(
         "remote control is already attached to this daemon"
     );
     let push = daemon.push.as_ref().map(|push| push.notifier().clone());
-    let control = assemble(daemon, config, push, shutdown)?;
+    let control = assemble(daemon, config, push, TailscaleStatus::system(), shutdown)?;
     anyhow::ensure!(
         daemon.remote.0.set(control.clone()).is_ok(),
         "remote control is already attached to this daemon"
@@ -158,9 +167,10 @@ fn assemble(
     daemon: &Arc<Daemon>,
     config: RemoteConfig,
     push: Option<Notifier>,
+    publication: TailscaleStatus,
     shutdown: CancellationToken,
 ) -> anyhow::Result<Arc<RemoteControl>> {
-    let host = Arc::new(DeviceConnections::new(daemon, config.clone()));
+    let host = Arc::new(DeviceConnections::new(daemon, config.clone(), publication));
     let stored = Arc::new(devices::RuntimeDevices::new(daemon.runtime.clone()));
     if let Some(notifier) = &push {
         // From here on nothing is pushed to a device this table revoked.

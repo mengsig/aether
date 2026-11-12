@@ -35,6 +35,25 @@ impl CostBasis {
     }
 }
 
+/// What paid for a usage record when it was written: an engine CLI on the
+/// user's own subscription, or a provider billed per request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Billing {
+    Subscription,
+    Api,
+}
+
+impl Billing {
+    pub fn of(runs_on_engine: bool) -> Self {
+        if runs_on_engine {
+            Self::Subscription
+        } else {
+            Self::Api
+        }
+    }
+}
+
 /// Why the dollar total may omit work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -371,6 +390,16 @@ impl Usage {
             .saturating_add(self.cache_write_tokens)
     }
 
+    /// Whether this usage says anything about where dollars came from, so its
+    /// `cost_basis` counts when totals combine. Empty or unpriced usage does not:
+    /// it cannot change the source of priced dollars. A legacy positive amount
+    /// with unknown provenance does, and keeps the total's basis unknown.
+    pub fn has_cost_figure(&self) -> bool {
+        self.cost_usd != 0.0
+            || self.estimated_cost_usd.is_some()
+            || (self.total_tokens() > 0 && self.cost_basis != CostBasis::Unknown)
+    }
+
     pub fn total_tokens(&self) -> u64 {
         self.input_tokens
             .saturating_add(self.output_tokens)
@@ -396,14 +425,7 @@ impl AddAssign for Usage {
     /// Saturating throughout: these numbers are read out of an import, and a
     /// wrapped total is a wrong total.
     fn add_assign(&mut self, rhs: Self) {
-        // Empty/unpriced contributors cannot change the source of priced dollars.
-        // A legacy positive amount with unknown provenance must stay unknown.
-        let has_figure = |u: &Self| {
-            u.cost_usd != 0.0
-                || u.estimated_cost_usd.is_some()
-                || (u.total_tokens() > 0 && u.cost_basis != CostBasis::Unknown)
-        };
-        self.cost_basis = match (has_figure(self), has_figure(&rhs)) {
+        self.cost_basis = match (self.has_cost_figure(), rhs.has_cost_figure()) {
             (false, true) => rhs.cost_basis,
             (true, true) => self.cost_basis.combine(rhs.cost_basis),
             _ => self.cost_basis,

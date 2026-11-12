@@ -2,7 +2,7 @@ use super::*;
 
 fn keyed_commands(key: &str) -> Vec<Command> {
     let agent = AgentId::new();
-    vec![
+    let commands = vec![
         Command::CreateAgent(CreateAgent {
             role: "worker".into(),
             idempotency_key: Some(key.into()),
@@ -46,7 +46,8 @@ fn keyed_commands(key: &str) -> Vec<Command> {
             },
             idempotency_key: Some(key.into()),
         },
-    ]
+    ];
+    commands
 }
 
 /// `SUBMISSION_KEY_FIELD` names the wire field, and the digest must not
