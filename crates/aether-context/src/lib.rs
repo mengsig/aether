@@ -56,6 +56,8 @@ pub struct ContextInputs<'a> {
     pub notes: &'a [aether_core::note::Note],
     /// Older such notes left out of `notes`.
     pub notes_omitted: usize,
+    /// Durable interruption context awaiting a successful model response.
+    pub interruption_notes: &'a str,
     pub tools: Vec<ToolSpec>,
     /// Model-family instructions from the registry, if any.
     pub model_profile: Option<&'a str>,
@@ -121,6 +123,21 @@ impl ContextManager {
         self
     }
 
+    /// The ids of `records` that [`Self::assemble`] would render for this
+    /// model and output cap: the only memories a turn could inject.
+    pub fn memories_that_fit(
+        &self,
+        records: &[MemoryRecord],
+        capabilities: &CapabilityProfile,
+        max_output_tokens: Option<u32>,
+    ) -> Vec<aether_core::id::MemoryId> {
+        let budget = ContextBudget::for_profile(capabilities, max_output_tokens);
+        let (_, ids) = memory_layer(records, &self.estimator, budget.memory_max);
+        debug_assert!(ids.len() <= records.len());
+        debug_assert!(ids.iter().all(|id| records.iter().any(|r| r.id == *id)));
+        ids
+    }
+
     fn policy_text(&self, engine_policy: Option<&str>) -> Option<String> {
         let parts: Vec<_> = [Some(self.policy.as_str()), engine_policy]
             .into_iter()
@@ -165,9 +182,11 @@ impl ContextManager {
             Some(render::role_task(inputs.agent, inputs.task)),
             1,
         );
+        let mut runtime_state = render::runtime_state(&inputs);
+        runtime_state.push_str(inputs.interruption_notes);
         push_text(
             LayerKind::RuntimeState,
-            Some(render::runtime_state(&inputs)),
+            Some(runtime_state),
             (inputs.children.len() + inputs.child_tasks.len()) as u32,
         );
         push_text(
@@ -272,6 +291,7 @@ impl ContextManager {
             params,
             token_estimate: used,
             created_at: inputs.now,
+            memory_retrieval: None,
         };
         let request = build_request(&snapshot);
         let new_user_message = if nudged && new_user_message.is_none() {
@@ -351,8 +371,9 @@ pub fn build_request(snapshot: &InvocationSnapshot) -> ModelRequest {
 }
 
 /// The memory layer's text and the ids it renders, in render order: own
-/// memories first, then repository notes, as the text lists them.
-fn memory_layer(
+/// memories first, then repository notes, as the text lists them. Public so
+/// the memory benchmark measures the layer a model is actually sent.
+pub fn memory_layer(
     records: &[MemoryRecord],
     estimator: &TokenEstimator,
     maximum: u32,

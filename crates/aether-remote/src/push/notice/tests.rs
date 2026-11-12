@@ -426,6 +426,7 @@ fn the_acting_device_is_remembered_so_it_is_not_told() {
         device,
         name: "phone".into(),
         connection: "c1".into(),
+        role: Some(aether_core::event::DeviceRole::Operator),
     };
     let done = EventKind::TaskCompleted {
         result: TaskResult::summary("done"),

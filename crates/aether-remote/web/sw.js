@@ -6,6 +6,8 @@ import {renewSubscription} from './push-renewal.js';
 const worker = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
 const CACHE = `aether-shell-${VERSION}`;
 const assetURLs = new Set(PRECACHE.map(path => new URL(path,worker.registration.scope).href));
+// Only the app's own pages fall back to the cached shell; a mount such as /archon/ is another app.
+const appPages = new Set(['./','./index.html','./pair'].map(path => new URL(path,worker.registration.scope).pathname));
 
 worker.addEventListener('install',event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(PRECACHE)).then(() => worker.skipWaiting()));
@@ -16,7 +18,8 @@ worker.addEventListener('activate',event => {
 worker.addEventListener('fetch',event => {
   const request = event.request; const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== worker.location.origin || url.pathname.startsWith('/api/') || url.pathname === '/ws') return;
-  if (request.mode === 'navigate' || assetURLs.has(url.href)) event.respondWith(shellResponse(request));
+  const owned = request.mode === 'navigate' ? appPages.has(url.pathname) : assetURLs.has(url.href);
+  if (owned) event.respondWith(shellResponse(request));
 });
 
 /** @param {Request} request */

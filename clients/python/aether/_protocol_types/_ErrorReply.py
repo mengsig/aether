@@ -11,3 +11,4 @@ class ErrorReply(TypedDict, total=False):
     first_seq: int | None  # optional
     last_seq: int | None  # optional
     message: str
+    reason: str | None  # optional

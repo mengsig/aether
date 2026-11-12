@@ -1,10 +1,10 @@
 //! Native engine events.
 use super::{
-    Arc, BTreeMap, Commit, ContentBlock, DeltaKind, EngineEvent, EngineKind, EventKind,
-    IdempotencyKey, Instant, Invocation, InvocationId, InvocationSnapshot, MAX_ENGINE_ERROR,
-    MessageRole, Mutation, PendingAccounting, ResolvedModel, Result, Runtime, StreamEvent,
-    ToolCall, ToolCallId, ToolOutcome, TurnCtx, TurnPricing, Usage, clamp, engine_call_class,
-    flush_accounting, json, now,
+    Arc, BTreeMap, Commit, ContentBlock, DeltaKind, DeltaStream, EngineEvent, EngineKind,
+    EventKind, IdempotencyKey, Instant, Invocation, InvocationId, InvocationSnapshot,
+    MAX_ENGINE_ERROR, MessageRole, Mutation, PendingAccounting, ResolvedModel, Result, Runtime,
+    StreamEvent, ToolCall, ToolCallId, ToolOutcome, TurnCtx, TurnPricing, Usage, clamp,
+    engine_call_class, flush_accounting, json, now,
 };
 
 /// The native spawn tool an engine's own `Session` init advertises despite
@@ -57,7 +57,8 @@ pub(super) struct StreamState {
     /// Bridge replies can precede native announcements or outlive missing echoes.
     bridge_replies: Vec<BridgeReply>,
     /// Content-block index → tool name for input deltas.
-    pub(super) tool_names: BTreeMap<usize, String>,
+    /// Each streaming tool block's name and call id, by block index.
+    pub(super) tool_names: BTreeMap<usize, (String, String)>,
     /// The engine reported per-message usage at least once this turn.
     pub(super) usage_seen: bool,
     /// An assistant message arrived, so an invocation was recorded.
@@ -92,9 +93,9 @@ pub(super) struct StreamState {
     /// clock, not `std::time::Instant`, so a paused-time test can advance it
     /// deterministically instead of sleeping for a real interval.
     pub(super) invocation_since: tokio::time::Instant,
-    /// Id the in-flight assistant message is recorded under; its deltas stream
-    /// under it too, so a client can retire the live text once it commits.
-    pub(super) message_invocation: InvocationId,
+    /// The in-flight assistant message's deltas, under the id it is recorded
+    /// under, so a client can retire the live text once it commits.
+    pub(super) deltas: DeltaStream,
     /// Thinking streamed for the in-flight message. Codex streams reasoning
     /// only as deltas, so its commit carries none unless folded in from here.
     pub(super) thinking: String,
@@ -164,7 +165,7 @@ impl StreamState {
             configured,
             protocol_notes: 0,
             invocation_since: tokio::time::Instant::now(),
-            message_invocation: InvocationId::new(),
+            deltas: DeltaStream::new(InvocationId::new()),
             thinking: String::new(),
             thinking_truncated: false,
             text: String::new(),
@@ -388,27 +389,32 @@ pub(super) fn handle_event(
                 }
                 StreamEvent::BlockStart {
                     index,
-                    block: aether_core::model::BlockStart::ToolUse { name, .. },
+                    block: aether_core::model::BlockStart::ToolUse { id, name, .. },
                 } => {
-                    state.tool_names.insert(index, name.clone());
+                    state.tool_names.insert(index, (name.clone(), id.clone()));
                     Some(DeltaKind::ToolInput {
                         name,
                         partial_json: String::new(),
+                        tool_use_id: Some(id),
                     })
                 }
                 StreamEvent::ToolInputDelta {
                     index,
                     partial_json,
-                } => Some(DeltaKind::ToolInput {
-                    name: state.tool_names.get(&index).cloned().unwrap_or_default(),
-                    partial_json,
-                }),
+                } => {
+                    let (name, id) = state.tool_names.get(&index).cloned().unzip();
+                    Some(DeltaKind::ToolInput {
+                        name: name.unwrap_or_default(),
+                        partial_json,
+                        tool_use_id: id,
+                    })
+                }
                 _ => None,
             };
             if let Some(delta) = delta {
                 runtime
                     .bus
-                    .publish_delta(ctx.agent.id, state.message_invocation, delta);
+                    .publish_delta(ctx.agent.id, &mut state.deltas, delta);
             }
         }
         EngineEvent::Assistant {
@@ -477,8 +483,9 @@ pub(super) fn handle_event(
             // with it.
             let started_at =
                 at - chrono::Duration::milliseconds(i64::try_from(duration_ms).unwrap_or(i64::MAX));
+            let next = state.deltas.next_invocation();
             let invocation = Invocation {
-                id: std::mem::replace(&mut state.message_invocation, InvocationId::new()),
+                id: std::mem::replace(&mut state.deltas, next).invocation(),
                 snapshot_id: snapshot.id,
                 agent_id: ctx.agent.id,
                 turn: ctx.turn,
@@ -807,10 +814,10 @@ fn note_context_usage(runtime: &Runtime, ctx: &mut TurnCtx, state: &mut StreamSt
     publish_accounting(runtime, ctx, state);
 }
 
-fn publish_accounting(runtime: &Runtime, ctx: &TurnCtx, state: &StreamState) {
+fn publish_accounting(runtime: &Runtime, ctx: &TurnCtx, state: &mut StreamState) {
     runtime.bus.publish_delta(
         ctx.agent.id,
-        state.message_invocation,
+        &mut state.deltas,
         DeltaKind::Accounting {
             after_seq: runtime.bus.last_seq(),
             total: ctx.agent.stats.usage,
@@ -880,6 +887,7 @@ mod live_accounting_tests {
             params: InvocationParams::default(),
             token_estimate: 0,
             created_at: now(),
+            memory_retrieval: None,
         };
         let commits = runtime.store.commits();
         let last_seq = runtime.store.last_seq().unwrap();
@@ -890,7 +898,7 @@ mod live_accounting_tests {
             output_tokens: 20,
             ..Default::default()
         };
-        for event in [
+        for (numbered, event) in (1u64..).zip([
             EngineEvent::UsageDelta { usage },
             EngineEvent::ContextUsage { tokens: 0 },
             EngineEvent::UsageRequest {
@@ -901,10 +909,11 @@ mod live_accounting_tests {
                 },
             },
             EngineEvent::ContextUsage { tokens: 412 },
-        ] {
+        ]) {
             handle_event(&runtime, &mut ctx, &snapshot, event, &mut state).unwrap();
             match bus.try_recv().expect("a reading publishes immediately") {
                 BusMessage::Delta {
+                    seq,
                     agent,
                     invocation,
                     delta:
@@ -915,9 +924,10 @@ mod live_accounting_tests {
                             context_tokens,
                         },
                 } => {
+                    assert_eq!(seq, numbered, "the message's deltas count up from 1");
                     assert_eq!(after_seq, last_seq);
                     assert_eq!(agent, ctx.agent.id);
-                    assert_eq!(invocation, state.message_invocation);
+                    assert_eq!(invocation, state.deltas.invocation());
                     assert_eq!(total, ctx.agent.stats.usage);
                     assert_eq!(turn_usage, ctx.turn_usage);
                     assert_eq!(context_tokens, ctx.agent.stats.context_tokens);
@@ -939,7 +949,7 @@ mod live_accounting_tests {
             panic!("durable usage")
         };
         assert!(
-            matches!(event.kind, EventKind::AgentUsageUpdated { total, turn_usage }
+            matches!(event.kind, EventKind::AgentUsageUpdated { total, turn_usage, .. }
             if total == ctx.agent.stats.usage && turn_usage == ctx.turn_usage)
         );
         let BusMessage::Event(event) = bus.try_recv().unwrap() else {
@@ -950,6 +960,49 @@ mod live_accounting_tests {
         let stored = runtime.store.agent(ctx.agent.id).unwrap().unwrap();
         assert_eq!(stored.stats.usage, ctx.agent.stats.usage);
         assert_eq!(stored.stats.context_tokens, Some(412));
+
+        // Every input delta of a tool block names the call it belongs to.
+        let tool_block = aether_core::model::StreamEvent::BlockStart {
+            index: 1,
+            block: aether_core::model::BlockStart::ToolUse {
+                id: "toolu_1".into(),
+                name: "bash".into(),
+                input: None,
+            },
+        };
+        let tool_input = aether_core::model::StreamEvent::ToolInputDelta {
+            index: 1,
+            partial_json: "{".into(),
+        };
+        for (numbered, event) in [(5, tool_block), (6, tool_input)] {
+            handle_event(
+                &runtime,
+                &mut ctx,
+                &snapshot,
+                EngineEvent::Delta(event),
+                &mut state,
+            )
+            .unwrap();
+            let message = std::iter::from_fn(|| bus.try_recv().ok())
+                .find(|message| matches!(message, BusMessage::Delta { .. }));
+            let Some(BusMessage::Delta {
+                seq,
+                delta:
+                    DeltaKind::ToolInput {
+                        name, tool_use_id, ..
+                    },
+                ..
+            }) = message
+            else {
+                panic!("a tool input delta, got {message:?}");
+            };
+            assert_eq!(
+                seq, numbered,
+                "durable events between never break the count"
+            );
+            assert_eq!(name, "bash");
+            assert_eq!(tool_use_id.as_deref(), Some("toolu_1"));
+        }
         runtime.shutdown().await;
     }
 }

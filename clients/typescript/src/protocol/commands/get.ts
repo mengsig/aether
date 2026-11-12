@@ -3,6 +3,7 @@
 
 import type {
   AgentId,
+  AgentTree,
   ArtifactId,
   CheckpointId,
   EventQuery,
@@ -204,11 +205,35 @@ export function getTranscript(args: Omit<GetTranscriptCommand, "cmd">): GetTrans
 }
 
 /**
- * The live graph: every agent in the run (or all runs) with relations.
+ * A bounded page of an agent's transcript: entries after `after`, the
+ * newest before `before`, or the newest of all when neither is given.
+ * `limit` is 1 to 1000, 200 when absent. Needs `features::TRANSCRIPT_PAGING`.
+ */
+export interface GetTranscriptPageCommand {
+  "cmd": "get_transcript_page";
+  "after"?: number | null;
+  "agent": AgentId;
+  "before"?: number | null;
+  "limit"?: number | null;
+}
+
+export function getTranscriptPage(args: Omit<GetTranscriptPageCommand, "cmd">): GetTranscriptPageCommand {
+  return { cmd: "get_transcript_page", ...args };
+}
+
+/**
+ * The live graph: the agents in the run (or all runs) with relations.
+ * One page: the newest live agents, then the newest agents of any state,
+ * at most `limit` of each (1 to 500, 500 when absent); `AgentTree.next_after`
+ * says older ones were left out.
  */
 export interface GetTreeCommand {
   "cmd": "get_tree";
+  "after"?: AgentId | null;
   "include_archived"?: boolean;
+  "limit"?: number | null;
+  "role_prefix"?: string | null;
+  "root"?: AgentId | null;
   "run"?: RunId | null;
 }
 

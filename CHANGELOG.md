@@ -4,7 +4,166 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
-## Unreleased
+## 1.3.0
+
+Released with Archon 1.5.0. Archon can be mounted on the same listener at `/archon`. Memory 2.0
+gives memories a standing, an opt-in relevance cutoff and export and import.
+Protocol 26 (the daemon serves 17 to 26) and store schema 33. Read the
+[upgrade notes](https://github.com/mengsig/aether/blob/main/docs/upgrading.md)
+before updating.
+
+### Before updating
+
+- **Store schema 33.** Five migrations run when the daemon first opens the
+  store: V29 marks each agent's subsystem and adds the paging indexes, V30
+  gives each memory a tier and a state (existing memories become active,
+  unchanged), V31 adds the stale marks and the retrieval holdout log, V32
+  moves only the version stamp, and V33 keeps each agent's usage and the
+  fleet's and each run's totals beside the agents, and each agent's archived
+  flag in a column, for `status` and `get_tree`. From then on a program
+  other than Aether cannot write an agent into the store (reading is
+  unaffected). The migration is one way: Aether saves
+  the schema 28 database first (see
+  [migration backups](https://github.com/mengsig/aether/blob/main/docs/migration-backups.md)),
+  and 1.2.11 refuses to start on the migrated store (`store schema version
+  33 is newer than supported 28`). To go back, stop the daemon and restore
+  that backup with the older binary; changes made since are lost.
+- **Restart the daemon** after the update (`aether stop`, then `aether`).
+- **Memory retrieval can inject less.** `[memory.retrieval] min_score`
+  (0, off, by default) is the relevance a memory needs to reach a turn,
+  pinned ones excepted. A value of 0.05 trades recall for fewer injected
+  tokens. `holdout_rate` defaults to 0; set it to 0.05 to withhold and log
+  a seeded sample. Stale-marked memories can still rank lower.
+- **Update the daemon before the clients.** The 1.3.0 Python and
+  TypeScript clients ask for protocol 26, which a 1.2.11 daemon refuses as
+  `incompatible`; give the Python client `protocol_version=25` to reach one.
+  The daemon still serves protocols 17 to 25 to older clients.
+- **Remote access to Archon 1.5.0 needs this release.** `archon remote
+  setup` mounts archond on this listener at `/archon`; Archon 1.5.0 runs the
+  queue on Aether 1.2.11 too.
+
+### Added
+
+- **Protocol 26 (AE-P).** `list_agents_page`, `get_tree`'s `root` and
+  `role_prefix`, `get_transcript_page` and `usage_breakdown`; deltas carry
+  `invocation_seq` and `tool_input` its `tool_use_id`. Each is behind a
+  feature, and a client of version 25 or older gets every frame as before.
+- **Mounts (AE-M).** `aether remote mount add|remove|list` forwards a path
+  of the listener, such as `/archon`, to a loopback archond. Adding one is
+  refused while Tailscale Funnel is on or its state is unknown, Funnel is
+  refused while a mount exists, and mounted traffic stops within seconds of
+  a Funnel appearing.
+- **Memory 2.0 (G1–G4).** Each memory has a tier and a state (candidate,
+  active, superseded, retracted) with support, verification and refs;
+  admission stays immediate by default. Retrieval ranks against a cutoff,
+  halves the score of a memory whose source no longer states it, and logs a
+  holdout to measure lift. `aether memory consolidate` merges near-duplicates
+  into one survivor; `aether memory explain`, `export`, `import` and
+  `migration-status` come with it, behind the `memory_v2` feature. See
+  [Memory 2.0](https://github.com/mengsig/aether/blob/main/docs/memory/MEMORY-V2.md).
+- **Checks.** `make bench-memory` (G0), not part of `make ci`.
+- **Claude Fable 5.2.** Available on Anthropic and Claude Code at $8/$40 per
+  million tokens with a 1M context; `fable` and `fable-5-2` select it, while
+  `fable-5-1` still selects Fable 5.1.
+- `list_view_modes` serves the shared TUI's transcript-mode catalog,
+  including scoped user modes and file diagnostics, to any authenticated reader.
+  The `view_modes` handshake feature announces it.
+
+### Security
+
+- **The vNext audit (H3).** `docs/security/vnext-audit.md` checks remote
+  access and the mount. `docs/remote.md` lists the access
+  class of every command, kept in step by a test.
+- **Host-only Memory 2.0 commands.** A paired device cannot
+  explain, consolidate, export or import memories.
+- **Operator devices name their role.** A paired device's operator origin
+  carries the `role` the daemon paired it with, so archond can take a line
+  from an `operator` phone as the operator's; an observer's refusal says it is
+  an observer. The field is optional and protocol 26 is unchanged.
+  `SECURITY.md` says pairing as operator grants full operator power.
+
+### Changed
+
+- **Versions.** The workspace and the Python and TypeScript clients are 1.3.0.
+- **A light facelift for the phone app.** Same tabs, screens and actions as
+  1.2.11, with a higher-contrast palette, a near-black dark mode, 44px touch
+  targets and a shimmering fleet skeleton. From 1100px wide the navigation
+  becomes a sidebar, Attention and Settings lay their cards out in a grid and
+  a conversation spans the window.
+- **Phone app polish.** The Approve dialog lists the tool, side effect,
+  arguments and resources on their own labelled lines. Settings > About shows
+  the Aether version the daemon reports. Usage by agent adds a short ID to
+  agents that share a name. From 800px wide the Start button follows the start
+  form instead of covering its last row, and on a phone a focused field
+  scrolls clear of it. An operator device shows no observer label while it
+  connects, and the empty Attention screen lines up with its heading.
+
+### Fixed
+
+- **Changed earlier turns no longer break Anthropic thinking requests.**
+  Requests to models that bind thinking to its prefix ask the API to drop
+  invalidated preserved thinking instead of failing, and retry once without
+  thinking if an endpoint rejects the control or a replayed block's signature.
+  Summarize requests send the control only when they replay signed thinking.
+- **An installed phone app no longer answers for a mount.** Its service worker
+  serves the cached shell only for the app's own pages, so a failing `/archon/`
+  shows Archon's error instead of Aether.
+- **A bare mount prefix works.** The listener redirects `/archon` to `/archon/`
+  (`308`, query kept), so the mounted app's relative URLs resolve under it.
+- **`status` and `get_tree` on a large, long-lived store.** The fleet's
+  usage and each run's are one row each, kept by triggers as agents are
+  written, which count exactly the agents the store can read, so a
+  quarantined one stays out. A live run's summary reads only its live members
+  and those with a usage receipt in the last 15 minutes, through an index; past
+  eight pages of receipts its rate is a floor, marked `rate_approximate` and
+  shown as "at least". Each status section has 750 ms and the reply comes back
+  within a second; a section not read in time is listed in `unavailable` and
+  named in its problems, and the CLI, TUI and `aether doctor` show it as
+  unavailable instead of as zero. `get_tree` filters by run, root, role and
+  archived state before it reads an agent and answers one page: the newest
+  live agents and the root, then the newest agents of any state, 500 of each
+  at most, with `next_after` for the rest (`after` and `limit`, feature
+  `tree_pages`); the board says when older agents are left out. A filter no
+  index answers is checked on at most 4000 agents per page, and a page holds
+  at most `limit` ancestors. A rooted page walks a kept table of each agent's
+  ancestors, and each shown agent's roll-up is read from its subtree's kept
+  totals, so a page costs the same however many agents are below it. An agent
+  shown apart from its ancestors, its parent filtered out, is counted at its
+  own root only, so the roots' sums count each agent once. Within a run, a
+  roll-up counts that run's agents below, even under an agent of another run.
+  The tree reads leases by agent instead of every lease. It is shared like
+  `status`: past 750 ms it answers with the last tree read for the same
+  request, marked `stale`. The GitHub watcher's status shares one read and
+  answers `unavailable` past 750 ms. A timed-out client names the daemon's
+  slowest recent status section or the host's load, and a slow engine tool
+  call is logged with its tool, split into its wait for the turn and its own
+  run. On a synthetic store of 5 million events with a live run five days old,
+  `status` answers in 13 ms at p99 instead of 480 ms (`runs` 12 ms instead of
+  456, `usage_total` under 1 ms instead of 68), a 500-agent tree page with its
+  roll-ups reads in 11 ms, and the migration to schema 33 takes about a minute.
+- **A tool call that never returns (archon#393).** After 15 minutes
+  outstanding with no sign of life from the engine, Aether stops the turn,
+  records `agent.tool_call_overdue` and wakes the agent to read its inbox;
+  Claude Code's shell cap is pinned at 10 minutes.
+- **Memory recall is back to 1.2.11's.** The relevance cutoff is off by
+  default (`min_score = 0`): at 0.05 it dropped relevant memories phrased
+  in other words than the task (recall@6 0.89 → 0.78 on the memory
+  benchmark).
+- **A store with damaged memory tables refuses to open.** The daemon checks
+  those tables when it opens the store and names the damaged one, instead
+  of starting and failing every turn's memory retrieval. A check that
+  meets a held lock or an I/O error reports that error, not damage.
+- **A result written out as text keeps its structured part.** An agent that
+  ends its task by writing `complete_task`'s input as its answer (a bare or
+  fenced JSON object, `complete_task {...}` or `{"complete_task": {...}}`)
+  now hands its parent that object as `structured`, not only as summary
+  text. Codex models do this often; Archon read such a review as missing
+  its verdict and repaired the stage.
+- Daemon shutdown reaps live agents' detached servers before the final store
+  checkpoint and bounds each shutdown phase; committed data remains recoverable
+  from the WAL if a deadline prevents the checkpoint.
+- Delegated children inherit their parent's current deadline and cost budget,
+  including extensions made while a turn is in flight.
 
 ## 1.2.11
 

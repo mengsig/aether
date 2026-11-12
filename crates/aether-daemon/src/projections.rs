@@ -1,111 +1,75 @@
 //! Read-only projections of authoritative state for clients.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use aether_core::id::{AgentId, RunId};
+use aether_core::agent::Agent;
+
+use aether_core::id::{AgentId, RunId, TaskId};
+use aether_core::lease::Lease;
 use aether_core::model::Usage;
 use aether_core::replay::{self, ReplayFrame};
 use aether_core::report::{self, RunReport};
-use aether_protocol::{AgentTree, RunListing, TreeNode};
+use aether_core::task::Task;
+use aether_protocol::{AgentTree, RunListing, TranscriptEntry, TreeNode};
 use aether_runtime::Runtime;
-use aether_store::{AgentFilter, EventFilter, Store, TaskFilter};
+use aether_store::{AgentFilter, EventFilter, Store, TREE_PAGE_MAX, TaskFilter, TreeQuery};
 
-/// Build the live agent graph for one run, or every run.
+/// Which agents `get_tree` projects. Spend is rolled up over every agent
+/// below a shown one up to the next shown ones; what is not shown lands in the
+/// `hidden_usage` of the nearest shown agent above it. Within a run, only that run's agents count.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TreeFilter {
+    pub include_archived: bool,
+    /// Only agents whose role starts with this text.
+    pub role_prefix: Option<String>,
+    /// Only this agent and its descendants.
+    pub root: Option<AgentId>,
+    /// The page of agents older than this one.
+    pub after: Option<AgentId>,
+    /// At most this many agents walked; [`TREE_PAGE_MAX`] when absent.
+    pub limit: Option<usize>,
+}
+
+impl TreeFilter {
+    fn query(&self, run: Option<RunId>) -> TreeQuery {
+        let limit = self.limit.unwrap_or(TREE_PAGE_MAX);
+        assert!(
+            (1..=TREE_PAGE_MAX).contains(&limit),
+            "a page limit is validated before the read"
+        );
+        TreeQuery {
+            run,
+            root: self.root,
+            include_archived: self.include_archived,
+            role_prefix: self.role_prefix.clone(),
+            after: self.after,
+            limit,
+        }
+    }
+}
+
+/// Build one page of the live agent graph for one run, or every run.
 pub fn build_tree(
     store: &dyn Store,
     run: Option<RunId>,
-    include_archived: bool,
+    filter: &TreeFilter,
 ) -> aether_store::Result<AgentTree> {
-    // Always roll usage up over the unfiltered set: an archived child's spend
-    // still counts against its live ancestors' budgets even once hidden from
-    // the tree. `exclude_archived` below only trims what gets projected.
-    let all_agents = store.agents(&AgentFilter {
-        run,
-        exclude_archived: false,
-        ..Default::default()
-    })?;
-    let tasks = store.tasks(&TaskFilter {
-        run,
-        ..Default::default()
-    })?;
-    let leases: BTreeMap<AgentId, _> = store
-        .leases()?
-        .into_iter()
-        .map(|l| (l.agent_id, l))
-        .collect();
-
-    // Roll each agent's usage into every live ancestor with a post-order
-    // walk over the parent/child structure itself, so a child is always
-    // folded in before its own parent is. Not a reverse creation-order walk
-    // over the store's ASC `created_at` order:
-    // verified `to_rfc3339`'s "+00:00" suffix keeps that order
-    // chronological here (a digit always sorts after it, unlike a 'Z'
-    // suffix), but nothing guarantees the wall clock itself never steps
-    // backward between a parent's creation and its child's - the store
-    // layer promises nothing about ordering either way, so this does not
-    // depend on it.
-    let mut all_children: BTreeMap<AgentId, Vec<AgentId>> = BTreeMap::new();
-    let all_ids: std::collections::BTreeSet<AgentId> = all_agents.iter().map(|a| a.id).collect();
-    for agent in &all_agents {
-        if let Some(p) = agent.parent {
-            all_children.entry(p).or_default().push(agent.id);
-        }
-    }
-    let mut subtree_usage: BTreeMap<AgentId, Usage> =
-        all_agents.iter().map(|a| (a.id, a.stats.usage)).collect();
-    let roots: Vec<AgentId> = all_agents
-        .iter()
-        .filter(|a| a.parent.is_none_or(|p| !all_ids.contains(&p)))
-        .map(|a| a.id)
-        .collect();
-    for root in roots {
-        let mut stack = vec![(root, false)];
-        while let Some((id, post)) = stack.pop() {
-            let Some(kids) = all_children.get(&id) else {
-                continue;
-            };
-            if post {
-                let mut total = subtree_usage[&id];
-                for child in kids {
-                    total += subtree_usage[child];
-                }
-                subtree_usage.insert(id, total);
-                continue;
-            }
-            stack.push((id, true));
-            stack.extend(kids.iter().map(|c| (*c, false)));
-        }
-    }
-
-    let agents: Vec<_> = if include_archived {
-        all_agents
-    } else {
-        all_agents.into_iter().filter(|a| !a.archived).collect()
-    };
-    let visible: std::collections::BTreeSet<_> = agents.iter().map(|agent| agent.id).collect();
-
-    let tasks: HashMap<_, _> = tasks.into_iter().map(|t| (t.id, t)).collect();
+    let page = store.tree_page(&filter.query(run))?;
+    let mut agents = page.agents;
+    // A page comes newest first; the reply lists roots and children oldest first.
+    agents.sort_unstable_by_key(|agent| agent.id);
+    let visible: BTreeSet<AgentId> = agents.iter().map(|agent| agent.id).collect();
+    assert_eq!(visible.len(), agents.len(), "a page shows an agent once");
+    let usages = store.tree_usages(&agents, run)?;
+    assert_eq!(usages.len(), visible.len(), "every shown agent has a total");
+    let leases = shown_leases(store, &agents)?;
+    let tasks = current_tasks(store, &agents)?;
     let mut nodes: BTreeMap<AgentId, TreeNode> = BTreeMap::new();
-    let mut children: BTreeMap<AgentId, Vec<AgentId>> = BTreeMap::new();
-    let mut roots = Vec::new();
-    for agent in &agents {
-        match agent.parent {
-            Some(p) if visible.contains(&p) => children.entry(p).or_default().push(agent.id),
-            _ => roots.push(agent.id),
-        }
-    }
+    let (roots, mut children) = link(&agents, &visible);
     for agent in agents {
         let task = agent.current_task.and_then(|id| tasks.get(&id).cloned());
         let waiting_on = Runtime::waiting_on(&agent).into_iter().collect();
-        let subtree = subtree_usage.get(&agent.id).copied().unwrap_or_default();
-        let hidden_usage = all_children.get(&agent.id).and_then(|children| {
-            let mut hidden = children.iter().filter(|id| !visible.contains(*id));
-            let mut total = subtree_usage[hidden.next()?];
-            for child in hidden {
-                total += subtree_usage[child];
-            }
-            Some(total)
-        });
+        let usage = usages.get(&agent.id).copied();
         nodes.insert(
             agent.id,
             TreeNode {
@@ -113,13 +77,79 @@ pub fn build_tree(
                 task,
                 waiting_on,
                 lease: leases.get(&agent.id).cloned(),
-                subtree_usage: subtree,
-                hidden_usage,
+                subtree_usage: usage.map(|usage| usage.subtree).unwrap_or_default(),
+                hidden_usage: usage.and_then(|usage| usage.hidden),
                 agent,
             },
         );
     }
-    Ok(AgentTree { roots, nodes })
+    Ok(AgentTree {
+        roots,
+        nodes,
+        stale: None,
+        next_after: page.next_after,
+    })
+}
+
+/// The lease each shown agent holds, read by its key: the fleet's leases are
+/// never all decoded for the few the tree shows.
+fn shown_leases(
+    store: &dyn Store,
+    agents: &[Agent],
+) -> aether_store::Result<BTreeMap<AgentId, Lease>> {
+    let mut leases = BTreeMap::new();
+    for agent in agents {
+        if let Some(lease) = store.lease(agent.id)? {
+            assert_eq!(lease.agent_id, agent.id, "a lease read by agent is its own");
+            leases.insert(agent.id, lease);
+        }
+    }
+    assert!(leases.len() <= agents.len(), "at most one lease per agent");
+    Ok(leases)
+}
+
+/// The task each shown agent is on, read by id: a long-lived store's task
+/// history is never decoded for the few the tree shows.
+fn current_tasks(
+    store: &dyn Store,
+    agents: &[Agent],
+) -> aether_store::Result<HashMap<TaskId, Task>> {
+    let ids: BTreeSet<TaskId> = agents
+        .iter()
+        .filter_map(|agent| agent.current_task)
+        .collect();
+    let mut tasks = HashMap::with_capacity(ids.len());
+    for id in ids {
+        if let Some(task) = store.task(id)? {
+            assert_eq!(task.id, id, "a task read by id is that task");
+            tasks.insert(id, task);
+        }
+    }
+    assert!(
+        tasks.len() <= agents.len(),
+        "at most one current task per agent"
+    );
+    Ok(tasks)
+}
+
+/// The shown agents without a shown parent, and each shown agent's shown children.
+fn link(
+    agents: &[Agent],
+    visible: &BTreeSet<AgentId>,
+) -> (Vec<AgentId>, BTreeMap<AgentId, Vec<AgentId>>) {
+    let mut children: BTreeMap<AgentId, Vec<AgentId>> = BTreeMap::new();
+    let mut roots = Vec::new();
+    for agent in agents {
+        match agent.parent {
+            Some(p) if visible.contains(&p) => children.entry(p).or_default().push(agent.id),
+            _ => roots.push(agent.id),
+        }
+    }
+    debug_assert_eq!(
+        roots.len() + children.values().map(Vec::len).sum::<usize>(),
+        agents.len()
+    );
+    (roots, children)
 }
 
 /// Every run the store knows about, newest first. Projected from agents and
@@ -204,6 +234,103 @@ pub fn replay(store: &dyn Store, agent: AgentId) -> aether_store::Result<Vec<Rep
     Ok(replay::build(agent, &events))
 }
 
+/// One page of an agent's transcript, as `get_transcript_page` replies.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TranscriptPage {
+    pub entries: Vec<TranscriptEntry>,
+    pub has_before: bool,
+    pub has_after: bool,
+    /// The agent's newest transcript entry, 0 before its first.
+    pub last_seq: u64,
+}
+
+/// Up to `limit` transcript entries in seq order: past `after`, below
+/// `before`, or the newest when neither is given.
+pub fn transcript_page(
+    store: &dyn Store,
+    agent: AgentId,
+    after: Option<u64>,
+    before: Option<u64>,
+    limit: usize,
+) -> aether_store::Result<TranscriptPage> {
+    assert!(limit > 0, "a page holds at least one entry");
+    assert!(after.is_none() || before.is_none(), "one cursor at most");
+    let filter = EventFilter {
+        types: vec!["agent.message".into()],
+        ..EventFilter::own_events(agent)
+    };
+    let (events, has_before, has_after) = match after {
+        Some(after) => {
+            let mut events = store.events(after, limit + 1, &filter)?;
+            let has_after = events.len() > limit;
+            events.truncate(limit);
+            let has_before = !store
+                .events_before(after.saturating_add(1), 1, &filter)?
+                .is_empty();
+            (events, has_before, has_after)
+        }
+        None => {
+            let mut events = match before {
+                Some(before) => store.events_before(before, limit + 1, &filter)?,
+                None => store.latest_events(limit + 1, &filter)?,
+            };
+            let has_before = events.len() > limit;
+            events.truncate(limit);
+            events.reverse();
+            (events, has_before, false)
+        }
+    };
+    // Read after the page and from its own transaction: an entry committed
+    // in between raises it, so it is never below the page's newest entry.
+    let newest = store
+        .latest_events(1, &filter)?
+        .first()
+        .map(|event| event.seq);
+    let page_end = events
+        .last()
+        .map(|event| event.seq)
+        .or(after)
+        .or(before.map(|before| before.saturating_sub(1)))
+        .unwrap_or(0);
+    let has_after = has_after || newest_is_past(page_end, newest);
+    let entries: Vec<TranscriptEntry> = events.into_iter().filter_map(transcript_entry).collect();
+    let last_seq = newest
+        .into_iter()
+        .chain(entries.last().map(|entry| entry.seq))
+        .max()
+        .unwrap_or(0);
+    assert!(entries.windows(2).all(|pair| pair[0].seq < pair[1].seq));
+    assert!(entries.len() <= limit, "a page holds at most its limit");
+    Ok(TranscriptPage {
+        entries,
+        has_before,
+        has_after,
+        last_seq,
+    })
+}
+
+/// Whether the newest entry lies beyond where the page ends, whatever the
+/// page's own read saw: a commit between the two reads still shows.
+fn newest_is_past(page_end: u64, newest: Option<u64>) -> bool {
+    newest.is_some_and(|seq| seq > page_end)
+}
+
+fn transcript_entry(event: aether_core::event::Event) -> Option<TranscriptEntry> {
+    match event.kind {
+        aether_core::event::EventKind::AgentMessage {
+            role,
+            content,
+            invocation,
+        } => Some(TranscriptEntry {
+            seq: event.seq,
+            at: event.at,
+            message: aether_core::model::Message { role, content },
+            invocation,
+        }),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,7 +401,7 @@ mod tests {
         upsert(&store, &parent);
         upsert(&store, &child);
 
-        let tree = build_tree(&store, Some(run), false).expect("tree");
+        let tree = build_tree(&store, Some(run), &TreeFilter::default()).expect("tree");
 
         assert!(!tree.nodes.contains_key(&child.id), "archived child hidden");
         let parent_node = tree.nodes.get(&parent.id).expect("parent visible");
@@ -302,7 +429,7 @@ mod tests {
             upsert(&store, &child);
         }
 
-        let tree = build_tree(&store, Some(run), false).expect("tree");
+        let tree = build_tree(&store, Some(run), &TreeFilter::default()).expect("tree");
 
         assert_eq!(tree.nodes.len(), 100);
         assert_eq!(tree.roots, vec![root.id]);
@@ -323,7 +450,15 @@ mod tests {
         upsert(&store, &parent);
         upsert(&store, &child);
 
-        let tree = build_tree(&store, Some(run), true).expect("tree");
+        let tree = build_tree(
+            &store,
+            Some(run),
+            &TreeFilter {
+                include_archived: true,
+                ..TreeFilter::default()
+            },
+        )
+        .expect("tree");
 
         assert!(tree.nodes.contains_key(&child.id));
         assert_eq!(tree.nodes[&parent.id].hidden_usage, None);
@@ -380,11 +515,192 @@ mod tests {
             "test setup: the store must actually return the child before its parent"
         );
 
-        let tree = build_tree(&store, Some(run), false).expect("tree");
+        let tree = build_tree(&store, Some(run), &TreeFilter::default()).expect("tree");
         assert_eq!(
             tree.nodes[&grandparent.id].subtree_usage.input_tokens, 111,
             "every generation's usage must reach the grandparent regardless of store order"
         );
         assert_eq!(tree.nodes[&parent.id].subtree_usage.input_tokens, 11);
+    }
+
+    /// A root narrows the tree to its subtree, a role prefix to the roles it
+    /// names; a filtered-out child's spend still reaches its shown parent.
+    #[test]
+    fn a_rooted_role_filtered_tree_shows_only_what_it_names() {
+        let store = aether_store::SqliteStore::open_in_memory().expect("open");
+        let run = RunId::new();
+        let top = agent(None, run, false, 1000);
+        let mut lead = agent(Some(top.id), run, false, 100);
+        lead.role = Role::new("lead");
+        let worker = agent(Some(lead.id), run, false, 10);
+        let mut reviewer = agent(Some(lead.id), run, false, 1);
+        reviewer.role = Role::new("reviewer");
+        let sibling = agent(Some(top.id), run, false, 5);
+        for a in [&top, &lead, &worker, &reviewer, &sibling] {
+            upsert(&store, a);
+        }
+
+        let rooted = TreeFilter {
+            root: Some(lead.id),
+            ..TreeFilter::default()
+        };
+        let tree = build_tree(&store, Some(run), &rooted).expect("tree");
+        assert_eq!(tree.roots, vec![lead.id]);
+        let shown: BTreeSet<_> = tree.nodes.keys().copied().collect();
+        assert_eq!(shown, BTreeSet::from([lead.id, worker.id, reviewer.id]));
+        assert_eq!(tree.nodes[&lead.id].subtree_usage.input_tokens, 111);
+
+        let workers = TreeFilter {
+            root: Some(lead.id),
+            role_prefix: Some("work".into()),
+            ..TreeFilter::default()
+        };
+        let tree = build_tree(&store, Some(run), &workers).expect("tree");
+        assert_eq!(
+            tree.roots,
+            vec![worker.id],
+            "a shown agent without a shown parent is a root"
+        );
+        assert_eq!(tree.nodes.len(), 1);
+
+        let leads = TreeFilter {
+            role_prefix: Some("lead".into()),
+            ..TreeFilter::default()
+        };
+        let tree = build_tree(&store, Some(run), &leads).expect("tree");
+        assert_eq!(tree.roots, vec![lead.id]);
+        assert_eq!(
+            tree.nodes[&lead.id].hidden_usage.map(|u| u.input_tokens),
+            Some(11),
+            "the hidden worker's and reviewer's spend"
+        );
+    }
+
+    fn say(store: &dyn Store, agent: AgentId, text: &str) -> u64 {
+        let kind = EventKind::AgentMessage {
+            role: aether_core::model::MessageRole::User,
+            content: vec![aether_core::model::ContentBlock::text(text)],
+            invocation: None,
+        };
+        let noise =
+            EventDraft::new(Actor::System, EventKind::AgentStarted { turn: 1 }).agent(agent);
+        let events = aether_store::Store::commit(
+            store,
+            Commit::new()
+                .event(noise)
+                .event(EventDraft::new(Actor::System, kind).agent(agent)),
+        )
+        .expect("commit");
+        events[1].seq
+    }
+
+    /// Five messages among other events: the newest page, then each cursor
+    /// both ways, report the entries beyond them.
+    #[test]
+    fn a_transcript_pages_by_seq_both_ways() {
+        let store = aether_store::SqliteStore::open_in_memory().expect("open");
+        let agent = AgentId::new();
+        let empty = transcript_page(&store, agent, None, None, 2).expect("empty");
+        assert_eq!((empty.entries.len(), empty.last_seq), (0, 0));
+        assert!(!empty.has_before && !empty.has_after);
+        let empty = transcript_page(&store, agent, None, Some(0), 2).expect("before 0");
+        assert!(!empty.has_after, "no entry lies at or past the cursor");
+        let seqs: Vec<u64> = (0..5)
+            .map(|i| say(&store, agent, &format!("m{i}")))
+            .collect();
+        let page_seqs =
+            |page: &TranscriptPage| page.entries.iter().map(|e| e.seq).collect::<Vec<_>>();
+
+        let newest = transcript_page(&store, agent, None, None, 2).expect("newest");
+        assert_eq!(page_seqs(&newest), &seqs[3..]);
+        assert!(newest.has_before && !newest.has_after);
+        assert_eq!(newest.last_seq, seqs[4]);
+
+        let older = transcript_page(&store, agent, None, Some(seqs[3]), 2).expect("before");
+        assert_eq!(page_seqs(&older), &seqs[1..3]);
+        assert!(older.has_before && older.has_after);
+        let oldest = transcript_page(&store, agent, None, Some(seqs[1]), 2).expect("oldest");
+        assert_eq!(page_seqs(&oldest), &seqs[..1]);
+        assert!(!oldest.has_before && oldest.has_after);
+
+        let from_start = transcript_page(&store, agent, Some(0), None, 3).expect("after 0");
+        assert_eq!(page_seqs(&from_start), &seqs[..3]);
+        assert!(!from_start.has_before && from_start.has_after);
+        let rest = transcript_page(&store, agent, Some(seqs[2]), None, 3).expect("after");
+        assert_eq!(page_seqs(&rest), &seqs[3..]);
+        assert!(rest.has_before && !rest.has_after);
+        assert_eq!(rest.last_seq, seqs[4]);
+    }
+
+    #[test]
+    fn a_commit_after_the_page_read_still_reports_has_after() {
+        assert!(newest_is_past(4, Some(5)));
+        assert!(!newest_is_past(5, Some(5)));
+        assert!(
+            newest_is_past(0, Some(5)),
+            "the first entry of an empty page"
+        );
+        assert!(!newest_is_past(0, None));
+    }
+
+    /// Delegation may cross runs: a run filter keeps a same-run grandchild
+    /// whose intermediate parent ran elsewhere, counted at its own root only.
+    #[test]
+    fn a_rooted_run_filtered_tree_follows_a_cross_run_intermediate() {
+        let store = aether_store::SqliteStore::open_in_memory().expect("open");
+        let (run_a, run_b) = (RunId::new(), RunId::new());
+        let root = agent(None, run_a, false, 1);
+        let middle = agent(Some(root.id), run_b, false, 10);
+        let leaf = agent(Some(middle.id), run_a, false, 100);
+        for a in [&root, &middle, &leaf] {
+            upsert(&store, a);
+        }
+        let rooted = TreeFilter {
+            root: Some(root.id),
+            ..TreeFilter::default()
+        };
+        let tree = build_tree(&store, Some(run_a), &rooted).expect("tree");
+        let shown: BTreeSet<_> = tree.nodes.keys().copied().collect();
+        assert_eq!(shown, BTreeSet::from([root.id, leaf.id]));
+        assert_eq!(tree.roots.len(), 2, "the leaf's parent is not shown");
+        let top = &tree.nodes[&root.id];
+        assert_eq!(
+            top.subtree_usage.input_tokens, 1,
+            "the leaf is a root of its own, and b's spend is not counted"
+        );
+        assert_eq!(top.hidden_usage, None, "only b's agent is left out");
+        assert_eq!(tree.nodes[&leaf.id].subtree_usage.input_tokens, 100);
+        assert_eq!(roots_total(&tree), 101, "each agent of run a once");
+    }
+
+    /// What the shown roots sum to, as a client's total adds them up.
+    fn roots_total(tree: &AgentTree) -> u64 {
+        let total: u64 = tree
+            .roots
+            .iter()
+            .map(|root| tree.nodes[root].subtree_usage.input_tokens)
+            .sum();
+        assert!(tree.roots.iter().all(|root| tree.nodes.contains_key(root)));
+        total
+    }
+
+    /// A live agent under an archived one is shown apart from its shown
+    /// grandparent: its spend is counted at its own root, not hidden above it too.
+    #[test]
+    fn a_shown_agent_under_a_hidden_one_is_counted_once() {
+        let store = aether_store::SqliteStore::open_in_memory().expect("open");
+        let run = RunId::new();
+        let top = agent(None, run, false, 1);
+        let middle = agent(Some(top.id), run, true, 10);
+        let leaf = agent(Some(middle.id), run, false, 100);
+        for a in [&top, &middle, &leaf] {
+            upsert(&store, a);
+        }
+        let tree = build_tree(&store, Some(run), &TreeFilter::default()).expect("tree");
+        assert_eq!(tree.roots, vec![top.id, leaf.id]);
+        let shown = &tree.nodes[&top.id];
+        assert_eq!(shown.hidden_usage.map(|u| u.input_tokens), Some(10));
+        assert_eq!(shown.subtree_usage.input_tokens, 11);
+        assert_eq!(roots_total(&tree), 111, "each agent once");
     }
 }

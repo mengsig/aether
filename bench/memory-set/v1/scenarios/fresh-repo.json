@@ -1,0 +1,14 @@
+{
+  "id": "fresh-repo",
+  "description": "A repository with no memories of its own: everything retrieved is from global scope, so anything that is not relevant is noise.",
+  "repository": "github.com/example-org/new-service",
+  "memories": [],
+  "queries": [
+    {"id": "setup-ci", "role": "worker", "query": "Set up a CI workflow for this new repository.",
+     "relevant": [], "harmful": []},
+    {"id": "write-readme", "role": "worker", "query": "Write a README describing the service's HTTP endpoints.",
+     "relevant": [], "harmful": []},
+    {"id": "heavy-build", "role": "worker", "query": "Build the release binaries and run the load test on the shared build host.",
+     "relevant": ["agent-ops/one-heavy-job"], "harmful": []}
+  ]
+}

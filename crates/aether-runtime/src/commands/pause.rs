@@ -214,13 +214,7 @@ impl Runtime {
             // Waiting for a provider's allowance is not a judgement a person
             // has to make per agent, unlike a wait or an inspection: the sweep
             // makes every suspended descendant probe now.
-            let suspended = matches!(
-                &agent.status,
-                AgentStatus::Blocked {
-                    reason: BlockReason::Exhausted { .. }
-                }
-            );
-            if !agent.paused && !suspended {
+            if !agent.paused && !suspended(&agent) {
                 continue;
             }
             let via = (agent.id != root).then_some(root);
@@ -284,4 +278,14 @@ impl Runtime {
             .cloned()
             .collect())
     }
+}
+
+/// Blocked on provider exhaustion, which a subtree resume makes probe now.
+fn suspended(agent: &Agent) -> bool {
+    matches!(
+        &agent.status,
+        AgentStatus::Blocked {
+            reason: BlockReason::Exhausted { .. }
+        }
+    )
 }

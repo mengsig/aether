@@ -217,6 +217,37 @@ fn daemon_status(version: &str) -> aether_protocol::DaemonStatus {
     .expect("daemon status")
 }
 
+#[test]
+fn unavailable_recovery_and_disk_reads_do_not_report_success() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let mut status = daemon_status("1.0.9");
+    for section in [
+        aether_protocol::status_sections::PROBLEMS,
+        aether_protocol::status_sections::LOW_DISK,
+    ] {
+        status
+            .unavailable
+            .push(aether_protocol::UnavailableSection {
+                section: section.into(),
+                reason: "timed out".into(),
+            });
+    }
+    for check in [
+        check_recovery(Some(&status)),
+        check_disk_status(&paths(dir.path()), None, Some(&status)),
+    ] {
+        assert_eq!(check.level, Level::Warn);
+        assert!(
+            check.detail.contains("unavailable: timed out"),
+            "{}",
+            check.detail
+        );
+        assert!(!check.detail.contains("no quarantined records"));
+    }
+    status.unavailable.clear();
+    assert_eq!(check_recovery(Some(&status)).level, Level::Ok);
+}
+
 /// `aether update` replaces the binary and leaves the daemon on its old build;
 /// the report says both versions, and warns until the daemon is restarted.
 #[test]

@@ -9,6 +9,7 @@ const IPHONE_FIRST: &str = "iPhone or iPad: add Aether to the Home Screen first 
 and type the code in that app.\nIt keeps its own pairing, so one made in Safari does not carry over.";
 
 mod admin;
+mod mount;
 mod qr;
 mod requests;
 mod setup;
@@ -56,6 +57,7 @@ pub(crate) async fn run(socket: PathBuf, command: RemoteCmd) -> anyhow::Result<(
             json,
         } => admin::revoke(socket, device, reason, json).await,
         RemoteCmd::Rename { device, name, json } => admin::rename(socket, device, name, json).await,
+        RemoteCmd::Mount { command } => mount::run(socket, command).await,
         RemoteCmd::Add {
             name,
             ssh,

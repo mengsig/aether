@@ -26,11 +26,11 @@ export function createToast(host) {
 
 /** @param {HTMLElement} host */
 export function createConfirm(host) {
-  return /** @param {string} title @param {string} detail */ (title, detail) => new Promise(resolve => {
+  return /** @param {string} title @param {string} detail @param {Array<[string,string]>} [fields] */ (title, detail, fields = []) => new Promise(resolve => {
     const previous = document.activeElement;
     const dialog = el('dialog', 'confirm-dialog');
     const heading = el('h2', '', title); heading.id = 'confirmation-title';
-    const description = el('p', '', detail); description.id = 'confirmation-detail';
+    const description = confirmationDetail(detail, fields); description.id = 'confirmation-detail';
     dialog.setAttribute('aria-labelledby', heading.id);
     dialog.setAttribute('aria-describedby', description.id);
     const controls = el('div', 'row');
@@ -44,4 +44,16 @@ export function createConfirm(host) {
     }, {once:true});
     dialog.showModal(); cancel.focus();
   });
+}
+
+/** @param {string} detail @param {Array<[string,string]>} fields */
+function confirmationDetail(detail, fields) {
+  invariant(Array.isArray(fields), 'Confirmation fields must be a list');
+  if (!fields.length) return el('p', '', detail);
+  const list = el('dl', 'confirm-fields');
+  for (const [label, value] of fields) {
+    invariant(label.length > 0 && typeof value === 'string', 'Confirmation fields need a label and a text value');
+    const row = el('div'); row.append(el('dt', '', label), el('dd', '', value)); list.append(row);
+  }
+  return list;
 }

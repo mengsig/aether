@@ -22,6 +22,7 @@ fn billing_corrections_replace_provisional_cost_in_subtree_reports() {
                         output_tokens: 105,
                         ..Default::default()
                     },
+                    billing: None,
                 },
             )
             .agent(child),
@@ -220,6 +221,7 @@ fn cost_gap_reasons_survive_report_rollups_and_rendering() {
                 EventKind::AgentUsageUpdated {
                     total: usage,
                     turn_usage: usage,
+                    billing: None,
                 },
             )
             .agent(agent),

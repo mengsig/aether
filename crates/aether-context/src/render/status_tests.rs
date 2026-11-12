@@ -90,6 +90,7 @@ fn inputs<'a>(
         memories: &[],
         notes: &[],
         notes_omitted: 0,
+        interruption_notes: "",
         tools: vec![],
         model_profile: None,
         engine_policy: None,

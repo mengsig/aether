@@ -455,6 +455,24 @@ fn disabling_hooks_leaves_permission_rules_untouched() {
 }
 
 #[test]
+fn a_turn_with_tools_pins_the_longest_foreground_command() {
+    let settings_of = |t: &EngineTurn| -> Value {
+        let args = ClaudeCodeEngine::new("claude", "test").args(t);
+        serde_json::from_str(&args[args.iter().position(|a| a == "--settings").unwrap() + 1])
+            .unwrap()
+    };
+    let mut t = turn();
+    assert_eq!(
+        settings_of(&t)["env"]["BASH_MAX_TIMEOUT_MS"],
+        BASH_MAX_TIMEOUT.as_millis().to_string(),
+        "the runtime's tool-call bound is derived from this cap"
+    );
+    assert_eq!(BASH_MAX_TIMEOUT, std::time::Duration::from_secs(600));
+    t.summary_only = true;
+    assert!(settings_of(&t)["env"].get("BASH_MAX_TIMEOUT_MS").is_none());
+}
+
+#[test]
 fn prompt_cache_ttl_preserves_native_default_and_accepts_explicit_overrides() {
     let t = turn();
     let default_settings = |engine: &ClaudeCodeEngine| {
@@ -670,6 +688,22 @@ fn args_for_resume_and_bypass() {
     assert!(joined.contains("--permission-mode bypassPermissions"));
     assert!(!joined.contains("--permission-prompt-tool"));
     assert!(!joined.contains("--model"));
+}
+
+#[test]
+fn resumed_turns_with_hoisted_state_do_not_change_the_appended_prompt() {
+    let engine = ClaudeCodeEngine::new("claude", "2.1.322");
+    let mut turn = turn();
+    turn.session = Some("existing".into());
+    turn.system_prompt.clear();
+    turn.prompt = "first state".into();
+    let first = engine.args(&turn);
+    turn.prompt = "changed state".into();
+    let second = engine.args(&turn);
+    for args in [&first, &second] {
+        assert!(!args.iter().any(|arg| arg == "--append-system-prompt"));
+        assert!(args.windows(2).any(|pair| pair == ["--resume", "existing"]));
+    }
 }
 
 /// Every spawn goes through Aether's `delegate`, never the

@@ -109,6 +109,13 @@ impl Runtime {
         preflight: Preflight<'_>,
         submission: Option<&Submission>,
     ) -> Result<(Agent, Option<Task>)> {
+        let subsystem = spec.subsystem.clone();
+        if subsystem
+            .as_deref()
+            .is_some_and(|name| name.trim().is_empty())
+        {
+            return Err(RuntimeError::Invalid("a subsystem must be named".into()));
+        }
         let PreparedAgent {
             mut agent,
             task,
@@ -116,6 +123,15 @@ impl Runtime {
             parent,
         } = self.prepare_agent(spec, &by, preflight)?;
         let run = agent.run;
+        #[cfg(test)]
+        if let Some((prepared, proceed)) = preflight.before_hold {
+            prepared
+                .send(())
+                .map_err(|e| RuntimeError::Internal(e.to_string()))?;
+            proceed
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .map_err(|e| RuntimeError::Internal(e.to_string()))?;
+        }
         let hold = self.hold();
         // The authoritative replay check: only a retry that raced the original
         // gets this far, and this is where it is caught. Ahead of the budget
@@ -136,11 +152,14 @@ impl Runtime {
             return Err(RuntimeError::Invalid(refusal));
         }
         if let Some(parent) = &parent {
-            self.inherit_from_parent(&hold, parent, &mut agent)?;
+            self.inherit_from_parent(&hold, parent, &mut agent, preflight.inherit_limits)?;
             crate::cancellation::check_parent(self, &hold, parent.id)?;
         }
         self.recheck_workspace_gc_admission(&agent.scope)?;
-        commit.push_mutation(Mutation::UpsertAgent(agent.clone()));
+        commit.push_mutation(Mutation::CreateAgent {
+            agent: agent.clone(),
+            subsystem,
+        });
         crate::submission::record_receipt(&mut commit, submission, &(agent.clone(), task.clone()))?;
         self.apply_held(hold, commit)?;
         self.seed_repository_knowledge(&agent, by);
@@ -398,6 +417,7 @@ impl Runtime {
         _hold: &CommitHold<'_>,
         derived_from: &Agent,
         agent: &mut Agent,
+        inherit_limits: bool,
     ) -> Result<()> {
         let parent = self.live_agent(derived_from.id, "parent")?;
         // Derived from the old row, so possibly wider than the parent now.
@@ -409,6 +429,24 @@ impl Runtime {
                  created; retry",
                 parent.id
             )));
+        }
+        if inherit_limits {
+            agent.config.deadline = narrower_limit(agent.config.deadline, parent.config.deadline);
+            agent.config.cost_budget =
+                narrower_limit(agent.config.cost_budget, parent.config.cost_budget);
+            debug_assert!(
+                parent
+                    .config
+                    .deadline
+                    .is_none_or(|limit| agent.config.deadline.is_some_and(|child| child <= limit))
+            );
+            debug_assert!(
+                parent.config.cost_budget.is_none_or(|limit| agent
+                    .config
+                    .cost_budget
+                    .is_some_and(|child| child <= limit))
+            );
+            self.check_cost_budget(&agent.model, &agent.fallbacks, agent.config.cost_budget)?;
         }
         // §3.8: a subtree pause holds what the held supervisor's own
         // in-flight turn goes on to delegate, and the same subtree resume
@@ -437,3 +475,15 @@ impl Runtime {
         Ok((agent, task))
     }
 }
+
+fn narrower_limit<T: PartialOrd + Copy>(requested: Option<T>, parent: Option<T>) -> Option<T> {
+    match (requested, parent) {
+        (Some(requested), Some(parent)) if requested <= parent => Some(requested),
+        (_, Some(parent)) => Some(parent),
+        (requested, None) => requested,
+    }
+}
+
+#[cfg(test)]
+#[path = "creation_tests.rs"]
+mod tests;

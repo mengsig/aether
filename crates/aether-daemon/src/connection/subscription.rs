@@ -237,8 +237,10 @@ impl Subscription {
             BusMessage::Delta {
                 agent,
                 invocation,
+                seq,
                 delta,
             } => {
+                debug_assert!(seq >= 1, "the bus numbers every delta from 1");
                 if let DeltaKind::Accounting { after_seq, .. } = &delta
                     && *after_seq < self.replayed_through
                 {
@@ -262,9 +264,15 @@ impl Subscription {
                     DeltaKind::TurnStarted { turn } => Delta::TurnStarted { turn },
                     DeltaKind::Text { text } => Delta::Text { text },
                     DeltaKind::Thinking { text } => Delta::Thinking { text },
-                    DeltaKind::ToolInput { name, partial_json } => {
-                        Delta::ToolInput { name, partial_json }
-                    }
+                    DeltaKind::ToolInput {
+                        name,
+                        partial_json,
+                        tool_use_id,
+                    } => Delta::ToolInput {
+                        name,
+                        partial_json,
+                        tool_use_id,
+                    },
                     DeltaKind::Accounting {
                         total,
                         turn_usage,
@@ -277,11 +285,14 @@ impl Subscription {
                     },
                     DeltaKind::TurnFinished => Delta::TurnFinished,
                 };
+                // Numbered for every client; the writer withholds the number
+                // from one that did not list `delta_order`.
                 ServerFrame::Delta {
                     sub: self.sub,
                     agent,
                     invocation,
                     delta,
+                    invocation_seq: Some(seq),
                 }
             }
         };
@@ -386,6 +397,7 @@ mod tests {
                     .deliver(BusMessage::Delta {
                         agent: aether_core::id::AgentId::new(),
                         invocation: aether_core::id::InvocationId::new(),
+                        seq: 1,
                         delta: DeltaKind::Accounting {
                             after_seq,
                             total: usage,
@@ -431,6 +443,7 @@ mod tests {
                 ..Default::default()
             };
             let accounting = ServerFrame::Delta {
+                invocation_seq: None,
                 sub: 1,
                 agent,
                 invocation,
@@ -447,6 +460,7 @@ mod tests {
                 assert!(received.try_recv().is_err(), "v{protocol_version}");
             }
             let text = ServerFrame::Delta {
+                invocation_seq: None,
                 sub: 1,
                 agent,
                 invocation,
@@ -460,6 +474,7 @@ mod tests {
                     aether_core::event::EventKind::AgentUsageUpdated {
                         total: usage,
                         turn_usage: usage,
+                        billing: None,
                     },
                 )
                 .agent(agent),
@@ -585,6 +600,7 @@ mod device_tests {
         let (out, mut received) = mpsc::channel(1);
         let control = control();
         let frame = || ServerFrame::Delta {
+            invocation_seq: None,
             sub: 1,
             agent: aether_core::id::AgentId::new(),
             invocation: InvocationId::new(),

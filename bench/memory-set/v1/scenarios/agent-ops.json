@@ -1,0 +1,139 @@
+{
+  "id": "agent-ops",
+  "description": "Operational lessons that apply across repositories: global and role-scoped memories that every query in every scenario can see.",
+  "repository": "github.com/example-org/ops-playbook",
+  "memories": [
+    {
+      "key": "one-heavy-job",
+      "class": "durable",
+      "scope": "global",
+      "kind": "constraint",
+      "importance": 0.8,
+      "confidence": 0.9,
+      "age_days": 30,
+      "tags": [
+        "machine"
+      ],
+      "text": "Run one heavy job at a time on the shared build host, and check uptime before starting a large build or test run."
+    },
+    {
+      "key": "one-heavy-dup",
+      "class": "near_duplicate",
+      "duplicate_of": "one-heavy-job",
+      "scope": "global",
+      "kind": "lesson",
+      "importance": 0.7,
+      "confidence": 0.8,
+      "age_days": 9,
+      "tags": [
+        "machine"
+      ],
+      "text": "The build machine stalls when two heavy builds overlap; look at the load average first and run builds one at a time."
+    },
+    {
+      "key": "reviewer-readonly",
+      "class": "durable",
+      "scope": "role:reviewer",
+      "kind": "constraint",
+      "importance": 0.8,
+      "confidence": 0.9,
+      "age_days": 40,
+      "text": "A reviewer only reads: no edits, commits, stashes or branch switches in the workspace it shares with the author."
+    },
+    {
+      "key": "commit-steps",
+      "class": "durable",
+      "scope": "role:worker",
+      "kind": "lesson",
+      "importance": 0.6,
+      "confidence": 0.8,
+      "age_days": 20,
+      "text": "Commit each working step as it lands, so a retry after a timeout builds on it instead of starting over."
+    },
+    {
+      "key": "rate-limit",
+      "class": "one_off",
+      "scope": "global",
+      "kind": "fact",
+      "importance": 0.5,
+      "confidence": 0.9,
+      "age_days": 6,
+      "text": "An agent hit HTTP 429 from the model provider at 14:02 on 2026-10-01 and its turn was retried."
+    },
+    {
+      "key": "tmp-full",
+      "class": "one_off",
+      "scope": "global",
+      "kind": "fact",
+      "importance": 0.5,
+      "confidence": 0.8,
+      "age_days": 4,
+      "text": "/tmp filled up during the 2026-10-03 test run because a build cache had been copied there."
+    },
+    {
+      "key": "default-model-old",
+      "class": "stale",
+      "scope": "global",
+      "kind": "fact",
+      "importance": 0.6,
+      "confidence": 0.8,
+      "age_days": 400,
+      "text": "Workers default to the model named model-a-2025 unless the task names another."
+    },
+    {
+      "key": "default-model",
+      "class": "durable",
+      "contradicts": "default-model-old",
+      "scope": "global",
+      "kind": "fact",
+      "importance": 0.6,
+      "confidence": 0.9,
+      "age_days": 25,
+      "text": "The default worker model is whatever config.toml sets under [models] default; it is not hard-coded."
+    }
+  ],
+  "queries": [
+    {
+      "id": "full-suite",
+      "role": "worker",
+      "query": "Run the full test suite and the benchmarks for the playbook scripts.",
+      "relevant": [
+        "one-heavy-job"
+      ],
+      "harmful": []
+    },
+    {
+      "id": "review-change",
+      "role": "reviewer",
+      "query": "Review the committed change on the branch and report findings.",
+      "relevant": [
+        "reviewer-readonly"
+      ],
+      "harmful": []
+    },
+    {
+      "id": "long-task",
+      "role": "worker",
+      "query": "Implement the export command; the task may time out and be retried.",
+      "relevant": [
+        "commit-steps"
+      ],
+      "harmful": []
+    },
+    {
+      "id": "which-model",
+      "role": "worker",
+      "query": "Which model do workers use by default when the task does not name one?",
+      "relevant": [
+        "default-model"
+      ],
+      "harmful": [
+        "default-model-old"
+      ],
+      "task": {
+        "question": "Where is the default worker model set? Answer with the file name only.",
+        "answer": "config\\.toml"
+      }
+    }
+  ]
+}

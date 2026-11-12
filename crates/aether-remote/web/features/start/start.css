@@ -42,7 +42,8 @@
   .start-directory-results { display: grid; gap: 8px; }
   .start-folder-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; }
   .start-folder-row .workspace-choice { overflow-wrap: anywhere; }
-  @media (min-width: 800px) { .start-action { bottom: 0; } }
+  @media (min-width: 800px) { .start-action { position: static; padding-top: 4px; } }
+  @media (min-width: 1100px) { .start-form { max-width: 960px; margin-inline: 0; } }
   @media (max-width: 359px) {
     .start-form, .start-agent-fields { gap: 20px; }
     .start-sheet { padding-inline: 16px; }

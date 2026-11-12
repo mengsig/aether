@@ -40,6 +40,7 @@ impl Drop for Harness {
 
 pub(super) fn settings(push: bool) -> RemoteSettings {
     RemoteSettings {
+        mounts: None,
         enabled: true,
         pairing: false,
         public_origins: vec!["https://box.example.ts.net".into()],
@@ -234,5 +235,6 @@ pub(super) fn by_device(device: DeviceId) -> Actor {
         device,
         name: "phone".into(),
         connection: "c1".into(),
+        role: Some(aether_core::event::DeviceRole::Operator),
     })
 }

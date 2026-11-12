@@ -540,8 +540,10 @@ async fn cli_with_socket(
                         hidden_usage: None,
                     };
                     Ok(Reply::Tree(aether_protocol::AgentTree {
+                        stale: None,
                         roots: vec![a.id],
                         nodes: [(a.id, node)].into(),
+                        next_after: None,
                     }))
                 }
                 Command::CreateMemory { spec, .. } => {
@@ -739,6 +741,7 @@ async fn cli_with_socket(
                         write_frame(
                             &mut write,
                             ServerFrame::Delta {
+                                invocation_seq: None,
                                 sub: 1,
                                 agent: AGENT.parse().unwrap(),
                                 invocation: InvocationId::new(),
@@ -752,6 +755,7 @@ async fn cli_with_socket(
                     write_frame(
                         &mut write,
                         ServerFrame::Delta {
+                            invocation_seq: None,
                             sub: 1,
                             agent: AGENT.parse().unwrap(),
                             invocation: InvocationId::new(),
@@ -787,6 +791,7 @@ async fn cli_with_socket(
                     write_frame(
                         &mut write,
                         ServerFrame::Delta {
+                            invocation_seq: None,
                             sub: 1,
                             agent: AGENT.parse().unwrap(),
                             invocation: InvocationId::new(),
@@ -799,6 +804,7 @@ async fn cli_with_socket(
                     write_frame(
                         &mut write,
                         ServerFrame::Delta {
+                            invocation_seq: None,
                             sub: 1,
                             agent: AGENT.parse().unwrap(),
                             invocation: InvocationId::new(),
@@ -2451,6 +2457,9 @@ mod proposal_lookup_tests;
 
 #[path = "cli_regressions/memory_feedback.rs"]
 mod feedback_cli_tests;
+
+#[path = "cli_regressions/memory_v2.rs"]
+mod memory_v2_cli_tests;
 
 #[path = "cli_regressions/notify.rs"]
 mod notify_cli_tests;

@@ -103,6 +103,8 @@ async fn daemon_shutdown_releases_an_engine_tool_waiting_for_approval() {
         push: None,
         remote: Default::default(),
         status_reads: Default::default(),
+        tree_reads: Default::default(),
+        watcher_reads: Default::default(),
     });
     let shutdown = CancellationToken::new();
     let (client, server) = tokio::io::duplex(16 * 1024);
@@ -164,15 +166,24 @@ async fn daemon_shutdown_releases_an_engine_tool_waiting_for_approval() {
     .await
     .expect("the engine tool is waiting for approval");
     shutdown.cancel();
-    let stopped = tokio::time::timeout(
-        Duration::from_secs(3),
-        crate::shutdown_connections(&runtime, &mut connections),
-    )
-    .await;
-    if stopped.is_err() {
-        runtime.shutdown().await;
-        connections.abort_all();
-    }
-    stopped.expect("runtime cancellation must unblock connection draining");
+    let locks = crate::shutdown::Locks::new(
+        Arc::new(
+            crate::instance_lock::InstanceLock::for_store(&workspace.path().join("store.db"))
+                .unwrap(),
+        ),
+        Arc::new(
+            crate::instance_lock::InstanceLock::for_socket(&workspace.path().join("daemon.sock"))
+                .unwrap(),
+        ),
+        None,
+    );
+    let stopped = tokio::time::timeout(Duration::from_secs(3), async move {
+        let runtime_stopped = crate::shutdown::runtime(runtime, locks.clone()).await;
+        let connections_stopped = crate::shutdown::connections(connections, locks).await;
+        (runtime_stopped, connections_stopped)
+    })
+    .await
+    .expect("runtime cancellation must unblock connection draining");
+    assert_eq!(stopped, (true, true));
     assert!(!workspace.path().join("evidence.txt").exists());
 }

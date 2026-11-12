@@ -16,6 +16,7 @@ import type {
   ConfigureGithubWatcherCommand,
   ConfigureRemoteCommand,
   ConfirmPairingCommand,
+  ConsolidateMemoriesCommand,
   CreateAgentCommand,
   CreateMemoryCommand,
   CreateScheduleCommand,
@@ -42,12 +43,14 @@ import type {
   GetSnapshotCommand,
   GetTaskCommand,
   GetTranscriptCommand,
+  GetTranscriptPageCommand,
   GetTreeCommand,
   HelloCommand,
   ImportRunCommand,
   InterruptCommand,
   LatestCheckpointCommand,
   ListAgentsCommand,
+  ListAgentsPageCommand,
   ListApprovalRulesCommand,
   ListApprovalsCommand,
   ListArtifactsCommand,
@@ -59,12 +62,17 @@ import type {
   ListRunsCommand,
   ListSchedulesCommand,
   ListTasksCommand,
+  ListViewModesCommand,
   ListWorkspacesCommand,
   MarkNotificationReadCommand,
   McpServersCommand,
   MemoriesCommand,
   MemoriesInContextCommand,
+  MemoryExportCommand,
   MemoryFeedbackCommand,
+  MemoryImportCommand,
+  MemoryMigrationStatusCommand,
+  MemoryRetrievalExplainCommand,
   PauseCommand,
   PinMemoryCommand,
   PingCommand,
@@ -105,6 +113,7 @@ import type {
   UpdateAgentCommand,
   UpdateDeviceCommand,
   UpdateScheduleCommand,
+  UsageBreakdownCommand,
   ValidateWorkspaceCommand,
   WakeCommand,
   WorkspaceDiffCommand,
@@ -127,6 +136,7 @@ export type Command =
   | ConfigureGithubWatcherCommand
   | ConfigureRemoteCommand
   | ConfirmPairingCommand
+  | ConsolidateMemoriesCommand
   | CreateAgentCommand
   | CreateMemoryCommand
   | CreateScheduleCommand
@@ -153,12 +163,14 @@ export type Command =
   | GetSnapshotCommand
   | GetTaskCommand
   | GetTranscriptCommand
+  | GetTranscriptPageCommand
   | GetTreeCommand
   | HelloCommand
   | ImportRunCommand
   | InterruptCommand
   | LatestCheckpointCommand
   | ListAgentsCommand
+  | ListAgentsPageCommand
   | ListApprovalRulesCommand
   | ListApprovalsCommand
   | ListArtifactsCommand
@@ -170,12 +182,17 @@ export type Command =
   | ListRunsCommand
   | ListSchedulesCommand
   | ListTasksCommand
+  | ListViewModesCommand
   | ListWorkspacesCommand
   | MarkNotificationReadCommand
   | McpServersCommand
   | MemoriesCommand
   | MemoriesInContextCommand
+  | MemoryExportCommand
   | MemoryFeedbackCommand
+  | MemoryImportCommand
+  | MemoryMigrationStatusCommand
+  | MemoryRetrievalExplainCommand
   | PauseCommand
   | PinMemoryCommand
   | PingCommand
@@ -216,6 +233,7 @@ export type Command =
   | UpdateAgentCommand
   | UpdateDeviceCommand
   | UpdateScheduleCommand
+  | UsageBreakdownCommand
   | ValidateWorkspaceCommand
   | WakeCommand
   | WorkspaceDiffCommand

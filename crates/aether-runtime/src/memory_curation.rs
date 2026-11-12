@@ -11,7 +11,7 @@ use aether_core::memory::{
     MAX_ROLE_SEGMENTS, MemoryCandidate, MemoryProvenance, MemoryRecord, MemoryScope,
     OperatorMemoryScope, OperatorMemorySpec, SeedReport,
 };
-use aether_memory::Admission;
+use aether_memory::{Admission, ConsolidationOptions, ConsolidationReport};
 use aether_store::MemoryQuery;
 
 use crate::{Result, Runtime, RuntimeError};
@@ -49,7 +49,9 @@ impl Runtime {
             .memory
             .evaluate_operator(&hold, candidate, by, proposed)?;
         let record = match admission {
-            Admission::Accepted { record } | Admission::Superseded { record, .. } => record,
+            Admission::Accepted { record }
+            | Admission::Superseded { record, .. }
+            | Admission::Reinforced { record, .. } => record,
             Admission::Rejected { reason } => {
                 return Err(RuntimeError::Invalid(format!(
                     "memory not admitted: {reason}"
@@ -217,6 +219,39 @@ impl Runtime {
     /// Keep a memory in front of the model, or stop.
     pub fn pin_memory(&self, id: MemoryId, pinned: bool, by: Actor) -> Result<MemoryRecord> {
         Ok(self.memory.pin(id, pinned, by)?)
+    }
+
+    /// Merge near-duplicate memories in `scope`, or in every scope when `None`.
+    /// A host command: an agent cannot retire memories it did not write.
+    pub fn consolidate_memories(
+        &self,
+        scope: Option<MemoryScope>,
+        dry_run: bool,
+        by: Actor,
+    ) -> Result<ConsolidationReport> {
+        if !matches!(by, Actor::User { .. } | Actor::System) {
+            return Err(RuntimeError::Invalid(
+                "only an operator can consolidate memories".into(),
+            ));
+        }
+        let options = ConsolidationOptions {
+            dry_run,
+            abstraction: None,
+        };
+        let report = self.memory.consolidate(scope, by, options)?;
+        debug_assert_eq!(report.dry_run, dry_run);
+        debug_assert!(report.abstractions.is_empty(), "abstraction stays off here");
+        Ok(report)
+    }
+
+    /// Undo an abstraction, putting back the memory it replaced.
+    pub fn rollback_memory_abstraction(&self, id: MemoryId, by: Actor) -> Result<MemoryRecord> {
+        if !matches!(by, Actor::User { .. }) {
+            return Err(RuntimeError::Invalid(
+                "only an operator can roll an abstraction back".into(),
+            ));
+        }
+        Ok(self.memory.rollback_abstraction(id, by)?)
     }
 
     /// Read a repository's committed notes into memory scoped to it. Answers

@@ -249,7 +249,11 @@ fn log_panic(finished: Option<Result<(), tokio::task::JoinError>>, what: &str) {
 /// Run `request` and send its reply, logging it if it was slow.
 async fn answer(context: &Context, request: Request, lane: &'static str) {
     let started = Instant::now();
-    let name = request.command.name();
+    let name = match &request.command {
+        // The tool, so a deliberate wait (a permission prompt) is told from a slow call.
+        Command::EngineTool { name, .. } => format!("engine_tool {name}"),
+        command => command.name(),
+    };
     let queued = started.duration_since(request.arrived);
     let running = run_command(context, request.command, request.by, &request.auth);
     tokio::pin!(running);
@@ -269,15 +273,7 @@ async fn answer(context: &Context, request: Request, lane: &'static str) {
     };
     let ran = started.elapsed();
     if queued + ran >= SLOW_REQUEST {
-        tracing::warn!(
-            command = %name,
-            lane,
-            queued_ms = queued.as_millis() as u64,
-            ran_ms = ran.as_millis() as u64,
-            failed = result.is_err(),
-            "slow request: queued_ms waited behind this connection's earlier commands, \
-             ran_ms ran the command (startup probes, store and runtime waits included)"
-        );
+        log_slow(&name, lane, queued, ran, result.is_err());
     }
     let reply = ServerFrame::Reply {
         id: request.id,
@@ -290,6 +286,37 @@ async fn answer(context: &Context, request: Request, lane: &'static str) {
         _ = context.out.send(reply) => {}
         () = context.replies.cancelled() => {}
     }
+}
+
+fn log_slow(name: &str, lane: &'static str, queued: Duration, ran: Duration, failed: bool) {
+    debug_assert!(
+        queued + ran >= SLOW_REQUEST,
+        "only a slow request is logged"
+    );
+    let (queued_ms, ran_ms) = (queued.as_millis() as u64, ran.as_millis() as u64);
+    if name.starts_with("engine_tool ") {
+        // Not a warning: an engine's tool call waits on purpose, on a person or on the turn.
+        tracing::info!(
+            command = %name,
+            lane,
+            queued_ms,
+            ran_ms,
+            failed,
+            "slow engine tool call: ran_ms includes the turn serving its earlier bridge calls \
+             one at a time and any wait on a person; the runtime's `slow bridge call` line \
+             splits the two"
+        );
+        return;
+    }
+    tracing::warn!(
+        command = %name,
+        lane,
+        queued_ms,
+        ran_ms,
+        failed,
+        "slow request: queued_ms waited behind this connection's earlier commands, \
+         ran_ms ran the command (startup probes, store and runtime waits included)"
+    );
 }
 
 async fn run_command(
@@ -313,8 +340,12 @@ mod tests {
     fn reads_run_aside_and_everything_else_in_order() {
         assert!(is_read(&Command::Status));
         assert!(is_read(&Command::GetTree {
+            role_prefix: None,
+            root: None,
             run: None,
             include_archived: false,
+            after: None,
+            limit: None,
         }));
         assert!(is_read(&Command::GetTranscript {
             agent: AgentId::new(),

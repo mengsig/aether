@@ -56,7 +56,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::approval::{self, Gate};
 
-use crate::bus::{BusMessage, DeltaKind};
+use crate::bus::{BusMessage, DeltaKind, DeltaStream};
 
 use crate::turn::{
     CompletionSource, Next, ToolEffects, TurnCtx, apply_action, prose_only_next, tool_context,
@@ -69,6 +69,8 @@ pub(crate) struct EngineRequest {
     pub name: String,
     pub input: Value,
     pub reply: oneshot::Sender<(String, bool)>,
+    /// When the bridge's call reached the runtime, before it queued for the turn.
+    pub arrived: std::time::Instant,
 }
 
 /// Registered while an engine turn runs so the daemon can route bridge calls.
@@ -148,6 +150,7 @@ use outcome::{
 mod availability;
 mod driver;
 mod native_wait;
+mod overdue;
 mod stall;
 mod transient;
 use driver::{DriveResult, drive};

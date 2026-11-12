@@ -256,6 +256,9 @@ impl<R: CommandRunner, D: Daemon, E: Environment, U: Ui> Wizard<'_, R, D, E, U> 
         let funnel = self.options.funnel;
         let command = serve_command(plan.port, target, funnel);
         for _ in 0..PUBLISH_ATTEMPTS {
+            if funnel && self.mounted_since_plan().await? {
+                return Ok(Flow::Stop);
+            }
             let (headline, fix) = match tailscale.publish(plan.port, target, funnel).await? {
                 PublishOutcome::Published => {
                     return self.confirm_published(&tailscale, node, plan, target).await;

@@ -18,6 +18,7 @@ mod resolution;
 mod shutdown;
 mod shutdown_approval;
 mod subscription_cancel;
+mod view_modes;
 
 #[tokio::test]
 async fn model_catalogue_carries_aliases_and_marks_an_aliased_default() {
@@ -220,6 +221,8 @@ pub(super) async fn daemon_with_config(
             push: None,
             remote: Default::default(),
             status_reads: Default::default(),
+            tree_reads: Default::default(),
+            watcher_reads: Default::default(),
         },
         config_dir,
     )

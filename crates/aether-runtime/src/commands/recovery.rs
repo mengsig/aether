@@ -123,6 +123,8 @@ impl Runtime {
                 "agent {id} was already restarted as {successor}"
             )));
         }
+        // The successor stays in the subsystem its predecessor was created under.
+        let subsystem = self.store.agent_subsystem(id)?;
         self.refuse_collected_workspace(&old)?;
         self.models.resolve(&old.model)?;
         // §16: the successor is a new agent under the same parent, and the
@@ -306,7 +308,10 @@ impl Runtime {
         }
         agent.transition(AgentStatus::Ready, at)?;
         commit.push_event(base(EventKind::AgentReady));
-        commit.push_mutation(Mutation::UpsertAgent(agent.clone()));
+        commit.push_mutation(Mutation::CreateAgent {
+            agent: agent.clone(),
+            subsystem,
+        });
         old.restarted_as = Some(new_id);
         old.updated_at = at;
         commit.push_mutation(Mutation::UpsertAgent(old));

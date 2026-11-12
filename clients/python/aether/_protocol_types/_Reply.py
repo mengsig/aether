@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypedDict
 from ._ReplyAgent import ReplyAgent
 from ._ReplyAgents import ReplyAgents
+from ._ReplyAgentsPage import ReplyAgentsPage
 from ._ReplyApprovalRule import ReplyApprovalRule
 from ._ReplyApprovalRules import ReplyApprovalRules
 from ._ReplyApprovals import ReplyApprovals
@@ -29,8 +30,13 @@ from ._ReplyMcpServers import ReplyMcpServers
 from ._ReplyMemories import ReplyMemories
 from ._ReplyMemoriesInContext import ReplyMemoriesInContext
 from ._ReplyMemory import ReplyMemory
+from ._ReplyMemoryConsolidation import ReplyMemoryConsolidation
+from ._ReplyMemoryExport import ReplyMemoryExport
 from ._ReplyMemoryFeedback import ReplyMemoryFeedback
 from ._ReplyMemoryFeedbackList import ReplyMemoryFeedbackList
+from ._ReplyMemoryImport import ReplyMemoryImport
+from ._ReplyMemoryMigrationStatus import ReplyMemoryMigrationStatus
+from ._ReplyMemoryRetrievalExplain import ReplyMemoryRetrievalExplain
 from ._ReplyMemorySeeded import ReplyMemorySeeded
 from ._ReplyMessageSent import ReplyMessageSent
 from ._ReplyMessagesSent import ReplyMessagesSent
@@ -66,7 +72,10 @@ from ._ReplySubscribed import ReplySubscribed
 from ._ReplyTask import ReplyTask
 from ._ReplyTasks import ReplyTasks
 from ._ReplyTranscript import ReplyTranscript
+from ._ReplyTranscriptPage import ReplyTranscriptPage
 from ._ReplyTree import ReplyTree
+from ._ReplyUsageBreakdown import ReplyUsageBreakdown
+from ._ReplyViewModes import ReplyViewModes
 from ._ReplyWelcome import ReplyWelcome
 from ._ReplyWorkspaceDiff import ReplyWorkspaceDiff
 from ._ReplyWorkspaceDiscarded import ReplyWorkspaceDiscarded
@@ -89,6 +98,7 @@ Reply = (
     ReplyPaused |
     ReplyAgent |
     ReplyAgents |
+    ReplyAgentsPage |
     ReplyTree |
     ReplyTask |
     ReplyTasks |
@@ -104,6 +114,8 @@ Reply = (
     ReplySubscribed |
     ReplyEvents |
     ReplyTranscript |
+    ReplyTranscriptPage |
+    ReplyUsageBreakdown |
     ReplyInbox |
     ReplySnapshot |
     ReplyInvocation |
@@ -119,6 +131,11 @@ Reply = (
     ReplyMemory |
     ReplyMemoryFeedback |
     ReplyMemoryFeedbackList |
+    ReplyMemoryRetrievalExplain |
+    ReplyMemoryConsolidation |
+    ReplyMemoryExport |
+    ReplyMemoryImport |
+    ReplyMemoryMigrationStatus |
     ReplyMemorySeeded |
     ReplyRuns |
     ReplyRunReport |
@@ -127,6 +144,7 @@ Reply = (
     ReplyRunImported |
     ReplyMcpServers |
     ReplyModels |
+    ReplyViewModes |
     ReplyProviders |
     ReplyProviderUsage |
     ReplyAuth |

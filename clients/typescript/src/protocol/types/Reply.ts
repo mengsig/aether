@@ -22,8 +22,12 @@ import type {
   InvocationSnapshot,
   McpServerHealth,
   MemoriesInContext,
+  MemoryConsolidation,
+  MemoryExport,
   MemoryFeedback,
   MemoryFeedbackList,
+  MemoryImport,
+  MemoryMigrationStatus,
   MemoryRecord,
   ModelInfo,
   Notification,
@@ -36,6 +40,7 @@ import type {
   RepositoryAlias,
   RepositoryAliasReport,
   RetentionPreview,
+  RetrievalExplain,
   RunListing,
   RunReport,
   Schedule,
@@ -43,6 +48,8 @@ import type {
   SubmissionResolution,
   Task,
   TranscriptEntry,
+  UsageBreakdown,
+  ViewModes,
   Welcome,
   Workspace,
   WorkspaceDiff,
@@ -129,6 +136,17 @@ export interface ReplyAgent {
 export interface ReplyAgents {
   "data": Array<Agent>;
   "reply": "agents";
+}
+
+/**
+ * Reply to `list_agents_page`. `next_after` is the cursor for the next
+ * page, absent on the last one. Ids are only ordered, not committed in
+ * order, so a walk covers the agents present when it began; a client
+ * subscribes first and applies the buffered events for creations during it.
+ */
+export interface ReplyAgentsPage {
+  "data": Record<string, unknown>;
+  "reply": "agents_page";
 }
 
 export interface ReplyTree {
@@ -219,6 +237,21 @@ export interface ReplyTranscript {
   "reply": "transcript";
 }
 
+/**
+ * Reply to `get_transcript_page`: entries in ascending `seq`, whether
+ * older or newer ones exist outside it, and the seq of the agent's newest
+ * entry (0 for none).
+ */
+export interface ReplyTranscriptPage {
+  "data": Record<string, unknown>;
+  "reply": "transcript_page";
+}
+
+export interface ReplyUsageBreakdown {
+  "data": UsageBreakdown;
+  "reply": "usage_breakdown";
+}
+
 export interface ReplyInbox {
   "data": Array<InboxItem>;
   "reply": "inbox";
@@ -294,6 +327,31 @@ export interface ReplyMemoryFeedbackList {
   "reply": "memory_feedback_list";
 }
 
+export interface ReplyMemoryRetrievalExplain {
+  "data": RetrievalExplain;
+  "reply": "memory_retrieval_explain";
+}
+
+export interface ReplyMemoryConsolidation {
+  "data": MemoryConsolidation;
+  "reply": "memory_consolidation";
+}
+
+export interface ReplyMemoryExport {
+  "data": MemoryExport;
+  "reply": "memory_export";
+}
+
+export interface ReplyMemoryImport {
+  "data": MemoryImport;
+  "reply": "memory_import";
+}
+
+export interface ReplyMemoryMigrationStatus {
+  "data": MemoryMigrationStatus;
+  "reply": "memory_migration_status";
+}
+
 export interface ReplyMemorySeeded {
   "data": Record<string, unknown>;
   "reply": "memory_seeded";
@@ -332,6 +390,11 @@ export interface ReplyMcpServers {
 export interface ReplyModels {
   "data": Array<ModelInfo>;
   "reply": "models";
+}
+
+export interface ReplyViewModes {
+  "data": ViewModes;
+  "reply": "view_modes";
 }
 
 export interface ReplyProviders {
@@ -443,6 +506,7 @@ export type Reply =
     ReplyPaused |
     ReplyAgent |
     ReplyAgents |
+    ReplyAgentsPage |
     ReplyTree |
     ReplyTask |
     ReplyTasks |
@@ -458,6 +522,8 @@ export type Reply =
     ReplySubscribed |
     ReplyEvents |
     ReplyTranscript |
+    ReplyTranscriptPage |
+    ReplyUsageBreakdown |
     ReplyInbox |
     ReplySnapshot |
     ReplyInvocation |
@@ -473,6 +539,11 @@ export type Reply =
     ReplyMemory |
     ReplyMemoryFeedback |
     ReplyMemoryFeedbackList |
+    ReplyMemoryRetrievalExplain |
+    ReplyMemoryConsolidation |
+    ReplyMemoryExport |
+    ReplyMemoryImport |
+    ReplyMemoryMigrationStatus |
     ReplyMemorySeeded |
     ReplyRuns |
     ReplyRunReport |
@@ -481,6 +552,7 @@ export type Reply =
     ReplyRunImported |
     ReplyMcpServers |
     ReplyModels |
+    ReplyViewModes |
     ReplyProviders |
     ReplyProviderUsage |
     ReplyAuth |

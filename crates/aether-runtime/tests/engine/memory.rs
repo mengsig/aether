@@ -135,6 +135,47 @@ async fn engine_memory_does_not_churn_with_each_message() {
     }
 }
 
+/// The holdout is drawn from what the memory budget lets the layer carry:
+/// at rate 1 a note too long to render is neither shown nor logged.
+#[tokio::test]
+async fn an_engine_turn_logs_only_holdouts_that_would_have_fit_the_budget() {
+    const FACT: &str = "The indexer runs in batches of five hundred rows here";
+    let engine: Arc<dyn Engine> = Arc::new(ScriptedEngine {
+        reply: Reply::Resumable,
+        prompts: Arc::default(),
+        costs: Arc::default(),
+        systems: Arc::default(),
+        tool_gate: None,
+    });
+    let h = harness_with_engine_config(engine, |config| {
+        config.memory_retrieval.holdout_rate = 1.0;
+    })
+    .await;
+    let id = chat_agent(&h);
+    let agent = wait_for(h.store.as_ref(), id, |a| {
+        a.status.kind() == AgentStatusKind::Waiting
+    })
+    .await;
+    let fits = seed_repository_note(&h, &agent, FACT, 0.9);
+    let oversized = "The indexer archive notes ramble about batches. ".repeat(250);
+    let trimmed = seed_repository_note(&h, &agent, &oversized, 0.1);
+
+    engine_turn(&h, id, "what should I know about the indexer?").await;
+    let snapshot = latest_snapshot(&h, id);
+    assert!(snapshot.memory_ids.is_empty(), "rate 1 shows nothing");
+    let logged = h.store.memory_holdouts(fits).expect("holdouts");
+    assert_eq!(logged.len(), 1, "the note that fits is logged: {logged:?}");
+    assert_eq!((logged[0].agent, logged[0].task), (id, None));
+    assert!(
+        h.store
+            .memory_holdouts(trimmed)
+            .expect("holdouts")
+            .is_empty(),
+        "the budget would have trimmed it, so it was never a would-be injection"
+    );
+    h.runtime.shutdown().await;
+}
+
 #[tokio::test]
 async fn forgotten_memory_is_excluded_and_restored_across_fresh_sessions() {
     const STALE: &str = "Deploys go through the legacy jenkins pipeline";
@@ -222,6 +263,17 @@ fn seed_repository_memory(
     agent: &aether_core::agent::Agent,
     text: &str,
 ) -> aether_core::id::MemoryId {
+    seed_repository_note(h, agent, text, 0.9)
+}
+
+/// Like [`seed_repository_memory`], ranked by `importance`. Stored past
+/// admission, so a note may be longer than any memory budget.
+fn seed_repository_note(
+    h: &Harness,
+    agent: &aether_core::agent::Agent,
+    text: &str,
+    importance: f32,
+) -> aether_core::id::MemoryId {
     use aether_core::memory::{MemoryCandidate, MemoryKind, MemoryRecord, MemoryScope};
     use aether_store::{Commit, Mutation};
 
@@ -233,7 +285,7 @@ fn seed_repository_memory(
             kind: MemoryKind::Fact,
             text: text.into(),
             structured: None,
-            importance: 0.9,
+            importance,
             confidence: 0.9,
             tags: vec![],
             provenance: Default::default(),

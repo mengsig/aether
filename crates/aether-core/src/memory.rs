@@ -274,6 +274,10 @@ pub struct MemoryRecord {
     /// person's decision, which outranks the file for good.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retracted: Option<Retraction>,
+    /// Memory 2.0 standing, filled in only on a reply to a `memory_v2`
+    /// client. Never stored: the store keeps it beside the record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standing: Option<crate::memory_v2::MemoryStanding>,
 }
 
 /// Why a repository-knowledge sweep curated a record out: the committed tree
@@ -314,6 +318,7 @@ impl MemoryRecord {
             pinned: false,
             forgotten_at: None,
             retracted: None,
+            standing: None,
         }
     }
 

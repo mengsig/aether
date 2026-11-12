@@ -39,8 +39,12 @@ impl App {
                     self.flash("checking live workers before confirmation");
                     return vec![Effect::Request {
                         command: Command::GetTree {
+                            role_prefix: None,
+                            root: None,
                             run: None,
                             include_archived: true,
+                            after: None,
+                            limit: None,
                         },
                         then: Then::BoardConfirm {
                             agent: id,
@@ -107,6 +111,10 @@ impl App {
     }
 
     fn confirm_board_end(&mut self, id: AgentId, remove: bool, tree: &aether_protocol::AgentTree) {
+        if tree.stale.is_some() {
+            self.flash("the daemon did not read the agent tree in time; no action taken, retry");
+            return;
+        }
         let Some(node) = tree.nodes.get(&id) else {
             self.flash("agent no longer exists; no action taken");
             return;

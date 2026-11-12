@@ -1,7 +1,7 @@
 //! What an ended agent leaves running. A child that completed under a live
 //! ancestor hands it to the nearest one; any other end stops it, together
 //! with what reaped agents handed up to it. A daemon stop or start stops
-//! what no live agent holds.
+//! what no live agent holds at start, and all its own agents at stop.
 
 use crate::commands::PendingReap;
 use crate::{CommitHold, Runtime};
@@ -415,9 +415,8 @@ impl Runtime {
         }
     }
 
-    /// Stop what this daemon's agents left running that no live agent holds:
-    /// as it stops, since nothing would stop it after, and as it starts, after
-    /// one that died. A live agent keeps its own, and a completed one's stay
+    /// Stop what this daemon's agents left running that no live agent holds
+    /// after a daemon died. A live agent keeps its own, and a completed one's stay
     /// with its nearest live ancestor, so agents a restart resumes find their
     /// servers up. Returns how many processes were signalled.
     pub(crate) async fn reap_unheld_agent_processes(&self) -> usize {
@@ -442,6 +441,41 @@ impl Runtime {
             tracing::warn!(agents = ?unheld, "agents kept waking through the daemon sweep; leaving their processes");
         }
         signalled
+    }
+
+    /// Stop processes belonging to this store's agents before the daemon exits.
+    pub(crate) async fn reap_shutdown_agent_processes(&self) -> aether_engine::reap::ReapReport {
+        let found = aether_engine::reap::agents_with_processes().await;
+        debug_assert!(found.is_sorted(), "the process scan returns sorted agents");
+        let owned: Vec<_> = found
+            .into_iter()
+            .filter(|id| self.agent_ran_here(*id))
+            .collect();
+        assert!(owned.is_sorted(), "filtering preserves agent order");
+        let grace = self
+            .models
+            .config()
+            .agents
+            .reap_grace()
+            .min(SHUTDOWN_REAP_GRACE);
+        aether_engine::reap::reap_agents(
+            &owned,
+            grace,
+            |id| self.agent_ran_here(id),
+            &self.spawn_gates(),
+        )
+        .await
+    }
+
+    fn agent_ran_here(&self, agent: AgentId) -> bool {
+        match self.store.agent(agent) {
+            Ok(Some(row)) => !matches!(row.status, AgentStatus::Imported { .. }),
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!(%agent, %error, "cannot determine process ownership; sparing the agent's processes");
+                false
+            }
+        }
     }
 
     /// Stop what the ended `unheld` left running, sparing each one that a

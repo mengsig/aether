@@ -94,6 +94,45 @@ fn a_device_acts_as_the_operator_and_is_named_in_the_record() {
     assert!(local.contains("local_socket"), "{local}");
 }
 
+/// Archon reads the role off the event to decide whether a phone line is an
+/// operator line, so it must come from the session, never from the client.
+#[test]
+fn a_device_origin_carries_the_role_its_session_was_paired_with() {
+    let auth = device(DeviceRole::Operator);
+    let identity = auth.device().unwrap().clone();
+    let actor = auth.actor(None, "conn".into());
+    let json = serde_json::to_value(&actor).unwrap();
+    assert_eq!(json["origin"]["transport"], "device");
+    assert_eq!(json["origin"]["role"], "operator");
+    assert_eq!(json["origin"]["device"], identity.id.to_string());
+    let peer: SocketAddr = "192.0.2.7:4000".parse().unwrap();
+    let token = serde_json::to_value(AuthContext::Token.actor(Some(peer), "conn".into())).unwrap();
+    assert_eq!(token["origin"]["transport"], "tcp");
+    assert!(token["origin"].get("role").is_none(), "{token}");
+    let local = serde_json::to_value(AuthContext::Local.actor(None, "conn".into())).unwrap();
+    assert!(local["origin"].get("role").is_none(), "{local}");
+}
+
+#[test]
+fn an_observer_refusal_says_the_device_is_an_observer() {
+    let observer = device(DeviceRole::Observer);
+    let refusal = observer
+        .authorize(&Command::Interrupt {
+            agent: aether_core::id::AgentId::new(),
+            idempotency_key: None,
+        })
+        .unwrap_err();
+    assert_eq!(refusal.code, ErrorCode::Forbidden);
+    assert!(
+        refusal.message.contains("paired as an observer"),
+        "{}",
+        refusal.message
+    );
+    observer.closed().unwrap().cancel();
+    let revoked = observer.authorize(&Command::GetAttention).unwrap_err();
+    assert!(revoked.message.contains("revoked"), "{}", revoked.message);
+}
+
 #[test]
 fn every_command_has_an_explicit_role_decision() {
     let cases: serde_json::Value =
@@ -141,6 +180,52 @@ fn every_command_has_an_explicit_role_decision() {
             );
         }
     }
+}
+
+/// The matrix in docs/remote.md names every command with the class its
+/// fixture case has, so the document cannot drift from the daemon.
+#[test]
+fn the_documented_matrix_names_every_command_with_its_class() {
+    let doc = include_str!("../../../../docs/remote.md");
+    let start = doc
+        .find("### The matrix")
+        .expect("docs/remote.md has the matrix");
+    let mut documented = std::collections::BTreeMap::new();
+    for line in doc[start..].lines().skip(1) {
+        if line.starts_with("### ") {
+            break;
+        }
+        let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+        let Some(cmd) = cells
+            .get(1)
+            .and_then(|c| c.strip_prefix('`')?.strip_suffix('`'))
+        else {
+            continue;
+        };
+        let class = cells.get(2).copied().unwrap_or_default();
+        assert!(
+            documented.insert(cmd, class).is_none(),
+            "{cmd} is documented twice"
+        );
+    }
+    let cases: serde_json::Value =
+        serde_json::from_str(include_str!("command_cases.json")).unwrap();
+    let cases = cases.as_array().unwrap();
+    assert!(cases.len() > 100, "the fixture holds every command");
+    for case in cases {
+        let cmd = case["command"]["cmd"].as_str().unwrap();
+        let wanted = case["access"].as_str().unwrap();
+        assert_eq!(
+            documented.get(cmd).copied(),
+            Some(wanted),
+            "docs/remote.md row for {cmd}"
+        );
+    }
+    assert_eq!(
+        documented.len(),
+        cases.len(),
+        "the matrix names no command the daemon lacks"
+    );
 }
 
 #[test]
@@ -306,5 +391,30 @@ fn storage_gc_requires_host_access_in_both_modes() {
         for role in [DeviceRole::Operator, DeviceRole::Observer] {
             assert_eq!(code(&device(role), &command), Some(ErrorCode::Forbidden));
         }
+    }
+}
+
+#[test]
+fn memory_v2_host_commands_refuse_every_paired_role_and_status_admits_observers() {
+    let host_only = [
+        serde_json::json!({"cmd":"memory_retrieval_explain", "invocation":aether_core::id::InvocationId::new()}),
+        serde_json::json!({"cmd":"consolidate_memories", "dry_run":false}),
+        serde_json::json!({"cmd":"memory_export"}),
+        serde_json::json!({"cmd":"memory_import", "artifact":"{}", "dry_run":false}),
+    ];
+    for value in host_only {
+        let command: Command = serde_json::from_value(value).unwrap();
+        assert_eq!(command.access(), Access::HostOnly);
+        assert!(AuthContext::Local.authorize(&command).is_ok());
+        assert!(AuthContext::Token.authorize(&command).is_ok());
+        for role in [DeviceRole::Operator, DeviceRole::Observer] {
+            assert_eq!(code(&device(role), &command), Some(ErrorCode::Forbidden));
+        }
+    }
+    let status: Command =
+        serde_json::from_value(serde_json::json!({"cmd":"memory_migration_status"})).unwrap();
+    assert_eq!(status.access(), Access::Observe);
+    for role in [DeviceRole::Operator, DeviceRole::Observer] {
+        assert_eq!(code(&device(role), &status), None);
     }
 }

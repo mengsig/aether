@@ -60,6 +60,11 @@ The boundaries Aether does maintain, where a bypass is a security bug:
 - **The daemon's local interface.** The Unix socket and Aether's private
   files (configuration, credentials, database, logs, exports) are for the
   owning user only. Remote TCP access requires a token.
+- **Paired remote devices.** A phone or browser paired with
+  `aether remote pair` acts only with the role the host gave it at pairing:
+  an `observer` device reads and changes nothing, and a revoked device is
+  refused on its next request. The role comes from the daemon's device
+  store, never from what the device sends. See [remote control](docs/remote.md).
 - **Agent scope.** A scope that denies network access, limits writable paths
   through Aether's own file tools, or selects the container backend for
   Aether's shell is enforced as documented.
@@ -94,6 +99,11 @@ Out of scope, because Aether does not claim to prevent it:
 - Exposing the daemon's TCP port to an untrusted network. It has no built-in
   TLS; use an SSH tunnel.
 - Denial of service by a local user who can already run commands as you.
+- What an `operator` device does. Pairing a device as `operator` grants it
+  the operator's full power from the phone app, as at the TUI, minus the
+  host-only set; its lines to an agent Archon drives reach archond as the
+  operator's. Pair as `observer` when reading is enough, and revoke a lost
+  or retired device at once with `aether remote revoke DEVICE`.
 
 ### Known limitations
 

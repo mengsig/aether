@@ -2,7 +2,7 @@ import { button, el, empty, errorText, heading, invariant, money, number } from 
 import { array } from '../../core/validate.js';
 import { unique } from '../../core/normalize.js';
 import { applyEvent } from '../../core/events.js';
-import { reported, usageSummary } from './model.js';
+import { agentLabels, reported, usageSummary } from './model.js';
 import { agentLink, connectionNotice, liveView, metric, timeLabel } from './shared.js';
 
 /** @typedef {import('../../types.js').Context} Context */
@@ -163,13 +163,14 @@ function usageChart(agents, context, measure, select) {
   const list = el('ol', 'activity-bars');
   list.setAttribute('aria-label', measure === 'tokens' ? 'Tokens by agent' : 'Cost by agent');
   list.setAttribute('aria-describedby', 'activity-coverage');
-  for (const agent of ranked) list.append(usageRow(agent, context, measure, maximum));
+  const labels = agentLabels(agents);
+  for (const agent of ranked) list.append(usageRow(agent, context, measure, maximum, labels.get(agent.id) ?? agent.id));
   chart.append(header, list, coverageNote(agents));
   return chart;
 }
 
-/** @param {Agent} agent @param {Context} context @param {'tokens'|'cost'} measure @param {number} maximum */
-function usageRow(agent, context, measure, maximum) {
+/** @param {Agent} agent @param {Context} context @param {'tokens'|'cost'} measure @param {number} maximum @param {string} name */
+function usageRow(agent, context, measure, maximum, name) {
   invariant(Number.isFinite(maximum) && maximum >= 0, 'Chart maximum must be finite and nonnegative');
   const value = agent[measure];
   invariant(!reported(value) || Number(value) <= maximum, 'Usage cannot exceed the chart maximum');
@@ -179,7 +180,7 @@ function usageRow(agent, context, measure, maximum) {
   const suffix = measure === 'cost' && reported(value) && !agent.costComplete ? '*' : '';
   const amount = el('span', 'activity-bar-value', formatted + suffix);
   if (!reported(value)) amount.setAttribute('aria-label', 'Unreported');
-  const link = agentLink(context, agent.id, agent.name || agent.id);
+  const link = agentLink(context, agent.id, name);
   link.dataset.focus = `usage-agent:${measure}:${agent.id}`;
   label.append(link, amount);
   const track = el('div', 'activity-bar-track');
@@ -246,7 +247,7 @@ function eventTimeline(state, context, limit, history) {
     section.append(empty('Ready for the next update', 'Events appear here as your fleet works.'));
     return section;
   }
-  const names = new Map(state.agents.map(agent => [agent.id, agent.name || agent.id]));
+  const names = agentLabels(state.agents);
   const list = el('ol', 'activity-events');
   list.setAttribute('aria-label', 'Recent activity');
   for (const event of events) list.append(timelineEvent(event, context, names));

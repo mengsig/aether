@@ -102,6 +102,7 @@ impl AuthContext {
                 device: device.id,
                 name: device.name.clone(),
                 connection,
+                role: Some(device.role),
             },
             (None, Some(peer)) => OperatorOrigin::Tcp { peer, connection },
             (None, None) => OperatorOrigin::LocalSocket { connection },
@@ -147,9 +148,9 @@ impl AuthContext {
             Access::HostOnly => {
                 ErrorReply::forbidden(format!("`{name}` is not available to a remote device"))
             }
-            Access::Operate | Access::Observe => {
-                ErrorReply::forbidden(format!("`{name}` needs the operator role"))
-            }
+            Access::Operate | Access::Observe => ErrorReply::forbidden(format!(
+                "`{name}` needs the operator role, and this device is paired as an observer"
+            )),
         })
     }
 }

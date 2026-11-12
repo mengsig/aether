@@ -68,7 +68,11 @@ family version; use a full ID to pin a version.
 - `anthropic` and `claude-code`: `opus`, `opus-5-5`, `opus-5.5` →
   `claude-opus-5-5`; `sonnet`, `sonnet-5-5`, `sonnet-5.5` →
   `claude-sonnet-5-5`; `haiku`, `haiku-5-5`, `haiku-5.5` →
-  `claude-haiku-5-5`; `fable`, `fable-5-1` → `claude-fable-5-1`.
+  `claude-haiku-5-5`; `fable`, `fable-5-2` → `claude-fable-5-2`;
+  `fable-5-1` → `claude-fable-5-1`. On `anthropic`, the retired
+  `claude-fable-5` still names Fable 5.1 (`claude-fable-5-1`), not 5.2, as
+  the model to use instead; it stays so that stored configs naming it get a
+  pointer to the closest version.
 - `openai`, `openai-responses`, `openai-codex` and `codex`: `astra` →
   `gpt-6-astra`; `terra`, `gpt-5.6-terra` → `gpt-6.1-terra`; `sol` →
   `gpt-6.1-sol`; `luna` → `gpt-6-luna`.
@@ -576,10 +580,8 @@ whole process group, so a kept process must also leave it, for example
 `AETHER_KEEP_PROCESS=1 setsid -f ./server`. Nothing stops a kept process
 afterwards; that is up to whoever started it.
 
-A daemon shutdown ends no agent, and it leaves what a live agent holds
-running, so a server an agent started is still up when a restart's recovery
-resumes the agent. It stops each running engine's process group, as for any
-interrupted turn. On Linux it then stops what those engines left outside
+A daemon shutdown ends no agent. It stops each running engine's process
+group, as for any interrupted turn. On Linux it then stops what those engines left outside
 their groups, as a start after a crash would: each process carrying an
 interrupted engine's token that runs for no agent or for the agent whose
 turn the stop cut short, such as the command Claude Code was running in a
@@ -587,20 +589,21 @@ session of its own, unless it is kept. A server that engine started for its
 agent goes with it, since the stop cannot tell it from the command; start
 one with `AETHER_KEEP_PROCESS=1` to keep it. From then on it refuses to start any host command or
 engine, letting one already being started finish first, and it stops every
-background shell. Then it finds every process carrying an agent's tag or in an
-engine scope, keeps the agents its own store ran (never an imported one, nor
-another daemon's) that have ended, and of those leaves each completed one
-whose processes a live ancestor holds, by the rules above. It stops the rest
-the same way, in one sweep, with a grace of `reap_grace_secs` but at most 10
-seconds. It spares an agent woken meanwhile, or whose ancestor was, which
-then holds what the agent left, and one whose ancestry it cannot read or
-that has an ancestor gone from the store. If
-that ancestor ends again before the sweep records it as holding, the sweep
-goes back for the agent, up to three times. The daemon log records what it stopped. A process is signalled only through a pidfd opened before its tag,
+background shell. It then sweeps processes carrying a tag or in an engine
+scope of any agent its store ran, including live agents and their completed
+children. Imported agents and other daemons' agents are spared. The grace is
+`reap_grace_secs` but at most 10 seconds. The daemon log records what it
+stopped. A process is signalled only through a pidfd opened before its tag,
 or its scope, and the keep entry are checked again, so a pid reused meanwhile
-is never hit. What a live agent holds runs on while the daemon is down and is
-stopped when that agent ends after the next start; to stop it with the daemon,
-end or cancel the agent first.
+is never hit. Mark a server as kept if it must outlive a clean stop.
+
+Shutdown gives the runtime, connections, store readers and writers,
+final store checkpoint and file cleanup separate deadlines. It names a phase that runs over its deadline
+in the log and skips the final checkpoint if an earlier phase is unfinished.
+Committed data stays in the WAL and is recovered on the next open. A timed-out
+phase may finish in the background while the process remains alive; it keeps
+the daemon locks until it does. A reader outside the daemon can still leave
+frames in the WAL, which the daemon also reports.
 
 The tag attributes processes; it is not a security boundary. Any process of
 the same user that sets `AETHER_ENGINE_AGENT` to one of the daemon's agents
@@ -627,8 +630,8 @@ that may be the tool command the engine was running in a session of its own,
 as Claude Code runs each, which the resumed turn must not race. A token
 carrier that carries the tag of an agent with no turn in flight (a dev server,
 a database, a `docker compose` client an agent started), or the keep entry, is
-left alone there. Before it runs any turn the start then stops,
-as a clean stop would have, what no live agent holds: the processes tagged
+left alone there. Before it runs any turn the start then stops
+what no live agent holds: the processes tagged
 with, or in an engine scope of, each of its own agents that has ended, unless
 it completed under a live ancestor. That ancestor then holds them again, as
 the hand-up the dead daemon recorded only in memory said, and they stop with

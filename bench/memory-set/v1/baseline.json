@@ -1,0 +1,246 @@
+{
+  "set": "memory-set/v1",
+  "commit": "b0ffd05e42fa8fff3bb2fd4b548f893edbfb8b8d",
+  "arms": {
+    "none": {
+      "deterministic": {
+        "retrieval": {
+          "queries": 26,
+          "queries_with_relevant": 23,
+          "precision@3": 0.2564,
+          "recall@3": 0.6957,
+          "precision@6": 0.1603,
+          "recall@6": 0.8913,
+          "mrr": 0.7297
+        },
+        "influence": {
+          "queries_with_harmful_labels": 10,
+          "harmful_exposure_rate": 0.4,
+          "harmful_slot_share": 0.0256,
+          "conflicts": 8,
+          "conflict_loss_rate": 0.125
+        },
+        "store": {
+          "by_class": {
+            "durable": {
+              "offered": 26,
+              "admitted": 26
+            },
+            "incorrect": {
+              "offered": 1,
+              "admitted": 1
+            },
+            "near_duplicate": {
+              "offered": 7,
+              "admitted": 7
+            },
+            "one_off": {
+              "offered": 11,
+              "admitted": 11
+            },
+            "stale": {
+              "offered": 5,
+              "admitted": 5
+            },
+            "transient": {
+              "offered": 4,
+              "admitted": 0
+            }
+          },
+          "current": 48,
+          "duplicate_share": 0.1458,
+          "low_value_share": 0.2292,
+          "harmful_current_share": 0.125,
+          "transient_rejected": 1.0,
+          "near_duplicates_admitted": 1.0
+        },
+        "injection": {
+          "mean_slots": 6.0,
+          "tokens_per_turn_mean": 323.0385,
+          "tokens_per_turn_p95": 349,
+          "tokens_per_turn_max": 349,
+          "wasted_token_share": 0.8301,
+          "tokens_on_queries_without_relevant": 305.0,
+          "redundant_slot_share": 0.2244,
+          "low_value_slot_share": 0.1795,
+          "model_calls_per_retrieval": 0
+        },
+        "recovery": {
+          "restart_identical_share": 1.0,
+          "restart_memories_kept": true,
+          "corruption": {
+            "intact_copy": {
+              "open": "ok",
+              "retrieval": "ok",
+              "recovered_share": 1.0
+            },
+            "missing_file": {
+              "open": "ok",
+              "retrieval": "ok",
+              "recovered_share": 0.0
+            },
+            "truncated_half": {
+              "open": "error",
+              "retrieval": "skipped",
+              "recovered_share": null
+            },
+            "zeroed_header": {
+              "open": "error",
+              "retrieval": "skipped",
+              "recovered_share": null
+            },
+            "garbled_middle_page": {
+              "open": "ok",
+              "retrieval": "ok",
+              "recovered_share": 1.0
+            },
+            "garbled_every_8th_page": {
+              "open": "error",
+              "retrieval": "skipped",
+              "recovered_share": null
+            }
+          }
+        }
+      },
+      "measured": {
+        "latency_us": {
+          "store_memories": 48,
+          "median": 2171.053,
+          "p95": 3132.657,
+          "scaled_store_memories": 5048,
+          "scaled_median": 8226.149,
+          "scaled_p95": 12282.169
+        },
+        "storage_bytes": {
+          "empty_database": 442368,
+          "seeded_database": 593920,
+          "seeded_on_disk": 5723160,
+          "per_record": 3031.04,
+          "scaled_database": 7057408,
+          "scaled_on_disk": 7057408,
+          "scaled_per_memory": 1310.4279
+        }
+      }
+    },
+    "local": {
+      "deterministic": {
+        "retrieval": {
+          "queries": 26,
+          "queries_with_relevant": 23,
+          "precision@3": 0.2949,
+          "recall@3": 0.8261,
+          "precision@6": 0.1731,
+          "recall@6": 0.9783,
+          "mrr": 0.8333
+        },
+        "influence": {
+          "queries_with_harmful_labels": 10,
+          "harmful_exposure_rate": 0.6,
+          "harmful_slot_share": 0.0385,
+          "conflicts": 8,
+          "conflict_loss_rate": 0.5
+        },
+        "store": {
+          "by_class": {
+            "durable": {
+              "offered": 26,
+              "admitted": 26
+            },
+            "incorrect": {
+              "offered": 1,
+              "admitted": 1
+            },
+            "near_duplicate": {
+              "offered": 7,
+              "admitted": 7
+            },
+            "one_off": {
+              "offered": 11,
+              "admitted": 11
+            },
+            "stale": {
+              "offered": 5,
+              "admitted": 5
+            },
+            "transient": {
+              "offered": 4,
+              "admitted": 0
+            }
+          },
+          "current": 48,
+          "duplicate_share": 0.1458,
+          "low_value_share": 0.2292,
+          "harmful_current_share": 0.125,
+          "transient_rejected": 1.0,
+          "near_duplicates_admitted": 1.0
+        },
+        "injection": {
+          "mean_slots": 6.0,
+          "tokens_per_turn_mean": 320.1923,
+          "tokens_per_turn_p95": 346,
+          "tokens_per_turn_max": 349,
+          "wasted_token_share": 0.815,
+          "tokens_on_queries_without_relevant": 306.6667,
+          "redundant_slot_share": 0.1731,
+          "low_value_slot_share": 0.2115,
+          "model_calls_per_retrieval": 0
+        },
+        "recovery": {
+          "restart_identical_share": 1.0,
+          "restart_memories_kept": true,
+          "corruption": {
+            "intact_copy": {
+              "open": "ok",
+              "retrieval": "ok",
+              "recovered_share": 1.0
+            },
+            "missing_file": {
+              "open": "ok",
+              "retrieval": "ok",
+              "recovered_share": 0.0
+            },
+            "truncated_half": {
+              "open": "error",
+              "retrieval": "skipped",
+              "recovered_share": null
+            },
+            "zeroed_header": {
+              "open": "error",
+              "retrieval": "skipped",
+              "recovered_share": null
+            },
+            "garbled_middle_page": {
+              "open": "ok",
+              "retrieval": "ok",
+              "recovered_share": 1.0
+            },
+            "garbled_every_8th_page": {
+              "open": "error",
+              "retrieval": "skipped",
+              "recovered_share": null
+            }
+          }
+        }
+      },
+      "measured": {
+        "latency_us": {
+          "store_memories": 48,
+          "median": 2294.336,
+          "p95": 3204.965,
+          "scaled_store_memories": 5048,
+          "scaled_median": 9155.975,
+          "scaled_p95": 12262.331
+        },
+        "storage_bytes": {
+          "empty_database": 442368,
+          "seeded_database": 593920,
+          "seeded_on_disk": 5723160,
+          "per_record": 3031.04,
+          "scaled_database": 7065600,
+          "scaled_on_disk": 7065600,
+          "scaled_per_memory": 1312.0507
+        }
+      }
+    }
+  }
+}

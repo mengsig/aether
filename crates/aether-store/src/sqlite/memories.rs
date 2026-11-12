@@ -1,6 +1,10 @@
+use super::write_tally::WriteTally;
 use super::{SqliteStore, fts_query, nested_scope_range, scope_key};
 use crate::{MemoryQuery, Result, StoreError};
+use aether_core::id::MemoryId;
 use aether_core::memory::{MemoryRecord, MemoryRecorder};
+use aether_core::memory_admission::{MemoryAdmission, MemoryState};
+use rusqlite::{OptionalExtension, Transaction, params};
 
 impl SqliteStore {
     pub(super) fn query_memories(&self, query: &MemoryQuery) -> Result<Vec<MemoryRecord>> {
@@ -22,6 +26,12 @@ impl SqliteStore {
         }
         if !query.include_forgotten {
             sql.push_str(" AND m.forgotten_at IS NULL");
+        }
+        if !query.include_candidates {
+            sql.push_str(
+                " AND NOT EXISTS (SELECT 1 FROM memory_admission a
+                    WHERE a.memory_id = m.id AND a.state = 'candidate')",
+            );
         }
         content_filters(query, &mut sql, &mut args)?;
         // Pinned first either way: a person put it there on purpose.
@@ -46,6 +56,70 @@ impl SqliteStore {
         }
         Ok(records)
     }
+
+    pub(super) fn read_memory_admission(&self, id: MemoryId) -> Result<Option<MemoryAdmission>> {
+        let conn = self.read_conn()?;
+        let row: Option<(String, String)> = conn
+            .query_row(
+                "SELECT state, body FROM memory_admission WHERE memory_id = ?1",
+                [id.to_string()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((state, body)) = row else {
+            return Ok(None);
+        };
+        let admission: MemoryAdmission = serde_json::from_str(&body)?;
+        if admission.memory != id || admission.state.as_str() != state {
+            return Err(StoreError::Corrupt(format!(
+                "memory {id} admission body disagrees with its indexed state; run `aether doctor`"
+            )));
+        }
+        Ok(Some(admission))
+    }
+}
+
+/// The store keeps only whether a memory is still a candidate: superseded
+/// and retracted are the record's to say.
+pub(super) fn put_memory_admission(
+    tx: &Transaction<'_>,
+    admission: &MemoryAdmission,
+    tally: &mut WriteTally,
+) -> Result<()> {
+    if !matches!(
+        admission.state,
+        MemoryState::Candidate | MemoryState::Active
+    ) {
+        return Err(StoreError::Corrupt(format!(
+            "memory {} admission cannot be stored as {}",
+            admission.memory,
+            admission.state.as_str()
+        )));
+    }
+    let memory = admission.memory.to_string();
+    let stored: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM memories WHERE id = ?1)",
+        [&memory],
+        |row| row.get(0),
+    )?;
+    if !stored {
+        return Err(StoreError::Corrupt(format!(
+            "admission for memory {memory}, which is not stored"
+        )));
+    }
+    let written = tx.execute(
+        "INSERT INTO memory_admission(memory_id, state, tier, body) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(memory_id) DO UPDATE SET state = excluded.state, tier = excluded.tier,
+           body = excluded.body",
+        params![
+            memory,
+            admission.state.as_str(),
+            admission.tier.as_str(),
+            tally.json("memory_admission", admission)?,
+        ],
+    )?;
+    debug_assert_eq!(written, 1);
+    Ok(())
 }
 
 fn scope_filters(query: &MemoryQuery, sql: &mut String, args: &mut Vec<Box<dyn rusqlite::ToSql>>) {

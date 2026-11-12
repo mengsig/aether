@@ -84,7 +84,9 @@ async fn engine_compaction_replaces_session_only_after_valid_checkpoint() {
             .iter()
             .rev()
             .find_map(|event| match event.kind {
-                EventKind::AgentUsageUpdated { total, turn_usage } => Some((total, turn_usage)),
+                EventKind::AgentUsageUpdated {
+                    total, turn_usage, ..
+                } => Some((total, turn_usage)),
                 _ => None,
             })
             .expect("final billing update");

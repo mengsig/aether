@@ -22,6 +22,7 @@ fn snapshot(f: &Fixture) -> SnapshotId {
         params: InvocationParams::default(),
         token_estimate: 0,
         created_at: f.agent.created_at,
+        memory_retrieval: None,
     }));
     id
 }

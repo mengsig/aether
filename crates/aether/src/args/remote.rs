@@ -18,6 +18,54 @@ impl From<DeviceRoleArg> for aether_protocol::remote::DeviceRole {
     }
 }
 
+/// What a mount forwards to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum MountKindArg {
+    /// An Archon daemon's web interface.
+    Archon,
+}
+
+impl From<MountKindArg> for aether_protocol::remote::MountKind {
+    fn from(kind: MountKindArg) -> Self {
+        match kind {
+            MountKindArg::Archon => Self::Archon,
+        }
+    }
+}
+
+/// `aether remote mount`: prefixes of the listener forwarded to a loopback daemon.
+#[derive(Debug, Subcommand)]
+pub(crate) enum MountCmd {
+    /// Forward a prefix, e.g. /archon, to a daemon on this machine. Refused
+    /// while the listener is published through Tailscale Funnel.
+    Add {
+        /// One lowercase path segment, e.g. /archon.
+        prefix: String,
+        /// http://127.0.0.1:<port> or http://[::1]:<port>.
+        #[arg(long, value_name = "URL")]
+        target: String,
+        /// What the target is.
+        #[arg(long, value_enum, default_value = "archon")]
+        kind: MountKindArg,
+        /// Print the result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Stop forwarding a prefix; its open connections close at once.
+    Remove {
+        prefix: String,
+        /// Print the result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List the mounts.
+    List {
+        /// Print the result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum RemoteCmd {
     /// Guided setup: check Tailscale, enable the listener, pair a device.
@@ -105,6 +153,11 @@ pub(crate) enum RemoteCmd {
         /// Print the result as JSON.
         #[arg(long)]
         json: bool,
+    },
+    /// Forward listener prefixes to daemons on this machine.
+    Mount {
+        #[command(subcommand)]
+        command: MountCmd,
     },
     /// Remember another machine's daemon, reached over SSH.
     Add {

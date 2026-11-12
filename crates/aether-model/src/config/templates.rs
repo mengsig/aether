@@ -371,18 +371,16 @@ pub fn ensure_templates(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
         ("providers.toml", providers_template()),
     ] {
         let path = dir.join(name);
-        // create_new: never overwrite, even if another process raced us.
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(mut file) => {
-                file.write_all(text.as_bytes())?;
-                written.push(path);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(e),
+        if path.exists() {
+            continue;
+        }
+        let mut file = tempfile::NamedTempFile::new_in(dir)?;
+        file.write_all(text.as_bytes())?;
+        // Publish only complete templates, without replacing a concurrent writer.
+        match file.persist_noclobber(&path) {
+            Ok(_) => written.push(path),
+            Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e.error),
         }
     }
     Ok(written)

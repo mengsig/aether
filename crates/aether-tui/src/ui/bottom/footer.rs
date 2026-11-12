@@ -163,15 +163,7 @@ fn footer_line(
     overlay: bool,
 ) -> Line<'static> {
     let glyphs = theme.glyphs();
-    if let Some((status, disk)) = app
-        .status
-        .as_ref()
-        .and_then(|status| Some((status, status.low_disk.as_ref()?)))
-    {
-        let mut text = format::low_disk(disk);
-        if let Some(stale) = &status.stale {
-            text.push_str(&format!(" ({})", format::stale_status(stale)));
-        }
+    if let Some(text) = app.status.as_ref().and_then(format::disk_status) {
         let prefix = format!("{INDENT}{} ", glyphs.needs_you);
         let room = usize::from(width).saturating_sub(prefix.width());
         return Line::from(vec![
@@ -844,6 +836,34 @@ mod tests {
             assert_eq!(crate::ui::board::cost_text(cost), expected);
             assert_eq!(crate::ui::cells::text::money(cost.unwrap()), expected);
         }
+    }
+
+    #[test]
+    fn an_unavailable_disk_read_replaces_a_hold_with_its_reason() {
+        let mut app = busy_child();
+        let mut status = crate::ui::tests_support::quiet_status();
+        status.low_disk = Some(aether_core::disk::LowDisk {
+            path: "/store".into(),
+            available_bytes: 1 << 30,
+            floor_bytes: 5 << 30,
+            since: app.now,
+        });
+        status
+            .unavailable
+            .push(aether_protocol::UnavailableSection {
+                section: aether_protocol::status_sections::LOW_DISK.into(),
+                reason: "timed out".into(),
+            });
+        app.status = Some(status);
+        let text = footer_line(&app, &dark_theme(false), 120, false, false).to_string();
+        assert!(text.contains("Disk unavailable: timed out"), "{text}");
+        assert!(
+            !text.contains("GiB") && !text.contains("Disk low"),
+            "{text}"
+        );
+        app.status.as_mut().expect("status").unavailable[0].reason = "store busy".into();
+        let text = footer_line(&app, &dark_theme(false), 120, false, false).to_string();
+        assert!(text.contains("Disk unavailable: store busy"), "{text}");
     }
 
     #[test]

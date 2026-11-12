@@ -95,6 +95,19 @@ enum Target {
         generation: Option<u64>,
     },
 }
+fn decode_settings(raw: Option<&str>) -> Result<Settings> {
+    let Some(raw) = raw else {
+        return Ok(Settings::default());
+    };
+    serde_json::from_str(raw)
+        .map_err(|e| RuntimeError::Internal(format!("corrupt GitHub watcher settings: {e}")))
+}
+fn decode_state(repo: &str, raw: Option<&str>) -> Result<RepositoryState> {
+    let raw =
+        raw.ok_or_else(|| RuntimeError::Internal(format!("missing GitHub state for {repo}")))?;
+    serde_json::from_str(raw)
+        .map_err(|e| RuntimeError::Internal(format!("corrupt GitHub state for {repo}: {e}")))
+}
 fn encode(key: String, value: &impl Serialize) -> Result<Mutation> {
     Ok(Mutation::SetMeta {
         key,
@@ -105,40 +118,48 @@ fn encode(key: String, value: &impl Serialize) -> Result<Mutation> {
 
 impl Runtime {
     fn github_settings(&self) -> Result<Settings> {
-        self.store
-            .meta(CONFIG_KEY)?
-            .map(|s| {
-                serde_json::from_str(&s).map_err(|e| {
-                    RuntimeError::Internal(format!("corrupt GitHub watcher settings: {e}"))
-                })
-            })
-            .unwrap_or_else(|| Ok(Settings::default()))
+        decode_settings(self.store.meta(CONFIG_KEY)?.as_deref())
     }
     fn github_repository_state(&self, repo: &str) -> Result<RepositoryState> {
-        let raw = self
-            .store
-            .meta(&state_key(repo))?
-            .ok_or_else(|| RuntimeError::Internal(format!("missing GitHub state for {repo}")))?;
-        serde_json::from_str(&raw)
-            .map_err(|e| RuntimeError::Internal(format!("corrupt GitHub state for {repo}: {e}")))
+        decode_state(repo, self.store.meta(&state_key(repo))?.as_deref())
     }
+    /// Read under no lock, so a poll waits on no writer: the settings and the
+    /// states they name come from one snapshot, as one commit writes them.
     pub fn github_watcher_status(&self) -> Result<GithubWatcherStatus> {
-        let _hold = self.hold();
-        let settings = self.github_settings()?;
-        let repositories = settings
-            .config
-            .repositories
-            .iter()
-            .map(|r| {
-                self.github_repository_state(&r.repository)
-                    .map(|s| s.status)
-            })
-            .collect::<Result<_>>()?;
-        Ok(GithubWatcherStatus {
-            revision: settings.revision,
-            config: settings.config,
-            repositories,
-        })
+        let mut keys = vec![CONFIG_KEY.to_owned()];
+        for _ in 0..3 {
+            let values = self.store.metas(&keys)?;
+            assert_eq!(values.len(), keys.len(), "one value per key read");
+            let settings = decode_settings(values[0].as_deref())?;
+            let named: Vec<String> = std::iter::once(CONFIG_KEY.to_owned())
+                .chain(
+                    settings
+                        .config
+                        .repositories
+                        .iter()
+                        .map(|r| state_key(&r.repository)),
+                )
+                .collect();
+            if named != keys {
+                keys = named;
+                continue;
+            }
+            let repositories = settings
+                .config
+                .repositories
+                .iter()
+                .zip(&values[1..])
+                .map(|(r, raw)| decode_state(&r.repository, raw.as_deref()).map(|s| s.status))
+                .collect::<Result<_>>()?;
+            return Ok(GithubWatcherStatus {
+                revision: settings.revision,
+                config: settings.config,
+                repositories,
+            });
+        }
+        Err(RuntimeError::Internal(
+            "the GitHub watcher's repositories changed on every read; retry".to_owned(),
+        ))
     }
     /// Whole-config compare-and-swap. The daemon restricts this to operators.
     pub fn configure_github_watcher(
@@ -504,6 +525,7 @@ impl Runtime {
         );
         let prepared = self.prepare_agent(
             CreateAgentSpec {
+                subsystem: None,
                 role: template.role.clone(),
                 name: template.name.clone(),
                 objective: Some(objective),

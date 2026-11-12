@@ -9,12 +9,14 @@ use super::resolution;
 mod agents;
 mod control;
 mod memory;
+mod memory_v2;
 mod notifications;
 mod reads;
 mod runs;
 mod schedules;
 mod system;
 mod tasks;
+mod view_modes;
 
 /// Where to cut `bytes` at about `max` so that text stays text. Slicing at a
 /// byte offset can land inside a UTF-8 sequence, and a client decoding the

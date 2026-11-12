@@ -3,6 +3,7 @@
 
 import type {
   DeviceId,
+  DeviceRole,
 } from "../../protocol.ts";
 
 /**
@@ -27,6 +28,7 @@ export interface OperatorOriginDevice {
   "connection": string;
   "device": DeviceId;
   "name": string;
+  "role"?: DeviceRole | null;
   "transport": "device";
 }
 

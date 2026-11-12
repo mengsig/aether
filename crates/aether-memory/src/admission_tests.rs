@@ -50,11 +50,14 @@ fn outcome(admission: &Admission) -> String {
         Admission::Accepted { .. } => "accepted".into(),
         Admission::Superseded { old, .. } => format!("superseded {old}"),
         Admission::Rejected { reason } => format!("rejected: {reason}"),
+        Admission::Reinforced { record, promoted } => {
+            format!("reinforced {} {promoted}", record.id)
+        }
     }
 }
 
 /// Each pair shares every word, or all but one, that token overlap counts.
-const CHANGED_REQUIREMENTS: [(&str, &str); 17] = [
+pub(crate) const CHANGED_REQUIREMENTS: [(&str, &str); 17] = [
     (
         "Run cargo fmt before committing changes to the workspace",
         "Do not run cargo fmt before committing changes to the workspace",

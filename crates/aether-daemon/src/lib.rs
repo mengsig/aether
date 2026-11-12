@@ -16,8 +16,11 @@ mod projections;
 pub mod push;
 pub mod remote;
 mod secrets;
+mod shutdown;
 mod startup;
 mod status_reads;
+mod tree_reads;
+mod usage_breakdown;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -78,6 +81,19 @@ fn memory_index_of(
         aether_model::config::MemoryIndexChoice::Local => {
             Some(std::sync::Arc::new(aether_memory::LocalEmbeddingIndex))
         }
+    }
+}
+
+/// `[memory.retrieval]` as the memory service reads it. The section was
+/// validated when the config loaded; the runtime checks the policy again.
+fn retrieval_policy_of(
+    section: &aether_model::config::MemoryRetrievalSection,
+) -> aether_memory::RetrievalPolicy {
+    aether_memory::RetrievalPolicy {
+        max_items: section.max_items,
+        min_score: section.min_score,
+        holdout_rate: section.holdout_rate,
+        holdout_seed: section.holdout_seed,
     }
 }
 
@@ -170,6 +186,10 @@ pub struct Daemon {
     pub remote: remote::RemoteSlot,
     /// The reads behind `status`, shared by every request.
     pub(crate) status_reads: status_reads::StatusReads<status_reads::Figures>,
+    /// The reads behind `get_tree`, shared per request shape.
+    pub(crate) tree_reads: tree_reads::TreeReads,
+    /// The reads behind `get_github_watcher`: one at a time, however many ask.
+    pub(crate) watcher_reads: status_reads::StatusReads<aether_core::github::GithubWatcherStatus>,
 }
 
 /// Run until `shutdown` fires or a client asks to stop.
@@ -184,21 +204,15 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     // returns. The socket lock covers the probe, the unlink and the bind
     // below, which the store lock cannot: a daemon for another store
     // configured with this socket passes that one.
-    let instance = instance_lock::InstanceLock::for_store(&config.store_path)?;
-    let socket_lock = instance_lock::InstanceLock::for_socket(&config.socket)?;
+    let instance = Arc::new(instance_lock::InstanceLock::for_store(&config.store_path)?);
+    let socket_lock = Arc::new(instance_lock::InstanceLock::for_socket(&config.socket)?);
     // Pin the same target as the lock: a configured directory alias can change later.
     let socket = socket_lock.target();
-    let (socket_address, _socket_alias) = pinned_socket_address(socket)?;
+    let (socket_address, socket_alias) = pinned_socket_address(socket)?;
     remove_stale_socket(socket, &socket_address).await?;
     let pid_path = aether_protocol::paths::pid_path_for(socket);
     instance_lock::check_private_file_replacement(&pid_path)?;
     clock.finished("preflight");
-    let store_path = instance.prepare_store()?;
-    crash::report_previous(&store_path);
-    crash::begin_run(&store_path);
-    let store = Arc::new(SqliteStore::open(&store_path)?);
-    clock.finished("store");
-    let instance_id = aether_store::Store::instance_id(store.as_ref())?;
     let config_dir = aether_model::config::config_dir(config.config_dir.clone());
     match aether_model::config::ensure_templates(&config_dir) {
         Ok(written) => {
@@ -225,7 +239,6 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     // Nothing binds until remote control is enabled, but a stanza that
     // could never be honoured fails the start, where the operator is looking.
     let remote_config = remote::configured(&models.config().remote)?;
-    let push_config = push::configured(&models.config().remote, &instance_id, &config.store_path)?;
     let yolo = config.yolo || models.config().approval.yolo;
     if yolo {
         tracing::warn!(
@@ -323,6 +336,27 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     if let Some(bytes) = models.config().storage.free_space_floor_bytes {
         disk_floor = (bytes > 0).then_some(aether_core::disk::DiskFloor::Bytes(bytes));
     }
+    let redactor = secrets::known_secrets_redactor(
+        models.config(),
+        models.registry(),
+        tcp.as_ref(),
+        |name| std::env::var(name).ok(),
+    )?;
+    // Validate push settings before opening the store; fill in its identity afterwards.
+    let mut push_config = push::configured(&models.config().remote, "", &config.store_path)?;
+    let review_sweep_prs = models
+        .config()
+        .github_watcher
+        .review_sweep_prs()
+        .map_err(config_error)?;
+    let store_path = instance.prepare_store()?;
+    crash::report_previous(&store_path);
+    crash::begin_run(&store_path);
+    let store = Arc::new(SqliteStore::open(&store_path)?);
+    clock.finished("store");
+    let instance_id = aether_store::Store::instance_id(store.as_ref())?;
+    push_config.instance_id.clone_from(&instance_id);
+
     // MCP health transitions become events once the runtime exists, so the
     // channel is created before it and drained after it starts.
     let (mcp_tx, mcp_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -353,12 +387,6 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         models.config().agents.temp_root.as_deref(),
         &store_path,
         &instance_id,
-    )?;
-    let redactor = secrets::known_secrets_redactor(
-        models.config(),
-        models.registry(),
-        tcp.as_ref(),
-        |name| std::env::var(name).ok(),
     )?;
     clock.finished("config");
     // Before any turn can start a container of its own, and before a resumed
@@ -400,17 +428,14 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
                 logs: aether_protocol::paths::log_dir(),
             }),
             memory_index: memory_index_of(models.config().memory.index),
+            memory_retrieval: retrieval_policy_of(&models.config().memory.retrieval),
             // Resolved with the engines, after the socket answers.
             default_model: None,
             workspace_root: config.workspace_root.clone(),
             // Beside the resolved store: an engine opens the file from its agent's workspace.
             attachment_dir: Some(aether_protocol::paths::attachment_dir_for(&store_path)),
             github_checkout_root: Some(config.store_path.with_extension("github-workspaces")),
-            github_review_sweep_prs: models
-                .config()
-                .github_watcher
-                .review_sweep_prs()
-                .map_err(config_error)?,
+            github_review_sweep_prs: review_sweep_prs,
             delegated_workspace_root: Some(
                 config.store_path.with_extension("delegated-workspaces"),
             ),
@@ -475,6 +500,8 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             push: Some(push),
             remote: remote::RemoteSlot::default(),
             status_reads: Default::default(),
+            tree_reads: Default::default(),
+            watcher_reads: Default::default(),
         });
         // Supervised with the connections: it opens the listener the stored
         // settings ask for, and closes it when the daemon stops.
@@ -525,38 +552,21 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     }.await;
     tracing::info!("aetherd shutting down");
     shutdown.cancel();
-    shutdown_connections(&runtime, &mut connections).await;
-    let store_sync = match store.sync() {
-        Ok(true) => Ok(()),
-        // A reader on an older snapshot keeps frames in the WAL; the next open still reads them.
-        Ok(false) => {
-            tracing::warn!("final WAL sync left frames for a reader; they stay in the WAL");
-            Ok(())
-        }
-        Err(error) => Err(anyhow::Error::new(error).context("final store sync")),
+    let locks = shutdown::Locks::new(instance.clone(), socket_lock.clone(), socket_alias);
+    let (stopped, drained) = shutdown::services(runtime.clone(), connections, locks.clone()).await;
+    drop(runtime);
+    let store_sync = shutdown::store(store, stopped && drained, locks.clone()).await;
+    let cleanup = shutdown::Cleanup {
+        socket: socket.to_path_buf(),
+        socket_published,
+        pid_path,
+        pid_published,
+        bridge,
+        store_path,
+        clear_crash_marker: result.is_ok() && matches!(store_sync, Ok(true)),
     };
-    let socket_cleanup = if let Some(identity) = socket_published {
-        remove_daemon_file(socket, &identity)
-    } else {
-        Ok(())
-    };
-    // A rejected PID entry must be left intact, including a foreign symlink or hard link.
-    let pid_cleanup = if let Some(file) = pid_published {
-        file.metadata()
-            .map_err(anyhow::Error::new)
-            .and_then(|identity| remove_daemon_file(&pid_path, &identity))
-    } else {
-        Ok(())
-    };
-    let bridge_cleanup = bridge.map_or(Ok(()), bridge::Bridge::remove);
-    if result.is_ok() && store_sync.is_ok() {
-        crash::end_run(&store_path);
-    }
-    result
-        .and(store_sync)
-        .and(socket_cleanup)
-        .and(pid_cleanup)
-        .and(bridge_cleanup)
+    let cleanup_result = shutdown::cleanup(cleanup, locks).await;
+    result.and(store_sync.map(|_| ())).and(cleanup_result)
 }
 
 /// A valid configured alias can resolve to a target longer than `sun_path`.
@@ -603,16 +613,6 @@ fn remove_daemon_file(path: &Path, identity: &std::fs::Metadata) -> anyhow::Resu
         Err(error) => {
             tracing::warn!(path = %path.display(), %error, "could not remove daemon file");
             Err(anyhow::Error::new(error).context(format!("removing {}", path.display())))
-        }
-    }
-}
-
-async fn shutdown_connections(runtime: &Runtime, connections: &mut tokio::task::JoinSet<()>) {
-    // Pending engine approvals need runtime cancellation before their connections can finish.
-    runtime.shutdown().await;
-    while let Some(result) = connections.join_next().await {
-        if let Err(error) = result {
-            tracing::error!(%error, "connection task failed");
         }
     }
 }
@@ -1141,6 +1141,35 @@ mod tests {
         for name in aether_tools::registry::DAEMON_ENV {
             assert!(hidden.contains(&name.to_owned()), "{name} reaches a child");
         }
+    }
+
+    #[test]
+    fn the_retrieval_config_reaches_the_memory_policy_field_for_field() {
+        let section = aether_model::config::MemoryRetrievalSection::default();
+        let policy = retrieval_policy_of(&section);
+        assert!(policy.validate().is_ok());
+        assert_eq!(policy.holdout_rate, 0.0, "the daemon injects by default");
+        let library = aether_memory::RetrievalPolicy::default();
+        assert_eq!(
+            (policy.max_items, policy.min_score),
+            (library.max_items, library.min_score)
+        );
+        let set = aether_model::config::MemoryRetrievalSection {
+            max_items: 3,
+            min_score: 0.3,
+            holdout_rate: 0.5,
+            holdout_seed: 11,
+        };
+        let policy = retrieval_policy_of(&set);
+        assert_eq!(
+            (
+                policy.max_items,
+                policy.min_score,
+                policy.holdout_rate,
+                policy.holdout_seed
+            ),
+            (3, 0.3, 0.5, 11)
+        );
     }
 
     /// `daemon_secret_env` used to read only

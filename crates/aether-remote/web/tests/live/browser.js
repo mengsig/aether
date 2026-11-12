@@ -36,7 +36,7 @@ async function settleTheme(page,theme) {
     document.documentElement.dataset.motion='reduced';
     document.documentElement.dataset.theme=value;
   },theme);
-  await expect(page.locator('body')).toHaveCSS('background-color',theme==='light'?'rgb(246, 247, 249)':'rgb(13, 18, 22)');
+  await expect(page.locator('body')).toHaveCSS('background-color',theme==='light'?'rgb(244, 245, 247)':'rgb(12, 13, 15)');
   await expect(page.locator('main')).toHaveCSS('opacity','1');
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(null)))));
 }

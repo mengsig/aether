@@ -493,6 +493,7 @@ fn live_accounting_projects_immediately_and_durable_usage_converges_once() {
         EventKind::AgentUsageUpdated {
             total: provisional,
             turn_usage: provisional,
+            billing: None,
         },
         EventKind::AgentMessage {
             role: MessageRole::Assistant,
@@ -502,6 +503,7 @@ fn live_accounting_projects_immediately_and_durable_usage_converges_once() {
         EventKind::AgentUsageUpdated {
             total: settled,
             turn_usage: settled,
+            billing: None,
         },
         EventKind::Custom {
             name: "context.usage".into(),
@@ -649,6 +651,7 @@ fn settled_accounting_cannot_mask_a_later_api_turn_on_refresh() {
         EventKind::AgentUsageUpdated {
             total: prior,
             turn_usage: prior,
+            billing: None,
         },
     );
     feed(
@@ -707,6 +710,7 @@ fn durable_usage_and_turn_end_retire_provisional_accounting() {
                 EventKind::AgentUsageUpdated {
                     total,
                     turn_usage: total,
+                    billing: None,
                 },
             ),
             1 => feed(

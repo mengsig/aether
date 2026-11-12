@@ -11,7 +11,7 @@
 //! correlation key receives an ID-zero diagnostic followed by connection closure;
 //! clients fail all pending requests on closure. See docs/protocol.md.
 //!
-//! Eighteen commands take an optional `idempotency_key` so a lost acknowledgement
+//! Twenty-nine commands take an optional `idempotency_key` so a lost acknowledgement
 //! can be retried safely (docs/remote.md).
 //!
 //! This crate is types and paths only. The client and daemon crates own the
@@ -21,8 +21,11 @@ pub mod auth;
 pub mod command_hint;
 pub mod compat;
 pub mod paths;
+pub mod read_models;
 pub mod remote;
 pub mod schema;
+pub mod view_modes;
+pub use view_modes::{ViewMode, ViewModes};
 
 use std::collections::BTreeMap;
 
@@ -171,10 +174,18 @@ use serde::{Deserialize, Serialize};
 ///
 /// 25: the `credentials` exhaustion class, for an agent suspended on an engine
 /// sign-in the provider refused. `compat` shows it to older clients as `usage_limit`.
-pub const PROTOCOL_VERSION: u32 = 25;
+///
+/// 26: read models for one frontend, each behind its own feature:
+/// `list_agents_page` and the `get_tree` filters, `get_transcript_page`,
+/// `usage_breakdown`, `RemoteSettings.mounts`, and delta frames numbered per
+/// invocation for a client listing `delta_order`. Older clients get every
+/// frame byte for byte as before.
+pub const PROTOCOL_VERSION: u32 = 26;
 
 /// Optional features a peer may advertise. Unknown ones are ignored.
 pub mod features {
+    /// The daemon serves the shared transcript catalog with `list_view_modes`.
+    pub const VIEW_MODES: &str = "view_modes";
     /// The daemon serves bounded stale provider usage refreshes.
     pub const PROVIDER_USAGE_REFRESH: &str = "provider_usage_refresh";
     pub const DELTAS: &str = "deltas";
@@ -208,6 +219,9 @@ pub mod features {
     pub const BUILD_CACHE: &str = "build_cache";
     /// Host evidence about memories a task saw, with append-only records and retractions.
     pub const MEMORY_FEEDBACK: &str = "memory_feedback";
+    /// Memory 2.0: `MemoryRecord.standing` on memory replies, and the
+    /// explain, consolidate, export, import and migration-status commands.
+    pub const MEMORY_V2: &str = "memory_v2";
     /// The daemon serves `workspace_diff`, `workspace_integrate` and
     /// `workspace_discard`.
     pub const WORKSPACE_REVIEW: &str = "workspace_review";
@@ -223,6 +237,21 @@ pub mod features {
     /// Both sides of a connection handle `ErrorCode::HistoryExpired`. The
     /// daemon sends it only to a client whose hello lists this feature.
     pub const HISTORY_EXPIRED: &str = "history_expired";
+    /// The daemon serves `list_agents_page` and the `root` and `role_prefix`
+    /// filters of `get_tree`.
+    pub const AGENTS_PAGING: &str = "agents_paging";
+    /// The daemon pages `get_tree`: `after` and `limit` on the command, and
+    /// `AgentTree.next_after` when older agents were left out.
+    pub const TREE_PAGES: &str = "tree_pages";
+    /// The daemon serves `get_transcript_page`.
+    pub const TRANSCRIPT_PAGING: &str = "transcript_paging";
+    /// Listed by a client, delta frames carry `invocation_seq` and tool input
+    /// carries `tool_use_id`; listed by the daemon, it numbers them.
+    pub const DELTA_ORDER: &str = "delta_order";
+    /// The daemon serves `usage_breakdown`.
+    pub const USAGE_BREAKDOWN: &str = "usage_breakdown";
+    /// `get_remote` and `configure_remote` carry `RemoteSettings.mounts`.
+    pub const REMOTE_MOUNTS: &str = "remote_mounts";
 }
 
 mod handshake;
@@ -238,7 +267,7 @@ mod replies;
 pub use replies::{
     AgentTree, AuthInfo, DaemonStatus, ENGINES_STARTING, ErrorCode, ErrorReply, MessageDelivery,
     ModelInfo, ProviderInfo, Reply, RunListing, StatusStale, SubmissionResolution, TranscriptEntry,
-    TreeNode,
+    TreeNode, UnavailableSection, status_sections,
 };
 mod frames;
 pub use frames::{ClientFrame, Delta, ServerFrame, decode, encode};

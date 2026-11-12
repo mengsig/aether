@@ -216,21 +216,20 @@ fn read_directory(path: &Path) -> io::Result<Option<fs::ReadDir>> {
 }
 
 fn backup_name(name: &str) -> bool {
-    let Some((from, rest)) = name
+    parse_backup_name(name).is_some()
+}
+
+/// The schema versions and id a pre-migration backup's file name carries:
+/// `schema-<from>-before-<to>-<ulid>.sqlite[.zst]`.
+pub(crate) fn parse_backup_name(name: &str) -> Option<(u32, u32, ulid::Ulid)> {
+    let (from, rest) = name
         .strip_prefix("schema-")
-        .and_then(|s| s.split_once("-before-"))
-    else {
-        return false;
-    };
-    let Some((to, id)) = rest.split_once('-') else {
-        return false;
-    };
-    from.parse::<u32>().is_ok()
-        && to.parse::<u32>().is_ok()
-        && id
-            .strip_suffix(".sqlite.zst")
-            .or_else(|| id.strip_suffix(".sqlite"))
-            .is_some_and(|id| id.parse::<ulid::Ulid>().is_ok())
+        .and_then(|s| s.split_once("-before-"))?;
+    let (to, id) = rest.split_once('-')?;
+    let id = id
+        .strip_suffix(".sqlite.zst")
+        .or_else(|| id.strip_suffix(".sqlite"))?;
+    Some((from.parse().ok()?, to.parse().ok()?, id.parse().ok()?))
 }
 
 /// Keep the newest `keep` or anything younger than `days` (zero: no age

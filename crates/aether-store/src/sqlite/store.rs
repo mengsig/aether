@@ -1,5 +1,5 @@
 use super::write_tally::WriteTally;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
@@ -19,6 +19,7 @@ use aether_core::idempotency::{
 use aether_core::inbox::InboxItem;
 use aether_core::lease::Lease;
 use aether_core::memory::MemoryRecord;
+use aether_core::memory_admission::MemoryAdmission;
 use aether_core::model::{Message, Usage};
 use aether_core::notification::Notification;
 use aether_core::repository::RepositoryAlias;
@@ -405,6 +406,19 @@ impl Store for SqliteStore {
         Ok(agents)
     }
 
+    fn agents_page(
+        &self,
+        filter: &AgentFilter,
+        after: Option<AgentId>,
+        limit: usize,
+    ) -> Result<crate::AgentPage> {
+        self.page_agents(filter, after, limit)
+    }
+
+    fn agent_subsystem(&self, id: AgentId) -> Result<Option<String>> {
+        self.read_agent_subsystem(id)
+    }
+
     fn is_descendant(&self, root: AgentId, id: AgentId) -> Result<bool> {
         // UNION drops repeated rows, so a corrupt parent cycle ends the walk.
         Ok(self.read_conn()?.query_row(
@@ -420,17 +434,42 @@ impl Store for SqliteStore {
     }
 
     fn fleet_usage(&self) -> Result<Usage> {
-        let agents = self.record_list(
-            "agents",
-            "SELECT id, body FROM agents WHERE status != ?1",
-            &[&AgentStatusKind::Imported.as_str()],
-            |agent: &Agent| agent.id.to_string(),
-        )?;
-        let mut total = Usage::default();
-        for agent in agents {
-            total += agent.stats.usage;
-        }
-        Ok(total)
+        self.read_fleet_usage()
+    }
+
+    fn run_totals(
+        &self,
+        run: aether_core::id::RunId,
+    ) -> Result<Option<aether_core::budget::RunTotals>> {
+        self.read_run_totals(run)
+    }
+
+    fn agent_usages(&self, agents: &[AgentId]) -> Result<BTreeMap<AgentId, Usage>> {
+        self.read_agent_usages_by_id(agents)
+    }
+
+    fn count_tasks(&self, statuses: &[aether_core::task::TaskStatusKind]) -> Result<u64> {
+        self.count_tasks_of(statuses)
+    }
+
+    fn count_pending_approvals(&self) -> Result<u64> {
+        self.count_pending()
+    }
+
+    fn tree_page(&self, query: &crate::TreeQuery) -> Result<crate::TreePage> {
+        self.read_tree_page(query)
+    }
+
+    fn subtree_usages(&self, roots: &[AgentId]) -> Result<Vec<crate::UsageNode>> {
+        self.read_subtree_usages(roots)
+    }
+
+    fn tree_usages(
+        &self,
+        shown: &[Agent],
+        run: Option<aether_core::id::RunId>,
+    ) -> Result<BTreeMap<AgentId, crate::TreeUsage>> {
+        self.read_tree_usages(shown, run)
     }
 
     fn subtree_ids(&self, root: AgentId) -> Result<BTreeSet<AgentId>> {
@@ -452,6 +491,24 @@ impl Store for SqliteStore {
             );
         }
         Ok(ids)
+    }
+
+    fn expired_child_span(&self, parent: AgentId) -> Result<Option<(u64, u64)>> {
+        let (first, last): (Option<i64>, Option<i64>) = self.read_conn()?.query_row(
+            "SELECT MIN(first_seq), MAX(last_seq) FROM expired_event_spans WHERE parent_agent_id = ?1",
+            [parent.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let (Some(first), Some(last)) = (first, last) else {
+            debug_assert!(first.is_none() && last.is_none(), "both aggregate one set");
+            return Ok(None);
+        };
+        if first <= 0 || last < first {
+            return Err(StoreError::Corrupt(format!(
+                "expired span {first}..={last} under {parent} is out of order"
+            )));
+        }
+        Ok(Some((first as u64, last as u64)))
     }
 
     fn subtree_agents(&self, root: AgentId) -> Result<Vec<Agent>> {
@@ -733,6 +790,39 @@ impl Store for SqliteStore {
         self.query_memories(query)
     }
 
+    fn memory_admission(&self, id: MemoryId) -> Result<Option<MemoryAdmission>> {
+        self.read_memory_admission(id)
+    }
+
+    fn memory_stale_marks(
+        &self,
+        memories: &[MemoryId],
+    ) -> Result<std::collections::BTreeMap<MemoryId, crate::MemoryStaleMark>> {
+        self.memory_stale_marks_for(memories)
+    }
+
+    fn memory_holdouts(&self, memory: MemoryId) -> Result<Vec<crate::MemoryHoldout>> {
+        self.memory_holdouts_of(memory)
+    }
+
+    fn memory_admissions(
+        &self,
+        memories: &[MemoryId],
+    ) -> Result<std::collections::BTreeMap<MemoryId, MemoryAdmission>> {
+        self.read_memory_admissions(memories)
+    }
+
+    fn memory_v2_counts(&self) -> Result<crate::MemoryV2Counts> {
+        self.count_memory_v2()
+    }
+
+    fn snapshot_retrievals(
+        &self,
+        ids: &[SnapshotId],
+    ) -> Result<Vec<(SnapshotId, Option<aether_core::memory_v2::RetrievalTrace>)>> {
+        self.read_snapshot_retrievals(ids)
+    }
+
     fn artifact(&self, id: ArtifactId) -> Result<Option<Artifact>> {
         self.read_one("SELECT body FROM artifacts WHERE id = ?1", &id.to_string())
     }
@@ -909,6 +999,10 @@ impl Store for SqliteStore {
             .optional()?)
     }
 
+    fn metas(&self, keys: &[String]) -> Result<Vec<Option<String>>> {
+        self.read_metas(keys)
+    }
+
     fn instance_id(&self) -> Result<String> {
         self.meta("instance_id")?
             .ok_or_else(|| StoreError::Corrupt("missing instance_id".into()))
@@ -918,8 +1012,43 @@ impl Store for SqliteStore {
 /// The agent listing for `filter`. Whole, live-only and per-run listings walk
 /// `agents_created` or `agents_run_created` in order; other filters sort matches.
 pub(super) fn agent_list_sql(filter: &AgentFilter, args: &mut Arguments) -> String {
+    let mut sql = format!(
+        "SELECT id, body FROM agents WHERE {}",
+        agent_predicate(filter, args)
+    );
+    sql.push_str(" ORDER BY created_at ASC");
+    debug_assert_eq!(sql.matches('?').count(), args.len());
+    sql
+}
+
+/// The statuses that are not terminal, as the `status` column stores them.
+pub(super) fn live_statuses() -> Vec<&'static str> {
+    // Off `is_terminal`, not a list typed here: a new terminal status must
+    // not silently start counting as live.
+    let live: Vec<&'static str> = AgentStatusKind::ALL
+        .iter()
+        .filter(|k| !k.is_terminal())
+        .map(|k| k.as_str())
+        .inspect(|name| assert!(name.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')))
+        .collect();
+    assert!(!live.is_empty(), "some status is live");
+    live
+}
+
+/// `status IN (...)` over the statuses that are not terminal, which the status
+/// index answers one status at a time.
+pub(super) fn live_status_clause() -> String {
+    let live: Vec<String> = live_statuses()
+        .into_iter()
+        .map(|name| format!("'{name}'"))
+        .collect();
+    format!("status IN ({})", live.join(", "))
+}
+
+/// The `WHERE` condition selecting `filter`'s agents by their columns.
+pub(super) fn agent_predicate(filter: &AgentFilter, args: &mut Arguments) -> String {
     debug_assert!(args.is_empty(), "placeholders are numbered from 1");
-    let mut sql = String::from("SELECT id, body FROM agents WHERE 1 = 1");
+    let mut sql = String::from("1 = 1");
     if let Some(p) = filter.parent {
         args.push(Box::new(p.to_string()));
         sql.push_str(&format!(" AND parent = ?{}", args.len()));
@@ -929,17 +1058,8 @@ pub(super) fn agent_list_sql(filter: &AgentFilter, args: &mut Arguments) -> Stri
         sql.push_str(&format!(" AND run = ?{}", args.len()));
     }
     if filter.live_only {
-        // Off `is_terminal`, not a list typed here: a new terminal status
-        // must not silently start counting as live.
-        let terminal: Vec<String> = AgentStatusKind::ALL
-            .iter()
-            .filter(|k| k.is_terminal())
-            .map(|k| {
-                args.push(Box::new(k.as_str().to_owned()));
-                format!("?{}", args.len())
-            })
-            .collect();
-        sql.push_str(&format!(" AND status NOT IN ({})", terminal.join(",")));
+        // An `IN` the status index answers: `NOT IN` scanned every agent kept.
+        sql.push_str(&format!(" AND {}", live_status_clause()));
     }
     if !filter.statuses.is_empty() {
         let placeholders: Vec<String> = filter
@@ -952,7 +1072,6 @@ pub(super) fn agent_list_sql(filter: &AgentFilter, args: &mut Arguments) -> Stri
             .collect();
         sql.push_str(&format!(" AND status IN ({})", placeholders.join(",")));
     }
-    sql.push_str(" ORDER BY created_at ASC");
     debug_assert_eq!(sql.matches('?').count(), args.len());
     sql
 }

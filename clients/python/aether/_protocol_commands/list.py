@@ -17,6 +17,19 @@ def list_agents(*, query: AgentQuery) -> dict[str, Any]:
     frame["query"] = query
     return frame
 
+def list_agents_page(*, after: AgentId | None = None, limit: int | None = None, query: AgentQuery | None = None) -> dict[str, Any]:
+    """One page of agents in `AgentId` order, from just after `after`.
+    `limit` is 1 to 500, 200 when absent. Needs `features::AGENTS_PAGING`.
+    """
+    frame: dict[str, Any] = {"cmd": "list_agents_page"}
+    if after is not None:
+        frame["after"] = after
+    if limit is not None:
+        frame["limit"] = limit
+    if query is not None:
+        frame["query"] = query
+    return frame
+
 def list_approval_rules(*, include_revoked: bool | None = None) -> dict[str, Any]:
     """Remembered decisions, oldest first."""
     frame: dict[str, Any] = {"cmd": "list_approval_rules"}
@@ -86,6 +99,11 @@ def list_tasks(*, query: TaskQuery) -> dict[str, Any]:
     """The `list_tasks` command."""
     frame: dict[str, Any] = {"cmd": "list_tasks"}
     frame["query"] = query
+    return frame
+
+def list_view_modes() -> dict[str, Any]:
+    """Built-in and user transcript modes from the daemon's configuration."""
+    frame: dict[str, Any] = {"cmd": "list_view_modes"}
     return frame
 
 def list_workspaces(*, limit: int | None = None) -> dict[str, Any]:

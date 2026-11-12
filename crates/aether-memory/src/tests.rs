@@ -116,7 +116,7 @@ fn retrieval_respects_scope_and_prefers_relevance() {
     let s = service();
     s.admit(
         candidate(
-            "Global rule: commit messages stay under seventy characters",
+            "Global rule: every unsafe block carries a SAFETY comment",
             MemoryScope::Global,
         ),
         Actor::System,

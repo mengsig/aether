@@ -325,7 +325,7 @@ async fn a_default_engine_turn_is_priced_by_the_model_its_session_reported() {
     let h = harness_with_engine(
         Arc::new(SessionModelEngine {
             kind: EngineKind::CLAUDE_CODE,
-            model: "claude-fable-5-1",
+            model: "claude-fable-5-2",
             usage,
         }),
         Arc::new(Mutex::new(Vec::new())),

@@ -13,7 +13,7 @@ use crate::idempotency::IdempotencyKey;
 use crate::inbox::InboxItem;
 use crate::lease::Lease;
 use crate::memory::MemoryCandidate;
-use crate::model::{ContentBlock, MessageRole, ModelRef, StopReason, Usage};
+use crate::model::{Billing, ContentBlock, MessageRole, ModelRef, StopReason, Usage};
 use crate::provider::QuotaWindow;
 use crate::snapshot::ContextLayer;
 use crate::task::{Priority, TaskResult};
@@ -131,7 +131,14 @@ pub enum EventKind {
     },
     /// Absolute billing totals, including corrections from a completed engine run.
     #[serde(rename = "agent.usage_updated")]
-    AgentUsageUpdated { total: Usage, turn_usage: Usage },
+    AgentUsageUpdated {
+        total: Usage,
+        turn_usage: Usage,
+        /// What paid for the use this record adds. Absent on records written
+        /// before it was kept, and when the provider was unknown: read as unknown.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        billing: Option<Billing>,
+    },
     /// A transcript entry: what the model said, or what it was shown.
     #[serde(rename = "agent.message")]
     AgentMessage {

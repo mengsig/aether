@@ -28,6 +28,7 @@ export interface DeltaToolInput {
   "delta": "tool_input";
   "name": string;
   "partial_json": string;
+  "tool_use_id"?: string | null;
 }
 
 /**

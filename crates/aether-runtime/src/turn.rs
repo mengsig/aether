@@ -18,8 +18,8 @@ use aether_core::inbox::InboxKind;
 use aether_core::lease::Lease;
 use aether_core::memory::MemoryScope;
 use aether_core::model::{
-    ContentBlock, Message, MessageRole, ModelError, ModelErrorClass, ModelRef, ModelResponse,
-    StopReason, StreamEvent, ToolResultBlock,
+    Billing, ContentBlock, Message, MessageRole, ModelError, ModelErrorClass, ModelRef,
+    ModelResponse, StopReason, StreamEvent, ToolResultBlock,
 };
 use aether_core::snapshot::Invocation;
 use aether_core::task::{Task, TaskResult, TaskStatus, TaskStatusKind};
@@ -37,12 +37,13 @@ use tokio_util::sync::CancellationToken;
 
 use crate::approval::{self, Gate};
 use crate::artifacts::StoreArtifactSink;
-use crate::bus::DeltaKind;
+use crate::bus::{DeltaKind, DeltaStream};
 use crate::commands::CreateAgentSpec;
 use crate::resources::{ResourceGuard, WaitOutcome};
 use crate::{CommitHold, Result, Runtime, RuntimeError};
 
 mod completion;
+mod prose_result;
 use completion::mark_completed;
 pub(crate) use completion::{AnswerJobs, CompletionSource, prose_only_next};
 
@@ -60,7 +61,7 @@ mod failure;
 mod server_compaction;
 use failure::*;
 mod context;
-pub(crate) use context::{agent_temp_dir, retrieve_memories, tool_context};
+pub(crate) use context::{agent_temp_dir, holdout_unit, retrieve_memories, tool_context};
 mod tools;
 pub(crate) use tools::ToolEffects;
 use tools::*;
@@ -252,6 +253,15 @@ impl TurnCtx {
             task_id: self.task.as_ref().map(|task| task.id),
             spawns: spawns.clone(),
         }
+    }
+
+    /// The agent's absolute usage now, with what paid for the use it adds.
+    pub(crate) fn usage_record(&self, billing: Option<Billing>) -> EventDraft {
+        self.draft(EventKind::AgentUsageUpdated {
+            total: self.agent.stats.usage,
+            turn_usage: self.turn_usage,
+            billing,
+        })
     }
 
     pub(crate) fn add_usage(&mut self, usage: aether_core::model::Usage) {

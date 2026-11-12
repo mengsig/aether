@@ -12,6 +12,7 @@ mod migration_backup;
 mod schedule_tests;
 mod schema;
 mod sqlite;
+mod tree_query;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -32,6 +33,7 @@ use aether_core::idempotency::{
 use aether_core::inbox::InboxItem;
 use aether_core::lease::Lease;
 use aether_core::memory::{MemoryKind, MemoryRecord, MemoryRecorder, MemoryScope};
+use aether_core::memory_admission::MemoryAdmission;
 use aether_core::model::{Message, ModelRef};
 use aether_core::notification::{Notification, NotificationState};
 use aether_core::repository::{RepositoryAlias, RepositoryAliasCounts};
@@ -45,7 +47,11 @@ use aether_core::memory_feedback::{FeedbackTally, MemoryFeedback};
 
 pub use migration_backup::backup_database;
 pub use schema::SCHEMA_VERSION;
+pub use sqlite::usage_totals::register as register_sql_functions;
 pub use sqlite::{HistoryScreen, PushSubscriptionRow, RunExpiry, SqliteStore};
+pub use tree_query::{
+    TREE_PAGE_MAX, TreePage, TreeQuery, TreeUsage, UsageNode, tree_page_of, tree_usages_of,
+};
 
 /// The single write path, shared by everything that commits to one store.
 ///
@@ -180,6 +186,12 @@ pub enum Mutation {
     UpsertSchedule(Schedule),
     RecordScheduleOccurrence(ScheduleOccurrence),
     UpsertAgent(Agent),
+    /// Insert a new agent with the subsystem it belongs to, if any. Fails on
+    /// an existing id: the subsystem is fixed when the row is first written.
+    CreateAgent {
+        agent: Agent,
+        subsystem: Option<String>,
+    },
     UpsertTask(Task),
     /// `item.seq` must equal the agent's current last inbox seq plus one.
     DeliverInbox(InboxItem),
@@ -200,6 +212,16 @@ pub enum Mutation {
     /// the duplicate creation it belongs to must not become durable.
     RecordSubmission(RecordedSubmission),
     PutMemory(MemoryRecord),
+    /// Insert or replace a memory's admission. Its record must already be
+    /// stored, earlier in the same commit or before it.
+    PutMemoryAdmission(MemoryAdmission),
+    /// Insert or replace a memory's stale mark. Its record must be stored.
+    MarkMemoryStale(MemoryStaleMark),
+    /// Drop a memory's stale mark; a memory with none is left as it is.
+    ClearMemoryStale(MemoryId),
+    /// Log a memory a turn withheld from its model. The first log for a
+    /// memory in one holdout unit wins; a repeat is not an error.
+    LogMemoryHoldout(MemoryHoldout),
     RecordMemoryFeedback(MemoryFeedback),
     RetractMemoryFeedback {
         id: MemoryFeedbackId,
@@ -411,6 +433,13 @@ pub struct AgentFilter {
     pub exclude_archived: bool,
 }
 
+/// One page of agents, and the cursor for the next when there is one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentPage {
+    pub agents: Vec<Agent>,
+    pub next_after: Option<AgentId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactFilter {
     pub name: Option<String>,
@@ -441,6 +470,57 @@ pub struct TaskFilter {
     pub statuses: Vec<TaskStatusKind>,
 }
 
+/// Memory 2.0 rows, counted for `memory_migration_status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MemoryV2Counts {
+    pub total: u64,
+    /// With an admission row (V30).
+    pub admitted: u64,
+    /// Without one: read as active.
+    pub implicit: u64,
+    /// Admission rows still waiting for support.
+    pub candidates: u64,
+    /// Stale marks (V31).
+    pub stale: u64,
+    /// Rows in the holdout log (V31).
+    pub held_out: u64,
+}
+
+/// A memory whose source may no longer say what it says. Retrieval demotes
+/// it; nothing hides it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemoryStaleMark {
+    pub memory: MemoryId,
+    pub reason: String,
+    pub since: Timestamp,
+    /// The commit whose tree stopped stating the memory's source, when a
+    /// repository sweep set the mark; `None` for a mark set by hand.
+    pub revision: Option<String>,
+}
+
+/// A memory a turn withheld from its model, so its lift can be measured as a
+/// difference. `unit` is the task the draw was made for, or the agent with
+/// none: each memory is held out once per unit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemoryHoldout {
+    pub memory: MemoryId,
+    pub agent: AgentId,
+    pub task: Option<TaskId>,
+    pub at: Timestamp,
+    /// The configured rate the draw was made at, in `0..=1`.
+    pub rate: f32,
+    /// The retrieval score the memory would have been injected with.
+    pub score: f32,
+}
+
+impl MemoryHoldout {
+    /// The task, or the agent when the turn had none.
+    pub fn unit(&self) -> String {
+        self.task
+            .map_or_else(|| self.agent.to_string(), |task| task.to_string())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemoryQuery {
     /// Restrict authorship, independently of applicability scope.
@@ -469,6 +549,8 @@ pub struct MemoryQuery {
     pub include_forgotten: bool,
     /// Select pending proposals instead of admitted memories. Never enabled for recall.
     pub proposed: bool,
+    /// Include candidates still waiting for support. Never enabled for recall.
+    pub include_candidates: bool,
     /// One record by id, for a browser showing a supersession chain.
     pub id: Option<MemoryId>,
     pub limit: usize,
@@ -489,6 +571,7 @@ impl Default for MemoryQuery {
             include_superseded: false,
             include_forgotten: false,
             proposed: false,
+            include_candidates: false,
             id: None,
             limit: 20,
         }
@@ -668,20 +751,101 @@ pub trait Store: Send + Sync {
 
     fn agent(&self, id: AgentId) -> Result<Option<Agent>>;
     fn agents(&self, filter: &AgentFilter) -> Result<Vec<Agent>>;
+    /// One page of `filter`'s agents in id order, from just after `after`,
+    /// at most `limit` of them. `filter.budgeted_only` is not supported.
+    fn agents_page(
+        &self,
+        filter: &AgentFilter,
+        after: Option<AgentId>,
+        limit: usize,
+    ) -> Result<AgentPage>;
+    /// The subsystem an agent was created under; set once, by
+    /// [`Mutation::CreateAgent`], and never changed.
+    fn agent_subsystem(&self, id: AgentId) -> Result<Option<String>>;
     /// Whether `id` is `root` or one of its descendants; false when either is unknown.
     /// Same answer as `subtree_of(..).contains(&id)` without reading the fleet.
     fn is_descendant(&self, root: AgentId, id: AgentId) -> Result<bool>;
     /// `root` and every descendant of it; empty when `root` is unknown.
     fn subtree_ids(&self, root: AgentId) -> Result<BTreeSet<AgentId>>;
+    /// The seq span of expired history whose events named `parent` as their
+    /// parent: a child retention removed, perhaps with a run of its own.
+    fn expired_child_span(&self, parent: AgentId) -> Result<Option<(u64, u64)>>;
     /// `root` and every descendant of it, decoded, in the order `agents` lists the
     /// whole fleet (`created_at`, then insertion); empty when `root` is unknown.
     fn subtree_agents(&self, root: AgentId) -> Result<Vec<Agent>>;
     /// The stored agents among `ids` plus every stored ancestor of them, in no
     /// particular order. Unknown ids and missing parents are skipped.
     fn ancestry(&self, ids: &[AgentId]) -> Result<Vec<Agent>>;
-    /// Usage summed over every agent that is not an imported archive, decoding
-    /// each row's usage alone rather than the whole agent.
+    /// Usage summed over every agent that is not an imported archive. The
+    /// SQLite store reads it from one row its triggers keep as agents are written.
     fn fleet_usage(&self) -> Result<aether_core::model::Usage>;
+    /// What `run`'s agents billed between them, how many there are and when
+    /// the first was created; `None` for a run with no agent. The SQLite
+    /// store reads its kept totals, never the agents' bodies.
+    fn run_totals(&self, run: RunId) -> Result<Option<aether_core::budget::RunTotals>> {
+        let agents = self.agents(&AgentFilter {
+            run: Some(run),
+            ..Default::default()
+        })?;
+        Ok(aether_core::budget::RunTotals::of(&agents))
+    }
+    /// The usage of each of `agents` the store holds, read by id; the SQLite
+    /// store reads `agent_usage`, not the bodies. Unknown ids are left out.
+    fn agent_usages(
+        &self,
+        agents: &[AgentId],
+    ) -> Result<BTreeMap<AgentId, aether_core::model::Usage>> {
+        let mut usages = BTreeMap::new();
+        for id in agents {
+            if let Some(agent) = self.agent(*id)? {
+                usages.insert(*id, agent.stats.usage);
+            }
+        }
+        Ok(usages)
+    }
+    /// One page of the agents a tree shows, filtered before any is decoded:
+    /// on the first page the newest live agents in scope and the root, and on
+    /// each page the newest agents older than `query.after`, `query.limit` of each.
+    fn tree_page(&self, query: &TreeQuery) -> Result<TreePage> {
+        tree_page_of(self.tree_scope(query)?, query)
+    }
+    /// The agents in `query`'s scope, unpaged: only for stores without
+    /// [`Store::tree_page`] of their own, such as test doubles.
+    fn tree_scope(&self, query: &TreeQuery) -> Result<Vec<Agent>> {
+        let mut agents = match query.root {
+            Some(root) => self.subtree_agents(root)?,
+            None => self.agents(&AgentFilter {
+                run: query.run,
+                ..Default::default()
+            })?,
+        };
+        agents.retain(|agent| query.selects(agent));
+        Ok(agents)
+    }
+    /// `roots` and every agent below them, across runs, as a usage roll-up
+    /// reads them; the SQLite store reads no body. Unknown roots are skipped.
+    fn subtree_usages(&self, roots: &[AgentId]) -> Result<Vec<UsageNode>> {
+        let mut nodes = Vec::new();
+        let mut seen = BTreeSet::new();
+        for root in roots {
+            for agent in self.subtree_agents(*root)? {
+                if seen.insert(agent.id) {
+                    nodes.push(UsageNode::of(&agent));
+                }
+            }
+        }
+        Ok(nodes)
+    }
+    /// [`TreeUsage`] for each of `shown`, counting every agent below it or
+    /// only those of `run`; the SQLite store reads its kept subtree totals by key.
+    fn tree_usages(
+        &self,
+        shown: &[Agent],
+        run: Option<RunId>,
+    ) -> Result<BTreeMap<AgentId, TreeUsage>> {
+        let ids: Vec<AgentId> = shown.iter().map(|agent| agent.id).collect();
+        Ok(tree_usages_of(self.subtree_usages(&ids)?, shown, run))
+    }
     /// Whether any agent, including archived and terminal agents, carries this repository scope.
     fn any_agent_in_repository(&self, repository: &str) -> Result<bool>;
 
@@ -706,6 +870,16 @@ pub trait Store: Send + Sync {
 
     fn task(&self, id: TaskId) -> Result<Option<Task>>;
     fn tasks(&self, filter: &TaskFilter) -> Result<Vec<Task>>;
+    /// How many tasks have one of `statuses`, which is not empty. The SQLite
+    /// store counts them by its status index, decoding none.
+    fn count_tasks(&self, statuses: &[TaskStatusKind]) -> Result<u64> {
+        assert!(!statuses.is_empty(), "a count names the statuses it counts");
+        let tasks = self.tasks(&TaskFilter {
+            statuses: statuses.to_vec(),
+            ..Default::default()
+        })?;
+        Ok(tasks.len() as u64)
+    }
 
     /// Inbox items with `seq > after`, ascending.
     fn inbox(&self, agent: AgentId, after: u64) -> Result<Vec<InboxItem>>;
@@ -726,6 +900,21 @@ pub trait Store: Send + Sync {
         }
         Ok(out)
     }
+    /// The retrieval trace each stored snapshot recorded, in the order of
+    /// `ids`; ids with no stored snapshot are left out. Disk stores skip the
+    /// messages.
+    fn snapshot_retrievals(
+        &self,
+        ids: &[SnapshotId],
+    ) -> Result<Vec<(SnapshotId, Option<aether_core::memory_v2::RetrievalTrace>)>> {
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(snapshot) = self.snapshot(*id)? {
+                out.push((snapshot.id, snapshot.memory_retrieval));
+            }
+        }
+        Ok(out)
+    }
     fn invocation(&self, id: InvocationId) -> Result<Option<Invocation>>;
     fn invocations_for_agent(&self, agent: AgentId) -> Result<Vec<Invocation>>;
 
@@ -734,6 +923,11 @@ pub trait Store: Send + Sync {
 
     fn approval(&self, id: ApprovalId) -> Result<Option<ApprovalRequest>>;
     fn pending_approvals(&self) -> Result<Vec<ApprovalRequest>>;
+    /// How many approvals wait on a decision; the SQLite store counts them by
+    /// its state index, decoding none.
+    fn count_pending_approvals(&self) -> Result<u64> {
+        Ok(self.pending_approvals()?.len() as u64)
+    }
 
     /// The outcome committed for `key` while driving `invocation`, if any.
     /// Scoped to the invocation and the call, so only a re-drive of that
@@ -788,6 +982,62 @@ pub trait Store: Send + Sync {
 
     fn memory(&self, id: MemoryId) -> Result<Option<MemoryRecord>>;
     fn memories(&self, query: &MemoryQuery) -> Result<Vec<MemoryRecord>>;
+    /// `None` for a record admitted before admission was tracked.
+    fn memory_admission(&self, id: MemoryId) -> Result<Option<MemoryAdmission>>;
+    /// The stored admission of each of `memories` that has one.
+    fn memory_admissions(
+        &self,
+        memories: &[MemoryId],
+    ) -> Result<BTreeMap<MemoryId, MemoryAdmission>> {
+        let mut found = BTreeMap::new();
+        for id in memories {
+            if let Some(admission) = self.memory_admission(*id)? {
+                found.insert(*id, admission);
+            }
+        }
+        Ok(found)
+    }
+    /// The stale mark of each of `memories` that has one, in one read.
+    fn memory_stale_marks(
+        &self,
+        memories: &[MemoryId],
+    ) -> Result<BTreeMap<MemoryId, MemoryStaleMark>>;
+    /// Every logged holdout of `memory`, oldest first.
+    fn memory_holdouts(&self, memory: MemoryId) -> Result<Vec<MemoryHoldout>>;
+    /// How many memories stand where Memory 2.0 keeps them, for
+    /// `memory_migration_status`. Disk stores count in SQL.
+    fn memory_v2_counts(&self) -> Result<MemoryV2Counts> {
+        let everything = |proposed| MemoryQuery {
+            include_superseded: true,
+            include_forgotten: true,
+            include_candidates: true,
+            proposed,
+            limit: usize::MAX,
+            ..Default::default()
+        };
+        let mut records = self.memories(&everything(false))?;
+        records.extend(self.memories(&everything(true))?);
+        let ids: Vec<MemoryId> = records.iter().map(|r| r.id).collect();
+        let mut counts = MemoryV2Counts {
+            total: ids.len() as u64,
+            stale: self.memory_stale_marks(&ids)?.len() as u64,
+            ..Default::default()
+        };
+        for id in ids {
+            match self.memory_admission(id)? {
+                Some(admission) => {
+                    counts.admitted += 1;
+                    counts.candidates += u64::from(
+                        admission.state == aether_core::memory_admission::MemoryState::Candidate,
+                    );
+                }
+                None => counts.implicit += 1,
+            }
+            counts.held_out += self.memory_holdouts(id)?.len() as u64;
+        }
+        debug_assert_eq!(counts.admitted + counts.implicit, counts.total);
+        Ok(counts)
+    }
 
     fn artifact(&self, id: ArtifactId) -> Result<Option<Artifact>>;
     fn artifacts_for_task(&self, task: TaskId) -> Result<Vec<Artifact>>;
@@ -866,6 +1116,11 @@ pub trait Store: Send + Sync {
     fn transcript(&self, agent: AgentId, after: u64) -> Result<Vec<TranscriptEntry>>;
 
     fn meta(&self, key: &str) -> Result<Option<String>>;
+    /// The value of each of `keys`, in order. The SQLite store reads them
+    /// from one snapshot, so no commit lands between two of them.
+    fn metas(&self, keys: &[String]) -> Result<Vec<Option<String>>> {
+        keys.iter().map(|key| self.meta(key)).collect()
+    }
     /// Stable id of this store, minted on first open.
     fn instance_id(&self) -> Result<String>;
 }

@@ -32,11 +32,18 @@ fn claude_cost(input: f64, output: f64) -> ModelCost {
 }
 
 /// Fable prices like the rest of the family but with a cheaper cache read.
-/// Shared with `claude-code/fable` so the two can never drift apart.
+/// Shared with Claude Code so the two providers cannot drift apart.
 fn fable_cost() -> ModelCost {
     ModelCost {
         cache_read_per_mtok: 0.25,
         ..claude_cost(10.0, 50.0)
+    }
+}
+
+fn fable_5_2_cost() -> ModelCost {
+    ModelCost {
+        cache_read_per_mtok: 0.20,
+        ..claude_cost(8.0, 40.0)
     }
 }
 
@@ -131,11 +138,18 @@ fn anthropic() -> ProviderDef {
             .with_aliases(["haiku", "haiku-5-5", "haiku-5.5"])
             .with_tier(ModelTier::Fast),
             ModelDef::new(
+                "claude-fable-5-2",
+                "Claude Fable 5.2",
+                adaptive(1_000_000, 128_000, fable_5_2_cost()),
+            )
+            .with_aliases(["fable", "fable-5-2"])
+            .with_tier(ModelTier::Frontier),
+            ModelDef::new(
                 "claude-fable-5-1",
                 "Claude Fable 5.1",
                 adaptive(1_000_000, 128_000, fable_cost()),
             )
-            .with_aliases(["fable", "fable-5-1"])
+            .with_aliases(["fable-5-1"])
             .with_tier(ModelTier::Frontier),
         ],
         default_capabilities: Some(claude(
@@ -482,12 +496,23 @@ fn claude_code() -> ProviderDef {
             ),
             priced(
                 engine_model(
+                    "claude-fable-5-2",
+                    "Claude Fable 5.2",
+                    CLAUDE_CONTEXT,
+                    128_000,
+                )
+                .with_aliases(["fable", "fable-5-2"])
+                .with_tier(ModelTier::Frontier),
+                fable_5_2_cost(),
+            ),
+            priced(
+                engine_model(
                     "claude-fable-5-1",
                     "Claude Fable 5.1",
                     CLAUDE_CONTEXT,
                     128_000,
                 )
-                .with_aliases(["fable", "fable-5-1"])
+                .with_aliases(["fable-5-1"])
                 .with_tier(ModelTier::Frontier),
                 fable_cost(),
             ),

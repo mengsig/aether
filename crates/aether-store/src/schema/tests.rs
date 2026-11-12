@@ -4,12 +4,14 @@ fn previous_database(path: &std::path::Path) -> Connection {
     database_at(path, SCHEMA_VERSION - 1)
 }
 
-fn database_at(path: &std::path::Path, version: u32) -> Connection {
+pub(super) fn database_at(path: &std::path::Path, version: u32) -> Connection {
     assert!(version > 0);
     assert!(version <= SCHEMA_VERSION);
     let conn = Connection::open(path).expect("database");
     conn.execute_batch("PRAGMA journal_mode=WAL;").expect("WAL");
-    for statement in &MIGRATIONS[..version as usize] {
+    crate::sqlite::usage_totals::register(&conn).expect("the V33 triggers' function");
+    for (at, statement) in MIGRATIONS[..version as usize].iter().enumerate() {
+        schema_migration(&conn, at as u32 + 1).expect("previous columns");
         conn.execute_batch(statement).expect("previous schema");
     }
     conn.execute(
@@ -120,7 +122,7 @@ fn v9_initializes_cancellation_intent_without_overwriting_existing_state() {
 
 /// Restore a migration backup as docs/migration-backups.md describes: it is
 /// a zstd frame holding the plain SQLite file.
-fn restore(backup: &std::path::Path) -> (tempfile::TempDir, std::path::PathBuf) {
+pub(super) fn restore(backup: &std::path::Path) -> (tempfile::TempDir, std::path::PathBuf) {
     assert!(
         backup.to_string_lossy().ends_with(".sqlite.zst"),
         "{}",
@@ -138,7 +140,7 @@ fn restore(backup: &std::path::Path) -> (tempfile::TempDir, std::path::PathBuf) 
 }
 
 /// Every schema object and every row of every ordinary table, by row ID.
-fn dump(conn: &Connection) -> Vec<String> {
+pub(super) fn dump(conn: &Connection) -> Vec<String> {
     let mut statement = conn
         .prepare("SELECT type, name, sql FROM sqlite_master ORDER BY type, name")
         .expect("schema");
@@ -181,7 +183,7 @@ fn dump(conn: &Connection) -> Vec<String> {
     lines
 }
 
-fn version(conn: &Connection) -> u32 {
+pub(super) fn version(conn: &Connection) -> u32 {
     conn.query_row(
         "SELECT value FROM meta WHERE key = 'schema_version'",
         [],
@@ -1023,10 +1025,13 @@ fn a_v22_store_gains_the_creation_order_listing_indexes() {
     assert_eq!(
         indexes(&v22),
         [
+            "agents_archived_id",
             "agents_created",
             "agents_parent",
+            "agents_run_archived_id",
             "agents_run_created",
-            "agents_status",
+            "agents_run_id",
+            "agents_status_id",
             "tasks_created",
             "tasks_owner",
             "tasks_parent",
@@ -1240,6 +1245,57 @@ fn v27_replays_over_a_store_whose_stamp_was_rewound() {
     );
 }
 
+/// The upgrade lane undoes V29 with REWINDS[29] in
+/// scripts/upgrade_compat_migration.py; V29 must then replay in full.
+#[test]
+fn v29_replays_over_the_upgrade_lanes_undo() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("aether.db");
+    drop(crate::SqliteStore::open(&path).expect("v29 store"));
+    let conn = Connection::open(&path).expect("rewind");
+    crate::sqlite::usage_totals::register(&conn).expect("the usage triggers' function");
+    conn.execute(
+        "INSERT INTO agents(id, role, status, run, created_at, updated_at, body, subsystem)
+         VALUES ('agt_named', 'lead', 'ready', 'run_x', 't', 't', '{}', 'archon')",
+        [],
+    )
+    .expect("a named agent");
+    conn.execute_batch(
+        "DROP TRIGGER agents_subsystem_fixed;
+         DROP INDEX agents_run_id;
+         DROP INDEX events_run_type;
+         ALTER TABLE agents DROP COLUMN subsystem;
+         UPDATE meta SET value = '28' WHERE key = 'schema_version';",
+    )
+    .expect("the lane's undo applies to a real v29 store");
+    drop(conn);
+
+    drop(crate::SqliteStore::open(&path).expect("replayed upgrade"));
+    let conn = Connection::open(&path).expect("inspect");
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    let subsystem: Option<String> = conn
+        .query_row(
+            "SELECT subsystem FROM agents WHERE id = 'agt_named'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("the column is back");
+    assert_eq!(subsystem, None, "an undone column comes back empty");
+    let refused = conn.execute(
+        "UPDATE agents SET subsystem = 'late' WHERE id = 'agt_named'",
+        [],
+    );
+    assert!(refused.is_err(), "the trigger is back");
+    let indexes: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('agents_run_id', 'events_run_type')",
+            [],
+            |r| r.get(0),
+        )
+        .expect("indexes");
+    assert_eq!(indexes, 2);
+}
+
 #[test]
 fn a_v27_store_gains_the_approvals_agent_index_history_retention_reads() {
     let directory = tempfile::tempdir().unwrap();
@@ -1264,4 +1320,400 @@ fn a_v27_store_gains_the_approvals_agent_index_history_retention_reads() {
         "{}",
         plan(&v27)
     );
+}
+
+#[test]
+fn v29_leaves_existing_agents_without_a_subsystem_and_fixes_it_from_then_on() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("aether.db");
+    let previous = database_at(&path, 28);
+    previous
+        .execute(
+            "INSERT INTO agents(id, parent, role, status, run, created_at, updated_at, body)
+             VALUES ('agt_old', NULL, 'root', 'created', 'run_1', 't', 't', '{}')",
+            [],
+        )
+        .expect("an agent from before");
+    drop(previous);
+    let conn = Connection::open(&path).expect("reopen");
+    migrate(&conn).expect("migrate");
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    assert!(column_names(&conn, "agents").contains(&"subsystem".to_owned()));
+    let subsystem: Option<String> = conn
+        .query_row(
+            "SELECT subsystem FROM agents WHERE id = 'agt_old'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("row");
+    assert_eq!(subsystem, None);
+    let refused = conn.execute(
+        "UPDATE agents SET subsystem = 'late' WHERE id = 'agt_old'",
+        [],
+    );
+    assert!(refused.is_err(), "not even a first naming after creation");
+    let indexes: Vec<String> = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('agents_run_id', 'events_run_type') ORDER BY name")
+        .expect("prepare")
+        .query_map([], |r| r.get(0))
+        .expect("query")
+        .collect::<rusqlite::Result<_>>()
+        .expect("names");
+    assert_eq!(indexes, ["agents_run_id", "events_run_type"]);
+}
+
+/// The memory and feedback tables, definitions and rows: what usefulness is
+/// read from, and what V30 must leave exactly as it found it.
+fn dump_memories_and_feedback(conn: &Connection) -> Vec<String> {
+    let lines: Vec<String> = dump(conn)
+        .into_iter()
+        .filter(|line| {
+            [
+                "memories ",
+                "memory_feedback ",
+                "table memories ",
+                "table memory_feedback ",
+            ]
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+        })
+        .collect();
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("memory_feedback "))
+    );
+    lines
+}
+
+fn admission_rows(conn: &Connection) -> Vec<(String, String, String)> {
+    conn.prepare("SELECT memory_id, state, tier FROM memory_admission ORDER BY memory_id")
+        .expect("prepare")
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .expect("query")
+        .collect::<rusqlite::Result<_>>()
+        .expect("rows")
+}
+
+fn insert_v29_feedback(conn: &Connection, memory: aether_core::id::MemoryId, verdict: &str) {
+    use aether_core::id::{MemoryFeedbackId, TaskId};
+    let (id, task) = (MemoryFeedbackId::new(), TaskId::new());
+    let body = serde_json::json!({
+        "id": id, "memory": memory, "verdict": verdict, "evidence": "review", "task": task,
+        "reason": "seeded at v29", "actor": {"actor": "user"}, "created_at": "2026-01-02T00:00:00Z",
+    });
+    conn.execute(
+        "INSERT INTO memory_feedback(id, memory_id, task_id, verdict, evidence, created_at, body)
+         VALUES (?1, ?2, ?3, ?4, 'review', '2026-01-02T00:00:00Z', ?5)",
+        rusqlite::params![
+            id.to_string(),
+            memory.to_string(),
+            task.to_string(),
+            verdict,
+            body.to_string()
+        ],
+    )
+    .expect("v29 feedback");
+}
+
+#[test]
+fn v30_admits_every_memory_of_a_v29_store_as_active_and_leaves_its_usefulness_alone() {
+    use crate::{MemoryQuery, Store};
+    use aether_core::{
+        id::MemoryId,
+        memory::{MemoryKind, MemoryRecord, MemoryScope},
+        memory_admission::{MemoryState, MemoryTier},
+        time::now,
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("aether.db");
+    let v29 = database_at(&path, 29);
+    let mut legacy: MemoryRecord = serde_json::from_str(V1_MEMORY_BODY).unwrap();
+    legacy.scope = MemoryScope::Global;
+    legacy.retrieval_count = 7;
+    let mut records = Vec::new();
+    for (state, kind) in [
+        ("active", MemoryKind::Fact),
+        ("pinned", MemoryKind::Decision),
+        ("forgotten", MemoryKind::Lesson),
+        ("superseded", MemoryKind::Constraint),
+    ] {
+        let mut record = legacy.clone();
+        record.id = MemoryId::new();
+        record.kind = kind;
+        record.pinned = state == "pinned";
+        record.forgotten_at = (state == "forgotten").then(now);
+        record.superseded_by = (state == "superseded").then(MemoryId::new);
+        insert_legacy_memory(&v29, &record);
+        records.push(record);
+    }
+    for verdict in ["helped", "helped", "hurt"] {
+        insert_v29_feedback(&v29, records[0].id, verdict);
+    }
+    let before = dump_memories_and_feedback(&v29);
+    drop(v29);
+
+    let store = crate::SqliteStore::open(&path).unwrap();
+    assert_eq!(
+        store.meta("schema_version").unwrap(),
+        Some(SCHEMA_VERSION.to_string())
+    );
+    for record in &records {
+        assert_eq!(store.memory(record.id).unwrap().as_ref(), Some(record));
+        let admission = store
+            .memory_admission(record.id)
+            .unwrap()
+            .expect("backfilled");
+        assert_eq!(admission.state, MemoryState::Active);
+        assert_eq!(admission.tier, MemoryTier::for_kind(record.kind));
+        assert!(admission.support.is_empty() && admission.promoted_at.is_none());
+    }
+    let tallies = store.memory_feedback_tallies(&[records[0].id]).unwrap();
+    assert_eq!(
+        (tallies[&records[0].id].helped, tallies[&records[0].id].hurt),
+        (2, 1)
+    );
+    let live = store.memories(&MemoryQuery::default()).unwrap();
+    assert_eq!(
+        live.len(),
+        2,
+        "the active and the pinned memory are still recalled"
+    );
+    drop(store);
+
+    let conn = Connection::open(&path).unwrap();
+    assert_eq!(
+        dump_memories_and_feedback(&conn),
+        before,
+        "no record or feedback row moved"
+    );
+    let states: Vec<String> = admission_rows(&conn).into_iter().map(|row| row.1).collect();
+    assert_eq!(states, ["active"; 4]);
+}
+
+/// The upgrade lane undoes V30 with REWINDS[30] in
+/// scripts/upgrade_compat_migration.py; V30 must then replay in full.
+#[test]
+fn v30_replays_over_the_upgrade_lanes_undo_and_keeps_what_it_finds() {
+    use crate::{Commit, Mutation, Store};
+    use aether_core::{
+        id::MemoryId,
+        memory::MemoryRecord,
+        memory_admission::{MemoryAdmission, MemoryState},
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("aether.db");
+    let mut record: MemoryRecord = serde_json::from_str(V1_MEMORY_BODY).unwrap();
+    record.scope = aether_core::memory::MemoryScope::Global;
+    let mut candidate = record.clone();
+    candidate.id = MemoryId::new();
+    let store = crate::SqliteStore::open(&path).unwrap();
+    store
+        .commit(
+            Commit::new()
+                .mutate(Mutation::PutMemory(record.clone()))
+                .mutate(Mutation::PutMemory(candidate.clone()))
+                .mutate(Mutation::PutMemoryAdmission(MemoryAdmission::derived(
+                    &candidate,
+                    MemoryState::Candidate,
+                ))),
+        )
+        .unwrap();
+    assert_eq!(store.memory_admission(record.id).unwrap(), None);
+    drop(store);
+
+    // A stamp rewound without the undo keeps the candidate a candidate.
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch("UPDATE meta SET value = '29' WHERE key = 'schema_version';")
+        .unwrap();
+    migrate(&conn).unwrap();
+    let rows = admission_rows(&conn);
+    assert_eq!(rows.len(), 2);
+    assert!(rows.contains(&(
+        candidate.id.to_string(),
+        "candidate".into(),
+        "operational".into()
+    )));
+    assert!(rows.contains(&(record.id.to_string(), "active".into(), "operational".into())));
+
+    conn.execute_batch(
+        "DROP TABLE memory_admission;
+         UPDATE meta SET value = '29' WHERE key = 'schema_version';",
+    )
+    .expect("the lane's undo applies to a real v30 store");
+    migrate(&conn).unwrap();
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    let states: Vec<String> = admission_rows(&conn).into_iter().map(|row| row.1).collect();
+    assert_eq!(
+        states,
+        ["active", "active"],
+        "the undo forgets candidates; nothing is hidden"
+    );
+}
+
+#[test]
+fn an_admission_needs_its_record_and_a_storable_state() {
+    use crate::{Commit, Mutation, Store};
+    use aether_core::memory::MemoryRecord;
+    use aether_core::memory_admission::{MemoryAdmission, MemoryState};
+    let store = crate::SqliteStore::open_in_memory().unwrap();
+    let record: MemoryRecord = serde_json::from_str(V1_MEMORY_BODY).unwrap();
+    let orphan = MemoryAdmission::derived(&record, MemoryState::Active);
+    let refused = store.commit(Commit::new().mutate(Mutation::PutMemoryAdmission(orphan.clone())));
+    assert!(
+        matches!(refused, Err(StoreError::Corrupt(_))),
+        "{refused:?}"
+    );
+    let mut superseded = orphan;
+    superseded.state = MemoryState::Superseded;
+    let refused = store.commit(
+        Commit::new()
+            .mutate(Mutation::PutMemory(record.clone()))
+            .mutate(Mutation::PutMemoryAdmission(superseded)),
+    );
+    assert!(
+        matches!(refused, Err(StoreError::Corrupt(_))),
+        "{refused:?}"
+    );
+    assert_eq!(
+        store.memory(record.id).unwrap(),
+        None,
+        "the whole commit failed"
+    );
+}
+
+/// Every table a V30 store holds memory state in, definitions and rows: what
+/// V31 must leave exactly as it found it.
+fn dump_memory_state(conn: &Connection) -> Vec<String> {
+    let lines: Vec<String> = dump(conn)
+        .into_iter()
+        .filter(|line| {
+            ["memories ", "memory_feedback ", "memory_admission "]
+                .iter()
+                .any(|table| line.starts_with(table) || line.starts_with(&format!("table {table}")))
+        })
+        .collect();
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("memory_admission "))
+    );
+    lines
+}
+
+use aether_core::{
+    id::MemoryId,
+    memory::{MemoryRecord, MemoryScope},
+};
+
+/// A V30 store at `path` with three admitted memories, the first with two
+/// helps and a hurt; returns them and the memory state as dumped.
+pub(super) fn v30_store_with_memories(path: &std::path::Path) -> (Vec<MemoryRecord>, Vec<String>) {
+    let v30 = database_at(path, 30);
+    let mut legacy: MemoryRecord = serde_json::from_str(V1_MEMORY_BODY).unwrap();
+    legacy.scope = MemoryScope::Global;
+    legacy.retrieval_count = 7;
+    let mut records = Vec::new();
+    for pinned in [false, true, false] {
+        let mut record = legacy.clone();
+        record.id = MemoryId::new();
+        record.pinned = pinned;
+        insert_legacy_memory(&v30, &record);
+        records.push(record);
+    }
+    super::backfill_memory_admission(&v30).unwrap();
+    for verdict in ["helped", "hurt", "helped"] {
+        insert_v29_feedback(&v30, records[0].id, verdict);
+    }
+    let dumped = dump_memory_state(&v30);
+    assert_eq!(records.len(), 3);
+    (records, dumped)
+}
+
+/// One stale mark on `ids[1]` and one holdout of `ids[2]`, in one commit.
+pub(super) fn write_v31_tables(store: &crate::SqliteStore, ids: &[MemoryId]) {
+    use crate::{Commit, MemoryHoldout, MemoryStaleMark, Mutation, Store};
+    use aether_core::{id::AgentId, time::now};
+    store
+        .commit(
+            Commit::new()
+                .mutate(Mutation::MarkMemoryStale(MemoryStaleMark {
+                    memory: ids[1],
+                    reason: "notes.md no longer states it".into(),
+                    since: now(),
+                    revision: Some("0123456789abcdef0123456789abcdef01234567".into()),
+                }))
+                .mutate(Mutation::LogMemoryHoldout(MemoryHoldout {
+                    memory: ids[2],
+                    agent: AgentId::new(),
+                    task: None,
+                    at: now(),
+                    rate: 0.05,
+                    score: 0.7,
+                })),
+        )
+        .unwrap();
+    assert_eq!(store.memory_stale_marks(ids).unwrap().len(), 1);
+    assert_eq!(store.memory_holdouts(ids[2]).unwrap().len(), 1);
+}
+
+#[test]
+fn v31_upgrades_a_v30_store_keeping_every_memory_row_and_its_usefulness() {
+    use crate::{MemoryQuery, Store};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("aether.db");
+    let (records, before) = v30_store_with_memories(&path);
+
+    let store = crate::SqliteStore::open(&path).unwrap();
+    assert_eq!(
+        store.meta("schema_version").unwrap(),
+        Some(SCHEMA_VERSION.to_string())
+    );
+    for record in &records {
+        assert_eq!(store.memory(record.id).unwrap().as_ref(), Some(record));
+        assert!(store.memory_admission(record.id).unwrap().is_some());
+        assert!(store.memory_holdouts(record.id).unwrap().is_empty());
+    }
+    let ids: Vec<MemoryId> = records.iter().map(|r| r.id).collect();
+    let tallies = store.memory_feedback_tallies(&ids).unwrap();
+    assert_eq!((tallies[&ids[0]].helped, tallies[&ids[0]].hurt), (2, 1));
+    assert!(
+        store.memory_stale_marks(&ids).unwrap().is_empty(),
+        "nothing starts stale"
+    );
+    assert_eq!(store.memories(&MemoryQuery::default()).unwrap().len(), 3);
+    write_v31_tables(&store, &ids);
+    drop(store);
+
+    let conn = Connection::open(&path).unwrap();
+    assert_eq!(
+        dump_memory_state(&conn),
+        before,
+        "no memory, feedback or admission row moved"
+    );
+}
+
+/// The upgrade lane undoes V31 with REWINDS[31] in
+/// scripts/upgrade_compat_migration.py; V31 must then replay in full.
+#[test]
+fn v31_replays_over_the_upgrade_lanes_undo() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("aether.db");
+    drop(crate::SqliteStore::open(&path).unwrap());
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "DROP TABLE memory_holdouts; DROP TABLE memory_stale;
+         UPDATE meta SET value = '30' WHERE key = 'schema_version';",
+    )
+    .unwrap();
+    drop(conn);
+    use crate::Store;
+    let store = crate::SqliteStore::open(&path).unwrap();
+    assert_eq!(
+        store.meta("schema_version").unwrap(),
+        Some(SCHEMA_VERSION.to_string())
+    );
+    let ids = [aether_core::id::MemoryId::new()];
+    assert!(store.memory_stale_marks(&ids).unwrap().is_empty());
+    assert!(store.memory_holdouts(ids[0]).unwrap().is_empty());
 }
