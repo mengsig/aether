@@ -4,22 +4,6 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
-## Unreleased
-
-### Added
-
-- `list_view_modes` serves the shared TUI's transcript-mode catalog,
-  including scoped user modes and file diagnostics, to any authenticated reader.
-  The `view_modes` handshake feature announces it.
-
-### Fixed
-
-- Daemon shutdown reaps live agents' detached servers before the final store
-  checkpoint and bounds each shutdown phase; committed data remains recoverable
-  from the WAL if a deadline prevents the checkpoint.
-- Delegated children inherit their parent's current deadline and cost budget,
-  including extensions made while a turn is in flight.
-
 ## 1.3.0
 
 Released with Archon 1.5.0. Archon can be mounted on the same listener at `/archon`. Memory 2.0
@@ -81,6 +65,9 @@ before updating.
 - **Claude Fable 5.2.** Available on Anthropic and Claude Code at $8/$40 per
   million tokens with a 1M context; `fable` and `fable-5-2` select it, while
   `fable-5-1` still selects Fable 5.1.
+- `list_view_modes` serves the shared TUI's transcript-mode catalog,
+  including scoped user modes and file diagnostics, to any authenticated reader.
+  The `view_modes` handshake feature announces it.
 
 ### Security
 
@@ -172,6 +159,11 @@ before updating.
   now hands its parent that object as `structured`, not only as summary
   text. Codex models do this often; Archon read such a review as missing
   its verdict and repaired the stage.
+- Daemon shutdown reaps live agents' detached servers before the final store
+  checkpoint and bounds each shutdown phase; committed data remains recoverable
+  from the WAL if a deadline prevents the checkpoint.
+- Delegated children inherit their parent's current deadline and cost budget,
+  including extensions made while a turn is in flight.
 
 ## 1.2.11
 
