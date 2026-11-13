@@ -306,11 +306,12 @@ pub fn conversation_page(
     let to_seq = page.events.last().map_or(0, |event| event.seq);
     let mut entries = Vec::new();
     for event in &page.events {
-        if already_said(store, agent, event)? {
-            continue;
-        }
+        let before = said_before(store, agent, event)?;
         let said = aether_core::conversation::entries(event);
-        entries.extend(said.into_iter().filter(|e| e.important || !important_only));
+        entries.extend(
+            said.into_iter()
+                .filter(|e| (e.important || !important_only) && !before.contains(&e.kind)),
+        );
     }
     assert!(from_seq <= to_seq, "a page's events are in seq order");
     assert!(
@@ -329,15 +330,15 @@ pub fn conversation_page(
     })
 }
 
-/// A cancelled turn whose kept text the runtime also committed as the agent's
-/// message just before it: the TUI draws it once, from that message.
-fn already_said(
+/// The entry kinds a cancelled turn's message just before it already holds:
+/// the runtime may commit the kept text, not its thinking, so each reads once.
+fn said_before(
     store: &dyn Store,
     agent: AgentId,
     event: &aether_core::event::Event,
-) -> aether_store::Result<bool> {
+) -> aether_store::Result<Vec<aether_core::conversation::EntryKind>> {
     let Some(invocation) = aether_core::conversation::cancelled_invocation(event) else {
-        return Ok(false);
+        return Ok(Vec::new());
     };
     let filter = EventFilter {
         types: vec!["agent.message".to_owned()],
@@ -349,12 +350,19 @@ fn already_said(
         previous.iter().all(|message| message.seq < event.seq),
         "the message read precedes the failure"
     );
-    Ok(previous.first().is_some_and(|message| {
+    let message = previous.into_iter().find(|message| {
         matches!(
             message.kind,
             aether_core::event::EventKind::AgentMessage { invocation: Some(said), .. } if said == invocation
         )
-    }))
+    });
+    let kinds = message.map_or_else(Vec::new, |message| {
+        aether_core::conversation::entries(&message)
+            .into_iter()
+            .map(|entry| entry.kind)
+            .collect()
+    });
+    Ok(kinds)
 }
 
 /// Up to `limit` events matching `filter`, in seq order, with whether more
@@ -755,7 +763,14 @@ mod tests {
             class: None,
             retryable: false,
             cancelled: true,
-            partial: vec![aether_core::model::ContentBlock::text(text)],
+            partial: vec![
+                aether_core::model::ContentBlock::Thinking {
+                    text: format!("pondering {text}"),
+                    signature: None,
+                    redacted: false,
+                },
+                aether_core::model::ContentBlock::text(text),
+            ],
         }
     }
 
@@ -802,13 +817,17 @@ mod tests {
                 (EntryKind::Assistant, "engine text"),
             ]
         );
-        let tail = conversation_page(&store, agent, Some(events[0].seq), None, 10, true)
+        let tail = conversation_page(&store, agent, Some(events[0].seq), None, 10, false)
             .expect("a page starting at the failure");
         let said: Vec<_> = tail.entries.iter().map(|e| e.text.as_str()).collect();
         assert_eq!(
             said,
-            ["engine text"],
-            "the message before the page still counts"
+            [
+                "pondering half an answer",
+                "pondering engine text",
+                "engine text"
+            ],
+            "the message before the page still counts; the thinking it lacks reads"
         );
     }
 

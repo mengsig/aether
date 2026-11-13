@@ -385,13 +385,15 @@ the agent's conversation as people read it, folded from its own
 `task.created`, `inbox.delivered`, `agent.message`, `invocation.failed`,
 `question.asked` and note events. A failed turn's partial text counts when the
 turn was stopped or is not retried, once: a stop the runtime also committed as
-an `agent.message` reads from that message. It pages those events like `get_transcript_page` (same cursors and
+an `agent.message` reads its text from that message, and from the failure only
+the kinds that message lacks, such as thinking. It pages those events like `get_transcript_page` (same cursors and
 `limit`), and `from_seq` and `to_seq` are the first and last seq it read, 0
 for none: page backwards with `before: from_seq` and forwards with
 `after: to_seq`. An event yields zero or more entries, each
 `{seq, part, at, kind, important, text, links?}`; `seq` and `part` name it.
 `kind` is `operator` (a message or task from the operator), `assistant` (the
-agent's text in one message, text beside its tool calls included), `post` (a
+agent's text in one message joined in one entry, text beside its tool calls
+included, before that message's calls, as the TUI draws it), `post` (a
 note), `question` (`ask_user`), `message` (from another agent), `thinking`,
 `tool_call`, `tool_result` or `trigger` (a raw external trigger). The daemon
 sets `important`: true for `operator`, `assistant` and `question`, the note's
