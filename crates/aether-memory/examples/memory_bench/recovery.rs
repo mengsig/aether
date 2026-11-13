@@ -176,12 +176,93 @@ fn overwrite(path: &Path, offset: u64, len: usize) -> std::io::Result<()> {
 
 const PAGE: u64 = 4_096;
 
-/// A page in the middle written over with a byte pattern: damage the header
-/// check cannot see.
+/// The middle leaf page of the `memories` table written over with a byte
+/// pattern: damage to the rows retrieval reads that the file header cannot
+/// show. Found by its role in the b-tree, not by file offset, so a store a few
+/// pages larger or smaller still loses the same kind of page. A leaf, not the
+/// root, so it is one page of memories lost, not the whole table's index.
 fn garble_middle_page(path: &Path) -> std::io::Result<()> {
-    let len = std::fs::metadata(path)?.len();
-    garble_pages(path, &[len / 2 / PAGE])
+    let root = table_root(path, "memories")?;
+    let leaf = middle_leaf_page(path, root)?;
+    // SQLite numbers pages from 1; `garble_pages` takes file indices from 0.
+    garble_pages(path, &[leaf - 1])
 }
+
+/// The root page number SQLite's schema records for `table`, read through a
+/// read-only connection that is closed before the file is damaged.
+fn table_root(path: &Path, table: &str) -> std::io::Result<u64> {
+    let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY;
+    let conn = rusqlite::Connection::open_with_flags(path, flags).map_err(std::io::Error::other)?;
+    let root: i64 = conn
+        .query_row(
+            "SELECT rootpage FROM sqlite_schema WHERE type = 'table' AND name = ?1",
+            [table],
+            |row| row.get(0),
+        )
+        .map_err(std::io::Error::other)?;
+    assert!(
+        root > 1,
+        "table {table} cannot be rooted on the schema page"
+    );
+    Ok(root as u64)
+}
+
+/// The leaf in the middle of the table b-tree rooted at `root`: from each
+/// interior page, the middle child. The root itself when the table fits on it.
+fn middle_leaf_page(path: &Path, root: u64) -> std::io::Result<u64> {
+    let bytes = std::fs::read(path)?;
+    assert_eq!(u64::from(be_u16(&bytes, 16)), PAGE, "the store's page size");
+    let pages = bytes.len() as u64 / PAGE;
+    let mut page = root;
+    for _ in 0..MAX_DEPTH {
+        assert!((2..=pages).contains(&page), "page {page} of {pages}");
+        let start = (page - 1) as usize * PAGE as usize;
+        let header = &bytes[start..start + PAGE as usize];
+        let cells = usize::from(be_u16(header, 3));
+        match header[0] {
+            TABLE_LEAF => return Ok(page),
+            TABLE_INTERIOR if cells > 0 => {}
+            other => {
+                return Err(std::io::Error::other(format!(
+                    "page {page} is no table page with cells: type {other:#x}, {cells} cells"
+                )));
+            }
+        }
+        // Children are each cell's left pointer, then the right-most pointer.
+        let middle = cells.div_ceil(2);
+        let child = match middle < cells {
+            true => be_u32(
+                header,
+                usize::from(be_u16(header, INTERIOR_HEADER + 2 * middle)),
+            ),
+            false => be_u32(header, 8),
+        };
+        page = u64::from(child);
+    }
+    Err(std::io::Error::other(format!(
+        "no leaf within {MAX_DEPTH} levels of page {root}"
+    )))
+}
+
+fn be_u16(page: &[u8], offset: usize) -> u16 {
+    u16::from_be_bytes([page[offset], page[offset + 1]])
+}
+
+fn be_u32(page: &[u8], offset: usize) -> u32 {
+    u32::from_be_bytes([
+        page[offset],
+        page[offset + 1],
+        page[offset + 2],
+        page[offset + 3],
+    ])
+}
+
+/// SQLite b-tree page types and the interior page header's length.
+const TABLE_INTERIOR: u8 = 0x05;
+const TABLE_LEAF: u8 = 0x0d;
+const INTERIOR_HEADER: usize = 12;
+/// Far deeper than any table of this bench grows; it bounds the walk.
+const MAX_DEPTH: usize = 16;
 
 /// Spread damage that is bound to reach the memory tables and their index.
 fn garble_every_8th_page(path: &Path) -> std::io::Result<()> {
@@ -190,6 +271,7 @@ fn garble_every_8th_page(path: &Path) -> std::io::Result<()> {
     garble_pages(path, &damaged)
 }
 
+/// Overwrite each page by its index in the file, from 0.
 fn garble_pages(path: &Path, pages: &[u64]) -> std::io::Result<()> {
     let mut file = OpenOptions::new().write(true).open(path)?;
     for page in pages {

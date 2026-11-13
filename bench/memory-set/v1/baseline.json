@@ -1,6 +1,6 @@
 {
   "set": "memory-set/v1",
-  "commit": "b0ffd05e42fa8fff3bb2fd4b548f893edbfb8b8d",
+  "commit": "111d31c96d3441f1df4fea54b4115c892af1313b",
   "arms": {
     "none": {
       "deterministic": {
@@ -90,9 +90,9 @@
               "recovered_share": null
             },
             "garbled_middle_page": {
-              "open": "ok",
-              "retrieval": "ok",
-              "recovered_share": 1.0
+              "open": "error",
+              "retrieval": "skipped",
+              "recovered_share": null
             },
             "garbled_every_8th_page": {
               "open": "error",
@@ -105,20 +105,20 @@
       "measured": {
         "latency_us": {
           "store_memories": 48,
-          "median": 2171.053,
-          "p95": 3132.657,
+          "median": 4353.487,
+          "p95": 6537.437,
           "scaled_store_memories": 5048,
-          "scaled_median": 8226.149,
-          "scaled_p95": 12282.169
+          "scaled_median": 12037.131,
+          "scaled_p95": 30643.809
         },
         "storage_bytes": {
-          "empty_database": 442368,
-          "seeded_database": 593920,
-          "seeded_on_disk": 5723160,
-          "per_record": 3031.04,
-          "scaled_database": 7057408,
-          "scaled_on_disk": 7057408,
-          "scaled_per_memory": 1310.4279
+          "empty_database": 536576,
+          "seeded_database": 700416,
+          "seeded_on_disk": 6571256,
+          "per_record": 3276.8,
+          "scaled_database": 7172096,
+          "scaled_on_disk": 7172096,
+          "scaled_per_memory": 1314.4849
         }
       }
     },
@@ -210,9 +210,9 @@
               "recovered_share": null
             },
             "garbled_middle_page": {
-              "open": "ok",
-              "retrieval": "ok",
-              "recovered_share": 1.0
+              "open": "error",
+              "retrieval": "skipped",
+              "recovered_share": null
             },
             "garbled_every_8th_page": {
               "open": "error",
@@ -225,20 +225,20 @@
       "measured": {
         "latency_us": {
           "store_memories": 48,
-          "median": 2294.336,
-          "p95": 3204.965,
+          "median": 2673.892,
+          "p95": 4641.765,
           "scaled_store_memories": 5048,
-          "scaled_median": 9155.975,
-          "scaled_p95": 12262.331
+          "scaled_median": 11654.274,
+          "scaled_p95": 17390.596
         },
         "storage_bytes": {
-          "empty_database": 442368,
-          "seeded_database": 593920,
-          "seeded_on_disk": 5723160,
-          "per_record": 3031.04,
-          "scaled_database": 7065600,
-          "scaled_on_disk": 7065600,
-          "scaled_per_memory": 1312.0507
+          "empty_database": 536576,
+          "seeded_database": 700416,
+          "seeded_on_disk": 6571256,
+          "per_record": 3276.8,
+          "scaled_database": 7172096,
+          "scaled_on_disk": 7172096,
+          "scaled_per_memory": 1314.4849
         }
       }
     }
