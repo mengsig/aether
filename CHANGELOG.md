@@ -4,6 +4,16 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## Unreleased
+
+### Dependencies
+
+- Updated `toml` to 1.2.1, `croner` to 4.0.3, `encoding_rs` to 0.8.44 and
+  `mime` to 0.3.18, and `taiki-e/install-action` to 2.90.2 in the workflows.
+- Kept `unicode-width` at 0.2.2: 0.2.3 counts the halfwidth katakana sound
+  marks itself, so ratatui's own compensation counts them twice and the
+  terminal UI wraps halfwidth katakana one cell early.
+
 ## 1.3.0
 
 Released with Archon 1.5.0. Archon can be mounted on the same listener at `/archon`. Memory 2.0
