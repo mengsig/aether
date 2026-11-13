@@ -71,6 +71,18 @@ pub fn mandatory(model: &CellModel) -> bool {
     }
 }
 
+/// A raw trigger or a plain note: an entry `get_conversation` never flags
+/// important, so no named mode draws it, even one that shows `status`.
+fn unimportant_entry(model: &CellModel) -> bool {
+    matches!(
+        model,
+        CellModel::Notice {
+            kind: NoticeKind::Trigger { .. } | NoticeKind::Note(_),
+            ..
+        }
+    )
+}
+
 /// A failed call that carries its own error text.
 fn failed_call(model: &CellModel) -> bool {
     matches!(
@@ -103,7 +115,13 @@ impl Policy<'_> {
                 ..
             } | CellModel::Post { .. }
         );
-        if always || definition.show.contains(&category(model)) {
+        if always {
+            return true;
+        }
+        if unimportant_entry(model) {
+            return false;
+        }
+        if definition.show.contains(&category(model)) {
             return true;
         }
         // A failed edit's line is its named-only call cell; the edit itself is tool detail.

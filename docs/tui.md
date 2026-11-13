@@ -855,7 +855,9 @@ status remain available with Ctrl+T and in `standard`.
 The operator's own messages, important posts, questions, approvals, failures and
 actionable health notices always stay visible, whole, even in a mode that omits
 `user_text`. A post is drawn as markdown, like the agent's text, with its links
-listed under it.
+listed under it. Raw triggers and plain notes are never important, so no named
+mode draws them, even one that shows `status`: a fresh launch and a live view
+of the same history draw the same entries.
 A failed tool call is tool detail: a mode without `tool` keeps one line for it.
 Modes do not alter agent execution, event ingestion, approval controls or the board.
 

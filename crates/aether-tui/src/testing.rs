@@ -125,6 +125,22 @@ fn reply_status(app: &mut App, then: Then, agents_suspended: u32) {
 /// One connected agent whose transcript alternates person and agent over
 /// `messages`, in order.
 pub fn app_with_transcript(messages: &[&str]) -> App {
+    let mut app = app_with_history(|_| Vec::new());
+    let id = app.selected.expect("the root is viewed");
+    for (i, text) in messages.iter().enumerate() {
+        let role = if i % 2 == 0 {
+            MessageRole::User
+        } else {
+            MessageRole::Assistant
+        };
+        push_message(&mut app, id, role, text);
+    }
+    app
+}
+
+/// One connected agent viewed on a fresh launch: its first history page
+/// is `history(agent)`, as a restarted TUI loads it.
+pub fn app_with_history(history: impl FnOnce(AgentId) -> Vec<Event>) -> App {
     let mut app = App::new(TuiOptions::default());
     app.reduce(AppEvent::Connected);
 
@@ -182,19 +198,16 @@ pub fn app_with_transcript(messages: &[&str]) -> App {
             next_after: None,
         })),
     });
+    let events = history(id);
+    assert!(
+        events.windows(2).all(|pair| pair[0].seq < pair[1].seq),
+        "a history page is in seq order"
+    );
     app.reduce(AppEvent::Reply {
         then: backfill_then(&app, id),
-        result: Ok(Reply::Events(vec![])),
+        result: Ok(Reply::Events(events)),
     });
-
-    for (i, text) in messages.iter().enumerate() {
-        let role = if i % 2 == 0 {
-            MessageRole::User
-        } else {
-            MessageRole::Assistant
-        };
-        push_message(&mut app, id, role, text);
-    }
+    assert_eq!(app.selected, Some(id), "the root is viewed");
     app
 }
 
