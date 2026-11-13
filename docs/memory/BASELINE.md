@@ -13,7 +13,9 @@ conditions.
 - **Reproduce:** `make bench-memory`. It builds the driver, runs both arms in
   private sandboxes, prints the report and exits 1 unless every deterministic
   metric equals [`bench/memory-set/v1/baseline.json`](../../bench/memory-set/v1/baseline.json).
-  It calls no model.
+  It calls no model. That file now holds the re-recording at 1.3.0 described
+  in [Re-recorded at 1.3.0](#re-recorded-at-130); the tables below are the
+  original 1.2.11 baseline.
 
 ## How memory works today
 
@@ -220,7 +222,7 @@ Recovery, the same for both arms:
 | File missing | ok | ok | 0 of 48: a new, empty store, silently |
 | Truncated to half | error: database disk image is malformed | - | - |
 | First 100 bytes zeroed | error: file is not a database | - | - |
-| One middle page overwritten | ok | ok | 48 of 48: damage not detected |
+| One middle page overwritten (the page at half the file) | ok | ok | 48 of 48: damage not detected |
 | Every eighth page overwritten | error: database disk image is malformed | - | - |
 
 The WAL is not truncated on close: the dataset store occupies 5.7 MB on disk
@@ -256,6 +258,29 @@ also held the stale fact, the model still answered with the newer one.
   overwritten middle page goes undetected and every memory is still
   retrieved; a missing file is replaced by an empty store without a warning.
   No path restores from a backup.
+
+### Re-recorded at 1.3.0
+
+`bench/memory-set/v1/baseline.json` was recorded again at
+`111d31c96d3441f1df4fea54b4115c892af1313b` (`next` after 1.3.0) with
+`python3 evals/memory_bench.py run --write-baseline --load-max 1000`, on a
+clean tree. Every deterministic metric above is unchanged except one
+recovery case:
+
+- **One page overwritten** now damages the middle leaf page of the `memories`
+  table, found by walking the b-tree page headers from the table's root, and
+  no longer the page at half the file length. That page's owner depended on
+  the store's size: between 1.2.11 and 1.3.0 the seeded store grew from
+  593,920 to 700,416 bytes (26 pages), and the page at half the file became
+  one of `memory_feedback`. The 1.3.0 store checks its memory tables when it opens,
+  so the case now reads: open `error` (`store is corrupt: memory table
+  memories is damaged`), retrieval skipped, nothing recovered.
+- Measured, not checked: bytes per record 3,031 to 3,277 (empty database
+  442,368 to 536,576 bytes, from schema added since 1.2.11); bytes per
+  scaled memory 1,310 / 1,312 to 1,314; retrieval latency, median / p95,
+  48 memories 4.35 / 6.54 ms and 2.67 / 4.64 ms, 5,048 memories
+  12.04 / 30.64 ms and 11.65 / 17.39 ms (index=none, then index=local). These were taken with the load gate off on a shared host at a
+  1-minute load near 25, so they are not comparable with the 1.2.11 figures.
 
 ## Judging Memory 2.0
 
