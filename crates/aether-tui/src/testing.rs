@@ -124,6 +124,7 @@ fn reply_status(app: &mut App, then: Then, agents_suspended: u32) {
 
 /// One connected agent whose transcript alternates person and agent over
 /// `messages`, in order.
+#[allow(clippy::expect_used)]
 pub fn app_with_transcript(messages: &[&str]) -> App {
     let mut app = app_with_history(|_| Vec::new());
     let id = app.selected.expect("the root is viewed");
