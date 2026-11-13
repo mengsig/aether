@@ -120,7 +120,7 @@ class SchemaRewind(unittest.TestCase):
 
     def test_a_schema_33_store_loses_its_usage_tables_and_archived_column(self):
         with tempfile.TemporaryDirectory() as directory:
-            store = store_at(directory, 33, tables=["agent_usage", "usage_totals"])
+            store = store_at(directory, 33, tables=["agent_usage", "usage_totals", "agent_tree"])
             with sqlite3.connect(store) as conn:
                 conn.execute("ALTER TABLE agents ADD COLUMN run TEXT")
                 conn.execute("ALTER TABLE agents ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
@@ -132,11 +132,17 @@ class SchemaRewind(unittest.TestCase):
                     ("agent_usage_deleted", "agents", "DELETE"),
                     ("usage_totals_added", "agent_usage", "INSERT"),
                     ("usage_totals_removed", "agent_usage", "DELETE"),
+                    ("agent_tree_inserted", "agents", "INSERT"),
+                    ("agent_tree_moved", "agents", "UPDATE"),
+                    ("agent_tree_deleted", "agents", "DELETE"),
+                    ("agent_tree_added", "agent_tree", "INSERT"),
+                    ("agent_tree_removed", "agent_tree", "DELETE"),
                 ]:
                     conn.execute(f"CREATE TRIGGER {name} AFTER {event} ON {table} BEGIN SELECT 1; END")
             self.assertEqual(migration.rewind(store, 33), 32)
             self.assertNotIn("agent_usage", tables(store))
             self.assertNotIn("usage_totals", tables(store))
+            self.assertNotIn("agent_tree", tables(store))
             with sqlite3.connect(store) as conn:
                 columns = {row[1] for row in conn.execute("PRAGMA table_info(agents)")}
                 left = conn.execute("SELECT name FROM sqlite_master WHERE type IN ('index', 'trigger') "

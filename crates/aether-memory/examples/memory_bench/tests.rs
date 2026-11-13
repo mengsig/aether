@@ -129,3 +129,64 @@ fn a_consolidating_run_merges_restatements_before_it_ranks() {
     assert_eq!(report.storage.records, 3, "and was kept");
     assert_eq!(report.restart.current_after, 1);
 }
+
+/// The plan with `extra` long durable facts added, each in its own words.
+fn plan_with_extra(extra: usize) -> Plan {
+    let mut plan = plan();
+    for i in 0..extra {
+        let text = format!(
+            "Deployment note {i}: the staging cluster {i} rotates its signing keys on the first \
+             weekday of each month, and every service in region {i} reloads them from the vault \
+             path secrets/region-{i}/signing without a restart. {}",
+            "Keep the old key readable for one rotation so in-flight tokens still verify. "
+                .repeat(4)
+        );
+        plan.memories.push(
+            serde_json::from_value(serde_json::json!({
+                "key": format!("pad/{i}"), "scope": {"scope": "global"}, "kind": "fact",
+                "text": text, "importance": 0.6, "confidence": 0.8
+            }))
+            .unwrap(),
+        );
+    }
+    plan.validate().unwrap();
+    plan
+}
+
+#[test]
+fn a_garbled_memory_page_is_found_whatever_the_store_size() {
+    let mut sizes = Vec::new();
+    for extra in [0, 10, 12, 14, 30] {
+        let sandbox = tempfile::tempdir().unwrap();
+        let report = run(&plan_with_extra(extra), sandbox.path()).unwrap();
+        assert_eq!(
+            report.current.len(),
+            1 + extra,
+            "every padding fact admitted"
+        );
+        let row = report
+            .corruption
+            .iter()
+            .find(|c| c.case == "garbled_middle_page")
+            .unwrap();
+        let error = row.error.as_deref().unwrap_or_default();
+        assert_eq!(
+            (row.open, row.retrieval),
+            ("error", "skipped"),
+            "{extra}: {error}"
+        );
+        assert!(
+            error.contains("memory table memories is damaged"),
+            "{extra}: {error}"
+        );
+        sizes.push(report.storage.seeded.database);
+    }
+    assert!(
+        sizes.windows(2).all(|w| w[0] < w[1]),
+        "each store is larger: {sizes:?}"
+    );
+    assert!(
+        sizes[2] - sizes[1] >= 2 * 4_096,
+        "a few pages apart: {sizes:?}"
+    );
+}
