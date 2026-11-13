@@ -5,8 +5,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::event::{Actor, Event, EventKind};
+use crate::id::InvocationId;
 use crate::inbox::InboxKind;
-use crate::model::{ContentBlock, MessageRole, ToolResultBlock};
+use crate::model::{ContentBlock, MessageRole, ModelErrorClass, ToolResultBlock};
 use crate::note::Note;
 use crate::time::Timestamp;
 
@@ -14,10 +15,11 @@ use crate::time::Timestamp;
 pub const MAX_DETAIL_BYTES: usize = 2048;
 
 /// The event types an agent's conversation is folded from.
-pub const EVENT_TYPES: [&str; 5] = [
+pub const EVENT_TYPES: [&str; 6] = [
     "task.created",
     "inbox.delivered",
     "agent.message",
+    "invocation.failed",
     "question.asked",
     "custom",
 ];
@@ -88,6 +90,12 @@ pub fn entries(event: &Event) -> Vec<Entry> {
                 add(kind, text);
             }
         }
+        EventKind::InvocationFailed { partial, .. } if keeps_partial(&event.kind) => {
+            let said = message_parts(MessageRole::Assistant, partial);
+            for (kind, text) in said.into_iter().filter(|(kind, _)| !is_tool(*kind)) {
+                add(kind, text);
+            }
+        }
         EventKind::QuestionAsked { question } => add(EntryKind::Question, question.clone()),
         EventKind::Custom { .. } => {
             if let Some(note) = Note::of(&event.kind) {
@@ -116,6 +124,42 @@ pub fn entries(event: &Event) -> Vec<Entry> {
         "only a post carries an importance of its own"
     );
     entries
+}
+
+/// The invocation of a cancelled turn, whose kept text the `agent.message`
+/// just before it may already hold; that message's entries stand for it.
+pub fn cancelled_invocation(event: &Event) -> Option<InvocationId> {
+    match &event.kind {
+        EventKind::InvocationFailed {
+            invocation,
+            cancelled: true,
+            ..
+        } => Some(*invocation),
+        _ => None,
+    }
+}
+
+/// Whether a failed turn's partial reads as said: a stop, or a failure that
+/// is not retried (a usage limit is not retried soon either).
+fn keeps_partial(kind: &EventKind) -> bool {
+    let EventKind::InvocationFailed {
+        cancelled,
+        retryable,
+        class,
+        ..
+    } = kind
+    else {
+        return false;
+    };
+    let limited = matches!(
+        class,
+        Some(ModelErrorClass::UsageLimit | ModelErrorClass::QuotaExhausted)
+    );
+    *cancelled || !*retryable || limited
+}
+
+fn is_tool(kind: EntryKind) -> bool {
+    matches!(kind, EntryKind::ToolCall | EntryKind::ToolResult)
 }
 
 /// Who sent a message or task: the operator, or another agent or service.

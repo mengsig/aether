@@ -1,5 +1,5 @@
 use super::*;
-use crate::id::{AgentId, EventId, InboxItemId, MessageId, RunId};
+use crate::id::{AgentId, EventId, InboxItemId, InvocationId, MessageId, RunId};
 use crate::inbox::InboxItem;
 use crate::note::{NoteContext, NoteLevel};
 use crate::task::Priority;
@@ -206,4 +206,49 @@ fn an_entry_without_links_keeps_them_off_the_wire() {
     assert!(wire.get("links").is_none(), "{wire}");
     assert_eq!(wire["kind"], "operator");
     assert_eq!(wire["important"], true);
+}
+
+fn failed(cancelled: bool, retryable: bool, class: Option<ModelErrorClass>) -> EventKind {
+    EventKind::InvocationFailed {
+        invocation: InvocationId::new(),
+        snapshot: crate::id::SnapshotId::new(),
+        error: "stopped".into(),
+        class,
+        retryable,
+        cancelled,
+        partial: vec![
+            ContentBlock::Thinking {
+                text: "weighing it".into(),
+                signature: None,
+                redacted: false,
+            },
+            ContentBlock::text("half an answer"),
+            ContentBlock::ToolUse {
+                id: "t1".into(),
+                name: "bash".into(),
+                input: json!({"cmd": "ls"}),
+            },
+        ],
+    }
+}
+
+/// A stopped or unretried turn's partial reads as said, without its unfinished
+/// calls; a turn that is retried says it again, so its partial adds nothing.
+#[test]
+fn a_failed_turn_keeps_its_partial_text_unless_it_is_retried() {
+    use EntryKind::*;
+    let said = vec![
+        (Thinking, false, "weighing it".to_owned()),
+        (Assistant, true, "half an answer".to_owned()),
+    ];
+    let stopped = event(Actor::System, failed(true, false, None));
+    assert_eq!(kinds(&stopped), said);
+    assert!(cancelled_invocation(&stopped).is_some());
+    let broken = event(Actor::System, failed(false, false, None));
+    assert_eq!(kinds(&broken), said);
+    assert_eq!(cancelled_invocation(&broken), None);
+    let limited = failed(false, true, Some(ModelErrorClass::UsageLimit));
+    assert_eq!(kinds(&event(Actor::System, limited)), said);
+    let retried = failed(false, true, Some(ModelErrorClass::Overloaded));
+    assert!(entries(&event(Actor::System, retried)).is_empty());
 }

@@ -304,12 +304,14 @@ pub fn conversation_page(
     let page = event_page(store, &filter, after, before, limit)?;
     let from_seq = page.events.first().map_or(0, |event| event.seq);
     let to_seq = page.events.last().map_or(0, |event| event.seq);
-    let entries: Vec<_> = page
-        .events
-        .iter()
-        .flat_map(aether_core::conversation::entries)
-        .filter(|entry| entry.important || !important_only)
-        .collect();
+    let mut entries = Vec::new();
+    for event in &page.events {
+        if already_said(store, agent, event)? {
+            continue;
+        }
+        let said = aether_core::conversation::entries(event);
+        entries.extend(said.into_iter().filter(|e| e.important || !important_only));
+    }
     assert!(from_seq <= to_seq, "a page's events are in seq order");
     assert!(
         entries
@@ -325,6 +327,34 @@ pub fn conversation_page(
         has_after: page.has_after,
         last_seq: page.last_seq,
     })
+}
+
+/// A cancelled turn whose kept text the runtime also committed as the agent's
+/// message just before it: the TUI draws it once, from that message.
+fn already_said(
+    store: &dyn Store,
+    agent: AgentId,
+    event: &aether_core::event::Event,
+) -> aether_store::Result<bool> {
+    let Some(invocation) = aether_core::conversation::cancelled_invocation(event) else {
+        return Ok(false);
+    };
+    let filter = EventFilter {
+        types: vec!["agent.message".to_owned()],
+        ..EventFilter::own_events(agent)
+    };
+    let previous = store.events_before(event.seq, 1, &filter)?;
+    assert!(previous.len() <= 1, "asked for one message at most");
+    assert!(
+        previous.iter().all(|message| message.seq < event.seq),
+        "the message read precedes the failure"
+    );
+    Ok(previous.first().is_some_and(|message| {
+        matches!(
+            message.kind,
+            aether_core::event::EventKind::AgentMessage { invocation: Some(said), .. } if said == invocation
+        )
+    }))
 }
 
 /// Up to `limit` events matching `filter`, in seq order, with whether more
@@ -715,6 +745,71 @@ mod tests {
         assert_eq!(page_seqs(&rest), &seqs[3..]);
         assert!(rest.has_before && !rest.has_after);
         assert_eq!(rest.last_seq, seqs[4]);
+    }
+
+    fn failed(invocation: aether_core::id::InvocationId, text: &str) -> EventKind {
+        EventKind::InvocationFailed {
+            invocation,
+            snapshot: aether_core::id::SnapshotId::new(),
+            error: "cancelled".into(),
+            class: None,
+            retryable: false,
+            cancelled: true,
+            partial: vec![aether_core::model::ContentBlock::text(text)],
+        }
+    }
+
+    /// A stopped API turn commits its kept text as a message and again in its
+    /// failure; an engine's stop keeps it only in the failure. Each reads once.
+    #[test]
+    fn a_stopped_turn_reads_its_partial_once() {
+        use aether_core::conversation::EntryKind;
+        let store = aether_store::SqliteStore::open_in_memory().expect("open");
+        let agent = AgentId::new();
+        let (api, engine) = (
+            aether_core::id::InvocationId::new(),
+            aether_core::id::InvocationId::new(),
+        );
+        let message = EventKind::AgentMessage {
+            role: aether_core::model::MessageRole::Assistant,
+            content: vec![aether_core::model::ContentBlock::text("half an answer")],
+            invocation: Some(api),
+        };
+        let draft = |kind| EventDraft::new(Actor::System, kind).agent(agent);
+        let events = Store::commit(
+            &store,
+            Commit::new()
+                .event(draft(message))
+                .event(draft(failed(api, "half an answer"))),
+        )
+        .expect("commit");
+        Store::commit(
+            &store,
+            Commit::new().event(draft(failed(engine, "engine text"))),
+        )
+        .expect("commit");
+
+        let page = conversation_page(&store, agent, None, None, 10, true).expect("page");
+        let said: Vec<_> = page
+            .entries
+            .iter()
+            .map(|e| (e.kind, e.text.as_str()))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                (EntryKind::Assistant, "half an answer"),
+                (EntryKind::Assistant, "engine text"),
+            ]
+        );
+        let tail = conversation_page(&store, agent, Some(events[0].seq), None, 10, true)
+            .expect("a page starting at the failure");
+        let said: Vec<_> = tail.entries.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(
+            said,
+            ["engine text"],
+            "the message before the page still counts"
+        );
     }
 
     #[test]

@@ -382,8 +382,10 @@ forwards with `after` set to the last one's.
 `get_conversation {agent, after?, before?, limit?, important_only?}` answers
 `conversation {entries, from_seq, to_seq, has_before, has_after, last_seq}`:
 the agent's conversation as people read it, folded from its own
-`task.created`, `inbox.delivered`, `agent.message`, `question.asked` and note
-events. It pages those events like `get_transcript_page` (same cursors and
+`task.created`, `inbox.delivered`, `agent.message`, `invocation.failed`,
+`question.asked` and note events. A failed turn's partial text counts when the
+turn was stopped or is not retried, once: a stop the runtime also committed as
+an `agent.message` reads from that message. It pages those events like `get_transcript_page` (same cursors and
 `limit`), and `from_seq` and `to_seq` are the first and last seq it read, 0
 for none: page backwards with `before: from_seq` and forwards with
 `after: to_seq`. An event yields zero or more entries, each
