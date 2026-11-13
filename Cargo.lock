@@ -192,6 +192,7 @@ dependencies = [
  "aether-core",
  "aether-store",
  "chrono",
+ "rusqlite",
  "rustix",
  "serde",
  "serde_json",
