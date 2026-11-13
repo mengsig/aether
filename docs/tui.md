@@ -848,7 +848,8 @@ The default `standard` keeps the stock view: every entry. The built-in `focus`
 shows the important entries only: what the operator sent, the agent's own text
 (including text beside its tool calls), its questions, and posts a host flagged
 important. These are the entries `get_conversation` flags `important`, so a
-client reading it with `important_only` shows what `/focus` shows. Tools,
+client reading it with `important_only` shows what `/focus` shows, less the
+approvals, failures and health notices below that every mode keeps. Tools,
 thinking, delegations, other agents' messages, raw triggers, plain notes and
 status remain available with Ctrl+T and in `standard`.
 The operator's own messages, important posts, questions, approvals, failures and

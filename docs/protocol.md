@@ -382,8 +382,10 @@ forwards with `after` set to the last one's.
 `get_conversation {agent, after?, before?, limit?, important_only?}` answers
 `conversation {entries, from_seq, to_seq, has_before, has_after, last_seq}`:
 the agent's conversation as people read it, folded from its own
-`task.created`, `inbox.delivered`, `agent.message`, `invocation.failed`,
-`question.asked` and note events. A failed turn's partial text counts when the
+`task.created`, `inbox.delivered`, `inbox.consumed`, `agent.message`,
+`invocation.failed`, `question.asked` and note events. A message reads where
+the agent consumed it, as the TUI places it, with the `inbox.consumed` event's
+seq; a trigger reads where it was delivered. A failed turn's partial text counts when the
 turn was stopped or is not retried, once: a stop the runtime also committed as
 an `agent.message` reads its text from that message, and from the failure only
 the kinds that message lacks, such as thinking. It pages those events like `get_transcript_page` (same cursors and
@@ -400,7 +402,8 @@ sets `important`: true for `operator`, `assistant` and `question`, the note's
 own flag for a `post`, false otherwise. A client never derives it. Tool,
 result and trigger text is cut to 2048 bytes. With `important_only` a page
 keeps only important entries, so it may hold none while `has_before` is true.
-The TUI's `/focus` draws the same important entries.
+The TUI's `/focus` draws the same important entries, beside the approvals,
+failures and health notices every view mode keeps.
 
 `usage_breakdown {scope, by, since?, until?, limit?}` answers
 `usage_breakdown {rows, total, truncated}`. It sums the `usage` of

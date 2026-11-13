@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::event::{Actor, Event, EventKind};
 use crate::id::InvocationId;
-use crate::inbox::InboxKind;
+use crate::inbox::{InboxItem, InboxKind};
 use crate::model::{ContentBlock, MessageRole, ModelErrorClass, ToolResultBlock};
 use crate::note::Note;
 use crate::time::Timestamp;
@@ -15,9 +15,10 @@ use crate::time::Timestamp;
 pub const MAX_DETAIL_BYTES: usize = 2048;
 
 /// The event types an agent's conversation is folded from.
-pub const EVENT_TYPES: [&str; 6] = [
+pub const EVENT_TYPES: [&str; 7] = [
     "task.created",
     "inbox.delivered",
+    "inbox.consumed",
     "agent.message",
     "invocation.failed",
     "question.asked",
@@ -68,9 +69,13 @@ pub struct Entry {
     pub links: Vec<String>,
 }
 
+/// One entry's kind, text, links and importance, before it is numbered.
+type Part = (EntryKind, String, Vec<String>, bool);
+
 /// The conversation entries one event adds, in order; most events add none.
+/// A message reads where the agent consumed it: see [`consumed_entries`].
 pub fn entries(event: &Event) -> Vec<Entry> {
-    let mut parts: Vec<(EntryKind, String, Vec<String>, bool)> = Vec::new();
+    let mut parts: Vec<Part> = Vec::new();
     let mut add = |kind: EntryKind, text: String| {
         if !text.trim().is_empty() {
             parts.push((kind, text.trim().to_owned(), Vec::new(), kind.important()));
@@ -78,13 +83,14 @@ pub fn entries(event: &Event) -> Vec<Entry> {
     };
     match &event.kind {
         EventKind::TaskCreated { objective, .. } => add(sender(&event.actor), objective.clone()),
-        EventKind::InboxDelivered { item } => match &item.kind {
-            InboxKind::Message { from, content, .. } => add(sender(from), message_text(content)),
-            InboxKind::ExternalTrigger {
+        EventKind::InboxDelivered { item } => {
+            if let InboxKind::ExternalTrigger {
                 source, payload, ..
-            } => add(EntryKind::Trigger, bounded(&format!("{source}: {payload}"))),
-            _ => {}
-        },
+            } = &item.kind
+            {
+                add(EntryKind::Trigger, bounded(&format!("{source}: {payload}")));
+            }
+        }
         EventKind::AgentMessage { role, content, .. } => {
             for (kind, text) in message_parts(*role, content) {
                 add(kind, text);
@@ -105,6 +111,31 @@ pub fn entries(event: &Event) -> Vec<Entry> {
         }
         _ => {}
     }
+    numbered(event, parts)
+}
+
+/// The messages an `inbox.consumed` event read, in its order, where the agent
+/// read them (as the TUI places them); `delivered` holds at least its items.
+pub fn consumed_entries(event: &Event, delivered: &[InboxItem]) -> Vec<Entry> {
+    let EventKind::InboxConsumed { items, .. } = &event.kind else {
+        return Vec::new();
+    };
+    let parts: Vec<Part> = items
+        .iter()
+        .filter_map(|id| delivered.iter().find(|item| item.id == *id))
+        .filter_map(|item| match &item.kind {
+            InboxKind::Message { from, content, .. } => {
+                let kind = sender(from);
+                let text = message_text(content).trim().to_owned();
+                (!text.is_empty()).then(|| (kind, text, Vec::new(), kind.important()))
+            }
+            _ => None,
+        })
+        .collect();
+    numbered(event, parts)
+}
+
+fn numbered(event: &Event, parts: Vec<Part>) -> Vec<Entry> {
     let entries: Vec<Entry> = parts
         .into_iter()
         .enumerate()

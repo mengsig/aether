@@ -1405,6 +1405,7 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
             ..
         } => {
             if *cancelled {
+                debug_assert!(aether_core::conversation::keeps_partial(&event.kind));
                 cancelled_partial(t, at, *invocation, partial);
                 return;
             }

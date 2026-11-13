@@ -307,7 +307,13 @@ pub fn conversation_page(
     let mut entries = Vec::new();
     for event in &page.events {
         let before = said_before(store, agent, event)?;
-        let said = aether_core::conversation::entries(event);
+        let said = match &event.kind {
+            aether_core::event::EventKind::InboxConsumed { .. } => {
+                let delivered = consumed_items(store, agent, event)?;
+                aether_core::conversation::consumed_entries(event, &delivered)
+            }
+            _ => aether_core::conversation::entries(event),
+        };
         entries.extend(
             said.into_iter()
                 .filter(|e| (e.important || !important_only) && !before.contains(&e.kind)),
@@ -363,6 +369,42 @@ fn said_before(
             .collect()
     });
     Ok(kinds)
+}
+
+/// The inbox items an `inbox.consumed` event read: those after the previous
+/// consumption's `up_to`, as the agent's inbox cursor only moves forward.
+fn consumed_items(
+    store: &dyn Store,
+    agent: AgentId,
+    event: &aether_core::event::Event,
+) -> aether_store::Result<Vec<aether_core::inbox::InboxItem>> {
+    let aether_core::event::EventKind::InboxConsumed { up_to, items } = &event.kind else {
+        unreachable!("only an inbox.consumed event names consumed items");
+    };
+    let filter = EventFilter {
+        types: vec!["inbox.consumed".to_owned()],
+        ..EventFilter::own_events(agent)
+    };
+    let previous = store.events_before(event.seq, 1, &filter)?;
+    let previous_up_to = previous.first().map_or(0, |previous| match previous.kind {
+        aether_core::event::EventKind::InboxConsumed { up_to, .. } => up_to,
+        _ => 0,
+    });
+    debug_assert!(previous_up_to <= *up_to, "the inbox cursor moves forward");
+    // Were it ever to move back, reading the whole inbox stays correct.
+    let after = if previous_up_to <= *up_to {
+        previous_up_to
+    } else {
+        0
+    };
+    let read: Vec<_> = store
+        .inbox(agent, after)?
+        .into_iter()
+        .take_while(|item| item.seq <= *up_to)
+        .filter(|item| items.contains(&item.id))
+        .collect();
+    assert!(read.len() <= items.len(), "each consumed item read once");
+    Ok(read)
 }
 
 /// Up to `limit` events matching `filter`, in seq order, with whether more
@@ -828,6 +870,68 @@ mod tests {
                 "engine text"
             ],
             "the message before the page still counts; the thinking it lacks reads"
+        );
+    }
+
+    /// A message reads where the agent read it, as the TUI places it: after
+    /// text the agent said between its delivery and its consumption.
+    #[test]
+    fn a_message_reads_where_the_agent_consumed_it() {
+        use aether_core::conversation::EntryKind;
+        use aether_core::inbox::{InboxItem, InboxKind};
+        let store = aether_store::SqliteStore::open_in_memory().expect("open");
+        let agent = AgentId::new();
+        let draft = |kind| EventDraft::new(Actor::System, kind).agent(agent);
+        let item = |seq: u64, text: &str| InboxItem {
+            id: aether_core::id::InboxItemId::new(),
+            agent_id: agent,
+            seq,
+            kind: InboxKind::Message {
+                message_id: aether_core::id::MessageId::new(),
+                from: Actor::user(),
+                content: vec![aether_core::model::ContentBlock::text(text)],
+            },
+            delivered_at: now(),
+        };
+        let deliver = |item: InboxItem| {
+            let commit = Commit::new()
+                .event(draft(EventKind::InboxDelivered { item: item.clone() }))
+                .mutate(Mutation::DeliverInbox(item));
+            Store::commit(&store, commit).expect("deliver");
+        };
+        let consume = |items: &[&InboxItem]| {
+            let kind = EventKind::InboxConsumed {
+                up_to: items.iter().map(|item| item.seq).max().expect("an item"),
+                items: items.iter().map(|item| item.id).collect(),
+            };
+            Store::commit(&store, Commit::new().event(draft(kind))).expect("consume");
+        };
+        let (first, second) = (item(1, "ship it"), item(2, "and the docs"));
+        deliver(first.clone());
+        let said = EventKind::AgentMessage {
+            role: aether_core::model::MessageRole::Assistant,
+            content: vec![aether_core::model::ContentBlock::text("still building")],
+            invocation: None,
+        };
+        Store::commit(&store, Commit::new().event(draft(said))).expect("say");
+        consume(&[&first]);
+        deliver(second.clone());
+        consume(&[&second]);
+
+        let page = conversation_page(&store, agent, None, None, 10, true).expect("page");
+        let said: Vec<_> = page
+            .entries
+            .iter()
+            .map(|e| (e.kind, e.text.as_str()))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                (EntryKind::Assistant, "still building"),
+                (EntryKind::Operator, "ship it"),
+                (EntryKind::Operator, "and the docs"),
+            ],
+            "each message once, where it was consumed"
         );
     }
 

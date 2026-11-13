@@ -32,12 +32,25 @@ fn delivered(kind: InboxKind) -> EventKind {
     }
 }
 
-fn message(from: Actor, text: &str) -> EventKind {
-    delivered(InboxKind::Message {
+/// The entries of a message the agent read: none at its delivery, then its
+/// own at the `inbox.consumed` that read it.
+fn read(from: Actor, text: &str) -> Vec<Entry> {
+    let EventKind::InboxDelivered { item } = delivered(InboxKind::Message {
         message_id: MessageId::new(),
-        from,
+        from: from.clone(),
         content: vec![ContentBlock::text(text)],
-    })
+    }) else {
+        unreachable!("delivered builds an inbox.delivered event");
+    };
+    let arrival = EventKind::InboxDelivered { item: item.clone() };
+    assert!(entries(&event(from, arrival)).is_empty(), "unread yet");
+    let consumed = EventKind::InboxConsumed {
+        up_to: item.seq,
+        items: vec![item.id],
+    };
+    let entries = consumed_entries(&event(Actor::System, consumed), &[item]);
+    assert!(entries.iter().all(|entry| entry.seq == 7), "{entries:?}");
+    entries
 }
 
 fn post(text: &str, important: bool) -> EventKind {
@@ -54,7 +67,11 @@ fn post(text: &str, important: bool) -> EventKind {
 }
 
 fn kinds(event: &Event) -> Vec<(EntryKind, bool, String)> {
-    entries(event)
+    triples(entries(event))
+}
+
+fn triples(entries: Vec<Entry>) -> Vec<(EntryKind, bool, String)> {
+    entries
         .into_iter()
         .map(|entry| (entry.kind, entry.important, entry.text))
         .collect()
@@ -76,42 +93,42 @@ fn every_entry_kind_carries_its_importance() {
         operator: false,
     });
     let cases = [
+        (read(Actor::user(), "ship it"), Operator, true),
         (
-            event(Actor::user(), message(Actor::user(), "ship it")),
+            entries(&event(Actor::user(), task("build the thing"))),
             Operator,
             true,
         ),
+        (read(agent.clone(), "done"), Message, false),
         (
-            event(Actor::user(), task("build the thing")),
-            Operator,
-            true,
-        ),
-        (
-            event(agent.clone(), message(agent.clone(), "done")),
+            entries(&event(agent.clone(), task("review"))),
             Message,
             false,
         ),
-        (event(agent.clone(), task("review")), Message, false),
-        (event(Actor::System, trigger), Trigger, false),
+        (entries(&event(Actor::System, trigger)), Trigger, false),
         (
-            event(
+            entries(&event(
                 agent.clone(),
                 EventKind::QuestionAsked {
                     question: "merge?".into(),
                 },
-            ),
+            )),
             Question,
             true,
         ),
-        (event(Actor::user(), post("item shipped", true)), Post, true),
         (
-            event(Actor::user(), post("cache pruned", false)),
+            entries(&event(Actor::user(), post("item shipped", true))),
+            Post,
+            true,
+        ),
+        (
+            entries(&event(Actor::user(), post("cache pruned", false))),
             Post,
             false,
         ),
     ];
-    for (event, kind, important) in cases {
-        let got = kinds(&event);
+    for (said, kind, important) in cases {
+        let got = triples(said);
         assert_eq!(got.len(), 1, "{kind:?}: {got:?}");
         assert_eq!((got[0].0, got[0].1), (kind, important), "{got:?}");
     }
@@ -188,8 +205,7 @@ fn a_post_keeps_its_links_and_bulky_detail_is_bounded() {
 
 #[test]
 fn blank_text_and_unrelated_events_add_no_entries() {
-    let blank = event(Actor::user(), message(Actor::user(), "  \n"));
-    assert!(entries(&blank).is_empty());
+    assert!(read(Actor::user(), "  \n").is_empty());
     let started = event(Actor::System, EventKind::AgentStarted { turn: 1 });
     assert!(entries(&started).is_empty());
     let other = EventKind::Custom {
@@ -201,7 +217,7 @@ fn blank_text_and_unrelated_events_add_no_entries() {
 
 #[test]
 fn an_entry_without_links_keeps_them_off_the_wire() {
-    let got = entries(&event(Actor::user(), message(Actor::user(), "hi")));
+    let got = read(Actor::user(), "hi");
     let wire = serde_json::to_value(&got[0]).unwrap();
     assert!(wire.get("links").is_none(), "{wire}");
     assert_eq!(wire["kind"], "operator");
