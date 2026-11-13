@@ -779,17 +779,19 @@ fn backoff_is_replaced_in_place_by_its_recovery() {
 fn a_retried_failure_after_a_spent_quota_draws_no_partial() {
     let mut feed = Feed::new();
     let (agent, _) = feed.spawn(None, "aether", "assistant");
-    let failed = |invocation, class, retryable, text: &str| EventKind::InvocationFailed {
-        invocation,
-        snapshot: aether_core::id::SnapshotId::new(),
-        error: "failed".into(),
-        class: Some(class),
-        retryable,
-        cancelled: false,
-        partial: vec![ContentBlock::text(text)],
-    };
+    let failed =
+        |invocation, error: &str, class, retryable, text: &str| EventKind::InvocationFailed {
+            invocation,
+            snapshot: aether_core::id::SnapshotId::new(),
+            error: error.into(),
+            class: Some(class),
+            retryable,
+            cancelled: false,
+            partial: vec![ContentBlock::text(text)],
+        };
     let spent = failed(
         InvocationId::new(),
+        "weekly limit reached",
         ModelErrorClass::UsageLimit,
         false,
         "spent",
@@ -804,9 +806,18 @@ fn a_retried_failure_after_a_spent_quota_draws_no_partial() {
         .get_mut(&agent)
         .expect("the agent's transcript")
         .stream(fallback, &delta, clock);
-    feed.on(
-        agent,
-        failed(fallback, ModelErrorClass::Overloaded, true, "retried"),
+    let overloaded = failed(
+        fallback,
+        "fallback overloaded",
+        ModelErrorClass::Overloaded,
+        true,
+        "retried",
+    );
+    feed.on(agent, overloaded);
+    assert_eq!(
+        feed.t(agent).stream.invocation,
+        None,
+        "the failure clears its live stream"
     );
     feed.on(
         agent,
@@ -823,11 +834,57 @@ fn a_retried_failure_after_a_spent_quota_draws_no_partial() {
         })
         .collect();
     assert_eq!(said, ["spent"], "the cut stream is dropped, not committed");
-    let errors = models
+    let errors: Vec<&str> = models
         .iter()
-        .filter(|model| matches!(model, CellModel::Error { .. }))
-        .count();
-    assert!(errors >= 2, "both failures still show: {models:?}");
+        .filter_map(|model| match model {
+            CellModel::Error { message, .. } => Some(message.as_str()),
+            _ => None,
+        })
+        .collect();
+    for message in [
+        "weekly limit reached",
+        "fallback overloaded",
+        "retries spent",
+    ] {
+        assert!(errors.contains(&message), "{message} shows: {errors:?}");
+    }
+}
+
+/// A retried failure clears its own live stream, so the retry does not
+/// stream onto it; with no quota spent it draws no error.
+#[test]
+fn a_retried_failure_clears_its_live_stream() {
+    let mut feed = Feed::new();
+    let (agent, _) = feed.spawn(None, "aether", "assistant");
+    let invocation = InvocationId::new();
+    let delta = Delta::Text {
+        text: "half".into(),
+    };
+    let clock = feed.clock;
+    feed.transcripts
+        .get_mut(&agent)
+        .expect("the agent's transcript")
+        .stream(invocation, &delta, clock);
+    let before = feed.t(agent).cells.len();
+    feed.on(
+        agent,
+        EventKind::InvocationFailed {
+            invocation,
+            snapshot: aether_core::id::SnapshotId::new(),
+            error: "overloaded".into(),
+            class: Some(ModelErrorClass::Overloaded),
+            retryable: true,
+            cancelled: false,
+            partial: vec![ContentBlock::text("half")],
+        },
+    );
+    assert_eq!(feed.t(agent).stream.invocation, None);
+    assert_eq!(
+        feed.t(agent).cells.len(),
+        before,
+        "{:?}",
+        feed.models(agent)
+    );
 }
 
 #[test]

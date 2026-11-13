@@ -1408,6 +1408,7 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
                 cancelled_partial(t, at, *invocation, partial);
                 return;
             }
+            failed_partial(t, at, *invocation, &event.kind, partial);
             let provider = t.private.who.model.as_ref().map(|m| m.provider.clone());
             if matches!(
                 class,
@@ -1419,23 +1420,6 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
             // A retryable failure is retried; its backoff notice tells that story.
             if *retryable && t.private.quota.is_none() {
                 return;
-            }
-            let matching = t.stream.invocation == Some(*invocation);
-            if !aether_core::conversation::keeps_partial(&event.kind) {
-                // Retried after a spent quota: the retry says it again.
-                debug_assert!(*retryable, "only a retried failure is left unsaid");
-                if matching {
-                    t.stream.reset();
-                }
-            } else if partial_is_blank(partial) {
-                if matching {
-                    t.commit_stream(at);
-                }
-            } else {
-                if matching {
-                    t.stream.reset();
-                }
-                t.push_reply(at, &thinking_of(partial), &text_of(partial), None);
             }
             let hint = match t.private.quota {
                 Some(_) => NoticeText::joined(&["/model to switch", "/wake"], NoticeSeparator::Dot),
@@ -1715,6 +1699,41 @@ fn partial_is_blank(partial: &[ContentBlock]) -> bool {
     text_of(partial).trim().is_empty() && thinking_of(partial).trim().is_empty()
 }
 
+/// A failed turn's partial as `get_conversation` reads it, by
+/// `conversation::keeps_partial` alone; the failed invocation's stream ends here.
+fn failed_partial(
+    t: &mut AgentTranscript,
+    at: Timestamp,
+    invocation: InvocationId,
+    failure: &EventKind,
+    partial: &[ContentBlock],
+) {
+    debug_assert!(
+        matches!(failure, EventKind::InvocationFailed { cancelled: false, invocation: i, .. } if *i == invocation),
+        "a failure of this invocation that was not a stop"
+    );
+    let live = t.stream.invocation == Some(invocation);
+    if !aether_core::conversation::keeps_partial(failure) {
+        // Retried: the retry says it again.
+        if live {
+            t.stream.reset();
+        }
+    } else if partial_is_blank(partial) {
+        if live {
+            t.commit_stream(at);
+        }
+    } else {
+        if live {
+            t.stream.reset();
+        }
+        t.push_reply(at, &thinking_of(partial), &text_of(partial), None);
+    }
+    debug_assert!(
+        t.stream.invocation != Some(invocation),
+        "a failed invocation's stream stays live"
+    );
+}
+
 fn cancelled_partial(
     t: &mut AgentTranscript,
     at: Timestamp,
@@ -1742,6 +1761,9 @@ fn draw_cancelled_partial(
     let thinking = thinking_of(partial);
     let text = text_of(partial);
     if thinking.trim().is_empty() && text.trim().is_empty() {
+        if t.stream.invocation == Some(invocation) {
+            t.commit_stream(at);
+        }
         return;
     }
     if t.stream.invocation == Some(invocation) {
