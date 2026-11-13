@@ -4,7 +4,10 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
-## Unreleased
+## 1.3.1
+
+Released 2026-11-13. A dependency patch release (#419). The workspace and
+the Python and TypeScript clients are 1.3.1.
 
 ### Dependencies
 
