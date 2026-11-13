@@ -252,6 +252,9 @@ pub mod features {
     pub const USAGE_BREAKDOWN: &str = "usage_breakdown";
     /// `get_remote` and `configure_remote` carry `RemoteSettings.mounts`.
     pub const REMOTE_MOUNTS: &str = "remote_mounts";
+    /// The daemon serves `get_conversation` and keeps `append_note.important`.
+    /// A daemon without it drops the flag, so check this first.
+    pub const CONVERSATION: &str = "conversation";
 }
 
 mod handshake;

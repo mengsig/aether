@@ -1,14 +1,14 @@
 {
   "version": 1,
-  "about": "One transcript and what each view mode draws of each row. The TUI (tests/view_modes.rs) checks its rules against it. Outcomes: full, compact (one line), line (a failed call's one-line row) or hidden. Quiet omits user_text: the operator's own text is drawn in every mode.",
+  "about": "One transcript and what each view mode draws of each row. The TUI (tests/view_modes.rs) checks its rules against it. Outcomes: full, compact (one line), line (a failed call's one-line row) or hidden. Quiet omits user_text: the operator's own text, like a host's important post, is drawn in every mode.",
   "modes": {
     "standard": null,
     "focus": {
       "version": 1,
       "label": "Focus",
-      "description": "Coordination without tool detail",
+      "description": "The important entries: what the operator and the agent said",
       "density": "compact",
-      "show": ["user_text", "assistant_text", "delegation", "agent_message", "completion", "status", "question", "approval", "error"]
+      "show": ["user_text", "assistant_text", "question"]
     },
     "calm": {
       "version": 1,
@@ -36,6 +36,7 @@
     { "id": "task-from-parent", "kind": "user_task" },
     { "id": "message-from-agent", "kind": "user_message" },
     { "id": "reply", "kind": "assistant_text" },
+    { "id": "post", "kind": "post" },
     { "id": "thinking", "kind": "reasoning" },
     { "id": "tool-ok", "kind": "tool_succeeded" },
     { "id": "tool-running", "kind": "tool_running" },
@@ -62,6 +63,7 @@
   "expect": {
     "standard": {
       "header": "full", "operator-text": "full", "task-from-parent": "full", "message-from-agent": "full", "reply": "full",
+      "post": "full",
       "thinking": "full", "tool-ok": "full", "tool-running": "full", "tool-awaiting": "full", "tool-failed": "full",
       "tool-denied": "full", "tool-cancelled": "full", "edit-failed": "full", "memory": "full", "spawned": "full",
       "waiting": "full", "child-finished": "full", "child-failed": "full", "sent": "full", "approval": "full",
@@ -69,15 +71,17 @@
       "compaction-failed": "full", "usage": "full"
     },
     "focus": {
-      "header": "full", "operator-text": "full", "task-from-parent": "compact", "message-from-agent": "compact", "reply": "full",
+      "header": "full", "operator-text": "full", "task-from-parent": "hidden", "message-from-agent": "hidden", "reply": "full",
+      "post": "full",
       "thinking": "hidden", "tool-ok": "hidden", "tool-running": "hidden", "tool-awaiting": "full", "tool-failed": "line",
-      "tool-denied": "full", "tool-cancelled": "full", "edit-failed": "hidden", "memory": "hidden", "spawned": "compact",
-      "waiting": "compact", "child-finished": "compact", "child-failed": "full", "sent": "compact", "approval": "full",
-      "question": "full", "turn-error": "full", "provider-backoff": "full", "reconnected": "compact", "compacted": "hidden",
+      "tool-denied": "full", "tool-cancelled": "full", "edit-failed": "hidden", "memory": "hidden", "spawned": "hidden",
+      "waiting": "hidden", "child-finished": "hidden", "child-failed": "full", "sent": "hidden", "approval": "full",
+      "question": "full", "turn-error": "full", "provider-backoff": "full", "reconnected": "hidden", "compacted": "hidden",
       "compaction-failed": "full", "usage": "hidden"
     },
     "calm": {
       "header": "full", "operator-text": "full", "task-from-parent": "compact", "message-from-agent": "compact", "reply": "full",
+      "post": "full",
       "thinking": "hidden", "tool-ok": "hidden", "tool-running": "hidden", "tool-awaiting": "full", "tool-failed": "line",
       "tool-denied": "full", "tool-cancelled": "full", "edit-failed": "hidden", "memory": "hidden", "spawned": "compact",
       "waiting": "compact", "child-finished": "compact", "child-failed": "full", "sent": "compact", "approval": "full",
@@ -86,6 +90,7 @@
     },
     "tools": {
       "header": "full", "operator-text": "full", "task-from-parent": "hidden", "message-from-agent": "hidden", "reply": "full",
+      "post": "full",
       "thinking": "hidden", "tool-ok": "full", "tool-running": "full", "tool-awaiting": "full", "tool-failed": "full",
       "tool-denied": "full", "tool-cancelled": "full", "edit-failed": "full", "memory": "hidden", "spawned": "hidden",
       "waiting": "hidden", "child-finished": "hidden", "child-failed": "full", "sent": "hidden", "approval": "full",
@@ -94,6 +99,7 @@
     },
     "quiet": {
       "header": "full", "operator-text": "full", "task-from-parent": "hidden", "message-from-agent": "hidden", "reply": "full",
+      "post": "full",
       "thinking": "hidden", "tool-ok": "hidden", "tool-running": "hidden", "tool-awaiting": "full", "tool-failed": "line",
       "tool-denied": "full", "tool-cancelled": "full", "edit-failed": "hidden", "memory": "hidden", "spawned": "hidden",
       "waiting": "hidden", "child-finished": "hidden", "child-failed": "full", "sent": "hidden", "approval": "full",

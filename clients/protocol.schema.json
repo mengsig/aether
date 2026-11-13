@@ -2785,6 +2785,10 @@
               "$ref": "#/$defs/NoteContext",
               "default": "none"
             },
+            "important": {
+              "description": "A readable post for the operator: every focused view shows it, and\nit may hold [`aether_core::note::MAX_POST_BYTES`]. Needs\n`features::CONVERSATION` when set.",
+              "type": "boolean"
+            },
             "level": {
               "$ref": "#/$defs/NoteLevel",
               "description": "Needs protocol 24 unless `info`; the TUI shows `applied` and\n`refused` notes as the result of a host command."
@@ -3456,6 +3460,50 @@
             "cmd": {
               "const": "get_transcript_page",
               "type": "string"
+            },
+            "limit": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "agent"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A bounded page of an agent's conversation: the entries of up to `limit`\nevents (1 to 1000, 200 when absent) after `after`, before `before`, or\nthe newest. `important_only` keeps the entries flagged important.\nNeeds `features::CONVERSATION`.",
+          "properties": {
+            "after": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "agent": {
+              "$ref": "#/$defs/AgentId"
+            },
+            "before": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "cmd": {
+              "const": "get_conversation",
+              "type": "string"
+            },
+            "important_only": {
+              "type": "boolean"
             },
             "limit": {
               "format": "uint32",
@@ -5145,6 +5193,93 @@
         "tokens"
       ],
       "type": "object"
+    },
+    "ConversationEntry": {
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "important": {
+          "type": "boolean"
+        },
+        "kind": {
+          "$ref": "#/$defs/ConversationEntryKind"
+        },
+        "links": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "part": {
+          "description": "Its place among the entries of the same event.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "seq": {
+          "description": "The event this entry came from; with `part`, the entry's id.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "description": "Markdown for operator, assistant, post and question entries.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "part",
+        "at",
+        "kind",
+        "important",
+        "text"
+      ],
+      "type": "object"
+    },
+    "ConversationEntryKind": {
+      "oneOf": [
+        {
+          "enum": [
+            "thinking",
+            "tool_call",
+            "tool_result"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "operator",
+          "description": "What the operator sent: a message, or a task they created.",
+          "type": "string"
+        },
+        {
+          "const": "assistant",
+          "description": "The agent's own text, including text beside its tool calls.",
+          "type": "string"
+        },
+        {
+          "const": "post",
+          "description": "A readable post a host appended (`append_note`).",
+          "type": "string"
+        },
+        {
+          "const": "question",
+          "description": "The agent asking the operator (`ask_user`).",
+          "type": "string"
+        },
+        {
+          "const": "message",
+          "description": "A message or task from another agent.",
+          "type": "string"
+        },
+        {
+          "const": "trigger",
+          "description": "A raw external trigger payload.",
+          "type": "string"
+        }
+      ]
     },
     "CostBasis": {
       "description": "Where dollar figures came from; independent of whether every invocation was priced.",
@@ -13094,6 +13229,9 @@
           "$ref": "#/$defs/NoteContext",
           "default": "none"
         },
+        "important": {
+          "type": "boolean"
+        },
         "level": {
           "$ref": "#/$defs/NoteLevel"
         },
@@ -13786,6 +13924,60 @@
             },
             "reply": {
               "const": "transcript_page",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Reply to `get_conversation`: the entries of the events between\n`from_seq` and `to_seq` (0 for an empty page), in order. Page on with\n`before: from_seq` or `after: to_seq`; `last_seq` is the agent's newest\nconversation event.",
+          "properties": {
+            "data": {
+              "properties": {
+                "entries": {
+                  "items": {
+                    "$ref": "#/$defs/ConversationEntry"
+                  },
+                  "type": "array"
+                },
+                "from_seq": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "has_after": {
+                  "type": "boolean"
+                },
+                "has_before": {
+                  "type": "boolean"
+                },
+                "last_seq": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "to_seq": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "entries",
+                "from_seq",
+                "to_seq",
+                "has_before",
+                "has_after",
+                "last_seq"
+              ],
+              "type": "object"
+            },
+            "reply": {
+              "const": "conversation",
               "type": "string"
             }
           },

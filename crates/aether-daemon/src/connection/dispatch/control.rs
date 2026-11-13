@@ -50,12 +50,14 @@ pub(super) async fn dispatch(
             links,
             context,
             level,
+            important,
         } => {
             let note = aether_core::note::Note {
                 text,
                 links,
                 context,
                 level,
+                important,
             };
             append_note(daemon, agent, &note, by)
         }

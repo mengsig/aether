@@ -12,6 +12,7 @@ import type {
 export interface ReplayNote {
   "at": string;
   "context"?: NoteContext;
+  "important"?: boolean;
   "level"?: NoteLevel;
   "links"?: Array<string>;
   "seq": number;

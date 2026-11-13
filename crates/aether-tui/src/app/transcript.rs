@@ -279,6 +279,10 @@ pub enum CellModel {
     Assistant {
         text: String,
     },
+    /// An important note: a host's readable post, drawn as markdown.
+    Post {
+        text: String,
+    },
     Reasoning {
         title: Option<String>,
         text: String,

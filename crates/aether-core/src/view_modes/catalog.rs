@@ -35,19 +35,9 @@ impl Default for Catalog {
         let focus = Definition {
             version: 1,
             label: Some("Focus".into()),
-            description: Some("Coordination without tool detail".into()),
+            description: Some("The important entries: what the operator and the agent said".into()),
             density: Density::Compact,
-            show: vec![
-                UserText,
-                AssistantText,
-                Delegation,
-                AgentMessage,
-                Completion,
-                Status,
-                Question,
-                Approval,
-                Error,
-            ],
+            show: vec![UserText, AssistantText, Question],
             scope: None,
         };
         let standard = Definition {

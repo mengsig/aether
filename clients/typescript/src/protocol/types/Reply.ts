@@ -247,6 +247,17 @@ export interface ReplyTranscriptPage {
   "reply": "transcript_page";
 }
 
+/**
+ * Reply to `get_conversation`: the entries of the events between
+ * `from_seq` and `to_seq` (0 for an empty page), in order. Page on with
+ * `before: from_seq` or `after: to_seq`; `last_seq` is the agent's newest
+ * conversation event.
+ */
+export interface ReplyConversation {
+  "data": Record<string, unknown>;
+  "reply": "conversation";
+}
+
 export interface ReplyUsageBreakdown {
   "data": UsageBreakdown;
   "reply": "usage_breakdown";
@@ -523,6 +534,7 @@ export type Reply =
     ReplyEvents |
     ReplyTranscript |
     ReplyTranscriptPage |
+    ReplyConversation |
     ReplyUsageBreakdown |
     ReplyInbox |
     ReplySnapshot |

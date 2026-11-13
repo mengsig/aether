@@ -285,6 +285,11 @@ client too: a client that lists it in `Hello.features` receives the
 unknown and ignores the tree filters, answering with the whole tree; the
 Rust client refuses all of them to such a daemon.
 
+`conversation` means the daemon serves `get_conversation` (see
+[read models](#read-models)) and keeps `append_note`'s `important` flag (see
+[notes](#notes)). An older daemon refuses the command and drops the flag; the
+Rust client refuses both to such a daemon.
+
 `remote_mounts` means `configure_remote` accepts `settings.mounts` (see
 [remote settings](remote.md#runtime-settings-remotesettings)). An older
 daemon drops the field and saves no mounts; the Rust client refuses such a
@@ -305,7 +310,7 @@ It takes no arguments and returns `Reply::ViewModes`:
 ```
 
 ```json
-{"reply":"view_modes","data":{"modes":[{"name":"standard","label":"Standard","description":"Complete stock transcript","density":"comfortable","show":["user_text","assistant_text","delegation","agent_message","completion","status","question","approval","error","tool","reasoning","memory","compaction","usage"],"scope":null,"builtin":true},{"name":"focus","label":"Focus","description":"Coordination without tool detail","density":"compact","show":["user_text","assistant_text","delegation","agent_message","completion","status","question","approval","error"],"scope":null,"builtin":true}],"diagnostics":[]}}
+{"reply":"view_modes","data":{"modes":[{"name":"standard","label":"Standard","description":"Complete stock transcript","density":"comfortable","show":["user_text","assistant_text","delegation","agent_message","completion","status","question","approval","error","tool","reasoning","memory","compaction","usage"],"scope":null,"builtin":true},{"name":"focus","label":"Focus","description":"The important entries: what the operator and the agent said","density":"compact","show":["user_text","assistant_text","question"],"scope":null,"builtin":true}],"diagnostics":[]}}
 ```
 
 The daemon reads its own `<config dir>/modes/*.toml` on every call, using the
@@ -373,6 +378,25 @@ its first. `last_seq` is read after the page, so an entry committed meanwhile
 can put it past the page's last entry with `has_after` still false; ask again
 with `after` to read it. Page backwards with `before` set to the first entry's seq, and
 forwards with `after` set to the last one's.
+
+`get_conversation {agent, after?, before?, limit?, important_only?}` answers
+`conversation {entries, from_seq, to_seq, has_before, has_after, last_seq}`:
+the agent's conversation as people read it, folded from its own
+`task.created`, `inbox.delivered`, `agent.message`, `question.asked` and note
+events. It pages those events like `get_transcript_page` (same cursors and
+`limit`), and `from_seq` and `to_seq` are the first and last seq it read, 0
+for none: page backwards with `before: from_seq` and forwards with
+`after: to_seq`. An event yields zero or more entries, each
+`{seq, part, at, kind, important, text, links?}`; `seq` and `part` name it.
+`kind` is `operator` (a message or task from the operator), `assistant` (the
+agent's text in one message, text beside its tool calls included), `post` (a
+note), `question` (`ask_user`), `message` (from another agent), `thinking`,
+`tool_call`, `tool_result` or `trigger` (a raw external trigger). The daemon
+sets `important`: true for `operator`, `assistant` and `question`, the note's
+own flag for a `post`, false otherwise. A client never derives it. Tool,
+result and trigger text is cut to 2048 bytes. With `important_only` a page
+keeps only important entries, so it may hold none while `has_before` is true.
+The TUI's `/focus` draws the same important entries.
 
 `usage_breakdown {scope, by, since?, until?, limit?}` answers
 `usage_breakdown {rows, total, truncated}`. It sums the `usage` of
@@ -637,6 +661,13 @@ event's payload for any other subscriber. `info` is left out of the payload.
 The level changes only how people see the note; it never wakes the agent or
 reaches the model, which sees a note only through `context: digest`. The Rust
 client sends it with `Client::append_note`.
+
+`important: true` makes the note a post the operator reads: every view mode
+of the TUI draws it, as markdown with its links listed under it, and
+`get_conversation` flags it important, so `important_only` readers show it. The
+host that posts it sets the flag; it is absent, false, in older notes. An
+important note may hold 16384 bytes of text. Send it only to a daemon that
+lists the `conversation` feature, which an older daemon would not keep.
 
 `context` is `none` by default: only people see the note. With `digest` the
 agent's next turn is also given it, in a compact list in its runtime state:

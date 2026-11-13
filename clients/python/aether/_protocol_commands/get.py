@@ -41,6 +41,24 @@ def get_checkpoint(*, id: CheckpointId) -> dict[str, Any]:
     frame["id"] = id
     return frame
 
+def get_conversation(*, agent: AgentId, after: int | None = None, before: int | None = None, important_only: bool | None = None, limit: int | None = None) -> dict[str, Any]:
+    """A bounded page of an agent's conversation: the entries of up to `limit`
+    events (1 to 1000, 200 when absent) after `after`, before `before`, or
+    the newest. `important_only` keeps the entries flagged important.
+    Needs `features::CONVERSATION`.
+    """
+    frame: dict[str, Any] = {"cmd": "get_conversation"}
+    if after is not None:
+        frame["after"] = after
+    frame["agent"] = agent
+    if before is not None:
+        frame["before"] = before
+    if important_only is not None:
+        frame["important_only"] = important_only
+    if limit is not None:
+        frame["limit"] = limit
+    return frame
+
 def get_events(*, after: int, limit: int, query: EventQuery) -> dict[str, Any]:
     """The `get_events` command."""
     frame: dict[str, Any] = {"cmd": "get_events"}

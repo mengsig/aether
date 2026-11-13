@@ -104,3 +104,62 @@ async fn an_observer_device_cannot_append_a_note() {
     assert_eq!(notes, 1, "{events:?}");
     host.daemon.stop().await;
 }
+
+/// An important note is a post: `get_conversation` keeps it with the flag the
+/// host set, and `important_only` leaves out the plain note beside it.
+#[tokio::test]
+async fn an_important_post_is_read_back_from_the_conversation() {
+    let mut host = Host::enabled().await;
+    let mut conn = RawConn::connect(&host.daemon.socket).await.unwrap();
+    let welcome = conn.hello(aether_protocol::PROTOCOL_VERSION).await.unwrap();
+    let features = welcome["features"].as_array().unwrap();
+    assert!(features.contains(&json!("conversation")), "{welcome}");
+    let agent = idle_agent(&mut host).await;
+    host.ok(json!({"cmd":"append_note", "agent":agent, "text":"cache pruned"}))
+        .await;
+    let post = "**Item shipped**\n\n".to_owned() + &"x".repeat(4000);
+    let appended = host
+        .ok(json!({"cmd":"append_note", "agent":agent, "text":post, "important":true}))
+        .await;
+
+    let all = host
+        .ok(json!({"cmd":"get_conversation", "agent":agent}))
+        .await;
+    let posts: Vec<(&str, bool)> = all["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["kind"] == "post")
+        .map(|entry| (entry["text"].as_str().unwrap(), entry["important"] == true))
+        .collect();
+    assert_eq!(
+        posts,
+        [("cache pruned", false), (post.as_str(), true)],
+        "{all}"
+    );
+    assert_eq!(all["last_seq"], appended["seq"], "{all}");
+
+    let important = host
+        .ok(json!({"cmd":"get_conversation", "agent":agent, "important_only":true}))
+        .await;
+    let entries = important["entries"].as_array().unwrap();
+    assert!(
+        entries.iter().all(|entry| entry["important"] == true),
+        "{important}"
+    );
+    assert!(
+        entries.iter().any(|entry| entry["text"] == post.as_str()),
+        "{important}"
+    );
+    assert!(!entries.iter().any(|entry| entry["text"] == "cache pruned"));
+
+    let older = host
+        .ok(json!({"cmd":"get_conversation", "agent":agent, "before":important["to_seq"], "limit":1}))
+        .await;
+    assert_eq!(older["entries"][0]["text"], "cache pruned", "{older}");
+    let both = host
+        .err(json!({"cmd":"get_conversation", "agent":agent, "after":1, "before":2}))
+        .await;
+    assert_eq!(both["code"], "invalid_argument", "{both}");
+    host.daemon.stop().await;
+}

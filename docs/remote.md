@@ -786,6 +786,7 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `get_tree` | observe | |
 | `list_agents_page` | observe | |
 | `get_transcript_page` | observe | |
+| `get_conversation` | observe | |
 | `usage_breakdown` | observe | |
 | `update_agent` | operate | `host_only` when `patch.backend` or `patch.tools` is supplied; `subtree` needs nothing more. |
 | `reply_to_question` | operate | |

@@ -253,26 +253,112 @@ pub fn transcript_page(
     before: Option<u64>,
     limit: usize,
 ) -> aether_store::Result<TranscriptPage> {
-    assert!(limit > 0, "a page holds at least one entry");
-    assert!(after.is_none() || before.is_none(), "one cursor at most");
     let filter = EventFilter {
         types: vec!["agent.message".into()],
         ..EventFilter::own_events(agent)
     };
+    let page = event_page(store, &filter, after, before, limit)?;
+    let entries: Vec<TranscriptEntry> = page
+        .events
+        .into_iter()
+        .filter_map(transcript_entry)
+        .collect();
+    assert!(entries.len() <= limit, "a page holds at most its limit");
+    Ok(TranscriptPage {
+        entries,
+        has_before: page.has_before,
+        has_after: page.has_after,
+        last_seq: page.last_seq,
+    })
+}
+
+/// One page of an agent's conversation, as `get_conversation` replies.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConversationPage {
+    pub entries: Vec<aether_core::conversation::Entry>,
+    /// The seq range of the events the page read, 0 and 0 when it read none.
+    pub from_seq: u64,
+    pub to_seq: u64,
+    pub has_before: bool,
+    pub has_after: bool,
+    pub last_seq: u64,
+}
+
+/// The conversation entries of up to `limit` of the agent's events, paged
+/// like [`transcript_page`]; `important_only` drops the rest.
+pub fn conversation_page(
+    store: &dyn Store,
+    agent: AgentId,
+    after: Option<u64>,
+    before: Option<u64>,
+    limit: usize,
+    important_only: bool,
+) -> aether_store::Result<ConversationPage> {
+    let filter = EventFilter {
+        types: aether_core::conversation::EVENT_TYPES
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect(),
+        ..EventFilter::own_events(agent)
+    };
+    let page = event_page(store, &filter, after, before, limit)?;
+    let from_seq = page.events.first().map_or(0, |event| event.seq);
+    let to_seq = page.events.last().map_or(0, |event| event.seq);
+    let entries: Vec<_> = page
+        .events
+        .iter()
+        .flat_map(aether_core::conversation::entries)
+        .filter(|entry| entry.important || !important_only)
+        .collect();
+    assert!(from_seq <= to_seq, "a page's events are in seq order");
+    assert!(
+        entries
+            .iter()
+            .all(|entry| (from_seq..=to_seq).contains(&entry.seq)),
+        "every entry comes from an event the page read"
+    );
+    Ok(ConversationPage {
+        entries,
+        from_seq,
+        to_seq,
+        has_before: page.has_before,
+        has_after: page.has_after,
+        last_seq: page.last_seq,
+    })
+}
+
+/// Up to `limit` events matching `filter`, in seq order, with whether more
+/// lie on either side and the newest matching seq.
+struct EventPage {
+    events: Vec<aether_core::event::Event>,
+    has_before: bool,
+    has_after: bool,
+    last_seq: u64,
+}
+
+fn event_page(
+    store: &dyn Store,
+    filter: &EventFilter,
+    after: Option<u64>,
+    before: Option<u64>,
+    limit: usize,
+) -> aether_store::Result<EventPage> {
+    assert!(limit > 0, "a page holds at least one entry");
+    assert!(after.is_none() || before.is_none(), "one cursor at most");
     let (events, has_before, has_after) = match after {
         Some(after) => {
-            let mut events = store.events(after, limit + 1, &filter)?;
+            let mut events = store.events(after, limit + 1, filter)?;
             let has_after = events.len() > limit;
             events.truncate(limit);
             let has_before = !store
-                .events_before(after.saturating_add(1), 1, &filter)?
+                .events_before(after.saturating_add(1), 1, filter)?
                 .is_empty();
             (events, has_before, has_after)
         }
         None => {
             let mut events = match before {
-                Some(before) => store.events_before(before, limit + 1, &filter)?,
-                None => store.latest_events(limit + 1, &filter)?,
+                Some(before) => store.events_before(before, limit + 1, filter)?,
+                None => store.latest_events(limit + 1, filter)?,
             };
             let has_before = events.len() > limit;
             events.truncate(limit);
@@ -283,7 +369,7 @@ pub fn transcript_page(
     // Read after the page and from its own transaction: an entry committed
     // in between raises it, so it is never below the page's newest entry.
     let newest = store
-        .latest_events(1, &filter)?
+        .latest_events(1, filter)?
         .first()
         .map(|event| event.seq);
     let page_end = events
@@ -293,16 +379,15 @@ pub fn transcript_page(
         .or(before.map(|before| before.saturating_sub(1)))
         .unwrap_or(0);
     let has_after = has_after || newest_is_past(page_end, newest);
-    let entries: Vec<TranscriptEntry> = events.into_iter().filter_map(transcript_entry).collect();
     let last_seq = newest
         .into_iter()
-        .chain(entries.last().map(|entry| entry.seq))
+        .chain(events.last().map(|event| event.seq))
         .max()
         .unwrap_or(0);
-    assert!(entries.windows(2).all(|pair| pair[0].seq < pair[1].seq));
-    assert!(entries.len() <= limit, "a page holds at most its limit");
-    Ok(TranscriptPage {
-        entries,
+    assert!(events.windows(2).all(|pair| pair[0].seq < pair[1].seq));
+    assert!(events.len() <= limit, "a page holds at most its limit");
+    Ok(EventPage {
+        events,
         has_before,
         has_after,
         last_seq,

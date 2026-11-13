@@ -2157,6 +2157,7 @@ fn a_note_is_its_own_notice_and_starts_nothing() {
         links: vec!["https://example.com/pull/12".into()],
         context: aether_core::note::NoteContext::None,
         level: aether_core::note::NoteLevel::Info,
+        important: false,
     };
     let draft = note
         .draft(agent, aether_core::id::RunId::new(), Actor::user())
@@ -2185,6 +2186,7 @@ fn a_note_keeps_its_level_in_the_notice() {
             links: Vec::new(),
             context: aether_core::note::NoteContext::None,
             level,
+            important: false,
         };
         let draft = note
             .draft(agent, aether_core::id::RunId::new(), Actor::user())
@@ -2197,4 +2199,31 @@ fn a_note_keeps_its_level_in_the_notice() {
             "{models:?}"
         );
     }
+}
+
+#[test]
+fn an_important_note_is_a_readable_post_with_its_links() {
+    let mut feed = Feed::new();
+    let (agent, _) = feed.spawn(None, "orchestrator", "assistant");
+    let note = aether_core::note::Note {
+        text: "**Item shipped**\n\nMerged into next.".into(),
+        links: vec!["https://example.com/pull/12".into()],
+        context: aether_core::note::NoteContext::None,
+        level: aether_core::note::NoteLevel::Info,
+        important: true,
+    };
+    let draft = note
+        .draft(agent, aether_core::id::RunId::new(), Actor::user())
+        .expect("a valid post");
+    let before = feed.models(agent).len();
+    feed.on(agent, draft.kind);
+    let models = feed.models(agent);
+    assert_eq!(models.len(), before + 1, "one cell for one post");
+    let Some(CellModel::Post { text }) = models.last() else {
+        panic!("{models:?}");
+    };
+    assert_eq!(
+        text,
+        "**Item shipped**\n\nMerged into next.\n\n- https://example.com/pull/12"
+    );
 }

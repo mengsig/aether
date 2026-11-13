@@ -651,6 +651,17 @@ fn thinking_of(content: &[ContentBlock]) -> String {
         .collect()
 }
 
+/// An important note's markdown, then its links as a list.
+fn post_text(note: &aether_core::note::Note) -> String {
+    debug_assert!(note.important, "only an important note is a post");
+    let mut text = note.text.trim().to_owned();
+    for (i, link) in note.links.iter().enumerate() {
+        text.push_str(if i == 0 { "\n\n- " } else { "\n- " });
+        text.push_str(link.trim());
+    }
+    text
+}
+
 /// A delivered message as its cell reads: the text, then a line per image.
 fn message_text(content: &[ContentBlock]) -> String {
     let summaries = message_images(content).into_iter().map(|i| i.summary());
@@ -1547,6 +1558,15 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
         }
         EventKind::Custom { name, .. } if name == aether_core::note::NOTE_EVENT => {
             if let Some(note) = aether_core::note::Note::of(&event.kind) {
+                if note.important {
+                    t.push(
+                        at,
+                        CellModel::Post {
+                            text: post_text(&note),
+                        },
+                    );
+                    return;
+                }
                 let mut parts = vec![note.text.trim()];
                 parts.extend(note.links.iter().map(String::as_str));
                 let text = NoticeText::joined(&parts, NoticeSeparator::Dot);
