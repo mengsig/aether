@@ -774,13 +774,13 @@ fn backoff_is_replaced_in_place_by_its_recovery() {
 }
 
 /// A spent quota's partial is said; a fallback's retried failure after it is
-/// not, as `get_conversation` reads them.
+/// shown as an error but its partial is not, as `get_conversation` reads them.
 #[test]
 fn a_retried_failure_after_a_spent_quota_draws_no_partial() {
     let mut feed = Feed::new();
     let (agent, _) = feed.spawn(None, "aether", "assistant");
-    let failed = |class, retryable, text: &str| EventKind::InvocationFailed {
-        invocation: InvocationId::new(),
+    let failed = |invocation, class, retryable, text: &str| EventKind::InvocationFailed {
+        invocation,
         snapshot: aether_core::id::SnapshotId::new(),
         error: "failed".into(),
         class: Some(class),
@@ -788,26 +788,46 @@ fn a_retried_failure_after_a_spent_quota_draws_no_partial() {
         cancelled: false,
         partial: vec![ContentBlock::text(text)],
     };
-    feed.on(agent, failed(ModelErrorClass::UsageLimit, false, "spent"));
-    feed.on(agent, failed(ModelErrorClass::Overloaded, true, "retried"));
-    let said: Vec<&str> = feed
-        .models(agent)
-        .into_iter()
+    let spent = failed(
+        InvocationId::new(),
+        ModelErrorClass::UsageLimit,
+        false,
+        "spent",
+    );
+    feed.on(agent, spent);
+    let fallback = InvocationId::new();
+    let delta = Delta::Text {
+        text: "retried".into(),
+    };
+    let clock = feed.clock;
+    feed.transcripts
+        .get_mut(&agent)
+        .expect("the agent's transcript")
+        .stream(fallback, &delta, clock);
+    feed.on(
+        agent,
+        failed(fallback, ModelErrorClass::Overloaded, true, "retried"),
+    );
+    feed.on(
+        agent,
+        EventKind::AgentFailed {
+            error: "retries spent".into(),
+        },
+    );
+    let models = feed.models(agent);
+    let said: Vec<&str> = models
+        .iter()
         .filter_map(|model| match model {
-            CellModel::Assistant { text, .. } => Some(text.as_str()),
+            CellModel::Assistant { text } => Some(text.as_str()),
             _ => None,
         })
         .collect();
-    assert_eq!(said, ["spent"]);
-    let errors = feed
-        .models(agent)
-        .into_iter()
+    assert_eq!(said, ["spent"], "the cut stream is dropped, not committed");
+    let errors = models
+        .iter()
         .filter(|model| matches!(model, CellModel::Error { .. }))
         .count();
-    assert_eq!(
-        errors, 1,
-        "a retried failure leaves its story to the backoff notice"
-    );
+    assert!(errors >= 2, "both failures still show: {models:?}");
 }
 
 #[test]

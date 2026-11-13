@@ -1417,14 +1417,17 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
                 t.private.quota = Some(format!("{provider} usage limit reached"));
             }
             // A retryable failure is retried; its backoff notice tells that story.
-            if !aether_core::conversation::keeps_partial(&event.kind) {
-                debug_assert!(*retryable, "only a retried failure is left unsaid");
+            if *retryable && t.private.quota.is_none() {
                 return;
             }
-            let thinking = thinking_of(partial);
-            let partial = text_of(partial);
             let matching = t.stream.invocation == Some(*invocation);
-            if partial.trim().is_empty() && thinking.trim().is_empty() {
+            if !aether_core::conversation::keeps_partial(&event.kind) {
+                // Retried after a spent quota: the retry says it again.
+                debug_assert!(*retryable, "only a retried failure is left unsaid");
+                if matching {
+                    t.stream.reset();
+                }
+            } else if partial_is_blank(partial) {
                 if matching {
                     t.commit_stream(at);
                 }
@@ -1432,7 +1435,7 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
                 if matching {
                     t.stream.reset();
                 }
-                t.push_reply(at, &thinking, &partial, None);
+                t.push_reply(at, &thinking_of(partial), &text_of(partial), None);
             }
             let hint = match t.private.quota {
                 Some(_) => NoticeText::joined(&["/model to switch", "/wake"], NoticeSeparator::Dot),
@@ -1706,6 +1709,10 @@ fn shown_since_cut(
     };
     shown(thinking, &cut.reasoning, tail.map(|s| s.reasoning.as_str()))
         && shown(text, &cut.text, tail.map(|s| s.text.as_str()))
+}
+
+fn partial_is_blank(partial: &[ContentBlock]) -> bool {
+    text_of(partial).trim().is_empty() && thinking_of(partial).trim().is_empty()
 }
 
 fn cancelled_partial(
