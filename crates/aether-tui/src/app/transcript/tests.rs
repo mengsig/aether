@@ -773,6 +773,43 @@ fn backoff_is_replaced_in_place_by_its_recovery() {
     );
 }
 
+/// A spent quota's partial is said; a fallback's retried failure after it is
+/// not, as `get_conversation` reads them.
+#[test]
+fn a_retried_failure_after_a_spent_quota_draws_no_partial() {
+    let mut feed = Feed::new();
+    let (agent, _) = feed.spawn(None, "aether", "assistant");
+    let failed = |class, retryable, text: &str| EventKind::InvocationFailed {
+        invocation: InvocationId::new(),
+        snapshot: aether_core::id::SnapshotId::new(),
+        error: "failed".into(),
+        class: Some(class),
+        retryable,
+        cancelled: false,
+        partial: vec![ContentBlock::text(text)],
+    };
+    feed.on(agent, failed(ModelErrorClass::UsageLimit, false, "spent"));
+    feed.on(agent, failed(ModelErrorClass::Overloaded, true, "retried"));
+    let said: Vec<&str> = feed
+        .models(agent)
+        .into_iter()
+        .filter_map(|model| match model {
+            CellModel::Assistant { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(said, ["spent"]);
+    let errors = feed
+        .models(agent)
+        .into_iter()
+        .filter(|model| matches!(model, CellModel::Error { .. }))
+        .count();
+    assert_eq!(
+        errors, 1,
+        "a retried failure leaves its story to the backoff notice"
+    );
+}
+
 #[test]
 fn quota_failures_raise_an_alert_and_mark_the_child_result() {
     let mut feed = Feed::new();

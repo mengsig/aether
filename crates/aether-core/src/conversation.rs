@@ -140,8 +140,8 @@ pub fn cancelled_invocation(event: &Event) -> Option<InvocationId> {
 }
 
 /// Whether a failed turn's partial reads as said: a stop, or a failure that
-/// is not retried (a usage limit is not retried soon either).
-fn keeps_partial(kind: &EventKind) -> bool {
+/// is not retried (a usage limit is not retried soon either). The TUI agrees.
+pub fn keeps_partial(kind: &EventKind) -> bool {
     let EventKind::InvocationFailed {
         cancelled,
         retryable,

@@ -1417,7 +1417,8 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
                 t.private.quota = Some(format!("{provider} usage limit reached"));
             }
             // A retryable failure is retried; its backoff notice tells that story.
-            if *retryable && t.private.quota.is_none() {
+            if !aether_core::conversation::keeps_partial(&event.kind) {
+                debug_assert!(*retryable, "only a retried failure is left unsaid");
                 return;
             }
             let thinking = thinking_of(partial);
