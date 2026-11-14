@@ -98,3 +98,29 @@ test('a failed archive shows the error and keeps the card until the daemon confi
     expect(archivedIds(server)).toEqual([FAILED[0]]);
   } finally {await server.close();}
 });
+
+test('the error toast stays readable below the Reconnecting header at 390 px',async({page})=>{
+  const server=serverWithFailures();
+  try {
+    await openAttention(page,server);
+    const card=page.locator(`.fleet-attention-card[data-attention="attention-agent_failed-${FAILED[0]}"]`);
+    await card.getByRole('button',{name:'Dismiss…'}).click();
+    await expect(page.getByRole('heading',{name:'Dismiss CI investigation?'})).toBeVisible();
+    server.wss.handleUpgrade=(_request,socket)=>{socket.destroy();};
+    for (const ws of server.clients.keys()) ws.terminate();
+    await expect(page.locator('.connection[data-state="reconnecting"]')).toBeVisible();
+    await page.getByRole('button',{name:'Confirm'}).click();
+    const toast=page.locator('.toast:visible');
+    await expect(toast).toContainText('Could not dismiss CI investigation');
+    await page.screenshot({path:process.env.TOAST_SHOT??'test-results/toast.png'});
+    const toastBox=await toast.boundingBox();
+    const bannerBoxes=await page.locator('.topbar, .global-banner:visible, .bottom-nav').evaluateAll(nodes=>nodes.map(node=>{const {x,y,width,height}=node.getBoundingClientRect();return {x,y,width,height};}));
+    if (!toastBox) throw new Error('The toast must be laid out');
+    for (const box of bannerBoxes) {
+      const overlaps=toastBox.x<box.x+box.width&&box.x<toastBox.x+toastBox.width&&toastBox.y<box.y+box.height&&box.y<toastBox.y+toastBox.height;
+      expect(overlaps,`toast ${JSON.stringify(toastBox)} must clear ${JSON.stringify(box)}`).toBe(false);
+    }
+    expect(toastBox.y).toBeGreaterThanOrEqual(0);
+
+  } finally {await server.close();}
+});
