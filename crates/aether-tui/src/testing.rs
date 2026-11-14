@@ -205,14 +205,21 @@ pub fn app_with_window(history: impl FnOnce(AgentId) -> Vec<Event>, window: usiz
             next_after: None,
         })),
     });
-    let events = history(id);
+    load_history(&mut app, id, &history(id), window);
+    assert_eq!(app.selected, Some(id), "the root is viewed");
+    app
+}
+
+/// Answer `id`'s first history page with the last `window` of `events`, and
+/// each read of what lies before that page from all of them, as a daemon does.
+pub fn load_history(app: &mut App, id: AgentId, events: &[Event], window: usize) {
     assert!(
         events.windows(2).all(|pair| pair[0].seq < pair[1].seq),
         "a history page is in seq order"
     );
     let page = events[events.len().saturating_sub(window)..].to_vec();
     let mut effects = app.reduce(AppEvent::Reply {
-        then: backfill_then(&app, id),
+        then: backfill_then(app, id),
         result: Ok(Reply::Events(page)),
     });
     while let Some(index) = effects.iter().position(|effect| {
@@ -227,11 +234,13 @@ pub fn app_with_window(history: impl FnOnce(AgentId) -> Vec<Event>, window: usiz
         let Effect::Request { command, then } = effects.swap_remove(index) else {
             unreachable!("matched a request");
         };
-        let result = Ok(Reply::Events(deliveries_before(id, &events, &command)));
+        let result = Ok(Reply::Events(deliveries_before(id, events, &command)));
         effects = app.reduce(AppEvent::Reply { then, result });
     }
-    assert_eq!(app.selected, Some(id), "the root is viewed");
-    app
+    assert!(
+        app.transcripts.get(&id).is_some_and(|t| t.loaded),
+        "the page and the reads it made load the transcript"
+    );
 }
 
 /// A daemon's answer from `events` to a page's read of the agent's
