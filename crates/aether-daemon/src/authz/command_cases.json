@@ -79,6 +79,13 @@
   {
     "access": "observe",
     "command": {
+      "cmd": "get_conversation",
+      "agent": "agt_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
       "cmd": "usage_breakdown",
       "by": "model"
     }

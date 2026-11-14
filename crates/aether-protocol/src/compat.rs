@@ -527,6 +527,7 @@ mod tests {
             ("get_artifact", &["id"]),
             ("get_attention", &[]),
             ("get_checkpoint", &["id"]),
+            ("get_conversation", &["agent"]),
             ("get_events", &["after", "limit", "query"]),
             ("get_git_summary", &["workspace"]),
             ("get_github_watcher", &[]),

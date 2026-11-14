@@ -14,9 +14,9 @@ use aether_core::model::{ContentBlock, MessageRole, ModelRef, Usage};
 use aether_core::provider::ProviderHealth;
 use aether_core::time::now;
 use aether_core::tool::SideEffectClass;
-use aether_protocol::{AgentTree, DaemonStatus, Delta, Reply, TreeNode};
+use aether_protocol::{AgentTree, Command, DaemonStatus, Delta, Reply, TreeNode};
 
-use crate::app::{App, AppEvent, Then, TuiOptions};
+use crate::app::{App, AppEvent, Effect, Then, TuiOptions};
 
 mod fleet;
 pub use fleet::{
@@ -124,7 +124,30 @@ fn reply_status(app: &mut App, then: Then, agents_suspended: u32) {
 
 /// One connected agent whose transcript alternates person and agent over
 /// `messages`, in order.
+#[allow(clippy::expect_used)]
 pub fn app_with_transcript(messages: &[&str]) -> App {
+    let mut app = app_with_history(|_| Vec::new());
+    let id = app.selected.expect("the root is viewed");
+    for (i, text) in messages.iter().enumerate() {
+        let role = if i % 2 == 0 {
+            MessageRole::User
+        } else {
+            MessageRole::Assistant
+        };
+        push_message(&mut app, id, role, text);
+    }
+    app
+}
+
+/// One connected agent viewed on a fresh launch: its first history page
+/// is `history(agent)`, as a restarted TUI loads it.
+pub fn app_with_history(history: impl FnOnce(AgentId) -> Vec<Event>) -> App {
+    app_with_window(history, usize::MAX)
+}
+
+/// [`app_with_history`] whose first page holds only the last `window` of
+/// the agent's events; the page's later reads see all of them, as a daemon's do.
+pub fn app_with_window(history: impl FnOnce(AgentId) -> Vec<Event>, window: usize) -> App {
     let mut app = App::new(TuiOptions::default());
     app.reduce(AppEvent::Connected);
 
@@ -182,20 +205,70 @@ pub fn app_with_transcript(messages: &[&str]) -> App {
             next_after: None,
         })),
     });
-    app.reduce(AppEvent::Reply {
-        then: backfill_then(&app, id),
-        result: Ok(Reply::Events(vec![])),
-    });
-
-    for (i, text) in messages.iter().enumerate() {
-        let role = if i % 2 == 0 {
-            MessageRole::User
-        } else {
-            MessageRole::Assistant
-        };
-        push_message(&mut app, id, role, text);
-    }
+    load_history(&mut app, id, &history(id), window);
+    assert_eq!(app.selected, Some(id), "the root is viewed");
     app
+}
+
+/// Answer `id`'s first history page with the last `window` of `events`, and
+/// each read of what lies before that page from all of them, as a daemon does.
+pub fn load_history(app: &mut App, id: AgentId, events: &[Event], window: usize) {
+    assert!(
+        events.windows(2).all(|pair| pair[0].seq < pair[1].seq),
+        "a history page is in seq order"
+    );
+    let page = events[events.len().saturating_sub(window)..].to_vec();
+    let mut effects = app.reduce(AppEvent::Reply {
+        then: backfill_then(app, id),
+        result: Ok(Reply::Events(page)),
+    });
+    while let Some(index) = effects.iter().position(|effect| {
+        matches!(
+            effect,
+            Effect::Request {
+                then: Then::BackfillDeliveries { .. },
+                ..
+            }
+        )
+    }) {
+        let Effect::Request { command, then } = effects.swap_remove(index) else {
+            unreachable!("matched a request");
+        };
+        let result = Ok(Reply::Events(deliveries_before(id, events, &command)));
+        effects = app.reduce(AppEvent::Reply { then, result });
+    }
+    assert!(
+        app.transcripts.get(&id).is_some_and(|t| t.loaded),
+        "the page and the reads it made load the transcript"
+    );
+}
+
+/// A daemon's answer from `events` to a page's read of the agent's
+/// deliveries, or replies, before it: newest first, up to its limit.
+#[allow(clippy::expect_used, clippy::panic)]
+fn deliveries_before(agent: AgentId, events: &[Event], command: &Command) -> Vec<Event> {
+    let Command::GetEvents { query, limit, .. } = command else {
+        panic!("a history page asks for no {command:?}");
+    };
+    assert!(
+        query.types.iter().any(|name| name == "inbox.delivered")
+            && query
+                .types
+                .iter()
+                .all(|name| ["inbox.delivered", "agent.message"].contains(&name.as_str())),
+        "the page reads deliveries and replies: {:?}",
+        query.types
+    );
+    let before = query.before.expect("a read before the page");
+    let mut deliveries: Vec<Event> = events
+        .iter()
+        .filter(|event| event.agent_id == Some(agent) && event.seq < before)
+        .filter(|event| query.types.contains(&event.kind.type_name()))
+        .cloned()
+        .collect();
+    deliveries.reverse();
+    deliveries.truncate(*limit);
+    deliveries
 }
 
 /// One more message from the person, streamed to the selected agent's

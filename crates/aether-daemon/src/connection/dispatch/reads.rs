@@ -14,6 +14,7 @@ pub(super) fn owns(command: &Command) -> bool {
         Command::GetEvents { .. }
             | Command::GetTranscript { .. }
             | Command::GetTranscriptPage { .. }
+            | Command::GetConversation { .. }
             | Command::UsageBreakdown { .. }
             | Command::GetInbox { .. }
             | Command::GetSnapshot { .. }
@@ -57,6 +58,33 @@ fn read(store: &dyn aether_store::Store, command: Command) -> Result<Reply, Erro
             before,
             limit,
         } => get_transcript_page(store, agent, after, before, limit),
+        Command::GetConversation {
+            agent,
+            after,
+            before,
+            limit,
+            important_only,
+        } => {
+            let limit = aether_protocol::read_models::transcript_request(after, before, limit)
+                .map_err(ErrorReply::invalid)?;
+            let page = crate::projections::conversation_page(
+                store,
+                agent,
+                after,
+                before,
+                limit as usize,
+                important_only,
+            )
+            .map_err(store_err)?;
+            Ok(Reply::Conversation {
+                entries: page.entries,
+                from_seq: page.from_seq,
+                to_seq: page.to_seq,
+                has_before: page.has_before,
+                has_after: page.has_after,
+                last_seq: page.last_seq,
+            })
+        }
         Command::UsageBreakdown {
             scope,
             by,

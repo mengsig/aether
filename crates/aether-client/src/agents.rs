@@ -178,13 +178,15 @@ impl Client {
 
     /// Append `note` to `agent`'s transcript without starting a turn.
     /// Returns the note's event sequence number. A daemon that does not
-    /// announce `notes` is refused before anything is sent.
+    /// announce `notes` is refused before anything is sent, and an important
+    /// note to one that does not announce `conversation`.
     pub async fn append_note(&self, agent: AgentId, note: aether_core::note::Note) -> Result<u64> {
         let aether_core::note::Note {
             text,
             links,
             context,
             level,
+            important,
         } = note;
         let command = Command::AppendNote {
             agent,
@@ -192,6 +194,7 @@ impl Client {
             links,
             context,
             level,
+            important,
         };
         match self.request(command).await? {
             Reply::NoteAppended { seq } => Ok(seq),

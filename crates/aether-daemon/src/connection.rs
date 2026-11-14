@@ -419,6 +419,7 @@ where
                                                     features::USAGE_BREAKDOWN.into(),
                                                     features::VIEW_MODES.into(),
                                                     features::REMOTE_MOUNTS.into(),
+                                                    features::CONVERSATION.into(),
                                                 ],
                                                 daemon_protocol_version: Some(
                                                     aether_protocol::PROTOCOL_VERSION,

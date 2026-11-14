@@ -50,6 +50,7 @@ impl Runtime {
                     links: vec![candidate.url.clone()],
                     context: NoteContext::Digest,
                     level: NoteLevel::Info,
+                    important: false,
                 };
                 // GitHub supplies the URL; a link the note refuses is dropped.
                 if note.check().is_err() {

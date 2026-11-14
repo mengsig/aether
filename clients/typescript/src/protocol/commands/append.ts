@@ -16,6 +16,7 @@ export interface AppendNoteCommand {
   "cmd": "append_note";
   "agent": AgentId;
   "context"?: NoteContext;
+  "important"?: boolean;
   "level"?: NoteLevel;
   "links"?: Array<string>;
   "text": string;

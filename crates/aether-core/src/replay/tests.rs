@@ -419,6 +419,7 @@ fn leveled_note(text: &str, level: crate::note::NoteLevel) -> EventKind {
         links: vec!["https://example.com/1".into()],
         context: NoteContext::None,
         level,
+        important: false,
     };
     note.draft(AgentId::new(), crate::id::RunId::new(), Actor::user())
         .expect("a valid note")

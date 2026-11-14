@@ -1,5 +1,5 @@
 //! Cell family: assistant markdown: `• ` dim gutter on the first row, 2-column indent. Owner: W2.
-//! Handles `CellModel::Assistant`.
+//! Handles `CellModel::Assistant` and a host's `CellModel::Post`, whose bullet is accented.
 
 use ratatui::text::Line;
 
@@ -16,11 +16,13 @@ pub fn display_lines(cell: &CellModel, width: u16, theme: &Theme) -> Vec<Line<'s
 }
 
 pub fn layout(cell: &CellModel, width: u16, _detail: bool, theme: &Theme) -> Layout {
-    let CellModel::Assistant { text } = cell else {
-        return Layout::default();
+    let (text, bullet_style) = match cell {
+        CellModel::Assistant { text } => (text, theme.secondary()),
+        CellModel::Post { text } => (text, theme.accent()),
+        _ => return Layout::default(),
     };
     let mut rows = markdown::render_layout(text, text_width(width), theme.text(), theme);
-    let (bullet, indent) = gutters(theme);
+    let (bullet, indent) = gutters(theme, bullet_style);
     for (i, (row, source)) in rows.rows_mut().enumerate() {
         if let Some(lead) = gutter(i, row, &bullet, &indent) {
             source.prefix += lead.content.width();
@@ -36,8 +38,8 @@ pub fn text_width(width: u16) -> usize {
     usize::from(width).saturating_sub(2)
 }
 
-fn gutters(theme: &Theme) -> (Span<'static>, Span<'static>) {
-    let bullet = span(format!("{} ", theme.glyphs().bullet), theme.secondary());
+fn gutters(theme: &Theme, bullet: ratatui::style::Style) -> (Span<'static>, Span<'static>) {
+    let bullet = span(format!("{} ", theme.glyphs().bullet), bullet);
     (bullet, span("  ", theme.text()))
 }
 
@@ -61,7 +63,7 @@ pub fn gutter_from(
     rows: Vec<Line<'static>>,
     theme: &Theme,
 ) -> impl Iterator<Item = Line<'static>> {
-    let (bullet, indent) = gutters(theme);
+    let (bullet, indent) = gutters(theme, theme.secondary());
     rows.into_iter().enumerate().map(move |(i, mut row)| {
         if let Some(lead) = gutter(first + i, &row, &bullet, &indent) {
             row.spans.insert(0, lead.clone());

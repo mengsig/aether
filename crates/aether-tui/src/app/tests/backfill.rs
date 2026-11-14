@@ -1028,3 +1028,152 @@ fn eviction_keeps_old_pending_questions_in_the_needs_you_strip() {
     assert!(app.needs_you().iter().any(|row| row.agent == id));
     assert!(app.transcripts[&id].older_available);
 }
+
+/// A page at seqs 7 and 8 whose consumption read an item delivered before it.
+fn page_missing_a_delivery(id: AgentId, item: aether_core::id::InboxItemId) -> Vec<Event> {
+    let consumed = EventKind::InboxConsumed {
+        up_to: 3,
+        items: vec![item],
+    };
+    let reply = EventKind::AgentMessage {
+        role: MessageRole::Assistant,
+        content: vec![ContentBlock::text("on it")],
+        invocation: None,
+    };
+    vec![event(8, id, reply), event(7, id, consumed)]
+}
+
+fn operator_delivery(seq: u64, id: AgentId, item_seq: u64, text: &str) -> Event {
+    let item = aether_core::inbox::InboxItem {
+        id: aether_core::id::InboxItemId::new(),
+        agent_id: id,
+        seq: item_seq,
+        kind: aether_core::inbox::InboxKind::Message {
+            message_id: aether_core::id::MessageId::new(),
+            from: Actor::user(),
+            content: vec![ContentBlock::text(text)],
+        },
+        delivered_at: aether_core::time::now(),
+    };
+    event(seq, id, EventKind::InboxDelivered { item })
+}
+
+/// The one request in `effects`: a read of deliveries before `before`.
+#[track_caller]
+fn deliveries_read(effects: &[Effect], before: u64) -> Then {
+    match effects {
+        [
+            Effect::Request {
+                command: Command::GetEvents { query, limit, .. },
+                then,
+            },
+        ] => {
+            assert_eq!(query.before, Some(before), "deliveries before the page");
+            assert_eq!(query.types, ["inbox.delivered"]);
+            assert_eq!(*limit, 1, "one delivery a reply: it fits a frame");
+            then.clone()
+        }
+        other => panic!("a read of the deliveries before the page: {other:?}"),
+    }
+}
+
+fn user_texts(app: &App, id: AgentId) -> Vec<String> {
+    app.transcripts[&id]
+        .all_cells()
+        .filter_map(|cell| match &cell.model {
+            CellModel::User { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_page_whose_earlier_deliveries_fail_to_load_still_loads_and_says_so() {
+    let (mut app, id) = app_with_agent();
+    start(&mut app, id);
+    let effects = finish(
+        &mut app,
+        id,
+        page_missing_a_delivery(id, aether_core::id::InboxItemId::new()),
+    );
+    let then = deliveries_read(&effects, 7);
+    assert!(
+        !app.transcripts[&id].loaded,
+        "the page waits for its deliveries"
+    );
+    app.reduce(AppEvent::Reply {
+        then,
+        result: Err(ClientError::Disconnected),
+    });
+    assert!(app.transcripts[&id].loaded);
+    assert!(
+        app.transcripts[&id]
+            .all_cells()
+            .any(|c| matches!(&c.model, CellModel::Assistant { text } if text == "on it"))
+    );
+    assert!(
+        app.live_flash()
+            .expect("error flash")
+            .contains("before its history")
+    );
+}
+
+#[test]
+fn deliveries_are_read_back_one_at_a_time_until_the_consumed_one() {
+    let (mut app, id) = app_with_agent();
+    start(&mut app, id);
+    let wanted = operator_delivery(2, id, 1, "ship the fix");
+    let EventKind::InboxDelivered { item } = &wanted.kind else {
+        unreachable!("built as a delivery");
+    };
+    let effects = finish(&mut app, id, page_missing_a_delivery(id, item.id));
+    let then = deliveries_read(&effects, 7);
+    // Still queued past the page: delivered after the wanted one, before the page.
+    let large = "x".repeat(2 << 20);
+    let mut then = then;
+    for seq in [6, 4] {
+        let effects = app.reduce(AppEvent::Reply {
+            then,
+            result: Ok(Reply::Events(vec![operator_delivery(seq, id, seq, &large)])),
+        });
+        then = deliveries_read(&effects, seq);
+        assert!(!app.transcripts[&id].loaded);
+    }
+    app.reduce(AppEvent::Reply {
+        then,
+        result: Ok(Reply::Events(vec![wanted.clone()])),
+    });
+    assert!(app.transcripts[&id].loaded);
+    assert_eq!(
+        user_texts(&app, id),
+        ["ship the fix"],
+        "only the consumed one"
+    );
+}
+
+#[test]
+fn live_overflow_while_deliveries_load_keeps_live_content() {
+    let (mut app, id) = app_with_agent();
+    start(&mut app, id);
+    let invocation = InvocationId::new();
+    deliver(&mut app, answer(1, id, invocation, "live answer"));
+    let effects = finish(
+        &mut app,
+        id,
+        page_missing_a_delivery(id, aether_core::id::InboxItemId::new()),
+    );
+    let then = deliveries_read(&effects, 7);
+    for _ in 0..20_001 {
+        text(&mut app, id, invocation, "x");
+    }
+    let before = app.transcripts[&id].clone();
+    app.reduce(AppEvent::Reply {
+        then,
+        result: Ok(Reply::Events(Vec::new())),
+    });
+    let mut expected = before;
+    expected.client_error(app.now, app.live_flash().expect("error flash").into());
+    assert_eq!(app.transcripts[&id], expected, "the live transcript stays");
+    assert!(!app.transcripts[&id].loaded);
+    assert!(app.live_flash().unwrap().contains("too much live activity"));
+}

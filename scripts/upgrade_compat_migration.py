@@ -25,11 +25,17 @@ REWINDS = {
     # V33's triggers name its tables and its indexes the column, so they go
     # first; V33 adds the column back and replays in full, backfill included.
     33: (
+        "DROP TRIGGER agent_tree_removed",
+        "DROP TRIGGER agent_tree_added",
+        "DROP TRIGGER agent_tree_deleted",
+        "DROP TRIGGER agent_tree_moved",
+        "DROP TRIGGER agent_tree_inserted",
         "DROP TRIGGER agent_usage_deleted",
         "DROP TRIGGER agent_usage_updated",
         "DROP TRIGGER agent_usage_inserted",
         "DROP TRIGGER usage_totals_removed",
         "DROP TRIGGER usage_totals_added",
+        "DROP TABLE agent_tree",
         "DROP TABLE usage_totals",
         "DROP TABLE agent_usage",
         "DROP INDEX agents_run_archived_id",

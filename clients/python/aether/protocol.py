@@ -92,6 +92,7 @@ from ._protocol_commands.get import (
     get_artifact,
     get_attention,
     get_checkpoint,
+    get_conversation,
     get_events,
     get_git_summary,
     get_github_watcher,

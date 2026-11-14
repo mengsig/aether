@@ -220,6 +220,7 @@ async fn a_note_is_refused_by_a_daemon_without_the_feature() {
         links: Vec::new(),
         context: aether_core::note::NoteContext::None,
         level: aether_core::note::NoteLevel::Info,
+        important: false,
     };
     let error = client
         .append_note(aether_core::id::AgentId::new(), note)

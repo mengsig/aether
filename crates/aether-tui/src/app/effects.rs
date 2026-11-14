@@ -56,6 +56,11 @@ pub enum Then {
         agent: AgentId,
         connection: u64,
     },
+    /// Deliveries before that page of the items its consumptions read.
+    BackfillDeliveries {
+        agent: AgentId,
+        connection: u64,
+    },
     /// Reply to this root start's create request.
     AgentCreated(StartId),
     /// Reply to a restart: select the new agent and load what it inherited.

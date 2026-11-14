@@ -3,7 +3,9 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
-use aether_core::id::InvocationId;
+use aether_core::event::EventKind;
+use aether_core::id::{InboxItemId, InvocationId};
+use aether_core::inbox::InboxItem;
 use aether_core::time::Timestamp;
 use aether_protocol::{Delta, EventQuery, Reply};
 
@@ -14,6 +16,9 @@ use super::{AgentId, App, ClientError, Command, Effect, Event, Then};
 const PAGE: usize = transcript::HISTORY_WINDOW;
 /// Live events and deltas held while any backfill is in flight.
 const MAX_BUFFERED: usize = 20_000;
+/// Deliveries per read of those before a page: one is never larger than the
+/// request line that delivered it, so a reply always fits a frame.
+const DELIVERIES_PER_READ: usize = 1;
 
 #[derive(Debug, Default)]
 pub(super) struct Backfill {
@@ -38,6 +43,14 @@ struct Pending {
     /// Asked for on this connection. History expiring cancels pages and bumps
     /// it, so a cancelled page's reply never matches its replacement.
     connection: u64,
+    /// Items the page's consumptions read whose delivery came before it and
+    /// is not found yet, and those found, as delivered.
+    undelivered: HashSet<InboxItemId>,
+    earlier: Vec<InboxItem>,
+    /// The page stops a turn before any reply of its own, so the reply
+    /// before the page is still to read, and the invocation it was found for.
+    reply_wanted: bool,
+    earlier_reply: Option<InvocationId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +151,10 @@ impl App {
                 buffer_start: self.backfill.buffered.len(),
                 abandoned: None,
                 connection: self.connection,
+                undelivered: HashSet::new(),
+                earlier: Vec::new(),
+                reply_wanted: false,
+                earlier_reply: None,
             },
         );
         Some(page_request(agent, before, self.connection))
@@ -233,8 +250,7 @@ impl App {
                 return self.finish_backfill(agent, pending, false);
             }
         };
-        if self.backfill.overflowed && pending.before.is_none() {
-            self.flash_error(format!("too much live activity while loading {}'s history; keeping live content; reselect to retry", self.agent_name(agent)));
+        if self.live_overflowed(agent, &pending) {
             return self.finish_backfill(agent, pending, false);
         }
         if events.len() >= PAGE && events.windows(2).any(|pair| pair[0].seq < pair[1].seq) {
@@ -249,7 +265,90 @@ impl App {
             // An empty older page leaves the displayed window intact.
             return self.finish_backfill(agent, pending, false);
         }
+        pending.undelivered = transcript::undelivered_consumed(agent, &events);
+        pending.reply_wanted = transcript::stops_before_a_reply(agent, &events);
+        let start = events.iter().map(|event| event.seq).min();
         pending.events = events;
+        match start {
+            Some(start) if pending.reads_earlier() => {
+                let request = deliveries_request(agent, start, connection, &pending);
+                self.backfill.pages.insert(agent, pending);
+                vec![request]
+            }
+            _ => self.finish_backfill(agent, pending, true),
+        }
+    }
+
+    /// The page's initial load gave up on live frames it could not hold:
+    /// rebuilding would drop live cells.
+    fn live_overflowed(&mut self, agent: AgentId, pending: &Pending) -> bool {
+        if !self.backfill.overflowed || pending.before.is_some() {
+            return false;
+        }
+        self.flash_error(format!("too much live activity while loading {}'s history; keeping live content; reselect to retry", self.agent_name(agent)));
+        true
+    }
+
+    /// The agent's deliveries before the page, newest first, until each item
+    /// the page consumed is found, and its last reply when the page wants it.
+    /// Without them the page still loads, and says what it lacks.
+    pub(super) fn on_backfill_deliveries(
+        &mut self,
+        agent: AgentId,
+        connection: u64,
+        result: Result<Reply, ClientError>,
+    ) -> Vec<Effect> {
+        let Some(mut pending) = self.take_page(agent, connection) else {
+            return Vec::new();
+        };
+        debug_assert!(
+            pending.reads_earlier(),
+            "only a page missing earlier events looks them up"
+        );
+        if pending.abandoned.is_some() || pending.latest_requested {
+            return self.finish_backfill(agent, pending, false);
+        }
+        let deliveries = match result {
+            Ok(Reply::Events(events)) => events,
+            other => {
+                let error = match other {
+                    Err(error) => error.to_string(),
+                    Ok(reply) => format!("unexpected reply {reply:?}"),
+                };
+                self.flash_error(format!(
+                    "loading the messages {} read from before its history: {error}",
+                    self.agent_name(agent)
+                ));
+                return self.finish_page(agent, pending);
+            }
+        };
+        let more = deliveries.len() >= DELIVERIES_PER_READ;
+        let oldest = deliveries.iter().map(|event| event.seq).min();
+        take_earlier(&mut pending, agent, deliveries);
+        match oldest {
+            Some(before) if more && pending.reads_earlier() => {
+                let request = deliveries_request(agent, before, connection, &pending);
+                self.backfill.pages.insert(agent, pending);
+                vec![request]
+            }
+            _ => self.finish_page(agent, pending),
+        }
+    }
+
+    /// Rebuild a page whose earlier deliveries are in, unless live frames
+    /// overflowed while they loaded.
+    fn finish_page(&mut self, agent: AgentId, mut pending: Pending) -> Vec<Effect> {
+        if self.live_overflowed(agent, &pending) {
+            return self.finish_backfill(agent, pending, false);
+        }
+        pending.earlier.sort_by_key(|item| item.seq);
+        debug_assert!(
+            pending
+                .earlier
+                .windows(2)
+                .all(|pair| pair[0].seq < pair[1].seq),
+            "each earlier item once"
+        );
         self.finish_backfill(agent, pending, true)
     }
 
@@ -353,6 +452,12 @@ impl App {
             tree: &self.tree,
             now: self.now,
         };
+        if let Some(invocation) = pending.earlier_reply {
+            transcript::hold_earlier_reply(&mut rebuilt, agent, invocation);
+        }
+        for item in &pending.earlier {
+            transcript::ingest_earlier_delivery(&mut rebuilt, agent, item, &ctx);
+        }
         let mut seen = HashSet::new();
         for frame in frames {
             match frame {
@@ -441,4 +546,65 @@ fn page_request(agent: AgentId, before: Option<u64>, connection: u64) -> Effect 
         },
         then: Then::Backfill { agent, connection },
     }
+}
+
+impl Pending {
+    /// Something the page drew from lies before it and is not read yet.
+    fn reads_earlier(&self) -> bool {
+        !self.undelivered.is_empty() || self.reply_wanted
+    }
+}
+
+/// The agent's own newest delivery before `before`, or its reply when the
+/// page still wants that.
+fn deliveries_request(agent: AgentId, before: u64, connection: u64, pending: &Pending) -> Effect {
+    let mut types = vec!["inbox.delivered".to_owned()];
+    if pending.reply_wanted {
+        types.push("agent.message".to_owned());
+    }
+    Effect::Request {
+        command: Command::GetEvents {
+            after: 0,
+            limit: DELIVERIES_PER_READ,
+            query: EventQuery {
+                agent: Some(agent),
+                before: Some(before),
+                types,
+                // None of these is a delivery or a message: no child's is read.
+                child_types: transcript::PARENT_VISIBLE_CHILD_TYPES
+                    .map(String::from)
+                    .into(),
+                ..EventQuery::default()
+            },
+        },
+        then: Then::BackfillDeliveries { agent, connection },
+    }
+}
+
+/// Move the items `deliveries` holds from the page's missing ones to its
+/// earlier ones, and note the newest reply among them while one is wanted.
+fn take_earlier(pending: &mut Pending, agent: AgentId, deliveries: Vec<Event>) {
+    let missing = pending.undelivered.len() + pending.earlier.len();
+    for event in deliveries {
+        if event.agent_id != Some(agent) {
+            continue;
+        }
+        if pending.reply_wanted && transcript::is_reply(&event.kind) {
+            pending.reply_wanted = false;
+            if let EventKind::AgentMessage { invocation, .. } = event.kind {
+                pending.earlier_reply = invocation;
+            }
+            continue;
+        }
+        if let EventKind::InboxDelivered { item } = event.kind
+            && pending.undelivered.remove(&item.id)
+        {
+            pending.earlier.push(item);
+        }
+    }
+    assert_eq!(
+        pending.undelivered.len() + pending.earlier.len(),
+        missing,
+        "an item is missing or found, never both"
+    );
 }

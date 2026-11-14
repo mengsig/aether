@@ -4,6 +4,53 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## 1.3.1
+
+Released 2026-11-14. One conversation for the TUI and phone (#420), dependency
+updates (#419), a memory benchmark correction (#422), and a CI upgrade-lane
+fix (#421). The workspace and the Python and TypeScript clients are 1.3.1.
+
+### Benchmark
+
+- Made the garbled-page memory recovery scenario target a `memories` leaf
+  page consistently, and re-recorded the baseline at 1.3.0 (#422). The old
+  file midpoint changed ownership as the store grew; this corrects the
+  benchmark rather than changing memory recovery behavior.
+
+### Added
+
+- **One conversation for the TUI and a phone.** `append_note` takes
+  `important: true` for a readable post the operator should see, and
+  `get_conversation` reads an agent's conversation as entries (`operator`,
+  `assistant`, `post`, `question`, `message`, `thinking`, `tool_call`,
+  `tool_result`, `trigger`), each with the `important` flag the daemon or the
+  posting host set. Both are announced by the `conversation` feature.
+- The TUI draws an important note as a markdown post instead of a one-line
+  notice, in every view mode.
+
+### Changed
+
+- The built-in `focus` view mode shows exactly the important entries: the
+  operator's text, the agent's text, its questions and important posts.
+  Delegations, other agents' messages, completions and status lines moved to
+  `standard` and Ctrl+T, as tools and thinking were. Approvals, failures and
+  health notices stay visible in every mode as before.
+
+### Fixed
+
+- Fixed the CI upgrade lane to rewind the V33 agent tree triggers and table
+  before replaying the migration (#421).
+- Pinned the CI and upgrade jobs to ubuntu-24.04, where Playwright can install
+  Chromium.
+
+### Dependencies
+
+- Updated `toml` to 1.2.1, `croner` to 4.0.3, `encoding_rs` to 0.8.44 and
+  `mime` to 0.3.18, and `taiki-e/install-action` to 2.90.2 in the workflows.
+- Kept `unicode-width` at 0.2.2: 0.2.3 counts the halfwidth katakana sound
+  marks itself, so ratatui's own compensation counts them twice and the
+  terminal UI wraps halfwidth katakana one cell early.
+
 ## 1.3.0
 
 Released with Archon 1.5.0. Archon can be mounted on the same listener at `/archon`. Memory 2.0

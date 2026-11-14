@@ -12,6 +12,8 @@ use crate::id::{AgentId, RunId};
 pub const NOTE_EVENT: &str = "note.appended";
 /// The most text one note may carry, in bytes.
 pub const MAX_NOTE_BYTES: usize = 2048;
+/// The most text an important note (a post people read) may carry, in bytes.
+pub const MAX_POST_BYTES: usize = 16 * 1024;
 pub const MAX_NOTE_LINKS: usize = 8;
 pub const MAX_NOTE_LINK_BYTES: usize = 512;
 
@@ -60,6 +62,10 @@ pub struct Note {
     pub context: NoteContext,
     #[serde(default, skip_serializing_if = "NoteLevel::is_info")]
     pub level: NoteLevel,
+    /// Set by the host that posts it: a readable post the operator's focused
+    /// view shows (see [`crate::conversation`]). Absent means false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub important: bool,
 }
 
 impl Note {
@@ -68,9 +74,19 @@ impl Note {
         if self.text.trim().is_empty() {
             return Err("a note needs text".into());
         }
-        if self.text.len() > MAX_NOTE_BYTES {
+        let limit = if self.important {
+            MAX_POST_BYTES
+        } else {
+            MAX_NOTE_BYTES
+        };
+        if self.text.len() > limit {
+            let what = if self.important {
+                "an important note"
+            } else {
+                "a note"
+            };
             return Err(format!(
-                "a note is limited to {MAX_NOTE_BYTES} bytes of text and this one has {}",
+                "{what} is limited to {limit} bytes of text and this one has {}",
                 self.text.len()
             ));
         }
@@ -128,6 +144,7 @@ mod tests {
             links: Vec::new(),
             context: NoteContext::None,
             level: NoteLevel::Info,
+            important: false,
         }
     }
 
@@ -159,6 +176,29 @@ mod tests {
         let wire = serde_json::to_value(&applied).unwrap();
         assert_eq!(wire["level"], "applied");
         assert_eq!(serde_json::from_value::<Note>(wire).unwrap(), applied);
+    }
+
+    #[test]
+    fn an_important_note_round_trips_and_older_wire_forms_read_as_unimportant() {
+        let mut post = note("item shipped");
+        post.important = true;
+        let draft = post
+            .draft(AgentId::new(), RunId::new(), Actor::user())
+            .expect("a valid post");
+        assert_eq!(Note::of(&draft.kind), Some(post));
+        let wire = serde_json::to_value(note("hi")).unwrap();
+        assert!(wire.get("important").is_none(), "{wire}");
+    }
+
+    #[test]
+    fn an_important_note_may_carry_a_longer_post() {
+        let mut post = note(&"x".repeat(MAX_NOTE_BYTES + 1));
+        assert!(post.check().is_err());
+        post.important = true;
+        assert!(post.check().is_ok());
+        post.text = "x".repeat(MAX_POST_BYTES + 1);
+        let error = post.check().unwrap_err();
+        assert!(error.contains(&MAX_POST_BYTES.to_string()), "{error}");
     }
 
     #[test]

@@ -199,7 +199,14 @@ mod tests {
         use aether_core::inbox::{InboxItem, InboxKind};
         use aether_core::model::ContentBlock;
         let mut app = crate::testing::app_with_transcript(&[]);
-        app.view_mode = "focus".into();
+        let mut messages = app.view_modes.modes["focus"].clone();
+        messages.name = "messages".into();
+        messages
+            .definition
+            .show
+            .push(crate::view_modes::Category::AgentMessage);
+        app.view_modes.modes.insert(messages.name.clone(), messages);
+        app.view_mode = "messages".into();
         let agent = app.selected.unwrap();
         let transcript = app.transcripts.get_mut(&agent).unwrap();
         for _ in 0..10_000 {

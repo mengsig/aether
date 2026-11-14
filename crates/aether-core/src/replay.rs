@@ -79,6 +79,8 @@ pub struct ReplayNote {
     pub context: NoteContext,
     #[serde(default, skip_serializing_if = "NoteLevel::is_info")]
     pub level: NoteLevel,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub important: bool,
 }
 
 impl ReplayNote {
@@ -90,6 +92,7 @@ impl ReplayNote {
             links: note.links,
             context: note.context,
             level: note.level,
+            important: note.important,
         }
     }
 }

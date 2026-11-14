@@ -85,7 +85,7 @@ impl ChatCell for CellModel {
         let render = match self {
             CellModel::Header { .. } => header::display_lines,
             CellModel::User { .. } => user::display_lines,
-            CellModel::Assistant { .. } => assistant::display_lines,
+            CellModel::Assistant { .. } | CellModel::Post { .. } => assistant::display_lines,
             CellModel::Reasoning { .. } => reasoning::display_lines,
             CellModel::Exec { .. } => exec::display_lines,
             CellModel::Explored { .. } => explored::display_lines,
@@ -109,7 +109,7 @@ impl ChatCell for CellModel {
         let render = match self {
             CellModel::Header { .. } => header::detail_lines,
             CellModel::User { .. } => user::detail_lines,
-            CellModel::Assistant { .. } => assistant::detail_lines,
+            CellModel::Assistant { .. } | CellModel::Post { .. } => assistant::detail_lines,
             CellModel::Reasoning { .. } => reasoning::detail_lines,
             CellModel::Exec { .. } => exec::detail_lines,
             CellModel::Explored { .. } => explored::detail_lines,
@@ -132,7 +132,7 @@ impl ChatCell for CellModel {
     fn layout(&self, width: u16, detail: bool, theme: &Theme) -> Layout {
         let render = match self {
             CellModel::User { .. } => user::layout,
-            CellModel::Assistant { .. } => assistant::layout,
+            CellModel::Assistant { .. } | CellModel::Post { .. } => assistant::layout,
             CellModel::Reasoning { .. } => reasoning::layout,
             CellModel::Exec { .. } => exec::layout,
             CellModel::Called { .. } | CellModel::Memory(_) => called::layout,
@@ -158,6 +158,7 @@ impl ChatCell for CellModel {
         match self {
             CellModel::User { text, .. }
             | CellModel::Assistant { text }
+            | CellModel::Post { text }
             | CellModel::Reasoning { text, .. }
             | CellModel::Question { text, .. } => Some(text),
             CellModel::Exec { output, .. } => Some(output),
@@ -174,7 +175,7 @@ impl ChatCell for CellModel {
         let render = match self {
             CellModel::Header { .. } => header::plain_lines,
             CellModel::User { .. } => user::plain_lines,
-            CellModel::Assistant { .. } => assistant::plain_lines,
+            CellModel::Assistant { .. } | CellModel::Post { .. } => assistant::plain_lines,
             CellModel::Reasoning { .. } => reasoning::plain_lines,
             CellModel::Exec { .. } => exec::plain_lines,
             CellModel::Explored { .. } => explored::plain_lines,

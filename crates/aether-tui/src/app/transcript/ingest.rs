@@ -651,6 +651,17 @@ fn thinking_of(content: &[ContentBlock]) -> String {
         .collect()
 }
 
+/// An important note's markdown, then its links as a list.
+fn post_text(note: &aether_core::note::Note) -> String {
+    debug_assert!(note.important, "only an important note is a post");
+    let mut text = note.text.trim().to_owned();
+    for (i, link) in note.links.iter().enumerate() {
+        text.push_str(if i == 0 { "\n\n- " } else { "\n- " });
+        text.push_str(link.trim());
+    }
+    text
+}
+
 /// A delivered message as its cell reads: the text, then a line per image.
 fn message_text(content: &[ContentBlock]) -> String {
     let summaries = message_images(content).into_iter().map(|i| i.summary());
@@ -847,6 +858,86 @@ fn remember_event(transcripts: &mut Transcripts, event: &Event) {
             });
         }
     }
+}
+
+/// The items the agent's consumptions in `events` read whose delivery is not
+/// among them: it came before the page did.
+pub(in crate::app) fn undelivered_consumed(
+    agent: AgentId,
+    events: &[Event],
+) -> std::collections::HashSet<InboxItemId> {
+    let own = || events.iter().filter(|event| event.agent_id == Some(agent));
+    let delivered: std::collections::HashSet<InboxItemId> = own()
+        .filter_map(|event| match &event.kind {
+            EventKind::InboxDelivered { item } => Some(item.id),
+            _ => None,
+        })
+        .collect();
+    own()
+        .filter_map(|event| match &event.kind {
+            EventKind::InboxConsumed { items, .. } => Some(items),
+            _ => None,
+        })
+        .flatten()
+        .filter(|id| !delivered.contains(id))
+        .copied()
+        .collect()
+}
+
+/// Whether the agent stops a turn in `events` before any reply of its own
+/// there: the reply before them may be that turn's, as `get_conversation` reads it.
+pub(in crate::app) fn stops_before_a_reply(agent: AgentId, events: &[Event]) -> bool {
+    let own = || events.iter().filter(|event| event.agent_id == Some(agent));
+    let first_reply = own()
+        .filter(|event| is_reply(&event.kind))
+        .map(|event| event.seq)
+        .min();
+    own()
+        .filter(|event| aether_core::conversation::cancelled_invocation(event).is_some())
+        .any(|event| first_reply.is_none_or(|reply| event.seq < reply))
+}
+
+/// An assistant message, which marks its invocation's reply drawn.
+pub(in crate::app) fn is_reply(kind: &EventKind) -> bool {
+    matches!(
+        kind,
+        EventKind::AgentMessage {
+            role: MessageRole::Assistant,
+            ..
+        }
+    )
+}
+
+/// The agent's last reply before the history page was `invocation`'s, as if
+/// drawn: a stop of that turn in the page does not draw its partial again.
+pub(in crate::app) fn hold_earlier_reply(
+    transcripts: &mut Transcripts,
+    agent: AgentId,
+    invocation: InvocationId,
+) {
+    let t = transcripts.entry(agent).or_default();
+    assert!(t.private.drawn.is_none(), "set before the page is ingested");
+    assert!(t.cells.is_empty(), "nothing of the page is ingested yet");
+    t.private.drawn = Some(invocation);
+}
+
+/// An item delivered before the history page, held as delivered so its
+/// consumption in the page draws it there. Its seq is none of the page's.
+pub(in crate::app) fn ingest_earlier_delivery(
+    transcripts: &mut Transcripts,
+    agent: AgentId,
+    item: &aether_core::inbox::InboxItem,
+    ctx: &IngestCtx<'_>,
+) {
+    assert_eq!(item.agent_id, agent, "an item from this agent's inbox");
+    let draft = aether_core::event::EventDraft::new(
+        Actor::System,
+        EventKind::InboxDelivered { item: item.clone() },
+    )
+    .agent(agent);
+    let event = Event::from_draft(draft, aether_core::id::EventId::new(), 0, item.delivered_at);
+    let alert = route_event(transcripts, &event, ctx, false);
+    debug_assert!(alert.is_none(), "a delivery raises no alert");
 }
 
 pub(in crate::app) fn ingest_replay_event(
@@ -1394,9 +1485,11 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
             ..
         } => {
             if *cancelled {
+                debug_assert!(aether_core::conversation::keeps_partial(&event.kind));
                 cancelled_partial(t, at, *invocation, partial);
                 return;
             }
+            failed_partial(t, at, *invocation, &event.kind, partial);
             let provider = t.private.who.model.as_ref().map(|m| m.provider.clone());
             if matches!(
                 class,
@@ -1408,19 +1501,6 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
             // A retryable failure is retried; its backoff notice tells that story.
             if *retryable && t.private.quota.is_none() {
                 return;
-            }
-            let thinking = thinking_of(partial);
-            let partial = text_of(partial);
-            let matching = t.stream.invocation == Some(*invocation);
-            if partial.trim().is_empty() && thinking.trim().is_empty() {
-                if matching {
-                    t.commit_stream(at);
-                }
-            } else {
-                if matching {
-                    t.stream.reset();
-                }
-                t.push_reply(at, &thinking, &partial, None);
             }
             let hint = match t.private.quota {
                 Some(_) => NoticeText::joined(&["/model to switch", "/wake"], NoticeSeparator::Dot),
@@ -1547,6 +1627,15 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
         }
         EventKind::Custom { name, .. } if name == aether_core::note::NOTE_EVENT => {
             if let Some(note) = aether_core::note::Note::of(&event.kind) {
+                if note.important {
+                    t.push(
+                        at,
+                        CellModel::Post {
+                            text: post_text(&note),
+                        },
+                    );
+                    return;
+                }
                 let mut parts = vec![note.text.trim()];
                 parts.extend(note.links.iter().map(String::as_str));
                 let text = NoticeText::joined(&parts, NoticeSeparator::Dot);
@@ -1687,6 +1776,45 @@ fn shown_since_cut(
         && shown(text, &cut.text, tail.map(|s| s.text.as_str()))
 }
 
+fn partial_is_blank(partial: &[ContentBlock]) -> bool {
+    text_of(partial).trim().is_empty() && thinking_of(partial).trim().is_empty()
+}
+
+/// A failed turn's partial as `get_conversation` reads it, by
+/// `conversation::keeps_partial` alone; the failed invocation's stream ends here.
+fn failed_partial(
+    t: &mut AgentTranscript,
+    at: Timestamp,
+    invocation: InvocationId,
+    failure: &EventKind,
+    partial: &[ContentBlock],
+) {
+    debug_assert!(
+        matches!(failure, EventKind::InvocationFailed { cancelled: false, invocation: i, .. } if *i == invocation),
+        "a failure of this invocation that was not a stop"
+    );
+    let live = t.stream.invocation == Some(invocation);
+    if !aether_core::conversation::keeps_partial(failure) {
+        // Retried: the retry says it again.
+        if live {
+            t.stream.reset();
+        }
+    } else if partial_is_blank(partial) {
+        if live {
+            t.commit_stream(at);
+        }
+    } else {
+        if live {
+            t.stream.reset();
+        }
+        t.push_reply(at, &thinking_of(partial), &text_of(partial), None);
+    }
+    debug_assert!(
+        t.stream.invocation != Some(invocation),
+        "a failed invocation's stream stays live"
+    );
+}
+
 fn cancelled_partial(
     t: &mut AgentTranscript,
     at: Timestamp,
@@ -1714,6 +1842,9 @@ fn draw_cancelled_partial(
     let thinking = thinking_of(partial);
     let text = text_of(partial);
     if thinking.trim().is_empty() && text.trim().is_empty() {
+        if t.stream.invocation == Some(invocation) {
+            t.commit_stream(at);
+        }
         return;
     }
     if t.stream.invocation == Some(invocation) {
