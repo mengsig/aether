@@ -100,6 +100,7 @@ function resourceMutation(state, command) {
   }
   if (command.cmd === 'archive') {
     const agent = requireAgent(state,object(command.target).agent);
+    if (command.archived === true && !['completed','failed','cancelled','imported'].includes(agent.status.state)) throw new Error(`agent ${agent.id} is ${agent.status.state}; only finished work can be cleared from the view`);
     Object.assign(agent,{archived:command.archived === true}); return {reply:'ok'};
   }
   if (['subscribe_push','unsubscribe_push','test_push'].includes(command.cmd)) throw new Error('Push is unavailable in the mock daemon');
@@ -160,7 +161,7 @@ function attentionReply(state) {
     if (kind.type === 'message.sent' && object(kind.from).actor === 'user') pending.delete(String(kind.to));
   }
   return {reply:'attention',data:{last_seq:state.seq,approvals:state.approvals,questions:[...pending.values()],
-    agents:state.agents.filter(agent=>['failed','blocked'].includes(agent.status.state)).map(agent=>({agent:agent.id,agent_name:agent.name,kind:`agent_${agent.status.state}`,reason:agent.status.state === 'failed' ? 'CI provider returned a temporary error' : 'Waiting for browser access',since:agent.updated_at}))}};
+    agents:state.agents.filter(agent=>!(/** @type {{archived?:boolean}} */ (agent)).archived && ['failed','blocked'].includes(agent.status.state)).map(agent=>({agent:agent.id,agent_name:agent.name,kind:`agent_${agent.status.state}`,reason:agent.status.state === 'failed' ? 'CI provider returned a temporary error' : 'Waiting for browser access',since:agent.updated_at}))}};
 }
 
 /** @param {{agents:Fixtures['agents']}} state */
