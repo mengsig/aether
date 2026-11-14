@@ -47,6 +47,10 @@ struct Pending {
     /// is not found yet, and those found, as delivered.
     undelivered: HashSet<InboxItemId>,
     earlier: Vec<InboxItem>,
+    /// The page stops a turn before any reply of its own, so the reply
+    /// before the page is still to read, and the invocation it was found for.
+    reply_wanted: bool,
+    earlier_reply: Option<InvocationId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +153,8 @@ impl App {
                 connection: self.connection,
                 undelivered: HashSet::new(),
                 earlier: Vec::new(),
+                reply_wanted: false,
+                earlier_reply: None,
             },
         );
         Some(page_request(agent, before, self.connection))
@@ -260,12 +266,14 @@ impl App {
             return self.finish_backfill(agent, pending, false);
         }
         pending.undelivered = transcript::undelivered_consumed(agent, &events);
+        pending.reply_wanted = transcript::stops_before_a_reply(agent, &events);
         let start = events.iter().map(|event| event.seq).min();
         pending.events = events;
         match start {
-            Some(start) if !pending.undelivered.is_empty() => {
+            Some(start) if pending.reads_earlier() => {
+                let request = deliveries_request(agent, start, connection, &pending);
                 self.backfill.pages.insert(agent, pending);
-                vec![deliveries_request(agent, start, connection)]
+                vec![request]
             }
             _ => self.finish_backfill(agent, pending, true),
         }
@@ -282,8 +290,8 @@ impl App {
     }
 
     /// The agent's deliveries before the page, newest first, until each item
-    /// the page consumed is found. Without them the page still loads, and
-    /// says what it lacks.
+    /// the page consumed is found, and its last reply when the page wants it.
+    /// Without them the page still loads, and says what it lacks.
     pub(super) fn on_backfill_deliveries(
         &mut self,
         agent: AgentId,
@@ -294,8 +302,8 @@ impl App {
             return Vec::new();
         };
         debug_assert!(
-            !pending.undelivered.is_empty(),
-            "only a page missing deliveries looks them up"
+            pending.reads_earlier(),
+            "only a page missing earlier events looks them up"
         );
         if pending.abandoned.is_some() || pending.latest_requested {
             return self.finish_backfill(agent, pending, false);
@@ -318,9 +326,10 @@ impl App {
         let oldest = deliveries.iter().map(|event| event.seq).min();
         take_earlier(&mut pending, agent, deliveries);
         match oldest {
-            Some(before) if more && !pending.undelivered.is_empty() => {
+            Some(before) if more && pending.reads_earlier() => {
+                let request = deliveries_request(agent, before, connection, &pending);
                 self.backfill.pages.insert(agent, pending);
-                vec![deliveries_request(agent, before, connection)]
+                vec![request]
             }
             _ => self.finish_page(agent, pending),
         }
@@ -443,6 +452,9 @@ impl App {
             tree: &self.tree,
             now: self.now,
         };
+        if let Some(invocation) = pending.earlier_reply {
+            transcript::hold_earlier_reply(&mut rebuilt, agent, invocation);
+        }
         for item in &pending.earlier {
             transcript::ingest_earlier_delivery(&mut rebuilt, agent, item, &ctx);
         }
@@ -536,8 +548,20 @@ fn page_request(agent: AgentId, before: Option<u64>, connection: u64) -> Effect 
     }
 }
 
-/// The agent's own newest deliveries before `before`.
-fn deliveries_request(agent: AgentId, before: u64, connection: u64) -> Effect {
+impl Pending {
+    /// Something the page drew from lies before it and is not read yet.
+    fn reads_earlier(&self) -> bool {
+        !self.undelivered.is_empty() || self.reply_wanted
+    }
+}
+
+/// The agent's own newest delivery before `before`, or its reply when the
+/// page still wants that.
+fn deliveries_request(agent: AgentId, before: u64, connection: u64, pending: &Pending) -> Effect {
+    let mut types = vec!["inbox.delivered".to_owned()];
+    if pending.reply_wanted {
+        types.push("agent.message".to_owned());
+    }
     Effect::Request {
         command: Command::GetEvents {
             after: 0,
@@ -545,8 +569,8 @@ fn deliveries_request(agent: AgentId, before: u64, connection: u64) -> Effect {
             query: EventQuery {
                 agent: Some(agent),
                 before: Some(before),
-                types: vec!["inbox.delivered".to_owned()],
-                // None of these is a delivery: no child's is read.
+                types,
+                // None of these is a delivery or a message: no child's is read.
                 child_types: transcript::PARENT_VISIBLE_CHILD_TYPES
                     .map(String::from)
                     .into(),
@@ -557,11 +581,19 @@ fn deliveries_request(agent: AgentId, before: u64, connection: u64) -> Effect {
     }
 }
 
-/// Move the items `deliveries` holds from the page's missing ones to its earlier ones.
+/// Move the items `deliveries` holds from the page's missing ones to its
+/// earlier ones, and note the newest reply among them while one is wanted.
 fn take_earlier(pending: &mut Pending, agent: AgentId, deliveries: Vec<Event>) {
     let missing = pending.undelivered.len() + pending.earlier.len();
     for event in deliveries {
         if event.agent_id != Some(agent) {
+            continue;
+        }
+        if pending.reply_wanted && transcript::is_reply(&event.kind) {
+            pending.reply_wanted = false;
+            if let EventKind::AgentMessage { invocation, .. } = event.kind {
+                pending.earlier_reply = invocation;
+            }
             continue;
         }
         if let EventKind::InboxDelivered { item } = event.kind

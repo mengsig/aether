@@ -884,6 +884,43 @@ pub(in crate::app) fn undelivered_consumed(
         .collect()
 }
 
+/// Whether the agent stops a turn in `events` before any reply of its own
+/// there: the reply before them may be that turn's, as `get_conversation` reads it.
+pub(in crate::app) fn stops_before_a_reply(agent: AgentId, events: &[Event]) -> bool {
+    let own = || events.iter().filter(|event| event.agent_id == Some(agent));
+    let first_reply = own()
+        .filter(|event| is_reply(&event.kind))
+        .map(|event| event.seq)
+        .min();
+    own()
+        .filter(|event| aether_core::conversation::cancelled_invocation(event).is_some())
+        .any(|event| first_reply.is_none_or(|reply| event.seq < reply))
+}
+
+/// An assistant message, which marks its invocation's reply drawn.
+pub(in crate::app) fn is_reply(kind: &EventKind) -> bool {
+    matches!(
+        kind,
+        EventKind::AgentMessage {
+            role: MessageRole::Assistant,
+            ..
+        }
+    )
+}
+
+/// The agent's last reply before the history page was `invocation`'s, as if
+/// drawn: a stop of that turn in the page does not draw its partial again.
+pub(in crate::app) fn hold_earlier_reply(
+    transcripts: &mut Transcripts,
+    agent: AgentId,
+    invocation: InvocationId,
+) {
+    let t = transcripts.entry(agent).or_default();
+    assert!(t.private.drawn.is_none(), "set before the page is ingested");
+    assert!(t.cells.is_empty(), "nothing of the page is ingested yet");
+    t.private.drawn = Some(invocation);
+}
+
 /// An item delivered before the history page, held as delivered so its
 /// consumption in the page draws it there. Its seq is none of the page's.
 pub(in crate::app) fn ingest_earlier_delivery(

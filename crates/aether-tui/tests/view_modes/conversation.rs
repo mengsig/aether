@@ -3,7 +3,7 @@
 use super::*;
 use aether_core::conversation::{self, Entry};
 use aether_core::event::{Actor, Event, EventDraft, EventKind};
-use aether_core::id::{AgentId, EventId, InboxItemId, MessageId};
+use aether_core::id::{AgentId, EventId, InboxItemId, InvocationId, MessageId, SnapshotId};
 use aether_core::inbox::{InboxItem, InboxKind};
 use aether_core::model::{ContentBlock, MessageRole};
 use aether_tui::testing::{app_with_history, app_with_window};
@@ -68,7 +68,8 @@ fn important_entries(events: &[Event]) -> Vec<String> {
 }
 
 /// [`important_entries`] of the `page` of `history`, its consumptions
-/// read from the whole inbox, as `get_conversation` reads them.
+/// read from the whole inbox and a stop's partial less what the message
+/// before it said, as `get_conversation` reads them.
 fn important_entries_of(page: &[Event], history: &[Event]) -> Vec<String> {
     let delivered: Vec<InboxItem> = history
         .iter()
@@ -77,9 +78,14 @@ fn important_entries_of(page: &[Event], history: &[Event]) -> Vec<String> {
             _ => None,
         })
         .collect();
-    let entries = page.iter().flat_map(|event| match event.kind {
-        EventKind::InboxConsumed { .. } => conversation::consumed_entries(event, &delivered),
-        _ => conversation::entries(event),
+    let entries = page.iter().flat_map(|event| {
+        let said = match event.kind {
+            EventKind::InboxConsumed { .. } => conversation::consumed_entries(event, &delivered),
+            _ => conversation::entries(event),
+        };
+        let before = said_before(event, history);
+        said.into_iter()
+            .filter(move |entry| !before.contains(&entry.kind))
     });
     let texts: Vec<String> = entries
         .filter(|entry: &Entry| entry.important)
@@ -87,6 +93,34 @@ fn important_entries_of(page: &[Event], history: &[Event]) -> Vec<String> {
         .collect();
     assert!(!texts.is_empty(), "the seed says something important");
     texts
+}
+
+/// The entry kinds of the message just before a stop of the same turn.
+fn said_before(event: &Event, history: &[Event]) -> Vec<conversation::EntryKind> {
+    let Some(stopped) = conversation::cancelled_invocation(event) else {
+        return Vec::new();
+    };
+    let message = history
+        .iter()
+        .rev()
+        .filter(|earlier| earlier.seq < event.seq)
+        .find(|earlier| matches!(earlier.kind, EventKind::AgentMessage { .. }));
+    match message {
+        Some(
+            message @ Event {
+                kind:
+                    EventKind::AgentMessage {
+                        invocation: Some(said),
+                        ..
+                    },
+                ..
+            },
+        ) if *said == stopped => conversation::entries(message)
+            .into_iter()
+            .map(|entry| entry.kind)
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// An entry as a cell reads it: a post lists its links under its text.
@@ -247,4 +281,48 @@ fn a_fresh_focus_reads_the_inbox_after_the_consumption_before_its_window() {
     );
     assert_eq!(expected[0], "ship the fix");
     assert_eq!(drawn_entries(&app), expected);
+}
+
+#[test]
+fn a_fresh_focus_keeps_a_stop_drawn_once_when_its_message_is_before_the_window() {
+    fn seed(_: AgentId) -> Vec<EventKind> {
+        let invocation = InvocationId::new();
+        let partial = vec![
+            ContentBlock::Thinking {
+                text: "pondering".into(),
+                signature: None,
+                redacted: false,
+            },
+            ContentBlock::text("half an answer"),
+        ];
+        vec![
+            EventKind::AgentMessage {
+                role: MessageRole::Assistant,
+                content: vec![ContentBlock::text("half an answer")],
+                invocation: Some(invocation),
+            },
+            EventKind::InvocationFailed {
+                invocation,
+                snapshot: SnapshotId::new(),
+                error: "cancelled".into(),
+                class: None,
+                retryable: false,
+                cancelled: true,
+                partial,
+            },
+            note("**Item shipped**", true),
+        ]
+    }
+    // The window starts at the stop: the message that kept its text lies before it.
+    let (app, history) = focused_window(2, seed);
+    let expected = important_entries_of(&history[1..], &history);
+    assert_eq!(expected.len(), 1, "the stop adds nothing: {expected:?}");
+    assert!(expected[0].starts_with("**Item shipped**"));
+    assert_eq!(drawn_entries(&app), expected);
+
+    let (whole, history) = focused_window(usize::MAX, seed);
+    let expected = important_entries_of(&history, &history);
+    assert_eq!(expected.len(), 2, "the message, then the post: {expected:?}");
+    assert_eq!(expected[0], "half an answer");
+    assert_eq!(drawn_entries(&whole), expected);
 }

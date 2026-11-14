@@ -235,22 +235,26 @@ pub fn app_with_window(history: impl FnOnce(AgentId) -> Vec<Event>, window: usiz
 }
 
 /// A daemon's answer from `events` to a page's read of the agent's
-/// deliveries before it: newest first, up to its limit.
+/// deliveries, or replies, before it: newest first, up to its limit.
 #[allow(clippy::expect_used, clippy::panic)]
 fn deliveries_before(agent: AgentId, events: &[Event], command: &Command) -> Vec<Event> {
     let Command::GetEvents { query, limit, .. } = command else {
         panic!("a history page asks for no {command:?}");
     };
-    assert_eq!(
-        query.types,
-        ["inbox.delivered"],
-        "the page reads deliveries"
+    assert!(
+        query.types.iter().any(|name| name == "inbox.delivered")
+            && query
+                .types
+                .iter()
+                .all(|name| ["inbox.delivered", "agent.message"].contains(&name.as_str())),
+        "the page reads deliveries and replies: {:?}",
+        query.types
     );
     let before = query.before.expect("a read before the page");
     let mut deliveries: Vec<Event> = events
         .iter()
         .filter(|event| event.agent_id == Some(agent) && event.seq < before)
-        .filter(|event| matches!(event.kind, EventKind::InboxDelivered { .. }))
+        .filter(|event| query.types.contains(&event.kind.type_name()))
         .cloned()
         .collect();
     deliveries.reverse();
