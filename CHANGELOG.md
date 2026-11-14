@@ -6,9 +6,9 @@ release is also the text of its GitHub release.
 
 ## 1.3.1
 
-Released 2026-11-13. Dependency updates (#419) and a memory benchmark correction
-(#422). The workspace and
-the Python and TypeScript clients are 1.3.1.
+Released 2026-11-14. One conversation for the TUI and phone (#420), dependency
+updates (#419), a memory benchmark correction (#422), and a CI upgrade-lane
+fix (#421). The workspace and the Python and TypeScript clients are 1.3.1.
 
 ### Benchmark
 
@@ -35,6 +35,11 @@ the Python and TypeScript clients are 1.3.1.
   Delegations, other agents' messages, completions and status lines moved to
   `standard` and Ctrl+T, as tools and thinking were. Approvals, failures and
   health notices stay visible in every mode as before.
+
+### Fixed
+
+- Fixed the CI upgrade lane to rewind the V33 agent tree triggers and table
+  before replaying the migration (#421).
 
 ### Dependencies
 
