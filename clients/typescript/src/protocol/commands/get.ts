@@ -56,6 +56,25 @@ export function getCheckpoint(args: Omit<GetCheckpointCommand, "cmd">): GetCheck
   return { cmd: "get_checkpoint", ...args };
 }
 
+/**
+ * A bounded page of an agent's conversation: the entries of up to `limit`
+ * events (1 to 1000, 200 when absent) after `after`, before `before`, or
+ * the newest. `important_only` keeps the entries flagged important.
+ * Needs `features::CONVERSATION`.
+ */
+export interface GetConversationCommand {
+  "cmd": "get_conversation";
+  "after"?: number | null;
+  "agent": AgentId;
+  "before"?: number | null;
+  "important_only"?: boolean;
+  "limit"?: number | null;
+}
+
+export function getConversation(args: Omit<GetConversationCommand, "cmd">): GetConversationCommand {
+  return { cmd: "get_conversation", ...args };
+}
+
 export interface GetEventsCommand {
   "cmd": "get_events";
   "after": number;

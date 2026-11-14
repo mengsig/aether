@@ -253,26 +253,191 @@ pub fn transcript_page(
     before: Option<u64>,
     limit: usize,
 ) -> aether_store::Result<TranscriptPage> {
-    assert!(limit > 0, "a page holds at least one entry");
-    assert!(after.is_none() || before.is_none(), "one cursor at most");
     let filter = EventFilter {
         types: vec!["agent.message".into()],
         ..EventFilter::own_events(agent)
     };
+    let page = event_page(store, &filter, after, before, limit)?;
+    let entries: Vec<TranscriptEntry> = page
+        .events
+        .into_iter()
+        .filter_map(transcript_entry)
+        .collect();
+    assert!(entries.len() <= limit, "a page holds at most its limit");
+    Ok(TranscriptPage {
+        entries,
+        has_before: page.has_before,
+        has_after: page.has_after,
+        last_seq: page.last_seq,
+    })
+}
+
+/// One page of an agent's conversation, as `get_conversation` replies.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConversationPage {
+    pub entries: Vec<aether_core::conversation::Entry>,
+    /// The seq range of the events the page read, 0 and 0 when it read none.
+    pub from_seq: u64,
+    pub to_seq: u64,
+    pub has_before: bool,
+    pub has_after: bool,
+    pub last_seq: u64,
+}
+
+/// The conversation entries of up to `limit` of the agent's events, paged
+/// like [`transcript_page`]; `important_only` drops the rest.
+pub fn conversation_page(
+    store: &dyn Store,
+    agent: AgentId,
+    after: Option<u64>,
+    before: Option<u64>,
+    limit: usize,
+    important_only: bool,
+) -> aether_store::Result<ConversationPage> {
+    let filter = EventFilter {
+        types: aether_core::conversation::EVENT_TYPES
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect(),
+        ..EventFilter::own_events(agent)
+    };
+    let page = event_page(store, &filter, after, before, limit)?;
+    let from_seq = page.events.first().map_or(0, |event| event.seq);
+    let to_seq = page.events.last().map_or(0, |event| event.seq);
+    let mut entries = Vec::new();
+    for event in &page.events {
+        let before = said_before(store, agent, event)?;
+        let said = match &event.kind {
+            aether_core::event::EventKind::InboxConsumed { .. } => {
+                let delivered = consumed_items(store, agent, event)?;
+                aether_core::conversation::consumed_entries(event, &delivered)
+            }
+            _ => aether_core::conversation::entries(event),
+        };
+        entries.extend(
+            said.into_iter()
+                .filter(|e| (e.important || !important_only) && !before.contains(&e.kind)),
+        );
+    }
+    assert!(from_seq <= to_seq, "a page's events are in seq order");
+    assert!(
+        entries
+            .iter()
+            .all(|entry| (from_seq..=to_seq).contains(&entry.seq)),
+        "every entry comes from an event the page read"
+    );
+    Ok(ConversationPage {
+        entries,
+        from_seq,
+        to_seq,
+        has_before: page.has_before,
+        has_after: page.has_after,
+        last_seq: page.last_seq,
+    })
+}
+
+/// The entry kinds a cancelled turn's message just before it already holds:
+/// the runtime may commit the kept text, not its thinking, so each reads once.
+fn said_before(
+    store: &dyn Store,
+    agent: AgentId,
+    event: &aether_core::event::Event,
+) -> aether_store::Result<Vec<aether_core::conversation::EntryKind>> {
+    let Some(invocation) = aether_core::conversation::cancelled_invocation(event) else {
+        return Ok(Vec::new());
+    };
+    let filter = EventFilter {
+        types: vec!["agent.message".to_owned()],
+        ..EventFilter::own_events(agent)
+    };
+    let previous = store.events_before(event.seq, 1, &filter)?;
+    assert!(previous.len() <= 1, "asked for one message at most");
+    assert!(
+        previous.iter().all(|message| message.seq < event.seq),
+        "the message read precedes the failure"
+    );
+    let message = previous.into_iter().find(|message| {
+        matches!(
+            message.kind,
+            aether_core::event::EventKind::AgentMessage { invocation: Some(said), .. } if said == invocation
+        )
+    });
+    let kinds = message.map_or_else(Vec::new, |message| {
+        aether_core::conversation::entries(&message)
+            .into_iter()
+            .map(|entry| entry.kind)
+            .collect()
+    });
+    Ok(kinds)
+}
+
+/// The inbox items an `inbox.consumed` event read: those after the previous
+/// consumption's `up_to`, as the agent's inbox cursor only moves forward.
+fn consumed_items(
+    store: &dyn Store,
+    agent: AgentId,
+    event: &aether_core::event::Event,
+) -> aether_store::Result<Vec<aether_core::inbox::InboxItem>> {
+    let aether_core::event::EventKind::InboxConsumed { up_to, items } = &event.kind else {
+        unreachable!("only an inbox.consumed event names consumed items");
+    };
+    let filter = EventFilter {
+        types: vec!["inbox.consumed".to_owned()],
+        ..EventFilter::own_events(agent)
+    };
+    let previous = store.events_before(event.seq, 1, &filter)?;
+    let previous_up_to = previous.first().map_or(0, |previous| match previous.kind {
+        aether_core::event::EventKind::InboxConsumed { up_to, .. } => up_to,
+        _ => 0,
+    });
+    debug_assert!(previous_up_to <= *up_to, "the inbox cursor moves forward");
+    // Were it ever to move back, reading from the inbox's start stays correct.
+    let after = if previous_up_to <= *up_to {
+        previous_up_to
+    } else {
+        0
+    };
+    let read: Vec<_> = store
+        .inbox_through(agent, after, *up_to)?
+        .into_iter()
+        .filter(|item| items.contains(&item.id))
+        .collect();
+    assert!(read.len() <= items.len(), "each consumed item read once");
+    Ok(read)
+}
+
+/// Up to `limit` events matching `filter`, in seq order, with whether more
+/// lie on either side and the newest matching seq.
+struct EventPage {
+    events: Vec<aether_core::event::Event>,
+    has_before: bool,
+    has_after: bool,
+    last_seq: u64,
+}
+
+fn event_page(
+    store: &dyn Store,
+    filter: &EventFilter,
+    after: Option<u64>,
+    before: Option<u64>,
+    limit: usize,
+) -> aether_store::Result<EventPage> {
+    assert!(limit > 0, "a page holds at least one entry");
+    assert!(after.is_none() || before.is_none(), "one cursor at most");
     let (events, has_before, has_after) = match after {
         Some(after) => {
-            let mut events = store.events(after, limit + 1, &filter)?;
+            let mut events = store.events(after, limit + 1, filter)?;
             let has_after = events.len() > limit;
             events.truncate(limit);
             let has_before = !store
-                .events_before(after.saturating_add(1), 1, &filter)?
+                .events_before(after.saturating_add(1), 1, filter)?
                 .is_empty();
             (events, has_before, has_after)
         }
         None => {
             let mut events = match before {
-                Some(before) => store.events_before(before, limit + 1, &filter)?,
-                None => store.latest_events(limit + 1, &filter)?,
+                Some(before) => store.events_before(before, limit + 1, filter)?,
+                None => store.latest_events(limit + 1, filter)?,
             };
             let has_before = events.len() > limit;
             events.truncate(limit);
@@ -283,7 +448,7 @@ pub fn transcript_page(
     // Read after the page and from its own transaction: an entry committed
     // in between raises it, so it is never below the page's newest entry.
     let newest = store
-        .latest_events(1, &filter)?
+        .latest_events(1, filter)?
         .first()
         .map(|event| event.seq);
     let page_end = events
@@ -293,16 +458,15 @@ pub fn transcript_page(
         .or(before.map(|before| before.saturating_sub(1)))
         .unwrap_or(0);
     let has_after = has_after || newest_is_past(page_end, newest);
-    let entries: Vec<TranscriptEntry> = events.into_iter().filter_map(transcript_entry).collect();
     let last_seq = newest
         .into_iter()
-        .chain(entries.last().map(|entry| entry.seq))
+        .chain(events.last().map(|event| event.seq))
         .max()
         .unwrap_or(0);
-    assert!(entries.windows(2).all(|pair| pair[0].seq < pair[1].seq));
-    assert!(entries.len() <= limit, "a page holds at most its limit");
-    Ok(TranscriptPage {
-        entries,
+    assert!(events.windows(2).all(|pair| pair[0].seq < pair[1].seq));
+    assert!(events.len() <= limit, "a page holds at most its limit");
+    Ok(EventPage {
+        events,
         has_before,
         has_after,
         last_seq,
@@ -630,6 +794,203 @@ mod tests {
         assert_eq!(page_seqs(&rest), &seqs[3..]);
         assert!(rest.has_before && !rest.has_after);
         assert_eq!(rest.last_seq, seqs[4]);
+    }
+
+    fn failed(invocation: aether_core::id::InvocationId, text: &str) -> EventKind {
+        EventKind::InvocationFailed {
+            invocation,
+            snapshot: aether_core::id::SnapshotId::new(),
+            error: "cancelled".into(),
+            class: None,
+            retryable: false,
+            cancelled: true,
+            partial: vec![
+                aether_core::model::ContentBlock::Thinking {
+                    text: format!("pondering {text}"),
+                    signature: None,
+                    redacted: false,
+                },
+                aether_core::model::ContentBlock::text(text),
+            ],
+        }
+    }
+
+    /// A stopped API turn commits its kept text as a message and again in its
+    /// failure; an engine's stop keeps it only in the failure. Each reads once.
+    #[test]
+    fn a_stopped_turn_reads_its_partial_once() {
+        use aether_core::conversation::EntryKind;
+        let store = aether_store::SqliteStore::open_in_memory().expect("open");
+        let agent = AgentId::new();
+        let (api, engine) = (
+            aether_core::id::InvocationId::new(),
+            aether_core::id::InvocationId::new(),
+        );
+        let message = EventKind::AgentMessage {
+            role: aether_core::model::MessageRole::Assistant,
+            content: vec![aether_core::model::ContentBlock::text("half an answer")],
+            invocation: Some(api),
+        };
+        let draft = |kind| EventDraft::new(Actor::System, kind).agent(agent);
+        let events = Store::commit(
+            &store,
+            Commit::new()
+                .event(draft(message))
+                .event(draft(failed(api, "half an answer"))),
+        )
+        .expect("commit");
+        Store::commit(
+            &store,
+            Commit::new().event(draft(failed(engine, "engine text"))),
+        )
+        .expect("commit");
+
+        let page = conversation_page(&store, agent, None, None, 10, true).expect("page");
+        let said: Vec<_> = page
+            .entries
+            .iter()
+            .map(|e| (e.kind, e.text.as_str()))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                (EntryKind::Assistant, "half an answer"),
+                (EntryKind::Assistant, "engine text"),
+            ]
+        );
+        let tail = conversation_page(&store, agent, Some(events[0].seq), None, 10, false)
+            .expect("a page starting at the failure");
+        let said: Vec<_> = tail.entries.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(
+            said,
+            [
+                "pondering half an answer",
+                "pondering engine text",
+                "engine text"
+            ],
+            "the message before the page still counts; the thinking it lacks reads"
+        );
+    }
+
+    /// A message reads where the agent read it, as the TUI places it: after
+    /// text the agent said between its delivery and its consumption.
+    #[test]
+    fn a_message_reads_where_the_agent_consumed_it() {
+        use aether_core::conversation::EntryKind;
+        use aether_core::inbox::{InboxItem, InboxKind};
+        let store = aether_store::SqliteStore::open_in_memory().expect("open");
+        let agent = AgentId::new();
+        let draft = |kind| EventDraft::new(Actor::System, kind).agent(agent);
+        let item = |seq: u64, text: &str| InboxItem {
+            id: aether_core::id::InboxItemId::new(),
+            agent_id: agent,
+            seq,
+            kind: InboxKind::Message {
+                message_id: aether_core::id::MessageId::new(),
+                from: Actor::user(),
+                content: vec![aether_core::model::ContentBlock::text(text)],
+            },
+            delivered_at: now(),
+        };
+        let deliver = |item: InboxItem| {
+            let commit = Commit::new()
+                .event(draft(EventKind::InboxDelivered { item: item.clone() }))
+                .mutate(Mutation::DeliverInbox(item));
+            Store::commit(&store, commit).expect("deliver");
+        };
+        let consume = |items: &[&InboxItem]| {
+            let kind = EventKind::InboxConsumed {
+                up_to: items.iter().map(|item| item.seq).max().expect("an item"),
+                items: items.iter().map(|item| item.id).collect(),
+            };
+            Store::commit(&store, Commit::new().event(draft(kind))).expect("consume");
+        };
+        let (first, second) = (item(1, "ship it"), item(2, "and the docs"));
+        deliver(first.clone());
+        let said = EventKind::AgentMessage {
+            role: aether_core::model::MessageRole::Assistant,
+            content: vec![aether_core::model::ContentBlock::text("still building")],
+            invocation: None,
+        };
+        Store::commit(&store, Commit::new().event(draft(said))).expect("say");
+        consume(&[&first]);
+        deliver(second.clone());
+        consume(&[&second]);
+
+        let page = conversation_page(&store, agent, None, None, 10, true).expect("page");
+        let said: Vec<_> = page
+            .entries
+            .iter()
+            .map(|e| (e.kind, e.text.as_str()))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                (EntryKind::Assistant, "still building"),
+                (EntryKind::Operator, "ship it"),
+                (EntryKind::Operator, "and the docs"),
+            ],
+            "each message once, where it was consumed"
+        );
+    }
+
+    /// An old page reads only the inbox rows its consumption covered: a later
+    /// row that does not even decode is never read, however many follow.
+    #[test]
+    fn an_old_page_reads_no_inbox_row_delivered_after_it() {
+        use aether_core::inbox::{InboxItem, InboxKind};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("aether.db");
+        let store = aether_store::SqliteStore::open(&path).expect("open");
+        let agent = AgentId::new();
+        let draft = |kind| EventDraft::new(Actor::System, kind).agent(agent);
+        let deliver = |seq: u64, text: &str| {
+            let item = InboxItem {
+                id: aether_core::id::InboxItemId::new(),
+                agent_id: agent,
+                seq,
+                kind: InboxKind::Message {
+                    message_id: aether_core::id::MessageId::new(),
+                    from: Actor::user(),
+                    content: vec![aether_core::model::ContentBlock::text(text)],
+                },
+                delivered_at: now(),
+            };
+            let commit = Commit::new()
+                .event(draft(EventKind::InboxDelivered { item: item.clone() }))
+                .mutate(Mutation::DeliverInbox(item.clone()));
+            Store::commit(&store, commit).expect("deliver");
+            item
+        };
+        let consume = |items: Vec<aether_core::id::InboxItemId>, up_to: u64| {
+            let kind = EventKind::InboxConsumed { up_to, items };
+            Store::commit(&store, Commit::new().event(draft(kind))).expect("consume");
+        };
+        let first = deliver(1, "ship it");
+        consume(vec![first.id], 1);
+        let later: Vec<InboxItem> = (2..=300).map(|seq| deliver(seq, "later")).collect();
+        consume(later.iter().map(|item| item.id).collect(), 300);
+        let raw = rusqlite::Connection::open(&path).expect("raw");
+        let changed = raw
+            .execute(
+                "UPDATE inbox SET body = '{' WHERE agent_id = ?1 AND seq = 300",
+                [agent.to_string()],
+            )
+            .expect("corrupt");
+        assert_eq!(changed, 1);
+        let before = Store::events(&store, 0, 2, &EventFilter::own_events(agent))
+            .expect("events")
+            .last()
+            .map(|event| event.seq + 1)
+            .expect("the first delivery and its consumption");
+
+        let page = conversation_page(&store, agent, None, Some(before), 10, true).expect("page");
+        let said: Vec<&str> = page.entries.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(said, ["ship it"], "the old page's message, from its rows");
+        assert!(
+            conversation_page(&store, agent, None, None, 10, true).is_err(),
+            "the page whose consumption covers the broken row reads it"
+        );
     }
 
     #[test]

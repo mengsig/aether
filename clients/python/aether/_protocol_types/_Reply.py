@@ -15,6 +15,7 @@ from ._ReplyArtifacts import ReplyArtifacts
 from ._ReplyAttention import ReplyAttention
 from ._ReplyAuth import ReplyAuth
 from ._ReplyCheckpoint import ReplyCheckpoint
+from ._ReplyConversation import ReplyConversation
 from ._ReplyDevice import ReplyDevice
 from ._ReplyDevices import ReplyDevices
 from ._ReplyEngineTool import ReplyEngineTool
@@ -115,6 +116,7 @@ Reply = (
     ReplyEvents |
     ReplyTranscript |
     ReplyTranscriptPage |
+    ReplyConversation |
     ReplyUsageBreakdown |
     ReplyInbox |
     ReplySnapshot |

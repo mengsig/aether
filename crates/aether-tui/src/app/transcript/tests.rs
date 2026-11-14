@@ -773,6 +773,120 @@ fn backoff_is_replaced_in_place_by_its_recovery() {
     );
 }
 
+/// A spent quota's partial is said; a fallback's retried failure after it is
+/// shown as an error but its partial is not, as `get_conversation` reads them.
+#[test]
+fn a_retried_failure_after_a_spent_quota_draws_no_partial() {
+    let mut feed = Feed::new();
+    let (agent, _) = feed.spawn(None, "aether", "assistant");
+    let failed =
+        |invocation, error: &str, class, retryable, text: &str| EventKind::InvocationFailed {
+            invocation,
+            snapshot: aether_core::id::SnapshotId::new(),
+            error: error.into(),
+            class: Some(class),
+            retryable,
+            cancelled: false,
+            partial: vec![ContentBlock::text(text)],
+        };
+    let spent = failed(
+        InvocationId::new(),
+        "weekly limit reached",
+        ModelErrorClass::UsageLimit,
+        false,
+        "spent",
+    );
+    feed.on(agent, spent);
+    let fallback = InvocationId::new();
+    let delta = Delta::Text {
+        text: "retried".into(),
+    };
+    let clock = feed.clock;
+    feed.transcripts
+        .get_mut(&agent)
+        .expect("the agent's transcript")
+        .stream(fallback, &delta, clock);
+    let overloaded = failed(
+        fallback,
+        "fallback overloaded",
+        ModelErrorClass::Overloaded,
+        true,
+        "retried",
+    );
+    feed.on(agent, overloaded);
+    assert_eq!(
+        feed.t(agent).stream.invocation,
+        None,
+        "the failure clears its live stream"
+    );
+    feed.on(
+        agent,
+        EventKind::AgentFailed {
+            error: "retries spent".into(),
+        },
+    );
+    let models = feed.models(agent);
+    let said: Vec<&str> = models
+        .iter()
+        .filter_map(|model| match model {
+            CellModel::Assistant { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(said, ["spent"], "the cut stream is dropped, not committed");
+    let errors: Vec<&str> = models
+        .iter()
+        .filter_map(|model| match model {
+            CellModel::Error { message, .. } => Some(message.as_str()),
+            _ => None,
+        })
+        .collect();
+    for message in [
+        "weekly limit reached",
+        "fallback overloaded",
+        "retries spent",
+    ] {
+        assert!(errors.contains(&message), "{message} shows: {errors:?}");
+    }
+}
+
+/// A retried failure clears its own live stream, so the retry does not
+/// stream onto it; with no quota spent it draws no error.
+#[test]
+fn a_retried_failure_clears_its_live_stream() {
+    let mut feed = Feed::new();
+    let (agent, _) = feed.spawn(None, "aether", "assistant");
+    let invocation = InvocationId::new();
+    let delta = Delta::Text {
+        text: "half".into(),
+    };
+    let clock = feed.clock;
+    feed.transcripts
+        .get_mut(&agent)
+        .expect("the agent's transcript")
+        .stream(invocation, &delta, clock);
+    let before = feed.t(agent).cells.len();
+    feed.on(
+        agent,
+        EventKind::InvocationFailed {
+            invocation,
+            snapshot: aether_core::id::SnapshotId::new(),
+            error: "overloaded".into(),
+            class: Some(ModelErrorClass::Overloaded),
+            retryable: true,
+            cancelled: false,
+            partial: vec![ContentBlock::text("half")],
+        },
+    );
+    assert_eq!(feed.t(agent).stream.invocation, None);
+    assert_eq!(
+        feed.t(agent).cells.len(),
+        before,
+        "{:?}",
+        feed.models(agent)
+    );
+}
+
 #[test]
 fn quota_failures_raise_an_alert_and_mark_the_child_result() {
     let mut feed = Feed::new();
@@ -2157,6 +2271,7 @@ fn a_note_is_its_own_notice_and_starts_nothing() {
         links: vec!["https://example.com/pull/12".into()],
         context: aether_core::note::NoteContext::None,
         level: aether_core::note::NoteLevel::Info,
+        important: false,
     };
     let draft = note
         .draft(agent, aether_core::id::RunId::new(), Actor::user())
@@ -2185,6 +2300,7 @@ fn a_note_keeps_its_level_in_the_notice() {
             links: Vec::new(),
             context: aether_core::note::NoteContext::None,
             level,
+            important: false,
         };
         let draft = note
             .draft(agent, aether_core::id::RunId::new(), Actor::user())
@@ -2197,4 +2313,31 @@ fn a_note_keeps_its_level_in_the_notice() {
             "{models:?}"
         );
     }
+}
+
+#[test]
+fn an_important_note_is_a_readable_post_with_its_links() {
+    let mut feed = Feed::new();
+    let (agent, _) = feed.spawn(None, "orchestrator", "assistant");
+    let note = aether_core::note::Note {
+        text: "**Item shipped**\n\nMerged into next.".into(),
+        links: vec!["https://example.com/pull/12".into()],
+        context: aether_core::note::NoteContext::None,
+        level: aether_core::note::NoteLevel::Info,
+        important: true,
+    };
+    let draft = note
+        .draft(agent, aether_core::id::RunId::new(), Actor::user())
+        .expect("a valid post");
+    let before = feed.models(agent).len();
+    feed.on(agent, draft.kind);
+    let models = feed.models(agent);
+    assert_eq!(models.len(), before + 1, "one cell for one post");
+    let Some(CellModel::Post { text }) = models.last() else {
+        panic!("{models:?}");
+    };
+    assert_eq!(
+        text,
+        "**Item shipped**\n\nMerged into next.\n\n- https://example.com/pull/12"
+    );
 }

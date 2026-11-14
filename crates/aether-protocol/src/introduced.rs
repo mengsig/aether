@@ -49,6 +49,9 @@ impl Command {
                 Introduced::Feature(features::AGENTS_PAGING)
             }
             Self::GetTranscriptPage { .. } => Introduced::Feature(features::TRANSCRIPT_PAGING),
+            Self::GetConversation { .. } | Self::AppendNote { important: true, .. } => {
+                Introduced::Feature(features::CONVERSATION)
+            }
             Self::UsageBreakdown { .. } => Introduced::Feature(features::USAGE_BREAKDOWN),
             Self::ConfigureRemote { settings, .. } if settings.mounts.is_some() => {
                 Introduced::Feature(features::REMOTE_MOUNTS)
@@ -201,6 +204,25 @@ mod tests {
         );
     }
 
+    /// Only an important note needs the `conversation` feature; a plain one
+    /// still goes to any daemon that serves notes.
+    #[test]
+    fn an_important_note_needs_the_conversation_feature() {
+        let agent = aether_core::id::AgentId::new();
+        let post =
+            json!({"cmd": "append_note", "agent": agent, "text": "shipped", "important": true});
+        assert_eq!(
+            command(post).introduced(),
+            Introduced::Feature(features::CONVERSATION)
+        );
+        let plain =
+            json!({"cmd": "append_note", "agent": agent, "text": "shipped", "important": false});
+        assert_eq!(
+            command(plain).introduced(),
+            Introduced::Feature(features::NOTES)
+        );
+    }
+
     /// Every protocol 26 read model names the feature that announces it,
     /// and `get_tree` needs one only when a new filter is set.
     #[test]
@@ -230,6 +252,10 @@ mod tests {
             (
                 json!({"cmd": "get_transcript_page", "agent": agent}),
                 features::TRANSCRIPT_PAGING,
+            ),
+            (
+                json!({"cmd": "get_conversation", "agent": agent, "important_only": true}),
+                features::CONVERSATION,
             ),
             (
                 json!({"cmd": "usage_breakdown", "by": "model"}),

@@ -577,6 +577,26 @@ impl Store for SqliteStore {
         )
     }
 
+    fn inbox_through(&self, agent: AgentId, after: u64, up_to: u64) -> Result<Vec<InboxItem>> {
+        assert!(after <= up_to, "an inbox range runs forward");
+        if after >= i64::MAX as u64 {
+            return Ok(Vec::new());
+        }
+        let up_to = up_to.min(i64::MAX as u64) as i64;
+        let conn = self.read_conn()?;
+        let items: Vec<InboxItem> = Self::read_many(
+            &conn,
+            "SELECT body FROM inbox WHERE agent_id = ?1 AND seq > ?2 AND seq <= ?3 ORDER BY seq ASC",
+            &[&agent.to_string(), &(after as i64), &up_to],
+        )?;
+        debug_assert!(
+            items
+                .iter()
+                .all(|item| item.seq > after && item.seq as i64 <= up_to)
+        );
+        Ok(items)
+    }
+
     fn inbox_last_seq(&self, agent: AgentId) -> Result<u64> {
         let conn = self.read_conn()?;
         let v: i64 = conn.query_row(

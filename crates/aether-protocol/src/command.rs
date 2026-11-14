@@ -192,6 +192,11 @@ pub enum Command {
         /// `refused` notes as the result of a host command.
         #[serde(default, skip_serializing_if = "aether_core::note::NoteLevel::is_info")]
         level: aether_core::note::NoteLevel,
+        /// A readable post for the operator: every focused view shows it, and
+        /// it may hold [`aether_core::note::MAX_POST_BYTES`]. Needs
+        /// `features::CONVERSATION` when set.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        important: bool,
     },
     /// Post a notification as the service `source`, or update the one its
     /// `key` already names. Needs `features::NOTIFICATIONS`.
@@ -375,6 +380,21 @@ pub enum Command {
         before: Option<u64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
+    },
+    /// A bounded page of an agent's conversation: the entries of up to `limit`
+    /// events (1 to 1000, 200 when absent) after `after`, before `before`, or
+    /// the newest. `important_only` keeps the entries flagged important.
+    /// Needs `features::CONVERSATION`.
+    GetConversation {
+        agent: AgentId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        important_only: bool,
     },
     /// Spend summed from `invocation.completed` events, grouped by `by`, in
     /// `since..until` (completion time, `until` exclusive). `limit` is 1 to

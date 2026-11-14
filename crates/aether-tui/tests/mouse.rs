@@ -478,9 +478,23 @@ fn pinned_coordination_prompts_copy_and_keep_selection_in_compact_and_full_views
             from: "parent".into(),
         },
     ] {
-        for (mode, details) in [("standard", false), ("focus", false), ("focus", true)] {
+        for (mode, details) in [
+            ("standard", false),
+            ("coordination", false),
+            ("coordination", true),
+        ] {
             let reply = "a long reply row\n\n".repeat(100);
             let mut app = app_with_transcript(&["coordination prompt", &reply]);
+            // A compact mode that shows coordination rows; `focus` hides them.
+            let mut coordination = app.view_modes.modes["focus"].clone();
+            coordination.name = "coordination".into();
+            coordination.definition.show.extend([
+                aether_tui::view_modes::Category::Delegation,
+                aether_tui::view_modes::Category::AgentMessage,
+            ]);
+            app.view_modes
+                .modes
+                .insert("coordination".into(), coordination);
             app.size = (160, 44);
             app.view_mode = mode.into();
             app.details = details;

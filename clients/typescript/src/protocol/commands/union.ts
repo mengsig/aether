@@ -29,6 +29,7 @@ import type {
   GetArtifactCommand,
   GetAttentionCommand,
   GetCheckpointCommand,
+  GetConversationCommand,
   GetEventsCommand,
   GetGitSummaryCommand,
   GetGithubWatcherCommand,
@@ -149,6 +150,7 @@ export type Command =
   | GetArtifactCommand
   | GetAttentionCommand
   | GetCheckpointCommand
+  | GetConversationCommand
   | GetEventsCommand
   | GetGitSummaryCommand
   | GetGithubWatcherCommand

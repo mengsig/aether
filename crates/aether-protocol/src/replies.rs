@@ -435,6 +435,18 @@ pub enum Reply {
         has_after: bool,
         last_seq: u64,
     },
+    /// Reply to `get_conversation`: the entries of the events between
+    /// `from_seq` and `to_seq` (0 for an empty page), in order. Page on with
+    /// `before: from_seq` or `after: to_seq`; `last_seq` is the agent's newest
+    /// conversation event.
+    Conversation {
+        entries: Vec<aether_core::conversation::Entry>,
+        from_seq: u64,
+        to_seq: u64,
+        has_before: bool,
+        has_after: bool,
+        last_seq: u64,
+    },
     UsageBreakdown(crate::read_models::UsageBreakdown),
     Inbox(Vec<InboxItem>),
     Snapshot(InvocationSnapshot),

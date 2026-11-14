@@ -103,7 +103,7 @@ impl Command {
             | Self::ListWorkspaces { .. } | Self::GetPushConfig
             | Self::ListRepositoryAliases | Self::ListNotifications { .. }
             | Self::GetNotification { .. } | Self::ListAgentsPage { .. }
-            | Self::GetTranscriptPage { .. } | Self::UsageBreakdown { .. } | Self::MemoryMigrationStatus => Access::Observe,
+            | Self::GetTranscriptPage { .. } | Self::GetConversation { .. } | Self::UsageBreakdown { .. } | Self::MemoryMigrationStatus => Access::Observe,
 
             Self::CreateAgent(_) | Self::ReplyToQuestion { .. } | Self::SendMessage { .. }
             | Self::AppendNote { .. } | Self::Cancel { .. } | Self::Interrupt { .. }

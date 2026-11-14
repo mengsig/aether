@@ -6,6 +6,8 @@ use aether_tui::app::transcript::{
 use aether_tui::app::{App, AppEvent, Effect};
 use aether_tui::testing::{app_with_transcript, render_to};
 use aether_tui::view_modes::{self, Catalog, Category, Definition, Density, Mode, Policy};
+#[path = "view_modes/conversation.rs"]
+mod conversation;
 #[path = "view_modes/parity.rs"]
 mod parity;
 
@@ -411,9 +413,13 @@ fn filtering_never_suppresses_decisions_or_failures() {
     let p = Policy {
         definition: Some(&focus.modes["focus"].definition),
     };
-    assert!(p.shows(&CellModel::Sent {
+    // Focus draws the important entries only: coordination rows are detail.
+    assert!(!p.shows(&CellModel::Sent {
         to: "tester".into(),
         text: "done".into()
+    }));
+    assert!(p.shows(&CellModel::Post {
+        text: "**Item shipped**".into()
     }));
     assert!(p.shows_category(Category::AssistantText));
     assert!(!p.shows_category(Category::Reasoning));
@@ -1340,7 +1346,7 @@ fn compact_find_prefers_shown_text_and_reveals_matches_after_narrowing() {
         app.now,
     );
     app.reduce(AppEvent::Frame(SubscriptionFrame::Event(Box::new(event))));
-    submit(&mut app, "/focus");
+    enter_calm(&mut app);
     assert!(render_to(&app, 400, 40).contains("needle evidence"));
     app.reduce(AppEvent::Key(KeyEvent::new(
         KeyCode::Char('f'),
@@ -1493,4 +1499,100 @@ fn fallback_banner_keeps_standard_visible_for_long_valid_mode_names() {
         banner.starts_with(&format!("active mode {name} not found; using standard")),
         "{banner}"
     );
+}
+
+fn note(text: &str, important: bool) -> aether_core::event::EventKind {
+    use aether_core::note::{Note, NoteContext, NoteLevel};
+    let note = Note {
+        text: text.into(),
+        links: vec!["https://example.com/pr/7".into()],
+        context: NoteContext::None,
+        level: NoteLevel::Info,
+        important,
+    };
+    let agent = aether_core::id::AgentId::new();
+    let run = aether_core::id::RunId::new();
+    let draft = note.draft(agent, run, aether_core::event::Actor::user());
+    draft.expect("a valid note").kind
+}
+
+/// The default view draws every entry; `/focus` draws exactly the important
+/// ones: the operator's text, the agent's text and a host's post, never the
+/// tool call, the raw trigger payload or a plain note.
+#[test]
+fn focus_shows_exactly_the_important_entries() {
+    use aether_core::event::EventKind;
+    use aether_core::id::{InboxItemId, MessageId};
+    use aether_core::inbox::{InboxItem, InboxKind};
+    let mut app = app_with_tool(ToolOutcome::ok("output"));
+    let agent = app.selected.unwrap();
+    let operator = InboxItemId::new();
+    let delivered = |id, kind| EventKind::InboxDelivered {
+        item: InboxItem {
+            id,
+            agent_id: agent,
+            seq: 1,
+            kind,
+            delivered_at: aether_core::time::now(),
+        },
+    };
+    own_event(
+        &mut app,
+        delivered(
+            operator,
+            InboxKind::Message {
+                message_id: MessageId::new(),
+                from: aether_core::event::Actor::user(),
+                content: vec![aether_core::model::ContentBlock::text("operator asks")],
+            },
+        ),
+    );
+    own_event(
+        &mut app,
+        EventKind::InboxConsumed {
+            up_to: 1,
+            items: vec![operator],
+        },
+    );
+    own_event(
+        &mut app,
+        delivered(
+            InboxItemId::new(),
+            InboxKind::ExternalTrigger {
+                source: "archon".into(),
+                payload: serde_json::json!({"raw": "trigger-json"}),
+                operator: false,
+            },
+        ),
+    );
+    own_event(&mut app, note("plain note", false));
+    own_event(&mut app, note("**Item shipped**", true));
+
+    let everything = render_to(&app, 120, 40);
+    for shown in [
+        "secret tool",
+        "trigger-json",
+        "plain note",
+        "Item shipped",
+        "operator asks",
+    ] {
+        assert!(everything.contains(shown), "{shown}: {everything}");
+    }
+    assert!(
+        !everything.contains("**Item"),
+        "a post renders its markdown: {everything}"
+    );
+    assert!(
+        everything.contains("https://example.com/pr/7"),
+        "{everything}"
+    );
+
+    submit(&mut app, "/focus");
+    let focused = render_to(&app, 120, 40);
+    for shown in ["Visible answer", "Item shipped", "operator asks"] {
+        assert!(focused.contains(shown), "{shown}: {focused}");
+    }
+    for hidden in ["secret tool", "trigger-json", "plain note"] {
+        assert!(!focused.contains(hidden), "{hidden}: {focused}");
+    }
 }

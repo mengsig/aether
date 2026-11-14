@@ -125,6 +125,9 @@ fn representative(kind: &str) -> CellModel {
         "assistant_text" => CellModel::Assistant {
             text: "answer".into(),
         },
+        "post" => CellModel::Post {
+            text: "**Item shipped**".into(),
+        },
         "reasoning" => CellModel::Reasoning {
             title: None,
             text: "thinking".into(),

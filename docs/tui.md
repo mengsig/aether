@@ -844,11 +844,20 @@ commands; either way the TUI starts and says why once.
 ## View modes
 
 A view mode changes presentation of the viewed agent's retained transcript.
-The default `standard` keeps the stock view. The built-in `focus` shows prose,
-delegations, messages, completions and status, with compact coordination rows.
-Tools, thinking, memory, compaction and accounting remain available with Ctrl+T.
-The operator's own messages, questions, approvals, failures and actionable health
-notices always stay visible, whole, even in a mode that omits `user_text`.
+The default `standard` keeps the stock view: every entry. The built-in `focus`
+shows the important entries only: what the operator sent, the agent's own text
+(including text beside its tool calls), its questions, and posts a host flagged
+important. These are the entries `get_conversation` flags `important`, so a
+client reading it with `important_only` shows what `/focus` shows, less the
+approvals, failures and health notices below that every mode keeps. Tools,
+thinking, delegations, other agents' messages, raw triggers, plain notes and
+status remain available with Ctrl+T and in `standard`.
+The operator's own messages, important posts, questions, approvals, failures and
+actionable health notices always stay visible, whole, even in a mode that omits
+`user_text`. A post is drawn as markdown, like the agent's text, with its links
+listed under it. Raw triggers and plain notes are never important, so no named
+mode draws them, even one that shows `status`: a fresh launch and a live view
+of the same history draw the same entries.
 A failed tool call is tool detail: a mode without `tool` keeps one line for it.
 Modes do not alter agent execution, event ingestion, approval controls or the board.
 

@@ -16,7 +16,7 @@ pub fn category(model: &CellModel) -> Category {
             UserFrom::Task { .. } => Delegation,
             UserFrom::Message { .. } => AgentMessage,
         },
-        CellModel::Assistant { .. } => AssistantText,
+        CellModel::Assistant { .. } | CellModel::Post { .. } => AssistantText,
         CellModel::Reasoning { .. } => Reasoning,
         CellModel::Exec { .. }
         | CellModel::Explored { .. }
@@ -71,6 +71,18 @@ pub fn mandatory(model: &CellModel) -> bool {
     }
 }
 
+/// A raw trigger or a plain note: an entry `get_conversation` never flags
+/// important, so no named mode draws it, even one that shows `status`.
+fn unimportant_entry(model: &CellModel) -> bool {
+    matches!(
+        model,
+        CellModel::Notice {
+            kind: NoticeKind::Trigger { .. } | NoticeKind::Note(_),
+            ..
+        }
+    )
+}
+
 /// A failed call that carries its own error text.
 fn failed_call(model: &CellModel) -> bool {
     matches!(
@@ -94,15 +106,22 @@ impl Policy<'_> {
         let Some(definition) = self.definition else {
             return true;
         };
-        // What the operator typed is theirs: no mode hides it, and none folds `user_text`.
-        let operator = matches!(
+        // What the operator typed is theirs, and a post was flagged important
+        // by its host: no mode hides either, and none folds `user_text`.
+        let always = matches!(
             model,
             CellModel::User {
                 from: UserFrom::Operator,
                 ..
-            }
+            } | CellModel::Post { .. }
         );
-        if operator || definition.show.contains(&category(model)) {
+        if always {
+            return true;
+        }
+        if unimportant_entry(model) {
+            return false;
+        }
+        if definition.show.contains(&category(model)) {
             return true;
         }
         // A failed edit's line is its named-only call cell; the edit itself is tool detail.
