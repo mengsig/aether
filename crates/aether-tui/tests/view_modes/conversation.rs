@@ -322,7 +322,11 @@ fn a_fresh_focus_keeps_a_stop_drawn_once_when_its_message_is_before_the_window()
 
     let (whole, history) = focused_window(usize::MAX, seed);
     let expected = important_entries_of(&history, &history);
-    assert_eq!(expected.len(), 2, "the message, then the post: {expected:?}");
+    assert_eq!(
+        expected.len(),
+        2,
+        "the message, then the post: {expected:?}"
+    );
     assert_eq!(expected[0], "half an answer");
     assert_eq!(drawn_entries(&whole), expected);
 }
