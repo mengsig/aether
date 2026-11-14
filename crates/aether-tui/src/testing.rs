@@ -14,9 +14,9 @@ use aether_core::model::{ContentBlock, MessageRole, ModelRef, Usage};
 use aether_core::provider::ProviderHealth;
 use aether_core::time::now;
 use aether_core::tool::SideEffectClass;
-use aether_protocol::{AgentTree, DaemonStatus, Delta, Reply, TreeNode};
+use aether_protocol::{AgentTree, Command, DaemonStatus, Delta, Reply, TreeNode};
 
-use crate::app::{App, AppEvent, Then, TuiOptions};
+use crate::app::{App, AppEvent, Effect, Then, TuiOptions};
 
 mod fleet;
 pub use fleet::{
@@ -142,6 +142,12 @@ pub fn app_with_transcript(messages: &[&str]) -> App {
 /// One connected agent viewed on a fresh launch: its first history page
 /// is `history(agent)`, as a restarted TUI loads it.
 pub fn app_with_history(history: impl FnOnce(AgentId) -> Vec<Event>) -> App {
+    app_with_window(history, usize::MAX)
+}
+
+/// [`app_with_history`] whose first page holds only the last `window` of
+/// the agent's events; the page's later reads see all of them, as a daemon's do.
+pub fn app_with_window(history: impl FnOnce(AgentId) -> Vec<Event>, window: usize) -> App {
     let mut app = App::new(TuiOptions::default());
     app.reduce(AppEvent::Connected);
 
@@ -204,12 +210,61 @@ pub fn app_with_history(history: impl FnOnce(AgentId) -> Vec<Event>) -> App {
         events.windows(2).all(|pair| pair[0].seq < pair[1].seq),
         "a history page is in seq order"
     );
-    app.reduce(AppEvent::Reply {
+    let page = events[events.len().saturating_sub(window)..].to_vec();
+    let mut effects = app.reduce(AppEvent::Reply {
         then: backfill_then(&app, id),
-        result: Ok(Reply::Events(events)),
+        result: Ok(Reply::Events(page)),
     });
+    while let Some(index) = effects.iter().position(|effect| {
+        matches!(
+            effect,
+            Effect::Request {
+                then: Then::BackfillInbox { .. },
+                ..
+            }
+        )
+    }) {
+        let Effect::Request { command, then } = effects.swap_remove(index) else {
+            unreachable!("matched a request");
+        };
+        let result = Ok(history_read(id, &events, &command));
+        effects = app.reduce(AppEvent::Reply { then, result });
+    }
     assert_eq!(app.selected, Some(id), "the root is viewed");
     app
+}
+
+/// A daemon's answer from `events` to a page's read of the agent's inbox:
+/// its last consumption before a seq, or the items delivered after an inbox seq.
+#[allow(clippy::expect_used, clippy::panic)]
+fn history_read(agent: AgentId, events: &[Event], command: &Command) -> Reply {
+    let own = events.iter().filter(|event| event.agent_id == Some(agent));
+    match command {
+        Command::GetEvents { query, limit, .. } => {
+            assert_eq!(
+                query.types,
+                ["inbox.consumed"],
+                "the page's own read is its own"
+            );
+            let before = query.before.expect("a read before the page");
+            let mut consumed: Vec<Event> = own
+                .filter(|event| event.seq < before)
+                .filter(|event| matches!(event.kind, EventKind::InboxConsumed { .. }))
+                .cloned()
+                .collect();
+            consumed.reverse();
+            consumed.truncate(*limit);
+            Reply::Events(consumed)
+        }
+        Command::GetInbox { after, .. } => Reply::Inbox(
+            own.filter_map(|event| match &event.kind {
+                EventKind::InboxDelivered { item } if item.seq > *after => Some(item.clone()),
+                _ => None,
+            })
+            .collect(),
+        ),
+        other => panic!("a history page asks for no {other:?}"),
+    }
 }
 
 /// One more message from the person, streamed to the selected agent's

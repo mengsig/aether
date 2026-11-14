@@ -3,7 +3,9 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
-use aether_core::id::InvocationId;
+use aether_core::event::EventKind;
+use aether_core::id::{InboxItemId, InvocationId};
+use aether_core::inbox::InboxItem;
 use aether_core::time::Timestamp;
 use aether_protocol::{Delta, EventQuery, Reply};
 
@@ -38,6 +40,10 @@ struct Pending {
     /// Asked for on this connection. History expiring cancels pages and bumps
     /// it, so a cancelled page's reply never matches its replacement.
     connection: u64,
+    /// Items the page's consumptions read whose delivery came before it,
+    /// then those of them the inbox still holds.
+    undelivered: HashSet<InboxItemId>,
+    earlier: Vec<InboxItem>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +144,8 @@ impl App {
                 buffer_start: self.backfill.buffered.len(),
                 abandoned: None,
                 connection: self.connection,
+                undelivered: HashSet::new(),
+                earlier: Vec::new(),
             },
         );
         Some(page_request(agent, before, self.connection))
@@ -249,8 +257,64 @@ impl App {
             // An empty older page leaves the displayed window intact.
             return self.finish_backfill(agent, pending, false);
         }
+        pending.undelivered = transcript::undelivered_consumed(agent, &events);
+        let start = events.iter().map(|event| event.seq).min();
         pending.events = events;
-        self.finish_backfill(agent, pending, true)
+        match start {
+            Some(start) if !pending.undelivered.is_empty() => {
+                self.backfill.pages.insert(agent, pending);
+                vec![previous_consumption_request(agent, start, connection)]
+            }
+            _ => self.finish_backfill(agent, pending, true),
+        }
+    }
+
+    /// The messages a page's consumptions read from before it, found as
+    /// `get_conversation` finds them: the inbox after the consumption before
+    /// the page. Without them the page still loads, and says what it lacks.
+    pub(super) fn on_backfill_inbox(
+        &mut self,
+        agent: AgentId,
+        connection: u64,
+        result: Result<Reply, ClientError>,
+    ) -> Vec<Effect> {
+        let Some(mut pending) = self.take_page(agent, connection) else {
+            return Vec::new();
+        };
+        debug_assert!(
+            !pending.undelivered.is_empty() && pending.earlier.is_empty(),
+            "only a page missing deliveries looks them up, once"
+        );
+        if pending.abandoned.is_some() || pending.latest_requested {
+            return self.finish_backfill(agent, pending, false);
+        }
+        match result {
+            Ok(Reply::Events(previous)) => {
+                let after = previous_up_to(agent, &previous);
+                self.backfill.pages.insert(agent, pending);
+                vec![inbox_request(agent, after, connection)]
+            }
+            Ok(Reply::Inbox(items)) => {
+                let earlier: Vec<InboxItem> = items
+                    .into_iter()
+                    .filter(|item| pending.undelivered.contains(&item.id))
+                    .collect();
+                assert!(earlier.len() <= pending.undelivered.len());
+                pending.earlier = earlier;
+                self.finish_backfill(agent, pending, true)
+            }
+            other => {
+                let error = match other {
+                    Err(error) => error.to_string(),
+                    Ok(reply) => format!("unexpected reply {reply:?}"),
+                };
+                self.flash_error(format!(
+                    "loading the messages {} read from before its history: {error}",
+                    self.agent_name(agent)
+                ));
+                self.finish_backfill(agent, pending, true)
+            }
+        }
     }
 
     /// Say why the page before `before` did not load. Expired older history
@@ -353,6 +417,9 @@ impl App {
             tree: &self.tree,
             now: self.now,
         };
+        for item in &pending.earlier {
+            transcript::ingest_earlier_delivery(&mut rebuilt, agent, item, &ctx);
+        }
         let mut seen = HashSet::new();
         for frame in frames {
             match frame {
@@ -441,4 +508,45 @@ fn page_request(agent: AgentId, before: Option<u64>, connection: u64) -> Effect 
         },
         then: Then::Backfill { agent, connection },
     }
+}
+
+/// The agent's last consumption before `start`; children's are left out.
+fn previous_consumption_request(agent: AgentId, start: u64, connection: u64) -> Effect {
+    Effect::Request {
+        command: Command::GetEvents {
+            after: 0,
+            limit: 1,
+            query: EventQuery {
+                agent: Some(agent),
+                before: Some(start),
+                types: vec!["inbox.consumed".to_owned()],
+                child_types: transcript::PARENT_VISIBLE_CHILD_TYPES
+                    .map(String::from)
+                    .into(),
+                ..EventQuery::default()
+            },
+        },
+        then: Then::BackfillInbox { agent, connection },
+    }
+}
+
+fn inbox_request(agent: AgentId, after: u64, connection: u64) -> Effect {
+    Effect::Request {
+        command: Command::GetInbox { agent, after },
+        then: Then::BackfillInbox { agent, connection },
+    }
+}
+
+/// Where the inbox cursor stood before the page: the `up_to` of the agent's
+/// consumption in `previous`, else the start of its inbox.
+fn previous_up_to(agent: AgentId, previous: &[Event]) -> u64 {
+    debug_assert!(previous.len() <= 1, "asked for one consumption at most");
+    previous
+        .iter()
+        .filter(|event| event.agent_id == Some(agent))
+        .find_map(|event| match event.kind {
+            EventKind::InboxConsumed { up_to, .. } => Some(up_to),
+            _ => None,
+        })
+        .unwrap_or(0)
 }

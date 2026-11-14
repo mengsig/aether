@@ -1028,3 +1028,58 @@ fn eviction_keeps_old_pending_questions_in_the_needs_you_strip() {
     assert!(app.needs_you().iter().any(|row| row.agent == id));
     assert!(app.transcripts[&id].older_available);
 }
+
+#[test]
+fn a_page_whose_earlier_deliveries_fail_to_load_still_loads_and_says_so() {
+    let (mut app, id) = app_with_agent();
+    app.transcripts.get_mut(&id).unwrap().loaded = false;
+    app.select(id);
+    let consumed = EventKind::InboxConsumed {
+        up_to: 3,
+        items: vec![aether_core::id::InboxItemId::new()],
+    };
+    let reply = EventKind::AgentMessage {
+        role: MessageRole::Assistant,
+        content: vec![ContentBlock::text("on it")],
+        invocation: None,
+    };
+    let effects = app.reduce(AppEvent::Reply {
+        then: crate::testing::backfill_then(&app, id),
+        result: Ok(Reply::Events(vec![
+            event(8, id, reply),
+            event(7, id, consumed),
+        ])),
+    });
+    let then = match effects.as_slice() {
+        [
+            Effect::Request {
+                command:
+                    Command::GetEvents {
+                        query, limit: 1, ..
+                    },
+                then,
+            },
+        ] => {
+            assert_eq!(query.before, Some(7), "the consumption before the page");
+            assert_eq!(query.types, ["inbox.consumed"]);
+            then.clone()
+        }
+        other => panic!("a read of the consumption before the page: {other:?}"),
+    };
+    assert!(!app.transcripts[&id].loaded, "the page waits for its inbox");
+    app.reduce(AppEvent::Reply {
+        then,
+        result: Err(ClientError::Disconnected),
+    });
+    assert!(app.transcripts[&id].loaded);
+    assert!(
+        app.transcripts[&id]
+            .all_cells()
+            .any(|c| matches!(&c.model, CellModel::Assistant { text } if text == "on it"))
+    );
+    assert!(
+        app.live_flash()
+            .expect("error flash")
+            .contains("before its history")
+    );
+}

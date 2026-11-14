@@ -56,6 +56,12 @@ pub enum Then {
         agent: AgentId,
         connection: u64,
     },
+    /// What that page's consumptions read from before it: the consumption
+    /// before the page, then the inbox after it.
+    BackfillInbox {
+        agent: AgentId,
+        connection: u64,
+    },
     /// Reply to this root start's create request.
     AgentCreated(StartId),
     /// Reply to a restart: select the new agent and load what it inherited.

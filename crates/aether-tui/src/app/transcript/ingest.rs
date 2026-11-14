@@ -860,6 +860,49 @@ fn remember_event(transcripts: &mut Transcripts, event: &Event) {
     }
 }
 
+/// The items the agent's consumptions in `events` read whose delivery is not
+/// among them: it came before the page did.
+pub(in crate::app) fn undelivered_consumed(
+    agent: AgentId,
+    events: &[Event],
+) -> std::collections::HashSet<InboxItemId> {
+    let own = || events.iter().filter(|event| event.agent_id == Some(agent));
+    let delivered: std::collections::HashSet<InboxItemId> = own()
+        .filter_map(|event| match &event.kind {
+            EventKind::InboxDelivered { item } => Some(item.id),
+            _ => None,
+        })
+        .collect();
+    own()
+        .filter_map(|event| match &event.kind {
+            EventKind::InboxConsumed { items, .. } => Some(items),
+            _ => None,
+        })
+        .flatten()
+        .filter(|id| !delivered.contains(id))
+        .copied()
+        .collect()
+}
+
+/// An item delivered before the history page, held as delivered so its
+/// consumption in the page draws it there. Its seq is none of the page's.
+pub(in crate::app) fn ingest_earlier_delivery(
+    transcripts: &mut Transcripts,
+    agent: AgentId,
+    item: &aether_core::inbox::InboxItem,
+    ctx: &IngestCtx<'_>,
+) {
+    assert_eq!(item.agent_id, agent, "an item from this agent's inbox");
+    let draft = aether_core::event::EventDraft::new(
+        Actor::System,
+        EventKind::InboxDelivered { item: item.clone() },
+    )
+    .agent(agent);
+    let event = Event::from_draft(draft, aether_core::id::EventId::new(), 0, item.delivered_at);
+    let alert = route_event(transcripts, &event, ctx, false);
+    debug_assert!(alert.is_none(), "a delivery raises no alert");
+}
+
 pub(in crate::app) fn ingest_replay_event(
     transcripts: &mut Transcripts,
     event: &Event,

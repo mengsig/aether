@@ -132,6 +132,9 @@ impl App {
         if let Then::Backfill { agent, connection } = then {
             return Routed::Done(self.on_backfill(agent, connection, result));
         }
+        if let Then::BackfillInbox { agent, connection } = then {
+            return Routed::Done(self.on_backfill_inbox(agent, connection, result));
+        }
         if then.is_notification() {
             return Routed::Done(self.notification_reply(&then, result));
         }
