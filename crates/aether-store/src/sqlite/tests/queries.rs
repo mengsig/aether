@@ -32,6 +32,34 @@ fn inbox_cursors_beyond_sqlite_sequences_do_not_replay_items() {
 }
 
 #[test]
+fn an_inbox_range_reads_no_row_past_its_end() {
+    let store = SqliteStore::open_in_memory().expect("open");
+    let id = AgentId::new();
+    for seq in 1..=5 {
+        store
+            .commit(Commit::new().mutate(Mutation::DeliverInbox(inbox_item(id, seq))))
+            .expect("deliver");
+    }
+    let changed = store
+        .write_conn()
+        .execute(
+            "UPDATE inbox SET body = '{' WHERE agent_id = ?1 AND seq = 5",
+            [id.to_string()],
+        )
+        .expect("corrupt");
+    assert_eq!(changed, 1);
+    assert!(store.inbox(id, 1).is_err(), "an open range reads the row");
+    let seqs = |after, up_to| -> Vec<u64> {
+        let items = store.inbox_through(id, after, up_to).expect("range");
+        items.iter().map(|item| item.seq).collect()
+    };
+    assert_eq!(seqs(1, 3), [2, 3]);
+    assert_eq!(seqs(0, 4), [1, 2, 3, 4]);
+    assert!(seqs(4, 4).is_empty());
+    assert!(seqs(i64::MAX as u64, u64::MAX).is_empty());
+}
+
+#[test]
 fn event_filters() {
     let store = SqliteStore::open_in_memory().expect("open");
     let a = agent();

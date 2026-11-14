@@ -391,16 +391,15 @@ fn consumed_items(
         _ => 0,
     });
     debug_assert!(previous_up_to <= *up_to, "the inbox cursor moves forward");
-    // Were it ever to move back, reading the whole inbox stays correct.
+    // Were it ever to move back, reading from the inbox's start stays correct.
     let after = if previous_up_to <= *up_to {
         previous_up_to
     } else {
         0
     };
     let read: Vec<_> = store
-        .inbox(agent, after)?
+        .inbox_through(agent, after, *up_to)?
         .into_iter()
-        .take_while(|item| item.seq <= *up_to)
         .filter(|item| items.contains(&item.id))
         .collect();
     assert!(read.len() <= items.len(), "each consumed item read once");
@@ -932,6 +931,65 @@ mod tests {
                 (EntryKind::Operator, "and the docs"),
             ],
             "each message once, where it was consumed"
+        );
+    }
+
+    /// An old page reads only the inbox rows its consumption covered: a later
+    /// row that does not even decode is never read, however many follow.
+    #[test]
+    fn an_old_page_reads_no_inbox_row_delivered_after_it() {
+        use aether_core::inbox::{InboxItem, InboxKind};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("aether.db");
+        let store = aether_store::SqliteStore::open(&path).expect("open");
+        let agent = AgentId::new();
+        let draft = |kind| EventDraft::new(Actor::System, kind).agent(agent);
+        let deliver = |seq: u64, text: &str| {
+            let item = InboxItem {
+                id: aether_core::id::InboxItemId::new(),
+                agent_id: agent,
+                seq,
+                kind: InboxKind::Message {
+                    message_id: aether_core::id::MessageId::new(),
+                    from: Actor::user(),
+                    content: vec![aether_core::model::ContentBlock::text(text)],
+                },
+                delivered_at: now(),
+            };
+            let commit = Commit::new()
+                .event(draft(EventKind::InboxDelivered { item: item.clone() }))
+                .mutate(Mutation::DeliverInbox(item.clone()));
+            Store::commit(&store, commit).expect("deliver");
+            item
+        };
+        let consume = |items: Vec<aether_core::id::InboxItemId>, up_to: u64| {
+            let kind = EventKind::InboxConsumed { up_to, items };
+            Store::commit(&store, Commit::new().event(draft(kind))).expect("consume");
+        };
+        let first = deliver(1, "ship it");
+        consume(vec![first.id], 1);
+        let later: Vec<InboxItem> = (2..=300).map(|seq| deliver(seq, "later")).collect();
+        consume(later.iter().map(|item| item.id).collect(), 300);
+        let raw = rusqlite::Connection::open(&path).expect("raw");
+        let changed = raw
+            .execute(
+                "UPDATE inbox SET body = '{' WHERE agent_id = ?1 AND seq = 300",
+                [agent.to_string()],
+            )
+            .expect("corrupt");
+        assert_eq!(changed, 1);
+        let before = Store::events(&store, 0, 2, &EventFilter::own_events(agent))
+            .expect("events")
+            .last()
+            .map(|event| event.seq + 1)
+            .expect("the first delivery and its consumption");
+
+        let page = conversation_page(&store, agent, None, Some(before), 10, true).expect("page");
+        let said: Vec<&str> = page.entries.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(said, ["ship it"], "the old page's message, from its rows");
+        assert!(
+            conversation_page(&store, agent, None, None, 10, true).is_err(),
+            "the page whose consumption covers the broken row reads it"
         );
     }
 

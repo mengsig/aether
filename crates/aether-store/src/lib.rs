@@ -883,6 +883,14 @@ pub trait Store: Send + Sync {
 
     /// Inbox items with `seq > after`, ascending.
     fn inbox(&self, agent: AgentId, after: u64) -> Result<Vec<InboxItem>>;
+    /// Inbox items with `after < seq <= up_to`, ascending. The SQLite store
+    /// reads only those rows, however many come later.
+    fn inbox_through(&self, agent: AgentId, after: u64, up_to: u64) -> Result<Vec<InboxItem>> {
+        assert!(after <= up_to, "an inbox range runs forward");
+        let mut items = self.inbox(agent, after)?;
+        items.retain(|item| item.seq <= up_to);
+        Ok(items)
+    }
     fn inbox_last_seq(&self, agent: AgentId) -> Result<u64>;
 
     fn lease(&self, agent: AgentId) -> Result<Option<Lease>>;
