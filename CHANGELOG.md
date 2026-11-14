@@ -4,7 +4,18 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
-## Unreleased
+## 1.3.1
+
+Released 2026-11-13. Dependency updates (#419) and a memory benchmark correction
+(#422). The workspace and
+the Python and TypeScript clients are 1.3.1.
+
+### Benchmark
+
+- Made the garbled-page memory recovery scenario target a `memories` leaf
+  page consistently, and re-recorded the baseline at 1.3.0 (#422). The old
+  file midpoint changed ownership as the store grew; this corrects the
+  benchmark rather than changing memory recovery behavior.
 
 ### Added
 
