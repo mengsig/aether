@@ -254,7 +254,7 @@ pub(super) fn then_operation(then: &Then) -> &'static str {
         Then::VoiceReply(_) => "sending a voice reply",
         Then::Status | Then::StatusPoll => "refreshing status",
         Then::Tree => "refreshing the agent tree",
-        Then::Backfill { .. } | Then::BackfillInbox { .. } => "loading the transcript",
+        Then::Backfill { .. } | Then::BackfillDeliveries { .. } => "loading the transcript",
         Then::Restarted { .. } => "restarting the agent",
         Then::Woken => "waking the agent",
         Then::FannedOut => "sending to the subtree",

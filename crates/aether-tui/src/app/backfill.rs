@@ -40,8 +40,8 @@ struct Pending {
     /// Asked for on this connection. History expiring cancels pages and bumps
     /// it, so a cancelled page's reply never matches its replacement.
     connection: u64,
-    /// Items the page's consumptions read whose delivery came before it,
-    /// then those of them the inbox still holds.
+    /// Items the page's consumptions read whose delivery came before it and
+    /// is not found yet, and those found, as delivered.
     undelivered: HashSet<InboxItemId>,
     earlier: Vec<InboxItem>,
 }
@@ -241,8 +241,7 @@ impl App {
                 return self.finish_backfill(agent, pending, false);
             }
         };
-        if self.backfill.overflowed && pending.before.is_none() {
-            self.flash_error(format!("too much live activity while loading {}'s history; keeping live content; reselect to retry", self.agent_name(agent)));
+        if self.live_overflowed(agent, &pending) {
             return self.finish_backfill(agent, pending, false);
         }
         if events.len() >= PAGE && events.windows(2).any(|pair| pair[0].seq < pair[1].seq) {
@@ -263,16 +262,26 @@ impl App {
         match start {
             Some(start) if !pending.undelivered.is_empty() => {
                 self.backfill.pages.insert(agent, pending);
-                vec![previous_consumption_request(agent, start, connection)]
+                vec![deliveries_request(agent, start, connection)]
             }
             _ => self.finish_backfill(agent, pending, true),
         }
     }
 
-    /// The messages a page's consumptions read from before it, found as
-    /// `get_conversation` finds them: the inbox after the consumption before
-    /// the page. Without them the page still loads, and says what it lacks.
-    pub(super) fn on_backfill_inbox(
+    /// The page's initial load gave up on live frames it could not hold:
+    /// rebuilding would drop live cells.
+    fn live_overflowed(&mut self, agent: AgentId, pending: &Pending) -> bool {
+        if !self.backfill.overflowed || pending.before.is_some() {
+            return false;
+        }
+        self.flash_error(format!("too much live activity while loading {}'s history; keeping live content; reselect to retry", self.agent_name(agent)));
+        true
+    }
+
+    /// The agent's deliveries before the page, newest first, a page of them
+    /// at a time until each item the page consumed is found. Without them
+    /// the page still loads, and says what it lacks.
+    pub(super) fn on_backfill_deliveries(
         &mut self,
         agent: AgentId,
         connection: u64,
@@ -282,27 +291,14 @@ impl App {
             return Vec::new();
         };
         debug_assert!(
-            !pending.undelivered.is_empty() && pending.earlier.is_empty(),
-            "only a page missing deliveries looks them up, once"
+            !pending.undelivered.is_empty(),
+            "only a page missing deliveries looks them up"
         );
         if pending.abandoned.is_some() || pending.latest_requested {
             return self.finish_backfill(agent, pending, false);
         }
-        match result {
-            Ok(Reply::Events(previous)) => {
-                let after = previous_up_to(agent, &previous);
-                self.backfill.pages.insert(agent, pending);
-                vec![inbox_request(agent, after, connection)]
-            }
-            Ok(Reply::Inbox(items)) => {
-                let earlier: Vec<InboxItem> = items
-                    .into_iter()
-                    .filter(|item| pending.undelivered.contains(&item.id))
-                    .collect();
-                assert!(earlier.len() <= pending.undelivered.len());
-                pending.earlier = earlier;
-                self.finish_backfill(agent, pending, true)
-            }
+        let deliveries = match result {
+            Ok(Reply::Events(events)) => events,
             other => {
                 let error = match other {
                     Err(error) => error.to_string(),
@@ -312,9 +308,36 @@ impl App {
                     "loading the messages {} read from before its history: {error}",
                     self.agent_name(agent)
                 ));
-                self.finish_backfill(agent, pending, true)
+                return self.finish_page(agent, pending);
             }
+        };
+        let more = deliveries.len() >= PAGE;
+        let oldest = deliveries.iter().map(|event| event.seq).min();
+        take_earlier(&mut pending, agent, deliveries);
+        match oldest {
+            Some(before) if more && !pending.undelivered.is_empty() => {
+                self.backfill.pages.insert(agent, pending);
+                vec![deliveries_request(agent, before, connection)]
+            }
+            _ => self.finish_page(agent, pending),
         }
+    }
+
+    /// Rebuild a page whose earlier deliveries are in, unless live frames
+    /// overflowed while they loaded.
+    fn finish_page(&mut self, agent: AgentId, mut pending: Pending) -> Vec<Effect> {
+        if self.live_overflowed(agent, &pending) {
+            return self.finish_backfill(agent, pending, false);
+        }
+        pending.earlier.sort_by_key(|item| item.seq);
+        debug_assert!(
+            pending
+                .earlier
+                .windows(2)
+                .all(|pair| pair[0].seq < pair[1].seq),
+            "each earlier item once"
+        );
+        self.finish_backfill(agent, pending, true)
     }
 
     /// Say why the page before `before` did not load. Expired older history
@@ -510,43 +533,43 @@ fn page_request(agent: AgentId, before: Option<u64>, connection: u64) -> Effect 
     }
 }
 
-/// The agent's last consumption before `start`; children's are left out.
-fn previous_consumption_request(agent: AgentId, start: u64, connection: u64) -> Effect {
+/// Up to a page of the agent's own deliveries before `before`.
+fn deliveries_request(agent: AgentId, before: u64, connection: u64) -> Effect {
     Effect::Request {
         command: Command::GetEvents {
             after: 0,
-            limit: 1,
+            limit: PAGE,
             query: EventQuery {
                 agent: Some(agent),
-                before: Some(start),
-                types: vec!["inbox.consumed".to_owned()],
+                before: Some(before),
+                types: vec!["inbox.delivered".to_owned()],
+                // None of these is a delivery: no child's is read.
                 child_types: transcript::PARENT_VISIBLE_CHILD_TYPES
                     .map(String::from)
                     .into(),
                 ..EventQuery::default()
             },
         },
-        then: Then::BackfillInbox { agent, connection },
+        then: Then::BackfillDeliveries { agent, connection },
     }
 }
 
-fn inbox_request(agent: AgentId, after: u64, connection: u64) -> Effect {
-    Effect::Request {
-        command: Command::GetInbox { agent, after },
-        then: Then::BackfillInbox { agent, connection },
+/// Move the items `deliveries` holds from the page's missing ones to its earlier ones.
+fn take_earlier(pending: &mut Pending, agent: AgentId, deliveries: Vec<Event>) {
+    let missing = pending.undelivered.len() + pending.earlier.len();
+    for event in deliveries {
+        if event.agent_id != Some(agent) {
+            continue;
+        }
+        if let EventKind::InboxDelivered { item } = event.kind
+            && pending.undelivered.remove(&item.id)
+        {
+            pending.earlier.push(item);
+        }
     }
-}
-
-/// Where the inbox cursor stood before the page: the `up_to` of the agent's
-/// consumption in `previous`, else the start of its inbox.
-fn previous_up_to(agent: AgentId, previous: &[Event]) -> u64 {
-    debug_assert!(previous.len() <= 1, "asked for one consumption at most");
-    previous
-        .iter()
-        .filter(|event| event.agent_id == Some(agent))
-        .find_map(|event| match event.kind {
-            EventKind::InboxConsumed { up_to, .. } => Some(up_to),
-            _ => None,
-        })
-        .unwrap_or(0)
+    assert_eq!(
+        pending.undelivered.len() + pending.earlier.len(),
+        missing,
+        "an item is missing or found, never both"
+    );
 }

@@ -56,9 +56,8 @@ pub enum Then {
         agent: AgentId,
         connection: u64,
     },
-    /// What that page's consumptions read from before it: the consumption
-    /// before the page, then the inbox after it.
-    BackfillInbox {
+    /// Deliveries before that page of the items its consumptions read.
+    BackfillDeliveries {
         agent: AgentId,
         connection: u64,
     },
