@@ -16,6 +16,9 @@ use super::{AgentId, App, ClientError, Command, Effect, Event, Then};
 const PAGE: usize = transcript::HISTORY_WINDOW;
 /// Live events and deltas held while any backfill is in flight.
 const MAX_BUFFERED: usize = 20_000;
+/// Deliveries per read of those before a page: one is never larger than the
+/// request line that delivered it, so a reply always fits a frame.
+const DELIVERIES_PER_READ: usize = 1;
 
 #[derive(Debug, Default)]
 pub(super) struct Backfill {
@@ -278,9 +281,9 @@ impl App {
         true
     }
 
-    /// The agent's deliveries before the page, newest first, a page of them
-    /// at a time until each item the page consumed is found. Without them
-    /// the page still loads, and says what it lacks.
+    /// The agent's deliveries before the page, newest first, until each item
+    /// the page consumed is found. Without them the page still loads, and
+    /// says what it lacks.
     pub(super) fn on_backfill_deliveries(
         &mut self,
         agent: AgentId,
@@ -311,7 +314,7 @@ impl App {
                 return self.finish_page(agent, pending);
             }
         };
-        let more = deliveries.len() >= PAGE;
+        let more = deliveries.len() >= DELIVERIES_PER_READ;
         let oldest = deliveries.iter().map(|event| event.seq).min();
         take_earlier(&mut pending, agent, deliveries);
         match oldest {
@@ -533,12 +536,12 @@ fn page_request(agent: AgentId, before: Option<u64>, connection: u64) -> Effect 
     }
 }
 
-/// Up to a page of the agent's own deliveries before `before`.
+/// The agent's own newest deliveries before `before`.
 fn deliveries_request(agent: AgentId, before: u64, connection: u64) -> Effect {
     Effect::Request {
         command: Command::GetEvents {
             after: 0,
-            limit: PAGE,
+            limit: DELIVERIES_PER_READ,
             query: EventQuery {
                 agent: Some(agent),
                 before: Some(before),

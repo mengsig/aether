@@ -1070,7 +1070,7 @@ fn deliveries_read(effects: &[Effect], before: u64) -> Then {
         ] => {
             assert_eq!(query.before, Some(before), "deliveries before the page");
             assert_eq!(query.types, ["inbox.delivered"]);
-            assert_eq!(*limit, crate::app::transcript::HISTORY_WINDOW);
+            assert_eq!(*limit, 1, "one delivery a reply: it fits a frame");
             then.clone()
         }
         other => panic!("a read of the deliveries before the page: {other:?}"),
@@ -1119,7 +1119,7 @@ fn a_page_whose_earlier_deliveries_fail_to_load_still_loads_and_says_so() {
 }
 
 #[test]
-fn deliveries_are_read_back_a_page_at_a_time_until_the_consumed_one() {
+fn deliveries_are_read_back_one_at_a_time_until_the_consumed_one() {
     let (mut app, id) = app_with_agent();
     start(&mut app, id);
     let wanted = operator_delivery(2, id, 1, "ship the fix");
@@ -1128,18 +1128,17 @@ fn deliveries_are_read_back_a_page_at_a_time_until_the_consumed_one() {
     };
     let effects = finish(&mut app, id, page_missing_a_delivery(id, item.id));
     let then = deliveries_read(&effects, 7);
-    // A full page of other deliveries, as a busy inbox's would be.
-    let window = crate::app::transcript::HISTORY_WINDOW;
-    let others: Vec<Event> = (0..window as u64)
-        .map(|n| operator_delivery(1_000_000 - n, id, 10 + n, "later"))
-        .collect();
-    let oldest = others.last().map(|event| event.seq).expect("a full page");
-    let effects = app.reduce(AppEvent::Reply {
-        then,
-        result: Ok(Reply::Events(others)),
-    });
-    let then = deliveries_read(&effects, oldest);
-    assert!(!app.transcripts[&id].loaded);
+    // Still queued past the page: delivered after the wanted one, before the page.
+    let large = "x".repeat(2 << 20);
+    let mut then = then;
+    for seq in [6, 4] {
+        let effects = app.reduce(AppEvent::Reply {
+            then,
+            result: Ok(Reply::Events(vec![operator_delivery(seq, id, seq, &large)])),
+        });
+        then = deliveries_read(&effects, seq);
+        assert!(!app.transcripts[&id].loaded);
+    }
     app.reduce(AppEvent::Reply {
         then,
         result: Ok(Reply::Events(vec![wanted.clone()])),
