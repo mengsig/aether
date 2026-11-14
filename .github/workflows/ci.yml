@@ -42,7 +42,7 @@ env:
 jobs:
   linux:
     name: ${{ matrix.stage }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A cold cache builds the whole workspace from scratch; a warm one is far quicker.
     timeout-minutes: 90
     strategy:

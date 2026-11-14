@@ -40,6 +40,8 @@ fix (#421). The workspace and the Python and TypeScript clients are 1.3.1.
 
 - Fixed the CI upgrade lane to rewind the V33 agent tree triggers and table
   before replaying the migration (#421).
+- Pinned the CI and upgrade jobs to ubuntu-24.04, where Playwright can install
+  Chromium.
 
 ### Dependencies
 
