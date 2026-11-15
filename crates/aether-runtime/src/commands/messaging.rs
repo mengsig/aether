@@ -248,27 +248,9 @@ impl Runtime {
         let Some(latest) = pending_question(self.store.as_ref(), to)? else {
             return Err(refused());
         };
-        if latest.seq == question_seq {
-            return Ok(());
-        }
-        // A later question in the same turn joins this one, so a reply to it
-        // still answers both while nobody has replied since.
-        let mut filter = EventFilter::own_events(to);
-        filter.types = vec!["question.asked".into()];
-        let earlier = self
-            .store
-            .events(question_seq.saturating_sub(1), 1, &filter)?
-            .pop()
-            .filter(|e| e.seq == question_seq && e.actor.agent_id() == Some(to));
-        let joined = match (&earlier.map(|e| e.kind), &latest.kind) {
-            (
-                Some(EventKind::QuestionAsked { question: old }),
-                EventKind::QuestionAsked { question: now },
-            ) => now.starts_with(&format!("{old}\n\n")),
-            _ => false,
-        };
-        debug_assert!(!joined || question_seq < latest.seq, "joined is later");
-        match joined && !answered_after(self.store.as_ref(), to, question_seq)? {
+        // A joined question supersedes the earlier seq; a stale reply is refused
+        // visibly so the operator answers the question as it stands now.
+        match latest.seq == question_seq {
             true => Ok(()),
             false => Err(refused()),
         }

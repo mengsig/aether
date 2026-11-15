@@ -118,8 +118,9 @@ met. This holds for a parked wait and for one an engine holds inside its turn
 for live background jobs; a held wait that ends before the answer says so. No
 count caps questions; only an exhausted budget or a cancel stops an agent from
 asking. A second `ask_user` in one turn joins the pending question while it is
-unanswered, so the operator sees both and a reply to either sequence answers
-them; after an answer, the new question is recorded on its own.
+unanswered, under a new sequence: the operator sees both and answers them with
+that sequence, while a reply to the earlier one is refused as no longer
+pending. After an answer, the new question is recorded on its own.
 
 ### Delegated workspaces
 

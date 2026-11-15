@@ -807,3 +807,53 @@ async fn a_native_waiting_childs_question_reaches_its_held_parent() {
     );
     h.runtime.shutdown().await;
 }
+
+/// A native `wait_for` on one sender that ends for another reason says the
+/// awaited message has not come, so the agent does not take it as answered.
+async fn assert_unanswered(release: impl AsyncFnOnce(&Harness, AgentId, &TurnStarted)) {
+    let awaited = AgentId::new();
+    let (h, agent, turn, pending) = background_wait(json!({"message_from": awaited})).await;
+    release(&h, agent, &turn).await;
+    let (reply, error) = tokio::time::timeout(Duration::from_secs(2), pending)
+        .await
+        .expect("the wait ends")
+        .expect("the request task must not panic")
+        .expect("the wait replies");
+    assert!(!error, "{reply}");
+    assert!(
+        reply.contains(&format!("No message from {awaited} has arrived yet")),
+        "{reply}"
+    );
+    assert!(!turn.observed.stopped(), "the session keeps running");
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_native_wait_on_a_sender_ended_by_another_message_says_it_is_unanswered() {
+    assert_unanswered(async |h: &Harness, agent: AgentId, _: &TurnStarted| {
+        h.runtime
+            .send_message(
+                agent,
+                vec![ContentBlock::text("status please")],
+                Actor::user(),
+            )
+            .expect("send");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_native_wait_on_a_sender_ended_by_a_job_says_it_is_unanswered() {
+    assert_unanswered(async |_: &Harness, _: AgentId, turn: &TurnStarted| {
+        turn.events
+            .upgrade()
+            .expect("the engine is live")
+            .send(EngineEvent::BackgroundTask {
+                id: "build".into(),
+                running: false,
+            })
+            .await
+            .expect("the job finishes");
+    })
+    .await;
+}

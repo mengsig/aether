@@ -153,13 +153,17 @@ pub(super) async fn handle_request(
                                 let _ = req.reply.send(reply.clone());
                                 return Ok(Served::Ran(Some(reply)));
                             }
+                            // Registered before the event, so the waker it notifies
+                            // already sees whom this wait is listening for.
+                            let payload = json!({"condition": condition});
+                            let wait = super::native_wait::NativeWait::new(
+                                runtime, condition, ctx, req.reply, req.input,
+                            );
                             runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
                                 name: "engine.native_wait_started".into(),
-                                payload: json!({"condition": condition}),
+                                payload,
                             })))?;
-                            return Ok(Served::NativeWait(super::native_wait::NativeWait::new(
-                                runtime, condition, ctx, req.reply, req.input,
-                            )));
+                            return Ok(Served::NativeWait(wait));
                         }
                         if parked
                             && !effects.admits_after_park(&action, ctx.agent.config.long_lived)
@@ -188,11 +192,8 @@ pub(super) async fn handle_request(
                                 ),
                                 None => condition,
                             };
-                            runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
-                                name: "engine.native_wait_started".into(),
-                                payload: json!({"condition": condition, "tool": req.name}),
-                            })))?;
-                            return Ok(Served::NativeWait(super::native_wait::NativeWait::held(
+                            let payload = json!({"condition": condition, "tool": req.name});
+                            let wait = super::native_wait::NativeWait::held(
                                 runtime,
                                 condition,
                                 ctx,
@@ -200,7 +201,12 @@ pub(super) async fn handle_request(
                                 req.input,
                                 req.name,
                                 outcome.content,
-                            )));
+                            );
+                            runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
+                                name: "engine.native_wait_started".into(),
+                                payload,
+                            })))?;
+                            return Ok(Served::NativeWait(wait));
                         }
                         (outcome.content, outcome.is_error)
                     }

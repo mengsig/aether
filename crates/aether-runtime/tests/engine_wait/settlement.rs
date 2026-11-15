@@ -433,10 +433,10 @@ fn reply(h: &Harness, agent: AgentId, seq: u64, text: &str) -> aether_runtime::R
         .map(|_| ())
 }
 
-/// A second question joins the first, and a reply the operator wrote to
-/// the first one still lands: it answers both.
+/// A second question joins the first under a new seq. A reply written to
+/// the first seq is refused visibly; the joined seq answers both.
 #[tokio::test]
-async fn a_reply_to_the_first_question_answers_a_joined_second_one() {
+async fn a_joined_question_is_answered_by_its_own_seq_only() {
     let mut h = harness(Duration::from_secs(5)).await;
     let agent = start_coordinator(&h);
     let turn = turn_of(&mut h, agent).await;
@@ -449,11 +449,50 @@ async fn a_reply_to_the_first_question_answers_a_joined_second_one() {
     let (second, text) = pending_seq(&h, agent);
     assert!(second > first);
     assert_eq!(text, "which one?\n\nwhich colour?");
-    reply(&h, agent, first, "the left one, in blue").expect("the first seq still answers");
+    let stale = reply(&h, agent, first, "the left one").expect_err("the old seq is stale");
+    assert!(
+        stale.to_string().contains("not the pending question"),
+        "{stale}"
+    );
+    reply(&h, agent, second, "the left one, in blue").expect("the joined seq answers");
     assert!(
         reply(&h, agent, second, "again").is_err(),
         "one reply closes both"
     );
+    let _ = turn.end.send(());
+    h.runtime.shutdown().await;
+}
+
+/// A later, independent question whose text starts with the old one is
+/// not mistaken for a join: the old seq cannot answer it.
+#[tokio::test]
+async fn a_superseded_question_with_a_matching_prefix_keeps_its_old_seq_closed() {
+    let mut h = harness(Duration::from_secs(5)).await;
+    let agent = start_coordinator(&h);
+    let turn = turn_of(&mut h, agent).await;
+    let (_, is_error) = call(&h, &turn, "ask_user", json!({"question": "which one?"})).await;
+    assert!(!is_error);
+    let (first, _) = pending_seq(&h, agent);
+    let run = h.store.agent(agent).expect("agent").expect("exists").run;
+    let independent = EventKind::QuestionAsked {
+        question: "which one?\n\nand a new question".into(),
+    };
+    h.runtime
+        .apply(
+            aether_store::Commit::new().event(
+                aether_core::event::EventDraft::new(Actor::Agent { id: agent }, independent)
+                    .agent(agent)
+                    .run(run),
+            ),
+        )
+        .expect("record an independent question");
+    let (latest, _) = pending_seq(&h, agent);
+    assert!(latest > first);
+    assert!(
+        reply(&h, agent, first, "stale").is_err(),
+        "a matching prefix does not reopen the old seq"
+    );
+    reply(&h, agent, latest, "fresh").expect("the latest seq answers");
     let _ = turn.end.send(());
     h.runtime.shutdown().await;
 }
