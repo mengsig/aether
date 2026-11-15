@@ -41,9 +41,9 @@ impl ReferenceScope {
 
 /// Read one named reference and check it: an absolute, readable regular
 /// file within its kind's size limit, in `scope` when there is one, and for
-/// an image, a supported type. The file is opened once; every check after
-/// that is made on the open handle, so a path swapped meanwhile cannot
-/// change what is read.
+/// an image, a supported type. The file is opened once; its type, path,
+/// scope and size are all taken from the open handle, so a path swapped
+/// meanwhile cannot change what is read or where it is said to lie.
 fn read_reference(
     request: &ReferenceRequest,
     scope: Option<&ReferenceScope>,
@@ -58,7 +58,7 @@ fn read_reference(
     if !opened.is_file() {
         return Err(format!("reference {shown} is not a regular file"));
     }
-    let path = path_of_opened(&request.path, &opened).map_err(unreadable)?;
+    let path = path_of_opened(&file).map_err(unreadable)?;
     if scope.is_some_and(|scope| !scope.admits(&path)) {
         return Err(format!(
             "reference {shown} is outside your workspace and allowed paths, and not one of \
@@ -117,18 +117,40 @@ fn open_without_blocking(path: &Path) -> std::io::Result<std::fs::File> {
         .open(path)
 }
 
-/// The canonical path naming the file `opened` describes. A path that now
-/// resolves to another file was swapped after the open and is refused.
-fn path_of_opened(path: &Path, opened: &std::fs::Metadata) -> std::io::Result<PathBuf> {
-    use std::os::unix::fs::MetadataExt as _;
-    let canonical = std::fs::canonicalize(path)?;
-    let named = std::fs::metadata(&canonical)?;
-    if (named.dev(), named.ino()) != (opened.dev(), opened.ino()) {
+/// The path the kernel holds for the open file itself. Nothing re-resolves
+/// the requested name, so a path swapped after the open cannot vouch for it.
+#[cfg(target_os = "linux")]
+fn path_of_opened(file: &std::fs::File) -> std::io::Result<PathBuf> {
+    use std::os::fd::AsRawFd as _;
+    let path = std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
+    check_opened_path(path)
+}
+
+#[cfg(target_vendor = "apple")]
+fn path_of_opened(file: &std::fs::File) -> std::io::Result<PathBuf> {
+    let mut path = PathBuf::new();
+    nix::fcntl::fcntl(file, nix::fcntl::FcntlArg::F_GETPATH(&mut path))?;
+    check_opened_path(path)
+}
+
+#[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
+fn path_of_opened(_file: &std::fs::File) -> std::io::Result<PathBuf> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "this platform cannot name an open file's path",
+    ))
+}
+
+/// A handle's path must be absolute; Linux marks one whose file was
+/// removed since, and such a file is no longer where it was named.
+fn check_opened_path(path: PathBuf) -> std::io::Result<PathBuf> {
+    let removed = path.to_string_lossy().ends_with(" (deleted)");
+    if !path.is_absolute() || removed {
         return Err(std::io::Error::other(
-            "it was replaced while it was being opened",
+            "it was moved or removed while it was being opened",
         ));
     }
-    Ok(canonical)
+    Ok(path)
 }
 
 /// At most `limit + 1` bytes from `file`, so a file that grew past its
@@ -204,8 +226,7 @@ impl Runtime {
     }
 }
 
-/// The stored images among a task's references, as a request reserves them.
-pub(crate) fn reference_images(
+fn reference_images(
     task: Option<&Task>,
 ) -> impl Iterator<Item = &aether_core::attachment::AttachmentRef> {
     task.into_iter()

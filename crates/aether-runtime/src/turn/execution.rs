@@ -516,14 +516,7 @@ pub(super) async fn run_link(
     let mut request = assembled.request;
     request.model.model.clone_from(&resolved.model.id);
     // The snapshot keeps references; only the request sent carries the bytes.
-    let reserved: Vec<_> = crate::references::reference_images(ctx.task.as_ref())
-        .cloned()
-        .collect();
-    runtime.inline_images(
-        &mut request.messages,
-        resolved.model.capabilities.vision,
-        &reserved,
-    );
+    runtime.inline_images(&mut request.messages, resolved.model.capabilities.vision);
     let stream = match client.stream(request, cancel.child_token()).await {
         Ok(s) => s,
         Err(e) => {

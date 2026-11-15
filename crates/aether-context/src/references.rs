@@ -36,3 +36,10 @@ pub fn attach_reference_images(
     debug_assert_eq!(messages.len(), before + 1);
     true
 }
+
+/// Whether `message` is the leading turn [`attach_reference_images`] built,
+/// whose images a request's image budget holds room for first.
+pub fn is_reference_turn(message: &Message) -> bool {
+    message.role == aether_core::model::MessageRole::User
+        && matches!(message.content.first(), Some(ContentBlock::Text { text, .. }) if text == REFERENCE_INTRO)
+}

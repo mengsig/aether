@@ -257,7 +257,15 @@ async fn assert_the_reference_outlasts(
         .flat_map(|message| &message.content)
         .filter(|block| matches!(block, ContentBlock::Image { .. }))
         .count();
-    assert_eq!(image_count(last), 1, "the reference is still a picture");
+    let png = base64::engine::general_purpose::STANDARD.encode(PNG);
+    let leading = last.messages[0]
+        .content
+        .iter()
+        .any(|block| matches!(block, ContentBlock::Image { data, .. } if *data == png));
+    assert!(
+        leading,
+        "the leading reference turn still holds the picture"
+    );
     assert!(
         inline <= aether_core::attachment::MAX_REQUEST_IMAGES,
         "{inline}"
@@ -278,4 +286,17 @@ async fn a_reference_image_outlasts_more_message_images_than_a_request_takes() {
 async fn a_reference_image_outlasts_message_images_that_fill_the_request_bytes() {
     let big = |n: u8| png_of(aether_core::attachment::MAX_IMAGE_BYTES, n);
     assert_the_reference_outlasts(vec![vec![big(1), big(2)], vec![big(3), big(4)]]).await;
+}
+
+#[tokio::test]
+async fn a_later_copy_of_the_reference_cannot_take_its_place_in_the_request() {
+    let copy = aether_core::attachment::ImageAttachment {
+        media_type: "image/png".into(),
+        data: base64::engine::general_purpose::STANDARD.encode(PNG),
+        name: Some("copy.png".into()),
+    };
+    let small = |n: u8| png_of(64, n);
+    let mut batches = vec![vec![copy]];
+    batches.extend((0..2u8).map(|batch| (0..10u8).map(|i| small(batch * 10 + i)).collect()));
+    assert_the_reference_outlasts(batches).await;
 }

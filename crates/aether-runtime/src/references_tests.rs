@@ -129,7 +129,7 @@ fn a_delegated_reference_must_lie_in_scope_or_on_the_callers_task() {
 }
 
 #[test]
-fn a_path_swapped_after_the_open_is_refused_rather_than_trusted() {
+fn a_handle_is_placed_by_the_file_it_opened_whatever_the_path_names_later() {
     let workspace = tempfile::tempdir().expect("workspace");
     let elsewhere = tempfile::tempdir().expect("elsewhere");
     let inside = workspace.path().join("mock.png");
@@ -139,22 +139,35 @@ fn a_path_swapped_after_the_open_is_refused_rather_than_trusted() {
     let link = workspace.path().join("link.png");
     std::os::unix::fs::symlink(&outside, &link).expect("symlink");
 
-    // The open follows the link outside; the link is then pointed back
-    // inside before the path is resolved. The handle still names the
-    // outside file, so the inside path must not vouch for it.
+    // The open follows the link outside. The link is then pointed inside,
+    // and the inside file itself replaced by a link back out: every name
+    // now resolves somewhere else, and the handle still names the secret.
     let file = open_without_blocking(&link).expect("open");
-    let opened = file.metadata().expect("metadata");
     std::fs::remove_file(&link).expect("unlink");
     std::os::unix::fs::symlink(&inside, &link).expect("relink");
-    let error = path_of_opened(&link, &opened).unwrap_err();
-    assert!(error.to_string().contains("replaced"), "{error}");
+    std::fs::remove_file(&inside).expect("remove inside");
+    std::os::unix::fs::symlink(&outside, &inside).expect("swap inside");
+    let placed = path_of_opened(&file).expect("the handle's path");
+    assert_eq!(placed, std::fs::canonicalize(&outside).expect("canonical"));
 
-    let file = open_without_blocking(&inside).expect("open");
-    let opened = file.metadata().expect("metadata");
+    let (scope, _) = delegated_references(&scoped(workspace.path()), &[], false);
+    assert!(!scope.expect("scoped").admits(&placed), "{placed:?}");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_file_removed_after_the_open_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("gone.md");
+    std::fs::write(&path, "R1").expect("write");
+    let file = open_without_blocking(&path).expect("open");
     assert_eq!(
-        path_of_opened(&inside, &opened).expect("unchanged"),
-        std::fs::canonicalize(&inside).expect("canonical")
+        path_of_opened(&file).expect("still there"),
+        std::fs::canonicalize(&path).expect("canonical")
     );
+    std::fs::remove_file(&path).expect("remove");
+    let error = path_of_opened(&file).unwrap_err();
+    assert!(error.to_string().contains("removed"), "{error}");
 }
 
 #[test]

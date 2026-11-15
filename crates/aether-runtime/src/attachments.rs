@@ -8,9 +8,8 @@
 use std::path::{Path, PathBuf};
 
 use aether_core::attachment::{
-    AttachmentError, AttachmentId, AttachmentRef, ImageAttachment, MAX_IMAGE_BYTES,
-    MAX_IMAGES_PER_MESSAGE, MAX_MESSAGE_IMAGE_BYTES, MAX_REQUEST_IMAGE_BYTES, MAX_REQUEST_IMAGES,
-    check_image,
+    AttachmentError, AttachmentRef, ImageAttachment, MAX_IMAGE_BYTES, MAX_IMAGES_PER_MESSAGE,
+    MAX_MESSAGE_IMAGE_BYTES, MAX_REQUEST_IMAGE_BYTES, MAX_REQUEST_IMAGES, check_image,
 };
 use aether_core::model::{ContentBlock, Message, ToolResultBlock};
 use aether_engine::EngineImage;
@@ -147,20 +146,15 @@ impl RequestImageBudget {
         }
     }
 
-    /// Charge a task's reference images up front, so the conversation's own
-    /// images cannot crowd them out. Returns the ids that fit, in order.
-    fn reserve<'a>(&mut self, references: &'a [AttachmentRef]) -> Vec<&'a AttachmentId> {
-        let mut held = Vec::with_capacity(references.len());
-        for reference in references {
-            if self.images == 0 || reference.size_bytes > self.bytes {
-                continue;
-            }
-            self.images -= 1;
-            self.bytes -= reference.size_bytes;
-            held.push(&reference.id);
+    /// Charge one image ahead of the walk, without closing the walk on a
+    /// refusal: a task's reference images are placed before the others.
+    fn charge(&mut self, size_bytes: u64) -> bool {
+        if self.images == 0 || size_bytes > self.bytes {
+            return false;
         }
-        debug_assert!(held.len() <= references.len());
-        held
+        self.images -= 1;
+        self.bytes -= size_bytes;
+        true
     }
 
     /// Whether the next older image still fits; it is charged when it does.
@@ -266,26 +260,35 @@ impl Runtime {
     /// Replace every stored-image reference in a model request: the newest
     /// become the image itself, within what one request may carry in all;
     /// older ones, and all of them for a model without vision, become text.
-    /// `reserved` (a task's reference images) is charged first and always sent.
-    pub(crate) fn inline_images(
-        &self,
-        messages: &mut [Message],
-        vision: bool,
-        reserved: &[AttachmentRef],
-    ) {
+    /// The leading reference turn's images are charged first, so the
+    /// conversation's own images, even copies of them, cannot crowd them out.
+    pub(crate) fn inline_images(&self, messages: &mut [Message], vision: bool) {
         let mut budget = RequestImageBudget::beside_inline(messages);
-        let mut held = budget.reserve(reserved);
-        for message in messages.iter_mut().rev() {
+        let conversation = match messages.split_first_mut() {
+            Some((first, rest)) if aether_context::references::is_reference_turn(first) => {
+                for block in &mut first.content {
+                    let ContentBlock::ImageRef(image) = block else {
+                        continue;
+                    };
+                    *block = if !vision {
+                        stand_in(image, "this model takes no images")
+                    } else if budget.charge(image.size_bytes) {
+                        self.inlined(image)
+                    } else {
+                        stand_in(image, "left out to keep this request in its limits")
+                    };
+                }
+                rest
+            }
+            _ => messages,
+        };
+        for message in conversation.iter_mut().rev() {
             for block in message.content.iter_mut().rev() {
                 let ContentBlock::ImageRef(image) = block else {
                     continue;
                 };
-                let slot = held.iter().position(|id| **id == image.id);
                 *block = if !vision {
                     stand_in(image, "this model takes no images")
-                } else if let Some(slot) = slot {
-                    held.swap_remove(slot);
-                    self.inlined(image)
                 } else if budget.admit(image.size_bytes) {
                     self.inlined(image)
                 } else {
@@ -297,7 +300,7 @@ impl Runtime {
             }
         }
         debug_assert!(
-            !messages
+            !conversation
                 .iter()
                 .flat_map(|message| &message.content)
                 .any(|block| matches!(block, ContentBlock::ImageRef(_))),
@@ -477,26 +480,13 @@ mod tests {
     }
 
     #[test]
-    fn reference_images_are_charged_first_and_only_while_they_fit() {
-        let reference = |n: u8, size_bytes| AttachmentRef {
-            id: AttachmentId::of(&[n]),
-            media_type: "image/png".into(),
-            size_bytes,
-            name: None,
-        };
-        let references = [
-            reference(1, 10),
-            reference(2, MAX_REQUEST_IMAGE_BYTES as u64),
-        ];
+    fn a_charge_ahead_of_the_walk_never_closes_it() {
         let mut budget = RequestImageBudget::beside_inline(&[]);
-        let held = budget.reserve(&references);
-        assert_eq!(
-            held,
-            vec![&references[0].id],
-            "the one too large is not held"
-        );
+        assert!(!budget.charge(MAX_REQUEST_IMAGE_BYTES as u64 + 1));
+        assert!(budget.charge(10), "a refused charge leaves the rest open");
         assert_eq!(budget.images, MAX_REQUEST_IMAGES - 1);
         assert_eq!(budget.bytes, MAX_REQUEST_IMAGE_BYTES as u64 - 10);
+        assert!(budget.admit(1), "the walk still has its remainder");
     }
 
     #[test]
