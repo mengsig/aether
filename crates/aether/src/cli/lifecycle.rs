@@ -151,7 +151,11 @@ pub async fn daemon(
     yolo: bool,
     allow_remote: bool,
 ) -> anyhow::Result<()> {
-    if !foreground {
+    // An interactive shell can make this CLI a group leader; setsid needs a child then.
+    let detached_group_leader = detached
+        && nix::unistd::getpgrp() == nix::unistd::getpid()
+        && nix::unistd::getsid(None)? != nix::unistd::getpid();
+    if !foreground || detached_group_leader {
         anyhow::ensure!(
             max_concurrent != Some(0),
             "--max-concurrent must be positive"
@@ -192,6 +196,9 @@ async fn foreground_daemon(
     yolo: bool,
     allow_remote: bool,
 ) -> anyhow::Result<()> {
+    if detached && nix::unistd::getsid(None)? != nix::unistd::getpid() {
+        nix::unistd::setsid().context("detach daemon from the controlling terminal")?;
+    }
     let store = aether_protocol::paths::store_path();
     crate::crash::install_hook(store.clone());
     // Keep logging alive until both persistent and startup evidence is written.

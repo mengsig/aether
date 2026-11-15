@@ -673,7 +673,6 @@ pub(crate) async fn run_process_with_env<P>(
 where
     P: FnMut(&str) -> Vec<EngineEvent> + Send + 'static,
 {
-    use std::os::unix::process::CommandExt as _;
     use tokio::io::AsyncWriteExt as _;
 
     ensure_workspace(&cwd)?;
@@ -686,8 +685,6 @@ where
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
-    // Own process group so cancellation can take the CLI's children with it.
-    command.as_std_mut().process_group(0);
     aether_spawn::reset_signals(command.as_std_mut());
     command.envs(extra_env.iter().cloned());
     strip_hidden(&mut command, hidden_env);
@@ -944,7 +941,7 @@ pub(crate) async fn kill_group(pid: Option<u32>) {
 /// Any other failure means a process may have been leaked, so it is logged
 /// with its errno rather than discarded.
 fn signal_group(pid: u32, signal: Signal) -> bool {
-    // Negative pid targets the process group created with process_group(0).
+    // Negative pid targets the process group created by setsid.
     match killpg(Pid::from_raw(pid as i32), signal) {
         Ok(()) => true,
         Err(Errno::ESRCH) => false,

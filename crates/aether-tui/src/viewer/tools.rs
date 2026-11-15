@@ -9,7 +9,7 @@ use std::{
     ffi::OsStr,
     fs::File,
     io::Read,
-    os::unix::{fs::PermissionsExt, process::CommandExt},
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -76,12 +76,12 @@ pub(super) fn run(mut command: Command, dir: &Path, timeout: Duration) -> Result
         .unwrap_or_default();
     let stdout_path = dir.join(".stdout");
     let stderr_path = dir.join(".stderr");
+    aether_spawn::detach_session(&mut command);
     let mut child = command
         .current_dir(dir)
         .stdin(Stdio::null())
         .stdout(File::create(&stdout_path).context("create tool stdout")?)
         .stderr(File::create(&stderr_path).context("create tool stderr")?)
-        .process_group(0)
         .spawn()
         .with_context(|| format!("start {name}"))?;
     let group = Pid::from_raw(i32::try_from(child.id()).context("child pid")?);

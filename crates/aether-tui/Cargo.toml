@@ -12,6 +12,7 @@ description = "Terminal user interface for the Aether agent harness"
 workspace = true
 
 [dependencies]
+aether-spawn = { workspace = true }
 aether-core = { workspace = true }
 aether-protocol = { workspace = true }
 aether-client = { workspace = true }

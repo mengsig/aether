@@ -1,4 +1,3 @@
-use std::os::unix::process::CommandExt;
 use std::process::Stdio;
 
 use nix::errno::Errno;
@@ -23,7 +22,6 @@ impl UsageProcess {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
-        command.as_std_mut().process_group(0);
         aether_spawn::reset_signals(command.as_std_mut());
         crate::strip_hidden(&mut command, hidden_env);
         let (child, watch) =

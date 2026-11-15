@@ -49,6 +49,13 @@ mod unix {
         unsafe { command.pre_exec(reset_child_signals) };
     }
 
+    /// Start a new session and process group without a controlling terminal.
+    /// Do not also configure `process_group`: a group leader cannot call setsid.
+    pub fn detach_session(command: &mut std::process::Command) {
+        // SAFETY: setsid is async-signal-safe and allocates nothing.
+        unsafe { command.pre_exec(|| nix::unistd::setsid().map(drop).map_err(io::Error::from)) };
+    }
+
     /// Make `command`'s child receive SIGKILL when the thread that spawns it
     /// ends, so it cannot outlive a parent killed without a clean shutdown.
     ///
@@ -198,7 +205,8 @@ pub use spawn_gate::{SpawnGate, SpawnHold, SpawnRefused};
 pub use unix::{StartGate, gate_start};
 #[cfg(unix)]
 pub use unix::{
-    die_with_parent, ignore_stop_signals, reset_child_signals, reset_pty_signals, reset_signals,
+    detach_session, die_with_parent, ignore_stop_signals, reset_child_signals, reset_pty_signals,
+    reset_signals,
 };
 
 #[cfg(not(unix))]
@@ -366,3 +374,9 @@ mod tests {
         assert!(survived, "an unmarked child outlives its spawning thread");
     }
 }
+
+#[cfg(target_os = "linux")]
+#[allow(unsafe_code)]
+mod session_watch;
+#[cfg(target_os = "linux")]
+pub use session_watch::{PendingWatch, SessionWatch, watch_session};

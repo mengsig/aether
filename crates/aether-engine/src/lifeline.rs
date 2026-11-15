@@ -7,9 +7,9 @@
 //! retires idle threads, so every spawn runs on one thread that lives as long
 //! as the process. That signal reaches only the process spawned, not a CLI
 //! wrapper's own child, so each engine's process group also gets a watchdog:
-//! a shell in that group that kills the group once its pipe from this process
-//! closes. The engine is held between fork and exec until that watchdog has
-//! joined, so it cannot start a child first. The next daemon start reaps what
+//! a watchdog born in that session that kills the group when its pipe closes.
+//! The engine is held between fork and exec until its watchdog is ready, so
+//! it cannot start a child first. The next daemon start reaps what
 //! left the group ([`crate::orphans`]).
 //! Elsewhere nothing is marked and no watchdog runs.
 
@@ -34,11 +34,10 @@ pub(crate) fn spawn_recorded(
     mut command: Command,
     token: Option<&str>,
 ) -> io::Result<(Child, GroupWatch, Option<EngineRecord>)> {
-    use std::os::unix::process::CommandExt as _;
-
     let runtime = tokio::runtime::Handle::try_current().map_err(io::Error::other)?;
-    command.as_std_mut().process_group(0);
+    aether_spawn::detach_session(command.as_std_mut());
     aether_spawn::die_with_parent(command.as_std_mut());
+    let pending_watch = aether_spawn::watch_session(command.as_std_mut())?;
     let mut gate = aether_spawn::gate_start(command.as_std_mut())?;
     let (reply_tx, reply_rx) = std::sync::mpsc::sync_channel(1);
     let job: Job = Box::new(move || {
@@ -49,6 +48,7 @@ pub(crate) fn spawn_recorded(
         let _ = reply_tx.send(spawned);
     });
     spawner()?.send(job).map_err(|_| spawner_gone())?;
+    let watch = GroupWatch(pending_watch.finish()?, tokio::runtime::Handle::current());
     // An early return drops the gate unopened, which fails the spawn.
     let pid = gate.child_pid().map_err(|error| {
         io::Error::new(
@@ -62,24 +62,17 @@ pub(crate) fn spawn_recorded(
         })?,
         _ => None,
     };
-    let watch = match pid {
-        Some(pid) => {
-            #[cfg(test)]
-            tests::pause_before_watch(pid);
-            // Unwatched, a wrapper's child would outlive this process: the
-            // early return drops the gate unopened, so the engine never runs.
-            GroupWatch::start(pid).map_err(|error| {
-                io::Error::new(
-                    error.kind(),
-                    format!("starting the engine group's watchdog: {error}"),
-                )
-            })?
-        }
-        None => GroupWatch(None),
-    };
+    #[cfg(test)]
+    if let Some(pid) = pid {
+        tests::pause_before_watch(pid);
+        tests::fail_watchdog_if_asked().map_err(|error| {
+            io::Error::new(error.kind(), format!("starting engine watchdog: {error}"))
+        })?;
+    }
     let opened = gate.open();
     let child = reply_rx.recv().map_err(|_| spawner_gone())??;
     debug_assert!(opened.is_ok(), "a child execs only through an opened gate");
+    debug_assert_eq!(child.id(), pid, "the gate reports the spawned engine");
     opened?;
     Ok((child, watch, record))
 }
@@ -90,9 +83,7 @@ pub(crate) fn spawn_recorded(
     mut command: Command,
     _token: Option<&str>,
 ) -> io::Result<(Child, GroupWatch, Option<EngineRecord>)> {
-    use std::os::unix::process::CommandExt as _;
-
-    command.as_std_mut().process_group(0);
+    aether_spawn::detach_session(command.as_std_mut());
     Ok((command.spawn()?, GroupWatch, None))
 }
 
@@ -124,73 +115,70 @@ impl Drop for GroupEnd {
 /// stops only the watchdog, so a clean end leaves the group to its owner.
 #[cfg(target_os = "linux")]
 #[derive(Debug)]
-pub(crate) struct GroupWatch(Option<Child>);
+pub(crate) struct GroupWatch(Option<aether_spawn::SessionWatch>, tokio::runtime::Handle);
 
 #[cfg(not(target_os = "linux"))]
 #[derive(Debug)]
 pub(crate) struct GroupWatch;
 
-/// Blocks until every writer of its stdin is gone, then kills group `$1`. It
-/// holds no copy of the pipe's write end, so only this process's death or
-/// [`GroupWatch`]'s drop ends the read.
-#[cfg(target_os = "linux")]
-const WATCHDOG: &str = r#"read -r _; kill -s KILL -- -"$1""#;
-
 #[cfg(target_os = "linux")]
 impl GroupWatch {
-    /// Join the group led by engine `pid` with a watchdog. Its membership keeps
-    /// the group id from being reused, so its kill cannot reach another group.
-    fn start(pid: u32) -> io::Result<Self> {
-        use std::os::unix::process::CommandExt as _;
-
-        assert!(
-            (2..=i32::MAX as u32).contains(&pid),
-            "not an engine pid: {pid}"
-        );
-        let mut command = Command::new("/bin/sh");
-        command
-            .args(["-c", WATCHDOG, "aether-engine-watchdog", &pid.to_string()])
-            .env_clear()
-            .current_dir("/")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        command.as_std_mut().process_group(pid as i32);
-        aether_spawn::reset_signals(command.as_std_mut());
-        // A group stop's TERM must not end it before the stop's KILL lands.
-        aether_spawn::ignore_stop_signals(command.as_std_mut());
-        #[cfg(test)]
-        tests::fail_watchdog_if_asked()?;
-        let watchdog = command.spawn()?;
-        assert!(watchdog.stdin.is_some(), "the watchdog reads a pipe");
-        Ok(Self(Some(watchdog)))
-    }
-
-    /// Kill what is left of the group now, as this process's death would:
-    /// closing the pipe without stopping the watchdog lets it fire.
+    /// EOF stops the group; ordinary drop kills only the watchdog instead.
     fn end_group(mut self) {
-        let Some(mut watchdog) = self.0.take() else {
-            return;
-        };
-        assert!(
-            watchdog.stdin.is_some(),
-            "the pipe is closed only here or in drop"
-        );
-        drop(watchdog.stdin.take());
+        if let Some(watch) = self.0.take() {
+            let pid = watch.id();
+            watch.end_group();
+            self.1.spawn(reap_watchdog(pid));
+        }
     }
 }
 
 #[cfg(target_os = "linux")]
 impl Drop for GroupWatch {
     fn drop(&mut self) {
-        let Some(mut watchdog) = self.0.take() else {
-            return;
-        };
-        // Kill before closing the pipe: a pending SIGKILL beats the read's EOF.
-        if let Err(error) = watchdog.start_kill() {
-            tracing::debug!(%error, "the engine group's watchdog had already exited");
+        if let Some(watch) = self.0.take() {
+            let pid = watch.id();
+            drop(watch);
+            self.1.spawn(reap_watchdog(pid));
         }
-        drop(watchdog.stdin.take());
+    }
+}
+
+/// Reap our CLONE_PARENT children using pidfd readiness when available.
+#[cfg(target_os = "linux")]
+async fn reap_watchdog(pid: u32) {
+    use rustix::process::{Pid, PidfdFlags};
+
+    let Some(raw) = Pid::from_raw(pid as i32) else {
+        unreachable!("validated watchdog pid");
+    };
+    let readiness = rustix::process::pidfd_open(raw, PidfdFlags::empty())
+        .map_err(io::Error::from)
+        .and_then(tokio::io::unix::AsyncFd::new);
+    match readiness {
+        Ok(fd) => {
+            if let Err(error) = fd.readable().await {
+                tracing::warn!(pid, %error, "watchdog readiness failed; polling its exit");
+            }
+        }
+        Err(error) => {
+            tracing::warn!(pid, %error, "watchdog pidfd unavailable; polling its exit");
+        }
+    }
+    loop {
+        match nix::sys::wait::waitpid(
+            nix::unistd::Pid::from_raw(pid as i32),
+            Some(nix::sys::wait::WaitPidFlag::WNOHANG),
+        ) {
+            Ok(nix::sys::wait::WaitStatus::StillAlive) | Err(nix::errno::Errno::EINTR) => {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            Ok(_) | Err(nix::errno::Errno::ECHILD) => return,
+            Err(error) => {
+                tracing::error!(pid, %error, "could not reap engine watchdog");
+                return;
+            }
+        }
     }
 }
 
@@ -232,12 +220,12 @@ pub(crate) mod tests {
     const HELPER: &str = "lifeline::tests::lifeline_helper_parent";
 
     /// When set, [`super::spawn`] reports the gated engine and pauses this long
-    /// before its watchdog joins, as a slow daemon might.
+    /// before its start gate opens, as a slow daemon might.
     static PAUSE_BEFORE_WATCH_MS: std::sync::atomic::AtomicU64 =
         std::sync::atomic::AtomicU64::new(0);
 
     std::thread_local! {
-        /// When set, [`super::GroupWatch::start`] fails on this thread, as a
+        /// When set, the watchdog setup fails on this thread, as a
         /// spawn out of file descriptors or processes would.
         static FAIL_WATCHDOG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
@@ -263,11 +251,8 @@ pub(crate) mod tests {
 
     /// An engine stand-in leading its own group, as every engine does.
     fn engine(program: &str, args: &[&str]) -> tokio::process::Command {
-        use std::os::unix::process::CommandExt as _;
-
         let mut command = tokio::process::Command::new(program);
         command.args(args).kill_on_drop(true);
-        command.as_std_mut().process_group(0);
         command
     }
 
@@ -325,7 +310,7 @@ pub(crate) mod tests {
     /// The helper side: spawn an engine stand-in, print the pids to watch,
     /// wait to be killed. `HELPER_ENV` is `direct`, or a file for a wrapper's
     /// child pid; prefixed `term:`, the group is sent SIGTERM before `ready`,
-    /// and prefixed `gated:` the spawn pauses before its watchdog joins.
+    /// and prefixed `gated:` the spawn pauses before its start gate opens.
     #[tokio::test]
     async fn lifeline_helper_parent() {
         let Some(mode) = std::env::var_os(HELPER_ENV) else {
@@ -346,9 +331,10 @@ pub(crate) mod tests {
         } else {
             wrapper(child_pid_file, stopping)
         };
-        let (child, _watch) = super::spawn(command).unwrap();
+        let (child, watch) = super::spawn(command).unwrap();
         let pid = child.id().unwrap();
         println!("pid={pid}");
+        println!("pid={}", watch.0.as_ref().unwrap().id());
         if mode != "direct" {
             let wrapped = tokio::time::timeout(Duration::from_secs(10), async {
                 loop {
@@ -445,19 +431,19 @@ pub(crate) mod tests {
         kill_parent_and_expect_gone(HELPER, HELPER_ENV, mode.as_ref());
     }
 
-    /// A daemon killed after its engine forked but before the watchdog joined
+    /// A daemon killed after its engine forked but before the start gate opened
     /// leaves nothing: the engine has not run, so it started no child.
     #[test]
-    fn a_parent_killed_before_the_watchdog_joins_leaves_no_wrapped_engine() {
+    fn a_parent_killed_before_the_gate_opens_leaves_no_wrapped_engine() {
         let dir = tempfile::tempdir().unwrap();
         let child_pid_file = dir.path().join("child.pid");
         let mode = format!("gated:{}", child_pid_file.display());
         kill_parent_and_expect_gone(HELPER, HELPER_ENV, mode.as_ref());
-        // Only an engine let run before its watchdog joined writes this.
+        // Only an engine let run before its start gate opened writes this.
         if let Ok(pid) = std::fs::read_to_string(&child_pid_file) {
             let pid: u32 = pid.trim().parse().unwrap();
             let _guard = KillOnDrop(pid);
-            panic!("the engine ran before its watchdog joined; started {pid}");
+            panic!("the engine ran before its start gate opened; started {pid}");
         }
     }
 
@@ -467,21 +453,30 @@ pub(crate) mod tests {
         let (mut child, watch) = super::spawn(sleeper()).unwrap();
         let pid = child.id().unwrap();
         let _guard = KillOnDrop(pid);
-        let watchdog = watch
-            .0
-            .as_ref()
-            .and_then(|w| w.id())
-            .expect("a watchdog runs");
+        let watchdog = watch.0.as_ref().map(|w| w.id()).expect("a watchdog runs");
         assert_eq!(
             nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(watchdog as i32))).unwrap(),
             nix::unistd::Pid::from_raw(pid as i32),
-            "the watchdog joins the engine's group"
+            "the watchdog is born in the engine's group"
+        );
+        assert_eq!(
+            nix::unistd::getsid(Some(nix::unistd::Pid::from_raw(watchdog as i32))).unwrap(),
+            nix::unistd::Pid::from_raw(pid as i32),
+            "watchdog shares the engine's new session"
+        );
+        assert!(
+            std::fs::read(format!("/proc/{watchdog}/environ"))
+                .unwrap()
+                .is_empty()
         );
         drop(watch);
-        assert!(
-            wait_until_gone(watchdog, Duration::from_secs(5)),
-            "a dropped watch stops its watchdog"
-        );
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while std::path::Path::new(&format!("/proc/{watchdog}")).exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the watchdog exits and is reaped");
         assert!(alive(pid), "a dropped watch leaves the engine running");
         child.kill().await.unwrap();
     }

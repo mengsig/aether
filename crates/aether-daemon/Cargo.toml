@@ -12,6 +12,7 @@ description = "Client connections and daemon lifecycle for the Aether agent harn
 workspace = true
 
 [dependencies]
+aether-spawn = { workspace = true }
 aether-core = { workspace = true }
 aether-store = { workspace = true }
 aether-memory = { workspace = true }
