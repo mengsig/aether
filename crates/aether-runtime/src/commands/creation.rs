@@ -183,6 +183,7 @@ impl Runtime {
         if let Some(objective) = &spec.objective {
             super::messaging::check_text_size("task objective", objective.len())?;
         }
+        check_task_delegation(&spec)?;
         let checked = preflight.checked;
         let parent = match spec.parent {
             Some(id) => Some(self.live_agent(id, "parent")?),
@@ -379,6 +380,7 @@ impl Runtime {
         let task = match spec.objective.filter(|o| !o.trim().is_empty()) {
             Some(objective) => {
                 let mut task = Task::new(objective.trim().to_owned(), by.clone(), run, at);
+                task.delegation_reason = spec.delegation_reason;
                 task.owner = Some(agent.id);
                 task.priority = agent.config.priority;
                 task.transition(TaskStatus::Assigned, at)?;
@@ -487,3 +489,25 @@ fn narrower_limit<T: PartialOrd + Copy>(requested: Option<T>, parent: Option<T>)
 #[cfg(test)]
 #[path = "creation_tests.rs"]
 mod tests;
+
+/// A recorded reason belongs to the initial task, so it needs an objective;
+/// a policy a client sent must be well formed.
+fn check_task_delegation(spec: &CreateAgentSpec) -> Result<()> {
+    let has_objective = spec
+        .objective
+        .as_deref()
+        .is_some_and(|objective| !objective.trim().is_empty());
+    if spec.delegation_reason.is_some() && !has_objective {
+        return Err(RuntimeError::Invalid(
+            "a delegation reason is recorded on the initial task: set an objective too".into(),
+        ));
+    }
+    let policy = spec
+        .config
+        .as_ref()
+        .and_then(|c| c.delegation_policy.as_ref());
+    if let Some(policy) = policy {
+        policy.validate().map_err(RuntimeError::Invalid)?;
+    }
+    Ok(())
+}

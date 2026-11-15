@@ -54,6 +54,8 @@ pub struct CreateAgentSpec {
     /// The subsystem the agent belongs to, fixed at creation and never changed.
     /// Only daemon code may set it, never a client; no subsystem sets it today.
     pub subsystem: Option<String>,
+    /// Why a delegating parent chose its own frontier model for this child.
+    pub delegation_reason: Option<String>,
 }
 
 pub use aether_core::inbox::MessageDelivery;

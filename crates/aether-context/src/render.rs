@@ -47,6 +47,13 @@ pub fn role_task(agent: &Agent, task: Option<&Task>) -> String {
             let _ = writeln!(out, "Task: none assigned.");
         }
     }
+    if let Some(policy) = &agent.config.delegation_policy {
+        let _ = writeln!(
+            out,
+            "Delegation policy (delegate refuses a child outside it): {}",
+            policy.describe()
+        );
+    }
     if let Some(instructions) = agent
         .config
         .instructions

@@ -16,6 +16,7 @@ pub mod budget;
 pub mod checkpoint;
 pub mod conversation;
 pub mod crash;
+pub mod delegation;
 pub mod disk;
 pub mod error;
 pub mod event;

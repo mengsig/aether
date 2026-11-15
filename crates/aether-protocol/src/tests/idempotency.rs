@@ -251,3 +251,42 @@ fn an_update_fingerprints_its_subtree_reach_only_when_set() {
     assert_eq!(subtree["subtree"], true);
     assert_ne!(plain, subtree);
 }
+
+/// Archon's lead frame carries the policy in `config.delegation_policy`:
+/// this daemon decodes it, a create without one digests as before, and an
+/// unknown config field (what an older daemon sees in the policy) is ignored.
+#[test]
+fn a_create_carries_its_delegation_policy_in_config() {
+    let wire = |config: serde_json::Value| {
+        serde_json::json!({"cmd": "create_agent", "role": "lead", "objective": "build",
+            "config": config, "idempotency_key": "k-1"})
+    };
+    let policy = serde_json::json!({"workers": [{"tier": "balanced", "effort": "medium"}],
+        "default_tier": "balanced", "max_parallel": 2, "exempt_roles": ["reviewer"]});
+    let command: Command =
+        serde_json::from_value(wire(serde_json::json!({"delegation_policy": policy})))
+            .expect("decode");
+    let Command::CreateAgent(create) = &command else {
+        panic!("create_agent")
+    };
+    let decoded = create
+        .config
+        .as_ref()
+        .and_then(|c| c.delegation_policy.as_ref());
+    assert_eq!(decoded.and_then(|p| p.max_parallel), Some(2));
+    let digested = command
+        .keyed_request()
+        .expect("keyed")
+        .expect("view")
+        .fields;
+    assert_eq!(digested["config"]["delegation_policy"], policy);
+    let plain: Command =
+        serde_json::from_value(wire(serde_json::json!({"leaf": false}))).expect("decode");
+    let plain = plain.keyed_request().expect("keyed").expect("view").fields;
+    assert!(plain["config"].get("delegation_policy").is_none());
+    let older: Command = serde_json::from_value(wire(
+        serde_json::json!({"a_field_from_a_newer_client": {"x": 1}}),
+    ))
+    .expect("an unknown config field is ignored, as an older daemon ignores the policy");
+    assert!(matches!(older, Command::CreateAgent(_)));
+}
