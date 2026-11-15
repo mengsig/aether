@@ -170,6 +170,22 @@ fn assert_fixture_passed(run: &PtyRun, markers: &[&str]) {
     }
 }
 
+/// A test runner can ignore or block job-control signals; the reproduction needs defaults.
+#[allow(unsafe_code)]
+fn default_sigttin(command: &mut Command) {
+    use nix::sys::signal::{SigHandler, SigSet, SigmaskHow, signal, sigprocmask};
+
+    // SAFETY: the hook only changes signal state using syscalls and stack data.
+    unsafe {
+        command.pre_exec(|| {
+            signal(Signal::SIGTTIN, SigHandler::SigDfl).map_err(std::io::Error::from)?;
+            let mut mask = SigSet::empty();
+            mask.add(Signal::SIGTTIN);
+            sigprocmask(SigmaskHow::SIG_UNBLOCK, Some(&mask), None).map_err(std::io::Error::from)
+        });
+    }
+}
+
 fn silent(program: &str, script: &str) -> Command {
     let mut command = Command::new(program);
     command
@@ -224,6 +240,7 @@ fn fixture_detached_tty_read() {
         "/bin/sh",
         "/bin/sh -c 'read x </dev/tty' </dev/null; status=$?; exit \"$status\"",
     );
+    default_sigttin(&mut detached);
     aether_spawn::detach_session(&mut detached);
     // `wait_for_exit_or_stop` reaps it with waitpid, which clippy cannot see.
     #[allow(clippy::zombie_processes)]
@@ -256,6 +273,7 @@ fn fixture_background_tty_read() {
     }
     let mut background = silent("/bin/sh", "read x </dev/tty");
     background.process_group(0);
+    default_sigttin(&mut background);
     let mut child = background.spawn().expect("spawn the background shell");
     let mut cleanup = KillGroupOnDrop(Some(child.id()));
     match wait_for_exit_or_stop(&child) {
