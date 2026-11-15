@@ -260,14 +260,17 @@ impl Runtime {
             .events(question_seq.saturating_sub(1), 1, &filter)?
             .pop()
             .filter(|e| e.seq == question_seq && e.actor.agent_id() == Some(to));
-        match earlier {
-            Some(_)
-                if question_seq < latest.seq
-                    && !answered_after(self.store.as_ref(), to, question_seq)? =>
-            {
-                Ok(())
-            }
-            _ => Err(refused()),
+        let joined = match (&earlier.map(|e| e.kind), &latest.kind) {
+            (
+                Some(EventKind::QuestionAsked { question: old }),
+                EventKind::QuestionAsked { question: now },
+            ) => now.starts_with(&format!("{old}\n\n")),
+            _ => false,
+        };
+        debug_assert!(!joined || question_seq < latest.seq, "joined is later");
+        match joined && !answered_after(self.store.as_ref(), to, question_seq)? {
+            true => Ok(()),
+            false => Err(refused()),
         }
     }
 
