@@ -246,10 +246,14 @@ impl NativeWait {
         // or on what reaches a waiting agent at once (a person, its parent).
         // A question's wait hears only what came after it was asked.
         let since = self.inbox_cursor.max(held.asked_at_inbox);
-        let since = match held.question {
-            Some(seq) => question_cursor(runtime, ctx, seq, since)?,
-            None => since,
-        };
+        if let Some(seq) = held.question {
+            debug_assert_eq!(
+                self.condition,
+                WaitCondition::Inbox,
+                "a held ask waits on Inbox"
+            );
+            return question_heard(runtime, ctx, seq, since);
+        }
         let oracle = crate::wait::RuntimeOracle {
             runtime,
             agent: ctx.agent.id,
@@ -423,29 +427,31 @@ fn open_questions(runtime: &Runtime, agent: AgentId) -> Result<Vec<u64>> {
     Ok(open.iter().map(|asked| asked.seq).collect())
 }
 
-/// Where question `seq`'s wait starts hearing from `since`: past the leading
-/// targeted replies to the asker's other questions, which never answer it.
-fn question_cursor(runtime: &Runtime, ctx: &TurnCtx, seq: u64, since: u64) -> Result<u64> {
+/// What woke question `seq`'s wait: an inbox item after `since` that is not
+/// a targeted reply to another of the asker's questions.
+fn question_heard(
+    runtime: &Runtime,
+    ctx: &TurnCtx,
+    seq: u64,
+    since: u64,
+) -> Result<Option<String>> {
     let store = runtime.store.as_ref();
+    // Inbox first: a reply commits with its answer events, so each item in
+    // this snapshot is classified by the events read after it.
+    let items = store.inbox(ctx.agent.id, since)?;
+    if items.is_empty() {
+        return Ok(None);
+    }
+    debug_assert!(
+        items.iter().all(|item| item.seq > since),
+        "inbox reads after the cursor"
+    );
     let others = crate::commands::replies_to_others(store, ctx.agent.id, seq)?;
-    if others.is_empty() {
-        return Ok(since);
-    }
-    let mut cursor = since;
-    for item in store.inbox(ctx.agent.id, since)? {
-        debug_assert!(
-            item.seq > cursor,
-            "inbox reads oldest first after the cursor"
-        );
-        let InboxKind::Message { message_id, .. } = &item.kind else {
-            break;
-        };
-        if !others.contains(message_id) {
-            break;
-        }
-        cursor = item.seq;
-    }
-    Ok(cursor)
+    let heard = items.iter().any(|item| match &item.kind {
+        InboxKind::Message { message_id, .. } => !others.contains(message_id),
+        _ => true,
+    });
+    Ok(heard.then(|| "a message arrived".to_owned()))
 }
 
 /// The newest inbox item's seq, or the cursor when nothing is unconsumed.

@@ -71,6 +71,39 @@ async fn a_second_question_beside_a_held_one_is_recorded_and_the_wait_kept() {
     h.runtime.shutdown().await;
 }
 
+/// Replies to other questions landing while the driver polls the held wait
+/// never release it: each is classified with the events committed beside it.
+#[tokio::test]
+async fn replies_racing_the_held_wait_never_release_it() {
+    let first = json!({"question": "which half?"});
+    let (h, turn, held) = held_call(job_harness().await, "ask_user", first).await;
+    let agent = turn.agent;
+    for n in 0..6 {
+        let question = json!({"question": format!("which shade {n}?")});
+        let (answer, is_error) = raw_call(&h, &turn, "ask_user", question).await;
+        assert!(!is_error, "{answer}");
+    }
+    let asked = pending_seqs(&h, agent);
+    assert_eq!(asked.len(), 7, "every question is pending: {asked:?}");
+    for (n, seq) in asked[1..].iter().enumerate() {
+        reply(&h, agent, *seq, &format!("shade {n}"));
+        tokio::task::yield_now().await;
+    }
+    still_held(&held).await;
+    assert_eq!(pending_seqs(&h, agent), [asked[0]]);
+
+    reply(&h, agent, asked[0], "the left half");
+    let woken = reply_of(held).await;
+    assert!(
+        woken.starts_with(&format!(
+            "Wait ended: the operator answered question {}.",
+            asked[0]
+        )),
+        "{woken}"
+    );
+    h.runtime.shutdown().await;
+}
+
 /// An answer that came for an earlier question is that question's answer:
 /// it never ends the wait of a question asked after it.
 #[tokio::test]
