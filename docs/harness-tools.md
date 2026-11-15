@@ -103,7 +103,20 @@ wakes for it. A post over a limit fails the call with the limit named.
 
 Native file, command and web capabilities remain available through the CLI
 engine. Aether owns coordination; a native subagent is not a tracked Aether
-child. Tool exposure and scope settings still apply to each agent.
+child. Tool exposure and scope settings still apply to each agent, except that
+`send_message`, `wait_for` and `ask_user` are always offered: no exposure takes
+away the way to ask.
+
+### Asking your parent
+
+A delegated agent asks its parent with `send_message` to the parent, then
+`wait_for(message_from=<parent>)`. A message from a descendant that is waiting
+on a reply from the recipient reaches the recipient at once, even while it
+waits on that descendant's task, and the interrupted wait is restored after
+its turn. Any other message from a child waits until the parent's condition is
+met. No count caps questions; only an exhausted budget or a cancel stops an
+agent from asking. A second `ask_user` in one turn joins the pending question,
+so the operator sees both and one reply answers them.
 
 ### Delegated workspaces
 

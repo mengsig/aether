@@ -183,11 +183,10 @@ impl ToolEffects {
             // into whatever wait already parked the turn (an earlier
             // `WaitFor`/delegate-wait, or a long_lived settle's `Inbox`)
             // exactly like `apply_action`'s own `AskUser` arm does on the
-            // batch path. Only a second question, a pending approval, or a
-            // genuinely terminal settle refuse it.
+            // batch path. A further question joins the pending one; only a
+            // pending approval or a genuinely terminal settle refuse it.
             Decides::Asks => {
-                self.asked.is_none()
-                    && self.pending_approvals.is_empty()
+                (self.asked.is_some() || self.pending_approvals.is_empty())
                     && !matches!(self.next, Some(Next::Completed(_) | Next::Failed(_)))
             }
         }

@@ -4,6 +4,30 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## Unreleased
+
+### Changed
+
+- **Ask, don't guess.** A root agent's assignment carries the opener rule:
+  a message that opens a conversation or ends in a check-in ("Ok?") with its
+  central choice still open gets a short acknowledgement, 2-4 options and one
+  question, and no files or builds; a fully specified request still starts at
+  once. Every assignment says when to ask (the answer changes what gets built
+  and is not in the brief, the repository or the approved intent; a deviation
+  from an approved requirement always asks) and to record an assumption
+  otherwise. A delegated agent is told to ask its parent with `send_message`
+  and `wait_for` `message_from` the parent.
+- A second `ask_user` in one turn joins the pending question, so the operator
+  sees both, instead of being refused.
+- `send_message`, `wait_for` and `ask_user` are offered whatever an agent's
+  tool exposure says: no allowlist can take away the way to ask.
+
+### Fixed
+
+- A child's question no longer deadlocks against a parent waiting on the
+  child's task: a message from a descendant that then waits on a reply from
+  the recipient wakes it, and the interrupted wait is restored after its turn.
+
 ## 1.3.1
 
 Released 2026-11-14. One conversation for the TUI and phone (#420), dependency

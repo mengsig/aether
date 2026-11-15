@@ -3,6 +3,7 @@ use crate::{Result, Runtime};
 use aether_core::{
     agent::{Agent, AgentStatus, BlockReason},
     event::{Actor, EventDraft, EventKind},
+    id::AgentId,
     time::now,
 };
 use aether_core::{
@@ -69,37 +70,74 @@ pub(super) fn wake_reason(condition: &WaitCondition, oracle: &RuntimeOracle<'_>)
 }
 
 /// Inbox items that should reach a waiting agent now: words from a person or
-/// from this agent's own supervisor, or a child that failed or was cancelled
-/// and will never report success. A message from any other agent - a child, a
+/// from this agent's own supervisor, a question from a descendant that waits
+/// on this agent's answer, or a child that failed or was cancelled and will
+/// never report success. Any other agent's message - a child's report, a
 /// sibling, an unrelated agent - waits until the condition is satisfied.
 pub(crate) fn urgent_inbox(runtime: &Runtime, agent: &Agent) -> Result<Option<String>> {
     let items = runtime.store.inbox(agent.id, agent.inbox_cursor)?;
-    Ok(items
+    for item in items
         .iter()
         .filter(|item| !settlement_in_flight(runtime, &item.kind))
-        .find_map(|item| match &item.kind {
-            InboxKind::Message {
-                from: Actor::User { .. },
-                ..
-            } => Some("message from the user".to_owned()),
-            // A supervisor steering a subtree speaks with the same urgency as a
-            // person: it must be heard before its child's fan-out finishes.
-            InboxKind::Message {
-                from: Actor::Agent { id },
-                ..
-            } if agent.parent == Some(*id) => Some("message from your parent".to_owned()),
-            InboxKind::TaskFailed { .. } | InboxKind::ChildFailed { .. } => {
-                Some("a delegated task failed".to_owned())
+    {
+        if let Some(reason) = urgent_item(runtime, agent, &item.kind)? {
+            return Ok(Some(reason));
+        }
+    }
+    Ok(None)
+}
+
+fn urgent_item(runtime: &Runtime, agent: &Agent, kind: &InboxKind) -> Result<Option<String>> {
+    let reason = match kind {
+        InboxKind::Message {
+            from: Actor::User { .. },
+            ..
+        } => "message from the user".to_owned(),
+        // A supervisor steering a subtree speaks with the same urgency as a
+        // person: it must be heard before its child's fan-out finishes.
+        InboxKind::Message {
+            from: Actor::Agent { id },
+            ..
+        } if agent.parent == Some(*id) => "message from your parent".to_owned(),
+        InboxKind::Message {
+            from: Actor::Agent { id },
+            ..
+        } => {
+            if !awaits_reply(runtime, agent.id, *id)? {
+                return Ok(None);
             }
-            InboxKind::ChildSuspended { .. } => {
-                Some("a delegated agent is suspended on provider exhaustion".to_owned())
-            }
-            InboxKind::TaskCancelled { .. } => Some("a delegated task was cancelled".to_owned()),
-            InboxKind::ExternalTrigger { source, .. } => {
-                Some(format!("external trigger from {source}"))
-            }
-            _ => None,
-        }))
+            format!("question from {id}, which is waiting for your answer")
+        }
+        InboxKind::TaskFailed { .. } | InboxKind::ChildFailed { .. } => {
+            "a delegated task failed".to_owned()
+        }
+        InboxKind::ChildSuspended { .. } => {
+            "a delegated agent is suspended on provider exhaustion".to_owned()
+        }
+        InboxKind::TaskCancelled { .. } => "a delegated task was cancelled".to_owned(),
+        InboxKind::ExternalTrigger { source, .. } => format!("external trigger from {source}"),
+        _ => return Ok(None),
+    };
+    Ok(Some(reason))
+}
+
+/// Whether `sender`, a descendant of `recipient`, is parked waiting for a
+/// message from it. Holding its question until `recipient`'s own wait ends
+/// would deadlock both when that wait is on the sender's task.
+fn awaits_reply(runtime: &Runtime, recipient: AgentId, sender: AgentId) -> Result<bool> {
+    if sender == recipient {
+        return Ok(false);
+    }
+    let Some(asker) = runtime.store.agent(sender)? else {
+        return Ok(false);
+    };
+    let AgentStatus::Waiting { condition } = &asker.status else {
+        return Ok(false);
+    };
+    if !condition.message_senders().contains(&recipient) {
+        return Ok(false);
+    }
+    Ok(runtime.store.is_descendant(recipient, sender)?)
 }
 
 /// When only a deadline fired, tell the agent what is still open so it can

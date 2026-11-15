@@ -270,7 +270,8 @@ impl Tool for SendMessage {
             "Send a message to another agent's inbox. It wakes the recipient if it is waiting for messages. \
              Set `subtree` to broadcast the same message to the recipient and every live agent beneath it. \
              A message to your own child also interrupts any wait it is holding (except an approval wait); \
-             a message to any other agent, including your parent, waits until that agent's condition is satisfied.",
+             a message to any other agent, including your parent, waits until that agent's condition is satisfied, \
+             unless you then wait_for message_from that ancestor: a question it must answer reaches it at once.",
             json!({
                 "type": "object",
                 "properties": {
