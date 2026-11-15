@@ -6,6 +6,12 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+## 1.4.0
+
+Released 2026-11-15. Bounded delegation (#430), approved task references
+(#431), and questions keyed by sequence (#432). The workspace and Python
+and TypeScript clients are 1.4.0.
+
 ### Added
 
 - **Delegation policy: workers are bounded, not cloned from the lead.**
@@ -54,8 +60,6 @@ release is also the text of its GitHub release.
   own during a turn, is sent the assignment, checkpoint and memory again on
   the next turn instead of assuming it still holds them.
 
-### Changed
-
 - **Ask, don't guess.** A root agent's assignment carries the opener rule:
   a message that opens a conversation or ends in a check-in ("Ok?") with its
   central choice still open gets a short acknowledgement, 2-4 options and one
@@ -83,6 +87,16 @@ release is also the text of its GitHub release.
 - A child's question no longer deadlocks against a parent waiting on the
   child's task: a message from a descendant that then waits on a reply from
   the recipient wakes it, and the interrupted wait is restored after its turn.
+
+- Remote web: failed and blocked agents can be dismissed from Attention
+  (#427); error toasts stay below the sticky header at phone widths (#428).
+
+### Known limitations
+
+- References on standalone `CreateTask` remain a follow-up; this release
+  accepts them through `delegate` and `CreateAgent` with an objective.
+- Comparing model tiers across providers and defining grandchild delegation
+  policy remain follow-ups; children do not inherit the parent's policy.
 
 ## 1.3.1
 
