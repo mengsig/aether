@@ -8,6 +8,7 @@ import type {
   Priority,
   RunId,
   TaskId,
+  TaskReference,
   TaskStatus,
   status,
 } from "../../protocol.ts";
@@ -19,6 +20,7 @@ export interface Task {
   "artifacts"?: Array<ArtifactId>;
   "created_at": string;
   "creator": Actor;
+  "delegation_reason"?: string | null;
   "dependencies"?: Array<TaskId>;
   "finished_at"?: string | null;
   "id": TaskId;
@@ -26,6 +28,7 @@ export interface Task {
   "owner"?: AgentId | null;
   "parent_task"?: TaskId | null;
   "priority"?: Priority;
+  "references"?: Array<TaskReference>;
   "run": RunId;
   "started_at"?: string | null;
   "status": TaskStatus;

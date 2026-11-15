@@ -146,6 +146,17 @@ impl RequestImageBudget {
         }
     }
 
+    /// Charge one image ahead of the walk, without closing the walk on a
+    /// refusal: a task's reference images are placed before the others.
+    fn charge(&mut self, size_bytes: u64) -> bool {
+        if self.images == 0 || size_bytes > self.bytes {
+            return false;
+        }
+        self.images -= 1;
+        self.bytes -= size_bytes;
+        true
+    }
+
     /// Whether the next older image still fits; it is charged when it does.
     fn admit(&mut self, size_bytes: u64) -> bool {
         if self.spent || self.images == 0 || size_bytes > self.bytes {
@@ -249,9 +260,23 @@ impl Runtime {
     /// Replace every stored-image reference in a model request: the newest
     /// become the image itself, within what one request may carry in all;
     /// older ones, and all of them for a model without vision, become text.
-    pub(crate) fn inline_images(&self, messages: &mut [Message], vision: bool) {
+    /// The turn at `reference_turn` (the task's reference turn, placed by the
+    /// assembler) is charged first, so the conversation's own images, even
+    /// copies of them, cannot crowd it out.
+    pub(crate) fn inline_images(
+        &self,
+        messages: &mut [Message],
+        vision: bool,
+        reference_turn: Option<usize>,
+    ) {
         let mut budget = RequestImageBudget::beside_inline(messages);
-        for message in messages.iter_mut().rev() {
+        if let Some(at) = reference_turn {
+            self.inline_reference_turn(&mut messages[at], vision, &mut budget);
+        }
+        for (index, message) in messages.iter_mut().enumerate().rev() {
+            if Some(index) == reference_turn {
+                continue;
+            }
             for block in message.content.iter_mut().rev() {
                 let ContentBlock::ImageRef(image) = block else {
                     continue;
@@ -275,6 +300,33 @@ impl Runtime {
                 .any(|block| matches!(block, ContentBlock::ImageRef(_))),
             "a reference never reaches a model"
         );
+    }
+
+    /// Charge the reference turn's images ahead of the walk over the rest.
+    fn inline_reference_turn(
+        &self,
+        turn: &mut Message,
+        vision: bool,
+        budget: &mut RequestImageBudget,
+    ) {
+        debug_assert!(matches!(
+            turn.content.first(),
+            Some(ContentBlock::Text { text, .. })
+                if text == aether_context::references::REFERENCE_INTRO
+        ));
+        debug_assert_eq!(turn.role, aether_core::model::MessageRole::User);
+        for block in &mut turn.content {
+            let ContentBlock::ImageRef(image) = block else {
+                continue;
+            };
+            *block = if !vision {
+                stand_in(image, "this model takes no images")
+            } else if budget.charge(image.size_bytes) {
+                self.inlined(image)
+            } else {
+                stand_in(image, "left out to keep this request in its limits")
+            };
+        }
     }
 
     /// The stored image itself. One whose file is gone or is not the bytes
@@ -446,6 +498,68 @@ mod tests {
         );
         // Smaller, but older than a refused one: the cut is a single point.
         assert!(!by_size.admit(1));
+    }
+
+    #[test]
+    fn a_charge_ahead_of_the_walk_never_closes_it() {
+        let mut budget = RequestImageBudget::beside_inline(&[]);
+        assert!(!budget.charge(MAX_REQUEST_IMAGE_BYTES as u64 + 1));
+        assert!(budget.charge(10), "a refused charge leaves the rest open");
+        assert_eq!(budget.images, MAX_REQUEST_IMAGES - 1);
+        assert_eq!(budget.bytes, MAX_REQUEST_IMAGE_BYTES as u64 - 10);
+        assert!(budget.admit(1), "the walk still has its remainder");
+    }
+
+    /// Only the index the assembler hands over marks the reference turn: a
+    /// first message that is exactly its intro text gets no place in front.
+    #[tokio::test]
+    async fn only_the_assembled_reference_turn_is_charged_ahead_of_newer_images() {
+        let images = tempfile::tempdir().expect("attachment dir");
+        let dir = images.path().to_path_buf();
+        let (runtime, _config) =
+            crate::test_runtime(move |config| config.attachment_dir = Some(dir)).await;
+        let distinct: Vec<_> = (0..=MAX_REQUEST_IMAGES as u8)
+            .map(|tag| attachment("image/png", &[PNG, &[tag]].concat(), None))
+            .collect();
+        let (first, newer) = distinct.split_first().expect("images");
+        let first = &runtime
+            .store_attachments(std::slice::from_ref(first))
+            .expect("store")[0];
+        // A message carries fewer images than a request, so store them in batches.
+        let newer: Vec<_> = newer
+            .chunks(MAX_IMAGES_PER_MESSAGE)
+            .flat_map(|batch| runtime.store_attachments(batch).expect("store"))
+            .collect();
+        assert_eq!(newer.len(), MAX_REQUEST_IMAGES);
+        let messages = || {
+            vec![
+                Message::user_blocks(vec![
+                    ContentBlock::text(aether_context::references::REFERENCE_INTRO),
+                    ContentBlock::ImageRef(first.clone()),
+                ]),
+                Message::user_blocks(newer.iter().cloned().map(ContentBlock::ImageRef).collect()),
+            ]
+        };
+        let inline = |message: &Message| {
+            message
+                .content
+                .iter()
+                .filter(|block| matches!(block, ContentBlock::Image { .. }))
+                .count()
+        };
+        let mut echo = messages();
+        runtime.inline_images(&mut echo, true, None);
+        assert_eq!(inline(&echo[0]), 0, "the echo is ordinary, oldest history");
+        assert_eq!(inline(&echo[1]), MAX_REQUEST_IMAGES);
+        let mut assembled = messages();
+        runtime.inline_images(&mut assembled, true, Some(0));
+        assert_eq!(
+            inline(&assembled[0]),
+            1,
+            "the reference turn is charged first"
+        );
+        assert_eq!(inline(&assembled[1]), MAX_REQUEST_IMAGES - 1);
+        runtime.shutdown().await;
     }
 
     #[test]

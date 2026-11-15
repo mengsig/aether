@@ -43,6 +43,12 @@ pub struct CreateAgent {
     /// Move to Ready immediately (default true).
     #[serde(default = "default_true")]
     pub start: bool,
+    /// Approved images and files attached to the initial task: checked at
+    /// creation, delivered to a vision model as images before it starts, and
+    /// re-attached after compaction. Needs `objective`. A daemon without
+    /// `features::REFERENCES` ignores it, so check that first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<aether_core::reference::ReferenceRequest>,
     /// Makes this submission retryable: a second identical request under the
     /// same key returns what the first created instead of creating it again.
     /// A key reused for a different request is refused (§13.6).
@@ -69,6 +75,7 @@ impl Default for CreateAgent {
             approval: None,
             run: None,
             start: true,
+            references: Vec::new(),
             idempotency_key: None,
         }
     }

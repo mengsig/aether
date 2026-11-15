@@ -217,6 +217,9 @@ pub struct Task {
     /// as it said when it delegated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegation_reason: Option<String>,
+    /// Approved images and files the owner must see, re-attached every turn.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<crate::reference::TaskReference>,
 }
 
 impl Task {
@@ -237,6 +240,7 @@ impl Task {
             started_at: None,
             finished_at: None,
             delegation_reason: None,
+            references: Vec::new(),
         }
     }
 

@@ -261,6 +261,8 @@ async fn delegating_onto_an_unusable_engine_names_its_probe_reason() {
         host_context: None,
         idempotency: None,
         reason: None,
+        references: Vec::new(),
+        inherit_references: false,
     };
     let refused = apply_action(
         &h.runtime,

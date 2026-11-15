@@ -53,6 +53,22 @@ days. The store prunes submission keys down to 100,000 in all, so a busy
 daemon can evict a key sooner; a repeat after that creates a new child. The
 reply to a keyed call echoes the key.
 
+`delegate` takes `references`, a list of `{path, kind, label}` with `kind`
+`image` or `file`, and `inherit_references: true`, which passes on the
+caller's own task references (never its context). A named path must lie in
+the caller's workspace or allowed paths, after symlinks resolve, or be one of
+its task's references. Each is checked when the child is created: readable, a
+regular file, an image a PNG, JPEG, GIF or WebP of at most 3.75 MiB, a file at
+most 16 MiB, and per task at most 16 references, 8 images and 6 MiB of
+images. Anything else refuses the call and names the reference. The child's
+assignment lists each reference with its path, size and SHA-256. A vision
+model gets the images as pictures before it starts and on every later turn:
+on the API path every request opens with them, and an engine is sent them
+with the assignment whenever its session does not hold it, such as after a
+compaction. The images are copies stored by digest, so a later edit of the
+file does not change what the child sees. The reply counts the references
+and warns when the child's model takes no images.
+
 Delegation has no depth limit: a child may delegate again, as long as its
 parent is not a leaf, to any number of generations. Only the `leaf` flag, a
 `concurrency` cap on the descendants running at once, the daemon's global

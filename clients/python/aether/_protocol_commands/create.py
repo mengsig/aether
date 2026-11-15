@@ -11,12 +11,13 @@ from ..protocol import (
     ModelRef,
     OperatorMemorySpec,
     Priority,
+    ReferenceRequest,
     RunId,
     Scope,
     TaskId,
 )
 
-def create_agent(*, role: str, approval: ApprovalPolicy | None = None, config: AgentConfig | None = None, fallbacks: list[ModelRef] | None = None, idempotency_key: str | None = None, model: ModelRef | None = None, name: str | None = None, objective: str | None = None, parent: AgentId | None = None, repository_root: str | None = None, run: RunId | None = None, scope: Scope | None = None, start: bool | None = None) -> dict[str, Any]:
+def create_agent(*, role: str, approval: ApprovalPolicy | None = None, config: AgentConfig | None = None, fallbacks: list[ModelRef] | None = None, idempotency_key: str | None = None, model: ModelRef | None = None, name: str | None = None, objective: str | None = None, parent: AgentId | None = None, references: list[ReferenceRequest] | None = None, repository_root: str | None = None, run: RunId | None = None, scope: Scope | None = None, start: bool | None = None) -> dict[str, Any]:
     """Request to create an agent, optionally with an initial task.
     A child requires explicit `config.effort`: low, medium, high, xhigh or max.
     """
@@ -37,6 +38,8 @@ def create_agent(*, role: str, approval: ApprovalPolicy | None = None, config: A
         frame["objective"] = objective
     if parent is not None:
         frame["parent"] = parent
+    if references is not None:
+        frame["references"] = references
     if repository_root is not None:
         frame["repository_root"] = repository_root
     frame["role"] = role

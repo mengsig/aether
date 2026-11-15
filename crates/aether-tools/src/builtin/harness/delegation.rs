@@ -55,6 +55,10 @@ struct DelegateInput {
     idempotency_key: Option<String>,
     #[serde(default)]
     reason: Option<String>,
+    #[serde(default)]
+    references: Vec<aether_core::reference::ReferenceRequest>,
+    #[serde(default)]
+    inherit_references: bool,
 }
 
 /// Longest caller key: the runtime prefixes it with the calling agent, and
@@ -101,7 +105,8 @@ impl Tool for Delegate {
              with wait_for. The child's scope can only narrow yours. Use workspace_mode=isolated \
              for concurrent editing; that creates a managed Git worktree snapshot and requires \
              deliberate integration later. Omitted workspace_mode keeps the shared workspace. \
-             idempotency_key makes a repeat after a lost reply safe.",
+             idempotency_key makes a repeat after a lost reply safe. Give every worker and reviewer \
+             the approved references; never narrow approved requirements.",
             json!({
                 "type": "object",
                 "properties": {
@@ -119,6 +124,8 @@ impl Tool for Delegate {
                     "host_context": {"type": "string", "enum": ["full", "lean"], "description": "lean starts a Claude Code child without its native skills and non-Aether MCP servers, for a smaller context; full restores them. Omit to inherit yours."},
                     "wait": {"type": "boolean", "default": true},
                     "reason": {"type": "string", "maxLength": 2048, "description": "Required for a child on your own frontier-tier model; recorded on its task."},
+                    "references": {"type": "array", "items": {"type": "object", "properties": {"path": {"type": "string"}, "kind": {"enum": ["image", "file"]}, "label": {"type": "string"}}, "required": ["path", "kind"]}, "description": "Files in your scope the child must see; a vision child gets images as pictures."},
+                    "inherit_references": {"type": "boolean", "description": "Pass on your task's references."},
                     "idempotency_key": {"type": "string", "maxLength": 128, "description": "Printable ASCII, no spaces. A repeat with the same key and arguments returns the first call's agent_id and task_id, not a second child; other arguments under a used key are refused. `wait` is not compared. Kept up to seven days."}
                 },
                 "required": ["role", "objective", "model", "effort"],
@@ -216,6 +223,15 @@ impl Tool for Delegate {
             host_context,
             idempotency: keyed,
             reason,
+            references: input
+                .references
+                .into_iter()
+                .map(|mut reference| {
+                    reference.path = crate::fs::lexical_resolve(ctx, &reference.path);
+                    reference
+                })
+                .collect(),
+            inherit_references: input.inherit_references,
         }))
     }
 }

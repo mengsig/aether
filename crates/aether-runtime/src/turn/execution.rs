@@ -516,7 +516,11 @@ pub(super) async fn run_link(
     let mut request = assembled.request;
     request.model.model.clone_from(&resolved.model.id);
     // The snapshot keeps references; only the request sent carries the bytes.
-    runtime.inline_images(&mut request.messages, resolved.model.capabilities.vision);
+    runtime.inline_images(
+        &mut request.messages,
+        resolved.model.capabilities.vision,
+        assembled.reference_turn,
+    );
     let stream = match client.stream(request, cancel.child_token()).await {
         Ok(s) => s,
         Err(e) => {

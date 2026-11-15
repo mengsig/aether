@@ -28,6 +28,7 @@ mod orphans;
 mod peers;
 mod problems;
 pub mod recovery;
+mod references;
 mod repository_aliases;
 pub mod resources;
 mod retention;
@@ -68,6 +69,7 @@ pub use commands::{
     AgentUpdate, CreateAgentSpec, CreateTaskSpec, MessageDelivery, RuntimeStatus, STATUS_DEADLINE,
     pending_question,
 };
+pub use references::ReferenceScope;
 pub use retention::HistorySweep;
 
 #[derive(Debug, thiserror::Error)]

@@ -38,6 +38,7 @@ pub mod notification;
 pub mod private_file;
 pub mod provider;
 pub mod redact;
+pub mod reference;
 pub mod replay;
 pub mod report;
 pub mod repository;
