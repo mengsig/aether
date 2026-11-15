@@ -53,6 +53,8 @@ struct DelegateInput {
     host_context: Option<Value>,
     #[serde(default)]
     idempotency_key: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 /// Longest caller key: the runtime prefixes it with the calling agent, and
@@ -90,7 +92,10 @@ impl Tool for Delegate {
     fn descriptor(&self) -> ToolDescriptor {
         harness_descriptor(
             "delegate",
-            "Create a child agent with its own task. You must choose both its model and reasoning effort explicitly. With wait=true (default) you sleep until \
+            "Create a child agent with its own task. You must choose both its model and reasoning effort explicitly. \
+             Workers default to the balanced or fast tier, not your model. Your delegation policy \
+             (inspect_state) bounds models, efforts and parallel children; without one a child may not be \
+             above your tier, and one on your own frontier model needs a `reason`. With wait=true (default) you sleep until \
              the child finishes and its result arrives in your inbox; you consume no tokens while \
              waiting. With wait=false the child runs in the background and you can wait later \
              with wait_for. The child's scope can only narrow yours. Use workspace_mode=isolated \
@@ -104,7 +109,7 @@ impl Tool for Delegate {
                     "objective": {"type": "string", "description": "What the child must accomplish, with acceptance criteria."},
                     "name": {"type": "string", "description": "Short display name."},
                     "instructions": {"type": "string", "description": "Extra instructions for this child's task. Omitted instructions are empty; your own task instructions are not copied to the child."},
-                    "model": {"type": "string", "description": "Required exact `provider/model` connection ID, e.g. `codex/gpt-6.1-terra` or `claude-code/opus`. Choose capability first, then cost within the suitable tier; list_models supplies current preferences and prices. Pass an ID you were already given straight through; an unknown one is refused by name. Resolve a bare model family with list_models rather than guessing a vendor connection."},
+                    "model": {"type": "string", "description": "Required exact `provider/model` connection ID, e.g. `codex/gpt-6.1-terra` or `claude-code/opus`. Choose capability first, then cost within the suitable tier; list_models supplies current preferences and prices. Pass an ID your instructions name straight through; an unknown one is refused by name. Resolve a bare model family with list_models rather than guessing a vendor connection."},
                     "effort": {"type": "string", "enum": ["low", "medium", "high", "xhigh", "max"], "description": "Required reasoning effort for this child's task. Choose explicitly; there is no inheritance default."},
                     "workspace_root": {"type": "string", "description": "Narrower workspace for the child. With isolated mode, select a Git repository root within your scope; omit to use your workspace root."},
                     "workspace_mode": {"type": "string", "enum": ["shared", "isolated"], "default": "shared", "description": "shared inherits or narrows your workspace. isolated snapshots the selected Git repository into a managed worktree; work remains there until integrate_workspace is called."},
@@ -113,6 +118,7 @@ impl Tool for Delegate {
                     "leaf": {"type": "boolean", "default": false, "description": "Create a child that cannot delegate and receives fewer coordination tools."},
                     "host_context": {"type": "string", "enum": ["full", "lean"], "description": "lean starts a Claude Code child without its native skills and non-Aether MCP servers, for a smaller context; full restores them. Omit to inherit yours."},
                     "wait": {"type": "boolean", "default": true},
+                    "reason": {"type": "string", "maxLength": 2048, "description": "Required for a child on your own frontier-tier model; recorded on its task."},
                     "idempotency_key": {"type": "string", "maxLength": 128, "description": "Printable ASCII, no spaces. A repeat with the same key and arguments returns the first call's agent_id and task_id, not a second child; other arguments under a used key are refused. `wait` is not compared. Kept up to seven days."}
                 },
                 "required": ["role", "objective", "model", "effort"],
@@ -148,6 +154,8 @@ impl Tool for Delegate {
         if let Some(key) = &input.idempotency_key {
             validate_idempotency_key(key)?;
         }
+        let reason = aether_core::delegation::normalize_reason(input.reason.as_deref())
+            .map_err(ToolError::InvalidInput)?;
         let model = ModelRef::parse(&input.model).ok_or_else(|| {
             ToolError::InvalidInput(format!(
                 "model must be `provider/model`, got `{}`",
@@ -207,6 +215,7 @@ impl Tool for Delegate {
             leaf: input.leaf,
             host_context,
             idempotency: keyed,
+            reason,
         }))
     }
 }

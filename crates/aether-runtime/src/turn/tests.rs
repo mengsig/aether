@@ -2,6 +2,7 @@ use super::*;
 use aether_core::id::TaskId;
 
 mod compaction;
+mod delegation_policy;
 mod heartbeat;
 mod lifecycle;
 mod prose_structured;

@@ -57,6 +57,8 @@ const ROOT_ADDED_BYTES: usize = 200;
 const NOTIFY_ADDED_BYTES: usize = 700;
 /// What `delegate`'s `idempotency_key` adds to a surface that is not a leaf.
 const DELEGATE_KEY_ADDED_BYTES: usize = 300;
+/// What `delegate`'s delegation-policy text and `reason` add to a non-leaf surface.
+const DELEGATION_POLICY_ADDED_BYTES: usize = 420;
 const DELEGATED_LEAF_ADDED_BYTES: usize = 300;
 /// What `send_message` and `wait_for` add to say how to ask a parent.
 const ASKING_ADDED_BYTES: usize = 200;
@@ -221,6 +223,7 @@ async fn a_root_agent_sees_the_v1_1_0_surface_plus_only_the_playbook_and_notify(
             <= ROOT_ADDED_BYTES
                 + NOTIFY_ADDED_BYTES
                 + DELEGATE_KEY_ADDED_BYTES
+                + DELEGATION_POLICY_ADDED_BYTES
                 + ASKING_ADDED_BYTES,
         "{added}"
     );
@@ -262,6 +265,7 @@ async fn delegated_agents_see_list_peers_and_only_a_lead_sees_the_playbook() {
             <= DELEGATED_LEAD_ADDED_BYTES
                 + NOTIFY_ADDED_BYTES
                 + DELEGATE_KEY_ADDED_BYTES
+                + DELEGATION_POLICY_ADDED_BYTES
                 + ASKING_ADDED_BYTES,
         "{lead_added}"
     );
