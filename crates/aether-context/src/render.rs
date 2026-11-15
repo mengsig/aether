@@ -18,6 +18,23 @@ use aether_core::tool::{ApprovalDecision, ApprovalRequest};
 
 use crate::ContextInputs;
 
+/// The task's references, each on one line. Whoever created the task
+/// approved them: a brief may not narrow what they show.
+fn write_references(out: &mut String, references: &[aether_core::reference::TaskReference]) {
+    if references.is_empty() {
+        return;
+    }
+    let _ = writeln!(
+        out,
+        "\nReferences attached to this task by its creator (approved material: meet what they show, \
+         and pass them on with `inherit_references` to every worker and reviewer you delegate; \
+         images are attached as pictures when your model takes them, otherwise open the paths):"
+    );
+    for reference in references {
+        let _ = writeln!(out, "- {}", reference.line());
+    }
+}
+
 /// The stored parent relationship, without assigning an orchestration role.
 pub fn tree_position(agent: &Agent) -> String {
     match agent.parent {
@@ -42,6 +59,7 @@ pub fn role_task(agent: &Agent, task: Option<&Task>) -> String {
                 t.priority
             );
             let _ = writeln!(out, "{}", t.objective.trim());
+            write_references(&mut out, &t.references);
         }
         None => {
             let _ = writeln!(out, "Task: none assigned.");

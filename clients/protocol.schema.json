@@ -429,6 +429,17 @@
             "null"
           ]
         },
+        "delegation_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DelegationPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Which children this agent may delegate to; absent bounds a child only\nby this agent's tier. Never inherited by a child."
+        },
         "effort": {
           "anyOf": [
             {
@@ -5400,6 +5411,13 @@
             }
           ]
         },
+        "references": {
+          "description": "Approved images and files attached to the initial task: checked at\ncreation, delivered to a vision model as images before it starts, and\nre-attached after compaction. Needs `objective`. A daemon without\n`features::REFERENCES` ignores it, so check that first.",
+          "items": {
+            "$ref": "#/$defs/ReferenceRequest"
+          },
+          "type": "array"
+        },
         "repository_root": {
           "description": "An absolute path to a checkout whose repository id the daemon derives\nand stores as `scope.repository`, exactly as for an agent working\nthere. Input only; exclusive with `scope.repository`. A daemon without\n`features::REPOSITORY_ROOT` ignores it, so check that first.",
           "type": [
@@ -5829,6 +5847,65 @@
           "type": "object"
         }
       ]
+    },
+    "DelegationPolicy": {
+      "additionalProperties": false,
+      "description": "The children a task's agent may create. Every field is optional; an empty\npolicy bounds nothing beyond the rules for a task without one.",
+      "properties": {
+        "default_tier": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelTier"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The tier a worker starts from when the lead has no better reason."
+        },
+        "exempt_models": {
+          "description": "The models an exempt-role child may use regardless of tier: the\norchestrator's own plan for those roles (Archon's `<stage>.review`).",
+          "items": {
+            "$ref": "#/$defs/ModelRef"
+          },
+          "type": "array"
+        },
+        "exempt_roles": {
+          "description": "Child roles the policy does not bound (list, effort, parallel limit),\nsuch as `reviewer`. Such a child still may not be above the parent's\ntier unless its model is in `exempt_models`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_effort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Effort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Highest effort for any child the policy bounds (exempt roles are not)."
+        },
+        "max_parallel": {
+          "description": "Most direct children unfinished at once, exempt ones not counted.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "workers": {
+          "description": "Allowed children. Empty: any model at or below `default_tier`, or\nwithout that, any model not above the delegating agent's tier.",
+          "items": {
+            "$ref": "#/$defs/WorkerChoice"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
     },
     "Delta": {
       "description": "Transient streaming signal. Not persisted; durable events reconcile it.",
@@ -11423,6 +11500,16 @@
       ],
       "type": "object"
     },
+    "ModelTier": {
+      "description": "A capability band within one provider, weakest first. The vocabulary is\nshared with Archon's catalog tiers: keep the names stable. `strongest` is\nthe legacy name of `strong` and is still accepted when reading.",
+      "enum": [
+        "fast",
+        "balanced",
+        "strong",
+        "frontier"
+      ],
+      "type": "string"
+    },
     "MountKind": {
       "description": "What a mount forwards to.",
       "enum": [
@@ -12860,6 +12947,46 @@
         "doc"
       ],
       "type": "string"
+    },
+    "ReferenceKind": {
+      "description": "Whether a reference is delivered as a picture or named as a file to read.",
+      "oneOf": [
+        {
+          "const": "image",
+          "description": "PNG, JPEG, GIF or WebP: attached as image content to a vision model.",
+          "type": "string"
+        },
+        {
+          "const": "file",
+          "description": "Any readable file: named by path and digest for the owner to open.",
+          "type": "string"
+        }
+      ]
+    },
+    "ReferenceRequest": {
+      "additionalProperties": false,
+      "description": "One reference as a creator names it: `{path, kind, label}`.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ReferenceKind"
+        },
+        "label": {
+          "description": "What the reference is, e.g. `approved mockup: settings page, dark`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "An absolute path the daemon can read. A delegating agent's relative\npath resolves against its working directory.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "kind"
+      ],
+      "type": "object"
     },
     "RememberSpec": {
       "description": "How to remember the answer a person just gave. The defaults are the\nnarrowest reading of it: the answered agent, this tool, and what this\ncall touched. Anything wider is asked for explicitly.",
@@ -16538,6 +16665,13 @@
         "creator": {
           "$ref": "#/$defs/Actor"
         },
+        "delegation_reason": {
+          "description": "Why the delegating parent put this task on its own frontier model,\nas it said when it delegated.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "dependencies": {
           "default": [],
           "description": "Tasks that must be terminal before this one can start.",
@@ -16583,6 +16717,13 @@
         "priority": {
           "$ref": "#/$defs/Priority",
           "default": "normal"
+        },
+        "references": {
+          "description": "Approved images and files the owner must see, re-attached every turn.",
+          "items": {
+            "$ref": "#/$defs/TaskReference"
+          },
+          "type": "array"
         },
         "run": {
           "$ref": "#/$defs/RunId"
@@ -16710,6 +16851,50 @@
           "type": "array"
         }
       },
+      "type": "object"
+    },
+    "TaskReference": {
+      "description": "One checked reference, as the task stores it.",
+      "properties": {
+        "image": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AttachmentRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "For an image: the stored copy delivered to the model, which a later\nedit of `path` cannot change."
+        },
+        "kind": {
+          "$ref": "#/$defs/ReferenceKind"
+        },
+        "label": {
+          "description": "The creator's label, else the file name.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The canonical path the reference was read from.",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "SHA-256 of the bytes as they were checked, in lowercase hex.",
+          "type": "string"
+        },
+        "size_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "label",
+        "path",
+        "size_bytes",
+        "sha256"
+      ],
       "type": "object"
     },
     "TaskResult": {
@@ -18335,6 +18520,44 @@
         "name",
         "remaining_percent"
       ],
+      "type": "object"
+    },
+    "WorkerChoice": {
+      "additionalProperties": false,
+      "description": "One allowed kind of child: an exact model or a whole tier, optionally\ncapped in effort. Exactly one of `model` and `tier` is set.",
+      "properties": {
+        "effort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Effort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Highest effort for a child on this entry; absent means `max_effort`."
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tier": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelTier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
       "type": "object"
     },
     "Workspace": {

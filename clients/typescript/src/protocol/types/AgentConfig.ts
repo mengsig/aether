@@ -3,6 +3,7 @@
 
 import type {
   ApprovalPolicy,
+  DelegationPolicy,
   Effort,
   HostContext,
   Priority,
@@ -18,6 +19,7 @@ export interface AgentConfig {
   "concurrency"?: number | null;
   "cost_budget"?: number | null;
   "deadline"?: string | null;
+  "delegation_policy"?: DelegationPolicy | null;
   "effort"?: Effort | null;
   "host_context"?: HostContext;
   "instructions"?: string | null;

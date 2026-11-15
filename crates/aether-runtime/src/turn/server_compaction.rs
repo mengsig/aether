@@ -189,14 +189,20 @@ fn summarize_request(
     if request.messages.is_empty() {
         return None;
     }
-    debug_assert!(!request.messages.is_empty());
+    // The reference turn is never the newest message, so the pop above keeps it.
+    let reference_turn = assembled.reference_turn;
+    debug_assert!(reference_turn.is_none_or(|at| at < request.messages.len()));
     debug_assert!(request.messages.iter().any(|m| !m.content.is_empty()));
     request.model.model.clone_from(&resolved.model.id);
     request.extensions.insert(
         "anthropic.compaction".into(),
         serde_json::json!({"type": "summarize"}),
     );
-    runtime.inline_images(&mut request.messages, resolved.model.capabilities.vision);
+    runtime.inline_images(
+        &mut request.messages,
+        resolved.model.capabilities.vision,
+        reference_turn,
+    );
     Some(request)
 }
 

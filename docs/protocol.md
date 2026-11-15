@@ -255,6 +255,16 @@ cannot set it. A client must check the feature before sending the field: an
 older daemon ignores it and the agent builds elsewhere. The Rust client
 refuses such a create itself.
 
+`references` means `create_agent` accepts `references` beside `objective`:
+`[{"path": "/abs/mock.png", "kind": "image", "label": "approved mockup"},
+{"path": "/abs/ledger.md", "kind": "file"}]`. The daemon checks each one as
+`delegate` does (see [harness tools](harness-tools.md)), with no scope rule,
+refuses the create naming any it cannot use, and records them on the task as
+`references` (`kind`, `label`, canonical `path`, `size_bytes`, `sha256`, and
+`image`, the stored copy). An image needs the daemon's attachment directory.
+A keyed create digests `references` only when it has some. An older daemon
+ignores the field, so check the feature first.
+
 `notes` means the daemon serves `append_note` (see [notes](#notes)). An
 older daemon refuses the command as unknown; the Rust client refuses to send
 it to one.

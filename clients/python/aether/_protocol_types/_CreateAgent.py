@@ -19,6 +19,7 @@ class CreateAgent(TypedDict, total=False):
     name: str | None  # optional
     objective: str | None  # optional
     parent: _protocol.AgentId | None  # optional
+    references: list[_protocol.ReferenceRequest]  # optional
     repository_root: str | None  # optional
     role: str
     run: _protocol.RunId | None  # optional

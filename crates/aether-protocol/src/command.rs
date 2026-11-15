@@ -778,6 +778,7 @@ impl Command {
                 approval,
                 run,
                 start,
+                references,
                 idempotency_key,
             }) => (
                 idempotency_key.as_deref()?,
@@ -795,6 +796,7 @@ impl Command {
                     approval,
                     run,
                     start: *start,
+                    references,
                 }),
             ),
             Self::CreateTask(CreateTask {
@@ -1065,6 +1067,9 @@ struct CreateAgentFingerprint<'a> {
     approval: &'a Option<ApprovalPolicy>,
     run: &'a Option<RunId>,
     start: bool,
+    // Absent without references, so an earlier create keeps its old digest.
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    references: &'a [aether_core::reference::ReferenceRequest],
 }
 
 #[derive(Serialize)]
