@@ -170,6 +170,7 @@ async fn delegate(
             checked: Some((&requested, network)),
             run_budget: true,
             inherit_limits: true,
+            parallel_limit: true,
             #[cfg(test)]
             before_hold: None,
             isolated_workspace: isolated
@@ -349,7 +350,7 @@ fn check_delegation_policy(
     let verdict = match &policy {
         Some(policy) => {
             let unfinished = match policy.max_parallel {
-                Some(_) => unfinished_children(runtime, parent.id, policy)?,
+                Some(_) => runtime.unfinished_children(parent.id, policy)?,
                 None => 0,
             };
             policy.admits(&child, parent_tier, unfinished)
@@ -387,24 +388,6 @@ fn canonical_policy(
     }
     debug_assert_eq!(canonical.workers.len(), policy.workers.len());
     canonical
-}
-
-/// Direct children that have not finished, exempt roles aside: what
-/// `max_parallel` bounds.
-fn unfinished_children(
-    runtime: &Arc<Runtime>,
-    parent: AgentId,
-    policy: &aether_core::delegation::DelegationPolicy,
-) -> Result<usize> {
-    let children = runtime.store.agents(&AgentFilter {
-        parent: Some(parent),
-        ..Default::default()
-    })?;
-    debug_assert!(children.iter().all(|child| child.parent == Some(parent)));
-    Ok(children
-        .iter()
-        .filter(|child| !child.status.is_terminal() && !policy.exempts(child.role.as_str()))
-        .count())
 }
 
 /// The child's scope, and the snapshot manifest when the workspace is isolated.

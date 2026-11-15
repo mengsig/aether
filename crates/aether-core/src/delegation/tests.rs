@@ -233,3 +233,70 @@ fn archons_wire_shape_with_exemptions_decodes() {
     assert_eq!(policy.validate(), Ok(()));
     assert_eq!(serde_json::to_value(&policy).expect("encode"), wire);
 }
+
+#[test]
+fn an_exempt_model_must_be_well_formed() {
+    let mut policy = adaptive();
+    policy.exempt_roles = vec!["reviewer".into()];
+    policy.exempt_models = vec![ModelRef::new("codex", " ")];
+    let err = policy.validate().unwrap_err();
+    assert!(err.contains("exempt_models[0]"), "{err}");
+    policy.exempt_models = vec![ModelRef::new("", "gpt-6.1-terra")];
+    assert!(policy.validate().is_err());
+}
+
+#[test]
+fn the_description_names_exempt_models_and_their_tier_exception() {
+    let mut policy = adaptive();
+    policy.exempt_roles = vec!["reviewer".into()];
+    let plain = policy.describe();
+    assert!(
+        plain.contains("roles reviewer unbounded by this policy but not above your tier"),
+        "{plain}"
+    );
+    policy.exempt_models = vec![model("codex/gpt-6.2-astra")];
+    let named = policy.describe();
+    assert!(
+        named.contains("any of codex/gpt-6.2-astra at any tier"),
+        "{named}"
+    );
+    assert!(
+        named.contains("other models not above your tier"),
+        "{named}"
+    );
+    let sonnet = model("claude-code/sonnet");
+    let refused = policy
+        .admits(
+            &candidate(&sonnet, Some(ModelTier::Fast), Effort::Low),
+            None,
+            2,
+        )
+        .unwrap_err();
+    assert!(refused.contains("at most 2 unfinished"), "{refused}");
+    let outside = model("claude-code/opus");
+    let refused = policy
+        .admits(
+            &candidate(&outside, Some(ModelTier::Strong), Effort::Low),
+            None,
+            0,
+        )
+        .unwrap_err();
+    assert!(
+        refused.contains("any of codex/gpt-6.2-astra at any tier"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn an_exempt_role_is_not_bound_by_max_effort_or_the_parallel_limit() {
+    let mut policy = adaptive();
+    policy.exempt_roles = vec!["reviewer".into()];
+    let opus = model("claude-code/opus");
+    let mut reviewer = candidate(&opus, Some(ModelTier::Strong), Effort::Max);
+    reviewer.role = "reviewer";
+    assert_eq!(policy.admits(&reviewer, Some(ModelTier::Strong), 9), Ok(()));
+    let err = policy
+        .admits(&reviewer, Some(ModelTier::Fast), 0)
+        .unwrap_err();
+    assert!(err.contains("above your own fast tier"), "{err}");
+}

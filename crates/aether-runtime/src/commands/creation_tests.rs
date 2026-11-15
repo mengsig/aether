@@ -144,3 +144,71 @@ async fn explicit_narrower_delegation_limits_are_preserved() {
     assert_eq!(inherited.config.cost_budget, Some(1.0));
     runtime.shutdown().await;
 }
+
+/// `max_parallel` is rechecked under the creation hold: a child created
+/// while a delegation waits between its count and its commit fills the slot.
+#[tokio::test]
+async fn a_concurrent_creation_fills_the_parallel_slot_a_delegation_counted() {
+    let (runtime, _workspace, _config) = runtime().await;
+    let policy = aether_core::delegation::DelegationPolicy {
+        max_parallel: Some(1),
+        exempt_roles: vec!["reviewer".into()],
+        ..Default::default()
+    };
+    let (lead, _) = runtime
+        .create_agent(
+            CreateAgentSpec {
+                model: Some(ModelRef::new("anthropic", "claude-sonnet-5-5")),
+                config: Some(AgentConfig {
+                    delegation_policy: Some(policy),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .unwrap();
+    let (prepared, ready) = mpsc::channel();
+    let (release, proceed) = mpsc::channel();
+    let (finished, result) = mpsc::channel();
+    let creating = runtime.clone();
+    std::thread::spawn(move || {
+        let preflight = Preflight {
+            parallel_limit: true,
+            before_hold: Some((&prepared, &proceed)),
+            ..Default::default()
+        };
+        let child = creating.create_agent_with_preflight(
+            child_spec(lead.id, None, None),
+            Actor::user(),
+            preflight,
+            None,
+        );
+        finished.send(child).unwrap();
+    });
+    ready.recv_timeout(Duration::from_secs(5)).unwrap();
+    runtime
+        .create_agent(child_spec(lead.id, None, None), Actor::user())
+        .expect("a person's child is never refused for the limit");
+    release.send(()).unwrap();
+    let refused = result
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .expect_err("the slot was taken under the delegation's feet");
+    assert!(
+        refused.to_string().contains("at most 1 unfinished"),
+        "{refused}"
+    );
+    let reviewer = CreateAgentSpec {
+        role: "reviewer".into(),
+        ..child_spec(lead.id, None, None)
+    };
+    let exempt = Preflight {
+        parallel_limit: true,
+        ..Default::default()
+    };
+    runtime
+        .create_agent_with_preflight(reviewer, Actor::user(), exempt, None)
+        .expect("an exempt role holds no slot");
+    runtime.shutdown().await;
+}

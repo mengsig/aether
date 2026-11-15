@@ -154,6 +154,9 @@ impl Runtime {
         if let Some(parent) = &parent {
             self.inherit_from_parent(&hold, parent, &mut agent, preflight.inherit_limits)?;
             crate::cancellation::check_parent(self, &hold, parent.id)?;
+            if preflight.parallel_limit {
+                self.check_parallel_limit(&hold, parent.id, agent.role.as_str())?;
+            }
         }
         self.recheck_workspace_gc_admission(&agent.scope)?;
         commit.push_mutation(Mutation::CreateAgent {
@@ -410,6 +413,46 @@ impl Runtime {
             commit,
             parent,
         })
+    }
+
+    /// The authoritative `max_parallel` check: under the creation hold, so a
+    /// concurrent creation under the same parent cannot slip past the count.
+    fn check_parallel_limit(
+        &self,
+        _hold: &CommitHold<'_>,
+        parent: AgentId,
+        child_role: &str,
+    ) -> Result<()> {
+        let current = self.live_agent(parent, "parent")?;
+        let Some(policy) = &current.config.delegation_policy else {
+            return Ok(());
+        };
+        let Some(limit) = policy.max_parallel.filter(|_| !policy.exempts(child_role)) else {
+            return Ok(());
+        };
+        let unfinished = self.unfinished_children(parent, policy)?;
+        if let Some(refusal) = policy.parallel_refusal(limit, unfinished) {
+            return Err(RuntimeError::Invalid(refusal));
+        }
+        Ok(())
+    }
+
+    /// Direct children that have not finished, exempt roles aside: what
+    /// `max_parallel` bounds.
+    pub(crate) fn unfinished_children(
+        &self,
+        parent: AgentId,
+        policy: &aether_core::delegation::DelegationPolicy,
+    ) -> Result<usize> {
+        let children = self.store.agents(&aether_store::AgentFilter {
+            parent: Some(parent),
+            ..Default::default()
+        })?;
+        debug_assert!(children.iter().all(|child| child.parent == Some(parent)));
+        Ok(children
+            .iter()
+            .filter(|child| !child.status.is_terminal() && !policy.exempts(child.role.as_str()))
+            .count())
     }
 
     /// Re-check `agent` against its parent's current row, under the creation hold:

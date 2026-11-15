@@ -81,15 +81,15 @@ pub struct DelegationPolicy {
     /// The tier a worker starts from when the lead has no better reason.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_tier: Option<ModelTier>,
-    /// Highest effort for any child.
+    /// Highest effort for any child the policy bounds (exempt roles are not).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_effort: Option<Effort>,
     /// Most direct children unfinished at once, exempt ones not counted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_parallel: Option<u32>,
-    /// Child roles the policy does not bound, such as `reviewer`. Such a
-    /// child still may not be above the parent's tier unless its model is in
-    /// `exempt_models`.
+    /// Child roles the policy does not bound (list, effort, parallel limit),
+    /// such as `reviewer`. Such a child still may not be above the parent's
+    /// tier unless its model is in `exempt_models`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exempt_roles: Vec<String>,
     /// The models an exempt-role child may use regardless of tier: the
@@ -147,13 +147,12 @@ impl DelegationPolicy {
                     "delegation policy workers[{index}] must name exactly one of `model` and `tier`"
                 ));
             }
-            if let Some(model) = &worker.model
-                && (model.provider.is_empty() || model.model.is_empty())
-            {
-                return Err(format!(
-                    "delegation policy workers[{index}].model needs a provider and a model"
-                ));
+            if let Some(model) = &worker.model {
+                check_model_ref(model, &format!("workers[{index}].model"))?;
             }
+        }
+        for (index, model) in self.exempt_models.iter().enumerate() {
+            check_model_ref(model, &format!("exempt_models[{index}]"))?;
         }
         if self.exempt_roles.iter().any(|role| role.trim().is_empty()) {
             return Err("delegation policy exempt_roles has an empty role".into());
@@ -179,12 +178,11 @@ impl DelegationPolicy {
             }
             return admits_without_policy(child, parent_tier);
         }
-        if let Some(limit) = self.max_parallel
-            && unfinished >= limit as usize
+        if let Some(refusal) = self
+            .max_parallel
+            .and_then(|limit| self.parallel_refusal(limit, unfinished))
         {
-            return Err(format!(
-                "your delegation policy allows at most {limit} unfinished children at once and {unfinished} are; wait for one to finish"
-            ));
+            return Err(refusal);
         }
         if let Some(max) = self.max_effort
             && child.effort > max
@@ -227,6 +225,16 @@ impl DelegationPolicy {
             Some(tier) => Err(self.refusal(child, &format!("tier {tier} is above"))),
             None => Err(self.refusal(child, "an unranked model is outside")),
         }
+    }
+
+    /// The refusal when `unfinished` bounded children already fill `limit`.
+    pub fn parallel_refusal(&self, limit: u32, unfinished: usize) -> Option<String> {
+        debug_assert_eq!(self.max_parallel, Some(limit), "the policy's own limit");
+        (unfinished >= limit as usize).then(|| {
+            format!(
+                "your delegation policy allows at most {limit} unfinished children at once and {unfinished} are; wait for one to finish"
+            )
+        })
     }
 
     /// Whether children with `role` are outside what the policy bounds.
@@ -277,14 +285,33 @@ impl DelegationPolicy {
             parts.push(format!("at most {limit} unfinished at once"));
         }
         if !self.exempt_roles.is_empty() {
-            parts.push(format!(
-                "roles {} not bounded beyond your tier",
-                self.exempt_roles.join(", ")
-            ));
+            parts.push(self.describe_exemptions());
         }
         debug_assert!(!parts.is_empty());
         parts.join(", ")
     }
+
+    fn describe_exemptions(&self) -> String {
+        debug_assert!(!self.exempt_roles.is_empty());
+        let roles = self.exempt_roles.join(", ");
+        if self.exempt_models.is_empty() {
+            return format!("roles {roles} unbounded by this policy but not above your tier");
+        }
+        let models: Vec<String> = self.exempt_models.iter().map(ToString::to_string).collect();
+        format!(
+            "roles {roles} unbounded by this policy: any of {} at any tier, other models not above your tier",
+            models.join(", ")
+        )
+    }
+}
+
+fn check_model_ref(model: &ModelRef, field: &str) -> Result<(), String> {
+    if model.provider.trim().is_empty() || model.model.trim().is_empty() {
+        return Err(format!(
+            "delegation policy {field} needs a provider and a model"
+        ));
+    }
+    Ok(())
 }
 
 /// The rule without a policy: a child may not be above its parent's tier.
