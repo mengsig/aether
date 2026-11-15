@@ -302,8 +302,9 @@ async fn a_later_copy_of_the_reference_cannot_take_its_place_in_the_request() {
 }
 
 /// Words a user sends cannot pose as the reference turn: with no task
-/// references, a first message that opens with the same text is ordinary
-/// history, and the newest images still win the budget.
+/// references, a message carrying its text is ordinary history and the newest
+/// images still win the budget (the unit test in `attachments` covers a first
+/// message that is exactly the intro).
 #[tokio::test]
 async fn a_message_echoing_the_reference_intro_gets_no_place_ahead_of_newer_images() {
     let ws = workspace();

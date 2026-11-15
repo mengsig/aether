@@ -90,6 +90,9 @@ pub struct Assembled {
     /// Inbox items rendered into `new_user_message`.
     pub consumed_inbox: Vec<InboxItemId>,
     pub consumed_up_to: Option<u64>,
+    /// Index in `request.messages` of the task's reference-image turn, which
+    /// the image budget charges first; `None` when the request has none.
+    pub reference_turn: Option<usize>,
     /// The tail exceeded its budget or the context is near the threshold.
     pub needs_compaction: bool,
     /// The size at which this model's context is compacted.
@@ -257,11 +260,12 @@ impl ContextManager {
             tail_tokens = count(&messages);
         }
         // After trimming, so the oldest exchange never takes them with it.
-        if references::attach_reference_images(
+        let reference_turn = references::attach_reference_images(
             &mut messages,
             inputs.task,
             inputs.capabilities.vision,
-        ) {
+        );
+        if reference_turn.is_some() {
             tail_tokens = count(&messages);
         }
         let used = fixed + tail_tokens;
@@ -303,6 +307,7 @@ impl ContextManager {
             memory_retrieval: None,
         };
         let request = build_request(&snapshot);
+        debug_assert!(reference_turn.is_none_or(|at| at < request.messages.len()));
         let new_user_message = if nudged && new_user_message.is_none() {
             snapshot.messages.last().cloned()
         } else {
@@ -315,6 +320,7 @@ impl ContextManager {
             synthesized_task_message,
             consumed_inbox,
             consumed_up_to,
+            reference_turn,
             needs_compaction,
             threshold_tokens: budget.threshold_tokens(),
             dropped_messages: dropped,

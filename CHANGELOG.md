@@ -38,7 +38,8 @@ release is also the text of its GitHub release.
   message images, so a later edit of the file cannot change what the child
   sees. The assignment lists every reference, and a vision model gets the
   images as pictures before it starts: on the API path as the first user turn
-  of every request, rebuilt from the task and charged to the request's image
+  of every request (after a retained server-compaction summary, which a
+  provider replays nothing before), rebuilt from the task and charged to the request's image
   budget before the conversation's own images, and on an engine with every turn
   that sends the assignment. The `delegate` reply counts the references and
   warns when the child's model takes no images. Announced by the

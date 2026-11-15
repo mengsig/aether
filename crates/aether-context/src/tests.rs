@@ -880,3 +880,63 @@ fn a_task_stored_before_references_reads_as_having_none() {
     let read: Task = serde_json::from_value(stored).expect("an older row parses");
     assert!(read.references.is_empty());
 }
+
+/// The provider replays nothing before the latest signed compaction block,
+/// so the reference turn must follow it to reach the model at all.
+#[test]
+fn reference_images_follow_a_signed_compaction_block_onto_the_wire() {
+    let a = agent();
+    let task = referencing_task(&a);
+    let mut c = caps();
+    c.vision = true;
+    c.compaction_tokens = Some(100_000);
+    c.extensions.insert(
+        aether_core::model::SERVER_COMPACTION_KEY.into(),
+        serde_json::json!(true),
+    );
+    let mut summary = entry(MessageRole::Assistant, "", 2);
+    summary.message.content = vec![ContentBlock::Compaction {
+        content: "remember saffron".into(),
+        signature: Some("opaque".into()),
+    }];
+    let transcript = [
+        entry(MessageRole::User, "old history", 1),
+        summary,
+        entry(MessageRole::User, "continue", 3),
+    ];
+    let out = ContextManager::new().assemble(inputs(&a, Some(&task), &transcript, &[], &c));
+    assert_eq!(out.reference_turn, Some(1));
+    let messages = &out.request.messages;
+    assert!(messages[0].content[0].is_signed_compaction());
+    assert!(messages[1].text().starts_with(references::REFERENCE_INTRO));
+    assert_eq!(
+        messages.last().map(Message::text).as_deref(),
+        Some("continue")
+    );
+    let built = aether_model::adapters::anthropic::request::build(&out.request, &c)
+        .expect("an Anthropic request");
+    let wire = built.body["messages"].to_string();
+    assert!(wire.contains("remember saffron"), "{wire}");
+    assert!(
+        wire.contains("Reference images attached to your task"),
+        "the adapter kept the reference turn: {wire}"
+    );
+}
+
+#[test]
+fn reference_images_lead_a_request_with_no_compaction_block() {
+    let a = agent();
+    let task = referencing_task(&a);
+    let mut c = caps();
+    c.vision = true;
+    let transcript = [entry(MessageRole::User, "hello", 1)];
+    let out = ContextManager::new().assemble(inputs(&a, Some(&task), &transcript, &[], &c));
+    assert_eq!(out.reference_turn, Some(0));
+    assert_eq!(leading_images(&out), 1);
+    c.vision = false;
+    let out = ContextManager::new().assemble(inputs(&a, Some(&task), &transcript, &[], &c));
+    assert_eq!(
+        out.reference_turn, None,
+        "a model without vision gets no turn"
+    );
+}

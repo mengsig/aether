@@ -170,23 +170,13 @@ fn request(
         turn: ctx.turn,
         now: now(),
     });
-    let reference_turn = aether_context::references::has_reference_turn(
-        ctx.task.as_ref(),
-        resolved.model.capabilities.vision,
-    );
-    Ok(summarize_request(
-        runtime,
-        assembled,
-        resolved,
-        reference_turn,
-    ))
+    Ok(summarize_request(runtime, assembled, resolved))
 }
 
 fn summarize_request(
     runtime: &Runtime,
     assembled: aether_context::Assembled,
     resolved: &ResolvedModel,
-    reference_turn: bool,
 ) -> Option<ModelRequest> {
     if assembled.dropped_messages > 0 {
         return None;
@@ -199,7 +189,9 @@ fn summarize_request(
     if request.messages.is_empty() {
         return None;
     }
-    debug_assert!(!request.messages.is_empty());
+    // The reference turn is never the newest message, so the pop above keeps it.
+    let reference_turn = assembled.reference_turn;
+    debug_assert!(reference_turn.is_none_or(|at| at < request.messages.len()));
     debug_assert!(request.messages.iter().any(|m| !m.content.is_empty()));
     request.model.model.clone_from(&resolved.model.id);
     request.extensions.insert(
