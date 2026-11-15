@@ -121,23 +121,30 @@ fn urgent_item(runtime: &Runtime, agent: &Agent, kind: &InboxKind) -> Result<Opt
     Ok(Some(reason))
 }
 
-/// Whether `sender`, a descendant of `recipient`, is parked waiting for a
-/// message from it. Holding its question until `recipient`'s own wait ends
+/// Whether `sender`, a descendant of `recipient`, waits for a message from
+/// it, parked or inside a live engine turn. Holding its question until `recipient`'s own wait ends
 /// would deadlock both when that wait is on the sender's task.
 fn awaits_reply(runtime: &Runtime, recipient: AgentId, sender: AgentId) -> Result<bool> {
     if sender == recipient {
         return Ok(false);
     }
-    let Some(asker) = runtime.store.agent(sender)? else {
-        return Ok(false);
-    };
-    let AgentStatus::Waiting { condition } = &asker.status else {
-        return Ok(false);
-    };
-    if !condition.message_senders().contains(&recipient) {
+    let natively = runtime
+        .native_message_waits
+        .lock()
+        .get(&sender)
+        .is_some_and(|senders| senders.contains(&recipient));
+    if !natively && !parked_on_reply(runtime, recipient, sender)? {
         return Ok(false);
     }
     Ok(runtime.store.is_descendant(recipient, sender)?)
+}
+
+fn parked_on_reply(runtime: &Runtime, recipient: AgentId, sender: AgentId) -> Result<bool> {
+    let Some(asker) = runtime.store.agent(sender)? else {
+        return Ok(false);
+    };
+    Ok(matches!(&asker.status, AgentStatus::Waiting { condition }
+        if condition.message_senders().contains(&recipient)))
 }
 
 /// When only a deadline fired, tell the agent what is still open so it can

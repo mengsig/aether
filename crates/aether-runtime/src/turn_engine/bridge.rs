@@ -158,7 +158,7 @@ pub(super) async fn handle_request(
                                 payload: json!({"condition": condition}),
                             })))?;
                             return Ok(Served::NativeWait(super::native_wait::NativeWait::new(
-                                condition, ctx, req.reply, req.input,
+                                runtime, condition, ctx, req.reply, req.input,
                             )));
                         }
                         if parked
@@ -193,6 +193,7 @@ pub(super) async fn handle_request(
                                 payload: json!({"condition": condition, "tool": req.name}),
                             })))?;
                             return Ok(Served::NativeWait(super::native_wait::NativeWait::held(
+                                runtime,
                                 condition,
                                 ctx,
                                 req.reply,

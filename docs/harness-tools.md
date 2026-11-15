@@ -114,9 +114,12 @@ A delegated agent asks its parent with `send_message` to the parent, then
 on a reply from the recipient reaches the recipient at once, even while it
 waits on that descendant's task, and the interrupted wait is restored after
 its turn. Any other message from a child waits until the parent's condition is
-met. No count caps questions; only an exhausted budget or a cancel stops an
-agent from asking. A second `ask_user` in one turn joins the pending question,
-so the operator sees both and one reply answers them.
+met. This holds for a parked wait and for one an engine holds inside its turn
+for live background jobs; a held wait that ends before the answer says so. No
+count caps questions; only an exhausted budget or a cancel stops an agent from
+asking. A second `ask_user` in one turn joins the pending question while it is
+unanswered, so the operator sees both and a reply to either sequence answers
+them; after an answer, the new question is recorded on its own.
 
 ### Delegated workspaces
 

@@ -93,16 +93,51 @@ pub(super) struct NativeWait {
     /// Why a `wait_for` already ended (its job or deadline); it is answered
     /// at the driver loop's next pass, once the turn is back on a slot.
     ended: Option<String>,
+    _awaiting: AwaitedSenders,
+}
+
+/// Publishes the senders a native wait expects a message from while it is
+/// pending, so a waiting ancestor hears this agent's question at once.
+struct AwaitedSenders {
+    runtime: std::sync::Weak<Runtime>,
+    agent: AgentId,
+}
+
+impl AwaitedSenders {
+    fn register(runtime: &Arc<Runtime>, agent: AgentId, condition: &WaitCondition) -> Self {
+        let senders = condition.message_senders();
+        let mut waits = runtime.native_message_waits.lock();
+        debug_assert!(!waits.contains_key(&agent), "one native wait per agent");
+        if senders.is_empty() {
+            waits.remove(&agent);
+        } else {
+            waits.insert(agent, senders);
+        }
+        Self {
+            runtime: Arc::downgrade(runtime),
+            agent,
+        }
+    }
+}
+
+impl Drop for AwaitedSenders {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.upgrade() {
+            runtime.native_message_waits.lock().remove(&self.agent);
+        }
+    }
 }
 
 impl NativeWait {
     pub(super) fn new(
+        runtime: &Arc<Runtime>,
         condition: WaitCondition,
         ctx: &TurnCtx,
         reply: oneshot::Sender<(String, bool)>,
         input: Value,
     ) -> Self {
         Self {
+            _awaiting: AwaitedSenders::register(runtime, ctx.agent.id, &condition),
             condition,
             inbox_cursor: ctx.agent.inbox_cursor,
             input,
@@ -114,6 +149,7 @@ impl NativeWait {
 
     /// Hold the reply `content` of the parking `tool` until `condition`.
     pub(super) fn held(
+        runtime: &Arc<Runtime>,
         condition: WaitCondition,
         ctx: &TurnCtx,
         reply: oneshot::Sender<(String, bool)>,
@@ -127,7 +163,7 @@ impl NativeWait {
             "a held wait waits on a child or an answer: {condition:?}"
         );
         let asked = tool == "ask_user";
-        let mut wait = Self::new(condition, ctx, reply, input);
+        let mut wait = Self::new(runtime, condition, ctx, reply, input);
         wait.held = Some(Held {
             tool,
             content,
@@ -243,7 +279,8 @@ impl NativeWait {
         };
         let delivered = pending.as_ref().map(|p| p.message.text());
         let Some(held) = self.held.take() else {
-            let finished = self.finish(what, delivered.as_deref());
+            let unanswered = self.unanswered(runtime, ctx.agent.id);
+            let finished = self.finish(what, delivered.as_deref(), unanswered.as_deref());
             if finished.is_some()
                 && let Some(pending) = pending
             {
@@ -290,7 +327,36 @@ impl NativeWait {
     /// Answer a `wait_for`, handing over `delivered` when the engine cannot
     /// be steered and would otherwise never see what woke it. `None` when
     /// the reply could not be sent.
-    fn finish(self, reason: &str, delivered: Option<&str>) -> Option<(Value, (String, bool))> {
+    /// Says which awaited senders have not written yet, so a wait that ended
+    /// on something else is never read as the answer having arrived.
+    fn unanswered(&self, runtime: &Runtime, agent: AgentId) -> Option<String> {
+        let oracle = crate::wait::RuntimeOracle {
+            runtime,
+            agent,
+            inbox_cursor: self.inbox_cursor,
+        };
+        let missing: Vec<String> = self
+            .condition
+            .message_senders()
+            .into_iter()
+            .filter(|sender| !oracle.has_unconsumed_message_from(*sender))
+            .map(|sender| sender.to_string())
+            .collect();
+        (!missing.is_empty()).then(|| {
+            format!(
+                "No message from {} has arrived yet: call wait_for with message_from again \
+                 to keep waiting for it.",
+                missing.join(", ")
+            )
+        })
+    }
+
+    fn finish(
+        self,
+        reason: &str,
+        delivered: Option<&str>,
+        unanswered: Option<&str>,
+    ) -> Option<(Value, (String, bool))> {
         debug_assert!(!self.is_held(), "a held wait is released, never finished");
         // A closed MCP client needs no reply; the engine still owns its jobs.
         if self.reply.is_closed() {
@@ -299,6 +365,9 @@ impl NativeWait {
         let mut text = format!(
             "Wait ended: {reason}. Handle this event now: if a job finished, collect its result using the native tools. The native session and any remaining background jobs are still alive. Do not wait again for the job that just finished."
         );
+        if let Some(unanswered) = unanswered {
+            text.push_str(&format!(" {unanswered}"));
+        }
         if let Some(delivered) = delivered {
             text.push_str(&format!("\n\nDelivered with this reply:\n{delivered}"));
         }

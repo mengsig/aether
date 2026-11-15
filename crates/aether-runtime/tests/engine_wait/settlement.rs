@@ -410,3 +410,74 @@ async fn asking_after_a_long_lived_settle_on_the_engine_bridge_is_admitted() {
         .expect("the question is answerable after the settle");
     h.runtime.shutdown().await;
 }
+
+fn pending_seq(h: &Harness, agent: AgentId) -> (u64, String) {
+    let event = aether_runtime::commands::pending_question(h.store.as_ref(), agent)
+        .expect("pending")
+        .expect("a question is pending");
+    let EventKind::QuestionAsked { question } = event.kind else {
+        unreachable!("pending_question returns a question")
+    };
+    (event.seq, question)
+}
+
+fn reply(h: &Harness, agent: AgentId, seq: u64, text: &str) -> aether_runtime::Result<()> {
+    h.runtime
+        .reply_to_question(
+            agent,
+            seq,
+            vec![ContentBlock::text(text)],
+            Actor::user(),
+            None,
+        )
+        .map(|_| ())
+}
+
+/// A second question joins the first, and a reply the operator wrote to
+/// the first one still lands: it answers both.
+#[tokio::test]
+async fn a_reply_to_the_first_question_answers_a_joined_second_one() {
+    let mut h = harness(Duration::from_secs(5)).await;
+    let agent = start_coordinator(&h);
+    let turn = turn_of(&mut h, agent).await;
+    let (_, is_error) = call(&h, &turn, "ask_user", json!({"question": "which one?"})).await;
+    assert!(!is_error);
+    let (first, _) = pending_seq(&h, agent);
+    let (joined, is_error) =
+        call(&h, &turn, "ask_user", json!({"question": "which colour?"})).await;
+    assert!(!is_error && joined.contains("Question added"), "{joined}");
+    let (second, text) = pending_seq(&h, agent);
+    assert!(second > first);
+    assert_eq!(text, "which one?\n\nwhich colour?");
+    reply(&h, agent, first, "the left one, in blue").expect("the first seq still answers");
+    assert!(
+        reply(&h, agent, second, "again").is_err(),
+        "one reply closes both"
+    );
+    let _ = turn.end.send(());
+    h.runtime.shutdown().await;
+}
+
+/// A reply that lands before the second question is not folded into it:
+/// the new question waits on its own for its own answer.
+#[tokio::test]
+async fn a_question_after_the_reply_is_recorded_on_its_own() {
+    let mut h = harness(Duration::from_secs(5)).await;
+    let agent = start_coordinator(&h);
+    let turn = turn_of(&mut h, agent).await;
+    let (_, is_error) = call(&h, &turn, "ask_user", json!({"question": "which one?"})).await;
+    assert!(!is_error);
+    let (first, _) = pending_seq(&h, agent);
+    reply(&h, agent, first, "the left one").expect("reply");
+    let (alone, is_error) = call(&h, &turn, "ask_user", json!({"question": "which colour?"})).await;
+    assert!(!is_error && alone.contains("already answered"), "{alone}");
+    let (second, text) = pending_seq(&h, agent);
+    assert!(second > first);
+    assert_eq!(text, "which colour?");
+    assert!(
+        reply(&h, agent, first, "stale").is_err(),
+        "the answered seq is closed"
+    );
+    let _ = turn.end.send(());
+    h.runtime.shutdown().await;
+}

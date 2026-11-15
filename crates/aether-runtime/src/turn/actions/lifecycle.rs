@@ -268,6 +268,7 @@ fn ask_user(
 
 /// A turn waits on one answer, so a further question is recorded together
 /// with the pending one: the operator sees both and one reply answers them.
+/// Under the commit hold, so a reply cannot land between the check and it.
 fn add_to_question(
     runtime: &Arc<Runtime>,
     ctx: &TurnCtx,
@@ -283,14 +284,29 @@ fn add_to_question(
         !effects.terminal(),
         "a pending question refuses the settle that would end the agent"
     );
-    let combined = format!("{asked}\n\n{question}");
-    runtime.apply(Commit::new().event(ctx.draft(EventKind::QuestionAsked {
-        question: combined.clone(),
-    })))?;
-    effects.asked = Some(combined);
+    let hold = runtime.hold();
+    let pending = crate::commands::pending_question(runtime.store.as_ref(), ctx.agent.id)?;
+    let still_open = pending.is_some_and(
+        |event| matches!(&event.kind, EventKind::QuestionAsked { question } if *question == asked),
+    );
+    // An answer already queued wakes the agent; the new question waits alone.
+    let recorded = match still_open {
+        true => format!("{asked}\n\n{question}"),
+        false => question,
+    };
+    runtime.apply_held(
+        hold,
+        Commit::new().event(ctx.draft(EventKind::QuestionAsked {
+            question: recorded.clone(),
+        })),
+    )?;
+    effects.asked = Some(recorded);
+    let joined = match still_open {
+        true => "Question added to the one already pending; the operator sees both together.",
+        false => "The earlier question was already answered; this one is recorded on its own.",
+    };
     Ok(ToolOutcome::ok(format!(
-        "Question added to the one already pending; the operator sees both together. \
-         {TURN_ENDS_HERE} {ANSWER_WAKES}"
+        "{joined} {TURN_ENDS_HERE} {ANSWER_WAKES}"
     )))
 }
 

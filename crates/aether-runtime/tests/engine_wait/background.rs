@@ -764,3 +764,46 @@ async fn a_native_wait_retakes_only_under_its_supervisor_cap() {
     let first = child_of_first_root(&h);
     wait_reply_queues_behind(h, first, child_of_first_root).await;
 }
+
+/// An engine child keeping a background job alive holds its wait inside the
+/// turn. Its question still reaches a parent held on the child's task, and
+/// the parent's answer ends the child's wait.
+#[tokio::test]
+async fn a_native_waiting_childs_question_reaches_its_held_parent() {
+    let request = json!({"model": "claude-code/haiku", "effort": "low", "role": "worker",
+                         "objective": "first half", "wait": true});
+    let (mut h, turn, parent_wait) = held_call(job_harness().await, "delegate", request).await;
+    let parent = turn.agent;
+    let child = only_child(&h, parent);
+    let child_turn = turn_of(&mut h, child).await;
+    let question = json!({"to": parent, "content": "sqlite or postgres?"});
+    let (sent, is_error) = call(&h, &child_turn, "send_message", question).await;
+    assert!(!is_error, "{sent}");
+    let child_wait = hold(&h, &child_turn, "wait_for", json!({"message_from": parent})).await;
+
+    let woken = reply_of(parent_wait).await;
+    assert!(
+        woken.contains("question from") && woken.contains("sqlite or postgres?"),
+        "{woken}"
+    );
+    let (answered, is_error) = call(
+        &h,
+        &turn,
+        "send_message",
+        json!({"to": child, "content": "sqlite"}),
+    )
+    .await;
+    assert!(!is_error, "{answered}");
+    let got = reply_of(child_wait).await;
+    assert!(
+        got.starts_with("Wait ended:") && !got.contains("No message from"),
+        "{got}"
+    );
+    let answers = h.store.inbox(child, 0).expect("inbox");
+    assert!(
+        answers.iter().any(|item| matches!(&item.kind,
+            aether_core::inbox::InboxKind::Message { from: Actor::Agent { id }, .. } if *id == parent)),
+        "the parent's answer is in the child's inbox: {answers:?}"
+    );
+    h.runtime.shutdown().await;
+}

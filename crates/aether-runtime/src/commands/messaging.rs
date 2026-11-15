@@ -39,20 +39,30 @@ pub fn pending_question(store: &dyn Store, agent: AgentId) -> Result<Option<Even
     {
         return Ok(None);
     }
+    match answered_after(store, agent, asked.seq)? {
+        true => Ok(None),
+        false => Ok(Some(asked)),
+    }
+}
+
+/// Whether an operator has sent `agent` a message since event `seq`.
+fn answered_after(store: &dyn Store, agent: AgentId, seq: u64) -> Result<bool> {
+    let mut filter = EventFilter::own_events(agent);
     filter.types = vec!["message.sent".into()];
-    let mut after = asked.seq;
+    let mut after = seq;
     loop {
         let events = store.events(after, 128, &filter)?;
         for event in &events {
             if matches!(&event.kind, EventKind::MessageSent { from, to, .. }
                 if *to == agent && matches!(from, Actor::User { .. } | Actor::Client { .. }))
             {
-                return Ok(None);
+                return Ok(true);
             }
+            debug_assert!(event.seq > after, "events come in seq order");
             after = event.seq;
         }
         if events.len() < 128 {
-            return Ok(Some(asked));
+            return Ok(false);
         }
     }
 }
@@ -230,11 +240,34 @@ impl Runtime {
         to: AgentId,
         question_seq: u64,
     ) -> Result<()> {
-        match pending_question(self.store.as_ref(), to)? {
-            Some(asked) if asked.seq == question_seq => Ok(()),
-            _ => Err(RuntimeError::Invalid(format!(
+        let refused = || {
+            RuntimeError::Invalid(format!(
                 "question {question_seq} is not the pending question for agent {to}"
-            ))),
+            ))
+        };
+        let Some(latest) = pending_question(self.store.as_ref(), to)? else {
+            return Err(refused());
+        };
+        if latest.seq == question_seq {
+            return Ok(());
+        }
+        // A later question in the same turn joins this one, so a reply to it
+        // still answers both while nobody has replied since.
+        let mut filter = EventFilter::own_events(to);
+        filter.types = vec!["question.asked".into()];
+        let earlier = self
+            .store
+            .events(question_seq.saturating_sub(1), 1, &filter)?
+            .pop()
+            .filter(|e| e.seq == question_seq && e.actor.agent_id() == Some(to));
+        match earlier {
+            Some(_)
+                if question_seq < latest.seq
+                    && !answered_after(self.store.as_ref(), to, question_seq)? =>
+            {
+                Ok(())
+            }
+            _ => Err(refused()),
         }
     }
 
