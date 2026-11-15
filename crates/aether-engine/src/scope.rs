@@ -13,8 +13,8 @@ use aether_core::id::AgentId;
 pub(crate) const AGENT_ENV: &str = aether_core::agent::PROCESS_AGENT_ENV;
 
 /// The command to spawn `program` as an engine of `agent`. The caller still
-/// puts it in its own process group, spawns it with [`crate::spawn_gated`]
-/// and passes the child to [`adopt`].
+/// spawns it in a new session with [`crate::spawn_gated`] and passes the
+/// child to [`adopt`].
 pub(crate) fn command(program: &str, agent: Option<AgentId>) -> tokio::process::Command {
     let mut command = tokio::process::Command::new(program);
     if let Some(agent) = agent {

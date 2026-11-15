@@ -117,8 +117,6 @@ impl StartingDaemon {
     /// Spawn `command` detached, and clear the startup log beside `socket` so
     /// that whatever is found there afterwards is this daemon's.
     pub fn spawn(mut command: Command, socket: &Path) -> std::io::Result<Self> {
-        use std::os::unix::process::CommandExt as _;
-
         if socket.as_os_str().is_empty() {
             return Err(std::io::Error::new(
                 ErrorKind::InvalidInput,
@@ -140,11 +138,11 @@ impl StartingDaemon {
                 ));
             }
         }
+        aether_spawn::detach_session(&mut command);
         let child = command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .process_group(0)
             .spawn()?;
         Ok(Self { child, startup_log })
     }

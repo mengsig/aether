@@ -237,8 +237,6 @@ pub(super) async fn start(
     launch: Option<&crate::EngineLaunchContext>,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<Sandbox, EngineError> {
-    use std::os::unix::process::CommandExt as _;
-
     let dir = tempfile::Builder::new()
         .prefix("aether-codex-")
         .tempdir()
@@ -282,7 +280,6 @@ pub(super) async fn start(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
-    command.as_std_mut().process_group(0);
     aether_spawn::reset_signals(command.as_std_mut());
     crate::strip_hidden(&mut command, hidden_env);
     crate::export_temp_dir(&mut command, temp_dir);

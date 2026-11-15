@@ -225,8 +225,8 @@ fn git() -> Command {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .process_group(0);
+        .kill_on_drop(true);
+    aether_spawn::detach_session(command.as_std_mut());
     command
 }
 
