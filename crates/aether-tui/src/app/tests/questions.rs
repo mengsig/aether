@@ -366,3 +366,74 @@ fn a_reloaded_transcript_sees_that_a_question_was_answered() {
         "the reload brought the answered question back as open: {models:?}"
     );
 }
+
+fn answer_event(question_seq: u64, reply: bool) -> EventKind {
+    EventKind::Custom {
+        name: "question.answered".into(),
+        payload: serde_json::json!({
+            "question_seq": question_seq,
+            "message": MessageId::new().to_string(),
+            "reply": reply,
+        }),
+    }
+}
+
+#[test]
+fn a_targeted_answer_closes_only_its_own_question() {
+    let (mut app, id) = app_with_agent();
+    feed(&mut app, 9, id, asked("first?"));
+    feed(&mut app, 10, id, asked("second?"));
+    feed(&mut app, 20, id, answer_event(9, true));
+    feed(&mut app, 21, id, answer_event(999, true));
+    feed(
+        &mut app,
+        22,
+        id,
+        EventKind::Custom {
+            name: "question.answered".into(),
+            payload: serde_json::json!({"question_seq": "nine"}),
+        },
+    );
+
+    for (seq, kind) in (23..).zip(operator_reply(id, "one")) {
+        feed(&mut app, seq, id, kind);
+    }
+
+    let states: Vec<_> = models(&app)
+        .into_iter()
+        .filter_map(|m| match m {
+            CellModel::Question { state, .. } => Some(state),
+            _ => None,
+        })
+        .collect();
+    use crate::app::transcript::QuestionState::{Answered, Pending};
+    assert_eq!(states, vec![Answered, Pending]);
+    assert_eq!(needs_you_agents(&app), vec![id]);
+}
+
+#[test]
+fn a_plain_message_then_answers_for_every_question_closes_them_all() {
+    let (mut app, id) = app_with_agent();
+    feed(&mut app, 9, id, asked("first?"));
+    feed(&mut app, 10, id, asked("second?"));
+    for (seq, kind) in (11..).zip(operator_reply(id, "blue")) {
+        feed(&mut app, seq, id, kind);
+    }
+    feed(&mut app, 20, id, answer_event(9, false));
+    feed(&mut app, 21, id, answer_event(10, false));
+
+    assert!(needs_you_agents(&app).is_empty(), "{:?}", models(&app));
+}
+
+#[test]
+fn a_message_alone_keeps_questions_open_once_answers_are_recorded() {
+    let (mut app, id) = app_with_agent();
+    feed(&mut app, 9, id, asked("first?"));
+    feed(&mut app, 10, id, answer_event(9, true));
+    feed(&mut app, 11, id, asked("second?"));
+    for (seq, kind) in (12..).zip(operator_reply(id, "blue")) {
+        feed(&mut app, seq, id, kind);
+    }
+
+    assert_eq!(needs_you_agents(&app), vec![id], "{:?}", models(&app));
+}

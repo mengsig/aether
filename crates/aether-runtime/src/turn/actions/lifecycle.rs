@@ -39,7 +39,7 @@ fn open_task(
     }
     // Only the path that really settles the task is refused. A long_lived
     // agent's settle parks it on Inbox, so the question's own park holds.
-    if let Some(question) = &effects.asked
+    if let Some(question) = effects.last_asked()
         && !ctx.agent.config.long_lived
     {
         return Ok(Err(ToolOutcome::error(still_asking(
@@ -232,16 +232,8 @@ fn ask_user(
     effects: &mut ToolEffects,
     question: String,
 ) -> Result<ToolOutcome> {
-    // Honest only while someone waits on the answer: never recorded
-    // once the turn ends the agent, and never twice in a turn.
-    if let Some(asked) = &effects.asked {
-        return Ok(ToolOutcome::error(format!(
-            "You already asked the operator \"{}\" in this turn, and only one \
-             question can be waited on. {TURN_ENDS_HERE} Ask anything further \
-             after they reply.",
-            one_line(asked)
-        )));
-    }
+    // Honest only while someone waits on the answer: never recorded once
+    // the turn ends the agent. A further question is recorded on its own.
     if let Some(Next::Completed(_) | Next::Failed(_)) = &effects.next {
         return Ok(ToolOutcome::error(format!(
             "This turn already ended the agent, so nothing would be left waiting \
@@ -259,16 +251,33 @@ fn ask_user(
              their answer. {TURN_ENDS_HERE} Ask again once the approval is settled."
         )));
     }
-    runtime.apply(Commit::new().event(ctx.draft(EventKind::QuestionAsked {
-        question: question.clone(),
-    })))?;
-    effects.asked = Some(question.clone());
+    let seq = record_question(runtime, ctx, &question)?;
+    let earlier = effects.asked.len();
+    effects.record_question(seq, question);
     // Merged, not assigned: a wait this turn already recorded (say a
     // `delegate` it is waiting on) still has to be honoured.
     merge_wait(effects, WaitCondition::Inbox);
+    let alongside = match earlier {
+        0 => String::new(),
+        n => format!(" It waits on its own answer beside the {n} asked before it."),
+    };
     Ok(ToolOutcome::ok(format!(
-        "Question recorded for the operator to see. {TURN_ENDS_HERE} {ANSWER_WAKES}"
+        "Question recorded for the operator to see, as question {seq}.{alongside} \
+         {TURN_ENDS_HERE} {ANSWER_WAKES}"
     )))
+}
+
+/// Record `question` as its own `question.asked`; its seq is its identity.
+fn record_question(runtime: &Arc<Runtime>, ctx: &TurnCtx, question: &str) -> Result<u64> {
+    let recorded = runtime.apply(Commit::new().event(ctx.draft(EventKind::QuestionAsked {
+        question: question.to_owned(),
+    })))?;
+    let asked = recorded
+        .iter()
+        .find(|event| matches!(event.kind, EventKind::QuestionAsked { .. }))
+        .ok_or_else(|| RuntimeError::Invalid("the question was not recorded".into()))?;
+    debug_assert_eq!(recorded.len(), 1, "a question is recorded alone");
+    Ok(asked.seq)
 }
 
 /// Task settlement, waiting, checkpoints and operator questions.

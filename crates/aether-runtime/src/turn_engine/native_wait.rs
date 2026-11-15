@@ -76,7 +76,10 @@ struct Held {
     tool: String,
     /// The action's own reply, written for a turn that ends with it.
     content: String,
-    asked: bool,
+    /// The `ask_user` question this wait is for, by seq.
+    question: Option<u64>,
+    /// The inbox seq when it was asked: what came before is not its answer.
+    asked_at_inbox: u64,
     /// Jobs that finished while the reply waited, oldest first.
     finished: Vec<String>,
 }
@@ -147,30 +150,42 @@ impl NativeWait {
         }
     }
 
-    /// Hold the reply `content` of the parking `tool` until `condition`.
+    /// Hold the reply `content` of a waiting `delegate`, or of the `ask_user`
+    /// that recorded `question`, until `condition`.
     pub(super) fn held(
         runtime: &Arc<Runtime>,
         condition: WaitCondition,
         ctx: &TurnCtx,
         reply: oneshot::Sender<(String, bool)>,
         input: Value,
-        tool: String,
+        question: Option<u64>,
         content: String,
-    ) -> Self {
-        debug_assert!(matches!(tool.as_str(), "ask_user" | "delegate"), "{tool}");
+    ) -> Result<Self> {
         debug_assert!(
             !condition.task_ids().is_empty() || condition == WaitCondition::Inbox,
             "a held wait waits on a child or an answer: {condition:?}"
         );
-        let asked = tool == "ask_user";
+        let tool = match question {
+            Some(_) => "ask_user",
+            None => "delegate",
+        };
+        let asked_at_inbox = match question {
+            Some(_) => latest_inbox_seq(runtime, ctx)?,
+            None => ctx.agent.inbox_cursor,
+        };
+        debug_assert!(
+            asked_at_inbox >= ctx.agent.inbox_cursor,
+            "the inbox only grows"
+        );
         let mut wait = Self::new(runtime, condition, ctx, reply, input);
         wait.held = Some(Held {
-            tool,
+            tool: tool.to_owned(),
             content,
-            asked,
+            question,
+            asked_at_inbox,
             finished: Vec::new(),
         });
-        wait
+        Ok(wait)
     }
 
     pub(super) fn is_held(&self) -> bool {
@@ -178,9 +193,10 @@ impl NativeWait {
     }
 
     /// Why a call cannot run while this wait is pending: one wait at a time,
-    /// and a held wait's task may not be settled under it.
+    /// and a held wait's task may not be settled under it. A question is never
+    /// refused: it is recorded on its own and this wait is kept.
     pub(super) fn refusal(&self, name: &str, input: &Value) -> Option<&'static str> {
-        if parks_turn(name, input) {
+        if parks_turn(name, input) && name != "ask_user" {
             return Some("A native background wait is already pending in this session.");
         }
         let settles = matches!(name, "complete_task" | "fail_task");
@@ -211,22 +227,34 @@ impl NativeWait {
         if let Some(why) = &self.ended {
             return Ok(Some(why.clone()));
         }
-        let oracle = crate::wait::RuntimeOracle {
-            runtime,
-            agent: ctx.agent.id,
-            inbox_cursor: self.inbox_cursor,
-        };
-        if !self.is_held() {
+        let Some(held) = &self.held else {
+            let oracle = crate::wait::RuntimeOracle {
+                runtime,
+                agent: ctx.agent.id,
+                inbox_cursor: self.inbox_cursor,
+            };
             let woken = oracle.has_unconsumed_inbox() || self.condition.is_satisfied(&oracle);
             return Ok(woken.then(|| UNHELD_WAKE.to_owned()));
+        };
+        if let Some(seq) = held.question
+            && !crate::commands::question_is_open(runtime.store.as_ref(), ctx.agent.id, seq)?
+        {
+            return Ok(Some(format!("the operator answered question {seq}")));
         }
         // A held wait ends as its parked turn would wake: on its condition,
         // or on what reaches a waiting agent at once (a person, its parent).
+        // A question's wait hears only what came after it was asked.
+        let since = self.inbox_cursor.max(held.asked_at_inbox);
+        let oracle = crate::wait::RuntimeOracle {
+            runtime,
+            agent: ctx.agent.id,
+            inbox_cursor: since,
+        };
         if self.condition.is_satisfied(&oracle) {
             return Ok(Some(held_wake(&self.condition, &oracle)));
         }
         let mut unheard = ctx.agent.clone();
-        unheard.inbox_cursor = unheard.inbox_cursor.max(handed_up_to);
+        unheard.inbox_cursor = since.max(handed_up_to);
         crate::scheduler::urgent_inbox(runtime, &unheard)
     }
 
@@ -288,16 +316,20 @@ impl NativeWait {
             }
             return Ok(finished.map(|(input, reply)| ("wait_for".to_owned(), input, reply)));
         };
+        let open = open_questions(runtime, ctx.agent.id)?;
+        let still_open: Vec<u64> = effects
+            .asked_seqs()
+            .into_iter()
+            .filter(|seq| open.contains(seq))
+            .collect();
         let result = (
-            held_reply(what, &held, delivered.as_deref(), follows),
+            held_reply(what, &held, delivered.as_deref(), follows, &still_open),
             false,
         );
         if self.reply.send(result.clone()).is_err() {
             return Ok(None);
         }
-        if held.asked {
-            effects.question_answered();
-        }
+        effects.questions_answered(|seq| still_open.contains(&seq));
         steering.retry |= follows;
         if let Some(pending) = pending {
             record_consumed(runtime, ctx, pending)?;
@@ -380,9 +412,33 @@ impl NativeWait {
     }
 }
 
+/// The seqs of `agent`'s questions still waiting for an answer.
+fn open_questions(runtime: &Runtime, agent: AgentId) -> Result<Vec<u64>> {
+    let open = crate::commands::pending_questions(runtime.store.as_ref(), agent)?;
+    Ok(open.iter().map(|asked| asked.seq).collect())
+}
+
+/// The newest inbox item's seq, or the cursor when nothing is unconsumed.
+fn latest_inbox_seq(runtime: &Runtime, ctx: &TurnCtx) -> Result<u64> {
+    let cursor = ctx.agent.inbox_cursor;
+    let items = runtime.store.inbox(ctx.agent.id, cursor)?;
+    debug_assert!(
+        items.iter().all(|item| item.seq > cursor),
+        "inbox reads after the cursor"
+    );
+    Ok(items.last().map_or(cursor, |item| item.seq))
+}
+
 /// A held action's reply once its wait ended inside the turn: what ended it,
-/// the jobs that finished meanwhile, what arrived, then the action's own reply.
-fn held_reply(what: &str, held: &Held, delivered: Option<&str>, follows: bool) -> String {
+/// the jobs that finished meanwhile, what arrived, the questions still open,
+/// then the action's own reply.
+fn held_reply(
+    what: &str,
+    held: &Held,
+    delivered: Option<&str>,
+    follows: bool,
+    still_open: &[u64],
+) -> String {
     debug_assert!(!(follows && delivered.is_some()), "delivered twice");
     let mut note = format!("Wait ended: {what}.");
     if !held.finished.is_empty() {
@@ -399,6 +455,14 @@ fn held_reply(what: &str, held: &Held, delivered: Option<&str>, follows: bool) -
     }
     if follows {
         note.push_str(" What arrived follows as your next input.");
+    }
+    if !still_open.is_empty() {
+        let seqs: Vec<String> = still_open.iter().map(u64::to_string).collect();
+        note.push_str(&format!(
+            "\n\nStill waiting for the operator's answer: question {}. Nothing that arrived \
+             answers it; wait_for to hear its answer.",
+            seqs.join(", question ")
+        ));
     }
     // The action's structured payload stays the reply's last line.
     format!("{note}\n\n{}", crate::turn::unparked_reply(&held.content))

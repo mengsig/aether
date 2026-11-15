@@ -1017,12 +1017,18 @@ Reply `attention` (`Attention`):
 | --- | --- | --- |
 | `last_seq` | integer | The log position this was read at. |
 | `approvals` | `ApprovalRequest[]` | Pending approvals, oldest first; the same items `list_approvals` returns. Each names the tool, its `description` and its `argument`, which is what is being approved. |
-| `questions` | `PendingQuestion[]` | Questions nobody has answered or superseded, oldest first. |
+| `questions` | `PendingQuestion[]` | Questions nobody has answered, oldest first; an agent may have several. |
 | `agents` | `AgentAttention[]` | Failed agents, and agents blocked on something only the operator can clear. Archived agents are excluded. Oldest first. |
 
-A question is pending while it is the latest `question.asked` of a live,
-unarchived agent and no operator (`user` or `client`) message to that agent
-has followed it, the rule `reply_to_question` applies. A failed agent is
+Each `question.asked` of a live, unarchived agent is its own question,
+pending until its own answer, the rule `reply_to_question` applies. A
+`reply_to_question` answers only the question whose `question_seq` it names;
+any other operator (`user` or `client`) message to the agent answers every
+question pending when it lands. Each answered question is closed by a custom
+event `question.answered` with payload `{question_seq, message, reply}`
+(`reply` is true for a targeted reply), recorded right after the message.
+History from before that event existed reads as before: an operator's message
+answered every earlier question. A failed agent is
 listed unless it has been restarted. A blocked agent is listed when its block
 is an inspection or exhausted credit; one waiting on a dependency or a
 resource clears itself and is not.

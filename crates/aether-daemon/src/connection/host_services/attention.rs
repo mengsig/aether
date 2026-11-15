@@ -4,7 +4,7 @@ use aether_core::agent::{Agent, AgentStatus, AgentStatusKind};
 use aether_core::event::EventKind;
 use aether_protocol::remote::{AgentAttention, Attention, AttentionKind, PendingQuestion};
 use aether_protocol::{ErrorReply, Reply};
-use aether_runtime::{RuntimeError, pending_question};
+use aether_runtime::RuntimeError;
 use aether_store::{AgentFilter, Store};
 
 use crate::Daemon;
@@ -57,34 +57,33 @@ fn read_attention(store: &dyn Store, last_seq: u64) -> Result<Attention, Runtime
     })
 }
 
-/// The latest unanswered question of each live agent, oldest first.
+/// Every unanswered question of each live agent, oldest first.
 fn pending_questions(
     store: &dyn Store,
     agents: &[Agent],
 ) -> Result<Vec<PendingQuestion>, RuntimeError> {
     let mut questions = Vec::new();
     for agent in agents.iter().filter(|agent| agent.is_live()) {
-        let Some(asked) = pending_question(store, agent.id)? else {
-            continue;
-        };
-        let EventKind::QuestionAsked { question } = &asked.kind else {
-            continue;
-        };
-        questions.push(PendingQuestion {
-            agent: agent.id,
-            agent_name: named(agent),
-            question_seq: asked.seq,
-            question: truncated(question, MAX_TEXT_CHARS),
-            asked_at: asked.at,
-        });
+        for asked in aether_runtime::pending_questions(store, agent.id)? {
+            let EventKind::QuestionAsked { question } = &asked.kind else {
+                continue;
+            };
+            questions.push(PendingQuestion {
+                agent: agent.id,
+                agent_name: named(agent),
+                question_seq: asked.seq,
+                question: truncated(question, MAX_TEXT_CHARS),
+                asked_at: asked.at,
+            });
+        }
     }
     questions.sort_by_key(|question| question.question_seq);
     questions.truncate(MAX_ITEMS);
     assert!(
         questions
             .windows(2)
-            .all(|pair| pair[0].agent != pair[1].agent),
-        "an agent has at most one pending question"
+            .all(|pair| pair[0].question_seq < pair[1].question_seq),
+        "each question is listed once, under its own seq"
     );
     Ok(questions)
 }

@@ -16,6 +16,7 @@ mod archive;
 mod creation;
 mod messaging;
 mod pause;
+mod questions;
 mod recovery;
 mod repository;
 mod status;
@@ -59,8 +60,8 @@ pub struct CreateAgentSpec {
 }
 
 pub use aether_core::inbox::MessageDelivery;
-pub use messaging::pending_question;
 pub(crate) use messaging::{check_payload_size, check_text_size};
+pub use questions::{QUESTION_ANSWERED, pending_question, pending_questions, question_is_open};
 
 /// What a pause moved (§3.1). `changed` is empty when every target was
 /// already paused; `mid_turn` names those still finishing a turn, so a caller

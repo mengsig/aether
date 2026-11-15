@@ -37,6 +37,13 @@ release is also the text of its GitHub release.
   and `wait_for` `message_from` the parent.
 - `send_message`, `wait_for` and `ask_user` are offered whatever an agent's
   tool exposure says: no allowlist can take away the way to ask.
+- **Questions are keyed by sequence.** Every `ask_user` records its own
+  question; a second one in a turn, or one asked while a native background
+  wait is held, is no longer refused. `reply_to_question` answers only the
+  question it names, a person's ordinary message answers every question
+  pending when it lands, and each answered question is closed by its own
+  `question.answered` custom event. `get_attention` lists every open question
+  of an agent, and the TUI retires only the answered question's cell.
 
 ### Fixed
 

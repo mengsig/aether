@@ -117,9 +117,12 @@ its turn. Any other message from a child waits until the parent's condition is
 met. This holds for a parked wait and for one an engine holds inside its turn
 for live background jobs; a held wait that ends before the answer says so. No
 count caps questions; only an exhausted budget or a cancel stops an agent from
-asking. One `ask_user` is pending per turn: a second in the same turn is
-refused with the first question quoted, and the agent asks the rest after the
-reply.
+asking. Each `ask_user` is its own question under its own sequence, never
+refused for being a second: one asked while an engine holds a native wait for
+live background jobs is recorded and the held wait is kept. A wait for a
+question hears only what arrived after it was asked, and an answer addressed
+to one question never answers another. When a held wait ends, its reply lists
+the questions still unanswered.
 
 ### Delegated workspaces
 

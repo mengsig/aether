@@ -841,7 +841,7 @@ pub(super) async fn drive(
                         let (tool, tool_input) = (req.name.clone(), req.input.clone());
                         let (arrived, serving) = (req.arrived, std::time::Instant::now());
                         let served =
-                            handle_request(runtime, ctx, tool_ctx, req, effects, cancel, park.is_some(), !background.is_empty(), engine_left(&mut run.events, &mut kept))
+                            handle_request(runtime, ctx, tool_ctx, req, effects, cancel, park.is_some(), native_state(&native_wait, &background), engine_left(&mut run.events, &mut kept))
                                 .await?;
                         super::bridge::log_slow_call(ctx.agent.id, &tool, arrived, serving);
                         if let Served::Ran(Some(result)) = &served {
@@ -1098,6 +1098,19 @@ pub(super) async fn drive(
         uncommitted,
         stalled,
     })
+}
+
+/// What native work a bridge call runs beside: a pending wait, jobs, or none.
+fn native_state(
+    native_wait: &Option<super::native_wait::NativeWait>,
+    background: &BTreeSet<String>,
+) -> super::bridge::Native {
+    use super::bridge::Native;
+    match (native_wait.is_some(), background.is_empty()) {
+        (true, _) => Native::Waiting,
+        (false, false) => Native::Jobs,
+        (false, true) => Native::Idle,
+    }
 }
 
 /// The outstanding calls the tool-call bound applies to: all but those the

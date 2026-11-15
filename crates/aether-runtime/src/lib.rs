@@ -65,8 +65,8 @@ use tokio_util::sync::CancellationToken;
 pub use approval::{Gate, Remember};
 pub use bus::{BusMessage, DeltaKind, DeltaStream, EventBus};
 pub use commands::{
-    AgentUpdate, CreateAgentSpec, CreateTaskSpec, MessageDelivery, RuntimeStatus, STATUS_DEADLINE,
-    pending_question,
+    AgentUpdate, CreateAgentSpec, CreateTaskSpec, MessageDelivery, QUESTION_ANSWERED,
+    RuntimeStatus, STATUS_DEADLINE, pending_question, pending_questions, question_is_open,
 };
 pub use retention::HistorySweep;
 

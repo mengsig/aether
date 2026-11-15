@@ -253,11 +253,15 @@ async fn a_stalled_bridge_call_cannot_postpone_the_park_s_stop() {
     h.runtime.shutdown().await;
 }
 
-type Pending = tokio::task::JoinHandle<aether_runtime::Result<(String, bool)>>;
+pub(super) type Pending = tokio::task::JoinHandle<aether_runtime::Result<(String, bool)>>;
 
 /// The coordinator's call `name` while its engine still runs the `build`
 /// job: a parking call held for the native wait instead.
-async fn held_call(mut h: Harness, name: &str, input: Value) -> (Harness, TurnStarted, Pending) {
+pub(super) async fn held_call(
+    mut h: Harness,
+    name: &str,
+    input: Value,
+) -> (Harness, TurnStarted, Pending) {
     let parent = start_coordinator(&h);
     let turn = turn_of(&mut h, parent).await;
     let pending = hold(&h, &turn, name, input).await;
@@ -265,7 +269,7 @@ async fn held_call(mut h: Harness, name: &str, input: Value) -> (Harness, TurnSt
 }
 
 /// Send `turn`'s call `name` and check that it is held, not parked.
-async fn hold(h: &Harness, turn: &TurnStarted, name: &str, input: Value) -> Pending {
+pub(super) async fn hold(h: &Harness, turn: &TurnStarted, name: &str, input: Value) -> Pending {
     let parent = turn.agent;
     turn.events
         .upgrade()
@@ -311,7 +315,7 @@ fn only_child(h: &Harness, parent: AgentId) -> AgentId {
     children.remove(0).id
 }
 
-async fn job_harness() -> Harness {
+pub(super) async fn job_harness() -> Harness {
     harness_full(
         Duration::from_millis(100),
         OnKill::Report(vec![cancelled_with(Usage::default())]),
@@ -323,7 +327,7 @@ async fn job_harness() -> Harness {
     .await
 }
 
-async fn reply_of(pending: Pending) -> String {
+pub(super) async fn reply_of(pending: Pending) -> String {
     let (reply, error) = tokio::time::timeout(Duration::from_secs(2), pending)
         .await
         .unwrap()
@@ -359,10 +363,10 @@ async fn ask_user_keeps_running_native_jobs_until_the_answer() {
         .unwrap();
     let reply = reply_of(pending).await;
     assert!(
-        reply.starts_with("Wait ended: a message arrived.")
+        reply.starts_with("Wait ended: the operator answered question ")
             && reply.contains("Delivered with this reply:")
             && reply.contains("the left half")
-            && reply.ends_with("Question recorded for the operator to see."),
+            && reply.contains("Question recorded for the operator to see, as question "),
         "{reply}"
     );
     assert!(!turn.observed.stopped() && !turn.observed.stdin_closed());

@@ -249,20 +249,33 @@ fn admits_after_park_admits_the_first_ask_user_as_a_merging_wait() {
     assert!(after_long_lived_settle.admits_after_park(&ask, true));
 }
 
-/// A second question is refused regardless of `long_lived`: only the
-/// first one is a merging wait.
+/// A second question is admitted regardless of `long_lived`: it is its own
+/// question, waiting on its own answer.
 #[test]
-fn admits_after_park_never_admits_a_second_ask_user() {
+fn admits_after_park_admits_a_second_ask_user() {
     let effects = ToolEffects {
         next: Some(Next::Waiting(WaitCondition::Inbox)),
-        asked: Some("already asked".into()),
+        asked: vec![(7, "already asked".into())],
         ..Default::default()
     };
     let ask = HarnessAction::AskUser {
         question: "again?".into(),
     };
-    assert!(!effects.admits_after_park(&ask, true));
-    assert!(!effects.admits_after_park(&ask, false));
+    assert!(effects.admits_after_park(&ask, true));
+    assert!(effects.admits_after_park(&ask, false));
+}
+
+/// Only the questions answered inside the turn are forgotten; the rest keep
+/// guarding the settle under their own seq.
+#[test]
+fn questions_answered_keeps_each_open_question() {
+    let mut effects = ToolEffects::default();
+    effects.record_question(3, "first?".into());
+    effects.record_question(9, "second?".into());
+    let answered = effects.questions_answered(|seq| seq == 9);
+    assert_eq!(answered, [3]);
+    assert_eq!(effects.asked_seqs(), [9]);
+    assert_eq!(effects.last_asked(), Some("second?"));
 }
 
 /// A question that would be swallowed by a pending approval's own wait is

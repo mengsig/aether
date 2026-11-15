@@ -53,10 +53,10 @@ async fn failing_a_task_after_asking_in_the_same_turn_is_refused() {
     );
 }
 
-/// A second `ask_user` in the same batch is refused - only one question can
-/// be waited on per turn.
+/// A second `ask_user` in the same batch is never refused: it is its own
+/// question, recorded under its own seq beside the first.
 #[tokio::test]
-async fn asking_twice_in_the_same_turn_is_refused() {
+async fn asking_twice_in_the_same_turn_records_two_questions() {
     let h = harness(vec![ScriptedClient::tool_calls(
         &[
             ("ask_user", json!({"question": "which colour?"})),
@@ -79,14 +79,6 @@ async fn asking_twice_in_the_same_turn_is_refused() {
     })
     .await;
 
-    let question_events = events
-        .iter()
-        .filter(|e| e.type_name() == "question.asked")
-        .count();
-    assert_eq!(
-        question_events, 1,
-        "only the first question was recorded: {events:?}"
-    );
     let outcomes: Vec<_> = events
         .iter()
         .filter_map(|e| match &e.kind {
@@ -95,10 +87,23 @@ async fn asking_twice_in_the_same_turn_is_refused() {
         })
         .collect();
     assert!(
-        outcomes
-            .iter()
-            .any(|o| o.is_error && o.content.contains("which colour?")),
-        "the second question is refused, naming the one already asked: {outcomes:?}"
+        outcomes.iter().all(|o| !o.is_error),
+        "neither question is refused: {outcomes:?}"
+    );
+    h.wait_until(agent.id, |s| matches!(s, AgentStatus::Waiting { .. }))
+        .await;
+    let pending = aether_runtime::pending_questions(h.store.as_ref(), agent.id).expect("pending");
+    let texts: Vec<&str> = pending
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EventKind::QuestionAsked { question } => Some(question.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        texts,
+        ["which colour?", "which shade?"],
+        "each is its own question"
     );
 }
 

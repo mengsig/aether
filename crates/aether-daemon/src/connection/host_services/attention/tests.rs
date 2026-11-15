@@ -126,8 +126,21 @@ async fn a_pending_approval_says_what_is_being_approved() {
     daemon.runtime.shutdown().await;
 }
 
+fn reply(daemon: &Daemon, agent: AgentId, seq: u64, text: &str) {
+    daemon
+        .runtime
+        .reply_to_question(
+            agent,
+            seq,
+            vec![ContentBlock::text(text)],
+            Actor::user(),
+            None,
+        )
+        .expect("reply");
+}
+
 #[tokio::test]
-async fn a_question_is_pending_until_the_operator_answers_or_the_agent_asks_again() {
+async fn each_question_is_pending_until_its_own_answer() {
     let (daemon, _config) = daemon().await;
     let agent = create(&daemon, "asker");
     let first = ask(&daemon, agent.id, "Which branch?");
@@ -150,20 +163,19 @@ async fn a_question_is_pending_until_the_operator_answers_or_the_agent_asks_agai
     );
 
     let second = ask(&daemon, agent.id, "Or this one?");
-    let superseded = attention(&daemon).await;
-    assert_eq!(superseded.questions.len(), 1);
-    assert_eq!(superseded.questions[0].question_seq, second);
+    let both = attention(&daemon).await;
+    let seqs: Vec<u64> = both.questions.iter().map(|q| q.question_seq).collect();
+    assert_eq!(
+        seqs,
+        [first, second],
+        "a second question supersedes nothing"
+    );
 
-    daemon
-        .runtime
-        .reply_to_question(
-            agent.id,
-            second,
-            vec![ContentBlock::text("main")],
-            Actor::user(),
-            None,
-        )
-        .expect("reply");
+    reply(&daemon, agent.id, second, "main");
+    let one_left = attention(&daemon).await;
+    let seqs: Vec<u64> = one_left.questions.iter().map(|q| q.question_seq).collect();
+    assert_eq!(seqs, [first], "a reply answers only its own question");
+    reply(&daemon, agent.id, first, "that one");
     let answered = attention(&daemon).await;
     assert!(answered.questions.is_empty());
     assert!(answered.last_seq > second, "the reply is in the position");

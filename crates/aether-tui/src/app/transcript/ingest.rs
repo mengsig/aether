@@ -66,6 +66,9 @@ pub(super) struct Private {
     /// What a stop drew from a stream it cut short, until a message for that
     /// invocation lands: one adding nothing to it is not drawn again.
     cut: Option<CutStream>,
+    /// Set once a `question.answered` event is seen; from then on an operator
+    /// message closes no question by itself.
+    answers_recorded: bool,
 }
 
 /// A delivered message awaiting `InboxConsumed`: who sent it, its text, its
@@ -415,6 +418,23 @@ impl AgentTranscript {
                 }
             });
         }
+    }
+
+    fn answer_question(&mut self, question_seq: u64) {
+        let id = self.cells.iter().find_map(|c| match c.model {
+            CellModel::Question { seq, state, .. }
+                if seq == question_seq && state == super::QuestionState::Pending =>
+            {
+                Some(c.id)
+            }
+            _ => None,
+        });
+        let Some(id) = id else { return };
+        self.update(id, |m| {
+            if let CellModel::Question { state, .. } = m {
+                *state = super::QuestionState::Answered;
+            }
+        });
     }
 
     fn close_calls(&mut self, at: Timestamp) {
@@ -1642,6 +1662,12 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
                 notice(t, at, NoticeKind::Note(note.level), text);
             }
         }
+        EventKind::Custom { name, payload } if name == "question.answered" => {
+            t.private.answers_recorded = true;
+            if let Some(question_seq) = payload["question_seq"].as_u64() {
+                t.answer_question(question_seq);
+            }
+        }
         EventKind::Custom { name, payload } if name == "store.write_failed" => {
             // Recorded after writes resume: an outage notice is history, not a live hold.
             let during = payload["during"].as_str().unwrap_or("a write");
@@ -2007,7 +2033,9 @@ fn consume_inbox(t: &mut AgentTranscript, at: Timestamp, items: &[InboxItemId]) 
         } = t.private.inbox.remove(pos);
         if from == UserFrom::Operator {
             retire_steer(t, &text, at);
-            t.close_questions(super::QuestionState::Answered);
+            if !t.private.answers_recorded {
+                t.close_questions(super::QuestionState::Answered);
+            }
         }
         if let Some(id) = pending {
             if let Some(cell) = t.pending_messages.remove(&id) {

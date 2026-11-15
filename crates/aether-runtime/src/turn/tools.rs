@@ -115,17 +115,42 @@ pub(super) fn unavailable(
 pub(crate) struct ToolEffects {
     pub(super) pending_approvals: Vec<ApprovalId>,
     pub(crate) next: Option<Next>,
-    /// A question recorded this turn promises the agent parks on its answer,
-    /// so nothing later in the turn may end the agent or ask again.
-    pub(super) asked: Option<String>,
+    /// The questions recorded this turn, by seq, oldest first. Each promises
+    /// the agent waits on its answer, so nothing may end the agent meanwhile.
+    pub(super) asked: Vec<(u64, String)>,
 }
 
 impl ToolEffects {
-    /// This turn's question was answered inside it: it no longer blocks a
-    /// settle or a further question.
-    pub(crate) fn question_answered(&mut self) {
-        debug_assert!(self.asked.is_some(), "no question was asked");
-        self.asked = None;
+    /// Record a question asked this turn under its own seq.
+    pub(crate) fn record_question(&mut self, seq: u64, question: String) {
+        assert!(
+            self.asked.last().is_none_or(|(last, _)| *last < seq),
+            "questions are recorded in the order they were asked"
+        );
+        debug_assert!(
+            !question.trim().is_empty(),
+            "a recorded question is never empty"
+        );
+        self.asked.push((seq, question));
+    }
+
+    /// Forget the questions answered inside this turn, keeping those
+    /// `still_open` says wait on their own answer; returns what was answered.
+    pub(crate) fn questions_answered(&mut self, still_open: impl Fn(u64) -> bool) -> Vec<u64> {
+        let (open, answered): (Vec<_>, Vec<_>) =
+            self.asked.drain(..).partition(|(seq, _)| still_open(*seq));
+        self.asked = open;
+        answered.into_iter().map(|(seq, _)| seq).collect()
+    }
+
+    /// The seqs of the questions asked this turn that still wait.
+    pub(crate) fn asked_seqs(&self) -> Vec<u64> {
+        self.asked.iter().map(|(seq, _)| *seq).collect()
+    }
+
+    /// The question asked last this turn that is still waiting.
+    pub(crate) fn last_asked(&self) -> Option<&str> {
+        self.asked.last().map(|(_, question)| question.as_str())
     }
 
     pub(crate) fn terminal(&self) -> bool {
@@ -183,11 +208,10 @@ impl ToolEffects {
             // into whatever wait already parked the turn (an earlier
             // `WaitFor`/delegate-wait, or a long_lived settle's `Inbox`)
             // exactly like `apply_action`'s own `AskUser` arm does on the
-            // batch path. Only a second question, a pending approval, or a
-            // genuinely terminal settle refuse it.
+            // batch path. A further question is its own; only a pending
+            // approval or a genuinely terminal settle refuse it.
             Decides::Asks => {
-                self.asked.is_none()
-                    && self.pending_approvals.is_empty()
+                self.pending_approvals.is_empty()
                     && !matches!(self.next, Some(Next::Completed(_) | Next::Failed(_)))
             }
         }
@@ -196,7 +220,7 @@ impl ToolEffects {
     /// A refusal naming the question the turn is parked on, for a caller whose
     /// own message is generic. `None`: nothing was asked.
     pub(crate) fn refusal_for_asked(&self, action: &HarnessAction) -> Option<String> {
-        let question = self.asked.as_deref()?;
+        let question = self.last_asked()?;
         match action {
             HarnessAction::CompleteTask { .. } => {
                 Some(still_asking("complete", "completed", question))
