@@ -249,10 +249,10 @@ fn admits_after_park_admits_the_first_ask_user_as_a_merging_wait() {
     assert!(after_long_lived_settle.admits_after_park(&ask, true));
 }
 
-/// A second question is admitted regardless of `long_lived`: it joins the
-/// pending one instead of being refused.
+/// A second question is refused regardless of `long_lived`: only the
+/// first one is a merging wait.
 #[test]
-fn admits_after_park_admits_a_second_ask_user_into_the_pending_one() {
+fn admits_after_park_never_admits_a_second_ask_user() {
     let effects = ToolEffects {
         next: Some(Next::Waiting(WaitCondition::Inbox)),
         asked: Some("already asked".into()),
@@ -261,8 +261,8 @@ fn admits_after_park_admits_a_second_ask_user_into_the_pending_one() {
     let ask = HarnessAction::AskUser {
         question: "again?".into(),
     };
-    assert!(effects.admits_after_park(&ask, true));
-    assert!(effects.admits_after_park(&ask, false));
+    assert!(!effects.admits_after_park(&ask, true));
+    assert!(!effects.admits_after_park(&ask, false));
 }
 
 /// A question that would be swallowed by a pending approval's own wait is

@@ -39,30 +39,20 @@ pub fn pending_question(store: &dyn Store, agent: AgentId) -> Result<Option<Even
     {
         return Ok(None);
     }
-    match answered_after(store, agent, asked.seq)? {
-        true => Ok(None),
-        false => Ok(Some(asked)),
-    }
-}
-
-/// Whether an operator has sent `agent` a message since event `seq`.
-fn answered_after(store: &dyn Store, agent: AgentId, seq: u64) -> Result<bool> {
-    let mut filter = EventFilter::own_events(agent);
     filter.types = vec!["message.sent".into()];
-    let mut after = seq;
+    let mut after = asked.seq;
     loop {
         let events = store.events(after, 128, &filter)?;
         for event in &events {
             if matches!(&event.kind, EventKind::MessageSent { from, to, .. }
                 if *to == agent && matches!(from, Actor::User { .. } | Actor::Client { .. }))
             {
-                return Ok(true);
+                return Ok(None);
             }
-            debug_assert!(event.seq > after, "events come in seq order");
             after = event.seq;
         }
         if events.len() < 128 {
-            return Ok(false);
+            return Ok(Some(asked));
         }
     }
 }
@@ -240,19 +230,11 @@ impl Runtime {
         to: AgentId,
         question_seq: u64,
     ) -> Result<()> {
-        let refused = || {
-            RuntimeError::Invalid(format!(
+        match pending_question(self.store.as_ref(), to)? {
+            Some(asked) if asked.seq == question_seq => Ok(()),
+            _ => Err(RuntimeError::Invalid(format!(
                 "question {question_seq} is not the pending question for agent {to}"
-            ))
-        };
-        let Some(latest) = pending_question(self.store.as_ref(), to)? else {
-            return Err(refused());
-        };
-        // A joined question supersedes the earlier seq; a stale reply is refused
-        // visibly so the operator answers the question as it stands now.
-        match latest.seq == question_seq {
-            true => Ok(()),
-            false => Err(refused()),
+            ))),
         }
     }
 

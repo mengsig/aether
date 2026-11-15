@@ -310,11 +310,14 @@ async fn a_parallel_batch_survives_the_call_that_parks_it() {
     assert!(!is_error, "the first question was refused: {reply}");
     assert!(reply.contains("Question recorded"), "{reply}");
 
-    // A second question joins the first instead of being refused; it
-    // changes no wait, so the merged wait below still covers both children.
+    // A *second* decision is the one thing that cannot run: it would
+    // overwrite the wait the turn already committed.
     let (reply, is_error) = call(&h, &first, "ask_user", json!({"question": "and then?"})).await;
-    assert!(!is_error, "a second question was refused: {reply}");
-    assert!(reply.contains("Question added"), "{reply}");
+    assert!(
+        is_error,
+        "a second decision was allowed to overwrite: {reply}"
+    );
+    assert!(reply.starts_with(TURN_IS_OVER), "{reply}");
 
     let _ = first.end.send(());
     let parked = wait_for_park(&h, coordinator).await;
@@ -349,12 +352,12 @@ async fn a_parallel_batch_survives_the_call_that_parks_it() {
             .iter()
             .filter(|e| e.type_name() == "question.asked")
             .count(),
-        2,
-        "the second question is recorded joined to the first"
+        1,
+        "only the first question is ever recorded, never the refused second one"
     );
     let park = custom(h.store.as_ref(), coordinator, "engine.parked").expect("recorded");
-    assert_eq!(park["refused_calls"], json!(1));
-    assert_eq!(park["refused_first"], json!(["remember"]));
+    assert_eq!(park["refused_calls"], json!(2));
+    assert_eq!(park["refused_first"], json!(["remember", "ask_user"]));
     h.runtime.shutdown().await;
 }
 

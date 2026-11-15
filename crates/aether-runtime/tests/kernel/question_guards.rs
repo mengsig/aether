@@ -53,10 +53,10 @@ async fn failing_a_task_after_asking_in_the_same_turn_is_refused() {
     );
 }
 
-/// A second `ask_user` in the same batch is never refused: it joins the
-/// pending question, so the operator sees both and one reply answers them.
+/// A second `ask_user` in the same batch is refused - only one question can
+/// be waited on per turn.
 #[tokio::test]
-async fn asking_twice_in_the_same_turn_joins_the_pending_question() {
+async fn asking_twice_in_the_same_turn_is_refused() {
     let h = harness(vec![ScriptedClient::tool_calls(
         &[
             ("ask_user", json!({"question": "which colour?"})),
@@ -79,6 +79,14 @@ async fn asking_twice_in_the_same_turn_joins_the_pending_question() {
     })
     .await;
 
+    let question_events = events
+        .iter()
+        .filter(|e| e.type_name() == "question.asked")
+        .count();
+    assert_eq!(
+        question_events, 1,
+        "only the first question was recorded: {events:?}"
+    );
     let outcomes: Vec<_> = events
         .iter()
         .filter_map(|e| match &e.kind {
@@ -87,18 +95,11 @@ async fn asking_twice_in_the_same_turn_joins_the_pending_question() {
         })
         .collect();
     assert!(
-        outcomes.iter().all(|o| !o.is_error),
-        "neither question is refused: {outcomes:?}"
+        outcomes
+            .iter()
+            .any(|o| o.is_error && o.content.contains("which colour?")),
+        "the second question is refused, naming the one already asked: {outcomes:?}"
     );
-    h.wait_until(agent.id, |s| matches!(s, AgentStatus::Waiting { .. }))
-        .await;
-    let pending = aether_runtime::commands::pending_question(h.store.as_ref(), agent.id)
-        .expect("pending")
-        .expect("a question is pending");
-    let EventKind::QuestionAsked { question } = &pending.kind else {
-        unreachable!("pending_question returns a question event")
-    };
-    assert_eq!(question, "which colour?\n\nwhich shade?");
 }
 
 /// The mirror image: once a turn has ended the agent, recording a question

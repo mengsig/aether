@@ -35,9 +35,6 @@ release is also the text of its GitHub release.
   from an approved requirement always asks) and to record an assumption
   otherwise. A delegated agent is told to ask its parent with `send_message`
   and `wait_for` `message_from` the parent.
-- A second `ask_user` in one turn joins the pending question, so the operator
-  sees both, instead of being refused. The joined question has its own
-  sequence; a reply to the earlier one is refused as no longer pending.
 - `send_message`, `wait_for` and `ask_user` are offered whatever an agent's
   tool exposure says: no allowlist can take away the way to ask.
 

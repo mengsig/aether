@@ -233,9 +233,14 @@ fn ask_user(
     question: String,
 ) -> Result<ToolOutcome> {
     // Honest only while someone waits on the answer: never recorded
-    // once the turn ends the agent. A further question joins the first.
-    if let Some(asked) = effects.asked.take() {
-        return add_to_question(runtime, ctx, effects, asked, question);
+    // once the turn ends the agent, and never twice in a turn.
+    if let Some(asked) = &effects.asked {
+        return Ok(ToolOutcome::error(format!(
+            "You already asked the operator \"{}\" in this turn, and only one \
+             question can be waited on. {TURN_ENDS_HERE} Ask anything further \
+             after they reply.",
+            one_line(asked)
+        )));
     }
     if let Some(Next::Completed(_) | Next::Failed(_)) = &effects.next {
         return Ok(ToolOutcome::error(format!(
@@ -263,50 +268,6 @@ fn ask_user(
     merge_wait(effects, WaitCondition::Inbox);
     Ok(ToolOutcome::ok(format!(
         "Question recorded for the operator to see. {TURN_ENDS_HERE} {ANSWER_WAKES}"
-    )))
-}
-
-/// A turn waits on one answer, so a further question is recorded together
-/// with the pending one: the operator sees both and one reply answers them.
-/// Under the commit hold, so a reply cannot land between the check and it.
-fn add_to_question(
-    runtime: &Arc<Runtime>,
-    ctx: &TurnCtx,
-    effects: &mut ToolEffects,
-    asked: String,
-    question: String,
-) -> Result<ToolOutcome> {
-    debug_assert!(
-        !asked.trim().is_empty(),
-        "a recorded question is never empty"
-    );
-    debug_assert!(
-        !effects.terminal(),
-        "a pending question refuses the settle that would end the agent"
-    );
-    let hold = runtime.hold();
-    let pending = crate::commands::pending_question(runtime.store.as_ref(), ctx.agent.id)?;
-    let still_open = pending.is_some_and(
-        |event| matches!(&event.kind, EventKind::QuestionAsked { question } if *question == asked),
-    );
-    // An answer already queued wakes the agent; the new question waits alone.
-    let recorded = match still_open {
-        true => format!("{asked}\n\n{question}"),
-        false => question,
-    };
-    runtime.apply_held(
-        hold,
-        Commit::new().event(ctx.draft(EventKind::QuestionAsked {
-            question: recorded.clone(),
-        })),
-    )?;
-    effects.asked = Some(recorded);
-    let joined = match still_open {
-        true => "Question added to the one already pending; the operator sees both together.",
-        false => "The earlier question was already answered; this one is recorded on its own.",
-    };
-    Ok(ToolOutcome::ok(format!(
-        "{joined} {TURN_ENDS_HERE} {ANSWER_WAKES}"
     )))
 }
 
