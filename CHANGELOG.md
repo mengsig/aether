@@ -23,6 +23,32 @@ release is also the text of its GitHub release.
   workers default to the balanced or fast tier, not the lead's own model.
 - `ModelTier` moves to `aether_core::delegation`; `aether_model::ModelTier`
   re-exports it.
+- **Delegation references: approved images and files reach children and
+  survive compaction.** `delegate` takes `references` (`[{path, kind: image |
+  file, label}]`, paths inside the caller's scope or already on its task) and
+  `inherit_references` (the caller's own task references, never its whole
+  context); `CreateAgent.references` does the same for a client creating an
+  agent with an objective. Each reference is checked once at creation
+  (absolute, readable, a regular file, an image of a supported type, at most
+  16 references, 8 images and 6 MiB of images per task, 16 MiB per file) and
+  a refusal names the reference and the budget. The task records each one
+  with its canonical path, size and SHA-256; images are stored by digest like
+  message images, so a later edit of the file cannot change what the child
+  sees. The assignment lists every reference, and a vision model gets the
+  images as pictures before it starts: on the API path as the first user turn
+  of every request, rebuilt from the task, and on an engine with every turn
+  that sends the assignment. The `delegate` reply counts the references and
+  warns when the child's model takes no images. Announced by the
+  `references` feature; an older daemon ignores the field.
+- The `delegate` guidance and the swarm playbook say a lead passes approved
+  references to every worker and reviewer and never narrows approved
+  requirements in a brief.
+
+### Changed
+
+- An engine session that folded its context, by a person's request or on its
+  own during a turn, is sent the assignment, checkpoint and memory again on
+  the next turn instead of assuming it still holds them.
 
 ## 1.3.1
 

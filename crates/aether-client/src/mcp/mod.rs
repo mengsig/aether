@@ -476,6 +476,7 @@ fn command_for(name: &str, arguments: Value) -> Result<Command, String> {
                 approval: None,
                 run: None,
                 start: a.start,
+                references: Vec::new(),
                 idempotency_key: None,
             })
         }

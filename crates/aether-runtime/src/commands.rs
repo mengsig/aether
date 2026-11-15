@@ -56,6 +56,10 @@ pub struct CreateAgentSpec {
     pub subsystem: Option<String>,
     /// Why a delegating parent chose its own frontier model for this child.
     pub delegation_reason: Option<String>,
+    /// Images and files named for the initial task, checked at creation.
+    pub references: Vec<aether_core::reference::ReferenceRequest>,
+    /// References a delegating parent passes on from its own task, as stored.
+    pub inherited_references: Vec<aether_core::reference::TaskReference>,
 }
 
 pub use aether_core::inbox::MessageDelivery;
@@ -188,6 +192,8 @@ pub(crate) struct PreparedAgent {
     /// The parent row `agent` was derived from, read unheld: creation
     /// re-checks it under its hold before committing.
     pub parent: Option<Agent>,
+    /// The task's reference images, stored under the creation hold.
+    pub reference_images: Vec<crate::attachments::CheckedImage>,
 }
 
 /// An agent's background processes, waiting to be ended. Held between the

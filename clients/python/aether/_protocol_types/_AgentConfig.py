@@ -15,6 +15,7 @@ class AgentConfig(TypedDict, total=False):
     concurrency: int | None  # optional
     cost_budget: float | None  # optional
     deadline: str | None  # optional
+    delegation_policy: _protocol.DelegationPolicy | None  # optional
     effort: _protocol.Effort | None  # optional
     host_context: _protocol.HostContext  # optional
     instructions: str | None  # optional

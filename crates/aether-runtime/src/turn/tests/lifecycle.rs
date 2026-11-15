@@ -366,6 +366,8 @@ fn admits_after_park_refuses_effects_and_admits_reads() {
         host_context: None,
         idempotency: None,
         reason: None,
+        references: Vec::new(),
+        inherit_references: false,
     };
     let refused = [
         delegate(false),

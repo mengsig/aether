@@ -28,6 +28,7 @@ mod orphans;
 mod peers;
 mod problems;
 pub mod recovery;
+mod references;
 mod repository_aliases;
 pub mod resources;
 mod retention;

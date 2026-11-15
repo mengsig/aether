@@ -19,6 +19,10 @@ struct DelegateRequest {
     host_context: Option<aether_core::agent::HostContext>,
     idempotency: Option<aether_tools::DelegateKey>,
     reason: Option<String>,
+    references: Vec<aether_core::reference::ReferenceRequest>,
+    inherit_references: bool,
+    /// Filled from the caller's task when `inherit_references` is set.
+    inherited_references: Vec<aether_core::reference::TaskReference>,
 }
 
 /// A refusal is a normal tool outcome; only infrastructure faults are `Err`.
@@ -107,7 +111,7 @@ async fn delegate(
     runtime: &Arc<Runtime>,
     ctx: &TurnCtx,
     effects: &mut ToolEffects,
-    request: DelegateRequest,
+    mut request: DelegateRequest,
 ) -> Result<ToolOutcome> {
     let parent = match load_delegating_parent(runtime, ctx)? {
         Ok(parent) => parent,
@@ -155,6 +159,20 @@ async fn delegate(
     if let Err(refusal) = check_delegation_policy(runtime, &parent, &request)? {
         return Ok(refusal);
     }
+    let own_references = ctx.task.as_ref().map_or(&[][..], |task| &task.references);
+    let requests = std::mem::take(&mut request.references);
+    match crate::references::delegated_references(
+        &parent.scope,
+        own_references,
+        requests,
+        request.inherit_references,
+    ) {
+        Ok((requests, inherited)) => {
+            request.references = requests;
+            request.inherited_references = inherited;
+        }
+        Err(refusal) => return Ok(ToolOutcome::error(format!("delegation refused: {refusal}"))),
+    }
     let (child_scope, isolated) = match prepare_child_scope(runtime, &parent, &request).await? {
         Ok(prepared) => prepared,
         Err(refusal) => return Ok(refusal),
@@ -184,6 +202,13 @@ async fn delegate(
             // Advisory (VISION §3.6 limit 3): never `?`, so a read failure
             // cannot fail the turn on a delegation that already committed.
             let status = cap_status(runtime, &ctx.agent, child_on_engine);
+            let vision = runtime
+                .models
+                .resolve(&requested)
+                .is_ok_and(|resolved| resolved.model.capabilities.vision);
+            let reference_note = task.as_ref().and_then(|task| {
+                crate::references::delegated_reference_note(&task.references, vision)
+            });
             Ok(delegated_outcome(
                 effects,
                 &child,
@@ -191,6 +216,7 @@ async fn delegate(
                     task_id: task.as_ref().map(|t| t.id),
                     wait,
                     key: key.as_deref(),
+                    reference_note,
                 },
                 isolated.as_ref(),
                 &status,
@@ -577,6 +603,8 @@ fn child_spec(
         run: Some(ctx.agent.run),
         start: true,
         delegation_reason: request.reason,
+        references: request.references,
+        inherited_references: request.inherited_references,
     }
 }
 
@@ -627,6 +655,8 @@ struct Delegated<'a> {
     wait: bool,
     /// Echoed so the caller can repeat the call to learn its outcome.
     key: Option<&'a str>,
+    /// What references the child's task carries, and any delivery warning.
+    reference_note: Option<String>,
 }
 
 fn delegated_outcome(
@@ -636,7 +666,12 @@ fn delegated_outcome(
     isolated: Option<&WorkspaceManifest>,
     status: &CapStatus,
 ) -> ToolOutcome {
-    let Delegated { task_id, wait, key } = delegated;
+    let Delegated {
+        task_id,
+        wait,
+        key,
+        reference_note,
+    } = delegated;
     if wait && let Some(id) = task_id {
         merge_wait(effects, WaitCondition::Task { id });
     }
@@ -653,6 +688,9 @@ fn delegated_outcome(
         },
         cap_note,
     ));
+    if let Some(note) = reference_note {
+        outcome.content.push_str(&note);
+    }
     if let Some(manifest) = isolated {
         outcome.content.push_str(&format!(
             " Isolated workspace: {}. Changes remain there until you call integrate_workspace with child_agent_id={}; integration checks conflicts and never runs automatically.",
@@ -784,6 +822,8 @@ pub(super) async fn apply(
             host_context,
             idempotency,
             reason,
+            references,
+            inherit_references,
         } => {
             let request = DelegateRequest {
                 role,
@@ -799,6 +839,9 @@ pub(super) async fn apply(
                 host_context,
                 idempotency,
                 reason,
+                references,
+                inherit_references,
+                inherited_references: Vec::new(),
             };
             delegate(runtime, ctx, effects, request).await
         }

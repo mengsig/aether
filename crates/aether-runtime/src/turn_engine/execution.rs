@@ -177,7 +177,7 @@ pub(crate) async fn execute(
             .filter(|text| !text.trim().is_empty())
             .unwrap_or_else(|| "Continue with your task.".into())
     };
-    let images = assembled
+    let message_images = assembled
         .new_user_message
         .as_ref()
         .map(|message| runtime.engine_images(message))
@@ -195,6 +195,8 @@ pub(crate) async fn execute(
         },
     );
     let prompt = prepared.prompt.clone();
+    let vision = resolved.model.capabilities.vision;
+    let images = with_reference_images(runtime, ctx, &snapshot, vision, message_images);
     recompute_snapshot_accounting(&mut snapshot);
     let mut commit = Commit::new()
         .event(ctx.draft(EventKind::SnapshotCreated {
@@ -303,6 +305,8 @@ pub(crate) async fn execute(
     // the prompt: it may only be continued, never sent the prompt again.
     let mut delivered = false;
     let mut earlier_tools = false;
+    // A fold replaced what the session held, the pictures included.
+    let mut folded_this_turn = false;
     let mut recovered_session = false;
     let mut stalls = 0u32;
     let mut run = loop {
@@ -414,6 +418,9 @@ pub(crate) async fn execute(
             ctx.agent.engine_sent = None;
             if turn.prompt != prepared.full_prompt {
                 turn.prompt = contract::resend_everything(&mut snapshot, &prepared);
+                let message_images = std::mem::take(&mut turn.images);
+                turn.images =
+                    with_reference_images(runtime, ctx, &snapshot, vision, message_images);
                 pending_prompt.clone_from(&turn.prompt);
                 recompute_snapshot_accounting(&mut snapshot);
                 runtime.apply(
@@ -495,6 +502,7 @@ pub(crate) async fn execute(
             break run;
         }
         earlier_tools |= run.ran_tools;
+        folded_this_turn |= run.compacted;
         match resume {
             super::transient::Resume::Replay => {}
             super::transient::Resume::Continue => {
@@ -536,7 +544,11 @@ pub(crate) async fn execute(
     // unless the check above says its own compaction likely discarded them.
     // Tagged with the session: one the engine replaced retains none of them.
     ctx.agent.engine_sent =
-        match context_likely_compacted || (run.outcome.is_error && run.unanswered()) {
+        match context_likely_compacted
+            || folded_this_turn
+            || run.compacted
+            || (run.outcome.is_error && run.unanswered())
+        {
             true => None,
             false => ctx.agent.engine_session.clone().map(|session| {
                 aether_core::agent::EngineSentLayers {
@@ -1130,6 +1142,7 @@ pub(super) fn test_run() -> DriveResult {
         usage_seen: false,
         invoked: false,
         ran_tools: false,
+        compacted: false,
         progressed: false,
         usage_before: None,
         stream_usage: Usage::default(),
@@ -1141,4 +1154,31 @@ pub(super) fn test_run() -> DriveResult {
         stalled: None,
         answer_jobs: crate::turn::AnswerJobs::Idle,
     }
+}
+
+/// The turn's images with the task's reference images ahead of them, when
+/// this turn sends the assignment: a fresh session, a resend after a failed
+/// resume, or the first turn after the session was compacted. A session that
+/// retains the assignment already holds them.
+fn with_reference_images(
+    runtime: &Runtime,
+    ctx: &TurnCtx,
+    snapshot: &aether_core::snapshot::InvocationSnapshot,
+    vision: bool,
+    message_images: Vec<aether_engine::EngineImage>,
+) -> Vec<aether_engine::EngineImage> {
+    use aether_core::snapshot::{LayerKind, LayerPlacement};
+    let assignment_sent = snapshot.layers.iter().any(|layer| {
+        layer.kind == LayerKind::RoleTask && layer.placement == LayerPlacement::UserTurn
+    });
+    if !vision || !assignment_sent {
+        return message_images;
+    }
+    let mut images = runtime.reference_engine_images(ctx.task.as_ref());
+    // A resend keeps what was already queued; a reference is never sent twice.
+    images.retain(|image| !message_images.contains(image));
+    let references = images.len();
+    images.extend(message_images);
+    debug_assert!(references <= aether_core::reference::MAX_REFERENCE_IMAGES);
+    images
 }

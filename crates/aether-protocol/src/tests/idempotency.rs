@@ -290,3 +290,45 @@ fn a_create_carries_its_delegation_policy_in_config() {
     .expect("an unknown config field is ignored, as an older daemon ignores the policy");
     assert!(matches!(older, Command::CreateAgent(_)));
 }
+
+/// The lead frame's `references`: decoded in the documented shape, part of
+/// the digest only when present, so an earlier keyed create digests as before.
+#[test]
+fn a_create_digests_its_references_only_when_it_has_some() {
+    let wire = |references: serde_json::Value| {
+        let mut frame = serde_json::json!({"cmd": "create_agent", "role": "lead",
+            "objective": "build", "idempotency_key": "k-1"});
+        if !references.is_null() {
+            frame["references"] = references;
+        }
+        frame
+    };
+    let references = serde_json::json!([
+        {"path": "/work/intent/mock-settings.png", "kind": "image", "label": "R3 settings, dark"},
+        {"path": "/work/intent/ledger.md", "kind": "file"}
+    ]);
+    let command: Command = serde_json::from_value(wire(references.clone())).expect("decode");
+    let Command::CreateAgent(create) = &command else {
+        panic!("create_agent")
+    };
+    assert_eq!(create.references.len(), 2);
+    assert_eq!(
+        create.references[0].kind,
+        aether_core::reference::ReferenceKind::Image
+    );
+    let digested = command
+        .keyed_request()
+        .expect("keyed")
+        .expect("view")
+        .fields;
+    assert_eq!(digested["references"], references);
+    let plain: Command = serde_json::from_value(wire(serde_json::Value::Null)).expect("decode");
+    let plain = plain.keyed_request().expect("keyed").expect("view").fields;
+    assert!(
+        plain.get("references").is_none(),
+        "an unreferenced create digests as before"
+    );
+    let bad =
+        serde_json::from_value::<Command>(wire(serde_json::json!([{"path": "/x", "kind": "pdf"}])));
+    assert!(bad.is_err(), "an unknown kind is refused, not dropped");
+}

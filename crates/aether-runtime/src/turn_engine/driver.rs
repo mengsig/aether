@@ -36,6 +36,8 @@ pub(super) struct DriveResult {
     pub(super) invoked: bool,
     /// The model called at least one tool this turn.
     pub(super) ran_tools: bool,
+    /// The engine folded its own context during this run.
+    pub(super) compacted: bool,
     /// The provider answered this run: a real model message or a finished tool call.
     pub(super) progressed: bool,
     /// Present only for incremental billing; previous runs must survive reconciliation.
@@ -190,6 +192,7 @@ fn failed_launch(
         usage_seen: false,
         invoked: false,
         ran_tools: false,
+        compacted: false,
         progressed: false,
         usage_before: None,
         stream_usage: Usage::default(),
@@ -1088,6 +1091,7 @@ pub(super) async fn drive(
         usage_seen: state.usage_seen,
         invoked: state.invoked,
         ran_tools: state.ran_tools,
+        compacted: state.compacted,
         progressed: state.progressed,
         usage_before: state.usage_before,
         stream_usage: state.stream_usage,

@@ -9,6 +9,7 @@
 pub mod budget;
 pub mod compaction;
 pub mod estimate;
+pub mod references;
 pub mod render;
 pub mod transcript;
 
@@ -253,6 +254,14 @@ impl ContextManager {
                 messages.len() <= before,
                 "sanitize must not grow a user-led tail"
             );
+            tail_tokens = count(&messages);
+        }
+        // After trimming, so the oldest exchange never takes them with it.
+        if references::attach_reference_images(
+            &mut messages,
+            inputs.task,
+            inputs.capabilities.vision,
+        ) {
             tail_tokens = count(&messages);
         }
         let used = fixed + tail_tokens;

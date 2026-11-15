@@ -539,6 +539,8 @@ impl Runtime {
                 run: None,
                 start: false,
                 delegation_reason: None,
+                references: Vec::new(),
+                inherited_references: Vec::new(),
             },
             &Actor::System,
             Preflight::default(),

@@ -65,6 +65,8 @@ pub(super) struct StreamState {
     pub(super) invoked: bool,
     /// The model called at least one tool this turn.
     pub(super) ran_tools: bool,
+    /// The engine reported folding its own context this turn.
+    pub(super) compacted: bool,
     /// A real model message or a finished tool call: the provider answered,
     /// unlike Claude Code's synthetic API-error message.
     pub(super) progressed: bool,
@@ -156,6 +158,7 @@ impl StreamState {
             usage_seen: false,
             invoked: false,
             ran_tools: false,
+            compacted: false,
             progressed: false,
             usage_before: None,
             stream_usage: Usage::default(),
@@ -749,6 +752,7 @@ pub(super) fn handle_event(
             if let Some(tokens) = after_tokens {
                 note_context_usage(runtime, ctx, state, tokens);
             }
+            state.compacted = true;
             let folded = EventKind::CompactionNative {
                 provider: snapshot.model.provider.clone(),
                 automatic,

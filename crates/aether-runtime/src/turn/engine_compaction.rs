@@ -262,6 +262,11 @@ fn settle(
         }
     };
     tracing::info!(agent = %ctx.agent.id, folded = run.folded, duration_ms = run.duration_ms, "native compaction settled");
+    if run.folded {
+        // The fold replaced the session's turns with a summary: the next turn
+        // resends the assignment, and with it the task's reference images.
+        ctx.agent.engine_sent = None;
+    }
     ctx.agent.updated_at = now();
     let hold = runtime.hold();
     let mut commit = Commit::new()

@@ -169,6 +169,8 @@ mod deadline_warnings;
 mod delegation;
 #[path = "kernel/delegation_policy.rs"]
 mod delegation_policy;
+#[path = "kernel/delegation_references.rs"]
+mod delegation_references;
 #[path = "kernel/dispatch_priority.rs"]
 mod dispatch_priority;
 #[path = "kernel/engine_fallback_slots.rs"]

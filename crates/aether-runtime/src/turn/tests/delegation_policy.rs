@@ -87,6 +87,8 @@ fn delegate(role: &str, model: &str, effort: Effort, reason: Option<&str>) -> Ha
         host_context: None,
         idempotency: None,
         reason: reason.map(str::to_owned),
+        references: Vec::new(),
+        inherit_references: false,
     }
 }
 

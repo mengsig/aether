@@ -121,6 +121,7 @@ impl Runtime {
             task,
             mut commit,
             parent,
+            reference_images,
         } = self.prepare_agent(spec, &by, preflight)?;
         let run = agent.run;
         #[cfg(test)]
@@ -159,6 +160,8 @@ impl Runtime {
             }
         }
         self.recheck_workspace_gc_admission(&agent.scope)?;
+        // Last before the commit, so a refusal or a replay stores nothing.
+        self.store_images(&hold, &reference_images)?;
         commit.push_mutation(Mutation::CreateAgent {
             agent: agent.clone(),
             subsystem,
@@ -187,6 +190,8 @@ impl Runtime {
             super::messaging::check_text_size("task objective", objective.len())?;
         }
         check_task_delegation(&spec)?;
+        let resolved =
+            self.resolve_references(&spec.references, spec.inherited_references.clone())?;
         let checked = preflight.checked;
         let parent = match spec.parent {
             Some(id) => Some(self.live_agent(id, "parent")?),
@@ -384,6 +389,7 @@ impl Runtime {
             Some(objective) => {
                 let mut task = Task::new(objective.trim().to_owned(), by.clone(), run, at);
                 task.delegation_reason = spec.delegation_reason;
+                task.references = resolved.references;
                 task.owner = Some(agent.id);
                 task.priority = agent.config.priority;
                 task.transition(TaskStatus::Assigned, at)?;
@@ -412,6 +418,7 @@ impl Runtime {
             task,
             commit,
             parent,
+            reference_images: resolved.images,
         })
     }
 
@@ -543,6 +550,12 @@ fn check_task_delegation(spec: &CreateAgentSpec) -> Result<()> {
     if spec.delegation_reason.is_some() && !has_objective {
         return Err(RuntimeError::Invalid(
             "a delegation reason is recorded on the initial task: set an objective too".into(),
+        ));
+    }
+    let has_references = !spec.references.is_empty() || !spec.inherited_references.is_empty();
+    if has_references && !has_objective {
+        return Err(RuntimeError::Invalid(
+            "references are attached to the initial task: set an objective too".into(),
         ));
     }
     let policy = spec
