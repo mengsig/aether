@@ -60,6 +60,51 @@ pub fn question_is_open(store: &dyn Store, agent: AgentId, seq: u64) -> Result<b
         .any(|asked| asked.seq == seq))
 }
 
+/// The messages that were targeted replies to `agent`'s questions other than
+/// `question`, recorded after it was asked.
+pub(crate) fn replies_to_others(
+    store: &dyn Store,
+    agent: AgentId,
+    question: u64,
+) -> Result<HashSet<MessageId>> {
+    let mut filter = EventFilter::own_events(agent);
+    filter.types = vec!["custom".into()];
+    let mut replies = HashSet::new();
+    let mut after = question;
+    loop {
+        let page = store.events(after, PAGE, &filter)?;
+        for event in &page {
+            debug_assert!(event.seq > after, "a page runs oldest first");
+            after = event.seq;
+            let EventKind::Custom { name, payload } = &event.kind else {
+                continue;
+            };
+            if name != QUESTION_ANSWERED || answered_seq(payload) == Some(question) {
+                continue;
+            }
+            if let Some(message) = targeted_message(payload) {
+                replies.insert(message);
+            }
+        }
+        if page.len() < PAGE {
+            return Ok(replies);
+        }
+    }
+}
+
+fn answered_seq(payload: &serde_json::Value) -> Option<u64> {
+    payload.get("question_seq").and_then(|v| v.as_u64())
+}
+
+/// The message of a targeted reply; `None` for an answer that is not one.
+fn targeted_message(payload: &serde_json::Value) -> Option<MessageId> {
+    if payload.get("reply").and_then(|v| v.as_bool()) != Some(true) {
+        return None;
+    }
+    let message = payload.get("message")?;
+    serde_json::from_value::<MessageId>(message.clone()).ok()
+}
+
 /// What closes `questions` of `agent` with `message`, recorded right after
 /// that message's `message.sent` in the same commit. `reply`: a targeted
 /// reply to its one question, which closes nothing else.
@@ -146,16 +191,12 @@ impl Walk {
     }
 
     fn take_answer(&mut self, payload: &serde_json::Value) {
-        let Some(seq) = payload.get("question_seq").and_then(|v| v.as_u64()) else {
+        let Some(seq) = answered_seq(payload) else {
             tracing::warn!(%payload, "a question.answered event names no question");
             return;
         };
         self.answered.insert(seq);
-        let targeted = payload.get("reply").and_then(|v| v.as_bool()) == Some(true);
-        let message = payload
-            .get("message")
-            .and_then(|v| serde_json::from_value::<MessageId>(v.clone()).ok());
-        if let (true, Some(message)) = (targeted, message) {
+        if let Some(message) = targeted_message(payload) {
             self.targeted.insert(message);
         }
     }

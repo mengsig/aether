@@ -15,7 +15,7 @@ pub(super) enum Served {
     /// The call would have decided the turn's end a second time, or asked a
     /// person to authorize work in a turn that is over.
     Refused,
-    NativeWait(super::native_wait::NativeWait),
+    NativeWait(Box<super::native_wait::NativeWait>),
 }
 
 /// What native work the session holds while a bridge call runs.
@@ -84,9 +84,9 @@ pub(super) async fn handle_request(
         let _ = req.reply.send(denied_prompt(TURN_IS_OVER));
         return Ok(Served::Refused);
     }
-    if parked && effects.terminal() {
-        // Terminal wind-down only collects the native result/usage receipt.
-        // Unlike a wait's parallel siblings, no new work belongs to this task.
+    if parked && effects.terminal() && req.name != "ask_user" {
+        // Terminal wind-down only collects the native result/usage receipt;
+        // a question still keeps its asker alive for the answer.
         let _ = req.reply.send((TURN_IS_OVER.to_owned(), true));
         return Ok(Served::Refused);
     }
@@ -175,7 +175,7 @@ pub(super) async fn handle_request(
                                 name: "engine.native_wait_started".into(),
                                 payload,
                             })))?;
-                            return Ok(Served::NativeWait(wait));
+                            return Ok(Served::NativeWait(Box::new(wait)));
                         }
                         if parked
                             && !effects.admits_after_park(&action, ctx.agent.config.long_lived)
@@ -231,7 +231,7 @@ pub(super) async fn handle_request(
                                 name: "engine.native_wait_started".into(),
                                 payload,
                             })))?;
-                            return Ok(Served::NativeWait(wait));
+                            return Ok(Served::NativeWait(Box::new(wait)));
                         }
                         (outcome.content, outcome.is_error)
                     }

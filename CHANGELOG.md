@@ -38,8 +38,11 @@ release is also the text of its GitHub release.
 - `send_message`, `wait_for` and `ask_user` are offered whatever an agent's
   tool exposure says: no allowlist can take away the way to ask.
 - **Questions are keyed by sequence.** Every `ask_user` records its own
-  question; a second one in a turn, or one asked while a native background
-  wait is held, is no longer refused. `reply_to_question` answers only the
+  question; a second one in a turn, one asked while a native background
+  wait is held, one beside a call awaiting approval, and one after the turn
+  settled its task (the asker then stays alive for the answer) are no longer
+  refused. A held question's wait ignores replies to the asker's other
+  questions. `reply_to_question` answers only the
   question it names, a person's ordinary message answers every question
   pending when it lands, and each answered question is closed by its own
   `question.answered` custom event. `get_attention` lists every open question

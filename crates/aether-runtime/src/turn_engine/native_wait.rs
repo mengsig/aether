@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use aether_core::agent::{WaitCondition, WaitOracle};
 use aether_core::id::AgentId;
+use aether_core::inbox::InboxKind;
 use serde_json::Value;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -245,6 +246,10 @@ impl NativeWait {
         // or on what reaches a waiting agent at once (a person, its parent).
         // A question's wait hears only what came after it was asked.
         let since = self.inbox_cursor.max(held.asked_at_inbox);
+        let since = match held.question {
+            Some(seq) => question_cursor(runtime, ctx, seq, since)?,
+            None => since,
+        };
         let oracle = crate::wait::RuntimeOracle {
             runtime,
             agent: ctx.agent.id,
@@ -416,6 +421,31 @@ impl NativeWait {
 fn open_questions(runtime: &Runtime, agent: AgentId) -> Result<Vec<u64>> {
     let open = crate::commands::pending_questions(runtime.store.as_ref(), agent)?;
     Ok(open.iter().map(|asked| asked.seq).collect())
+}
+
+/// Where question `seq`'s wait starts hearing from `since`: past the leading
+/// targeted replies to the asker's other questions, which never answer it.
+fn question_cursor(runtime: &Runtime, ctx: &TurnCtx, seq: u64, since: u64) -> Result<u64> {
+    let store = runtime.store.as_ref();
+    let others = crate::commands::replies_to_others(store, ctx.agent.id, seq)?;
+    if others.is_empty() {
+        return Ok(since);
+    }
+    let mut cursor = since;
+    for item in store.inbox(ctx.agent.id, since)? {
+        debug_assert!(
+            item.seq > cursor,
+            "inbox reads oldest first after the cursor"
+        );
+        let InboxKind::Message { message_id, .. } = &item.kind else {
+            break;
+        };
+        if !others.contains(message_id) {
+            break;
+        }
+        cursor = item.seq;
+    }
+    Ok(cursor)
 }
 
 /// The newest inbox item's seq, or the cursor when nothing is unconsumed.

@@ -119,7 +119,10 @@ for live background jobs; a held wait that ends before the answer says so. No
 count caps questions; only an exhausted budget or a cancel stops an agent from
 asking. Each `ask_user` is its own question under its own sequence, never
 refused for being a second: one asked while an engine holds a native wait for
-live background jobs is recorded and the held wait is kept. A wait for a
+live background jobs is recorded and the held wait is kept. A question beside
+a call awaiting approval is recorded too, and its answer is read once the
+approval is settled; one asked after the turn settled its task keeps the asker
+alive for the answer. A wait for a
 question hears only what arrived after it was asked, and an answer addressed
 to one question never answers another. When a held wait ends, its reply lists
 the questions still unanswered.

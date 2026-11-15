@@ -81,6 +81,8 @@ struct Unconsumed {
     images: Vec<AttachmentRef>,
     pending: Option<CellId>,
     at: Timestamp,
+    /// The seq of its delivery: it answers only questions asked before it.
+    delivered: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -396,7 +398,8 @@ impl AgentTranscript {
         }
     }
 
-    fn close_questions(&mut self, next: super::QuestionState) {
+    /// Closes every pending question asked before `before` (a seq).
+    fn close_questions(&mut self, next: super::QuestionState, before: u64) {
         let open: Vec<CellId> = self
             .cells
             .iter()
@@ -405,8 +408,9 @@ impl AgentTranscript {
                     c.model,
                     CellModel::Question {
                         state: crate::app::transcript::QuestionState::Pending,
+                        seq,
                         ..
-                    }
+                    } if seq < before
                 )
             })
             .map(|c| c.id)
@@ -1426,6 +1430,7 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
                     images,
                     pending,
                     at,
+                    delivered: event.seq,
                 });
             }
             InboxKind::ExternalTrigger {
@@ -1612,7 +1617,7 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
             t.end_wait(at);
             t.close_calls(at);
             t.commit_stream(at);
-            t.close_questions(super::QuestionState::AskerEnded);
+            t.close_questions(super::QuestionState::AskerEnded, u64::MAX);
             let name = look.own_name(agent, &t.private.who);
             let hint = NoticeText::joined(
                 &[&format!("/wake {name}"), &format!("/restart {name}")],
@@ -1626,7 +1631,7 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
             t.end_wait(at);
             t.close_calls(at);
             t.commit_stream(at);
-            t.close_questions(super::QuestionState::AskerEnded);
+            t.close_questions(super::QuestionState::AskerEnded, u64::MAX);
             let text = match reason.as_deref().map(first_line) {
                 Some(r) if !r.is_empty() => {
                     NoticeText::joined(&["Cancelled", r], NoticeSeparator::Dot)
@@ -1643,7 +1648,7 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
             own_result(t, agent, event, look);
             t.end_wait(at);
             t.close_calls(at);
-            t.close_questions(super::QuestionState::AskerEnded);
+            t.close_questions(super::QuestionState::AskerEnded, u64::MAX);
         }
         EventKind::Custom { name, .. } if name == aether_core::note::NOTE_EVENT => {
             if let Some(note) = aether_core::note::Note::of(&event.kind) {
@@ -2029,12 +2034,13 @@ fn consume_inbox(t: &mut AgentTranscript, at: Timestamp, items: &[InboxItemId]) 
             text,
             images,
             pending,
+            delivered,
             ..
         } = t.private.inbox.remove(pos);
         if from == UserFrom::Operator {
             retire_steer(t, &text, at);
             if !t.private.answers_recorded {
-                t.close_questions(super::QuestionState::Answered);
+                t.close_questions(super::QuestionState::Answered, delivered);
             }
         }
         if let Some(id) = pending {

@@ -30,7 +30,7 @@ async fn still_held(pending: &Pending) {
 }
 
 /// A second `ask_user` while the first is held is recorded as its own
-/// question, and the held wait stays the session's one wait.
+/// question, and the held wait stays held until the first one's answer.
 #[tokio::test]
 async fn a_second_question_beside_a_held_one_is_recorded_and_the_wait_kept() {
     let first = json!({"question": "which half?"});
@@ -48,17 +48,25 @@ async fn a_second_question_beside_a_held_one_is_recorded_and_the_wait_kept() {
     still_held(&held).await;
     assert!(!turn.observed.stopped(), "the jobs keep running");
 
+    // The second question's reply is not the first one's answer.
     reply(&h, agent, asked[1], "blue");
+    still_held(&held).await;
+    assert_eq!(pending_seqs(&h, agent), [asked[0]]);
+
+    reply(&h, agent, asked[0], "the left half");
     let woken = reply_of(held).await;
-    assert!(woken.contains("blue"), "{woken}");
     assert!(
-        woken.contains(&format!(
-            "Still waiting for the operator's answer: question {}",
+        woken.starts_with(&format!(
+            "Wait ended: the operator answered question {}.",
             asked[0]
         )),
-        "the first question is not answered by the second's reply: {woken}"
+        "{woken}"
     );
-    assert_eq!(pending_seqs(&h, agent), [asked[0]]);
+    assert!(
+        woken.contains("blue") && woken.contains("the left half"),
+        "both answers are handed over: {woken}"
+    );
+    assert!(pending_seqs(&h, agent).is_empty());
     assert!(!turn.observed.stopped() && !turn.observed.stdin_closed());
     h.runtime.shutdown().await;
 }

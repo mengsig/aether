@@ -243,6 +243,7 @@ impl Runtime {
         self.deliver_message_held(hold, &agent, content, &[], from, submission, answering)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn deliver_message_held(
         &self,
         hold: CommitHold<'_>,

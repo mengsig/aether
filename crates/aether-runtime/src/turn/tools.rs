@@ -204,16 +204,9 @@ impl ToolEffects {
             // ever records `Waiting`, never `Completed`/`Failed`, but this
             // does not lean on that invariant holding elsewhere.
             Decides::Settles => long_lived && matches!(self.next, Some(Next::Waiting(_))),
-            // The turn's *first* question is a merging wait too - it folds
-            // into whatever wait already parked the turn (an earlier
-            // `WaitFor`/delegate-wait, or a long_lived settle's `Inbox`)
-            // exactly like `apply_action`'s own `AskUser` arm does on the
-            // batch path. A further question is its own; only a pending
-            // approval or a genuinely terminal settle refuse it.
-            Decides::Asks => {
-                self.pending_approvals.is_empty()
-                    && !matches!(self.next, Some(Next::Completed(_) | Next::Failed(_)))
-            }
+            // A question folds into whatever already parked the turn, or
+            // keeps a settled asker alive for its answer: never refused.
+            Decides::Asks => true,
         }
     }
 
@@ -244,8 +237,7 @@ pub(super) enum Decides {
     /// schedule, a merge): refused once the turn is over, so a batched
     /// sibling cannot act after the model was told to stop.
     Effect,
-    /// A question: its own guards (asked-once, no pending approval, no
-    /// genuine terminal settle) decide whether it merges like a wait.
+    /// A question: always recorded, and merged like a wait.
     Asks,
 }
 

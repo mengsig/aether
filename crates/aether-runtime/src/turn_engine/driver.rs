@@ -848,7 +848,7 @@ pub(super) async fn drive(
                             state.remember_bridge_reply(tool, tool_input, result.clone());
                         }
                         if let Served::NativeWait(wait) = served {
-                            native_wait = Some(wait);
+                            native_wait = Some(*wait);
                             continue;
                         }
                         if let Some(park) = park.as_mut() {

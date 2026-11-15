@@ -278,26 +278,18 @@ fn questions_answered_keeps_each_open_question() {
     assert_eq!(effects.last_asked(), Some("second?"));
 }
 
-/// A question that would be swallowed by a pending approval's own wait is
-/// refused, exactly like `apply_action`'s own `AskUser` guard.
+/// No small guard blocks a question: a pending approval, or a settle that
+/// already ended the turn, still admits it.
 #[test]
-fn admits_after_park_refuses_ask_user_under_a_pending_approval() {
-    let effects = ToolEffects {
+fn admits_after_park_admits_ask_user_beside_approvals_and_settles() {
+    let ask = HarnessAction::AskUser {
+        question: "ok?".into(),
+    };
+    let approving = ToolEffects {
         next: Some(Next::Waiting(WaitCondition::Inbox)),
         pending_approvals: vec![ApprovalId::new()],
         ..Default::default()
     };
-    let ask = HarnessAction::AskUser {
-        question: "ok?".into(),
-    };
-    assert!(!effects.admits_after_park(&ask, false));
-    assert!(!effects.admits_after_park(&ask, true));
-}
-
-/// A question after a genuinely terminal settle (a non-long_lived
-/// complete/fail) is refused: there is nothing left to wait on an answer.
-#[test]
-fn admits_after_park_refuses_ask_user_after_a_terminal_settle() {
     let completed = ToolEffects {
         next: Some(Next::Completed(None)),
         ..Default::default()
@@ -306,11 +298,10 @@ fn admits_after_park_refuses_ask_user_after_a_terminal_settle() {
         next: Some(Next::Failed("nope".into())),
         ..Default::default()
     };
-    let ask = HarnessAction::AskUser {
-        question: "still relevant?".into(),
-    };
-    assert!(!completed.admits_after_park(&ask, false));
-    assert!(!failed.admits_after_park(&ask, false));
+    for effects in [approving, completed, failed] {
+        assert!(effects.admits_after_park(&ask, false), "{:?}", effects.next);
+        assert!(effects.admits_after_park(&ask, true), "{:?}", effects.next);
+    }
 }
 
 /// The entry in `sched.running` *is* the concurrency slot, so it has to

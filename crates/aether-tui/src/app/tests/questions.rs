@@ -437,3 +437,26 @@ fn a_message_alone_keeps_questions_open_once_answers_are_recorded() {
 
     assert_eq!(needs_you_agents(&app), vec![id], "{:?}", models(&app));
 }
+
+/// History without answer events: a message delivered before a question
+/// and consumed after it answers only the questions asked before it landed.
+#[test]
+fn a_queued_older_message_leaves_a_later_question_open() {
+    let (mut app, id) = app_with_agent();
+    feed(&mut app, 9, id, asked("first?"));
+    let [delivered, consumed] = operator_reply(id, "blue");
+    feed(&mut app, 10, id, delivered);
+    feed(&mut app, 11, id, asked("second?"));
+    feed(&mut app, 12, id, consumed);
+
+    let states: Vec<_> = models(&app)
+        .into_iter()
+        .filter_map(|m| match m {
+            CellModel::Question { state, .. } => Some(state),
+            _ => None,
+        })
+        .collect();
+    use crate::app::transcript::QuestionState::{Answered, Pending};
+    assert_eq!(states, vec![Answered, Pending]);
+    assert_eq!(needs_you_agents(&app), vec![id]);
+}

@@ -107,10 +107,10 @@ async fn asking_twice_in_the_same_turn_records_two_questions() {
     );
 }
 
-/// The mirror image: once a turn has ended the agent, recording a question
-/// would be a promise nobody can keep, so `ask_user` is refused instead.
+/// The mirror image: a question after the turn settled its task is still
+/// recorded, and the asker stays alive to hear its answer.
 #[tokio::test]
-async fn asking_after_completing_in_the_same_turn_is_refused() {
+async fn asking_after_completing_in_the_same_turn_keeps_the_asker_for_the_answer() {
     let h = harness(vec![ScriptedClient::tool_calls(
         &[
             ("complete_task", json!({"summary": "painted"})),
@@ -124,62 +124,6 @@ async fn asking_after_completing_in_the_same_turn_is_refused() {
         .create_agent(spec("paint it"), Actor::user())
         .expect("create");
 
-    h.wait_until(agent.id, |s| s.is_terminal()).await;
-    let events = h
-        .store
-        .events(0, 10_000, &EventFilter::for_agent(agent.id))
-        .expect("events");
-
-    let outcome = settled_outcome(&events, "ask_user");
-    assert!(
-        outcome.is_error,
-        "a question no one can answer must not be recorded: {outcome:?}"
-    );
-    assert!(
-        outcome.content.contains("summary"),
-        "the refusal says what to do instead: {outcome:?}"
-    );
-    assert!(
-        !events.iter().any(|e| e.type_name() == "question.asked"),
-        "no dangling question was recorded"
-    );
-    assert!(
-        events.iter().any(|e| e.type_name() == "task.completed"),
-        "the completion the agent actually decided on still stands"
-    );
-}
-
-/// A question in a batch that also queues an approval would lose its
-/// park - the turn waits for the approval instead, and an approval wait is
-/// never interrupted by an inbox item, so the reply could not wake the asker.
-/// Gating runs before any call in the batch, so the order does not matter.
-#[tokio::test]
-async fn asking_beside_a_call_awaiting_approval_is_refused() {
-    let h = harness_with_tools(
-        vec![ScriptedClient::tool_calls(
-            &[
-                ("ask_user", json!({"question": "which colour?"})),
-                ("call_outside", json!({})),
-            ],
-            None,
-        )],
-        |_| {},
-        |_| {},
-        |tools| tools.register(Arc::new(CallOutside)),
-    )
-    .await;
-    let (agent, _) = h
-        .runtime
-        .create_agent(
-            CreateAgentSpec {
-                config: Some(AgentConfig::default()),
-                approval: Some(ApprovalPolicy::default()),
-                ..spec("paint it")
-            },
-            Actor::user(),
-        )
-        .expect("create");
-
     let parked = h
         .wait_until(agent.id, |s| matches!(s, AgentStatus::Waiting { .. }))
         .await;
@@ -187,27 +131,78 @@ async fn asking_beside_a_call_awaiting_approval_is_refused() {
         unreachable!("{parked:?}")
     };
     assert!(
-        condition.involves_approval(),
-        "the turn waits for the approval it queued: {condition:?}"
+        waits_on_inbox(condition),
+        "it waits for the answer: {condition:?}"
     );
-
     let events = h
         .store
         .events(0, 10_000, &EventFilter::for_agent(agent.id))
         .expect("events");
     let outcome = settled_outcome(&events, "ask_user");
+    assert!(!outcome.is_error, "the question is recorded: {outcome:?}");
     assert!(
-        outcome.is_error,
-        "a question the approval wait would swallow must not be recorded: {outcome:?}"
+        outcome.content.contains("already settled"),
+        "the reply says the task stands: {outcome:?}"
     );
     assert!(
-        outcome.content.contains("approv"),
-        "the refusal says what is in the way: {outcome:?}"
+        events.iter().any(|e| e.type_name() == "task.completed"),
+        "the completion the agent decided on still stands"
     );
-    assert!(
-        !events.iter().any(|e| e.type_name() == "question.asked"),
-        "no dangling question was recorded"
-    );
+    let pending = aether_runtime::pending_questions(h.store.as_ref(), agent.id).expect("pending");
+    assert_eq!(pending.len(), 1, "the question waits for its answer");
+}
+
+/// A question in a batch that also queues an approval is recorded in either
+/// order. The approval wait is never interrupted by the reply, so the reply
+/// says the answer is read once the approval is settled.
+#[tokio::test]
+async fn asking_beside_a_call_awaiting_approval_records_the_question() {
+    let ask = ("ask_user", json!({"question": "which colour?"}));
+    let call = ("call_outside", json!({}));
+    for batch in [[ask.clone(), call.clone()], [call, ask]] {
+        let h = harness_with_tools(
+            vec![ScriptedClient::tool_calls(&batch, None)],
+            |_| {},
+            |_| {},
+            |tools| tools.register(Arc::new(CallOutside)),
+        )
+        .await;
+        let (agent, _) = h
+            .runtime
+            .create_agent(
+                CreateAgentSpec {
+                    config: Some(AgentConfig::default()),
+                    approval: Some(ApprovalPolicy::default()),
+                    ..spec("paint it")
+                },
+                Actor::user(),
+            )
+            .expect("create");
+
+        let parked = h
+            .wait_until(agent.id, |s| matches!(s, AgentStatus::Waiting { .. }))
+            .await;
+        let AgentStatus::Waiting { condition } = &parked else {
+            unreachable!("{parked:?}")
+        };
+        assert!(
+            condition.involves_approval(),
+            "the turn waits for the approval it queued: {condition:?}"
+        );
+        let events = h
+            .store
+            .events(0, 10_000, &EventFilter::for_agent(agent.id))
+            .expect("events");
+        let outcome = settled_outcome(&events, "ask_user");
+        assert!(!outcome.is_error, "the question is recorded: {outcome:?}");
+        assert!(
+            outcome.content.contains("approval"),
+            "the reply says what comes first: {outcome:?}"
+        );
+        let pending =
+            aether_runtime::pending_questions(h.store.as_ref(), agent.id).expect("pending");
+        assert_eq!(pending.len(), 1, "the question waits for its answer");
+    }
 }
 
 /// The question's own `Inbox` wait merges into a wait the same batch
