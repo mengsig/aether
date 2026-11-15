@@ -84,6 +84,8 @@ and TypeScript clients are 1.4.0.
 
 ### Fixed
 
+- agents no longer hang when a shell start-up file reads the terminal.
+
 - A child's question no longer deadlocks against a parent waiting on the
   child's task: a message from a descendant that then waits on a reply from
   the recipient wakes it, and the interrupted wait is restored after its turn.

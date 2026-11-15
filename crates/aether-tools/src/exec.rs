@@ -446,8 +446,8 @@ fn pipes(cmd: &mut tokio::process::Command, ctx: &ToolContext) {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .process_group(0);
+        .kill_on_drop(true);
+    aether_spawn::detach_session(cmd.as_std_mut());
     aether_spawn::reset_signals(cmd.as_std_mut());
 }
 

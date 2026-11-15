@@ -24,6 +24,7 @@ nix = { workspace = true }
 pty-process = { version = "0.5.3", features = ["async"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+tokio = { workspace = true }
 rustix = { version = "1.1.4", features = ["fs"] }
 
 [features]

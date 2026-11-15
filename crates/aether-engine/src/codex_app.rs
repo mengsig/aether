@@ -424,8 +424,6 @@ impl CodexAppEngine {
         context: Option<EngineLaunchContext>,
         cancel: CancellationToken,
     ) -> Result<EngineRun, EngineError> {
-        use std::os::unix::process::CommandExt as _;
-
         crate::ensure_workspace(&turn.cwd)?;
         let sandbox = if loopback_sandboxed(&turn) {
             self.validate_network_policy(false)?;
@@ -456,7 +454,6 @@ impl CodexAppEngine {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
-        command.as_std_mut().process_group(0);
         aether_spawn::reset_signals(command.as_std_mut());
         crate::strip_hidden(&mut command, &turn.hidden_env);
         crate::export_temp_dir(&mut command, turn.temp_dir.as_deref());

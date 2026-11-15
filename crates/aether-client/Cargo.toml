@@ -12,6 +12,7 @@ description = "Rust client for the Aether daemon protocol"
 workspace = true
 
 [dependencies]
+aether-spawn = { workspace = true }
 aether-core = { workspace = true }
 aether-net = { workspace = true }
 aether-protocol = { workspace = true }
@@ -38,6 +39,7 @@ futures = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+pty-process = { version = "0.5.3", features = ["async"] }
 tokio = { workspace = true, features = ["test-util"] }
 aether-tools = { workspace = true }
 reqwest = { workspace = true }

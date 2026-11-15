@@ -151,7 +151,7 @@ pub async fn daemon(
     yolo: bool,
     allow_remote: bool,
 ) -> anyhow::Result<()> {
-    if !foreground {
+    if !foreground || (detached && needs_detached_child()?) {
         anyhow::ensure!(
             max_concurrent != Some(0),
             "--max-concurrent must be positive"
@@ -184,6 +184,22 @@ pub async fn daemon(
     .await
 }
 
+/// A group leader cannot setsid; a session leader may still own a PTY.
+fn needs_detached_child() -> anyhow::Result<bool> {
+    let pid = nix::unistd::getpid();
+    if nix::unistd::getpgrp() != pid {
+        return Ok(false);
+    }
+    if nix::unistd::getsid(None)? != pid {
+        return Ok(true);
+    }
+    match std::fs::File::open("/dev/tty") {
+        Ok(_) => Ok(true),
+        Err(error) if error.raw_os_error() == Some(nix::libc::ENXIO) => Ok(false),
+        Err(error) => Err(error).context("check detached daemon's controlling terminal"),
+    }
+}
+
 async fn foreground_daemon(
     socket: PathBuf,
     detached: bool,
@@ -192,6 +208,9 @@ async fn foreground_daemon(
     yolo: bool,
     allow_remote: bool,
 ) -> anyhow::Result<()> {
+    if detached && nix::unistd::getsid(None)? != nix::unistd::getpid() {
+        nix::unistd::setsid().context("detach daemon from the controlling terminal")?;
+    }
     let store = aether_protocol::paths::store_path();
     crate::crash::install_hook(store.clone());
     // Keep logging alive until both persistent and startup evidence is written.

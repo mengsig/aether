@@ -12,6 +12,7 @@ description = "Scheduler, turns, delegation, recovery and external events for th
 workspace = true
 
 [dependencies]
+aether-spawn = { workspace = true }
 aether-core = { workspace = true }
 aether-protocol = { workspace = true }
 aether-store = { workspace = true }

@@ -10,7 +10,6 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::os::unix::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::ExitStatus;
 use std::process::{Command, Stdio};
@@ -117,8 +116,8 @@ fn git(repo: &Path) -> Command {
         .arg("-c")
         .arg("core.fsmonitor=false")
         .arg("-c")
-        .arg("core.autocrlf=false")
-        .process_group(0);
+        .arg("core.autocrlf=false");
+    aether_spawn::detach_session(&mut command);
     command
 }
 
