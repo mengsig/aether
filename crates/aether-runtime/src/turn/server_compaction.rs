@@ -170,13 +170,23 @@ fn request(
         turn: ctx.turn,
         now: now(),
     });
-    Ok(summarize_request(runtime, assembled, resolved))
+    let reference_turn = aether_context::references::has_reference_turn(
+        ctx.task.as_ref(),
+        resolved.model.capabilities.vision,
+    );
+    Ok(summarize_request(
+        runtime,
+        assembled,
+        resolved,
+        reference_turn,
+    ))
 }
 
 fn summarize_request(
     runtime: &Runtime,
     assembled: aether_context::Assembled,
     resolved: &ResolvedModel,
+    reference_turn: bool,
 ) -> Option<ModelRequest> {
     if assembled.dropped_messages > 0 {
         return None;
@@ -196,7 +206,11 @@ fn summarize_request(
         "anthropic.compaction".into(),
         serde_json::json!({"type": "summarize"}),
     );
-    runtime.inline_images(&mut request.messages, resolved.model.capabilities.vision);
+    runtime.inline_images(
+        &mut request.messages,
+        resolved.model.capabilities.vision,
+        reference_turn,
+    );
     Some(request)
 }
 

@@ -260,12 +260,23 @@ impl Runtime {
     /// Replace every stored-image reference in a model request: the newest
     /// become the image itself, within what one request may carry in all;
     /// older ones, and all of them for a model without vision, become text.
-    /// The leading reference turn's images are charged first, so the
-    /// conversation's own images, even copies of them, cannot crowd them out.
-    pub(crate) fn inline_images(&self, messages: &mut [Message], vision: bool) {
+    /// With `reference_turn` (the assembler put the task's reference turn
+    /// first), that turn's images are charged first, so the conversation's
+    /// own images, even copies of them, cannot crowd them out.
+    pub(crate) fn inline_images(
+        &self,
+        messages: &mut [Message],
+        vision: bool,
+        reference_turn: bool,
+    ) {
         let mut budget = RequestImageBudget::beside_inline(messages);
         let conversation = match messages.split_first_mut() {
-            Some((first, rest)) if aether_context::references::is_reference_turn(first) => {
+            Some((first, rest)) if reference_turn => {
+                debug_assert!(matches!(
+                    first.content.first(),
+                    Some(ContentBlock::Text { text, .. })
+                        if text == aether_context::references::REFERENCE_INTRO
+                ));
                 for block in &mut first.content {
                     let ContentBlock::ImageRef(image) = block else {
                         continue;

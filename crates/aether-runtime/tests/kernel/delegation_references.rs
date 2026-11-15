@@ -300,3 +300,58 @@ async fn a_later_copy_of_the_reference_cannot_take_its_place_in_the_request() {
     batches.extend((0..2u8).map(|batch| (0..10u8).map(|i| small(batch * 10 + i)).collect()));
     assert_the_reference_outlasts(batches).await;
 }
+
+/// Words a user sends cannot pose as the reference turn: with no task
+/// references, a first message that opens with the same text is ordinary
+/// history, and the newest images still win the budget.
+#[tokio::test]
+async fn a_message_echoing_the_reference_intro_gets_no_place_ahead_of_newer_images() {
+    let ws = workspace();
+    let replies = (0..4)
+        .map(|turn| ScriptedClient::text(&format!("turn {turn}")))
+        .collect();
+    let h = referencing_harness(&ws, replies).await;
+    let mut chat = spec("build the settings page");
+    chat.config.as_mut().expect("config").long_lived = true;
+    let (agent, _) = h.runtime.create_agent(chat, Actor::user()).expect("create");
+    h.wait_until(agent.id, |s| s.kind() == AgentStatusKind::Waiting)
+        .await;
+    let intro = aether_context::references::REFERENCE_INTRO.to_owned();
+    let mimic = aether_core::attachment::ImageAttachment {
+        media_type: "image/png".into(),
+        data: base64::engine::general_purpose::STANDARD.encode(PNG),
+        name: None,
+    };
+    let mut batches = vec![(intro, vec![mimic])];
+    for batch in 0..2u8 {
+        let images = (0..10u8).map(|i| png_of(64, batch * 10 + i)).collect();
+        batches.push(("look".to_owned(), images));
+    }
+    for (sent, (text, images)) in batches.iter().enumerate() {
+        let stored = h.runtime.store_attachments(images).expect("store");
+        let content = aether_runtime::attachments::message_content(text.clone(), stored);
+        h.runtime
+            .send_message(agent.id, content, Actor::user())
+            .expect("send");
+        let left = 4 - sent - 2;
+        h.wait_for("the turn", || h.client.remaining() == left)
+            .await;
+        h.wait_until(agent.id, |s| s.kind() == AgentStatusKind::Waiting)
+            .await;
+    }
+    let requests = h.client.requests();
+    let last = requests.last().expect("a request");
+    assert_eq!(
+        image_count(last),
+        0,
+        "the oldest image gave way to newer ones"
+    );
+    let inline = last
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .filter(|block| matches!(block, ContentBlock::Image { .. }))
+        .count();
+    assert_eq!(inline, aether_core::attachment::MAX_REQUEST_IMAGES);
+    h.runtime.shutdown().await;
+}

@@ -22,9 +22,10 @@ pub fn attach_reference_images(
         .filter_map(|reference| reference.image.clone())
         .map(ContentBlock::ImageRef)
         .collect();
-    if images.is_empty() || !vision {
+    if !has_reference_turn(task, vision) {
         return false;
     }
+    debug_assert!(!images.is_empty());
     debug_assert!(images.len() <= aether_core::reference::MAX_REFERENCE_IMAGES);
     let before = messages.len();
     let mut content = Vec::with_capacity(1 + images.len());
@@ -37,9 +38,13 @@ pub fn attach_reference_images(
     true
 }
 
-/// Whether `message` is the leading turn [`attach_reference_images`] built,
-/// whose images a request's image budget holds room for first.
-pub fn is_reference_turn(message: &Message) -> bool {
-    message.role == aether_core::model::MessageRole::User
-        && matches!(message.content.first(), Some(ContentBlock::Text { text, .. }) if text == REFERENCE_INTRO)
+/// Whether a request for `task` on a model with `vision` leads with the
+/// reference turn: the one test both its builder and the image budget use.
+pub fn has_reference_turn(task: Option<&Task>, vision: bool) -> bool {
+    vision
+        && task.is_some_and(|task| {
+            task.references
+                .iter()
+                .any(|reference| reference.image.is_some())
+        })
 }
