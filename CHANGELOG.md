@@ -8,8 +8,8 @@ release is also the text of its GitHub release.
 
 ## 1.4.0
 
-Released 2026-11-15. Bounded delegation (#430), approved task references
-(#431), and questions keyed by sequence (#432). The workspace and Python
+Released 2026-11-16. Bounded delegation (#430), approved task references
+(#431), questions keyed by sequence (#432), and terminal detachment (#433). The workspace and Python
 and TypeScript clients are 1.4.0.
 
 ### Added
@@ -84,7 +84,8 @@ and TypeScript clients are 1.4.0.
 
 ### Fixed
 
-- agents no longer hang when a shell start-up file reads the terminal.
+- Daemon and engine subprocesses detach from the controlling terminal, so
+  shell startup files cannot stop agents with a terminal-read signal (#433).
 
 - A child's question no longer deadlocks against a parent waiting on the
   child's task: a message from a descendant that then waits on a reply from
