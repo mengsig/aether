@@ -253,11 +253,15 @@ async fn a_stalled_bridge_call_cannot_postpone_the_park_s_stop() {
     h.runtime.shutdown().await;
 }
 
-type Pending = tokio::task::JoinHandle<aether_runtime::Result<(String, bool)>>;
+pub(super) type Pending = tokio::task::JoinHandle<aether_runtime::Result<(String, bool)>>;
 
 /// The coordinator's call `name` while its engine still runs the `build`
 /// job: a parking call held for the native wait instead.
-async fn held_call(mut h: Harness, name: &str, input: Value) -> (Harness, TurnStarted, Pending) {
+pub(super) async fn held_call(
+    mut h: Harness,
+    name: &str,
+    input: Value,
+) -> (Harness, TurnStarted, Pending) {
     let parent = start_coordinator(&h);
     let turn = turn_of(&mut h, parent).await;
     let pending = hold(&h, &turn, name, input).await;
@@ -265,7 +269,7 @@ async fn held_call(mut h: Harness, name: &str, input: Value) -> (Harness, TurnSt
 }
 
 /// Send `turn`'s call `name` and check that it is held, not parked.
-async fn hold(h: &Harness, turn: &TurnStarted, name: &str, input: Value) -> Pending {
+pub(super) async fn hold(h: &Harness, turn: &TurnStarted, name: &str, input: Value) -> Pending {
     let parent = turn.agent;
     turn.events
         .upgrade()
@@ -311,7 +315,7 @@ fn only_child(h: &Harness, parent: AgentId) -> AgentId {
     children.remove(0).id
 }
 
-async fn job_harness() -> Harness {
+pub(super) async fn job_harness() -> Harness {
     harness_full(
         Duration::from_millis(100),
         OnKill::Report(vec![cancelled_with(Usage::default())]),
@@ -323,7 +327,7 @@ async fn job_harness() -> Harness {
     .await
 }
 
-async fn reply_of(pending: Pending) -> String {
+pub(super) async fn reply_of(pending: Pending) -> String {
     let (reply, error) = tokio::time::timeout(Duration::from_secs(2), pending)
         .await
         .unwrap()
@@ -359,10 +363,10 @@ async fn ask_user_keeps_running_native_jobs_until_the_answer() {
         .unwrap();
     let reply = reply_of(pending).await;
     assert!(
-        reply.starts_with("Wait ended: a message arrived.")
+        reply.starts_with("Wait ended: the operator answered question ")
             && reply.contains("Delivered with this reply:")
             && reply.contains("the left half")
-            && reply.ends_with("Question recorded for the operator to see."),
+            && reply.contains("Question recorded for the operator to see, as question "),
         "{reply}"
     );
     assert!(!turn.observed.stopped() && !turn.observed.stdin_closed());
@@ -763,4 +767,97 @@ async fn a_native_wait_retakes_only_under_its_supervisor_cap() {
     capped_root(&h);
     let first = child_of_first_root(&h);
     wait_reply_queues_behind(h, first, child_of_first_root).await;
+}
+
+/// An engine child keeping a background job alive holds its wait inside the
+/// turn. Its question still reaches a parent held on the child's task, and
+/// the parent's answer ends the child's wait.
+#[tokio::test]
+async fn a_native_waiting_childs_question_reaches_its_held_parent() {
+    let request = json!({"model": "claude-code/haiku", "effort": "low", "role": "worker",
+                         "objective": "first half", "wait": true});
+    let (mut h, turn, parent_wait) = held_call(job_harness().await, "delegate", request).await;
+    let parent = turn.agent;
+    let child = only_child(&h, parent);
+    let child_turn = turn_of(&mut h, child).await;
+    let question = json!({"to": parent, "content": "sqlite or postgres?"});
+    let (sent, is_error) = call(&h, &child_turn, "send_message", question).await;
+    assert!(!is_error, "{sent}");
+    let child_wait = hold(&h, &child_turn, "wait_for", json!({"message_from": parent})).await;
+
+    let woken = reply_of(parent_wait).await;
+    assert!(
+        woken.contains("question from") && woken.contains("sqlite or postgres?"),
+        "{woken}"
+    );
+    let (answered, is_error) = call(
+        &h,
+        &turn,
+        "send_message",
+        json!({"to": child, "content": "sqlite"}),
+    )
+    .await;
+    assert!(!is_error, "{answered}");
+    let got = reply_of(child_wait).await;
+    assert!(
+        got.starts_with("Wait ended:") && !got.contains("No message from"),
+        "{got}"
+    );
+    let answers = h.store.inbox(child, 0).expect("inbox");
+    assert!(
+        answers.iter().any(|item| matches!(&item.kind,
+            aether_core::inbox::InboxKind::Message { from: Actor::Agent { id }, .. } if *id == parent)),
+        "the parent's answer is in the child's inbox: {answers:?}"
+    );
+    h.runtime.shutdown().await;
+}
+
+/// A native `wait_for` on one sender that ends for another reason says the
+/// awaited message has not come, so the agent does not take it as answered.
+async fn assert_unanswered(release: impl AsyncFnOnce(&Harness, AgentId, &TurnStarted)) {
+    let awaited = AgentId::new();
+    let (h, agent, turn, pending) = background_wait(json!({"message_from": awaited})).await;
+    release(&h, agent, &turn).await;
+    let (reply, error) = tokio::time::timeout(Duration::from_secs(2), pending)
+        .await
+        .expect("the wait ends")
+        .expect("the request task must not panic")
+        .expect("the wait replies");
+    assert!(!error, "{reply}");
+    assert!(
+        reply.contains(&format!("No message from {awaited} has arrived yet")),
+        "{reply}"
+    );
+    assert!(!turn.observed.stopped(), "the session keeps running");
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_native_wait_on_a_sender_ended_by_another_message_says_it_is_unanswered() {
+    assert_unanswered(async |h: &Harness, agent: AgentId, _: &TurnStarted| {
+        h.runtime
+            .send_message(
+                agent,
+                vec![ContentBlock::text("status please")],
+                Actor::user(),
+            )
+            .expect("send");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_native_wait_on_a_sender_ended_by_a_job_says_it_is_unanswered() {
+    assert_unanswered(async |_: &Harness, _: AgentId, turn: &TurnStarted| {
+        turn.events
+            .upgrade()
+            .expect("the engine is live")
+            .send(EngineEvent::BackgroundTask {
+                id: "build".into(),
+                running: false,
+            })
+            .await
+            .expect("the job finishes");
+    })
+    .await;
 }

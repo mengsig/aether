@@ -91,6 +91,60 @@ async fn completing_after_ask_user_in_one_engine_turn_is_refused() {
     h.runtime.shutdown().await;
 }
 
+/// The other order: a question after the engine completed its task is still
+/// recorded, and the asker parks on its answer instead of ending.
+#[tokio::test]
+async fn asking_after_complete_task_in_one_engine_turn_keeps_the_asker() {
+    let mut h = harness(Duration::from_secs(30)).await;
+    let worker = start_agent(
+        &h,
+        CreateAgentSpec {
+            role: "worker".into(),
+            objective: Some("paint it".into()),
+            start: true,
+            config: Some(AgentConfig {
+                approval: ApprovalPolicy::none(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    );
+    let turn = turn_of(&mut h, worker).await;
+
+    let (reply, is_error) = call(&h, &turn, "complete_task", json!({"summary": "painted"})).await;
+    assert!(!is_error, "{reply}");
+    // The settle already began a terminal wind-down, which keeps the engine
+    // for its receipt instead of stopping it.
+    let (reply, is_error) =
+        raw_call(&h, &turn, "ask_user", json!({"question": "which colour?"})).await;
+    assert!(
+        !is_error,
+        "a question after the settle was refused: {reply}"
+    );
+    assert!(reply.contains("already settled"), "{reply}");
+
+    let _ = turn.end.send(());
+    let parked = wait_for_park(&h, worker).await;
+    assert!(
+        matches!(condition_of(&parked.status), WaitCondition::Inbox),
+        "the asker waits for the answer: {:?}",
+        parked.status
+    );
+    let recorded = events(h.store.as_ref());
+    assert!(recorded.iter().any(|e| e.type_name() == "task.completed"));
+    assert_eq!(
+        aether_runtime::pending_questions(h.store.as_ref(), worker)
+            .expect("pending")
+            .len(),
+        1,
+        "the question waits for its answer"
+    );
+    h.runtime
+        .send_message(worker, vec![ContentBlock::text("blue")], Actor::user())
+        .expect("the operator's reply reaches the asker");
+    h.runtime.shutdown().await;
+}
+
 /// The refusal quotes the open question, so it reaches the engine masked.
 #[tokio::test]
 async fn a_refusal_quoting_the_open_question_is_masked() {

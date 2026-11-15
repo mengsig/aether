@@ -159,6 +159,10 @@ pub(super) fn bare_wait_has_no_wake_source(runtime: &Runtime, agent: &Agent) -> 
     if !assigned || crate::scheduler::has_unread_inbox(runtime, agent)? {
         return Ok(false);
     }
+    // An open question's answer wakes the asker.
+    if crate::commands::pending_question(runtime.store.as_ref(), agent.id)?.is_some() {
+        return Ok(false);
+    }
 
     let subtree = runtime.store.subtree_ids(agent.id)?;
     let live = runtime.store.agents(&AgentFilter {

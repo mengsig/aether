@@ -54,6 +54,36 @@ release is also the text of its GitHub release.
   own during a turn, is sent the assignment, checkpoint and memory again on
   the next turn instead of assuming it still holds them.
 
+### Changed
+
+- **Ask, don't guess.** A root agent's assignment carries the opener rule:
+  a message that opens a conversation or ends in a check-in ("Ok?") with its
+  central choice still open gets a short acknowledgement, 2-4 options and one
+  question, and no files or builds; a fully specified request still starts at
+  once. Every assignment says when to ask (the answer changes what gets built
+  and is not in the brief, the repository or the approved intent; a deviation
+  from an approved requirement always asks) and to record an assumption
+  otherwise. A delegated agent is told to ask its parent with `send_message`
+  and `wait_for` `message_from` the parent.
+- `send_message`, `wait_for` and `ask_user` are offered whatever an agent's
+  tool exposure says: no allowlist can take away the way to ask.
+- **Questions are keyed by sequence.** Every `ask_user` records its own
+  question; a second one in a turn, one asked while a native background
+  wait is held, one beside a call awaiting approval, and one after the turn
+  settled its task (the asker then stays alive for the answer) are no longer
+  refused. A held question's wait ignores replies to the asker's other
+  questions. `reply_to_question` answers only the
+  question it names, a person's ordinary message answers every question
+  pending when it lands, and each answered question is closed by its own
+  `question.answered` custom event. `get_attention` lists every open question
+  of an agent, and the TUI retires only the answered question's cell.
+
+### Fixed
+
+- A child's question no longer deadlocks against a parent waiting on the
+  child's task: a message from a descendant that then waits on a reply from
+  the recipient wakes it, and the interrupted wait is restored after its turn.
+
 ## 1.3.1
 
 Released 2026-11-14. One conversation for the TUI and phone (#420), dependency

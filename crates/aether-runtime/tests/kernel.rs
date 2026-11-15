@@ -155,6 +155,8 @@ mod cancellation_restart;
 mod chat_retries;
 #[path = "kernel/checkpoints.rs"]
 mod checkpoints;
+#[path = "kernel/child_questions.rs"]
+mod child_questions;
 #[path = "kernel/commit_races.rs"]
 mod commit_races;
 #[path = "kernel/completion_artifacts.rs"]
@@ -249,6 +251,8 @@ mod provider_probes;
 mod provider_scheduling;
 #[path = "kernel/question_guards.rs"]
 mod question_guards;
+#[path = "kernel/question_keys.rs"]
+mod question_keys;
 #[path = "kernel/questions.rs"]
 mod questions;
 #[path = "kernel/recovery_limits.rs"]

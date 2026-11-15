@@ -722,7 +722,7 @@ fn recording_memory_ids_leaves_the_prompt_bytes_unchanged() {
     let system = system.join("\n\n");
     let request = serde_json::to_string(&assembled.request).expect("request");
     assert_eq!(system, FIXED_SYSTEM_PROMPT);
-    assert_eq!(request.len(), 1_221, "{request}");
+    assert_eq!(request.len(), 2_027, "{request}");
     let mut bare = assembled.snapshot.clone();
     for layer in &mut bare.layers {
         layer.memories.clear();
@@ -752,6 +752,16 @@ Model: mock/m
 Task: none assigned.
 
 Scope: workspace /repo; network denied
+
+Asking: when a message opens a conversation or ends in a check-in (\"Ok?\", \"sound good?\", \
+\"what do you think?\") and its central choice (what to build, which direction) is still open and \
+a matter of taste, reply with a short acknowledgement, 2-4 concrete options and one question. Write \
+no files and start no builds until they choose. A fully specified request starts at once. Ask \
+whenever the answer changes what gets built and is not in the request or brief, the repository or \
+the approved intent; a deviation from an approved requirement always asks. Otherwise pick the most \
+reasonable option and state the assumption visibly. When in doubt about importance, ask. Asking is \
+never capped. When an agent you started asks you something, answer from what you know or ask \
+upward and relay the answer.
 
 Turn 1. Effort high.
 

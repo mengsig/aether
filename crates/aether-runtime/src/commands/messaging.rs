@@ -1,16 +1,16 @@
-use super::MessageDelivery;
+use super::{MessageDelivery, questions};
 use crate::attachments::{CheckedImage, message_content};
 use crate::submission::wrong_shape;
 use crate::{CommitHold, Result, Runtime, RuntimeError};
 use aether_core::agent::{Agent, AgentStatusKind};
 use aether_core::attachment::{AttachmentRef, ImageAttachment};
-use aether_core::event::{Actor, Event, EventDraft, EventKind};
+use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::{AgentId, InboxItemId, MessageId};
 use aether_core::idempotency::{Submission, SubmissionOutcome};
 use aether_core::inbox::{InboxItem, InboxKind};
 use aether_core::model::ContentBlock;
 use aether_core::time::now;
-use aether_store::{Commit, EventFilter, Mutation, Store};
+use aether_store::{Commit, Mutation};
 
 /// Why an ended agent takes no input, with the command that revives it.
 fn ended_refusal(id: AgentId, status: AgentStatusKind) -> RuntimeError {
@@ -24,37 +24,6 @@ fn ended_refusal(id: AgentId, status: AgentStatusKind) -> RuntimeError {
         _ => String::new(),
     };
     RuntimeError::Invalid(format!("agent {id} is {status}{revive}"))
-}
-
-/// The question `agent` asked last, unless an operator has answered it since.
-/// Delivery of the answer closes it, so two replies cannot both queue.
-pub fn pending_question(store: &dyn Store, agent: AgentId) -> Result<Option<Event>> {
-    let mut filter = EventFilter::own_events(agent);
-    filter.types = vec!["question.asked".into()];
-    let Some(asked) = store.latest_events(1, &filter)?.pop() else {
-        return Ok(None);
-    };
-    if asked.actor.agent_id() != Some(agent)
-        || !matches!(asked.kind, EventKind::QuestionAsked { .. })
-    {
-        return Ok(None);
-    }
-    filter.types = vec!["message.sent".into()];
-    let mut after = asked.seq;
-    loop {
-        let events = store.events(after, 128, &filter)?;
-        for event in &events {
-            if matches!(&event.kind, EventKind::MessageSent { from, to, .. }
-                if *to == agent && matches!(from, Actor::User { .. } | Actor::Client { .. }))
-            {
-                return Ok(None);
-            }
-            after = event.seq;
-        }
-        if events.len() < 128 {
-            return Ok(Some(asked));
-        }
-    }
 }
 
 /// The message a recorded delivery created, as its retry is answered.
@@ -112,7 +81,44 @@ pub(crate) fn check_text_size(what: &str, bytes: usize) -> Result<()> {
     aether_core::limits::check_text_size(what, bytes).map_err(RuntimeError::Invalid)
 }
 
+/// Which of the recipient's questions a delivered message answers.
+#[derive(Debug, Clone, Copy)]
+enum Answering {
+    /// Every one pending, when the sender is an operator.
+    Pending,
+    /// Only this one: a targeted `reply_to_question`.
+    Reply(u64),
+}
+
 impl Runtime {
+    /// The events closing what `message` answers, read under the caller's
+    /// commit hold so no question is asked or answered in between.
+    fn answers_of(
+        &self,
+        agent: &Agent,
+        from: &Actor,
+        message: MessageId,
+        answering: Answering,
+    ) -> Result<Vec<EventDraft>> {
+        if !questions::is_operator(from) {
+            debug_assert!(
+                matches!(answering, Answering::Pending),
+                "only an operator replies"
+            );
+            return Ok(Vec::new());
+        }
+        let (seqs, reply) = match answering {
+            Answering::Reply(seq) => (vec![seq], true),
+            Answering::Pending => {
+                let open = questions::pending_questions(self.store.as_ref(), agent.id)?;
+                (open.iter().map(|asked| asked.seq).collect(), false)
+            }
+        };
+        Ok(questions::answers(
+            from, agent.id, agent.run, &seqs, message, reply,
+        ))
+    }
+
     /// Deliver a message to an agent's inbox. Waking is the scheduler's job.
     pub fn send_message(
         &self,
@@ -182,10 +188,18 @@ impl Runtime {
         if agent.status.is_terminal() {
             return Err(ended_refusal(to, agent.status.kind()));
         }
-        self.deliver_message_held(hold, &agent, content, images, from, submission)
+        self.deliver_message_held(
+            hold,
+            &agent,
+            content,
+            images,
+            from,
+            submission,
+            Answering::Pending,
+        )
     }
 
-    /// Answer exactly this agent's latest pending question, never a newer one.
+    /// Answer exactly this one of the agent's pending questions, no other.
     /// Validation, delivery and optional retry record share one commit hold.
     pub fn reply_to_question(
         &self,
@@ -220,24 +234,16 @@ impl Runtime {
             )));
         }
         crate::cancellation::check_parent(self, &hold, to)?;
-        self.check_pending_question(&hold, to, question_seq)?;
-        self.deliver_message_held(hold, &agent, content, &[], from, submission)
-    }
-
-    fn check_pending_question(
-        &self,
-        _hold: &CommitHold<'_>,
-        to: AgentId,
-        question_seq: u64,
-    ) -> Result<()> {
-        match pending_question(self.store.as_ref(), to)? {
-            Some(asked) if asked.seq == question_seq => Ok(()),
-            _ => Err(RuntimeError::Invalid(format!(
-                "question {question_seq} is not the pending question for agent {to}"
-            ))),
+        if !questions::question_is_open(self.store.as_ref(), to, question_seq)? {
+            return Err(RuntimeError::Invalid(format!(
+                "question {question_seq} is not a pending question of agent {to}"
+            )));
         }
+        let answering = Answering::Reply(question_seq);
+        self.deliver_message_held(hold, &agent, content, &[], from, submission, answering)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn deliver_message_held(
         &self,
         hold: CommitHold<'_>,
@@ -246,10 +252,12 @@ impl Runtime {
         images: &[CheckedImage],
         from: Actor,
         submission: Option<Submission>,
+        answering: Answering,
     ) -> Result<MessageId> {
         let at = now();
         let to = agent.id;
         let message = MessageId::new();
+        let answers = self.answers_of(agent, &from, message, answering)?;
         let mut commit = Commit::new();
         commit.push_event(
             EventDraft::new(
@@ -275,6 +283,9 @@ impl Runtime {
             },
             from,
         )?;
+        for answer in answers {
+            commit.push_event(answer);
+        }
         if let Some(submission) = &submission {
             commit.push_mutation(Mutation::RecordSubmission(
                 submission.record(at, SubmissionOutcome::Message { message }),
@@ -388,6 +399,7 @@ impl Runtime {
         for target in targets {
             let id = target.id;
             let message = MessageId::new();
+            let answers = self.answers_of(target, from, message, Answering::Pending)?;
             commit.push_event(
                 EventDraft::new(
                     from.clone(),
@@ -412,6 +424,9 @@ impl Runtime {
                 },
                 from.clone(),
             )?;
+            for answer in answers {
+                commit.push_event(answer);
+            }
             deliveries.push(MessageDelivery { agent: id, message });
         }
         Ok(deliveries)

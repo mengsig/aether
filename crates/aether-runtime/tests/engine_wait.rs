@@ -557,6 +557,8 @@ mod approvals;
 
 #[path = "engine_wait/background.rs"]
 mod background;
+#[path = "engine_wait/held_questions.rs"]
+mod held_questions;
 
 #[path = "engine_wait/budgets.rs"]
 mod budgets;
