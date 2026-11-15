@@ -28,6 +28,7 @@ dependencies = [
  "futures",
  "hex",
  "nix 0.31.3",
+ "pty-process",
  "qrcode",
  "reqwest",
  "rusqlite",

@@ -379,4 +379,4 @@ mod tests {
 #[allow(unsafe_code)]
 mod session_watch;
 #[cfg(target_os = "linux")]
-pub use session_watch::{PendingWatch, SessionWatch, watch_session};
+pub use session_watch::{PendingWatch, SessionWatch, wait_readable, watch_session};

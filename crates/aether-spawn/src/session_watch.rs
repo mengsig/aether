@@ -30,7 +30,7 @@ impl PendingWatch {
             Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
             Err(error) => return Err(error),
         }
-        // The child has forked its watchdog; release our writer so exec can report EOF.
+        // The watchdog exists; release our writer so an early death reports EOF.
         drop(self.ready_write);
         let pid = u32::from_ne_bytes(bytes);
         assert!(pid > 1, "watchdog must be a child process");
@@ -71,15 +71,33 @@ impl Drop for SessionWatch {
     }
 }
 
+/// Wait for readability while retaining ownership of the registered descriptor.
+pub async fn wait_readable(fd: std::os::fd::OwnedFd) -> io::Result<()> {
+    // SAFETY: OwnedFd keeps the same descriptor open until AsyncFd is dropped.
+    let fd = unsafe {
+        tokio::io::unix::AsyncFd::register_with_interest(fd, tokio::io::Interest::READABLE)
+    }
+    .map_err(io::Error::from)?;
+    fd.readable().await.map(drop)
+}
+
 struct WatchArgs {
     control: RawFd,
     ready: RawFd,
     max_fd: i32,
+    script: &'static std::ffi::CStr,
 }
 
 /// Install after setsid and before the start gate. The caller must reap the
 /// returned pid: CLONE_PARENT makes the watchdog its child, not the engine's.
 pub fn watch_session(command: &mut std::process::Command) -> io::Result<PendingWatch> {
+    watch_session_command(command, c"printf r; exec 1>&-; read -r _; kill -s KILL 0")
+}
+
+fn watch_session_command(
+    command: &mut std::process::Command,
+    script: &'static std::ffi::CStr,
+) -> io::Result<PendingWatch> {
     let (control_read, control) = io::pipe()?;
     let (pid_read, pid_write) = io::pipe()?;
     let (ready_read, ready_write) = io::pipe()?;
@@ -107,6 +125,7 @@ pub fn watch_session(command: &mut std::process::Command) -> io::Result<PendingW
                 control: control_read.as_raw_fd(),
                 ready: ready_fd,
                 max_fd,
+                script,
             };
             start_watchdog(&mut args, &mut stack, &pid_write, &ready_read)
         });
@@ -118,7 +137,8 @@ pub fn watch_session(command: &mut std::process::Command) -> io::Result<PendingW
     })
 }
 
-/// Fork a sibling in this session and wait for its exec before opening the gate.
+/// Fork a sibling in this session and wait for its ready byte.
+/// Safety: call after setsid, with live pipes and a 16-byte-aligned downward-growing stack.
 unsafe fn start_watchdog(
     args: &mut WatchArgs,
     stack: &mut [u128],
@@ -149,7 +169,7 @@ unsafe fn start_watchdog(
     let mut ready = [0u8];
     loop {
         match nix::unistd::read(ready_read, &mut ready) {
-            Ok(0) => return Ok(()),
+            Ok(1) if ready[0] == b'r' => return Ok(()),
             Err(nix::errno::Errno::EINTR) => continue,
             Err(error) => return Err(error.into()),
             Ok(_) => return Err(io::Error::from(nix::errno::Errno::EIO)),
@@ -162,7 +182,9 @@ extern "C" fn watchdog(raw: *mut libc::c_void) -> libc::c_int {
     unsafe {
         let args = &*(raw as *const WatchArgs);
         if libc::dup2(args.control, 0) < 0
+            || libc::dup2(args.ready, 1) < 0
             || libc::fcntl(0, libc::F_SETFD, 0) < 0
+            || libc::fcntl(1, libc::F_SETFD, 0) < 0
             || libc::chdir(c"/".as_ptr()) < 0
         {
             libc::write(args.ready, b"e".as_ptr().cast(), 1);
@@ -170,31 +192,34 @@ extern "C" fn watchdog(raw: *mut libc::c_void) -> libc::c_int {
         }
         let descriptors = WatchArgs {
             control: 0,
-            ready: args.ready,
+            ready: 1,
             max_fd: args.max_fd,
+            script: args.script,
         };
         close_inherited(&descriptors);
         for signal in [libc::SIGHUP, libc::SIGINT, libc::SIGTERM] {
             if libc::signal(signal, libc::SIG_IGN) == libc::SIG_ERR {
-                libc::write(args.ready, b"e".as_ptr().cast(), 1);
+                libc::write(1, b"e".as_ptr().cast(), 1);
                 return 1;
             }
         }
         let argv = [
             c"/bin/sh".as_ptr(),
             c"-c".as_ptr(),
-            c"read -r _; kill -s KILL 0".as_ptr(),
+            args.script.as_ptr(),
+            c"aether-engine-watchdog".as_ptr(),
             std::ptr::null(),
         ];
         let env = [std::ptr::null()];
-        // Exec releases the daemon's copied address space and closes the readiness pipe.
+        // The shell acknowledges only after exec released the daemon's copied address space.
         libc::execve(argv[0], argv.as_ptr(), env.as_ptr());
-        libc::write(args.ready, b"e".as_ptr().cast(), 1);
+        libc::write(1, b"e".as_ptr().cast(), 1);
         1
     }
 }
 
-/// Close everything except the two lifeline descriptors, including stdio.
+/// Close everything except the two lifeline descriptors.
+/// Safety: call only in the cloned watchdog, before exec, with its live descriptors.
 unsafe fn close_inherited(args: &WatchArgs) {
     let low = args.control.min(args.ready) as u32;
     let high = args.control.max(args.ready) as u32;
@@ -239,5 +264,40 @@ mod tests {
             assert_eq!(error.raw_os_error(), Some(libc::EINVAL));
             assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         }
+    }
+
+    #[test]
+    fn a_watchdog_that_exits_without_ready_never_runs_the_engine() {
+        use nix::sys::{
+            signal::{Signal, killpg},
+            wait::waitpid,
+        };
+        use nix::unistd::{Pid, getpgid};
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("ran");
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "echo ran > \"$1\"", "sh"]).arg(&marker);
+        crate::detach_session(&mut command);
+        let pending = watch_session_command(&mut command, c"exit 0").unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let spawning = std::thread::spawn(move || sender.send(command.output()).unwrap());
+        let watch = pending.finish().unwrap().expect("watchdog forked");
+        let pid = Pid::from_raw(watch.id() as i32);
+        let group = getpgid(Some(pid)).unwrap();
+        assert_ne!(group, nix::unistd::getpgrp());
+        let result = receiver.recv_timeout(Duration::from_secs(5));
+        if result.is_err() {
+            killpg(group, Signal::SIGKILL).unwrap();
+        }
+        drop(watch);
+        waitpid(pid, None).unwrap();
+        spawning.join().unwrap();
+        let error = result
+            .expect("spawn must fail within seconds")
+            .expect_err("EOF without ready is not a working watchdog");
+        assert_eq!(error.raw_os_error(), Some(libc::EIO));
+        assert!(!marker.exists(), "the unwatched engine must never run");
     }
 }

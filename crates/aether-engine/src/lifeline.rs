@@ -152,12 +152,10 @@ async fn reap_watchdog(pid: u32) {
     let Some(raw) = Pid::from_raw(pid as i32) else {
         unreachable!("validated watchdog pid");
     };
-    let readiness = rustix::process::pidfd_open(raw, PidfdFlags::empty())
-        .map_err(io::Error::from)
-        .and_then(tokio::io::unix::AsyncFd::new);
+    let readiness = rustix::process::pidfd_open(raw, PidfdFlags::empty()).map_err(io::Error::from);
     match readiness {
         Ok(fd) => {
-            if let Err(error) = fd.readable().await {
+            if let Err(error) = aether_spawn::wait_readable(fd).await {
                 tracing::warn!(pid, %error, "watchdog readiness failed; polling its exit");
             }
         }

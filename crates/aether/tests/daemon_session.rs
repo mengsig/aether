@@ -14,6 +14,7 @@ use rustix::process::{Pid, PidfdFlags, Signal, pidfd_open, pidfd_send_signal};
 struct Daemon {
     launcher: Child,
     process: Option<OwnedFd>,
+    _pty: Option<pty_process::blocking::Pty>,
 }
 
 impl Drop for Daemon {
@@ -28,7 +29,14 @@ impl Drop for Daemon {
     }
 }
 
-fn launch(root: &Path, group_leader: bool) -> Daemon {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Launcher {
+    Child,
+    GroupLeader,
+    PtySessionLeader,
+}
+
+fn launch(root: &Path, mode: Launcher) -> Daemon {
     assert!(root.is_dir());
     assert!(root.is_absolute());
     let mut command = Command::new(env!("CARGO_BIN_EXE_aether"));
@@ -48,13 +56,34 @@ fn launch(root: &Path, group_leader: bool) -> Daemon {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    if group_leader {
+    if mode == Launcher::GroupLeader {
         command.process_group(0);
     }
+    let (launcher, pty) = if mode == Launcher::PtySessionLeader {
+        let (child, pty) = spawn_on_pty(command);
+        (child, Some(pty))
+    } else {
+        (command.spawn().unwrap(), None)
+    };
     Daemon {
-        launcher: command.spawn().unwrap(),
+        launcher,
         process: None,
+        _pty: pty,
     }
+}
+
+fn spawn_on_pty(command: Command) -> (Child, pty_process::blocking::Pty) {
+    let (pty, pts) = pty_process::blocking::open().unwrap();
+    let mut child = pty_process::blocking::Command::new(command.get_program())
+        .args(command.get_args())
+        .current_dir(command.get_current_dir().unwrap());
+    for (name, value) in command.get_envs() {
+        child = match value {
+            Some(value) => child.env(name, value),
+            None => child.env_remove(name),
+        };
+    }
+    (child.spawn(pts).unwrap(), pty)
 }
 
 async fn listening(root: &Path) -> Client {
@@ -75,9 +104,13 @@ async fn listening(root: &Path) -> Client {
 
 #[tokio::test]
 async fn direct_detached_daemon_leads_a_session_without_a_terminal() {
-    for group_leader in [false, true] {
+    for mode in [
+        Launcher::Child,
+        Launcher::GroupLeader,
+        Launcher::PtySessionLeader,
+    ] {
         let root = tempfile::tempdir().unwrap();
-        let mut daemon = launch(root.path(), group_leader);
+        let mut daemon = launch(root.path(), mode);
         let client = listening(root.path()).await;
         let pid = client.welcome().unwrap().pid;
         assert!(pid > 1);
@@ -95,8 +128,8 @@ async fn direct_detached_daemon_leads_a_session_without_a_terminal() {
         assert_eq!(fields[4], "0", "daemon has no controlling terminal");
         assert_eq!(
             pid != daemon.launcher.id(),
-            group_leader,
-            "only a group leader needs another child"
+            mode != Launcher::Child,
+            "a group leader or PTY session leader needs another child"
         );
     }
 }
