@@ -83,6 +83,22 @@ fn merging_keeps_one_copy_of_a_reference_named_twice() {
 }
 
 #[test]
+fn an_image_and_a_file_of_the_same_bytes_are_both_kept_in_either_order() {
+    let shown = image("mock.png", 5);
+    let mut listed = shown.clone();
+    listed.kind = ReferenceKind::File;
+    listed.image = None;
+    for (base, extra) in [(&listed, &shown), (&shown, &listed)] {
+        let merged = merge(vec![base.clone()], vec![extra.clone()]);
+        assert_eq!(merged.len(), 2, "{merged:?}");
+        assert!(
+            merged.iter().any(|r| r.image.is_some()),
+            "the image survives"
+        );
+    }
+}
+
+#[test]
 fn a_label_is_one_printable_line_and_a_line_names_the_digest() {
     assert_eq!(
         clean_label("mock\nup\u{1b}[2J").as_deref(),

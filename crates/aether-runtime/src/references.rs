@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use aether_core::attachment::{AttachmentId, MAX_IMAGE_BYTES, check_image, sniff_media_type};
 use aether_core::reference::{
-    MAX_REFERENCE_FILE_BYTES, ReferenceKind, ReferenceRequest, TaskReference, check_budget,
-    clean_label, merge,
+    MAX_REFERENCE_FILE_BYTES, MAX_REFERENCE_IMAGES, MAX_REFERENCES, ReferenceKind,
+    ReferenceRequest, TaskReference, check_budget, clean_label, merge, same_reference,
 };
 use aether_core::task::Task;
 use aether_engine::EngineImage;
@@ -187,14 +187,29 @@ impl Runtime {
         inherited: Vec<TaskReference>,
         scope: Option<&ReferenceScope>,
     ) -> Result<ResolvedReferences> {
-        let mut named = Vec::with_capacity(requests.len());
+        // Bounded before anything is read; the budget is then checked as each
+        // one is read, so at most one image past it is ever held.
+        if requests.len() > MAX_REFERENCES {
+            return Err(RuntimeError::Invalid(format!(
+                "too many references: {} named, at most {MAX_REFERENCES} per task",
+                requests.len()
+            )));
+        }
+        let mut named: Vec<TaskReference> = Vec::with_capacity(requests.len());
         let mut images = Vec::new();
         for request in requests {
             let (reference, image) =
                 read_reference(request, scope).map_err(RuntimeError::Invalid)?;
+            if named.iter().any(|held| same_reference(held, &reference)) {
+                continue;
+            }
             named.push(reference);
+            // The merged set holds every distinct named one, so this refuses
+            // nothing the whole set would take.
+            check_budget(&named).map_err(RuntimeError::Invalid)?;
             images.extend(image);
         }
+        debug_assert!(images.len() <= MAX_REFERENCE_IMAGES);
         let references = merge(inherited, named);
         check_budget(&references).map_err(RuntimeError::Invalid)?;
         if !images.is_empty() && self.attachment_dir().is_none() {

@@ -139,14 +139,17 @@ pub fn check_budget(references: &[TaskReference]) -> Result<(), String> {
     Ok(())
 }
 
-/// `extra` appended to `base`, skipping any whose bytes and path `base`
-/// already holds: inheriting a reference and naming it again is one reference.
+/// Whether two references name the same thing: one path, bytes and kind. A
+/// file and an image of the same bytes differ, as only the image is shown.
+pub fn same_reference(a: &TaskReference, b: &TaskReference) -> bool {
+    a.path == b.path && a.sha256 == b.sha256 && a.kind == b.kind
+}
+
+/// `extra` appended to `base`, skipping any `base` already holds: inheriting
+/// a reference and naming it again is one reference.
 pub fn merge(mut base: Vec<TaskReference>, extra: Vec<TaskReference>) -> Vec<TaskReference> {
     for reference in extra {
-        let duplicate = base
-            .iter()
-            .any(|held| held.path == reference.path && held.sha256 == reference.sha256);
-        if !duplicate {
+        if !base.iter().any(|held| same_reference(held, &reference)) {
             base.push(reference);
         }
     }

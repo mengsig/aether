@@ -219,3 +219,74 @@ fn the_delegate_reply_warns_when_the_child_takes_no_images() {
         "{blind}"
     );
 }
+
+async fn attaching_runtime() -> (
+    std::sync::Arc<Runtime>,
+    tempfile::TempDir,
+    tempfile::TempDir,
+) {
+    let images = tempfile::tempdir().expect("attachment dir");
+    let dir = images.path().to_path_buf();
+    let (runtime, config) =
+        crate::test_runtime(move |config| config.attachment_dir = Some(dir)).await;
+    (runtime, images, config)
+}
+
+#[tokio::test]
+async fn a_repeated_reference_is_held_once_and_a_file_beside_its_image_keeps_both() {
+    let (runtime, _images, _config) = attaching_runtime().await;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("mock.png");
+    std::fs::write(&path, PNG).expect("write");
+    let repeated = vec![request(&path, ReferenceKind::Image, None); MAX_REFERENCES];
+    let resolved = runtime
+        .resolve_references(&repeated, Vec::new(), None)
+        .expect("one image named many times is one reference");
+    assert_eq!(resolved.references.len(), 1);
+    assert_eq!(resolved.images.len(), 1, "no second buffer for a repeat");
+
+    let both = [
+        request(&path, ReferenceKind::File, None),
+        request(&path, ReferenceKind::Image, None),
+    ];
+    let resolved = runtime
+        .resolve_references(&both, Vec::new(), None)
+        .expect("a file and an image of the same bytes");
+    assert_eq!(resolved.references.len(), 2);
+    assert_eq!(resolved.images.len(), 1, "the image is still shown");
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_budgets_refuse_a_set_before_reading_past_them() {
+    let (runtime, _images, _config) = attaching_runtime().await;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let missing = dir.path().join("gone.png");
+    let too_many = vec![request(&missing, ReferenceKind::Image, None); MAX_REFERENCES + 1];
+    let error = runtime
+        .resolve_references(&too_many, Vec::new(), None)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("too many references"),
+        "nothing read: {error}"
+    );
+
+    let mut over: Vec<_> = (0..=MAX_REFERENCE_IMAGES as u8)
+        .map(|tag| {
+            let path = dir.path().join(format!("mock{tag}.png"));
+            std::fs::write(&path, [PNG, &[tag]].concat()).expect("write");
+            request(&path, ReferenceKind::Image, None)
+        })
+        .collect();
+    over.push(request(&missing, ReferenceKind::Image, None));
+    let error = runtime
+        .resolve_references(&over, Vec::new(), None)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("too many image references"),
+        "refused at the image past the budget, before the missing one: {error}"
+    );
+    runtime.shutdown().await;
+}
