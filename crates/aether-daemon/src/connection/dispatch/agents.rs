@@ -130,6 +130,7 @@ async fn create_agent(
         delegation_reason: None,
         references: req.references,
         inherited_references: Vec::new(),
+        reference_scope: None,
     };
     let (agent, _) = rt
         .create_agent_keyed(spec, by, submission)

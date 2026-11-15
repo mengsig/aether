@@ -60,6 +60,9 @@ pub struct CreateAgentSpec {
     pub references: Vec<aether_core::reference::ReferenceRequest>,
     /// References a delegating parent passes on from its own task, as stored.
     pub inherited_references: Vec<aether_core::reference::TaskReference>,
+    /// Where a delegating parent may take `references` from; `None` reads
+    /// any path the daemon can (a client's or the daemon's own creation).
+    pub reference_scope: Option<crate::ReferenceScope>,
 }
 
 pub use aether_core::inbox::MessageDelivery;

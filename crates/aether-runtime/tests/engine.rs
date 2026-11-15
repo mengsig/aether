@@ -93,6 +93,8 @@ mod pricing;
 mod questions;
 #[path = "engine/receipt_parity.rs"]
 mod receipt_parity;
+#[path = "engine/references.rs"]
+mod references;
 #[path = "engine/scripted.rs"]
 mod scripted;
 #[path = "engine/session_recovery.rs"]

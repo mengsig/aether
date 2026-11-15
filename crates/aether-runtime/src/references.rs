@@ -21,35 +21,61 @@ pub(crate) struct ResolvedReferences {
     pub images: Vec<CheckedImage>,
 }
 
+/// Where a delegating agent may take its child's references from: inside
+/// its scope's roots, or a path its own task already carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReferenceScope {
+    /// Canonical workspace root and allowed paths; one that does not
+    /// resolve holds nothing, so it is left out.
+    roots: Vec<PathBuf>,
+    /// Canonical paths of the delegating agent's own task references.
+    own: Vec<PathBuf>,
+}
+
+impl ReferenceScope {
+    fn admits(&self, path: &Path) -> bool {
+        self.own.iter().any(|own| own == path)
+            || self.roots.iter().any(|root| path.starts_with(root))
+    }
+}
+
 /// Read one named reference and check it: an absolute, readable regular
-/// file within its kind's size limit, and for an image, a supported type.
+/// file within its kind's size limit, in `scope` when there is one, and for
+/// an image, a supported type. The file is opened once; every check after
+/// that is made on the open handle, so a path swapped meanwhile cannot
+/// change what is read.
 fn read_reference(
     request: &ReferenceRequest,
+    scope: Option<&ReferenceScope>,
 ) -> std::result::Result<(TaskReference, Option<CheckedImage>), String> {
     let shown = request.path.display();
     if !request.path.is_absolute() {
         return Err(format!("reference {shown} is not an absolute path"));
     }
-    let path = std::fs::canonicalize(&request.path)
-        .map_err(|error| format!("reference {shown} cannot be read: {error}"))?;
-    let metadata = std::fs::metadata(&path)
-        .map_err(|error| format!("reference {shown} cannot be read: {error}"))?;
-    if !metadata.is_file() {
+    let unreadable = |error: std::io::Error| format!("reference {shown} cannot be read: {error}");
+    let file = open_without_blocking(&request.path).map_err(unreadable)?;
+    let opened = file.metadata().map_err(unreadable)?;
+    if !opened.is_file() {
         return Err(format!("reference {shown} is not a regular file"));
+    }
+    let path = path_of_opened(&request.path, &opened).map_err(unreadable)?;
+    if scope.is_some_and(|scope| !scope.admits(&path)) {
+        return Err(format!(
+            "reference {shown} is outside your workspace and allowed paths, and not one of \
+             your task's references"
+        ));
     }
     let limit = match request.kind {
         ReferenceKind::Image => MAX_IMAGE_BYTES as u64,
         ReferenceKind::File => MAX_REFERENCE_FILE_BYTES,
     };
-    if metadata.len() > limit {
+    let bytes = read_at_most(file, limit).map_err(unreadable)?;
+    if bytes.len() as u64 > limit {
         return Err(format!(
-            "reference {shown} is too large: {} bytes, at most {limit} for a {} reference",
-            metadata.len(),
+            "reference {shown} is too large: more than {limit} bytes for a {} reference",
             request.kind.as_str()
         ));
     }
-    let bytes = std::fs::read(&path)
-        .map_err(|error| format!("reference {shown} cannot be read: {error}"))?;
     let file_name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned());
@@ -73,12 +99,46 @@ fn read_reference(
         sha256,
         image: image.as_ref().map(|image| image.reference.clone()),
     };
-    debug_assert!(size_bytes <= limit, "the size was checked before reading");
+    debug_assert!(reference.path.is_absolute());
     debug_assert_eq!(
         reference.image.is_some(),
         request.kind == ReferenceKind::Image
     );
     Ok((reference, image))
+}
+
+/// Open for reading without waiting: a FIFO or device named as a reference
+/// opens at once and is then refused as not a regular file.
+fn open_without_blocking(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_NONBLOCK)
+        .open(path)
+}
+
+/// The canonical path naming the file `opened` describes. A path that now
+/// resolves to another file was swapped after the open and is refused.
+fn path_of_opened(path: &Path, opened: &std::fs::Metadata) -> std::io::Result<PathBuf> {
+    use std::os::unix::fs::MetadataExt as _;
+    let canonical = std::fs::canonicalize(path)?;
+    let named = std::fs::metadata(&canonical)?;
+    if (named.dev(), named.ino()) != (opened.dev(), opened.ino()) {
+        return Err(std::io::Error::other(
+            "it was replaced while it was being opened",
+        ));
+    }
+    Ok(canonical)
+}
+
+/// At most `limit + 1` bytes from `file`, so a file that grew past its
+/// limit after it was opened is seen as too large rather than read whole.
+fn read_at_most(file: std::fs::File, limit: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    debug_assert!(bytes.len() as u64 <= limit + 1);
+    Ok(bytes)
 }
 
 fn checked_image(
@@ -98,16 +158,18 @@ fn checked_image(
 
 impl Runtime {
     /// Check `requests` and add them to `inherited`, refusing the whole set
-    /// when any reference is unreadable or the set crosses a budget.
+    /// when any reference is unreadable, outside `scope` or over a budget.
     pub(crate) fn resolve_references(
         &self,
         requests: &[ReferenceRequest],
         inherited: Vec<TaskReference>,
+        scope: Option<&ReferenceScope>,
     ) -> Result<ResolvedReferences> {
         let mut named = Vec::with_capacity(requests.len());
         let mut images = Vec::new();
         for request in requests {
-            let (reference, image) = read_reference(request).map_err(RuntimeError::Invalid)?;
+            let (reference, image) =
+                read_reference(request, scope).map_err(RuntimeError::Invalid)?;
             named.push(reference);
             images.extend(image);
         }
@@ -142,7 +204,8 @@ impl Runtime {
     }
 }
 
-fn reference_images(
+/// The stored images among a task's references, as a request reserves them.
+pub(crate) fn reference_images(
     task: Option<&Task>,
 ) -> impl Iterator<Item = &aether_core::attachment::AttachmentRef> {
     task.into_iter()
@@ -150,32 +213,31 @@ fn reference_images(
         .filter_map(|reference| reference.image.as_ref())
 }
 
-/// What a delegating agent may attach to its child: paths inside its own
-/// scope, or references its own task already carries, plus with `inherit`
-/// its task's whole set. The error names the first path it may not pass on.
+/// What a delegating agent passes its child: the scope its named references
+/// are read in (none for an agent with no workspace root or allowed paths),
+/// plus with `inherit` its own task's whole reference set.
 pub(crate) fn delegated_references(
     scope: &aether_core::agent::Scope,
     own: &[TaskReference],
-    requests: Vec<ReferenceRequest>,
     inherit: bool,
-) -> std::result::Result<(Vec<ReferenceRequest>, Vec<TaskReference>), String> {
-    let mut roots: Vec<&Path> = scope.allowed_paths.iter().map(PathBuf::as_path).collect();
-    roots.extend(scope.workspace_root.as_deref());
-    for request in &requests {
-        let shown = request.path.display();
-        let path = std::fs::canonicalize(&request.path)
-            .map_err(|error| format!("reference {shown} cannot be read: {error}"))?;
-        let own_reference = own.iter().any(|reference| reference.path == path);
-        if !roots.is_empty() && !own_reference && !within_any(&path, &roots) {
-            return Err(format!(
-                "reference {shown} is outside your workspace and allowed paths, and not one of \
-                 your task's references"
-            ));
-        }
-    }
+) -> (Option<ReferenceScope>, Vec<TaskReference>) {
+    let mut named_roots: Vec<&Path> = scope.allowed_paths.iter().map(PathBuf::as_path).collect();
+    named_roots.extend(scope.workspace_root.as_deref());
+    let reference_scope = (!named_roots.is_empty()).then(|| ReferenceScope {
+        roots: named_roots
+            .iter()
+            .filter_map(|root| std::fs::canonicalize(root).ok())
+            .collect(),
+        own: own.iter().map(|reference| reference.path.clone()).collect(),
+    });
     let inherited = if inherit { own.to_vec() } else { Vec::new() };
     debug_assert!(inherit || inherited.is_empty());
-    Ok((requests, inherited))
+    debug_assert!(
+        reference_scope
+            .as_ref()
+            .is_none_or(|scope| scope.roots.len() <= named_roots.len())
+    );
+    (reference_scope, inherited)
 }
 
 /// The delegate reply's account of what the child's task carries, and why
@@ -205,15 +267,6 @@ pub(crate) fn delegated_reference_note(
         " The child's task carries {} reference(s).{delivery}",
         references.len()
     ))
-}
-
-/// Whether `path` lies inside one of `roots`, compared canonically so a
-/// symlink cannot carry a reference out of the delegating agent's scope.
-pub(crate) fn within_any(path: &Path, roots: &[&Path]) -> bool {
-    // A root that does not resolve holds nothing, so it cannot admit a path.
-    roots
-        .iter()
-        .any(|root| std::fs::canonicalize(root).is_ok_and(|root| path.starts_with(root)))
 }
 
 #[cfg(test)]

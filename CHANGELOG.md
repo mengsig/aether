@@ -31,12 +31,15 @@ release is also the text of its GitHub release.
   agent with an objective. Each reference is checked once at creation
   (absolute, readable, a regular file, an image of a supported type, at most
   16 references, 8 images and 6 MiB of images per task, 16 MiB per file) and
-  a refusal names the reference and the budget. The task records each one
+  a refusal names the reference and the budget. A file is opened once,
+  without waiting on a FIFO, and its scope, type and size are checked on
+  the open file, so a path swapped meanwhile cannot change what is read. The task records each one
   with its canonical path, size and SHA-256; images are stored by digest like
   message images, so a later edit of the file cannot change what the child
   sees. The assignment lists every reference, and a vision model gets the
   images as pictures before it starts: on the API path as the first user turn
-  of every request, rebuilt from the task, and on an engine with every turn
+  of every request, rebuilt from the task and charged to the request's image
+  budget before the conversation's own images, and on an engine with every turn
   that sends the assignment. The `delegate` reply counts the references and
   warns when the child's model takes no images. Announced by the
   `references` feature; an older daemon ignores the field.

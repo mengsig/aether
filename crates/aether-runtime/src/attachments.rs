@@ -8,8 +8,9 @@
 use std::path::{Path, PathBuf};
 
 use aether_core::attachment::{
-    AttachmentError, AttachmentRef, ImageAttachment, MAX_IMAGE_BYTES, MAX_IMAGES_PER_MESSAGE,
-    MAX_MESSAGE_IMAGE_BYTES, MAX_REQUEST_IMAGE_BYTES, MAX_REQUEST_IMAGES, check_image,
+    AttachmentError, AttachmentId, AttachmentRef, ImageAttachment, MAX_IMAGE_BYTES,
+    MAX_IMAGES_PER_MESSAGE, MAX_MESSAGE_IMAGE_BYTES, MAX_REQUEST_IMAGE_BYTES, MAX_REQUEST_IMAGES,
+    check_image,
 };
 use aether_core::model::{ContentBlock, Message, ToolResultBlock};
 use aether_engine::EngineImage;
@@ -146,6 +147,22 @@ impl RequestImageBudget {
         }
     }
 
+    /// Charge a task's reference images up front, so the conversation's own
+    /// images cannot crowd them out. Returns the ids that fit, in order.
+    fn reserve<'a>(&mut self, references: &'a [AttachmentRef]) -> Vec<&'a AttachmentId> {
+        let mut held = Vec::with_capacity(references.len());
+        for reference in references {
+            if self.images == 0 || reference.size_bytes > self.bytes {
+                continue;
+            }
+            self.images -= 1;
+            self.bytes -= reference.size_bytes;
+            held.push(&reference.id);
+        }
+        debug_assert!(held.len() <= references.len());
+        held
+    }
+
     /// Whether the next older image still fits; it is charged when it does.
     fn admit(&mut self, size_bytes: u64) -> bool {
         if self.spent || self.images == 0 || size_bytes > self.bytes {
@@ -249,15 +266,26 @@ impl Runtime {
     /// Replace every stored-image reference in a model request: the newest
     /// become the image itself, within what one request may carry in all;
     /// older ones, and all of them for a model without vision, become text.
-    pub(crate) fn inline_images(&self, messages: &mut [Message], vision: bool) {
+    /// `reserved` (a task's reference images) is charged first and always sent.
+    pub(crate) fn inline_images(
+        &self,
+        messages: &mut [Message],
+        vision: bool,
+        reserved: &[AttachmentRef],
+    ) {
         let mut budget = RequestImageBudget::beside_inline(messages);
+        let mut held = budget.reserve(reserved);
         for message in messages.iter_mut().rev() {
             for block in message.content.iter_mut().rev() {
                 let ContentBlock::ImageRef(image) = block else {
                     continue;
                 };
+                let slot = held.iter().position(|id| **id == image.id);
                 *block = if !vision {
                     stand_in(image, "this model takes no images")
+                } else if let Some(slot) = slot {
+                    held.swap_remove(slot);
+                    self.inlined(image)
                 } else if budget.admit(image.size_bytes) {
                     self.inlined(image)
                 } else {
@@ -446,6 +474,29 @@ mod tests {
         );
         // Smaller, but older than a refused one: the cut is a single point.
         assert!(!by_size.admit(1));
+    }
+
+    #[test]
+    fn reference_images_are_charged_first_and_only_while_they_fit() {
+        let reference = |n: u8, size_bytes| AttachmentRef {
+            id: AttachmentId::of(&[n]),
+            media_type: "image/png".into(),
+            size_bytes,
+            name: None,
+        };
+        let references = [
+            reference(1, 10),
+            reference(2, MAX_REQUEST_IMAGE_BYTES as u64),
+        ];
+        let mut budget = RequestImageBudget::beside_inline(&[]);
+        let held = budget.reserve(&references);
+        assert_eq!(
+            held,
+            vec![&references[0].id],
+            "the one too large is not held"
+        );
+        assert_eq!(budget.images, MAX_REQUEST_IMAGES - 1);
+        assert_eq!(budget.bytes, MAX_REQUEST_IMAGE_BYTES as u64 - 10);
     }
 
     #[test]

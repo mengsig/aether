@@ -35,6 +35,7 @@ pub(super) fn spawn_request(template: &SpawnSpec, objective: String) -> CreateAg
         delegation_reason: None,
         references: Vec::new(),
         inherited_references: Vec::new(),
+        reference_scope: None,
     }
 }
 

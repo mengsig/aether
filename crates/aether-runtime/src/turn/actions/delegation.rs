@@ -23,6 +23,8 @@ struct DelegateRequest {
     inherit_references: bool,
     /// Filled from the caller's task when `inherit_references` is set.
     inherited_references: Vec<aether_core::reference::TaskReference>,
+    /// Filled from the caller's scope: where `references` may be read from.
+    reference_scope: Option<crate::ReferenceScope>,
 }
 
 /// A refusal is a normal tool outcome; only infrastructure faults are `Err`.
@@ -160,19 +162,12 @@ async fn delegate(
         return Ok(refusal);
     }
     let own_references = ctx.task.as_ref().map_or(&[][..], |task| &task.references);
-    let requests = std::mem::take(&mut request.references);
-    match crate::references::delegated_references(
-        &parent.scope,
-        own_references,
-        requests,
-        request.inherit_references,
-    ) {
-        Ok((requests, inherited)) => {
-            request.references = requests;
-            request.inherited_references = inherited;
-        }
-        Err(refusal) => return Ok(ToolOutcome::error(format!("delegation refused: {refusal}"))),
-    }
+    (request.reference_scope, request.inherited_references) =
+        crate::references::delegated_references(
+            &parent.scope,
+            own_references,
+            request.inherit_references,
+        );
     let (child_scope, isolated) = match prepare_child_scope(runtime, &parent, &request).await? {
         Ok(prepared) => prepared,
         Err(refusal) => return Ok(refusal),
@@ -605,6 +600,7 @@ fn child_spec(
         delegation_reason: request.reason,
         references: request.references,
         inherited_references: request.inherited_references,
+        reference_scope: request.reference_scope,
     }
 }
 
@@ -842,6 +838,7 @@ pub(super) async fn apply(
                 references,
                 inherit_references,
                 inherited_references: Vec::new(),
+                reference_scope: None,
             };
             delegate(runtime, ctx, effects, request).await
         }

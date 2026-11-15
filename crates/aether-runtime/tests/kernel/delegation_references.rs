@@ -210,3 +210,72 @@ async fn a_lead_passes_its_references_on_only_from_its_scope_or_by_inheriting() 
     assert_eq!(task.references, lead_task.references);
     h.runtime.shutdown().await;
 }
+
+fn png_of(size: usize, tag: u8) -> aether_core::attachment::ImageAttachment {
+    let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+    bytes.push(tag);
+    bytes.resize(size, tag);
+    aether_core::attachment::ImageAttachment {
+        media_type: "image/png".into(),
+        data: base64::engine::general_purpose::STANDARD.encode(bytes),
+        name: None,
+    }
+}
+
+/// Later message images that alone fill a request's image budget must not
+/// crowd out the task's reference: it is charged first and always sent.
+async fn assert_the_reference_outlasts(
+    messages: Vec<Vec<aether_core::attachment::ImageAttachment>>,
+) {
+    let ws = workspace();
+    let replies = (0..=messages.len())
+        .map(|turn| ScriptedClient::text(&format!("turn {turn}")))
+        .collect();
+    let h = referencing_harness(&ws, replies).await;
+    let mut chat = with_mockup(spec("build the settings page"), &ws);
+    chat.config.as_mut().expect("config").long_lived = true;
+    let (agent, _) = h.runtime.create_agent(chat, Actor::user()).expect("create");
+    h.wait_until(agent.id, |s| s.kind() == AgentStatusKind::Waiting)
+        .await;
+    for (sent, images) in messages.iter().enumerate() {
+        let stored = h.runtime.store_attachments(images).expect("store");
+        let content = aether_runtime::attachments::message_content("look".into(), stored);
+        h.runtime
+            .send_message(agent.id, content, Actor::user())
+            .expect("send");
+        let left = messages.len() - sent - 1;
+        h.wait_for("the turn", || h.client.remaining() == left)
+            .await;
+        h.wait_until(agent.id, |s| s.kind() == AgentStatusKind::Waiting)
+            .await;
+    }
+    let requests = h.client.requests();
+    let last = requests.last().expect("a request");
+    let inline = last
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .filter(|block| matches!(block, ContentBlock::Image { .. }))
+        .count();
+    assert_eq!(image_count(last), 1, "the reference is still a picture");
+    assert!(
+        inline <= aether_core::attachment::MAX_REQUEST_IMAGES,
+        "{inline}"
+    );
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_reference_image_outlasts_more_message_images_than_a_request_takes() {
+    let small = |n: u8| png_of(64, n);
+    let batches = (0..3u8)
+        .map(|batch| (0..10u8).map(|i| small(batch * 10 + i)).collect())
+        .collect();
+    assert_the_reference_outlasts(batches).await;
+}
+
+#[tokio::test]
+async fn a_reference_image_outlasts_message_images_that_fill_the_request_bytes() {
+    let big = |n: u8| png_of(aether_core::attachment::MAX_IMAGE_BYTES, n);
+    assert_the_reference_outlasts(vec![vec![big(1), big(2)], vec![big(3), big(4)]]).await;
+}

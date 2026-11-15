@@ -190,8 +190,11 @@ impl Runtime {
             super::messaging::check_text_size("task objective", objective.len())?;
         }
         check_task_delegation(&spec)?;
-        let resolved =
-            self.resolve_references(&spec.references, spec.inherited_references.clone())?;
+        let resolved = self.resolve_references(
+            &spec.references,
+            spec.inherited_references.clone(),
+            spec.reference_scope.as_ref(),
+        )?;
         let checked = preflight.checked;
         let parent = match spec.parent {
             Some(id) => Some(self.live_agent(id, "parent")?),
