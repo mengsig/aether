@@ -67,7 +67,7 @@ async fn fresh_question_is_answered_once_even_before_inbox_consumption() {
 }
 
 #[tokio::test]
-async fn only_the_exact_asking_agents_latest_question_can_be_answered() {
+async fn only_the_exact_asking_agents_open_questions_can_be_answered() {
     let fx = fixture().await;
     let parent = an_agent(&fx).await;
     let child = fx
@@ -85,17 +85,18 @@ async fn only_the_exact_asking_agents_latest_question_can_be_answered() {
     let parent_question = ask(&fx, parent);
     let old = ask(&fx, child);
     let latest = ask(&fx, child);
-    for (agent, seq) in [
-        (parent, latest),
-        (child, old),
-        (child, latest + 1),
-        (child, 0),
-    ] {
+    for (agent, seq) in [(parent, latest), (child, latest + 1), (child, 0)] {
         assert!(answer(&fx, agent, seq, None).is_err(), "{agent} {seq}");
     }
     assert!(fx.store.inbox(child, 0).expect("inbox").is_empty());
     answer(&fx, parent, parent_question, None).expect("child did not supersede parent question");
+    // Each question is its own: the older one stays answerable beside the latest.
+    answer(&fx, child, old, None).expect("older question");
     answer(&fx, child, latest, None).expect("latest question");
+    assert!(
+        answer(&fx, child, old, None).is_err(),
+        "an answered question takes no second reply"
+    );
 }
 
 #[tokio::test]

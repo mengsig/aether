@@ -113,7 +113,10 @@ async fn asking_after_complete_task_in_one_engine_turn_keeps_the_asker() {
 
     let (reply, is_error) = call(&h, &turn, "complete_task", json!({"summary": "painted"})).await;
     assert!(!is_error, "{reply}");
-    let (reply, is_error) = call(&h, &turn, "ask_user", json!({"question": "which colour?"})).await;
+    // The settle already began a terminal wind-down, which keeps the engine
+    // for its receipt instead of stopping it.
+    let (reply, is_error) =
+        raw_call(&h, &turn, "ask_user", json!({"question": "which colour?"})).await;
     assert!(
         !is_error,
         "a question after the settle was refused: {reply}"
