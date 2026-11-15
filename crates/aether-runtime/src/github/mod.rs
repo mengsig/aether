@@ -538,6 +538,7 @@ impl Runtime {
                 approval: template.approval.clone(),
                 run: None,
                 start: false,
+                delegation_reason: None,
             },
             &Actor::System,
             Preflight::default(),

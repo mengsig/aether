@@ -32,6 +32,10 @@ async fn every_config_knob_persists_at_creation_and_mutable_knobs_update_live() 
         host_context: HostContext::Lean,
         build_cache: Some("/srv/cache/items/one".into()),
         interactive: Some(true),
+        delegation_policy: Some(aether_core::delegation::DelegationPolicy {
+            max_parallel: Some(2),
+            ..Default::default()
+        }),
     };
     let scope = Scope {
         workspace_root: Some(h.workspace_root.clone()),

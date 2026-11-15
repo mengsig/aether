@@ -4,6 +4,26 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## Unreleased
+
+### Added
+
+- **Delegation policy: workers are bounded, not cloned from the lead.**
+  `AgentConfig.delegation_policy` (`workers` as `{model | tier, effort}`
+  entries, `default_tier`, `max_effort`, `max_parallel`, `exempt_roles`,
+  `exempt_models`) bounds the children an agent may delegate; `delegate`
+  refuses a child outside it with an error naming the allowed choices.
+  `inspect_state` and the agent's assignment show the policy, and children
+  never inherit it. Announced by the `delegation_policy` feature; an older
+  daemon ignores the field.
+- Without a policy, `delegate` refuses a child above the parent's tier, and a
+  child on the parent's own frontier-tier model needs a `reason`, recorded on
+  the child's task as `delegation_reason`.
+- The `delegate` and `list_models` guidance and the swarm playbook say
+  workers default to the balanced or fast tier, not the lead's own model.
+- `ModelTier` moves to `aether_core::delegation`; `aether_model::ModelTier`
+  re-exports it.
+
 ## 1.3.1
 
 Released 2026-11-14. One conversation for the TUI and phone (#420), dependency

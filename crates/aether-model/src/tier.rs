@@ -1,30 +1,6 @@
 //! Capability bands that let callers pick a model without naming one.
 
-use serde::{Deserialize, Serialize};
-
-/// A capability band within one provider, weakest first. The vocabulary is
-/// shared with Archon's catalog tiers: keep the names stable. `strongest` is
-/// the legacy name of `strong` and is still accepted when reading.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ModelTier {
-    Fast,
-    Balanced,
-    #[serde(alias = "strongest")]
-    Strong,
-    Frontier,
-}
-
-impl ModelTier {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Fast => "fast",
-            Self::Balanced => "balanced",
-            Self::Strong => "strong",
-            Self::Frontier => "frontier",
-        }
-    }
-}
+pub use aether_core::delegation::ModelTier;
 
 /// Rank an unranked model by output price: the tier of the nearest priced,
 /// tiered model of the same provider (`references`), nearest in price ratio.

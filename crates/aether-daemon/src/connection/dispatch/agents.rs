@@ -127,6 +127,7 @@ async fn create_agent(
         approval: req.approval,
         run: req.run,
         start: req.start,
+        delegation_reason: None,
     };
     let (agent, _) = rt
         .create_agent_keyed(spec, by, submission)

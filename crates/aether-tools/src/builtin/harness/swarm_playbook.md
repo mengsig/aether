@@ -16,9 +16,12 @@ less, do the work yourself or delegate one child.
    Workers start cold and cannot read this playbook.
 3. Delegate one worker per task: `delegate` with `leaf: true`,
    `workspace_mode: "isolated"`, `allowed_paths` set to the task's owned
-   paths, `wait: false`, a fast-tier model from `list_models` and an explicit
-   effort. Start a task only after the tasks it depends on, or tell it which
-   peer to wait for.
+   paths, `wait: false`, a fast- or balanced-tier model from `list_models`
+   and an explicit effort, never your own model by default. Your delegation
+   policy, when you have one (`inspect_state`), bounds the models, efforts
+   and how many workers run at once; `delegate` refuses a worker outside it.
+   Start a task only after the tasks it depends on, or tell it which peer to
+   wait for.
 4. Wait with `wait_for(tasks=[...], any=true)` and read each result as it
    lands.
 5. Integrate in plan order with `integrate_workspace(child_agent_id)`. A

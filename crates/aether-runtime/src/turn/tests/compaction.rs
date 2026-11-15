@@ -260,6 +260,7 @@ async fn delegating_onto_an_unusable_engine_names_its_probe_reason() {
         leaf: true,
         host_context: None,
         idempotency: None,
+        reason: None,
     };
     let refused = apply_action(
         &h.runtime,

@@ -327,6 +327,10 @@ pub struct AgentConfig {
     /// always stores it, so `None` is a row stored before it existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interactive: Option<bool>,
+    /// Which children this agent may delegate to; absent bounds a child only
+    /// by this agent's tier. Never inherited by a child.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation_policy: Option<crate::delegation::DelegationPolicy>,
 }
 
 impl AgentConfig {
@@ -356,6 +360,7 @@ impl Default for AgentConfig {
             host_context: HostContext::Full,
             build_cache: None,
             interactive: None,
+            delegation_policy: None,
         }
     }
 }
