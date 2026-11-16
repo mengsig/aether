@@ -15,7 +15,18 @@ pub(super) enum Served {
     /// The call would have decided the turn's end a second time, or asked a
     /// person to authorize work in a turn that is over.
     Refused,
-    NativeWait(super::native_wait::NativeWait),
+    NativeWait(Box<super::native_wait::NativeWait>),
+}
+
+/// What native work the session holds while a bridge call runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Native {
+    /// No background job: a parking call ends the turn.
+    Idle,
+    /// Background jobs run, so a parking call's reply waits instead.
+    Jobs,
+    /// A native wait is already pending; it stays the session's one wait.
+    Waiting,
 }
 
 /// A bridge call this slow is logged with where its time went.
@@ -62,9 +73,10 @@ pub(super) async fn handle_request(
     effects: &mut ToolEffects,
     cancel: &CancellationToken,
     parked: bool,
-    native_jobs: bool,
+    native: Native,
     engine_left: impl std::future::Future<Output = ()>,
 ) -> Result<Served> {
+    let native_jobs = native == Native::Jobs;
     let mut completed = req.name != "permission";
     if parked && req.name == "permission" {
         // Nothing more may run in the turn, so the engine's own prompt is
@@ -72,9 +84,9 @@ pub(super) async fn handle_request(
         let _ = req.reply.send(denied_prompt(TURN_IS_OVER));
         return Ok(Served::Refused);
     }
-    if parked && effects.terminal() {
-        // Terminal wind-down only collects the native result/usage receipt.
-        // Unlike a wait's parallel siblings, no new work belongs to this task.
+    if parked && effects.terminal() && req.name != "ask_user" {
+        // Terminal wind-down only collects the native result/usage receipt;
+        // a question still keeps its asker alive for the answer.
         let _ = req.reply.send((TURN_IS_OVER.to_owned(), true));
         return Ok(Served::Refused);
     }
@@ -153,13 +165,17 @@ pub(super) async fn handle_request(
                                 let _ = req.reply.send(reply.clone());
                                 return Ok(Served::Ran(Some(reply)));
                             }
+                            // Registered before the event, so the waker it notifies
+                            // already sees whom this wait is listening for.
+                            let payload = json!({"condition": condition});
+                            let wait = super::native_wait::NativeWait::new(
+                                runtime, condition, ctx, req.reply, req.input,
+                            );
                             runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
                                 name: "engine.native_wait_started".into(),
-                                payload: json!({"condition": condition}),
+                                payload,
                             })))?;
-                            return Ok(Served::NativeWait(super::native_wait::NativeWait::new(
-                                condition, ctx, req.reply, req.input,
-                            )));
+                            return Ok(Served::NativeWait(Box::new(wait)));
                         }
                         if parked
                             && !effects.admits_after_park(&action, ctx.agent.config.long_lived)
@@ -170,6 +186,13 @@ pub(super) async fn handle_request(
                                 .unwrap_or_else(|| TURN_IS_OVER.to_owned());
                             let _ = req.reply.send(masked_reply(runtime, (refusal, true)));
                             return Ok(Served::Refused);
+                        }
+                        let asks = matches!(action, aether_tools::HarnessAction::AskUser { .. });
+                        if native == Native::Waiting && asks {
+                            let reply = ask_beside_wait(runtime, ctx, action, effects).await?;
+                            let reply = masked_reply(runtime, reply);
+                            let _ = req.reply.send(reply.clone());
+                            return Ok(Served::Ran(Some(reply)));
                         }
                         // Ending the turn would stop the session's running jobs, so
                         // the reply waits for the answer or the child instead.
@@ -188,18 +211,27 @@ pub(super) async fn handle_request(
                                 ),
                                 None => condition,
                             };
-                            runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
-                                name: "engine.native_wait_started".into(),
-                                payload: json!({"condition": condition, "tool": req.name}),
-                            })))?;
-                            return Ok(Served::NativeWait(super::native_wait::NativeWait::held(
+                            let payload = json!({"condition": condition, "tool": req.name});
+                            let question = effects.asked_seqs().last().copied().filter(|_| asks);
+                            debug_assert_eq!(
+                                asks,
+                                question.is_some(),
+                                "a held ask has its question"
+                            );
+                            let wait = super::native_wait::NativeWait::held(
+                                runtime,
                                 condition,
                                 ctx,
                                 req.reply,
                                 req.input,
-                                req.name,
+                                question,
                                 outcome.content,
-                            )));
+                            )?;
+                            runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
+                                name: "engine.native_wait_started".into(),
+                                payload,
+                            })))?;
+                            return Ok(Served::NativeWait(Box::new(wait)));
                         }
                         (outcome.content, outcome.is_error)
                     }
@@ -229,6 +261,40 @@ pub(super) async fn handle_request(
     // A dropped receiver means the bridge went away; nothing to do.
     let _ = req.reply.send(reply.clone());
     Ok(Served::Ran(completed.then_some(reply)))
+}
+
+/// A question asked while the session's one native wait is pending: it is
+/// recorded under its own seq, and the pending wait stays the turn's wait.
+async fn ask_beside_wait(
+    runtime: &Arc<Runtime>,
+    ctx: &mut TurnCtx,
+    action: aether_tools::HarnessAction,
+    effects: &mut ToolEffects,
+) -> Result<(String, bool)> {
+    // Only a question gets past the pending wait's refusal.
+    assert!(
+        matches!(action, aether_tools::HarnessAction::AskUser { .. }),
+        "only ask_user runs beside a pending native wait"
+    );
+    debug_assert!(
+        effects.next.is_none(),
+        "a pending native wait has not ended the turn"
+    );
+    let asked = effects.asked_seqs().len();
+    let outcome = apply_action(runtime, ctx, action, effects).await?;
+    // The question's own park would end the turn and stop the jobs.
+    effects.next = None;
+    let Some(&seq) = effects.asked_seqs().get(asked) else {
+        return Ok((outcome.content, outcome.is_error));
+    };
+    Ok((
+        format!(
+            "Question {seq} recorded for the operator to see, on its own. The wait already \
+             pending in this session is kept, and the native session and its background \
+             jobs stay alive; when it ends its reply lists the questions still unanswered."
+        ),
+        false,
+    ))
 }
 
 /// Completes once no answer can reach the asker: the bridge dropped the

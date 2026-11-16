@@ -1,6 +1,7 @@
 import { button, el, empty, errorText, field, heading, invariant } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { approvalCommand, approvalDetails, approvalHeadline, questionCommand } from './model.js';
+import { canDismiss, clearFailedButton, dismissButton, isDismissible } from './dismiss.js';
 import { agentLink, connectionNotice, exactBlock, liveView, refreshButton, timeLabel } from './shared.js';
 
 /** @typedef {import('../../types.js').Attention} Attention */
@@ -169,10 +170,11 @@ function attentionCard(item, context, inbox, names) {
   const disabled = state.role !== 'operator' || state.connection !== 'online' || inbox.pending.has(item.id) || inbox.sent.has(item.id);
   if (item.kind === 'approval') card.append(approvalBody(item,context,inbox,disabled));
   else if (item.kind === 'question') card.append(questionBody(item,context,inbox,disabled));
-  else card.append(button('Review agent',() => context.navigate(`controls/${item.agentId}`)));
+  else card.append(agentActions(item, context, inbox, disabled));
   if (item.kind === 'approval' && !disabled) addSwipe(card,decision => { void decide(item,context,inbox,decision); });
   if (inbox.pending.has(item.id) || inbox.sent.has(item.id)) {
-    const status = el('p', 'muted', inbox.sent.has(item.id) ? 'Response submitted. Waiting for the latest state.' : 'Response in progress…');
+    const progress = isDismissible(item.kind) ? 'Dismissing…' : 'Response in progress…';
+    const status = el('p', 'muted', inbox.sent.has(item.id) ? 'Response submitted. Waiting for the latest state.' : progress);
     status.setAttribute('role', 'status');
     card.append(status);
     if (inbox.sent.has(item.id)) card.append(refreshButton(context));
@@ -183,6 +185,16 @@ function attentionCard(item, context, inbox, names) {
     card.append(error);
   }
   return card;
+}
+
+/** @param {Attention} item @param {Context} context @param {Inbox} inbox @param {boolean} disabled */
+function agentActions(item, context, inbox, disabled) {
+  invariant(isDismissible(item.kind), 'Agent actions require a failed or blocked agent');
+  const review = button('Review agent', () => context.navigate(`controls/${item.agentId}`));
+  if (!canDismiss(context.store.get(), item)) return review;
+  const actions = el('div', 'row fleet-actions attention-agent-actions');
+  actions.append(review, dismissButton(item, context, inbox, disabled));
+  return actions;
 }
 
 /** @param {Attention} item @param {Context} context @param {string} name */
@@ -245,7 +257,11 @@ export function mountAttention(container, context) {
     counts.append(el('span', '', `${approvals} approval${approvals === 1 ? '' : 's'}`), el('span', '', `${questions} question${questions === 1 ? '' : 's'}`));
     const issues = state.attention.length - approvals - questions;
     if (issues) counts.append(el('span','',`${issues} to review`));
-    container.replaceChildren(header, counts);
+    // The shared toast lives in this container; a redraw must not delete it.
+    const toast = container.querySelector(':scope > .toast');
+    container.replaceChildren(...(toast ? [toast] : []), header, counts);
+    const clear = clearFailedButton(context, inbox);
+    if (clear) container.append(clear);
     if (Math.max(approvals,questions,issues) >= 200) container.append(el('p','muted small','The host returns up to 200 items in each category. More may remain after these are resolved.'));
     const notice = connectionNotice(state, context);
     if (notice) container.append(notice);

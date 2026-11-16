@@ -53,6 +53,22 @@ days. The store prunes submission keys down to 100,000 in all, so a busy
 daemon can evict a key sooner; a repeat after that creates a new child. The
 reply to a keyed call echoes the key.
 
+`delegate` takes `references`, a list of `{path, kind, label}` with `kind`
+`image` or `file`, and `inherit_references: true`, which passes on the
+caller's own task references (never its context). A named path must lie in
+the caller's workspace or allowed paths, after symlinks resolve, or be one of
+its task's references. Each is checked when the child is created: readable, a
+regular file, an image a PNG, JPEG, GIF or WebP of at most 3.75 MiB, a file at
+most 16 MiB, and per task at most 16 references, 8 images and 6 MiB of
+images. Anything else refuses the call and names the reference. The child's
+assignment lists each reference with its path, size and SHA-256. A vision
+model gets the images as pictures before it starts and on every later turn:
+on the API path every request opens with them, and an engine is sent them
+with the assignment whenever its session does not hold it, such as after a
+compaction. The images are copies stored by digest, so a later edit of the
+file does not change what the child sees. The reply counts the references
+and warns when the child's model takes no images.
+
 Delegation has no depth limit: a child may delegate again, as long as its
 parent is not a leaf, to any number of generations. Only the `leaf` flag, a
 `concurrency` cap on the descendants running at once, the daemon's global
@@ -103,7 +119,29 @@ wakes for it. A post over a limit fails the call with the limit named.
 
 Native file, command and web capabilities remain available through the CLI
 engine. Aether owns coordination; a native subagent is not a tracked Aether
-child. Tool exposure and scope settings still apply to each agent.
+child. Tool exposure and scope settings still apply to each agent, except that
+`send_message`, `wait_for` and `ask_user` are always offered: no exposure takes
+away the way to ask.
+
+### Asking your parent
+
+A delegated agent asks its parent with `send_message` to the parent, then
+`wait_for(message_from=<parent>)`. A message from a descendant that is waiting
+on a reply from the recipient reaches the recipient at once, even while it
+waits on that descendant's task, and the interrupted wait is restored after
+its turn. Any other message from a child waits until the parent's condition is
+met. This holds for a parked wait and for one an engine holds inside its turn
+for live background jobs; a held wait that ends before the answer says so. No
+count caps questions; only an exhausted budget or a cancel stops an agent from
+asking. Each `ask_user` is its own question under its own sequence, never
+refused for being a second: one asked while an engine holds a native wait for
+live background jobs is recorded and the held wait is kept. A question beside
+a call awaiting approval is recorded too, and its answer is read once the
+approval is settled; one asked after the turn settled its task keeps the asker
+alive for the answer. A wait for a
+question hears only what arrived after it was asked, and an answer addressed
+to one question never answers another. When a held wait ends, its reply lists
+the questions still unanswered.
 
 ### Delegated workspaces
 

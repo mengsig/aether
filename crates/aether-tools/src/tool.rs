@@ -178,6 +178,13 @@ pub enum HarnessAction {
         host_context: Option<aether_core::agent::HostContext>,
         /// Present when the caller keyed the call for a safe repeat.
         idempotency: Option<DelegateKey>,
+        /// Why the child needs this model; required on the parent's own
+        /// frontier-tier model, and recorded on the child's task.
+        reason: Option<String>,
+        /// Files the child's task carries, paths resolved against the caller.
+        references: Vec<aether_core::reference::ReferenceRequest>,
+        /// Pass the caller's own task references on as well.
+        inherit_references: bool,
     },
     IntegrateWorkspace {
         child: AgentId,

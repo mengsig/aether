@@ -28,6 +28,7 @@ mod orphans;
 mod peers;
 mod problems;
 pub mod recovery;
+mod references;
 mod repository_aliases;
 pub mod resources;
 mod retention;
@@ -65,9 +66,10 @@ use tokio_util::sync::CancellationToken;
 pub use approval::{Gate, Remember};
 pub use bus::{BusMessage, DeltaKind, DeltaStream, EventBus};
 pub use commands::{
-    AgentUpdate, CreateAgentSpec, CreateTaskSpec, MessageDelivery, RuntimeStatus, STATUS_DEADLINE,
-    pending_question,
+    AgentUpdate, CreateAgentSpec, CreateTaskSpec, MessageDelivery, QUESTION_ANSWERED,
+    RuntimeStatus, STATUS_DEADLINE, pending_question, pending_questions, question_is_open,
 };
+pub use references::ReferenceScope;
 pub use retention::HistorySweep;
 
 #[derive(Debug, thiserror::Error)]
@@ -318,6 +320,10 @@ pub struct Runtime {
     /// Ended agents whose reap has not run yet, which still hold what is
     /// handed to them. Changed only under the commit hold.
     pub(crate) awaiting_reap: parking_lot::Mutex<std::collections::HashSet<AgentId>>,
+    /// Senders each agent waits on inside a live engine turn (a native wait
+    /// held for background jobs), which its stored status does not show.
+    pub(crate) native_message_waits:
+        parking_lot::Mutex<HashMap<AgentId, std::collections::BTreeSet<AgentId>>>,
     /// Each completed agent whose processes were handed up, to the agent it
     /// handed them to, until a stop takes them. Changed only under the commit hold.
     pub(crate) handed_to: parking_lot::Mutex<std::collections::HashMap<AgentId, AgentId>>,
@@ -480,6 +486,7 @@ impl Runtime {
             workspace_gc_active: Default::default(),
             engine_spawns: Default::default(),
             awaiting_reap: Default::default(),
+            native_message_waits: Default::default(),
             handed_to: Default::default(),
             storage_gc_lock: parking_lot::Mutex::new(()),
             storage_last_run: parking_lot::Mutex::new(None),

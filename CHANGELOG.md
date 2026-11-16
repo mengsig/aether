@@ -4,6 +4,103 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## Unreleased
+
+## 1.4.0
+
+Released 2026-11-16. Bounded delegation (#430), approved task references
+(#431), questions keyed by sequence (#432), and terminal detachment (#433). The workspace and Python
+and TypeScript clients are 1.4.0.
+
+### Added
+
+- **Delegation policy: workers are bounded, not cloned from the lead.**
+  `AgentConfig.delegation_policy` (`workers` as `{model | tier, effort}`
+  entries, `default_tier`, `max_effort`, `max_parallel`, `exempt_roles`,
+  `exempt_models`) bounds the children an agent may delegate; `delegate`
+  refuses a child outside it with an error naming the allowed choices.
+  `inspect_state` and the agent's assignment show the policy, and children
+  never inherit it. Announced by the `delegation_policy` feature; an older
+  daemon ignores the field.
+- Without a policy, `delegate` refuses a child above the parent's tier, and a
+  child on the parent's own frontier-tier model needs a `reason`, recorded on
+  the child's task as `delegation_reason`.
+- The `delegate` and `list_models` guidance and the swarm playbook say
+  workers default to the balanced or fast tier, not the lead's own model.
+- `ModelTier` moves to `aether_core::delegation`; `aether_model::ModelTier`
+  re-exports it.
+- **Delegation references: approved images and files reach children and
+  survive compaction.** `delegate` takes `references` (`[{path, kind: image |
+  file, label}]`, paths inside the caller's scope or already on its task) and
+  `inherit_references` (the caller's own task references, never its whole
+  context); `CreateAgent.references` does the same for a client creating an
+  agent with an objective. Each reference is checked once at creation
+  (absolute, readable, a regular file, an image of a supported type, at most
+  16 references, 8 images and 6 MiB of images per task, 16 MiB per file) and
+  a refusal names the reference and the budget. A file is opened once,
+  without waiting on a FIFO, and its scope, type and size are checked on
+  the open file, so a path swapped meanwhile cannot change what is read. The task records each one
+  with its canonical path, size and SHA-256; images are stored by digest like
+  message images, so a later edit of the file cannot change what the child
+  sees. The assignment lists every reference, and a vision model gets the
+  images as pictures before it starts: on the API path as the first user turn
+  of every request (after a retained server-compaction summary, which a
+  provider replays nothing before), rebuilt from the task and charged to the request's image
+  budget before the conversation's own images, and on an engine with every turn
+  that sends the assignment. The `delegate` reply counts the references and
+  warns when the child's model takes no images. Announced by the
+  `references` feature; an older daemon ignores the field.
+- The `delegate` guidance and the swarm playbook say a lead passes approved
+  references to every worker and reviewer and never narrows approved
+  requirements in a brief.
+
+### Changed
+
+- An engine session that folded its context, by a person's request or on its
+  own during a turn, is sent the assignment, checkpoint and memory again on
+  the next turn instead of assuming it still holds them.
+
+- **Ask, don't guess.** A root agent's assignment carries the opener rule:
+  a message that opens a conversation or ends in a check-in ("Ok?") with its
+  central choice still open gets a short acknowledgement, 2-4 options and one
+  question, and no files or builds; a fully specified request still starts at
+  once. Every assignment says when to ask (the answer changes what gets built
+  and is not in the brief, the repository or the approved intent; a deviation
+  from an approved requirement always asks) and to record an assumption
+  otherwise. A delegated agent is told to ask its parent with `send_message`
+  and `wait_for` `message_from` the parent.
+- `send_message`, `wait_for` and `ask_user` are offered whatever an agent's
+  tool exposure says: no allowlist can take away the way to ask.
+- **Questions are keyed by sequence.** Every `ask_user` records its own
+  question; a second one in a turn, one asked while a native background
+  wait is held, one beside a call awaiting approval, and one after the turn
+  settled its task (the asker then stays alive for the answer) are no longer
+  refused. A held question's wait ignores replies to the asker's other
+  questions. `reply_to_question` answers only the
+  question it names, a person's ordinary message answers every question
+  pending when it lands, and each answered question is closed by its own
+  `question.answered` custom event. `get_attention` lists every open question
+  of an agent, and the TUI retires only the answered question's cell.
+
+### Fixed
+
+- Daemon and engine subprocesses detach from the controlling terminal, so
+  shell startup files cannot stop agents with a terminal-read signal (#433).
+
+- A child's question no longer deadlocks against a parent waiting on the
+  child's task: a message from a descendant that then waits on a reply from
+  the recipient wakes it, and the interrupted wait is restored after its turn.
+
+- Remote web: failed and blocked agents can be dismissed from Attention
+  (#427); error toasts stay below the sticky header at phone widths (#428).
+
+### Known limitations
+
+- References on standalone `CreateTask` remain a follow-up; this release
+  accepts them through `delegate` and `CreateAgent` with an objective.
+- Comparing model tiers across providers and defining grandchild delegation
+  policy remain follow-ups; children do not inherit the parent's policy.
+
 ## 1.3.1
 
 Released 2026-11-14. One conversation for the TUI and phone (#420), dependency

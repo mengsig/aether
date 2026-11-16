@@ -408,6 +408,8 @@ where
                                                     features::WORKSPACE_REVIEW.into(),
                                                     features::PROVIDER_USAGE_REFRESH.into(),
                                                     features::BUILD_CACHE.into(),
+                                                    features::DELEGATION_POLICY.into(),
+                                                    features::REFERENCES.into(),
                                                     features::NOTES.into(),
                                                     features::NOTIFICATIONS.into(),
                                                     features::SUBTREE_UPDATE.into(),

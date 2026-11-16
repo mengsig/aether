@@ -12,6 +12,7 @@ description = "Scheduler, turns, delegation, recovery and external events for th
 workspace = true
 
 [dependencies]
+aether-spawn = { workspace = true }
 aether-core = { workspace = true }
 aether-protocol = { workspace = true }
 aether-store = { workspace = true }
@@ -40,6 +41,10 @@ nix = { workspace = true }
 rustix = { version = "1.1.4", features = ["fs"] }
 fs4 = { workspace = true }
 tempfile = { workspace = true }
+
+# `F_GETPATH`: the path of an open reference file, read from its handle.
+[target.'cfg(target_vendor = "apple")'.dependencies]
+nix = { workspace = true, features = ["fs"] }
 
 [dev-dependencies]
 aether-client = { workspace = true }

@@ -250,9 +250,9 @@ async fn pending_exec_survives_ask_user(engine: Arc<dyn Engine>, dir: &tempfile:
         .unwrap();
     let reply = answered(call).await;
     assert!(
-        reply.starts_with("Wait ended: a message arrived.")
+        reply.starts_with("Wait ended: the operator answered question ")
             && reply.contains("the second one")
-            && reply.ends_with("Question recorded for the operator to see."),
+            && reply.contains("Question recorded for the operator to see, as question "),
         "{reply}"
     );
     assert!(!reply.contains("Your turn ends here"), "{reply}");

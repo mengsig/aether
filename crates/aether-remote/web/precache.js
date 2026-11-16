@@ -1,4 +1,4 @@
-export const VERSION = "2e9c32df5f4d18e5";
+export const VERSION = "d02137107f3e58dc";
 export const PRECACHE = [
   "./app.js",
   "./assets/icon-192.png",
@@ -75,6 +75,7 @@ export const PRECACHE = [
   "./features/fleet/activity.js",
   "./features/fleet/attention.css",
   "./features/fleet/attention.js",
+  "./features/fleet/dismiss.js",
   "./features/fleet/fleet.css",
   "./features/fleet/fleet.js",
   "./features/fleet/graph/canvas.js",

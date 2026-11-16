@@ -71,7 +71,7 @@ async function checkQuestion(page,fixture) {
   await until(()=>fixture.request({cmd:'get_attention'}),
     value=>!value.data.questions.some((/** @type {Question} */ item)=>item.question_seq===question.question_seq),'question answered');
   await expect(card).toHaveCount(0);
-  await expect(fixture.request({cmd:'reply_to_question',to:agent,question_seq:question.question_seq,content:'duplicate'})).rejects.toThrow(/(no longer pending|not the pending question)/);
+  await expect(fixture.request({cmd:'reply_to_question',to:agent,question_seq:question.question_seq,content:'duplicate'})).rejects.toThrow(/(no longer pending|not a pending question)/);
   return agent;
 }
 

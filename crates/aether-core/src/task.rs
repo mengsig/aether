@@ -213,6 +213,13 @@ pub struct Task {
     pub started_at: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<Timestamp>,
+    /// Why the delegating parent put this task on its own frontier model,
+    /// as it said when it delegated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation_reason: Option<String>,
+    /// Approved images and files the owner must see, re-attached every turn.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<crate::reference::TaskReference>,
 }
 
 impl Task {
@@ -232,6 +239,8 @@ impl Task {
             updated_at: at,
             started_at: None,
             finished_at: None,
+            delegation_reason: None,
+            references: Vec::new(),
         }
     }
 

@@ -175,8 +175,7 @@ async fn run_inner(
         .kill_on_drop(true);
     #[cfg(unix)]
     {
-        use std::os::unix::process::CommandExt;
-        command.as_std_mut().process_group(0);
+        aether_spawn::detach_session(command.as_std_mut());
     }
     let child = command
         .spawn()
@@ -298,8 +297,7 @@ pub(crate) async fn run_logged(
         .kill_on_drop(true);
     #[cfg(unix)]
     {
-        use std::os::unix::process::CommandExt;
-        command.as_std_mut().process_group(0);
+        aether_spawn::detach_session(command.as_std_mut());
     }
     let child = command
         .spawn()

@@ -18,6 +18,23 @@ use aether_core::tool::{ApprovalDecision, ApprovalRequest};
 
 use crate::ContextInputs;
 
+/// The task's references, each on one line. Whoever created the task
+/// approved them: a brief may not narrow what they show.
+fn write_references(out: &mut String, references: &[aether_core::reference::TaskReference]) {
+    if references.is_empty() {
+        return;
+    }
+    let _ = writeln!(
+        out,
+        "\nReferences attached to this task by its creator (approved material: meet what they show, \
+         and pass them on with `inherit_references` to every worker and reviewer you delegate; \
+         images are attached as pictures when your model takes them, otherwise open the paths):"
+    );
+    for reference in references {
+        let _ = writeln!(out, "- {}", reference.line());
+    }
+}
+
 /// The stored parent relationship, without assigning an orchestration role.
 pub fn tree_position(agent: &Agent) -> String {
     match agent.parent {
@@ -42,10 +59,18 @@ pub fn role_task(agent: &Agent, task: Option<&Task>) -> String {
                 t.priority
             );
             let _ = writeln!(out, "{}", t.objective.trim());
+            write_references(&mut out, &t.references);
         }
         None => {
             let _ = writeln!(out, "Task: none assigned.");
         }
+    }
+    if let Some(policy) = &agent.config.delegation_policy {
+        let _ = writeln!(
+            out,
+            "Delegation policy (delegate refuses a child outside it): {}",
+            policy.describe()
+        );
     }
     if let Some(instructions) = agent
         .config
@@ -86,7 +111,39 @@ pub fn role_task(agent: &Agent, task: Option<&Task>) -> String {
         }
     );
     let _ = writeln!(out, "\n{scope_line}");
+    let _ = writeln!(out, "\n{}", asking_guidance(agent));
     out.trim_end().to_owned()
+}
+
+/// Shared by both positions: what decides whether a question is worth asking.
+const WHEN_TO_ASK: &str = "Ask whenever the answer changes what gets built and is not in \
+     the request or brief, the repository or the approved intent; a deviation from an approved \
+     requirement always asks. Otherwise pick the most reasonable option and state the \
+     assumption visibly. When in doubt about importance, ask. Asking is never capped. When \
+     an agent you started asks you something, answer from what you know or ask upward and \
+     relay the answer.";
+
+/// When and how to ask. A root talks to a person; a delegated agent asks
+/// its parent, which answers or forwards the question upward.
+pub fn asking_guidance(agent: &Agent) -> String {
+    let Some(parent) = agent.parent else {
+        return format!(
+            "Asking: when a message opens a conversation or ends in a check-in (\"Ok?\", \
+             \"sound good?\", \"what do you think?\") and its central choice (what to build, \
+             which direction) is still open and a matter of taste, reply with a short \
+             acknowledgement, 2-4 concrete options and one question. Write no files and \
+             start no builds until they choose. A fully specified request starts at once. \
+             {WHEN_TO_ASK}"
+        );
+    };
+    debug_assert_ne!(parent, agent.id, "an agent is never its own parent");
+    format!(
+        "Asking: your parent ({parent}) answers your questions. With a clear objective, keep \
+         acting. {WHEN_TO_ASK} To ask: send_message to {parent} with the question, keep doing \
+         the work that does not depend on it, then wait_for with message_from {parent}; your \
+         waiting wakes them. If your instructions name another channel for questions, use \
+         that one."
+    )
 }
 
 pub fn runtime_state(inputs: &ContextInputs<'_>) -> String {
@@ -748,6 +805,37 @@ mod tests {
         let text = role_task(&root, Some(&task));
         assert!(text.contains("write a file"));
         assert!(!text.contains("Task: none assigned."));
+    }
+
+    #[test]
+    fn a_root_gets_the_opener_rule_and_a_child_is_told_how_to_ask_its_parent() {
+        let root = role_task(&agent(None, "assistant"), None);
+        assert!(
+            root.contains("2-4 concrete options and one question"),
+            "{root}"
+        );
+        assert!(
+            root.contains("A fully specified request starts at once"),
+            "{root}"
+        );
+        assert!(root.contains("always asks"), "{root}");
+
+        let parent = AgentId::new();
+        let child = role_task(&agent(Some(parent), "worker"), None);
+        assert!(!child.contains("2-4 concrete options"), "{child}");
+        assert!(
+            child.contains("With a clear objective, keep acting"),
+            "{child}"
+        );
+        assert!(
+            child.contains(&format!("send_message to {parent}")),
+            "{child}"
+        );
+        assert!(
+            child.contains(&format!("wait_for with message_from {parent}")),
+            "{child}"
+        );
+        assert!(child.contains("always asks"), "{child}");
     }
 }
 

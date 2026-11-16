@@ -9,6 +9,7 @@ import type {
   ModelRef,
   OperatorMemorySpec,
   Priority,
+  ReferenceRequest,
   RunId,
   Scope,
   TaskId,
@@ -25,6 +26,7 @@ export interface CreateAgentCommand {
   "name"?: string | null;
   "objective"?: string | null;
   "parent"?: AgentId | null;
+  "references"?: Array<ReferenceRequest>;
   "repository_root"?: string | null;
   "role": string;
   "run"?: RunId | null;

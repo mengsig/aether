@@ -45,8 +45,10 @@ fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<ToolOutcome> {
         "agent": agent.id,
         "parent": agent.parent,
         "model": agent.model,
+        "model_tier": runtime.models.tier(&agent.model),
         "effort": agent.config.effort,
         "task": ctx.task,
+        "delegation": delegation_state(&agent),
         "context": {"tokens": agent.stats.context_tokens, "window": window, "used_percent": percent_of(window), "compaction_threshold_tokens": threshold, "compaction_threshold_used_percent": percent_of(threshold), "at_compaction_threshold": agent.stats.context_tokens.map(|used| used >= u64::from(threshold))},
         "remaining_token_budget": agent.remaining_budget(),
         "cost_budget": agent.config.cost_budget,
@@ -77,6 +79,23 @@ fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<ToolOutcome> {
         }
     });
     Ok(crate::inspection::outcome(runtime, data))
+}
+
+/// The delegation policy and the rule it stands for, as inspect_state shows it.
+fn delegation_state(agent: &Agent) -> serde_json::Value {
+    if agent.config.leaf {
+        return serde_json::json!({"allowed": false, "rule": "Leaf agents cannot delegate."});
+    }
+    match &agent.config.delegation_policy {
+        Some(policy) => serde_json::json!({
+            "policy": policy,
+            "rule": format!("delegate refuses a child outside this policy. Allowed: {}", policy.describe()),
+        }),
+        None => serde_json::json!({
+            "policy": null,
+            "rule": "No policy: workers default to the balanced or fast tier; a child may not be above your tier, and one on your own frontier-tier model needs a `reason`.",
+        }),
+    }
 }
 
 async fn list_models(
@@ -145,7 +164,7 @@ async fn list_models(
         ));
     }
     let data = serde_json::json!({"providers": statuses, "models": models, "configured_alternatives": alternatives, "current_model": ctx.agent.model,
-        "guidance": "Choose a connection with available=true. configured reports credentials; available also checks the engine and your current network policy. Inspect configured_alternatives before declaring a model family unavailable. Each model has a tier (fast, balanced, strong, frontier; null when unranked), a capability band within its provider; a provider may lack a tier. Prefer capability first, then cost within a suitable tier: frontier or strong for the hardest work, balanced for demanding work, fast for focused, low-cost work. Select by tier, never by model name. Respect explicit model choices and budgets. API-equivalent prices are not subscription charges. Reasoning with tools on an OpenAI model requires the openai-responses provider on the API path."});
+        "guidance": "Choose a connection with available=true. configured reports credentials; available also checks the engine and your current network policy. Inspect configured_alternatives before declaring a model family unavailable. Each model has a tier (fast, balanced, strong, frontier; null when unranked), a capability band within its provider; a provider may lack a tier. Prefer capability first, then cost within a suitable tier: frontier or strong for the hardest work, balanced for demanding work, fast for focused, low-cost work. Select by tier, never by model name. Give workers the balanced or fast tier, not current_model; a delegation policy (inspect_state) bounds what you may choose. Respect explicit model choices and budgets. API-equivalent prices are not subscription charges. Reasoning with tools on an OpenAI model requires the openai-responses provider on the API path."});
     Ok(crate::inspection::outcome(runtime, data))
 }
 

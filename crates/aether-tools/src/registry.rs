@@ -208,6 +208,10 @@ impl ToolRegistry {
     }
 }
 
+/// How an agent asks a question and waits for the answer. No tool exposure
+/// withholds them: nothing smaller than a budget or a cancel stops a question.
+pub const ASKING_TOOLS: &[&str] = &["send_message", "wait_for", "ask_user"];
+
 /// Why an existing tool is kept from an agent, in words a person and a model
 /// can both act on. The single definition of "offered": [`ToolRegistry::visible`]
 /// is this filter, so nothing can be reachable that was never advertised.
@@ -217,7 +221,8 @@ fn withheld(
     exposure: &ToolExposure,
     scope: &Scope,
 ) -> Option<String> {
-    if !exposure.allows(&descriptor.spec.name) {
+    let name = descriptor.spec.name.as_str();
+    if !exposure.allows(name) && !ASKING_TOOLS.contains(&name) {
         return Some("this agent's tool exposure does not include it".to_owned());
     }
     if descriptor.needs_network && scope.network != NetworkPolicy::Allowed {
@@ -348,9 +353,12 @@ mod tests {
         let only = ToolExposure::Only {
             names: BTreeSet::from(["read_file".to_owned()]),
         };
-        let specs = r.specs_for(&only, &Scope::default());
-        assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].name, "read_file");
+        let names: Vec<_> = r
+            .specs_for(&only, &Scope::default())
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(names, ["ask_user", "read_file", "send_message", "wait_for"]);
         let except = ToolExposure::Except {
             names: BTreeSet::from(["bash".to_owned()]),
         };
@@ -359,5 +367,19 @@ mod tests {
                 .iter()
                 .any(|s| s.name == "bash")
         );
+    }
+
+    #[test]
+    fn no_exposure_withholds_a_way_to_ask() {
+        let r = ToolRegistry::with_builtins();
+        let except = ToolExposure::Except {
+            names: ASKING_TOOLS.iter().map(|n| (*n).to_owned()).collect(),
+        };
+        let denied = Scope::default();
+        assert_ne!(denied.network, NetworkPolicy::Allowed);
+        for name in ASKING_TOOLS {
+            assert!(r.get(name).is_some(), "{name} is not registered");
+            assert_eq!(r.withheld_reason(name, &except, &denied), None, "{name}");
+        }
     }
 }

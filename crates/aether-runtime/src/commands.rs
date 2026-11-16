@@ -16,6 +16,7 @@ mod archive;
 mod creation;
 mod messaging;
 mod pause;
+mod questions;
 mod recovery;
 mod repository;
 mod status;
@@ -54,11 +55,21 @@ pub struct CreateAgentSpec {
     /// The subsystem the agent belongs to, fixed at creation and never changed.
     /// Only daemon code may set it, never a client; no subsystem sets it today.
     pub subsystem: Option<String>,
+    /// Why a delegating parent chose its own frontier model for this child.
+    pub delegation_reason: Option<String>,
+    /// Images and files named for the initial task, checked at creation.
+    pub references: Vec<aether_core::reference::ReferenceRequest>,
+    /// References a delegating parent passes on from its own task, as stored.
+    pub inherited_references: Vec<aether_core::reference::TaskReference>,
+    /// Where a delegating parent may take `references` from; `None` reads
+    /// any path the daemon can (a client's or the daemon's own creation).
+    pub reference_scope: Option<crate::ReferenceScope>,
 }
 
 pub use aether_core::inbox::MessageDelivery;
-pub use messaging::pending_question;
 pub(crate) use messaging::{check_payload_size, check_text_size};
+pub(crate) use questions::replies_to_others;
+pub use questions::{QUESTION_ANSWERED, pending_question, pending_questions, question_is_open};
 
 /// What a pause moved (§3.1). `changed` is empty when every target was
 /// already paused; `mid_turn` names those still finishing a turn, so a caller
@@ -164,6 +175,9 @@ pub(crate) struct Preflight<'a> {
     pub run_budget: bool,
     /// Resolve delegated limits against the current parent under the hold.
     pub inherit_limits: bool,
+    /// Recheck the parent's `delegation_policy.max_parallel` under the hold.
+    /// Set by `delegate`; a person creating a child is never refused for it.
+    pub parallel_limit: bool,
     #[cfg(test)]
     pub before_hold: Option<(
         &'a std::sync::mpsc::Sender<()>,
@@ -183,6 +197,8 @@ pub(crate) struct PreparedAgent {
     /// The parent row `agent` was derived from, read unheld: creation
     /// re-checks it under its hold before committing.
     pub parent: Option<Agent>,
+    /// The task's reference images, stored under the creation hold.
+    pub reference_images: Vec<crate::attachments::CheckedImage>,
 }
 
 /// An agent's background processes, waiting to be ended. Held between the

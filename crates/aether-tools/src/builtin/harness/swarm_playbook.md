@@ -13,20 +13,32 @@ less, do the work yourself or delegate one child.
    depends on.
 2. Give each worker its own task, the shared interfaces and the Worker rules
    below, nothing more: not your conversation, not the other tasks' details.
-   Workers start cold and cannot read this playbook.
-3. Delegate one worker per task: `delegate` with `leaf: true`,
+   Workers start cold and cannot read this playbook. Approved requirements
+   (what the operator approved or said, mockups included) go into every
+   brief whole: never narrow, soften or drop one to fit what is easy to
+   build; report a requirement you cannot meet instead.
+3. Pass approved references to every worker and reviewer: `delegate` with
+   `inherit_references: true` passes on your task's references, and
+   `references: [{path, kind: "image" | "file", label}]` adds files from
+   your scope. A vision model gets each image as a picture before it starts
+   and again after each compaction; the reply warns when a child's model
+   takes no images.
+4. Delegate one worker per task: `delegate` with `leaf: true`,
    `workspace_mode: "isolated"`, `allowed_paths` set to the task's owned
-   paths, `wait: false`, a fast-tier model from `list_models` and an explicit
-   effort. Start a task only after the tasks it depends on, or tell it which
-   peer to wait for.
-4. Wait with `wait_for(tasks=[...], any=true)` and read each result as it
+   paths, `wait: false`, a fast- or balanced-tier model from `list_models`
+   and an explicit effort, never your own model by default. Your delegation
+   policy, when you have one (`inspect_state`), bounds the models, efforts
+   and how many workers run at once; `delegate` refuses a worker outside it.
+   Start a task only after the tasks it depends on, or tell it which peer to
+   wait for.
+5. Wait with `wait_for(tasks=[...], any=true)` and read each result as it
    lands.
-5. Integrate in plan order with `integrate_workspace(child_agent_id)`. A
+6. Integrate in plan order with `integrate_workspace(child_agent_id)`. A
    refusal lists every conflicting path: resolve them in your workspace, or
    hand the report to a new worker, then integrate again. Run the task's
    acceptance commands after each integration and the project's fast checks
    at the end.
-6. Re-dispatch a failed task to a new worker with the failure evidence, at
+7. Re-dispatch a failed task to a new worker with the failure evidence, at
    most twice. Then do it yourself, or fail with the evidence.
 
 ## Worker

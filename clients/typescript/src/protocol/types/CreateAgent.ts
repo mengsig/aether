@@ -6,6 +6,7 @@ import type {
   AgentId,
   ApprovalPolicy,
   ModelRef,
+  ReferenceRequest,
   RunId,
   Scope,
 } from "../../protocol.ts";
@@ -23,6 +24,7 @@ export interface CreateAgent {
   "name"?: string | null;
   "objective"?: string | null;
   "parent"?: AgentId | null;
+  "references"?: Array<ReferenceRequest>;
   "repository_root"?: string | null;
   "role": string;
   "run"?: RunId | null;

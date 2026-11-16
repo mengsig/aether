@@ -121,6 +121,7 @@ impl Runtime {
             task,
             mut commit,
             parent,
+            reference_images,
         } = self.prepare_agent(spec, &by, preflight)?;
         let run = agent.run;
         #[cfg(test)]
@@ -154,8 +155,13 @@ impl Runtime {
         if let Some(parent) = &parent {
             self.inherit_from_parent(&hold, parent, &mut agent, preflight.inherit_limits)?;
             crate::cancellation::check_parent(self, &hold, parent.id)?;
+            if preflight.parallel_limit {
+                self.check_parallel_limit(&hold, parent.id, agent.role.as_str())?;
+            }
         }
         self.recheck_workspace_gc_admission(&agent.scope)?;
+        // Last before the commit, so a refusal or a replay stores nothing.
+        self.store_images(&hold, &reference_images)?;
         commit.push_mutation(Mutation::CreateAgent {
             agent: agent.clone(),
             subsystem,
@@ -183,6 +189,12 @@ impl Runtime {
         if let Some(objective) = &spec.objective {
             super::messaging::check_text_size("task objective", objective.len())?;
         }
+        check_task_delegation(&spec)?;
+        let resolved = self.resolve_references(
+            &spec.references,
+            spec.inherited_references.clone(),
+            spec.reference_scope.as_ref(),
+        )?;
         let checked = preflight.checked;
         let parent = match spec.parent {
             Some(id) => Some(self.live_agent(id, "parent")?),
@@ -379,6 +391,8 @@ impl Runtime {
         let task = match spec.objective.filter(|o| !o.trim().is_empty()) {
             Some(objective) => {
                 let mut task = Task::new(objective.trim().to_owned(), by.clone(), run, at);
+                task.delegation_reason = spec.delegation_reason;
+                task.references = resolved.references;
                 task.owner = Some(agent.id);
                 task.priority = agent.config.priority;
                 task.transition(TaskStatus::Assigned, at)?;
@@ -407,7 +421,48 @@ impl Runtime {
             task,
             commit,
             parent,
+            reference_images: resolved.images,
         })
+    }
+
+    /// The authoritative `max_parallel` check: under the creation hold, so a
+    /// concurrent creation under the same parent cannot slip past the count.
+    fn check_parallel_limit(
+        &self,
+        _hold: &CommitHold<'_>,
+        parent: AgentId,
+        child_role: &str,
+    ) -> Result<()> {
+        let current = self.live_agent(parent, "parent")?;
+        let Some(policy) = &current.config.delegation_policy else {
+            return Ok(());
+        };
+        let Some(limit) = policy.max_parallel.filter(|_| !policy.exempts(child_role)) else {
+            return Ok(());
+        };
+        let unfinished = self.unfinished_children(parent, policy)?;
+        if let Some(refusal) = policy.parallel_refusal(limit, unfinished) {
+            return Err(RuntimeError::Invalid(refusal));
+        }
+        Ok(())
+    }
+
+    /// Direct children that have not finished, exempt roles aside: what
+    /// `max_parallel` bounds.
+    pub(crate) fn unfinished_children(
+        &self,
+        parent: AgentId,
+        policy: &aether_core::delegation::DelegationPolicy,
+    ) -> Result<usize> {
+        let children = self.store.agents(&aether_store::AgentFilter {
+            parent: Some(parent),
+            ..Default::default()
+        })?;
+        debug_assert!(children.iter().all(|child| child.parent == Some(parent)));
+        Ok(children
+            .iter()
+            .filter(|child| !child.status.is_terminal() && !policy.exempts(child.role.as_str()))
+            .count())
     }
 
     /// Re-check `agent` against its parent's current row, under the creation hold:
@@ -487,3 +542,31 @@ fn narrower_limit<T: PartialOrd + Copy>(requested: Option<T>, parent: Option<T>)
 #[cfg(test)]
 #[path = "creation_tests.rs"]
 mod tests;
+
+/// A recorded reason belongs to the initial task, so it needs an objective;
+/// a policy a client sent must be well formed.
+fn check_task_delegation(spec: &CreateAgentSpec) -> Result<()> {
+    let has_objective = spec
+        .objective
+        .as_deref()
+        .is_some_and(|objective| !objective.trim().is_empty());
+    if spec.delegation_reason.is_some() && !has_objective {
+        return Err(RuntimeError::Invalid(
+            "a delegation reason is recorded on the initial task: set an objective too".into(),
+        ));
+    }
+    let has_references = !spec.references.is_empty() || !spec.inherited_references.is_empty();
+    if has_references && !has_objective {
+        return Err(RuntimeError::Invalid(
+            "references are attached to the initial task: set an objective too".into(),
+        ));
+    }
+    let policy = spec
+        .config
+        .as_ref()
+        .and_then(|c| c.delegation_policy.as_ref());
+    if let Some(policy) = policy {
+        policy.validate().map_err(RuntimeError::Invalid)?;
+    }
+    Ok(())
+}

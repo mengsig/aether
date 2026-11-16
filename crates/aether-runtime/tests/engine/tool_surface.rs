@@ -57,7 +57,13 @@ const ROOT_ADDED_BYTES: usize = 200;
 const NOTIFY_ADDED_BYTES: usize = 700;
 /// What `delegate`'s `idempotency_key` adds to a surface that is not a leaf.
 const DELEGATE_KEY_ADDED_BYTES: usize = 300;
+/// What `delegate`'s delegation-policy text and `reason` add to a non-leaf surface.
+const DELEGATION_POLICY_ADDED_BYTES: usize = 420;
+/// What `delegate`'s `references`, `inherit_references` and their guidance add.
+const REFERENCES_ADDED_BYTES: usize = 430;
 const DELEGATED_LEAF_ADDED_BYTES: usize = 300;
+/// What `send_message` and `wait_for` add to say how to ask a parent.
+const ASKING_ADDED_BYTES: usize = 200;
 const DELEGATED_LEAD_ADDED_BYTES: usize = 470;
 
 fn tool_surface_agent(h: &Harness) -> aether_core::agent::Agent {
@@ -215,7 +221,13 @@ async fn a_root_agent_sees_the_v1_1_0_surface_plus_only_the_playbook_and_notify(
     let added = added_bridge_bytes(&root, V1_1_0_ROOT_BYTES);
     println!("root surface: {added} descriptor bytes beyond v1.1.0");
     assert!(
-        added <= ROOT_ADDED_BYTES + NOTIFY_ADDED_BYTES + DELEGATE_KEY_ADDED_BYTES,
+        added
+            <= ROOT_ADDED_BYTES
+                + NOTIFY_ADDED_BYTES
+                + DELEGATE_KEY_ADDED_BYTES
+                + DELEGATION_POLICY_ADDED_BYTES
+                + REFERENCES_ADDED_BYTES
+                + ASKING_ADDED_BYTES,
         "{added}"
     );
     h.runtime.shutdown().await;
@@ -247,9 +259,18 @@ async fn delegated_agents_see_list_peers_and_only_a_lead_sees_the_playbook() {
     println!(
         "delegated surfaces: leaf {leaf_added}, non-leaf {lead_added} descriptor bytes beyond v1.1.0"
     );
-    assert!(leaf_added <= DELEGATED_LEAF_ADDED_BYTES, "{leaf_added}");
     assert!(
-        lead_added <= DELEGATED_LEAD_ADDED_BYTES + NOTIFY_ADDED_BYTES + DELEGATE_KEY_ADDED_BYTES,
+        leaf_added <= DELEGATED_LEAF_ADDED_BYTES + ASKING_ADDED_BYTES,
+        "{leaf_added}"
+    );
+    assert!(
+        lead_added
+            <= DELEGATED_LEAD_ADDED_BYTES
+                + NOTIFY_ADDED_BYTES
+                + DELEGATE_KEY_ADDED_BYTES
+                + DELEGATION_POLICY_ADDED_BYTES
+                + REFERENCES_ADDED_BYTES
+                + ASKING_ADDED_BYTES,
         "{lead_added}"
     );
     h.runtime.shutdown().await;
@@ -263,14 +284,22 @@ async fn leaf_engine_tools_still_obey_tool_exposure() {
     agent.config.tools = aether_core::tool::ToolExposure::Only {
         names: ["delegate".into(), "read_artifact".into()].into(),
     };
-    let narrowed = h.runtime.engine_tool_specs(&agent);
-    assert_eq!(narrowed.len(), 1);
-    assert_eq!(narrowed[0].name, "read_artifact");
+    let narrowed: Vec<_> = h
+        .runtime
+        .engine_tool_specs(&agent)
+        .into_iter()
+        .map(|tool| tool.name)
+        .collect();
+    // No exposure takes away the way to ask.
+    assert_eq!(
+        narrowed,
+        ["ask_user", "read_artifact", "send_message", "wait_for"]
+    );
     h.runtime.shutdown().await;
 }
 
 #[tokio::test]
-async fn minimal_solo_exposure_shows_only_task_terminal_tools() {
+async fn minimal_solo_exposure_shows_only_task_terminal_and_asking_tools() {
     let h = harness(Reply::OneTurn).await;
     let mut agent = tool_surface_agent(&h);
     agent.config.tools = aether_core::tool::ToolExposure::Only {
@@ -282,6 +311,15 @@ async fn minimal_solo_exposure_shows_only_task_terminal_tools() {
         .into_iter()
         .map(|tool| tool.name)
         .collect::<Vec<_>>();
-    assert_eq!(names, ["complete_task", "fail_task"]);
+    assert_eq!(
+        names,
+        [
+            "ask_user",
+            "complete_task",
+            "fail_task",
+            "send_message",
+            "wait_for"
+        ]
+    );
     h.runtime.shutdown().await;
 }

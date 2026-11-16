@@ -32,6 +32,10 @@ pub(super) fn spawn_request(template: &SpawnSpec, objective: String) -> CreateAg
         approval: template.approval.clone(),
         run: None,
         start: true,
+        delegation_reason: None,
+        references: Vec::new(),
+        inherited_references: Vec::new(),
+        reference_scope: None,
     }
 }
 

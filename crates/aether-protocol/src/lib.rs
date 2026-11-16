@@ -217,6 +217,13 @@ pub mod features {
     /// The daemon accepts `AgentConfig.build_cache`. A daemon without it
     /// ignores the field, so check this first.
     pub const BUILD_CACHE: &str = "build_cache";
+    /// The daemon enforces `AgentConfig.delegation_policy` and the `reason`
+    /// argument of `delegate`. An older daemon ignores the field.
+    pub const DELEGATION_POLICY: &str = "delegation_policy";
+    /// The daemon accepts `CreateAgent.references`, and `delegate` takes
+    /// `references` and `inherit_references`. An older daemon ignores the
+    /// field, so check this first.
+    pub const REFERENCES: &str = "references";
     /// Host evidence about memories a task saw, with append-only records and retractions.
     pub const MEMORY_FEEDBACK: &str = "memory_feedback";
     /// Memory 2.0: `MemoryRecord.standing` on memory replies, and the

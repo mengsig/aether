@@ -9,7 +9,7 @@ pub(crate) fn spawn(
         .map_err(pty_error)?;
     let source = command.as_std();
     // Copy the explicit backend argv, cwd and environment, including removals.
-    // Stdio and process_group are intentionally replaced: PTY spawn establishes
+    // Stdio and spawn hooks are intentionally replaced: PTY spawn establishes
     // a new session/process group and makes the slave its controlling terminal.
     let mut cmd = pty_process::Command::new(source.get_program())
         .args(source.get_args())

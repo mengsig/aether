@@ -206,6 +206,7 @@
     .app-shell[data-connection="unpaired"] { padding-bottom: 0; }
     .app-shell[data-screen="pair"] > .topbar, .global-banner { flex-shrink: 0; }
     .main-content:not([data-screen="agent"]) { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 24px; overscroll-behavior-y: contain; scroll-padding-block: 88px 24px; }
+    .app-shell:not([data-screen="agent"]) .toast { position: sticky; z-index: 25; top: calc(64px + env(safe-area-inset-top)); box-shadow: var(--shadow); }
     .app-shell[data-screen="new"] .start-action { bottom: 0; }
     .app-shell[data-screen="new"] .main-content { scroll-padding-bottom: 96px; }
     .app-shell[data-screen="new"] .start-action.keyboard-open { bottom: max(0px,calc(var(--start-keyboard-inset) - var(--navigation-space,88px))); }
