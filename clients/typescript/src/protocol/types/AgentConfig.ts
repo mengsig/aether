@@ -16,6 +16,7 @@ import type {
 export interface AgentConfig {
   "approval"?: ApprovalPolicy;
   "build_cache"?: string | null;
+  "compaction_tokens"?: number | null;
   "concurrency"?: number | null;
   "cost_budget"?: number | null;
   "deadline"?: string | null;

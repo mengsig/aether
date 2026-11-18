@@ -490,6 +490,19 @@ impl App {
         )
     }
 
+    /// Context size at which this agent compacts: its own threshold, bounded
+    /// by the window, else its model's.
+    pub fn agent_compaction_threshold(&self, agent: &aether_core::agent::Agent) -> Option<u64> {
+        let model = self.compaction_threshold(&agent.model);
+        let Some(own) = agent.config.compaction_tokens.map(u64::from) else {
+            return model;
+        };
+        Some(
+            self.context_window(&agent.model)
+                .map_or(own, |window| own.min(window)),
+        )
+    }
+
     /// Whether the selected agent has an approval waiting on the person.
     pub fn approval_pending(&self) -> bool {
         self.selected
