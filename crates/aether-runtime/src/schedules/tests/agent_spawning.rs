@@ -3,9 +3,11 @@
 
 use super::spawning::{end_run, skip_reason, spawned};
 use super::*;
+use crate::schedules::execution;
 use aether_core::agent::{AgentConfig, NetworkPolicy};
 use aether_core::delegation::{DelegationPolicy, ModelTier, WorkerChoice};
 use aether_core::model::Effort;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const FAST: (&str, &str) = ("anthropic", "claude-haiku-5-5");
 const BALANCED: (&str, &str) = ("anthropic", "claude-sonnet-5-5");
@@ -402,13 +404,25 @@ async fn an_agents_spawn_schedule_fails_when_its_creator_finishes_mid_run_or_pau
     }
 }
 
+/// The job as the scheduler reads it, its run built outside the hold.
+fn queued_with_run(
+    runtime: &Runtime,
+    job: &Schedule,
+) -> (Schedule, Option<Result<execution::PreparedSpawn>>) {
+    let queued = runtime.store.schedule(job.id).unwrap().unwrap();
+    let spawn = execution::prepare_queued(runtime, &queued);
+    assert!(
+        matches!(spawn, Some(Ok(_))),
+        "built under the old authority"
+    );
+    (queued, spawn)
+}
+
 #[tokio::test]
-async fn an_agents_spawn_reads_its_creator_under_the_commit_hold() {
+async fn an_agents_spawn_fails_when_its_creator_narrows_after_the_run_is_built() {
     let (runtime, _dir, job, lead, first) = fired_once().await;
     end_run(&runtime, first);
-    let mut job = runtime.store.schedule(job.id).unwrap().unwrap();
-    let due = job.status.next_due().unwrap();
-    // Narrowed after the scheduler read the job: the occurrence must see it.
+    let (queued, spawn) = queued_with_run(&runtime, &job);
     let mut narrowed = runtime.store.agent(lead.id).unwrap().unwrap();
     narrowed.config.delegation_policy = Some(DelegationPolicy {
         max_effort: Some(Effort::Low),
@@ -420,41 +434,61 @@ async fn an_agents_spawn_reads_its_creator_under_the_commit_hold() {
         ..DelegationPolicy::default()
     });
     set_agent(&runtime, narrowed);
-    let hold = runtime.hold();
-    let mut commit = Commit::new();
-    let refused = super::super::execution::prepare_occurrence(
-        &runtime,
-        &hold,
-        &mut commit,
-        &mut job,
-        due,
-        due,
-        None,
-    );
-    let Err(error) = refused else {
-        panic!("refused under the hold");
+    let due = queued.status.next_due().unwrap();
+    execution::fire_queued(&runtime, &queued, spawn, due).unwrap();
+    let stored = runtime.store.schedule(job.id).unwrap().unwrap();
+    let ScheduleStatus::Failed { error, .. } = &stored.status else {
+        panic!("no run under the narrowed policy: {:?}", stored.last);
     };
-    let error = error.to_string();
     assert!(error.contains("the model is outside"), "{error}");
-    assert!(commit.mutations.is_empty());
+    assert_eq!(spawned_agents(&runtime, lead.id).len(), 1);
+}
+
+#[tokio::test]
+async fn an_agents_spawn_is_rebuilt_when_its_creator_changes_after_the_run_is_built() {
+    let (runtime, _dir, job, lead, first) = fired_once().await;
+    end_run(&runtime, first);
+    let (queued, spawn) = queued_with_run(&runtime, &job);
+    let mut narrowed = runtime.store.agent(lead.id).unwrap().unwrap();
+    narrowed.config.max_output_tokens = Some(512);
+    set_agent(&runtime, narrowed);
+    let due = queued.status.next_due().unwrap();
+    execution::fire_queued(&runtime, &queued, spawn, due).unwrap();
+    assert_eq!(runtime.store.schedule(job.id).unwrap().unwrap(), queued);
+    assert_eq!(spawned_agents(&runtime, lead.id).len(), 1);
+
+    tick(&runtime, due).unwrap();
+    let second = spawned(&runtime.store.schedule(job.id).unwrap().unwrap()).unwrap();
+    assert_ne!(second, first);
+    let run = runtime.store.agent(second).unwrap().unwrap();
+    assert_eq!(run.config.max_output_tokens, Some(512));
 }
 
 #[tokio::test]
 async fn an_agents_spawn_is_refused_while_its_creator_is_being_cancelled() {
-    let (runtime, _dir, job, lead, first) = fired_once().await;
-    end_run(&runtime, first);
-    crate::cancellation::request(&runtime, lead.id, None, Actor::user()).unwrap();
-    tick(&runtime, next_due(&runtime, &job)).unwrap();
-    let stored = runtime.store.schedule(job.id).unwrap().unwrap();
-    let ScheduleStatus::Failed { error, .. } = &stored.status else {
-        panic!("no run under a pending cancellation: {:?}", stored.status);
-    };
-    assert!(error.contains("being cancelled"), "{error}");
-    assert_eq!(spawned_agents(&runtime, lead.id).len(), 1);
+    // Also while the previous run is live, so a skip cannot mask it.
+    for previous_live in [false, true] {
+        let (runtime, _dir, job, lead, first) = fired_once().await;
+        if !previous_live {
+            end_run(&runtime, first);
+        }
+        crate::cancellation::request(&runtime, lead.id, None, Actor::user()).unwrap();
+        tick(&runtime, next_due(&runtime, &job)).unwrap();
+        let stored = runtime.store.schedule(job.id).unwrap().unwrap();
+        let ScheduleStatus::Failed { error, .. } = &stored.status else {
+            panic!(
+                "previous_live={previous_live}: not failed: {:?}",
+                stored.last
+            );
+        };
+        assert!(error.contains("being cancelled"), "{error}");
+        assert_eq!(spawned_agents(&runtime, lead.id).len(), 1);
+    }
 }
 
-/// An engine that cannot ask before acting, as legacy Codex exec.
-struct Ungated;
+/// An engine that cannot ask before acting, as legacy Codex exec, once its
+/// remaining gated answers run out (as after an engine reprobe).
+struct Ungated(Arc<AtomicUsize>);
 
 #[async_trait::async_trait]
 impl aether_engine::Engine for Ungated {
@@ -467,7 +501,11 @@ impl aether_engine::Engine for Ungated {
     }
 
     fn gates_permissions(&self) -> bool {
-        false
+        self.0
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
     }
 
     async fn run(
@@ -479,13 +517,14 @@ impl aether_engine::Engine for Ungated {
     }
 }
 
-#[tokio::test]
-async fn a_template_whose_engine_would_drop_the_creators_gates_is_refused() {
+/// A runtime whose Claude Code engine gates for `gated` more answers, and a
+/// gated lead on it.
+async fn ungated_runtime(gated: Arc<AtomicUsize>) -> (Arc<Runtime>, tempfile::TempDir, Agent) {
     let dir = tempfile::tempdir().unwrap();
     let engines: HashMap<aether_engine::EngineKind, Arc<dyn aether_engine::Engine>> =
         HashMap::from([(
             aether_engine::EngineKind::CLAUDE_CODE,
-            Arc::new(Ungated) as Arc<dyn aether_engine::Engine>,
+            Arc::new(Ungated(gated)) as Arc<dyn aether_engine::Engine>,
         )]);
     let runtime = Runtime::start_with_engines(
         RuntimeConfig {
@@ -505,6 +544,12 @@ async fn a_template_whose_engine_would_drop_the_creators_gates_is_refused() {
     lead.config.approval = aether_core::agent::ApprovalPolicy::default();
     set_agent(&runtime, lead.clone());
     assert!(!lead.config.approval.is_yolo(), "the lead is gated");
+    (runtime, dir, lead)
+}
+
+#[tokio::test]
+async fn a_template_whose_engine_would_drop_the_creators_gates_is_refused() {
+    let (runtime, _dir, lead) = ungated_runtime(Arc::new(AtomicUsize::new(0))).await;
     let ungated = model(("claude-code", "claude-haiku-5-5"));
     assert!(!runtime.engine_can_gate(&ungated).unwrap());
     let template = SpawnSpec {
@@ -517,4 +562,29 @@ async fn a_template_whose_engine_would_drop_the_creators_gates_is_refused() {
         .to_string();
     assert!(error.contains("cannot ask before acting"), "{error}");
     assert!(runtime.store.schedules(None).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_agents_run_is_refused_when_its_engine_stops_gating_while_it_is_built() {
+    let gated = Arc::new(AtomicUsize::new(usize::MAX));
+    let (runtime, _dir, lead) = ungated_runtime(gated.clone()).await;
+    let template = SpawnSpec {
+        model: Some(model(("claude-code", "claude-haiku-5-5"))),
+        ..agent_template(FAST, Effort::Low)
+    };
+    let job = runtime
+        .create_schedule(agent_spec(template), Actor::agent(lead.id))
+        .unwrap();
+    // Gates for the bound check only; creation then sees an ungated engine.
+    gated.store(1, Ordering::SeqCst);
+    let due = job.status.next_due().unwrap();
+    let Err(error) = execution::prepare_spawn(&runtime, &job, due) else {
+        panic!("the run would have dropped its gates");
+    };
+    let error = error.to_string();
+    assert!(
+        error.contains("keep its creator's approval gates"),
+        "{error}"
+    );
+    assert_eq!(gated.load(Ordering::SeqCst), 0, "creation asked the engine");
 }

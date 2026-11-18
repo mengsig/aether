@@ -354,7 +354,10 @@ async fn prepared_schedule_spawn_rechecks_workspace_gc_admission() {
             Some(Ok(prepared)),
         );
         if reserved {
-            assert!(matches!(result.unwrap().0, ScheduleOutcome::Skipped { .. }));
+            assert!(matches!(
+                result.unwrap().unwrap().0,
+                ScheduleOutcome::Skipped { .. }
+            ));
         } else {
             assert!(result.unwrap_err().to_string().contains("disappeared"));
         }
