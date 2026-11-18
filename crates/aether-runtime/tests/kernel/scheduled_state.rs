@@ -118,7 +118,10 @@ async fn state_tools_report_runtime_facts_without_mutating_task_state() {
         .unwrap();
     assert_eq!(old["superseded_by"], "gpt-6.2-astra");
     assert!(old["tier"].is_null());
-    assert!(old["efforts"].as_array().unwrap().contains(&json!("high")));
+    assert_eq!(
+        old["efforts"],
+        json!(["low", "medium", "high", "xhigh", "max"])
+    );
     let retired = catalog["retired"].as_array().unwrap();
     assert!(retired.contains(&json!({"model":"codex/gpt-6-sol", "successor":"codex/gpt-6.2-sol"})));
     assert!(

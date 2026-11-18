@@ -141,7 +141,7 @@ fn model_entry(
         "context_window": info.capabilities.context_window,
         "compaction_threshold_tokens": aether_context::ContextBudget::for_profile(&info.capabilities, None).threshold_tokens(),
         "effort_supported": info.capabilities.effort,
-        "efforts": info.efforts,
+        "efforts": info.efforts.iter().map(|effort| effort.as_str()).collect::<Vec<_>>(),
         "tier": info.tier,
         "api_equivalent_cost": cost,
     });

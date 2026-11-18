@@ -39,7 +39,9 @@ completed_run_days = 10
   tier as the agent tool. A model with `superseded_by` stays valid by explicit id
   and has no tier, including when an override names it. `aether models --json`
   lists these models alongside current defaults. `aether models --retired --json`
-  lists the retired ids and their successors in a separate array.
+  lists the retired ids and their successors in a separate array. The MCP
+  `list_models` tool spells effort choices the same way as `delegate`
+  (for example, `xhigh`). The daemon protocol spells that value `x_high`.
 - **Models and effort:** choose them per agent; switch with `/model` or
   `aether set`. A running turn finishes on its original model; the new choice
   applies when the agent starts its next turn. Fallback chains are explicit
