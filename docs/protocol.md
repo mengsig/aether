@@ -300,6 +300,17 @@ Rust client refuses all of them to such a daemon.
 [notes](#notes)). An older daemon refuses the command and drops the flag; the
 Rust client refuses both to such a daemon.
 
+`compaction_tokens` means `create_agent` accepts `config.compaction_tokens`:
+the context size, above zero, at which that agent compacts in place of its
+model's threshold (see [who compacts](engines.md#who-compacts)). It is
+bounded by the context window of whichever model runs the turn, set at
+creation only, and never inherited by a child; absent keeps the model's
+threshold. `get_agent` returns it in `config`, and the agent's
+`inspect_state` reports it as `compaction.agent_threshold_tokens` beside the
+effective `compaction.threshold_tokens`. An older daemon ignores the field
+and the agent compacts at its model's threshold, so check the feature first;
+the Rust client refuses such a create itself.
+
 `remote_mounts` means `configure_remote` accepts `settings.mounts` (see
 [remote settings](remote.md#runtime-settings-remotesettings)). An older
 daemon drops the field and saves no mounts; the Rust client refuses such a

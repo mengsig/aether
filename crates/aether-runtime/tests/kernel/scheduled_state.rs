@@ -242,6 +242,46 @@ async fn inspect_state_measures_context_against_the_compaction_threshold() {
     );
 }
 
+/// A caller confirms an agent's own threshold took effect from inspect_state.
+#[tokio::test]
+async fn inspect_state_reports_an_agents_own_compaction_threshold() {
+    let h = harness(vec![
+        ScriptedClient::tool_call("inspect_state", json!({})),
+        ScriptedClient::tool_call("complete_task", json!({"summary": "done"})),
+    ])
+    .await;
+    let mut own = spec("report my threshold");
+    if let Some(config) = own.config.as_mut() {
+        config.compaction_tokens = Some(60_000);
+    }
+    let (agent, _) = h.runtime.create_agent(own, Actor::user()).unwrap();
+    h.wait_until(agent.id, |s| s.is_terminal()).await;
+    let state = h
+        .store
+        .events(0, 10_000, &EventFilter::for_agent(agent.id))
+        .unwrap()
+        .into_iter()
+        .find_map(|e| match e.kind {
+            EventKind::ToolSucceeded { outcome, .. } => {
+                outcome.structured.filter(|v| v.get("compaction").is_some())
+            }
+            _ => None,
+        })
+        .expect("inspect_state result");
+    let capabilities = h
+        .runtime
+        .models()
+        .resolve(&agent.model)
+        .unwrap()
+        .model
+        .capabilities;
+    assert!(capabilities.context_window > 60_000);
+    assert_ne!(capabilities.compaction_tokens, Some(60_000));
+    assert_eq!(state["compaction"]["agent_threshold_tokens"], 60_000);
+    assert_eq!(state["compaction"]["threshold_tokens"], 60_000);
+    assert_eq!(state["context"]["compaction_threshold_tokens"], 60_000);
+}
+
 #[tokio::test]
 async fn inspect_state_reports_unset_limits_as_null() {
     let h = harness(vec![

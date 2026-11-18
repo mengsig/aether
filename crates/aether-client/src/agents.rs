@@ -9,7 +9,9 @@ use aether_protocol::{
 impl Client {
     /// A daemon that cannot derive a repository from `repository_root` would
     /// create the agent under its workspace's repository instead, and one
-    /// without `build_cache` would build elsewhere, so both are refused here.
+    /// without `build_cache` would build elsewhere, and one without
+    /// `compaction_tokens` would compact at the model's threshold, so all are
+    /// refused here.
     pub async fn create_agent(&self, req: CreateAgent) -> Result<Agent> {
         let supports = |wanted: &str| {
             self.welcome()
@@ -24,6 +26,15 @@ impl Client {
         if names_cache && !supports(aether_protocol::features::BUILD_CACHE) {
             return Err(ClientError::Incompatible(
                 "daemon cannot set an agent's build_cache; update Aether".into(),
+            ));
+        }
+        let names_threshold = req
+            .config
+            .as_ref()
+            .is_some_and(|c| c.compaction_tokens.is_some());
+        if names_threshold && !supports(aether_protocol::features::COMPACTION_TOKENS) {
+            return Err(ClientError::Incompatible(
+                "daemon cannot set an agent's compaction_tokens; update Aether".into(),
             ));
         }
         match self.request(Command::CreateAgent(req)).await? {

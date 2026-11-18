@@ -322,6 +322,12 @@ impl Runtime {
                 "a budget must be a positive, finite amount; leave it unset for no limit".into(),
             ));
         }
+        if config.compaction_tokens == Some(0) {
+            return Err(RuntimeError::Invalid(
+                "compaction_tokens must be above zero; leave it unset for the model's threshold"
+                    .into(),
+            ));
+        }
         self.check_cost_budget(&model, &fallbacks, config.cost_budget)?;
         let run = spec
             .run

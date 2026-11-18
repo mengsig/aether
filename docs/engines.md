@@ -189,6 +189,11 @@ depends on who runs the model loop.
 | `/compact` and `aether compact` on a direct Anthropic agent | The API's summarize compaction, asked for once on request. Its signed summary replaces the history and the fold is recorded as `compaction.native`. If the API cannot compact, Aether's own checkpoint runs instead. | Now, or as soon as a running turn ends. | Nothing; it uses the agent's model. |
 | `/compact` and `aether compact` on other agents, and an agent's `request_checkpoint` | The same Aether checkpoint, on any agent. The compactor model writes the summary: `model.compactor` when it is set, otherwise a model of the agent's own provider, which for a native agent is a model of the same CLI. A Claude Code or Codex compactor writes it in a fresh, isolated CLI session; this is not the CLI's own `/compact`. An API compactor writes it with an API request, for a native agent too. A native compactor cannot run for an agent in a container backend, which needs an API compactor. | Only on request, before the agent's next turn. | The compactor model and effort. |
 
+An agent created with `config.compaction_tokens` compacts at that size on
+every automatic path above, in place of its model's threshold, and never above
+the model's context window; its siblings on the same model keep the model's
+threshold (see [protocol](protocol.md), feature `compaction_tokens`).
+
 On a native session Aether still records context usage, but usage never
 requests an Aether summary or a task-boundary checkpoint, and automatic
 requests stored by an older version are ignored. Explicit checkpoints and
