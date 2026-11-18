@@ -43,7 +43,7 @@ pub(super) struct SpawnInput {
 pub(super) fn schema() -> Value {
     json!({
         "type": "object",
-        "description": "Spawn a fresh agent on each occurrence instead of delivering to one. Bounded like delegate: model and effort within your delegation policy, scope and approvals no wider than yours, budgets no larger than yours. Each run is its own root run; an occurrence skips while the previous run is live, and the timer fails once you finish.",
+        "description": "Spawn a fresh agent on each occurrence instead of delivering to one. Bounded like delegate: model and effort within your delegation policy, scope and approvals no wider than yours. Each run is its own root run, so you cannot schedule one while you or an ancestor has a cost or token budget; an occurrence skips while the previous run is live, and the timer fails once you finish.",
         "properties": {
             "role": {"type": "string"},
             "objective": {"type": "string", "description": "Each run's task; the due time and any payload are appended."},

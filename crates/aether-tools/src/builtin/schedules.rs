@@ -108,7 +108,10 @@ impl Tool for ScheduleTool {
                     #[serde(default, deserialize_with = "present")]
                     busy: Option<Value>,
                     max_deliveries: Option<NonZeroU64>,
-                    spawn: Option<spawn::SpawnInput>,
+                    // `present`, so an explicit `null` is refused rather than
+                    // silently turning a spawn request into a delivery.
+                    #[serde(default, deserialize_with = "present")]
+                    spawn: Option<Value>,
                 }
                 let input: Input = parse_input(input)?;
                 let target = input
@@ -142,7 +145,11 @@ impl Tool for ScheduleTool {
                         ));
                     }
                 };
-                let target = match (target, input.spawn) {
+                let spawn = input
+                    .spawn
+                    .map(|v| super::parse_field::<spawn::SpawnInput>(&v, "create_schedule.spawn"))
+                    .transpose()?;
+                let target = match (target, spawn) {
                     (Some(_), Some(_)) => {
                         return Err(ToolError::InvalidInput(
                             "choose target OR spawn, not both".into(),
@@ -276,6 +283,17 @@ mod tests {
         .await
         .unwrap_err();
         assert!(invalid_input(&both).contains("target OR spawn"), "{both:?}");
+        let null = act(
+            &ScheduleTool::Create,
+            &ctx,
+            json!({"name": "n", "payload": {}, "every_seconds": 60, "spawn": null}),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            invalid_input(&null).contains("create_schedule.spawn"),
+            "{null:?}"
+        );
         let mut bad = spawn.clone();
         bad["effort"] = json!("huge");
         let err = act(

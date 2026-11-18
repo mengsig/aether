@@ -25,15 +25,26 @@ fn fast_only() -> DelegationPolicy {
     }
 }
 
-/// A balanced-tier lead, offline, with a $5 budget and `policy`.
+/// A balanced-tier lead, offline, unbudgeted, with `policy`.
 fn creator(runtime: &Runtime, policy: Option<DelegationPolicy>) -> Agent {
+    creator_under(runtime, policy, None, None)
+}
+
+fn creator_under(
+    runtime: &Runtime,
+    policy: Option<DelegationPolicy>,
+    parent: Option<AgentId>,
+    cost_budget: Option<f64>,
+) -> Agent {
     let mut lead = runtime
         .create_agent(
             CreateAgentSpec {
                 role: "lead".into(),
                 model: Some(model(BALANCED)),
+                parent,
                 config: Some(AgentConfig {
-                    cost_budget: Some(5.0),
+                    effort: Some(Effort::Medium),
+                    cost_budget,
                     delegation_policy: policy,
                     ..AgentConfig::default()
                 }),
@@ -112,7 +123,7 @@ async fn an_agent_schedules_a_fast_tier_spawn_bounded_by_its_own_authority() {
     );
     assert_eq!(template.approval.as_ref(), Some(&lead.config.approval));
     let config = template.config.as_ref().unwrap();
-    assert_eq!(config.cost_budget, Some(5.0), "held to the lead's budget");
+    assert_eq!(config.cost_budget, Some(50.0), "the template's own budget");
     assert_eq!(config.delegation_policy, None);
 
     tick(&runtime, job.status.next_due().unwrap()).unwrap();
@@ -124,7 +135,7 @@ async fn an_agent_schedules_a_fast_tier_spawn_bounded_by_its_own_authority() {
     assert_eq!(run.model, model(FAST));
     assert_eq!(run.config.effort, Some(Effort::Low));
     assert_eq!(run.config.max_turns, Some(3));
-    assert_eq!(run.config.cost_budget, Some(5.0));
+    assert_eq!(run.config.cost_budget, Some(50.0));
     assert_eq!(run.scope.network, NetworkPolicy::Denied);
 }
 
@@ -218,6 +229,15 @@ async fn a_template_above_the_agents_policy_or_scope_is_refused() {
         let error = refused(template, by);
         assert!(error.contains(expected), "{expected}: {error}");
     }
+    let budgeted = creator_under(&runtime, Some(fast_only()), None, Some(5.0));
+    let error = refused(agent_template(FAST, Effort::Low), budgeted.id);
+    assert!(error.contains("cost or token budget"), "{error}");
+    let under_budget = creator_under(&runtime, Some(fast_only()), Some(budgeted.id), None);
+    let error = refused(agent_template(FAST, Effort::Low), under_budget.id);
+    assert!(
+        error.contains(&budgeted.id.to_string()),
+        "an ancestor's budget: {error}"
+    );
     let mut leaf = creator(&runtime, None);
     leaf.config.leaf = true;
     set_agent(&runtime, leaf.clone());
@@ -337,4 +357,164 @@ async fn an_agent_pauses_and_cancels_its_spawn_schedule_and_the_limit_holds() {
         .update_schedule(job.id, ScheduleAction::Cancel, Actor::agent(lead.id))
         .unwrap();
     assert!(matches!(cancelled.status, ScheduleStatus::Cancelled { .. }));
+}
+
+#[tokio::test]
+async fn a_link_inside_the_creators_workspace_cannot_reach_outside_it() {
+    let (runtime, dir) = fixture().await;
+    let (inside, outside) = (dir.path().join("inside"), dir.path().join("outside"));
+    std::fs::create_dir_all(&inside).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, inside.join("link")).unwrap();
+    let mut lead = creator(&runtime, Some(fast_only()));
+    lead.scope.workspace_root = Some(inside.clone());
+    set_agent(&runtime, lead.clone());
+    let template = SpawnSpec {
+        scope: Some(aether_core::agent::Scope {
+            workspace_root: Some(inside.join("link")),
+            ..lead.scope.clone()
+        }),
+        ..agent_template(FAST, Effort::Low)
+    };
+    let error = runtime
+        .create_schedule(agent_spec(template), Actor::agent(lead.id))
+        .expect_err("the link resolves outside the lead's workspace")
+        .to_string();
+    assert!(error.contains("widens your `workspace_root`"), "{error}");
+    assert!(runtime.store.schedules(None).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_agents_spawn_schedule_fails_when_its_creator_finishes_mid_run_or_paused() {
+    for paused in [false, true] {
+        let (runtime, _dir, job, lead, first) = fired_once().await;
+        let mut finished = runtime.store.agent(lead.id).unwrap().unwrap();
+        finished.paused = paused;
+        finished.status = AgentStatus::Completed { summary: None };
+        set_agent(&runtime, finished);
+        assert!(runtime.store.agent(first).unwrap().unwrap().is_live());
+        tick(&runtime, next_due(&runtime, &job)).unwrap();
+        let stored = runtime.store.schedule(job.id).unwrap().unwrap();
+        let ScheduleStatus::Failed { error, .. } = &stored.status else {
+            panic!("paused={paused}: not skipped: {:?}", stored.last);
+        };
+        assert!(error.contains("its creator"), "{error}");
+    }
+}
+
+#[tokio::test]
+async fn an_agents_spawn_reads_its_creator_under_the_commit_hold() {
+    let (runtime, _dir, job, lead, first) = fired_once().await;
+    end_run(&runtime, first);
+    let mut job = runtime.store.schedule(job.id).unwrap().unwrap();
+    let due = job.status.next_due().unwrap();
+    // Narrowed after the scheduler read the job: the occurrence must see it.
+    let mut narrowed = runtime.store.agent(lead.id).unwrap().unwrap();
+    narrowed.config.delegation_policy = Some(DelegationPolicy {
+        max_effort: Some(Effort::Low),
+        workers: vec![WorkerChoice {
+            model: Some(model(BALANCED)),
+            tier: None,
+            effort: None,
+        }],
+        ..DelegationPolicy::default()
+    });
+    set_agent(&runtime, narrowed);
+    let hold = runtime.hold();
+    let mut commit = Commit::new();
+    let refused = super::super::execution::prepare_occurrence(
+        &runtime,
+        &hold,
+        &mut commit,
+        &mut job,
+        due,
+        due,
+        None,
+    );
+    let Err(error) = refused else {
+        panic!("refused under the hold");
+    };
+    let error = error.to_string();
+    assert!(error.contains("the model is outside"), "{error}");
+    assert!(commit.mutations.is_empty());
+}
+
+#[tokio::test]
+async fn an_agents_spawn_is_refused_while_its_creator_is_being_cancelled() {
+    let (runtime, _dir, job, lead, first) = fired_once().await;
+    end_run(&runtime, first);
+    crate::cancellation::request(&runtime, lead.id, None, Actor::user()).unwrap();
+    tick(&runtime, next_due(&runtime, &job)).unwrap();
+    let stored = runtime.store.schedule(job.id).unwrap().unwrap();
+    let ScheduleStatus::Failed { error, .. } = &stored.status else {
+        panic!("no run under a pending cancellation: {:?}", stored.status);
+    };
+    assert!(error.contains("being cancelled"), "{error}");
+    assert_eq!(spawned_agents(&runtime, lead.id).len(), 1);
+}
+
+/// An engine that cannot ask before acting, as legacy Codex exec.
+struct Ungated;
+
+#[async_trait::async_trait]
+impl aether_engine::Engine for Ungated {
+    fn kind(&self) -> aether_engine::EngineKind {
+        aether_engine::EngineKind::CLAUDE_CODE
+    }
+
+    fn adapter(&self) -> String {
+        "ungated/1".into()
+    }
+
+    fn gates_permissions(&self) -> bool {
+        false
+    }
+
+    async fn run(
+        &self,
+        _turn: aether_engine::EngineTurn,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> std::result::Result<aether_engine::EngineRun, aether_engine::EngineError> {
+        Err(aether_engine::EngineError::Unsupported("ungated".into()))
+    }
+}
+
+#[tokio::test]
+async fn a_template_whose_engine_would_drop_the_creators_gates_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let engines: HashMap<aether_engine::EngineKind, Arc<dyn aether_engine::Engine>> =
+        HashMap::from([(
+            aether_engine::EngineKind::CLAUDE_CODE,
+            Arc::new(Ungated) as Arc<dyn aether_engine::Engine>,
+        )]);
+    let runtime = Runtime::start_with_engines(
+        RuntimeConfig {
+            default_model: Some(model(BALANCED)),
+            ..Default::default()
+        },
+        Arc::new(SqliteStore::open_in_memory().unwrap()),
+        Arc::new(Models::load(Some(dir.path().to_path_buf())).unwrap()),
+        Arc::new(ToolRegistry::with_builtins()),
+        Some(Arc::new(ScriptedClient::with_responses(vec![]))),
+        engines,
+    )
+    .await
+    .unwrap();
+    runtime.shutdown.cancel();
+    let mut lead = creator(&runtime, Some(fast_only()));
+    lead.config.approval = aether_core::agent::ApprovalPolicy::default();
+    set_agent(&runtime, lead.clone());
+    assert!(!lead.config.approval.is_yolo(), "the lead is gated");
+    let ungated = model(("claude-code", "claude-haiku-5-5"));
+    assert!(!runtime.engine_can_gate(&ungated).unwrap());
+    let template = SpawnSpec {
+        model: Some(ungated),
+        ..agent_template(FAST, Effort::Low)
+    };
+    let error = runtime
+        .create_schedule(agent_spec(template), Actor::agent(lead.id))
+        .expect_err("the run would be ungated")
+        .to_string();
+    assert!(error.contains("cannot ask before acting"), "{error}");
+    assert!(runtime.store.schedules(None).unwrap().is_empty());
 }

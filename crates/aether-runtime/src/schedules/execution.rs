@@ -74,17 +74,19 @@ pub(super) fn prepare_spawn(
     runtime.prepare_agent(request, &Actor::Scheduler, Preflight::default())
 }
 
-/// Why an agent's spawn schedule must wait: its creator is paused, so
-/// nothing it started may start more.
-fn creator_paused(runtime: &Runtime, owner: &Actor) -> Result<Option<String>> {
-    let Actor::Agent { id } = owner else {
-        return Ok(None);
-    };
-    let paused = runtime
-        .store
-        .agent(*id)?
-        .is_some_and(|creator| creator.paused);
-    Ok(paused.then(|| format!("its creator {id} is paused")))
+/// An agent's run, prepared under the commit hold so its creator's authority
+/// is read as it stands at the commit, never across a cancellation it is under.
+fn prepare_held_spawn(
+    runtime: &Runtime,
+    hold: &crate::CommitHold<'_>,
+    job: &Schedule,
+    creator: &Agent,
+    due: Timestamp,
+) -> Result<PreparedAgent> {
+    debug_assert_eq!(job.owner, Actor::agent(creator.id), "the job's own creator");
+    debug_assert!(!creator.status.is_terminal(), "checked by the caller");
+    crate::cancellation::check_parent(runtime, hold, creator.id)?;
+    prepare_spawn(runtime, job, due)
 }
 
 /// One bounded pass. Storage failures retain the original due time, so the
@@ -92,9 +94,13 @@ fn creator_paused(runtime: &Runtime, owner: &Actor) -> Result<Option<String>> {
 pub(crate) fn tick(runtime: &Runtime, at: Timestamp) -> Result<()> {
     for queued in runtime.store.due_schedules(at, 128)? {
         // Built outside the hold, since preparing an agent may run `git`; used
-        // only if the job is unchanged under the hold.
-        let spawn = match (&queued.mode, queued.status.next_due()) {
-            (ScheduleMode::Spawn { .. }, Some(due)) => Some(prepare_spawn(runtime, &queued, due)),
+        // only if the job is unchanged under the hold. An agent's is built
+        // under it, so the creator's authority cannot change before the commit.
+        let spawn = match (&queued.mode, queued.status.next_due(), &queued.owner) {
+            (ScheduleMode::Spawn { .. }, Some(_), Actor::Agent { .. }) => None,
+            (ScheduleMode::Spawn { .. }, Some(due), _) => {
+                Some(prepare_spawn(runtime, &queued, due))
+            }
             _ => None,
         };
         let hold = runtime.hold();
@@ -191,6 +197,11 @@ pub(super) fn prepare_occurrence(
         Some(id) => Some(runtime.schedule_target(id, &job.owner)?),
         None => None,
     };
+    // Likewise a finished creator fails its spawn schedule before any skip.
+    let creator = match (&job.owner, &job.mode) {
+        (Actor::Agent { id }, ScheduleMode::Spawn { .. }) => Some(runtime.schedule_creator(*id)?),
+        _ => None,
+    };
     let planned = job
         .recurrence
         .plan_due(due, at, job.missed)
@@ -205,6 +216,18 @@ pub(super) fn prepare_occurrence(
     if !planned.deliver {
         return Ok(skipped("missed occurrences skipped by policy"));
     }
+    if let ScheduleMode::Spawn { last_spawned, .. } = &job.mode {
+        if let Some(creator) = creator.as_ref().filter(|creator| creator.paused) {
+            return Ok(skipped(format!("its creator {} is paused", creator.id)));
+        }
+        if let Some(reason) = previous_run_live(runtime, *last_spawned)? {
+            return Ok(skipped(reason));
+        }
+    }
+    let spawn = match (spawn, &creator) {
+        (None, Some(creator)) => Some(prepare_held_spawn(runtime, hold, job, creator, due)),
+        (spawn, _) => spawn,
+    };
     // Before any mode field changes, so a refusal leaves nothing half-applied.
     let deliveries = job
         .deliveries
@@ -230,12 +253,6 @@ pub(super) fn prepare_occurrence(
             (ScheduleOutcome::Delivered { inbox: item.id }, None)
         }
         (ScheduleMode::Spawn { last_spawned, .. }, None) => {
-            if let Some(reason) = creator_paused(runtime, &job.owner)? {
-                return Ok(skipped(reason));
-            }
-            if let Some(reason) = previous_run_live(runtime, *last_spawned)? {
-                return Ok(skipped(reason));
-            }
             let PreparedAgent {
                 agent,
                 task,

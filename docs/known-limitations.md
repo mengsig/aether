@@ -242,11 +242,12 @@ looks like a boundary and is not one.
 - Delegation depth is unlimited: only `leaf` agents are refused, so a chain of
   children each delegating the next has no ceiling beyond the concurrency caps
   and budgets. A configurable maximum depth is not implemented.
-- An agent's spawn schedule starts each run as its own root run, so the
-  creator's run budget and `max_parallel` do not count those runs. Each run
-  is held to the creator's cost and token budgets, and a schedule runs at most
-  one run at a time. An agent can create several schedules: bound each with
-  `max_deliveries`. The schedule fails once its creator finishes.
+- An agent's spawn schedule starts each run as its own root run, outside its
+  creator's subtree. So the creator's run budget and `max_parallel` do not
+  count those runs, and an agent with a cost or token budget anywhere on its
+  line cannot create one. A schedule runs at most one run at a time, but an
+  agent can create several: bound each with `max_deliveries`. The schedule
+  fails once its creator finishes or is being cancelled.
 - `aether workspace diff` attributes commits in a shared workspace by the
   HEADs recorded at each turn's start and end, so another agent's commits in
   the same window are included; the reply flags such diffs `ambiguous`. There

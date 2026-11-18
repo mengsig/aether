@@ -11,11 +11,15 @@ release is also the text of its GitHub release.
 - **Agents may create spawn schedules.** `create_schedule` takes a `spawn`
   template, so a recurring check can run on a cheap model instead of waking
   its creator. The template's model and effort must fit the creator's
-  delegation policy. Its scope, network and approvals may only narrow the
-  creator's, and its budgets are capped at the creator's. A template above
-  the policy is refused with the policy's own refusal. Each occurrence
-  rechecks the template. It skips while the previous run is live or the
-  creator is paused, and fails the schedule once the creator finishes.
+  delegation policy, whose exemptions do not apply. Its scope, network and
+  approvals may only narrow the creator's, with paths resolved on disk, and a
+  model whose engine would drop the creator's gates is refused. Each run is
+  its own root run, so a creator with a cost or token budget on its line
+  cannot create one. A template above the policy is refused with the
+  policy's own refusal. Each occurrence rechecks the template under the
+  commit lock. It skips while the previous run is live or the creator is
+  paused, and fails the schedule once the creator finishes or is being
+  cancelled.
   `max_deliveries` and pause, resume and cancel work as for delivery
   schedules. The operator CLI path is unchanged.
 

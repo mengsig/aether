@@ -103,16 +103,22 @@ is bounded as `delegate` bounds a child:
   policy, the model may not be above the creator's tier. The creator's own
   frontier model is refused unless the policy names it. The policy's
   `exempt_roles` do not apply: an unattended run is always bounded.
-- Scope and network may only narrow the creator's. The run keeps the
-  creator's approval gates and tools.
-- The run's cost and token budgets are capped at the creator's. It inherits
-  the creator's deadline. Fallback models and a delegation policy of its own
-  are refused.
+- Scope and network may only narrow the creator's, compared as resolved on
+  disk, so a link inside the creator's workspace cannot reach outside it.
+  Every path must exist.
+- The run keeps the creator's approval gates and tools. A model whose engine
+  cannot ask before acting (legacy Codex exec) is refused for a gated
+  creator.
+- A scheduled run is outside its creator's subtree, so an agent with a cost or
+  token budget anywhere on its line cannot create one. The run has the
+  template's own budgets and the creator's deadline. Fallback models and a
+  delegation policy of its own are refused.
 
 Each run is its own root run. An occurrence skips while the previous run, or
 any agent in it, is still live, and while the creator is paused. Every
-occurrence rechecks the template against the creator as it is then. A
-narrowed policy or a finished creator fails the schedule. The creator sees
+occurrence rechecks the template against the creator as it is then, under
+the same lock as the run's creation. A narrowed policy, a finished creator or
+a pending cancellation fails the schedule. The creator sees
 its spawn schedules in `list_schedules` and can pause, resume or cancel them.
 Operators create spawn schedules with `aether schedule create --objective`,
 bounded only by what `create_agent` grants.
