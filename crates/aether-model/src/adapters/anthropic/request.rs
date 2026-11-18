@@ -112,10 +112,7 @@ pub fn build(req: &ModelRequest, profile: &CapabilityProfile) -> Result<BuiltReq
     }
 
     let mut betas = Vec::new();
-    if let Some(tokens) = profile
-        .compaction_tokens
-        .filter(|_| profile.compacts_on_server())
-    {
+    if let Some(tokens) = server_compaction_tokens(req, profile) {
         obj.insert("context_management".into(), compaction_edit(tokens));
         betas.push(COMPACTION_BETA.to_owned());
     }
@@ -131,6 +128,7 @@ pub fn build(req: &ModelRequest, profile: &CapabilityProfile) -> Result<BuiltReq
             "anthropic.fallbacks" => {
                 obj.insert("fallbacks".into(), value.clone());
             }
+            aether_core::model::SERVER_COMPACTION_TOKENS_KEY => {}
             "anthropic.compaction" => {
                 obj.insert("compaction".into(), value.clone());
             }
@@ -317,6 +315,21 @@ pub(super) fn validate_thinking(body: &Value, headers: &HeaderMap) -> Result<(),
 
 /// Server-side compaction at `tokens` input tokens. The returned compaction
 /// block stays in the transcript and is replayed with the next request.
+/// Where the server folds: the agent's own trigger from the request (already
+/// bounded by the window), else the model's. Only for server compaction.
+fn server_compaction_tokens(req: &ModelRequest, profile: &CapabilityProfile) -> Option<u32> {
+    if !profile.compacts_on_server() {
+        return None;
+    }
+    let requested = req
+        .extensions
+        .get(aether_core::model::SERVER_COMPACTION_TOKENS_KEY)
+        .and_then(Value::as_u64)
+        .and_then(|tokens| u32::try_from(tokens).ok())
+        .filter(|tokens| *tokens > 0);
+    requested.or(profile.compaction_tokens)
+}
+
 fn compaction_edit(tokens: u32) -> Value {
     json!({"edits": [{
         "type": "compact_20260112",
@@ -709,6 +722,28 @@ mod tests {
         assert_eq!(
             built.body["messages"][1]["content"][0],
             json!({"type": "compaction", "content": "summary"})
+        );
+
+        let mut own = req.clone();
+        own.extensions.insert(
+            aether_core::model::SERVER_COMPACTION_TOKENS_KEY.into(),
+            json!(160_000),
+        );
+        let built = build(&own, &profile).unwrap();
+        assert_eq!(
+            built.body["context_management"]["edits"][0]["trigger"]["value"], 160_000,
+            "an agent's own trigger replaces the model's"
+        );
+        assert!(built.body.get("compaction_tokens").is_none());
+        let mut plain_profile = profile.clone();
+        plain_profile.extensions.clear();
+        assert!(
+            build(&own, &plain_profile)
+                .unwrap()
+                .body
+                .get("context_management")
+                .is_none(),
+            "never asks a provider that does not compact on its server"
         );
 
         profile.compaction_tokens = Some(10_000);

@@ -277,11 +277,16 @@ pub(crate) async fn execute(
         summary_only: false,
         compact_session: false,
         // The threshold the context bar counts down to is where the engine folds.
+        // A model threshold at the window is the engine's own default; an
+        // agent's, capped at the window, is still passed.
         auto_compact_tokens: resolved
             .model
             .capabilities
             .compaction_tokens
-            .filter(|tokens| *tokens < resolved.model.capabilities.context_window),
+            .filter(|tokens| {
+                ctx.agent.config.compaction_tokens.is_some()
+                    || *tokens < resolved.model.capabilities.context_window
+            }),
         lean_host_context: ctx.agent.config.host_context.is_lean(),
         network_access: ctx.agent.scope.network == aether_core::agent::NetworkPolicy::Allowed,
         bypass_permissions: ctx.agent.config.approval.require_for.is_empty(),

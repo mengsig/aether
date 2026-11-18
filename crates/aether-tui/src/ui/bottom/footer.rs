@@ -377,7 +377,7 @@ fn usage_side(
         .and_then(|node| run_cost(&node.subtree_usage));
     let left = agent.and_then(|a| {
         let used = *app.context_tokens.get(&a.id)?;
-        let threshold = app.compaction_threshold(&a.model).filter(|t| *t > 0)?;
+        let threshold = app.agent_compaction_threshold(a).filter(|t| *t > 0)?;
         let used_pct = (used
             .min(threshold)
             .saturating_mul(100)

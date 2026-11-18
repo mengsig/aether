@@ -423,6 +423,7 @@ where
                                                     features::RETIRED_MODELS.into(),
                                                     features::REMOTE_MOUNTS.into(),
                                                     features::CONVERSATION.into(),
+                                                    features::COMPACTION_TOKENS.into(),
                                                 ],
                                                 daemon_protocol_version: Some(
                                                     aether_protocol::PROTOCOL_VERSION,

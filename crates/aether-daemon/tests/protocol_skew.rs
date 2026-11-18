@@ -441,3 +441,42 @@ async fn memories_recorded_by_the_operator_are_listed_by_that_filter() {
     );
     daemon.stop().await;
 }
+
+/// `compaction_tokens` is announced and kept for the client that sends it,
+/// while a client one version back, which never sends it, gets agents
+/// whose config carries no such key.
+#[tokio::test]
+async fn compaction_tokens_is_announced_and_absent_for_clients_that_omit_it() {
+    let daemon = TestDaemon::start().await;
+    let mut current = RawConn::connect(&daemon.socket).await.expect("connect");
+    let welcome = current.hello(PROTOCOL_VERSION).await.expect("served");
+    let features = welcome["features"].as_array().expect("features");
+    assert!(features.contains(&json!("compaction_tokens")), "{welcome}");
+    let created = current
+        .call(
+            json!({"cmd": "create_agent", "role": "skew", "start": false,
+            "model": {"provider": "claude-code", "model": "opus"},
+            "config": {"compaction_tokens": 160000}}),
+        )
+        .await;
+    let id = created["result"]["Ok"]["data"]["id"].clone();
+    assert!(id.is_string(), "{created}");
+    let shown = current.call(json!({"cmd": "get_agent", "id": id})).await;
+    assert_eq!(
+        shown["result"]["Ok"]["data"]["config"]["compaction_tokens"], 160_000,
+        "{shown}"
+    );
+
+    let mut old = RawConn::connect(&daemon.socket).await.expect("connect");
+    old.hello(MIN_PROTOCOL_VERSION).await.expect("served");
+    let created = old
+        .call(
+            json!({"cmd": "create_agent", "role": "skew", "start": false,
+            "model": {"provider": "claude-code", "model": "opus"}}),
+        )
+        .await;
+    let config = &created["result"]["Ok"]["data"]["config"];
+    assert!(config.is_object(), "{created}");
+    assert!(config.get("compaction_tokens").is_none(), "{created}");
+    daemon.stop().await;
+}

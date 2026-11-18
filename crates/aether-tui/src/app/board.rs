@@ -711,7 +711,7 @@ impl InspectorModel {
                 .copied()
                 .or(a.stats.context_tokens),
             context_window: app.context_window(&a.model),
-            compaction_threshold: app.compaction_threshold(&a.model),
+            compaction_threshold: app.agent_compaction_threshold(a),
             model: a.model.model.clone(),
             effort: a.config.effort,
             tokens_in: usage.input_tokens,

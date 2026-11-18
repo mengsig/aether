@@ -14,7 +14,7 @@ pub(super) async fn try_server_compaction(
     trigger: &CompactionTrigger,
     cancel: &CancellationToken,
 ) -> Result<bool> {
-    let resolved = runtime.models.resolve(&ctx.agent.model)?;
+    let resolved = runtime.resolve_for_agent(&ctx.agent, &ctx.agent.model)?;
     if resolved.provider.protocol != Protocol::AnthropicMessages
         || !resolved.model.capabilities.compacts_on_server()
         || matches!(trigger, CompactionTrigger::Handoff { .. })

@@ -1,7 +1,7 @@
 use super::*;
 
 fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<ToolOutcome> {
-    let resolved = runtime.models.resolve(&ctx.agent.model)?;
+    let resolved = runtime.resolve_for_agent(&ctx.agent, &ctx.agent.model)?;
     let agent = runtime
         .store
         .agent(ctx.agent.id)?
@@ -72,6 +72,7 @@ fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<ToolOutcome> {
             "model": runtime.models.compactor_for(&agent.model),
             "effort": runtime.models.config().model.compactor_effort.unwrap_or(aether_core::model::Effort::Medium),
             "threshold_tokens": threshold,
+            "agent_threshold_tokens": agent.config.compaction_tokens,
             "threshold_percent_of_window": threshold_percent_of_window,
             "manual_minimum": "Engine: any nonempty recorded transcript. API: an older complete turn beyond the six-entry retained tail.",
             "task_boundary": "Long-lived agents after at least six new transcript entries.",
