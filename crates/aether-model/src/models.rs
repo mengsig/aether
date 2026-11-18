@@ -194,21 +194,37 @@ impl Models {
     /// override (by canonical id or alias), else the catalog's.
     pub fn tier(&self, r: &ModelRef) -> Option<ModelTier> {
         let canonical = self.canonical(r);
-        if crate::retired::superseded_by(&canonical.provider, &canonical.model).is_some() {
+        if crate::retired::supersession(&canonical.provider, &canonical.model).is_some() {
             return None;
         }
-        self.config
-            .models
-            .tiers
-            .iter()
-            .find(|(key, _)| {
-                ModelRef::parse(key).is_some_and(|key| self.canonical(&key) == canonical)
-            })
-            .map(|(_, tier)| *tier)
-            .or_else(|| {
-                self.registry
-                    .catalog_tier(&canonical.provider, &canonical.model)
-            })
+        self.configured_tier(&canonical).or_else(|| {
+            self.registry
+                .catalog_tier(&canonical.provider, &canonical.model)
+        })
+    }
+
+    /// The band used to admit an explicitly named delegate, including superseded pins.
+    pub fn delegation_tier(&self, r: &ModelRef) -> Option<ModelTier> {
+        let canonical = self.canonical(r);
+        self.configured_tier(&canonical).or_else(|| {
+            if let Some(old) = crate::retired::supersession(&canonical.provider, &canonical.model) {
+                let listed = self
+                    .registry
+                    .provider(&canonical.provider)?
+                    .model(&canonical.model)?;
+                return listed.tier.or(Some(old.previous_tier));
+            }
+            self.registry
+                .catalog_tier(&canonical.provider, &canonical.model)
+        })
+    }
+
+    fn configured_tier(&self, canonical: &ModelRef) -> Option<ModelTier> {
+        self.config.models.tiers.iter().find_map(|(key, tier)| {
+            ModelRef::parse(key)
+                .filter(|key| self.canonical(key) == *canonical)
+                .map(|_| *tier)
+        })
     }
 
     /// Built-in retirement guidance excluding ids explicitly restored by provider overrides.
@@ -236,7 +252,8 @@ impl Models {
             .filter(|p| p.enabled)
             .flat_map(|p| {
                 p.models.iter().map(move |m| ModelInfo {
-                    superseded_by: crate::retired::superseded_by(&p.id, &m.id).map(str::to_owned),
+                    superseded_by: crate::retired::supersession(&p.id, &m.id)
+                        .map(|s| s.successor.to_owned()),
                     efforts: p.protocol.efforts(&m.capabilities).to_vec(),
                     tier: self.tier(&ModelRef::new(&p.id, &m.id)),
                     model: ModelRef::new(&p.id, &m.id),

@@ -37,7 +37,8 @@ completed_run_days = 10
   with no tiered reference in its provider stays null, as do unpriced models
   such as `default`. The daemon catalog and generated clients expose the same
   tier as the agent tool. A model with `superseded_by` stays valid by explicit id
-  and has no tier, including when an override names it. `aether models --json`
+  and has no routing tier, including when an override names it. Delegation
+  still checks explicit pins against the configured or former capability band. `aether models --json`
   lists these models alongside current defaults. `aether models --retired --json`
   lists the retired ids and their successors in a separate array. The MCP
   `list_models` tool spells effort choices the same way as `delegate`

@@ -112,6 +112,42 @@ async fn a_clone_of_the_frontier_lead_needs_a_reason_that_is_recorded() {
 }
 
 #[tokio::test]
+async fn superseded_pins_keep_the_parent_ceiling_and_frontier_clone_rule() {
+    let fable = "anthropic/claude-fable-5-1";
+    for (parent, child, policy, expected) in [
+        (
+            SONNET,
+            "openai/gpt-6-astra",
+            None,
+            "above your own balanced tier",
+        ),
+        (
+            SONNET,
+            fable,
+            Some(DelegationPolicy::default()),
+            "above your own balanced tier",
+        ),
+        (fable, fable, None, "is your own frontier-tier model"),
+        (
+            "openai/gpt-6.1-sol",
+            OPUS,
+            None,
+            "above your own balanced tier",
+        ),
+    ] {
+        let h = harness(vec![delegate_call(child, "low", json!({}))]).await;
+        let (agent, _) = h
+            .runtime
+            .create_agent(lead(parent, policy), Actor::user())
+            .unwrap();
+        let answers = tool_answers(&h, agent.id, 1).await;
+        assert!(answers[0].contains(expected), "{answers:?}");
+        assert!(children(&h, agent.id).is_empty());
+        h.runtime.shutdown().await;
+    }
+}
+
+#[tokio::test]
 async fn a_malformed_policy_is_refused_at_creation() {
     let h = harness(Vec::new()).await;
     let policy = DelegationPolicy {

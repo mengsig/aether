@@ -266,12 +266,16 @@ fn gpt_6_2_astra_is_the_first_strong_model_on_every_gpt_provider() {
 #[test]
 fn superseded_models_stay_unranked_even_with_an_operator_tier_override() {
     let models = load(
-        "[models.tiers]\n\"claude-code/fable-5-1\" = \"frontier\"",
+        "[models.tiers]\n\"claude-code/fable-5-1\" = \"balanced\"",
         "",
     );
     let old = ModelRef::new("claude-code", "fable-5-1");
     assert_eq!(models.tier(&old), None);
     assert!(models.resolve(&old).is_ok());
+    assert_eq!(models.delegation_tier(&old), Some(ModelTier::Balanced));
+    let astra = ModelRef::new("codex", "gpt-6-astra");
+    assert_eq!(models.tier(&astra), None);
+    assert_eq!(models.delegation_tier(&astra), Some(ModelTier::Strong));
 }
 
 #[test]

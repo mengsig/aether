@@ -780,7 +780,7 @@ fn superseded_models_resolve_by_id_and_never_acquire_a_tier_from_price() {
             assert_eq!(def.resolve_model(old).unwrap().tier, None);
             assert_eq!(registry.catalog_tier(provider, old), None);
             assert_eq!(
-                crate::retired::superseded_by(provider, old),
+                crate::retired::supersession(provider, old).map(|s| s.successor),
                 Some(successor)
             );
             assert!(registry.catalog_tier(provider, successor).is_some());

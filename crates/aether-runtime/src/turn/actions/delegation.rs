@@ -356,11 +356,11 @@ fn check_delegation_policy(
     let models = &runtime.models;
     let model = models.canonical(&request.model);
     let parent_model = models.canonical(&parent.model);
-    let parent_tier = models.tier(&parent_model);
+    let parent_tier = models.delegation_tier(&parent_model);
     let child = Candidate {
         role: request.role.trim(),
         model: &model,
-        tier: models.tier(&model),
+        tier: models.delegation_tier(&model),
         effort: request.effort,
     };
     let policy = parent
