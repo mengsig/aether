@@ -23,6 +23,7 @@ impl Command {
     #[rustfmt::skip]
     pub fn introduced(&self) -> Introduced {
         match self {
+            Self::ListRetiredModels => Introduced::Feature(features::RETIRED_MODELS),
             Self::ListViewModes => Introduced::Feature(features::VIEW_MODES),
             Self::RefreshProviderUsage { .. } => Introduced::Feature(features::PROVIDER_USAGE_REFRESH),
             Self::AcceptMemory { .. } | Self::RejectMemory { .. } => {
@@ -229,6 +230,10 @@ mod tests {
     fn protocol_26_read_models_name_their_features() {
         let agent = aether_core::id::AgentId::new();
         for (wire, feature) in [
+            (
+                json!({"cmd": "list_retired_models"}),
+                features::RETIRED_MODELS,
+            ),
             (
                 json!({"cmd": "list_agents_page", "query": {}}),
                 features::AGENTS_PAGING,

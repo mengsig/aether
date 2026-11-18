@@ -4,11 +4,11 @@ use super::remote::{
 };
 use super::{
     Agent, AgentId, ApprovalDefault, ApprovalRequest, ApprovalRule, Artifact, BTreeMap,
-    CapabilityProfile, Checkpoint, Deserialize, Event, ExportSummary, ImportSummary, InboxItem,
-    Invocation, InvocationId, InvocationSnapshot, Lease, LowDisk, McpServerHealth, MemoryRecord,
-    Message, MessageId, ModelRef, NetworkPolicy, ProviderHealth, ReplayFrame, ResourceHolding,
-    RunId, RunReport, RunSummary, Serialize, Task, TaskId, Timestamp, UnprovenAbsence, Usage,
-    Welcome, WriteStats,
+    CapabilityProfile, Checkpoint, Deserialize, Effort, Event, ExportSummary, ImportSummary,
+    InboxItem, Invocation, InvocationId, InvocationSnapshot, Lease, LowDisk, McpServerHealth,
+    MemoryRecord, Message, MessageId, ModelRef, NetworkPolicy, ProviderHealth, ReplayFrame,
+    ResourceHolding, RunId, RunReport, RunSummary, Serialize, Task, TaskId, Timestamp,
+    UnprovenAbsence, Usage, Welcome, WriteStats,
 };
 
 /// [`ErrorReply::reason`] of a command that conflicts with work in progress.
@@ -268,6 +268,12 @@ pub struct ModelInfo {
     pub model: ModelRef,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<String>,
+    /// Newer model ID on the same provider, when this model is still runnable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<String>,
+    /// Supported reasoning efforts. An empty list means none; older daemons omit this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub efforts: Option<Vec<Effort>>,
     pub name: String,
     pub provider_name: String,
     pub capabilities: CapabilityProfile,
@@ -276,6 +282,13 @@ pub struct ModelInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_source: Option<String>,
     pub is_default: bool,
+}
+
+/// A retired model ID and its recommended successor, both provider-qualified.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RetiredModel {
+    pub model: String,
+    pub successor: String,
 }
 
 /// One provider as a client sees it: what it is, whether it can be used, and
@@ -483,6 +496,7 @@ pub enum Reply {
     RunImported(ImportSummary),
     McpServers(Vec<McpServerHealth>),
     Models(Vec<ModelInfo>),
+    RetiredModels(Vec<RetiredModel>),
     ViewModes(crate::ViewModes),
     Providers(Vec<ProviderInfo>),
     ProviderUsage(serde_json::Value),

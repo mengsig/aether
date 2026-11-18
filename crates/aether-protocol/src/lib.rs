@@ -184,6 +184,8 @@ pub const PROTOCOL_VERSION: u32 = 26;
 
 /// Optional features a peer may advertise. Unknown ones are ignored.
 pub mod features {
+    /// The daemon serves the retired model catalog via `list_retired_models`.
+    pub const RETIRED_MODELS: &str = "retired_models";
     /// The daemon serves the shared transcript catalog with `list_view_modes`.
     pub const VIEW_MODES: &str = "view_modes";
     /// The daemon serves bounded stale provider usage refreshes.
@@ -276,8 +278,8 @@ pub use command::{Command, KeyedRequest};
 mod replies;
 pub use replies::{
     AgentTree, AuthInfo, DaemonStatus, ENGINES_STARTING, ErrorCode, ErrorReply, MessageDelivery,
-    ModelInfo, ProviderInfo, Reply, RunListing, StatusStale, SubmissionResolution, TranscriptEntry,
-    TreeNode, UnavailableSection, status_sections,
+    ModelInfo, ProviderInfo, Reply, RetiredModel, RunListing, StatusStale, SubmissionResolution,
+    TranscriptEntry, TreeNode, UnavailableSection, status_sections,
 };
 mod frames;
 pub use frames::{ClientFrame, Delta, ServerFrame, decode, encode};

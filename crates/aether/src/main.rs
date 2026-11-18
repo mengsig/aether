@@ -402,7 +402,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 };
                 return cli::update(socket, explicit_socket, options).await;
             }
-            Cmd::Models { json } => cli::models(endpoint, json).await,
+            Cmd::Models { json, retired } => cli::models(endpoint, json, retired).await,
             Cmd::Providers { json } => cli::providers(endpoint, json).await,
             Cmd::Runs { command } => match command {
                 RunsCmd::List { limit, json } => cli::runs_list(endpoint, limit, json).await,

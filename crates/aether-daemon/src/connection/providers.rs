@@ -1,5 +1,5 @@
 use crate::Daemon;
-use aether_protocol::{AuthInfo, ErrorReply, ModelInfo, ProviderInfo, Reply};
+use aether_protocol::{AuthInfo, ErrorReply, ModelInfo, ProviderInfo, Reply, RetiredModel};
 use std::collections::HashMap;
 
 use super::map_err;
@@ -26,6 +26,8 @@ pub(super) async fn list_models(daemon: &Daemon) -> Result<Reply, ErrorReply> {
             is_default: default.as_ref() == Some(&info.model),
             model: info.model,
             aliases: info.aliases,
+            superseded_by: info.superseded_by,
+            efforts: Some(info.efforts),
             name: info.name,
             provider_name: info.provider_name,
             capabilities: info.capabilities,
@@ -34,6 +36,16 @@ pub(super) async fn list_models(daemon: &Daemon) -> Result<Reply, ErrorReply> {
         });
     }
     Ok(Reply::Models(out))
+}
+
+pub(super) fn list_retired_models(daemon: &Daemon) -> Reply {
+    Reply::RetiredModels(
+        daemon
+            .models
+            .retired()
+            .map(|(model, successor)| RetiredModel { model, successor })
+            .collect(),
+    )
 }
 
 pub(super) async fn auth_status(daemon: &Daemon) -> Result<Reply, ErrorReply> {

@@ -29,6 +29,7 @@ pub(super) fn owns(command: &Command) -> bool {
             | Command::ConfigureGithubWatcher { .. }
             | Command::ListViewModes
             | Command::ListModels
+            | Command::ListRetiredModels
             | Command::AuthStatus
             | Command::Providers
             | Command::RefreshProviderUsage { .. }
@@ -81,6 +82,7 @@ pub(super) async fn dispatch(
         } => configure_github_watcher(daemon, config, expected_revision, by),
         Command::ListViewModes => super::view_modes::list(daemon.models.config_dir().clone()).await,
         Command::ListModels => providers::list_models(daemon).await,
+        Command::ListRetiredModels => Ok(providers::list_retired_models(daemon)),
         Command::AuthStatus => providers::auth_status(daemon).await,
 
         Command::Providers => providers::providers(daemon).await,

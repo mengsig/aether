@@ -11,6 +11,64 @@ use aether_protocol::compat::MIN_PROTOCOL_VERSION;
 use serde_json::{Value, json};
 use support::{RawConn, TestDaemon};
 
+#[tokio::test]
+async fn old_clients_can_still_decode_the_active_model_catalog() {
+    #[derive(serde::Deserialize)]
+    struct LegacyModel {
+        model: aether_core::model::ModelRef,
+        name: String,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(tag = "reply", content = "data", rename_all = "snake_case")]
+    enum LegacyReply {
+        Models(Vec<LegacyModel>),
+    }
+
+    let daemon = TestDaemon::start().await;
+    let mut old = RawConn::connect(&daemon.socket).await.unwrap();
+    old.hello(MIN_PROTOCOL_VERSION).await.unwrap();
+    let response = old.call(json!({"cmd": "list_models"})).await;
+    let reply = &response["result"]["Ok"];
+    let LegacyReply::Models(models) = serde_json::from_value(reply.clone()).unwrap();
+    let superseded = aether_core::model::ModelRef::new("codex", "gpt-6.1-sol");
+    let index = models
+        .iter()
+        .position(|row| row.model == superseded)
+        .unwrap();
+    assert!(!models[index].name.is_empty());
+    let row = &reply["data"][index];
+    assert_eq!(row["superseded_by"], "gpt-6.2-sol");
+    assert!(!row["efforts"].as_array().unwrap().is_empty());
+    assert!(
+        reply["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["efforts"].is_array())
+    );
+
+    let mut current = RawConn::connect(&daemon.socket).await.unwrap();
+    let welcome = current.hello(PROTOCOL_VERSION).await.unwrap();
+    assert!(
+        welcome["features"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("retired_models"))
+    );
+    let response = current.call(json!({"cmd": "list_retired_models"})).await;
+    let reply = &response["result"]["Ok"];
+    assert_eq!(reply["reply"], "retired_models");
+    let rows = reply["data"].as_array().unwrap();
+    assert!(rows.contains(&json!({"model": "codex/gpt-6-sol", "successor": "codex/gpt-6.2-sol"})));
+    assert!(
+        models
+            .iter()
+            .all(|row| row.model.to_string() != "codex/gpt-6-sol")
+    );
+    daemon.stop().await;
+}
+
 async fn save_watcher(conn: &mut RawConn, config: &Value, revision: u64) -> Value {
     conn.call(json!({
         "cmd":"configure_github_watcher",
