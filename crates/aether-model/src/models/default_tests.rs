@@ -85,7 +85,14 @@ async fn explicit_claude_choices_override_the_new_preference() {
 
 #[tokio::test]
 async fn explicit_codex_defaults_are_kept_over_the_terra_default() {
-    for model in ["default", "sol", "luna", "gpt-6.1-sol"] {
+    for model in [
+        "default",
+        "sol",
+        "luna",
+        "gpt-6.2-sol",
+        "gpt-6.1-sol",
+        "gpt-6-astra",
+    ] {
         assert_eq!(
             configured(false, true, Some(&format!("codex/{model}")), None)
                 .unwrap()
@@ -101,7 +108,10 @@ async fn terra_names_select_gpt_6_1_terra_and_sol_stays_selectable() {
     for (text, canonical) in [
         ("codex/terra", "gpt-6.1-terra"),
         ("codex/gpt-5.6-terra", "gpt-6.1-terra"),
-        ("codex/sol", "gpt-6.1-sol"),
+        ("codex/sol", "gpt-6.2-sol"),
+        ("codex/astra", "gpt-6.2-astra"),
+        ("codex/gpt-6.1-sol", "gpt-6.1-sol"),
+        ("codex/gpt-6-astra", "gpt-6-astra"),
     ] {
         let models = configured(false, true, Some(text), None).unwrap();
         let selected = models.default_model().await.expect("a default");

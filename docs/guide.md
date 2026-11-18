@@ -69,10 +69,11 @@ still selects Fable 5.1. Claude Code receives these explicit ids rather than
 its own floating aliases; `claude-code/default` leaves model selection to
 Claude Code itself.
 
-Built-in GPT models are GPT-6 Astra, GPT-6.1 Terra, GPT-6.1 Sol and GPT-6 Luna,
+Built-in GPT models are GPT-6.2 Astra, GPT-6.1 Terra, GPT-6.2 Sol and GPT-6 Luna,
 preferred in that order, on `codex` and on the OpenAI API providers: `astra`
-resolves to `gpt-6-astra`, `terra` to `gpt-6.1-terra`, `sol` to `gpt-6.1-sol` and
-`luna` to `gpt-6-luna`. Choose capability first, then cost within the tier
+resolves to `gpt-6.2-astra`, `terra` to `gpt-6.1-terra`, `sol` to `gpt-6.2-sol` and
+`luna` to `gpt-6-luna`. The superseded `gpt-6-astra` and `gpt-6.1-sol` stay
+selectable by id. Choose capability first, then cost within the tier
 suitable for the task. Terra is the balanced-tier choice and the Codex default,
 at half Sol's price. Terra and Sol run at high effort unless you pass
 `--effort` (Codex's own default is low); Sol stays selectable by name.

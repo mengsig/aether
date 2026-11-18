@@ -74,8 +74,9 @@ family version; use a full ID to pin a version.
   the model to use instead; it stays so that stored configs naming it get a
   pointer to the closest version.
 - `openai`, `openai-responses`, `openai-codex` and `codex`: `astra` →
-  `gpt-6-astra`; `terra`, `gpt-5.6-terra` → `gpt-6.1-terra`; `sol` →
-  `gpt-6.1-sol`; `luna` → `gpt-6-luna`.
+  `gpt-6.2-astra`; `terra`, `gpt-5.6-terra` → `gpt-6.1-terra`; `sol` →
+  `gpt-6.2-sol`; `luna` → `gpt-6-luna`. The superseded `gpt-6-astra` and
+  `gpt-6.1-sol` stay valid by id.
 
 ## Common settings
 

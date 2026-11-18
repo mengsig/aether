@@ -108,9 +108,9 @@ async fn state_tools_report_runtime_facts_without_mutating_task_state() {
         .expect("catalog result");
     assert!(!catalog["models"].as_array().unwrap().is_empty());
     let models = catalog["models"].as_array().unwrap();
-    assert_eq!(models[0]["model"]["model"], "gpt-6-astra");
+    assert_eq!(models[0]["model"]["model"], "gpt-6.2-astra");
     assert_eq!(models[1]["model"]["model"], "gpt-6.1-terra");
-    assert_eq!(models[2]["model"]["model"], "gpt-6.1-sol");
+    assert_eq!(models[2]["model"]["model"], "gpt-6.2-sol");
     assert_eq!(models[3]["model"]["model"], "gpt-6-luna");
     assert_eq!(models[1]["api_equivalent_cost"]["input_per_mtok"], 1.0);
     assert_eq!(

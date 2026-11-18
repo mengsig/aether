@@ -18,8 +18,10 @@ pub(super) fn validate_tool_compatibility(
         .as_array()
         .is_some_and(|tools| !tools.is_empty());
     let incompatible = match body["model"].as_str() {
-        // GPT-6.1 has no `none` effort, so Chat tools are never allowed.
-        Some("gpt-6-astra" | "gpt-6.1-sol" | "gpt-6.1-terra") => has_tools,
+        // GPT-6.1 and 6.2 have no `none` effort, so Chat tools are never allowed.
+        Some("gpt-6.2-astra" | "gpt-6.2-sol" | "gpt-6-astra" | "gpt-6.1-sol" | "gpt-6.1-terra") => {
+            has_tools
+        }
         Some("gpt-6-sol" | "gpt-6-luna") => has_tools && body["reasoning_effort"] != "none",
         _ => false,
     };
@@ -35,6 +37,8 @@ pub(super) fn validate_tool_compatibility(
 #[test]
 fn gpt6_chat_tools_require_the_documented_endpoint_or_effort() {
     for model in [
+        "gpt-6.2-astra",
+        "gpt-6.2-sol",
         "gpt-6-astra",
         "gpt-6.1-sol",
         "gpt-6.1-terra",

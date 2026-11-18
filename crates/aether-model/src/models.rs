@@ -605,6 +605,7 @@ mod tests {
             ("claude-code", "opus", Some(256_000)),
             ("claude-code", "default", Some(256_000)),
             ("anthropic", "sonnet", Some(256_000)),
+            ("codex", "gpt-6.2-sol", Some(272_000)),
             ("codex", "gpt-6.1-sol", Some(272_000)),
             ("codex", "gpt-6.1-terra", Some(272_000)),
             ("groq", "openai/gpt-oss-120b", None),
@@ -673,13 +674,17 @@ mod tests {
             threshold("claude-code", "claude-opus-5-5"),
             (1_000_000, Some(256_000))
         );
+        assert_eq!(
+            threshold("codex", "gpt-6.2-astra"),
+            (272_000, Some(272_000))
+        );
         assert_eq!(threshold("codex", "gpt-6-astra"), (272_000, Some(272_000)));
         assert_eq!(
             threshold("groq", "openai/gpt-oss-120b").1,
             Some(50_000),
             "an operator value reaches the catalogue"
         );
-        assert_eq!(threshold("openai", "gpt-6-astra").1, None);
+        assert_eq!(threshold("openai", "gpt-6.2-astra").1, None);
     }
 
     #[test]
@@ -766,11 +771,12 @@ mod tests {
             )
             .unwrap();
             for (provider, active, expected) in [
+                ("codex", "gpt-6.2-astra", "gpt-6-luna"),
                 ("codex", "gpt-6-astra", "gpt-6-luna"),
                 ("claude-code", "opus", "sonnet"),
                 ("anthropic", "opus", "claude-sonnet-5-5"),
-                ("openai", "gpt-6-astra", "gpt-6-luna"),
-                ("openai-responses", "gpt-6.1-sol", "gpt-6-luna"),
+                ("openai", "gpt-6.2-astra", "gpt-6-luna"),
+                ("openai-responses", "gpt-6.2-sol", "gpt-6-luna"),
                 ("codex", "gpt-6.1-terra", "gpt-6-luna"),
             ] {
                 assert_eq!(
