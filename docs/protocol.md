@@ -196,8 +196,9 @@ a full agent.
 `codex/gpt-6.2-sol`. Archon skips the request when talking to a daemon without
 this feature. The existing `list_models` command keeps its array of active
 models. Read `superseded_by` (a model id on the same provider) and `efforts`
-(an array of effort levels) as optional. An absent list means the daemon did
-not report supported levels.
+(an array of the effort levels the route sends distinctly, not a guarantee
+that the model accepts each) as optional. An absent list means the daemon did
+not report them.
 
 `operator_memory_roles` means `create_memory` accepts the `role` and
 `repository_role` operator scopes and the `repository` field on both repository

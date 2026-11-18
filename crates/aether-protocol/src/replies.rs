@@ -271,7 +271,8 @@ pub struct ModelInfo {
     /// Newer model ID on the same provider, when this model is still runnable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub superseded_by: Option<String>,
-    /// Supported reasoning efforts. An empty list means none; older daemons omit this field.
+    /// Efforts the route sends distinctly, not a guarantee the model accepts each. Empty means none;
+    /// older daemons omit this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub efforts: Option<Vec<Effort>>,
     pub name: String,

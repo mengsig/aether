@@ -6,7 +6,8 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
-- `aether models --json` keeps its array and reports supported `efforts` and
+- `aether models --json` keeps its array and reports `efforts` (the levels the route
+  sends distinctly, not a guarantee the model accepts each) and
   `superseded_by`. Explicit ids still work for Fable 5.1, GPT-6 Astra and
   GPT-6.1 Sol. Tier selection skips them. Use `aether models --retired` for
   replacement guidance, or read `retired` in the MCP `list_models` result.
