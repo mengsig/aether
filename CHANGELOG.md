@@ -21,6 +21,28 @@ release is also the text of its GitHub release.
   feature; an older daemon ignores the field, so a client checks the feature
   first, and the Rust client refuses such a create itself. Absent, nothing
   changes.
+- **Agents can schedule their own children.** `create_schedule` takes `spawn`
+  in place of `target`: `delegate`'s arguments for a child (`role`,
+  `objective`, `model`, `effort`, and optionally `name`, `instructions`,
+  `leaf`, `host_context`, `workspace_root`, `allowed_paths`, `network`). Each
+  occurrence is that `delegate` call made with `wait=false` and admitted by
+  the same code, so the child is the creator's child in the creator's run:
+  inside its delegation policy, `max_parallel`, tier ceiling and scope, under
+  its budgets and `[scheduler] run_budget_usd`, with its host context and a
+  child's messaging reach. A template `delegate` would refuse is refused when
+  the schedule is created; one refused later ends the schedule with that
+  refusal. An occurrence is skipped while the previous child's subtree is
+  live, the creator is paused or the creator is at `max_parallel`.
+  `max_deliveries` and pause, resume and cancel work as for any timer. The
+  schedule ends with its creator. Schedules that start a fresh root run stay
+  operator-only, and `aether schedule create` is unchanged.
+
+### Fixed
+
+- **A delegated child no longer starts with its parent's compaction
+  threshold.** `delegate` copied the parent's `config.compaction_tokens` to
+  the child, on whatever model the child ran; the child now compacts at its
+  own model's threshold, as documented.
 
 ## 1.4.1
 

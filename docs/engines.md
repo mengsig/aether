@@ -51,8 +51,9 @@ Native delegation, agent messaging, workflows, and scheduling are disabled
 because they create state outside Aether’s tree, task lifecycle, limits, and
 event accounting. Claude’s native background-shell controls (`TaskOutput` and
 `TaskStop`) and code-review rendering (`ReportFindings`) remain available.
-Aether supports one-shot durable wakes and recurring schedules; the agent tool
-does not yet expose CLI spawn-target scheduling. Compaction is a
+Aether supports one-shot durable wakes and recurring schedules, including an
+agent's own schedule that delegates a child per occurrence; a fresh root run
+per occurrence is scheduled from the CLI. Compaction is a
 separate restricted invocation; its tool restrictions do not define what an
 ordinary agent should be able to use.
 
@@ -767,7 +768,9 @@ callers arriving meanwhile share the latest outcome. A started agent
 (`aether run`) whose engine is still unusable is refused before it exists,
 with the probe's reason, unless that probe was inconclusive (below). A parked agent (`aether new`) is still created: its
 CLI may be installed before it runs. Spawn schedules and their runs are not
-refused either: each run's first turn probes the CLI again.
+refused either: each run's first turn probes the CLI again. An agent's own
+spawn schedule is checked as `delegate` is when it is created, and not again
+per occurrence.
 
 A usable engine is not given up on one failed probe. A probe that times out,
 or whose CLI the OS could not start for now, keeps the last good detection, and a Codex app-server probe that times out is

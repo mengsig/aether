@@ -242,8 +242,16 @@ looks like a boundary and is not one.
 - Delegation depth is unlimited: only `leaf` agents are refused, so a chain of
   children each delegating the next has no ceiling beyond the concurrency caps
   and budgets. A configurable maximum depth is not implemented.
-- The agent scheduling tool cannot create schedules that spawn a fresh agent;
-  the CLI can (roadmap).
+- An agent's spawn schedule (`create_schedule` with `spawn`) repeats one
+  `delegate` call, so it cannot carry what belongs to a single call: a `reason`
+  for a child on the creator's own frontier-tier model, an isolated workspace,
+  references, or budgets of the child's own. The template's engine and
+  provider credentials are checked when the schedule is created and not again
+  per occurrence; a child whose engine has since gone fails at its first turn.
+  The schedule belongs to the agent that created it: it ends when that agent
+  does, a restart's successor does not take it over, and an exported run
+  leaves it behind. Only the CLI schedules a fresh root run. See
+  [harness tools](harness-tools.md).
 - `aether workspace diff` attributes commits in a shared workspace by the
   HEADs recorded at each turn's start and end, so another agent's commits in
   the same window are included; the reply flags such diffs `ambiguous`. There

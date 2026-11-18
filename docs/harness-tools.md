@@ -92,9 +92,38 @@ messages may wake the agent sooner. Recurrence uses `create_schedule` with
 Use `max_deliveries` to bound recurrence. A busy target skips the occurrence
 by default; `busy="queue_one"` delivers anyway but never stacks a second unread
 trigger. Trigger delivery does not imply task completion; inspect results and
-delivery history separately. Timers that start a fresh run per occurrence are
-operator-only (`aether schedule create --objective`); agents see them in
-`list_schedules` only when they target them, which spawn timers never do.
+delivery history separately.
+
+`create_schedule` with `spawn` in place of `target` starts a child of the
+caller on each occurrence. `spawn` takes `delegate`'s arguments for the child:
+`role`, `objective`, `model` and `effort`, and optionally `name`,
+`instructions`, `leaf`, `host_context: "lean"`, `workspace_root`,
+`allowed_paths` and `network`. Each occurrence is that `delegate` call made
+with `wait=false`, admitted by the same code:
+
+- The child joins the caller's run as its child. It counts against the
+  caller's delegation policy and `max_parallel`, starts in the caller's scope
+  as it is when the occurrence fires, inherits its cost budget, deadline,
+  approval policy and host context, and reports to the caller's inbox. Its
+  messaging reach is a child's.
+- Creating the schedule is refused when the same `delegate` call would be
+  refused now, with the same message.
+- A call that is refused later ends the schedule, with the refusal as its
+  error: a tightened policy, a narrowed scope, a spent
+  `[scheduler] run_budget_usd`, a creator that became a leaf.
+- An occurrence is skipped, and the schedule stays active, while its previous
+  child or anything beneath that child is live, while the creator is paused,
+  and while the creator is at `max_parallel`. Skipped occurrences do not count
+  against `max_deliveries`.
+- The schedule ends when its creator does, at its next occurrence, and cannot
+  be resumed afterwards. The creator, or an operator, pauses, resumes and
+  cancels it with `update_schedule` like any timer.
+
+A template carries nothing that belongs to a single `delegate` call: no
+`reason`, so it cannot name the caller's own frontier-tier model, and no
+isolated workspace, references or budgets of its own. Delegate directly for
+those. Timers that start a fresh root run per occurrence stay operator-only
+(`aether schedule create --objective`).
 
 `remember` takes a `scope`: `repository` (the default; the agent's own scope
 when it has no repository), `global`, `role` (agents with the caller's role,
