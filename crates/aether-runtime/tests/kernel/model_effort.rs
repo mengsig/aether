@@ -2,7 +2,7 @@
 use super::*;
 use aether_core::model::Effort;
 
-/// GPT-6.1 Sol's request carries its high default when nothing asked
+/// GPT-6.1/6.2 Sol's request carries its high default when nothing asked
 /// otherwise; an explicit effort wins, and a model without a default sends none.
 /// The provider is sent the canonical id, never Aether's alias: the Chat
 /// adapter's GPT-6 tool guard matches on it, and the API rejects `sol`.
@@ -14,9 +14,9 @@ async fn gpt_6_1_sol_requests_high_unless_an_effort_was_asked_for() {
             "sol",
             None,
             Some(Effort::High),
-            "gpt-6.1-sol",
+            "gpt-6.2-sol",
         ),
-        ("openai", "sol", None, Some(Effort::High), "gpt-6.1-sol"),
+        ("openai", "sol", None, Some(Effort::High), "gpt-6.2-sol"),
         (
             "openai-responses",
             "gpt-6.1-sol",
@@ -25,7 +25,8 @@ async fn gpt_6_1_sol_requests_high_unless_an_effort_was_asked_for() {
             "gpt-6.1-sol",
         ),
         ("openai-responses", "luna", None, None, "gpt-6-luna"),
-        ("openai-responses", "astra", None, None, "gpt-6-astra"),
+        ("openai-responses", "astra", None, None, "gpt-6.2-astra"),
+        ("openai-responses", "gpt-6-astra", None, None, "gpt-6-astra"),
     ] {
         let h = harness(vec![ScriptedClient::tool_call(
             "complete_task",
