@@ -21,6 +21,7 @@ use crate::{Result, Runtime, RuntimeError};
 
 pub use aether_core::schedule::{CreateScheduleSpec, ScheduleAction};
 
+mod agent_template;
 mod execution;
 use execution::spawn_request;
 pub(crate) use execution::tick;
@@ -161,21 +162,21 @@ impl Runtime {
             .ok_or_else(|| created_work_gone("schedule", &schedule))
     }
 
-    /// The template every occurrence spawns from, model frozen. Operators
-    /// only: each run gets what `create_agent` would grant, not an agent's.
+    /// The template every occurrence spawns from, model frozen. An operator's
+    /// run gets what `create_agent` would grant; an agent's what `delegate`
+    /// would give its child.
     fn checked_template(
         &self,
-        mut template: SpawnSpec,
+        template: SpawnSpec,
         by: &Actor,
         busy: BusyPolicy,
     ) -> Result<SpawnSpec> {
         let refuse = |why: &str| Err(RuntimeError::Invalid(why.into()));
-        if !matches!(by, Actor::User { .. } | Actor::Client { .. }) {
-            return refuse(
-                "only an operator can create a spawn schedule; agents schedule deliveries to \
-                 themselves or their descendants",
-            );
-        }
+        let creator = match by {
+            Actor::User { .. } | Actor::Client { .. } => None,
+            Actor::Agent { id } => Some(*id),
+            _ => return refuse("only an operator or an agent can create a spawn schedule"),
+        };
         if busy != BusyPolicy::Skip {
             return refuse(
                 "busy=queue_one applies to delivery schedules; a spawn schedule skips while \
@@ -206,12 +207,10 @@ impl Runtime {
                 );
             }
         }
-        let model = template
-            .model
-            .take()
-            .or_else(|| self.default_model())
-            .ok_or(RuntimeError::NoModel)?;
-        template.model = Some(model);
+        let template = match creator {
+            Some(creator) => self.bounded_agent_template(template, creator)?,
+            None => self.with_default_model(template)?,
+        };
         // Refuse now what every occurrence would fail on. Nothing is written.
         let objective = template.objective.clone();
         self.prepare_agent(
@@ -219,6 +218,16 @@ impl Runtime {
             by,
             Preflight::default(),
         )?;
+        Ok(template)
+    }
+
+    fn with_default_model(&self, mut template: SpawnSpec) -> Result<SpawnSpec> {
+        let model = template
+            .model
+            .take()
+            .or_else(|| self.default_model())
+            .ok_or(RuntimeError::NoModel)?;
+        template.model = Some(model);
         Ok(template)
     }
 

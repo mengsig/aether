@@ -919,7 +919,8 @@ behavior.
   or tool exposure. Models that would silently discard required approvals
   cannot be selected remotely, including fallback models.
 - An operator device may create spawn schedules, with the same creation
-  ceilings as an immediate root. Agents still cannot create spawn targets.
+  ceilings as an immediate root. An agent's own spawn schedules are bounded
+  by its delegation policy and scope instead (see [harness tools](harness-tools.md)).
 - Scoped approval rules, including rules remembered from an approval answer,
   remain allowed. `everywhere` rules are always host-only, including through
   `remember`; omitting `remember.scope` means only the answered agent.

@@ -15,6 +15,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::tool::{HarnessAction, Tool, ToolContext, ToolError, ToolExecution, parse_input};
 
+mod spawn;
+
 /// Distinguishes an omitted field (`#[serde(default)]` fires, giving `None`)
 /// from one present with any value, including `null` (giving `Some`). A
 /// plain `Option<Value>` field can't tell these apart - JSON `null` and a
@@ -38,7 +40,7 @@ impl Tool for ScheduleTool {
         let (name, description, schema) = match self {
             Self::Create => (
                 "create_schedule",
-                "Create a durable recurring Aether timer that delivers to an existing agent. Use every_seconds OR a five-field cron expression with an IANA timezone (UTC by default). Target defaults to yourself; only yourself or your descendants are allowed. Payload is the future task instruction. Timers deliver inbox triggers under existing budgets and authority. Paused targets skip occurrences. When the target is busy, busy=skip (default) skips the occurrence; busy=queue_one delivers it while the target runs, once the previous trigger was consumed. Never more than one pending trigger per timer. Use max_deliveries for a finite timer, and list_schedules for history. This is distinct from one-shot wait_for(wake_at). This tool cannot create a spawn schedule (one that spawns a fresh agent per occurrence): that requires operator authority and is only available through the `aether schedule create --objective` CLI.",
+                "Create a durable recurring Aether timer that delivers to an existing agent, or with `spawn` starts a fresh agent each occurrence. Use every_seconds OR a five-field cron expression with an IANA timezone (UTC by default). Target defaults to yourself; only yourself or your descendants are allowed. Payload is the future task instruction. Timers deliver inbox triggers under existing budgets and authority. Paused targets skip occurrences. When the target is busy, busy=skip (default) skips the occurrence; busy=queue_one delivers it while the target runs, once the previous trigger was consumed. Never more than one pending trigger per timer. With `spawn` (instead of `target`), each occurrence starts a new run from the template so a recurring check can run on a cheap model without waking you: the template is held to your delegation policy and scope as delegate is, an occurrence skips while the previous run is live, and the timer fails once you finish. Use max_deliveries for a finite timer, and list_schedules for history. This is distinct from one-shot wait_for(wake_at).",
                 json!({
                     "type":"object", "properties": {
                         "name":{"type":"string"}, "target":{"type":"string"},
@@ -46,7 +48,8 @@ impl Tool for ScheduleTool {
                         "timezone":{"type":"string"}, "payload":{},
                         "missed":{"type":"string","enum":["coalesce","skip"]},
                         "busy":{"type":"string","enum":["skip","queue_one"]},
-                        "max_deliveries":{"type":"integer","minimum":1}
+                        "max_deliveries":{"type":"integer","minimum":1},
+                        "spawn": spawn::schema()
                     }, "required":["name","payload"], "additionalProperties":false
                 }),
             ),
@@ -105,6 +108,7 @@ impl Tool for ScheduleTool {
                     #[serde(default, deserialize_with = "present")]
                     busy: Option<Value>,
                     max_deliveries: Option<NonZeroU64>,
+                    spawn: Option<spawn::SpawnInput>,
                 }
                 let input: Input = parse_input(input)?;
                 let target = input
@@ -138,12 +142,22 @@ impl Tool for ScheduleTool {
                         ));
                     }
                 };
+                let target = match (target, input.spawn) {
+                    (Some(_), Some(_)) => {
+                        return Err(ToolError::InvalidInput(
+                            "choose target OR spawn, not both".into(),
+                        ));
+                    }
+                    (None, Some(template)) => {
+                        ScheduleTarget::Spawn(spawn::template(template, ctx)?)
+                    }
+                    (target, None) => ScheduleTarget::Agent(target.unwrap_or(ctx.agent_id)),
+                };
                 HarnessAction::CreateSchedule {
-                    // Only `Agent` delivery targets: `checked_template` accepts a spawn
-                    // target only from an operator actor, never a tool call's `Actor::Agent`.
+                    // The runtime bounds a spawn template by the calling agent's policy.
                     spec: CreateScheduleSpec {
                         name: input.name,
-                        target: ScheduleTarget::Agent(target.unwrap_or(ctx.agent_id)),
+                        target,
                         recurrence,
                         missed,
                         busy,
@@ -207,15 +221,73 @@ mod tests {
     }
 
     #[test]
-    fn create_schedule_descriptor_documents_the_spawn_limitation() {
-        let description = ScheduleTool::Create.descriptor().spec.description;
-        assert!(
-            description.contains("cannot create a spawn schedule"),
-            "{description}"
+    fn create_schedule_descriptor_offers_spawn_within_the_policy() {
+        let descriptor = ScheduleTool::Create.descriptor();
+        let description = &descriptor.spec.description;
+        assert!(description.contains("delegation policy"), "{description}");
+        assert!(!description.contains("cannot create a spawn schedule"));
+        let schema = &descriptor.spec.input_schema;
+        assert_eq!(
+            schema["properties"]["spawn"]["required"],
+            json!(["role", "objective", "model", "effort"])
         );
+    }
+
+    #[tokio::test]
+    async fn create_schedule_spawn_builds_a_template_for_the_runtime_to_bound() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ctx_in(dir.path());
+        let action = act(
+            &ScheduleTool::Create,
+            &ctx,
+            json!({"name": "poll", "payload": null, "every_seconds": 300, "spawn": {
+                "role": "poller", "objective": "Check the queue",
+                "model": "anthropic/claude-haiku-5-5", "effort": "low", "max_turns": 3}}),
+        )
+        .await
+        .unwrap();
+        let HarnessAction::CreateSchedule { spec } = action else {
+            panic!("a create action");
+        };
+        let ScheduleTarget::Spawn(template) = spec.target else {
+            panic!("a spawn target");
+        };
+        assert_eq!(
+            template.model.unwrap().to_string(),
+            "anthropic/claude-haiku-5-5"
+        );
+        let config = template.config.unwrap();
+        assert_eq!(config.effort, Some(aether_core::model::Effort::Low));
+        assert_eq!(config.max_turns, Some(3));
+        assert!(template.scope.is_none() && template.approval.is_none());
+    }
+
+    #[tokio::test]
+    async fn create_schedule_spawn_refuses_a_target_too_and_a_bad_effort() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ctx_in(dir.path());
+        let spawn = json!({"role": "r", "objective": "o", "model": "a/b", "effort": "low"});
+        let both = act(
+            &ScheduleTool::Create,
+            &ctx,
+            json!({"name": "n", "payload": {}, "every_seconds": 60,
+                   "target": ctx.agent_id.to_string(), "spawn": spawn}),
+        )
+        .await
+        .unwrap_err();
+        assert!(invalid_input(&both).contains("target OR spawn"), "{both:?}");
+        let mut bad = spawn.clone();
+        bad["effort"] = json!("huge");
+        let err = act(
+            &ScheduleTool::Create,
+            &ctx,
+            json!({"name": "n", "payload": {}, "every_seconds": 60, "spawn": bad}),
+        )
+        .await
+        .unwrap_err();
         assert!(
-            description.contains("aether schedule create --objective"),
-            "{description}"
+            invalid_input(&err).contains("create_schedule.spawn.effort"),
+            "{err:?}"
         );
     }
 

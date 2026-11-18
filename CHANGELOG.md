@@ -6,6 +6,19 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Added
+
+- **Agents may create spawn schedules.** `create_schedule` takes a `spawn`
+  template, so a recurring check can run on a cheap model instead of waking
+  its creator. The template's model and effort must fit the creator's
+  delegation policy. Its scope, network and approvals may only narrow the
+  creator's, and its budgets are capped at the creator's. A template above
+  the policy is refused with the policy's own refusal. Each occurrence
+  rechecks the template. It skips while the previous run is live or the
+  creator is paused, and fails the schedule once the creator finishes.
+  `max_deliveries` and pause, resume and cancel work as for delivery
+  schedules. The operator CLI path is unchanged.
+
 ## 1.4.1
 
 Released 2026-11-18. GPT-6.2 Astra and GPT-6.2 Sol become the `astra` and

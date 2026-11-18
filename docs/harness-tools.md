@@ -92,9 +92,30 @@ messages may wake the agent sooner. Recurrence uses `create_schedule` with
 Use `max_deliveries` to bound recurrence. A busy target skips the occurrence
 by default; `busy="queue_one"` delivers anyway but never stacks a second unread
 trigger. Trigger delivery does not imply task completion; inspect results and
-delivery history separately. Timers that start a fresh run per occurrence are
-operator-only (`aether schedule create --objective`); agents see them in
-`list_schedules` only when they target them, which spawn timers never do.
+delivery history separately.
+
+With `spawn` instead of `target`, each occurrence starts a fresh agent from a
+template (`role`, `objective`, `model` and `effort` are required). A recurring
+check can then run on a cheap model without waking its creator. The template
+is bounded as `delegate` bounds a child:
+
+- The model and effort must fit the creator's delegation policy. Without a
+  policy, the model may not be above the creator's tier. The creator's own
+  frontier model is refused unless the policy names it. The policy's
+  `exempt_roles` do not apply: an unattended run is always bounded.
+- Scope and network may only narrow the creator's. The run keeps the
+  creator's approval gates and tools.
+- The run's cost and token budgets are capped at the creator's. It inherits
+  the creator's deadline. Fallback models and a delegation policy of its own
+  are refused.
+
+Each run is its own root run. An occurrence skips while the previous run, or
+any agent in it, is still live, and while the creator is paused. Every
+occurrence rechecks the template against the creator as it is then. A
+narrowed policy or a finished creator fails the schedule. The creator sees
+its spawn schedules in `list_schedules` and can pause, resume or cancel them.
+Operators create spawn schedules with `aether schedule create --objective`,
+bounded only by what `create_agent` grants.
 
 `remember` takes a `scope`: `repository` (the default; the agent's own scope
 when it has no repository), `global`, `role` (agents with the caller's role,

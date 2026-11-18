@@ -352,63 +352,23 @@ fn check_delegation_policy(
     parent: &Agent,
     request: &DelegateRequest,
 ) -> Checked<()> {
-    use aether_core::delegation::{Candidate, admits_without_policy, needs_reason};
-    let models = &runtime.models;
-    let model = models.canonical(&request.model);
-    let parent_model = models.canonical(&parent.model);
-    let parent_tier = models.tier(&parent_model);
-    let child = Candidate {
+    use crate::delegation_admission::{ChildChoice, Refusal};
+    let choice = ChildChoice {
         role: request.role.trim(),
-        model: &model,
-        tier: models.tier(&model),
+        model: &request.model,
         effort: request.effort,
+        parallel: true,
+        reason_given: request.reason.is_some(),
+        exemptions: true,
     };
-    let policy = parent
-        .config
-        .delegation_policy
-        .as_ref()
-        .map(|policy| canonical_policy(runtime, policy));
-    let verdict = match &policy {
-        Some(policy) => {
-            let unfinished = match policy.max_parallel {
-                Some(_) => runtime.unfinished_children(parent.id, policy)?,
-                None => 0,
-            };
-            policy.admits(&child, parent_tier, unfinished)
-        }
-        None => admits_without_policy(&child, parent_tier),
-    };
-    if let Err(refusal) = verdict {
-        return Ok(Err(ToolOutcome::error(refusal)));
-    }
-    let named_by_policy = policy
-        .as_ref()
-        .is_some_and(|policy| policy.names_model(request.role.trim(), &model));
-    if needs_reason(&child, &parent_model) && !named_by_policy && request.reason.is_none() {
-        return Ok(Err(ToolOutcome::error(format!(
+    match runtime.delegation_verdict(parent, choice)? {
+        Ok(()) => Ok(Ok(())),
+        Err(Refusal::Policy(refusal)) => Ok(Err(ToolOutcome::error(refusal))),
+        Err(Refusal::FrontierClone(model)) => Ok(Err(ToolOutcome::error(format!(
             "delegation refused: {model} is your own frontier-tier model. Workers default to the balanced or fast tier (list_models shows each model's tier); \
              choose one, or pass `reason` saying why this child needs your model. The reason is recorded on the child's task."
-        ))));
+        )))),
     }
-    Ok(Ok(()))
-}
-
-/// The policy with each named model in canonical form, so an alias matches.
-fn canonical_policy(
-    runtime: &Arc<Runtime>,
-    policy: &aether_core::delegation::DelegationPolicy,
-) -> aether_core::delegation::DelegationPolicy {
-    let mut canonical = policy.clone();
-    for worker in &mut canonical.workers {
-        if let Some(model) = &worker.model {
-            worker.model = Some(runtime.models.canonical(model));
-        }
-    }
-    for model in &mut canonical.exempt_models {
-        *model = runtime.models.canonical(model);
-    }
-    debug_assert_eq!(canonical.workers.len(), policy.workers.len());
-    canonical
 }
 
 /// The child's scope, and the snapshot manifest when the workspace is isolated.

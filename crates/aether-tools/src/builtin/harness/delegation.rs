@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use aether_core::{
-    agent::{HostContext, NetworkPolicy},
+    agent::HostContext,
     id::AgentId,
     model::{Effort, ModelRef},
 };
@@ -175,30 +175,12 @@ impl Tool for Delegate {
             .as_ref()
             .map(|value| crate::builtin::parse_field(value, "delegate.host_context"))
             .transpose()?;
-        let wants_scope = input.workspace_root.is_some()
-            || !input.allowed_paths.is_empty()
-            || input.network.is_some();
-        let scope = wants_scope.then(|| {
-            let mut s = ctx.scope.clone();
-            if let Some(root) = &input.workspace_root {
-                s.workspace_root = Some(crate::fs::lexical_resolve(ctx, root));
-            }
-            if !input.allowed_paths.is_empty() {
-                s.allowed_paths = input
-                    .allowed_paths
-                    .iter()
-                    .map(|p| crate::fs::lexical_resolve(ctx, p))
-                    .collect();
-            }
-            if let Some(net) = input.network {
-                s.network = if net {
-                    NetworkPolicy::Allowed
-                } else {
-                    NetworkPolicy::Denied
-                };
-            }
-            s
-        });
+        let scope = crate::builtin::requested_scope(
+            ctx,
+            input.workspace_root.as_deref(),
+            &input.allowed_paths,
+            input.network,
+        );
         // A keyed call may repeat one that already ran under a since-narrowed
         // scope; its replay comes first, and creation still refuses a widening.
         if keyed.is_none()

@@ -60,14 +60,31 @@ pub(super) fn prepare_spawn(
         due.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
     );
     if !job.payload.is_null() {
-        // Compact JSON keeps it on one line; operator-supplied, shown as is.
+        // Compact JSON keeps it on one line; shown as its creator sent it.
         objective.push_str(&format!(" Payload: {}", job.payload));
     }
-    runtime.prepare_agent(
-        spawn_request(template, objective),
-        &Actor::Scheduler,
-        Preflight::default(),
-    )
+    // An agent's authority may have narrowed, or ended, since it scheduled this.
+    let request = match &job.owner {
+        Actor::Agent { id } => spawn_request(
+            &runtime.bounded_agent_template(template.clone(), *id)?,
+            objective,
+        ),
+        _ => spawn_request(template, objective),
+    };
+    runtime.prepare_agent(request, &Actor::Scheduler, Preflight::default())
+}
+
+/// Why an agent's spawn schedule must wait: its creator is paused, so
+/// nothing it started may start more.
+fn creator_paused(runtime: &Runtime, owner: &Actor) -> Result<Option<String>> {
+    let Actor::Agent { id } = owner else {
+        return Ok(None);
+    };
+    let paused = runtime
+        .store
+        .agent(*id)?
+        .is_some_and(|creator| creator.paused);
+    Ok(paused.then(|| format!("its creator {id} is paused")))
 }
 
 /// One bounded pass. Storage failures retain the original due time, so the
@@ -213,6 +230,9 @@ pub(super) fn prepare_occurrence(
             (ScheduleOutcome::Delivered { inbox: item.id }, None)
         }
         (ScheduleMode::Spawn { last_spawned, .. }, None) => {
+            if let Some(reason) = creator_paused(runtime, &job.owner)? {
+                return Ok(skipped(reason));
+            }
             if let Some(reason) = previous_run_live(runtime, *last_spawned)? {
                 return Ok(skipped(reason));
             }

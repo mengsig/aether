@@ -51,8 +51,8 @@ Native delegation, agent messaging, workflows, and scheduling are disabled
 because they create state outside Aether’s tree, task lifecycle, limits, and
 event accounting. Claude’s native background-shell controls (`TaskOutput` and
 `TaskStop`) and code-review rendering (`ReportFindings`) remain available.
-Aether supports one-shot durable wakes and recurring schedules; the agent tool
-does not yet expose CLI spawn-target scheduling. Compaction is a
+Aether supports one-shot durable wakes and recurring schedules, including
+spawn schedules within the agent's delegation policy. Compaction is a
 separate restricted invocation; its tool restrictions do not define what an
 ordinary agent should be able to use.
 

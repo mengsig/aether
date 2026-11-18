@@ -7,14 +7,14 @@ fn roots(runtime: &Runtime) -> Vec<Agent> {
         .unwrap()
 }
 
-fn spawned(job: &Schedule) -> Option<AgentId> {
+pub(super) fn spawned(job: &Schedule) -> Option<AgentId> {
     match &job.mode {
         ScheduleMode::Spawn { last_spawned, .. } => *last_spawned,
         ScheduleMode::Deliver { .. } => None,
     }
 }
 
-fn end_run(runtime: &Runtime, id: AgentId) {
+pub(super) fn end_run(runtime: &Runtime, id: AgentId) {
     let mut root = runtime.store.agent(id).unwrap().unwrap();
     root.status = AgentStatus::Completed { summary: None };
     runtime
@@ -109,7 +109,7 @@ async fn spawn_skips_while_its_previous_run_is_live_and_says_so() {
     assert_eq!(stored.deliveries, 2);
 }
 
-fn skip_reason(job: &Schedule) -> Option<String> {
+pub(super) fn skip_reason(job: &Schedule) -> Option<String> {
     match &job.last.as_ref()?.outcome {
         ScheduleOutcome::Skipped { reason } => Some(reason.clone()),
         _ => None,
@@ -208,7 +208,7 @@ async fn spawn_missed_runs_follow_the_policy_and_the_limit_exhausts() {
 }
 
 #[tokio::test]
-async fn spawn_templates_are_operator_only_and_checked_at_creation() {
+async fn spawn_templates_are_checked_at_creation() {
     let (runtime, _dir) = fixture().await;
     let owner = agent(&runtime, None);
     let refused = |spec: CreateScheduleSpec, by: Actor| {
@@ -222,8 +222,10 @@ async fn spawn_templates_are_operator_only_and_checked_at_creation() {
             spawn_spec(MissedRunPolicy::Coalesce),
             Actor::agent(owner.id)
         )
-        .contains("operator")
+        .contains("must name its model"),
+        "an agent's template is held to its authority, not an operator's"
     );
+    assert!(refused(spawn_spec(MissedRunPolicy::Coalesce), Actor::Scheduler).contains("operator"));
     let mut queued = spawn_spec(MissedRunPolicy::Coalesce);
     queued.busy = BusyPolicy::QueueOne;
     assert!(refused(queued, Actor::user()).contains("queue_one"));
