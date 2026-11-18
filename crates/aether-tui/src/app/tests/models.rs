@@ -1040,6 +1040,8 @@ fn only_the_no_model_code_sends_a_failed_creation_to_login() {
 fn an_agents_own_compaction_threshold_replaces_its_models_within_the_window() {
     let (mut app, id) = app_with_agent();
     app.models = vec![ModelInfo {
+        superseded_by: None,
+        efforts: None,
         tier: None,
         model: ModelRef::new("claude-code", "claude-opus-5-5"),
         aliases: vec!["opus".into()],
