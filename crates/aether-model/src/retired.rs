@@ -44,12 +44,12 @@ const RETIRED: &[RetiredModel] = &[
     RetiredModel {
         providers: GPT,
         ids: &["gpt-6-sol", "gpt-5.6-sol", "gpt-5.6", "gpt-5.5"],
-        successor: "gpt-6.1-sol",
+        successor: "gpt-6.2-sol",
     },
     RetiredModel {
         providers: GPT_API,
         ids: &["gpt-5.4"],
-        successor: "gpt-6.1-sol",
+        successor: "gpt-6.2-sol",
     },
     RetiredModel {
         providers: GPT,

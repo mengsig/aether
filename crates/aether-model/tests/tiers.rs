@@ -37,10 +37,12 @@ fn every_builtin_model_has_its_declared_tier() {
         }
     }
     let expected = [
-        ("gpt-6-astra", ModelTier::Strong),
+        ("gpt-6.2-astra", ModelTier::Strong),
         ("gpt-6.1-terra", ModelTier::Balanced),
-        ("gpt-6.1-sol", ModelTier::Balanced),
+        ("gpt-6.2-sol", ModelTier::Balanced),
         ("gpt-6-luna", ModelTier::Fast),
+        ("gpt-6-astra", ModelTier::Strong),
+        ("gpt-6.1-sol", ModelTier::Balanced),
     ];
     for provider in ["codex", "openai", "openai-responses"] {
         for (model, want) in expected {
@@ -52,6 +54,7 @@ fn every_builtin_model_has_its_declared_tier() {
         }
     }
     // Aliases rank like the model they name; pass-through and `default` stay unranked.
+    assert_eq!(tier(&models, "codex", "astra"), Some(ModelTier::Strong));
     assert_eq!(tier(&models, "codex", "sol"), Some(ModelTier::Balanced));
     assert_eq!(tier(&models, "codex", "terra"), Some(ModelTier::Balanced));
     assert_eq!(tier(&models, "claude-code", "default"), None);
@@ -242,6 +245,27 @@ fn gpt_6_1_terra_is_the_first_balanced_model_on_every_gpt_provider() {
             .filter(|info| info.tier == Some(ModelTier::Balanced))
             .map(|info| info.model.model.as_str())
             .collect();
-        assert_eq!(balanced, ["gpt-6.1-terra", "gpt-6.1-sol"], "{provider}");
+        assert_eq!(
+            balanced,
+            ["gpt-6.1-terra", "gpt-6.2-sol", "gpt-6.1-sol"],
+            "{provider}"
+        );
+    }
+}
+
+/// Tier routing takes the first listed strong model, so GPT-6.2 Astra must
+/// precede the GPT-6 Astra it supersedes.
+#[test]
+fn gpt_6_2_astra_is_the_first_strong_model_on_every_gpt_provider() {
+    let models = load("", "");
+    let list = models.list();
+    for provider in ["codex", "openai", "openai-responses"] {
+        let strong: Vec<_> = list
+            .iter()
+            .filter(|info| info.model.provider == provider)
+            .filter(|info| info.tier == Some(ModelTier::Strong))
+            .map(|info| info.model.model.as_str())
+            .collect();
+        assert_eq!(strong, ["gpt-6.2-astra", "gpt-6-astra"], "{provider}");
     }
 }

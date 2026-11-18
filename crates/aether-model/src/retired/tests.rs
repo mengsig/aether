@@ -48,6 +48,7 @@ fn retirement_guidance_is_specific_to_the_builtin_route() {
         ("codex", "gpt-5.4"),
         ("claude-code", "claude-opus-4-6"),
         ("codex", "gpt-6.1-sol"),
+        ("codex", "gpt-6-astra"),
         ("claude-code", "opus"),
     ] {
         assert_eq!(successor(provider, id), None, "{provider}/{id}");
@@ -133,7 +134,7 @@ enabled = false
             .resolve(&ModelRef::new("openai", "gpt-5.4"))
             .unwrap_err()
             .to_string(),
-        "openai/gpt-5.4 was retired; use openai/gpt-6.1-sol"
+        "openai/gpt-5.4 was retired; use openai/gpt-6.2-sol"
     );
     assert!(matches!(
         registry.resolve(&ModelRef::new("anthropic", "claude-opus-5")),
