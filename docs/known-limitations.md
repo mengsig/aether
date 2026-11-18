@@ -250,7 +250,11 @@ looks like a boundary and is not one.
   per occurrence; a child whose engine has since gone fails at its first turn.
   The schedule belongs to the agent that created it: it ends when that agent
   does, a restart's successor does not take it over, and an exported run
-  leaves it behind. Only the CLI schedules a fresh root run. See
+  leaves it behind. Only the CLI schedules a fresh root run. A release without
+  agent spawn schedules reads one as an operator's and starts each occurrence
+  as a fresh root run, outside its creator's policy and budgets: before
+  downgrading to such a release, cancel them with `aether schedule cancel`
+  (`aether schedule list --json` shows each schedule's `owner`). See
   [harness tools](harness-tools.md).
 - `aether workspace diff` attributes commits in a shared workspace by the
   HEADs recorded at each turn's start and end, so another agent's commits in
