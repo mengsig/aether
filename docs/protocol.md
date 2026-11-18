@@ -301,11 +301,12 @@ Rust client refuses all of them to such a daemon.
 Rust client refuses both to such a daemon.
 
 `compaction_tokens` means `create_agent` accepts `config.compaction_tokens`:
-the context size, above zero, at which that agent compacts in place of its
-model's threshold (see [who compacts](engines.md#who-compacts)). It is
-bounded by the context window of whichever model runs the turn, set at
-creation only, and never inherited by a child; absent keeps the model's
-threshold. `get_agent` returns it in `config`, and the agent's
+the context size, at least 100,000, at which that agent compacts in place of
+its model's threshold (see [who compacts](engines.md#who-compacts)). Below
+that, Claude Code's auto-compact window and the Anthropic server trigger
+would raise it, so the create is refused. It is capped at the context window
+of whichever model runs the turn, set at creation only, and never inherited
+by a child; absent keeps the model's threshold. `get_agent` returns it in `config`, and the agent's
 `inspect_state` reports it as `compaction.agent_threshold_tokens` beside the
 effective `compaction.threshold_tokens`. An older daemon ignores the field
 and the agent compacts at its model's threshold, so check the feature first;

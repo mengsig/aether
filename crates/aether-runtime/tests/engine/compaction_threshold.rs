@@ -65,9 +65,11 @@ async fn an_agents_own_threshold_reaches_its_launch_and_not_its_siblings() {
 
         let own = agent_on(&h, &model, Some(160_000));
         let sibling = agent_on(&h, &model, None);
+        let at = agent_on(&h, &model, Some(window));
         let above = agent_on(&h, &model, Some(window + 1));
         engine_turn(&h, own, "own threshold").await;
         engine_turn(&h, sibling, "model threshold").await;
+        engine_turn(&h, at, "at the window").await;
         engine_turn(&h, above, "beyond the window").await;
 
         assert_eq!(
@@ -80,30 +82,65 @@ async fn an_agents_own_threshold_reaches_its_launch_and_not_its_siblings() {
             [default],
             "{model}"
         );
-        assert_eq!(
-            launched_thresholds(&turns, "beyond the window"),
-            [None],
-            "{model}: bounded by the window, where the engine folds anyway"
-        );
+        for prompt in ["at the window", "beyond the window"] {
+            assert_eq!(
+                launched_thresholds(&turns, prompt),
+                [Some(window)],
+                "{model}: {prompt} is capped at the window, not left to the engine"
+            );
+        }
     }
 }
 
+/// Below 100,000 Claude Code and the Anthropic server would raise it, so the
+/// agent would not compact where it asked.
 #[tokio::test]
-async fn a_zero_threshold_is_refused_at_creation() {
+async fn a_threshold_below_what_every_path_honours_is_refused_at_creation() {
     let h = harness(Reply::ToolRun).await;
-    let error = h
-        .runtime
-        .create_agent(
+    let create = |tokens| {
+        h.runtime.create_agent(
             CreateAgentSpec {
                 role: "assistant".into(),
+                model: Some(ModelRef::new("claude-code", "opus")),
                 config: Some(AgentConfig {
-                    compaction_tokens: Some(0),
+                    compaction_tokens: Some(tokens),
                     ..Default::default()
                 }),
                 ..Default::default()
             },
             Actor::user(),
         )
-        .expect_err("zero never compacts sensibly");
-    assert!(error.to_string().contains("compaction_tokens"), "{error}");
+    };
+    for tokens in [0, 50_000, 99_999] {
+        let error = create(tokens).expect_err("below the floor");
+        assert!(error.to_string().contains("at least 100000"), "{error}");
+    }
+    let (agent, _) = create(100_000).expect("the floor itself");
+    assert_eq!(agent.config.compaction_tokens, Some(100_000));
+}
+
+/// A delegated child runs at its model's threshold, not its parent's.
+#[tokio::test]
+async fn a_child_does_not_inherit_its_parents_threshold() {
+    let h = harness(Reply::ToolRun).await;
+    let model = ModelRef::new("claude-code", "opus");
+    let parent = agent_on(&h, &model, Some(160_000));
+    let (child, _) = h
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                role: "worker".into(),
+                parent: Some(parent),
+                config: Some(AgentConfig {
+                    effort: Some(Effort::Low),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .expect("child");
+    assert_eq!(child.parent, Some(parent));
+    assert_eq!(child.model, model, "the same model as its parent");
+    assert_eq!(child.config.compaction_tokens, None);
 }

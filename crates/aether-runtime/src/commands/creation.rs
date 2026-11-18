@@ -9,6 +9,10 @@ use aether_core::task::{Task, TaskStatus};
 use aether_core::time::now;
 use aether_store::{Commit, Mutation};
 
+/// The lowest per-agent threshold every path honours exactly: Claude Code's
+/// auto-compact window starts at 100K and the Anthropic server trigger at 50K.
+const MIN_AGENT_COMPACTION_TOKENS: u32 = 100_000;
+
 impl Runtime {
     /// Create an agent, optionally with an initial task, and start it.
     pub fn create_agent(&self, spec: CreateAgentSpec, by: Actor) -> Result<(Agent, Option<Task>)> {
@@ -322,11 +326,13 @@ impl Runtime {
                 "a budget must be a positive, finite amount; leave it unset for no limit".into(),
             ));
         }
-        if config.compaction_tokens == Some(0) {
-            return Err(RuntimeError::Invalid(
-                "compaction_tokens must be above zero; leave it unset for the model's threshold"
-                    .into(),
-            ));
+        if config
+            .compaction_tokens
+            .is_some_and(|tokens| tokens < MIN_AGENT_COMPACTION_TOKENS)
+        {
+            return Err(RuntimeError::Invalid(format!(
+                "compaction_tokens must be at least {MIN_AGENT_COMPACTION_TOKENS}; leave it unset for the model's threshold"
+            )));
         }
         self.check_cost_budget(&model, &fallbacks, config.cost_budget)?;
         let run = spec

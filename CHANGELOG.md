@@ -9,8 +9,9 @@ release is also the text of its GitHub release.
 ### Added
 
 - **Per-agent compaction threshold.** `create_agent` accepts an optional
-  `config.compaction_tokens`: the context size at which that agent compacts,
-  in place of its model's threshold and bounded by the model's window. It
+  `config.compaction_tokens`: the context size, at least 100,000, at which
+  that agent compacts, in place of its model's threshold and capped at the
+  model's window. It
   reaches every automatic path: Claude Code's auto-compact window, Codex's
   `model_auto_compact_token_limit`, the Anthropic API's server compaction
   trigger and Aether's own fold. Siblings on the same model keep the model's
