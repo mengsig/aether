@@ -14,6 +14,7 @@ pub mod bus;
 mod cancellation;
 pub mod commands;
 mod compaction_client;
+mod delegation_admission;
 mod disk;
 mod exhaustion;
 pub mod github;

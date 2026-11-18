@@ -17,7 +17,7 @@ export interface ScheduleOutcomeDelivered {
 }
 
 /**
- * A spawn schedule started a run: its root agent and task.
+ * A spawn schedule started an agent and its task: a root, or its creator's child.
  */
 export interface ScheduleOutcomeSpawned {
   "agent": AgentId;

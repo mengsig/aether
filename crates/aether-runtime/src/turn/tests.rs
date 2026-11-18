@@ -7,6 +7,7 @@ mod heartbeat;
 mod lifecycle;
 mod prose_structured;
 mod resources;
+mod scheduled_children;
 mod stale_completion;
 mod subtree_reads;
 mod tool_results;

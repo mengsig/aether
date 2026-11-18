@@ -46,7 +46,7 @@ async fn dispatch_action(
         | A::SendMessage { .. }) => delegation::apply(runtime, ctx, effects, action).await,
         action
         @ (A::CreateSchedule { .. } | A::ListSchedules { .. } | A::UpdateSchedule { .. }) => {
-            schedules::apply(runtime, ctx, action)
+            schedules::apply(runtime, ctx, action).await
         }
         action @ (A::CompleteTask { .. }
         | A::FailTask { .. }

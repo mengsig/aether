@@ -15,12 +15,13 @@ use aether_core::time::{Timestamp, now};
 use aether_store::{Commit, Mutation};
 use chrono::Datelike;
 
-use crate::commands::Preflight;
+use crate::commands::{Preflight, PreparedAgent};
 use crate::submission::{created_work_gone, wrong_shape};
 use crate::{Result, Runtime, RuntimeError};
 
 pub use aether_core::schedule::{CreateScheduleSpec, ScheduleAction};
 
+mod child;
 mod execution;
 use execution::spawn_request;
 pub(crate) use execution::tick;
@@ -91,11 +92,13 @@ impl Runtime {
         }
         let at = now();
         let next_due = next_occurrence(&spec.recurrence, at)?;
-        let target = match spec.target {
-            ScheduleTarget::Agent(id) => ScheduleTarget::Agent(id),
+        // An agent's template comes with the child it would get now, for the
+        // check under the hold.
+        let (target, child) = match spec.target {
+            ScheduleTarget::Agent(id) => (ScheduleTarget::Agent(id), None),
             ScheduleTarget::Spawn(template) => {
                 match self.checked_template(template, &by, spec.busy) {
-                    Ok(template) => ScheduleTarget::Spawn(template),
+                    Ok((template, child)) => (ScheduleTarget::Spawn(template), child),
                     // A retry racing its landed original replays it, not the error.
                     Err(error) => match self.recorded_submission(submission.as_ref())? {
                         Some(outcome) => return self.replayed_schedule(outcome),
@@ -111,20 +114,7 @@ impl Runtime {
             drop(hold);
             return self.replayed_schedule(outcome);
         }
-        let mode = match target {
-            ScheduleTarget::Agent(id) => {
-                let target = self.schedule_target(id, &by)?;
-                ScheduleMode::Deliver {
-                    target: target.id,
-                    run: target.run,
-                    last_inbox_seq: None,
-                }
-            }
-            ScheduleTarget::Spawn(template) => ScheduleMode::Spawn {
-                template,
-                last_spawned: None,
-            },
-        };
+        let mode = self.initial_mode(&hold, target, child, &by)?;
         let schedule = Schedule {
             id: ScheduleId::new(),
             name: name.into(),
@@ -161,21 +151,16 @@ impl Runtime {
             .ok_or_else(|| created_work_gone("schedule", &schedule))
     }
 
-    /// The template every occurrence spawns from, model frozen. Operators
-    /// only: each run gets what `create_agent` would grant, not an agent's.
+    /// The template every occurrence spawns from. An operator's starts root
+    /// runs; an agent's starts its own children, so it comes back with the
+    /// child it would get now.
     fn checked_template(
         &self,
-        mut template: SpawnSpec,
+        template: SpawnSpec,
         by: &Actor,
         busy: BusyPolicy,
-    ) -> Result<SpawnSpec> {
+    ) -> Result<(SpawnSpec, Option<PreparedAgent>)> {
         let refuse = |why: &str| Err(RuntimeError::Invalid(why.into()));
-        if !matches!(by, Actor::User { .. } | Actor::Client { .. }) {
-            return refuse(
-                "only an operator can create a spawn schedule; agents schedule deliveries to \
-                 themselves or their descendants",
-            );
-        }
         if busy != BusyPolicy::Skip {
             return refuse(
                 "busy=queue_one applies to delivery schedules; a spawn schedule skips while \
@@ -185,6 +170,23 @@ impl Runtime {
         if template.role.trim().is_empty() || template.objective.trim().is_empty() {
             return refuse("a spawn template needs a role and an objective");
         }
+        match by {
+            Actor::User { .. } | Actor::Client { .. } => {
+                Ok((self.checked_root_template(template, by)?, None))
+            }
+            Actor::Agent { id } => {
+                let child = child::check_template(self, &template, *id)?;
+                Ok((template, Some(child)))
+            }
+            _ => refuse("only an operator or an agent can create a spawn schedule"),
+        }
+    }
+
+    /// An operator's template, model frozen: each run gets what `create_agent`
+    /// would grant that operator.
+    fn checked_root_template(&self, mut template: SpawnSpec, by: &Actor) -> Result<SpawnSpec> {
+        let refuse = |why: &str| Err(RuntimeError::Invalid(why.into()));
+        debug_assert!(matches!(by, Actor::User { .. } | Actor::Client { .. }));
         if let Some(root) = template
             .scope
             .as_ref()
@@ -219,7 +221,45 @@ impl Runtime {
             by,
             Preflight::default(),
         )?;
+        debug_assert!(template.model.is_some(), "the model is frozen");
         Ok(template)
+    }
+
+    /// The mode a new schedule starts in, decided under the hold it is written
+    /// under: a target `by` may schedule for, or a child `by` may have now.
+    fn initial_mode(
+        &self,
+        hold: &crate::CommitHold<'_>,
+        target: ScheduleTarget,
+        child: Option<PreparedAgent>,
+        by: &Actor,
+    ) -> Result<ScheduleMode> {
+        let template = match target {
+            ScheduleTarget::Agent(id) => {
+                let target = self.schedule_target(id, by)?;
+                debug_assert!(child.is_none(), "a delivery starts no child");
+                return Ok(ScheduleMode::Deliver {
+                    target: target.id,
+                    run: target.run,
+                    last_inbox_seq: None,
+                });
+            }
+            ScheduleTarget::Spawn(template) => template,
+        };
+        // As `delegate` would be refused now, atomically with the write.
+        if let Some(mut child) = child {
+            let creator = child.agent.parent.map(Actor::agent);
+            debug_assert_eq!(
+                creator.as_ref(),
+                Some(by),
+                "prepared as its creator's child"
+            );
+            self.check_prepared(hold, &mut child, Preflight::delegated())?;
+        }
+        Ok(ScheduleMode::Spawn {
+            template,
+            last_spawned: None,
+        })
     }
 
     pub fn update_schedule(
@@ -297,10 +337,14 @@ impl Runtime {
     }
 
     /// A spawn schedule has no target to recheck; its next occurrence
-    /// revalidates the template and fails the job again if it still cannot run.
+    /// revalidates the template and fails the job again if it still cannot
+    /// run. An agent's needs its creator: it never outlives it.
     fn check_delivery_target(&self, job: &Schedule) -> Result<()> {
         if let Some(target) = job.target() {
             self.schedule_target(target, &job.owner)?;
+        }
+        if let Some(creator) = job.spawns_children_of() {
+            child::check_resumable(self, creator)?;
         }
         Ok(())
     }

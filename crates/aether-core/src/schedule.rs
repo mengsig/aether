@@ -72,8 +72,8 @@ impl BusyPolicy {
     }
 }
 
-/// Root agent + task each spawn occurrence creates, in a new run. Fields as on
-/// `create_agent`; no parent or existing run.
+/// Agent + task each spawn occurrence creates: a root in a new run, or its
+/// creator's child. Fields as on `create_agent`; no parent or existing run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpawnSpec {
     pub role: String,
@@ -105,7 +105,8 @@ pub struct SpawnSpec {
 pub enum ScheduleTarget {
     /// Deliver the payload to this existing agent's inbox.
     Agent(AgentId),
-    /// Start a fresh root run from this template.
+    /// Start a fresh agent from this template: an operator's root run, or an
+    /// agent's own child.
     Spawn(SpawnSpec),
 }
 
@@ -255,6 +256,15 @@ impl Schedule {
         match &self.mode {
             ScheduleMode::Deliver { run, .. } => Some(*run),
             ScheduleMode::Spawn { .. } => None,
+        }
+    }
+
+    /// The agent whose children a spawn schedule starts: the agent that
+    /// created it. `None` for an operator's, whose runs are roots.
+    pub fn spawns_children_of(&self) -> Option<AgentId> {
+        match (&self.mode, &self.owner) {
+            (ScheduleMode::Spawn { .. }, Actor::Agent { id }) => Some(*id),
+            _ => None,
         }
     }
 }
@@ -408,7 +418,7 @@ pub enum ScheduleOutcome {
     Delivered {
         inbox: InboxItemId,
     },
-    /// A spawn schedule started a run: its root agent and task.
+    /// A spawn schedule started an agent and its task: a root, or its creator's child.
     Spawned {
         agent: AgentId,
         task: TaskId,
