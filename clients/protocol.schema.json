@@ -11499,7 +11499,7 @@
           "type": "boolean"
         },
         "efforts": {
-          "description": "Supported reasoning efforts. An empty list means none; older daemons omit this field.",
+          "description": "Efforts the route sends distinctly, not a guarantee the model accepts each. Empty means none;\nolder daemons omit this field.",
           "items": {
             "$ref": "#/$defs/Effort"
           },
