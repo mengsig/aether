@@ -242,6 +242,46 @@ async fn inspect_state_measures_context_against_the_compaction_threshold() {
     );
 }
 
+/// A caller confirms an agent's own threshold took effect from inspect_state.
+#[tokio::test]
+async fn inspect_state_reports_an_agents_own_compaction_threshold() {
+    let h = harness(vec![
+        ScriptedClient::tool_call("inspect_state", json!({})),
+        ScriptedClient::tool_call("complete_task", json!({"summary": "done"})),
+    ])
+    .await;
+    let mut own = spec("report my threshold");
+    if let Some(config) = own.config.as_mut() {
+        config.compaction_tokens = Some(120_000);
+    }
+    let (agent, _) = h.runtime.create_agent(own, Actor::user()).unwrap();
+    h.wait_until(agent.id, |s| s.is_terminal()).await;
+    let state = h
+        .store
+        .events(0, 10_000, &EventFilter::for_agent(agent.id))
+        .unwrap()
+        .into_iter()
+        .find_map(|e| match e.kind {
+            EventKind::ToolSucceeded { outcome, .. } => {
+                outcome.structured.filter(|v| v.get("compaction").is_some())
+            }
+            _ => None,
+        })
+        .expect("inspect_state result");
+    let capabilities = h
+        .runtime
+        .models()
+        .resolve(&agent.model)
+        .unwrap()
+        .model
+        .capabilities;
+    assert!(capabilities.context_window > 120_000);
+    assert_ne!(capabilities.compaction_tokens, Some(120_000));
+    assert_eq!(state["compaction"]["agent_threshold_tokens"], 120_000);
+    assert_eq!(state["compaction"]["threshold_tokens"], 120_000);
+    assert_eq!(state["context"]["compaction_threshold_tokens"], 120_000);
+}
+
 #[tokio::test]
 async fn inspect_state_reports_unset_limits_as_null() {
     let h = harness(vec![
@@ -310,4 +350,71 @@ async fn an_api_batch_cannot_delegate_or_message_after_a_wait() {
         .filter(|e| matches!(&e.kind, EventKind::ToolFailed { error, .. } if error.contains("turn is over")))
         .count();
     assert_eq!(failed, 2);
+}
+
+/// The direct API loop requests compaction at the agent's own threshold,
+/// while a sibling on the same model with the same context does not.
+#[tokio::test]
+async fn the_api_loop_compacts_at_an_agents_own_threshold() {
+    let h = harness(vec![
+        ScriptedClient::tool_call("complete_task", json!({"summary": "done"})),
+        ScriptedClient::tool_call("complete_task", json!({"summary": "done"})),
+    ])
+    .await;
+    // About 115,000 estimated tokens: past 110,000, inside the model's own.
+    let brief = "x".repeat(415_000);
+    let create = |tokens| {
+        let mut spec = spec(&brief);
+        spec.model = Some(ModelRef::new("openai", "gpt-6.1-sol"));
+        if let Some(config) = spec.config.as_mut() {
+            config.compaction_tokens = tokens;
+        }
+        h.runtime.create_agent(spec, Actor::user()).unwrap().0
+    };
+    let own = create(Some(110_000));
+    let sibling = create(None);
+    assert_eq!(own.model, sibling.model);
+    let capabilities = h
+        .runtime
+        .models()
+        .resolve(&own.model)
+        .unwrap()
+        .model
+        .capabilities;
+    let model_threshold = aether_context::ContextBudget::for_profile(&capabilities, None);
+    assert!(
+        model_threshold.threshold_tokens() > 130_000 && !capabilities.compacts_on_server(),
+        "the fixture model folds in Aether above the brief: {capabilities:?}"
+    );
+    // The threshold request commits before the model is called, so a
+    // completed invocation means the decision has been recorded.
+    let invoked = |events: &[aether_core::event::Event]| {
+        events
+            .iter()
+            .any(|e| matches!(e.kind, EventKind::InvocationCompleted { .. }))
+    };
+    let own_events = wait_until_events(h.store.as_ref(), own.id, invoked).await;
+    let sibling_events = wait_until_events(h.store.as_ref(), sibling.id, invoked).await;
+    let threshold_requests = |events: &[aether_core::event::Event]| {
+        events
+            .iter()
+            .filter_map(|e| match &e.kind {
+                EventKind::CompactionRequested {
+                    trigger: CompactionTrigger::TokenThreshold { tokens, threshold },
+                } => Some((*tokens, *threshold)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let own_requests = threshold_requests(&own_events);
+    assert!(!own_requests.is_empty(), "the agent's own threshold fired");
+    for (tokens, threshold) in own_requests {
+        assert_eq!(threshold, 110_000);
+        assert!(tokens >= 110_000, "{tokens}");
+    }
+    assert_eq!(
+        threshold_requests(&sibling_events),
+        [],
+        "the sibling keeps the model's"
+    );
 }

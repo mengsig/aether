@@ -950,3 +950,35 @@ fn reference_images_lead_a_request_with_no_compaction_block() {
         "a model without vision gets no turn"
     );
 }
+
+/// The adapter holds only the model's profile, so an agent's own threshold
+/// must ride in the request to reach the server's compaction trigger.
+#[test]
+fn an_agents_own_threshold_reaches_the_server_compaction_trigger() {
+    let mut model = caps();
+    model.context_window = 1_000_000;
+    model.compaction_tokens = Some(256_000);
+    model.extensions.insert(
+        aether_core::model::SERVER_COMPACTION_KEY.into(),
+        serde_json::json!(true),
+    );
+    let transcript = [entry(MessageRole::User, "continue", 1)];
+    let trigger = |agent: &Agent| {
+        let own = model.clone().for_agent(agent.config.compaction_tokens);
+        let out = ContextManager::new().assemble(inputs(agent, None, &transcript, &[], &own));
+        let built = aether_model::adapters::anthropic::request::build(&out.request, &model)
+            .expect("an Anthropic request");
+        (
+            out.threshold_tokens,
+            built.body["context_management"]["edits"][0]["trigger"]["value"].clone(),
+        )
+    };
+    let mut orchestrator = agent();
+    orchestrator.config.compaction_tokens = Some(160_000);
+    assert_eq!(
+        trigger(&orchestrator),
+        (160_000, serde_json::json!(160_000))
+    );
+    let sibling = agent();
+    assert_eq!(trigger(&sibling), (256_000, serde_json::json!(256_000)));
+}

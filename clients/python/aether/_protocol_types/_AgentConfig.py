@@ -12,6 +12,7 @@ class AgentConfig(TypedDict, total=False):
     """
     approval: _protocol.ApprovalPolicy  # optional
     build_cache: str | None  # optional
+    compaction_tokens: int | None  # optional
     concurrency: int | None  # optional
     cost_budget: float | None  # optional
     deadline: str | None  # optional

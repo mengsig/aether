@@ -23,6 +23,20 @@ release is also the text of its GitHub release.
   `max_deliveries` and pause, resume and cancel work as for delivery
   schedules. The operator CLI path is unchanged.
 
+- **Per-agent compaction threshold.** `create_agent` accepts an optional
+  `config.compaction_tokens`: the context size, at least 100,000, at which
+  that agent compacts, in place of its model's threshold and capped at the
+  model's window. It
+  reaches every automatic path: Claude Code's auto-compact window, Codex's
+  `model_auto_compact_token_limit`, the Anthropic API's server compaction
+  trigger and Aether's own fold. Siblings on the same model keep the model's
+  threshold; children do not inherit it. `inspect_state` reports it as
+  `compaction.agent_threshold_tokens`, `get_agent` in `config`, and the TUI's
+  context bar counts down to it. The daemon announces the `compaction_tokens`
+  feature; an older daemon ignores the field, so a client checks the feature
+  first, and the Rust client refuses such a create itself. Absent, nothing
+  changes.
+
 ## 1.4.1
 
 Released 2026-11-18. GPT-6.2 Astra and GPT-6.2 Sol become the `astra` and

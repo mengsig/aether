@@ -45,6 +45,8 @@ mod codex_jobs;
 mod compact_on_request;
 #[path = "engine/compaction.rs"]
 mod compaction;
+#[path = "engine/compaction_threshold.rs"]
+mod compaction_threshold;
 #[path = "engine/completion_recovery.rs"]
 mod completion_recovery;
 #[path = "engine/completion_waits.rs"]

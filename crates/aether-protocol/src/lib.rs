@@ -262,6 +262,9 @@ pub mod features {
     /// The daemon serves `get_conversation` and keeps `append_note.important`.
     /// A daemon without it drops the flag, so check this first.
     pub const CONVERSATION: &str = "conversation";
+    /// The daemon applies `AgentConfig.compaction_tokens`. A daemon without it
+    /// ignores the field and the agent compacts at its model's threshold.
+    pub const COMPACTION_TOKENS: &str = "compaction_tokens";
 }
 
 mod handshake;

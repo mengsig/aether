@@ -1031,3 +1031,31 @@ fn only_the_no_model_code_sends_a_failed_creation_to_login() {
     );
     assert!(shown.contains("/login"), "{shown}");
 }
+
+#[test]
+fn an_agents_own_compaction_threshold_replaces_its_models_within_the_window() {
+    let (mut app, id) = app_with_agent();
+    app.models = vec![ModelInfo {
+        tier: None,
+        model: ModelRef::new("claude-code", "claude-opus-5-5"),
+        aliases: vec!["opus".into()],
+        name: "Claude Opus 5.5".into(),
+        provider_name: "claude-code".into(),
+        capabilities: aether_core::model::CapabilityProfile {
+            context_window: 1_000_000,
+            compaction_tokens: Some(256_000),
+            ..Default::default()
+        },
+        configured: true,
+        auth_source: None,
+        is_default: false,
+    }];
+    let mut sibling = agent(id, "sibling");
+    sibling.model = ModelRef::new("claude-code", "opus");
+    assert_eq!(app.agent_compaction_threshold(&sibling), Some(256_000));
+    let mut own = sibling.clone();
+    own.config.compaction_tokens = Some(160_000);
+    assert_eq!(app.agent_compaction_threshold(&own), Some(160_000));
+    own.config.compaction_tokens = Some(2_000_000);
+    assert_eq!(app.agent_compaction_threshold(&own), Some(1_000_000));
+}

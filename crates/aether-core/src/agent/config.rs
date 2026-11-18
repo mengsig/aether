@@ -331,6 +331,10 @@ pub struct AgentConfig {
     /// by this agent's tier. Never inherited by a child.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegation_policy: Option<crate::delegation::DelegationPolicy>,
+    /// Context size at which this agent compacts, in place of its model's
+    /// threshold and never above the window. Never inherited by a child.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_tokens: Option<u32>,
 }
 
 impl AgentConfig {
@@ -361,6 +365,7 @@ impl Default for AgentConfig {
             build_cache: None,
             interactive: None,
             delegation_policy: None,
+            compaction_tokens: None,
         }
     }
 }

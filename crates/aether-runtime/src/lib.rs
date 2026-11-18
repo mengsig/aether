@@ -753,6 +753,21 @@ impl Runtime {
         resolved.profile_text()
     }
 
+    /// `model` as `agent` runs it: the model's profile under the agent's own
+    /// compaction threshold, when it set one.
+    pub(crate) fn resolve_for_agent(
+        &self,
+        agent: &aether_core::agent::Agent,
+        model: &ModelRef,
+    ) -> std::result::Result<aether_model::ResolvedModel, ModelsError> {
+        let mut resolved = self.models.resolve(model)?;
+        resolved.model.capabilities = resolved
+            .model
+            .capabilities
+            .for_agent(agent.config.compaction_tokens);
+        Ok(resolved)
+    }
+
     /// Health of every configured MCP server, empty when none are configured.
     pub fn mcp_health(&self) -> Vec<aether_core::mcp::McpServerHealth> {
         self.tools.mcp().map(|m| m.health()).unwrap_or_default()
