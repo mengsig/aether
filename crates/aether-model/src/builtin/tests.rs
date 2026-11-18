@@ -754,3 +754,36 @@ fn haiku_price_tables_select_long_prompt_tier_per_request() {
         }
     }
 }
+
+#[test]
+fn superseded_models_resolve_by_id_and_never_acquire_a_tier_from_price() {
+    let registry = crate::Registry::builtin();
+    for (providers, old, successor) in [
+        (
+            &["claude-code", "anthropic"][..],
+            "claude-fable-5-1",
+            "claude-fable-5-2",
+        ),
+        (
+            &["codex", "openai", "openai-responses", "openai-codex"][..],
+            "gpt-6-astra",
+            "gpt-6.2-astra",
+        ),
+        (
+            &["codex", "openai", "openai-responses", "openai-codex"][..],
+            "gpt-6.1-sol",
+            "gpt-6.2-sol",
+        ),
+    ] {
+        for provider in providers {
+            let def = registry.provider(provider).unwrap();
+            assert_eq!(def.resolve_model(old).unwrap().tier, None);
+            assert_eq!(registry.catalog_tier(provider, old), None);
+            assert_eq!(
+                crate::retired::superseded_by(provider, old),
+                Some(successor)
+            );
+            assert!(registry.catalog_tier(provider, successor).is_some());
+        }
+    }
+}

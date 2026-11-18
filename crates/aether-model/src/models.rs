@@ -53,6 +53,7 @@ pub enum ModelsError {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelInfo {
+    pub superseded_by: Option<String>,
     pub tier: Option<ModelTier>,
     pub model: ModelRef,
     pub aliases: Vec<String>,
@@ -191,6 +192,9 @@ impl Models {
     /// override (by canonical id or alias), else the catalog's.
     pub fn tier(&self, r: &ModelRef) -> Option<ModelTier> {
         let canonical = self.canonical(r);
+        if crate::retired::superseded_by(&canonical.provider, &canonical.model).is_some() {
+            return None;
+        }
         self.config
             .models
             .tiers
@@ -205,6 +209,23 @@ impl Models {
             })
     }
 
+    /// Built-in retirement guidance excluding ids explicitly restored by provider overrides.
+    pub fn retired(&self) -> impl Iterator<Item = (String, String)> + '_ {
+        crate::retired::entries()
+            .filter(|(provider, id, _)| {
+                self.registry
+                    .provider(provider)
+                    .and_then(|p| p.model(id))
+                    .is_none()
+            })
+            .map(|(provider, id, successor)| {
+                (
+                    format!("{provider}/{id}"),
+                    format!("{provider}/{successor}"),
+                )
+            })
+    }
+
     /// Every model of every enabled provider, with canonical ids and aliases.
     pub fn list(&self) -> Vec<ModelInfo> {
         self.registry
@@ -213,6 +234,7 @@ impl Models {
             .filter(|p| p.enabled)
             .flat_map(|p| {
                 p.models.iter().map(move |m| ModelInfo {
+                    superseded_by: crate::retired::superseded_by(&p.id, &m.id).map(str::to_owned),
                     tier: self.tier(&ModelRef::new(&p.id, &m.id)),
                     model: ModelRef::new(&p.id, &m.id),
                     aliases: m.aliases.clone(),

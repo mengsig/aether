@@ -63,6 +63,27 @@ const RETIRED: &[RetiredModel] = &[
     },
 ];
 
+pub(crate) fn entries() -> impl Iterator<Item = (&'static str, &'static str, &'static str)> {
+    RETIRED.iter().flat_map(|entry| {
+        entry.providers.iter().flat_map(move |provider| {
+            entry
+                .ids
+                .iter()
+                .map(move |id| (*provider, *id, entry.successor))
+        })
+    })
+}
+
+/// A superseded model still resolves by id but no longer represents a tier.
+pub(crate) fn superseded_by(provider: &str, id: &str) -> Option<&'static str> {
+    match id {
+        "claude-fable-5-1" if CLAUDE.contains(&provider) => Some("claude-fable-5-2"),
+        "gpt-6-astra" if GPT.contains(&provider) => Some("gpt-6.2-astra"),
+        "gpt-6.1-sol" if GPT.contains(&provider) => Some("gpt-6.2-sol"),
+        _ => None,
+    }
+}
+
 /// Replacement guidance for a retired id on its built-in provider.
 pub fn successor(provider: &str, id: &str) -> Option<&'static str> {
     RETIRED

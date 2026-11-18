@@ -526,6 +526,9 @@ impl Registry {
     pub fn catalog_tier(&self, provider: &str, model: &str) -> Option<ModelTier> {
         let provider = self.provider(provider)?;
         let def = provider.resolve_model(model)?;
+        if crate::retired::superseded_by(&provider.id, &def.id).is_some() {
+            return None;
+        }
         if def.tier.is_some() {
             return def.tier;
         }

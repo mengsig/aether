@@ -149,8 +149,7 @@ fn anthropic() -> ProviderDef {
                 "Claude Fable 5.1",
                 adaptive(1_000_000, 128_000, fable_cost()),
             )
-            .with_aliases(["fable-5-1"])
-            .with_tier(ModelTier::Frontier),
+            .with_aliases(["fable-5-1"]),
         ],
         default_capabilities: Some(claude(
             1_000_000,
@@ -237,10 +236,9 @@ fn openai_current_models() -> Vec<ModelDef> {
             .with_aliases(["luna"])
             .with_tier(ModelTier::Fast),
         // Superseded, still valid by id for existing configs and plans.
-        ModelDef::new("gpt-6-astra", "GPT-6 Astra", gpt6(10.0, 50.0)).with_tier(ModelTier::Strong),
+        ModelDef::new("gpt-6-astra", "GPT-6 Astra", gpt6(10.0, 50.0)),
         ModelDef::new("gpt-6.1-sol", "GPT-6.1 Sol", gpt61(2.0, 10.0))
-            .with_default_effort(GPT_6_1_EFFORT)
-            .with_tier(ModelTier::Balanced),
+            .with_default_effort(GPT_6_1_EFFORT),
     ]
 }
 
@@ -436,11 +434,9 @@ fn codex_models() -> Vec<ModelDef> {
             .with_aliases(["luna"])
             .with_tier(ModelTier::Fast),
         // Superseded, still valid by id for existing configs and plans.
-        engine_model("gpt-6-astra", "GPT-6 Astra", CODEX_CONTEXT, 128_000)
-            .with_tier(ModelTier::Strong),
+        engine_model("gpt-6-astra", "GPT-6 Astra", CODEX_CONTEXT, 128_000),
         engine_model("gpt-6.1-sol", "GPT-6.1 Sol", CODEX_CONTEXT, 128_000)
-            .with_default_effort(GPT_6_1_EFFORT)
-            .with_tier(ModelTier::Balanced),
+            .with_default_effort(GPT_6_1_EFFORT),
         engine_model("default", "Codex default model", CODEX_CONTEXT, 128_000),
     ]
 }
@@ -524,8 +520,7 @@ fn claude_code() -> ProviderDef {
                     CLAUDE_CONTEXT,
                     128_000,
                 )
-                .with_aliases(["fable-5-1"])
-                .with_tier(ModelTier::Frontier),
+                .with_aliases(["fable-5-1"]),
                 fable_cost(),
             ),
             priced(
