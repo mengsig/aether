@@ -4,7 +4,7 @@
 pub mod request;
 pub mod stream;
 
-use aether_core::model::{ModelError, ModelErrorClass, ModelRequest};
+use aether_core::model::{Effort, ModelError, ModelErrorClass, ModelRequest};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use tokio_util::sync::CancellationToken;
 
@@ -22,6 +22,15 @@ pub const CODEX_ADAPTER: &str = "openai-codex-responses/1";
 pub enum Dialect {
     OpenAi,
     Codex,
+}
+
+impl Dialect {
+    fn protocol(self) -> crate::Protocol {
+        match self {
+            Self::OpenAi => crate::Protocol::OpenaiResponses,
+            Self::Codex => crate::Protocol::OpenaiCodexResponses,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -96,6 +105,15 @@ impl ModelClient for OpenAiResponsesClient {
             Dialect::OpenAi => ADAPTER,
             Dialect::Codex => CODEX_ADAPTER,
         }
+    }
+
+    fn effective_effort(
+        &self,
+        model: &crate::ResolvedModel,
+        effort: Option<Effort>,
+    ) -> Option<Effort> {
+        self.config
+            .effective_effort(self.dialect.protocol(), &model.model.id, effort)
     }
 
     async fn stream(

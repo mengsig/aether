@@ -399,6 +399,8 @@ pub(super) async fn run_link(
     });
 
     let mut snapshot = assembled.snapshot;
+    snapshot.params.effort_requested = ctx.agent.config.effort;
+    snapshot.params.effort_effective = client.effective_effort(&resolved, assembled.request.effort);
     snapshot.memory_retrieval = memories.trace.clone();
     let input_budget = resolved
         .model

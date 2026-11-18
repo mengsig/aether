@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use aether_core::model::{CapabilityProfile, ModelError, ModelErrorClass, ModelRef};
+use aether_core::model::{CapabilityProfile, Effort, ModelError, ModelErrorClass, ModelRef};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -54,6 +54,8 @@ pub enum ModelsError {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelInfo {
     pub superseded_by: Option<String>,
+    /// Effort overrides the adapter can send for this model, in increasing order.
+    pub efforts: Vec<Effort>,
     pub tier: Option<ModelTier>,
     pub model: ModelRef,
     pub aliases: Vec<String>,
@@ -235,6 +237,7 @@ impl Models {
             .flat_map(|p| {
                 p.models.iter().map(move |m| ModelInfo {
                     superseded_by: crate::retired::superseded_by(&p.id, &m.id).map(str::to_owned),
+                    efforts: p.protocol.efforts(&m.capabilities).to_vec(),
                     tier: self.tier(&ModelRef::new(&p.id, &m.id)),
                     model: ModelRef::new(&p.id, &m.id),
                     aliases: m.aliases.clone(),
@@ -707,6 +710,28 @@ mod tests {
             "an operator value reaches the catalogue"
         );
         assert_eq!(threshold("openai", "gpt-6.2-astra").1, None);
+    }
+
+    #[test]
+    fn catalogue_lists_distinct_effort_overrides_per_model() {
+        use Effort::{High, Low, Max, Medium, XHigh};
+
+        let catalogue = builtin_models(AetherConfig::default()).list();
+        let all = &[Low, Medium, High, XHigh, Max][..];
+        let chat = &[Low, Medium, High][..];
+        for (provider, model, expected) in [
+            ("codex", "gpt-6.1-sol", all),
+            ("claude-code", "claude-opus-5-5", all),
+            ("anthropic", "claude-opus-5-5", all),
+            ("openai-responses", "gpt-6.1-sol", chat),
+            ("openai", "gpt-6.1-sol", chat),
+            ("groq", "openai/gpt-oss-120b", chat),
+            ("groq", "llama-3.3-70b-versatile", &[]),
+        ] {
+            let model = ModelRef::new(provider, model);
+            let info = catalogue.iter().find(|info| info.model == model).unwrap();
+            assert_eq!(info.efforts, expected, "{model}");
+        }
     }
 
     #[test]

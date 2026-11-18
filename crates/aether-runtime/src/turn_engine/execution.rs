@@ -158,6 +158,11 @@ pub(crate) async fn execute(
     // Explicit (or model-default) effort is independent of registry capability
     // flags. None records that the native harness chooses, not an assumed value.
     snapshot.params.effort = agent_for_link.config.effort;
+    snapshot.params.effort_requested = ctx.agent.config.effort;
+    snapshot.params.effort_effective = resolved
+        .provider
+        .protocol
+        .effective_effort(&resolved.model.capabilities, snapshot.params.effort);
     if let Some(layer) = snapshot
         .layers
         .iter_mut()
@@ -263,7 +268,7 @@ pub(crate) async fn execute(
         session_recorder: Some(super::session_recorder(runtime, ctx.agent.id)),
         model: Some(resolved.model.id.clone()),
         // Launch the same explicit override (or omission) the ledger recorded.
-        effort: snapshot.params.effort,
+        effort: snapshot.params.effort_effective,
         cwd: tool_ctx.cwd.clone(),
         extra_dirs: ctx.agent.scope.allowed_paths.clone(),
         hidden_env: runtime.tools.engine_hidden_env().to_vec(),

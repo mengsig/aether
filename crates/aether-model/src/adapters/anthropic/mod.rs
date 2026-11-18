@@ -3,7 +3,9 @@
 pub mod request;
 pub mod stream;
 
-use aether_core::model::{ContentBlock, MessageRole, ModelError, ModelErrorClass, ModelRequest};
+use aether_core::model::{
+    ContentBlock, Effort, MessageRole, ModelError, ModelErrorClass, ModelRequest,
+};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use tokio_util::sync::CancellationToken;
 
@@ -232,6 +234,15 @@ fn header_value(v: &str) -> Result<HeaderValue, ModelError> {
 impl ModelClient for AnthropicClient {
     fn adapter(&self) -> &str {
         ADAPTER
+    }
+
+    fn effective_effort(
+        &self,
+        model: &crate::ResolvedModel,
+        effort: Option<Effort>,
+    ) -> Option<Effort> {
+        self.config
+            .effective_effort(crate::Protocol::AnthropicMessages, &model.model.id, effort)
     }
 
     async fn stream(

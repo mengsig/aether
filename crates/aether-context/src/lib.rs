@@ -356,6 +356,7 @@ impl ContextManager {
             max_output_tokens: Some(budget.reserve_output),
             temperature: None,
             extensions,
+            ..Default::default()
         }
     }
 }

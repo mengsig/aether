@@ -313,6 +313,24 @@ impl Engine for EffortRecorder {
     }
 }
 
+async fn recording_harness() -> (Harness, Arc<Mutex<Vec<Option<Effort>>>>) {
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let systems = Arc::new(Mutex::new(Vec::new()));
+    let launched = Arc::new(Mutex::new(Vec::new()));
+    let engine: Arc<dyn Engine> = Arc::new(EffortRecorder {
+        inner: ScriptedEngine {
+            reply: Reply::ToolRun,
+            prompts: prompts.clone(),
+            costs: Arc::new(Mutex::new(Default::default())),
+            systems: systems.clone(),
+            tool_gate: None,
+        },
+        launched: launched.clone(),
+    });
+    let h = harness_with_engine(engine, prompts, systems).await;
+    (h, launched)
+}
+
 /// GPT-6.1 Sol launches at its high default when nothing asked otherwise
 /// (Codex's own default is low); an explicit effort wins, and a model without
 /// a default still leaves the choice to the native harness.
@@ -324,20 +342,7 @@ async fn gpt_6_1_sol_launches_at_high_unless_an_effort_was_asked_for() {
         ("sol", Some(Effort::Max), Some(Effort::Max)),
         ("gpt-6-luna", None, None),
     ] {
-        let prompts = Arc::new(Mutex::new(Vec::new()));
-        let systems = Arc::new(Mutex::new(Vec::new()));
-        let launched = Arc::new(Mutex::new(Vec::new()));
-        let engine: Arc<dyn Engine> = Arc::new(EffortRecorder {
-            inner: ScriptedEngine {
-                reply: Reply::ToolRun,
-                prompts: prompts.clone(),
-                costs: Arc::new(Mutex::new(Default::default())),
-                systems: systems.clone(),
-                tool_gate: None,
-            },
-            launched: launched.clone(),
-        });
-        let h = harness_with_engine(engine, prompts, systems).await;
+        let (h, launched) = recording_harness().await;
         let (agent, _) = h
             .runtime
             .create_agent(
@@ -361,33 +366,15 @@ async fn gpt_6_1_sol_launches_at_high_unless_an_effort_was_asked_for() {
             a.status.kind() == AgentStatusKind::Waiting
         })
         .await;
-        h.runtime
-            .send_message(id, vec![ContentBlock::text("what is here?")], Actor::user())
-            .expect("send");
-        wait_for(h.store.as_ref(), id, |a| {
-            a.status.kind() == AgentStatusKind::Waiting && a.stats.turns >= 1
-        })
-        .await;
+        engine_turn(&h, id, "what is here?").await;
 
         let case = format!("codex/{model} configured={configured:?}");
         assert_eq!(launched.lock().unwrap().first(), Some(&expected), "{case}");
-        let snapshot_id = h
-            .store
-            .events(0, 10_000, &EventFilter::for_agent(id))
-            .expect("events")
-            .into_iter()
-            .find_map(|e| match e.kind {
-                EventKind::SnapshotCreated { snapshot, .. } => Some(snapshot),
-                _ => None,
-            })
-            .expect("the engine turn recorded a snapshot");
-        let stored = h
-            .store
-            .snapshot(snapshot_id)
-            .expect("snapshot")
-            .expect("every announced snapshot is stored");
+        let params = latest_snapshot(&h, id).params;
+        assert_eq!(params.effort, expected, "{case}");
+        assert_eq!(params.effort_requested, configured, "{case}");
         assert_eq!(
-            stored.params.effort, expected,
+            params.effort_effective, expected,
             "{case}: ledger matches launch"
         );
         let persisted = h.store.agent(id).expect("agent").expect("exists");
