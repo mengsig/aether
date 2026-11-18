@@ -6,6 +6,19 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+- `aether models --json` keeps its array and reports supported `efforts` and
+  `superseded_by`. Explicit ids still work for Fable 5.1, GPT-6 Astra and
+  GPT-6.1 Sol. Tier selection skips them. Use `aether models --retired` for
+  replacement guidance, or read `retired` in the MCP `list_models` result.
+  Archon can check `Welcome.features` for `retired_models` before requesting
+  the retired array. All new catalog fields are optional for readers.
+- Invocation snapshots record requested and effective reasoning effort,
+  including OpenAI-compatible requests that send `high` for `x_high` or
+  `max`. The effective value describes the override Aether sent.
+- These additions need no store migration. After an update that migrates the
+  store, binary downgrade is unsupported because the older daemon refuses
+  the newer schema. Use the feature switches for rollback.
+
 ## 1.4.1
 
 Released 2026-11-18. GPT-6.2 Astra and GPT-6.2 Sol become the `astra` and

@@ -112,6 +112,20 @@ async fn state_tools_report_runtime_facts_without_mutating_task_state() {
     assert_eq!(models[1]["model"]["model"], "gpt-6.1-terra");
     assert_eq!(models[2]["model"]["model"], "gpt-6.2-sol");
     assert_eq!(models[3]["model"]["model"], "gpt-6-luna");
+    let old = models
+        .iter()
+        .find(|m| m["model"]["model"] == "gpt-6-astra")
+        .unwrap();
+    assert_eq!(old["superseded_by"], "gpt-6.2-astra");
+    assert!(old["tier"].is_null());
+    assert!(old["efforts"].as_array().unwrap().contains(&json!("high")));
+    let retired = catalog["retired"].as_array().unwrap();
+    assert!(retired.contains(&json!({"model":"codex/gpt-6-sol", "successor":"codex/gpt-6.2-sol"})));
+    assert!(
+        retired
+            .iter()
+            .all(|r| r["model"].as_str().unwrap().starts_with("codex/"))
+    );
     assert_eq!(models[1]["api_equivalent_cost"]["input_per_mtok"], 1.0);
     assert_eq!(
         models[1]["compaction_threshold_tokens"], 272_000,

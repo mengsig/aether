@@ -5,6 +5,13 @@ crossed release's "Before updating" notes from the
 [changelog](../CHANGELOG.md) and asks before a one-way store migration; this
 page explains them for the releases that change more than a patch.
 
+Clients such as Archon can discover retired model support through the
+`retired_models` handshake feature on protocol 26. The catalog and turn
+metadata need no store migration. For updates that do migrate the store,
+binary downgrade is unsupported after migration because the older daemon
+refuses the newer schema. Roll back optional behavior through its documented
+switches.
+
 ## From 1.2.11 to 1.3.0
 
 1.3.0 is released with Archon 1.5.0. It migrates the store to schema 33, speaks

@@ -36,7 +36,10 @@ completed_run_days = 10
   tier). Subscription models use their API equivalent's price. A priced model
   with no tiered reference in its provider stays null, as do unpriced models
   such as `default`. The daemon catalog and generated clients expose the same
-  tier as the agent tool.
+  tier as the agent tool. A model with `superseded_by` stays valid by explicit id
+  and has no tier, including when an override names it. `aether models --json`
+  lists these models alongside current defaults. `aether models --retired --json`
+  lists the retired ids and their successors in a separate array.
 - **Models and effort:** choose them per agent; switch with `/model` or
   `aether set`. A running turn finishes on its original model; the new choice
   applies when the agent starts its next turn. Fallback chains are explicit
