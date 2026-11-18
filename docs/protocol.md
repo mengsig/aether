@@ -306,7 +306,8 @@ its model's threshold (see [who compacts](engines.md#who-compacts)). Below
 that, Claude Code's auto-compact window and the Anthropic server trigger
 would raise it, so the create is refused. It is capped at the context window
 of whichever model runs the turn, set at creation only, and never inherited
-by a child; absent keeps the model's threshold. `get_agent` returns it in `config`, and the agent's
+by a child; absent keeps the model's threshold. On Claude Code a value above
+987,000 compacts at about 987,000, the most its auto-compact window allows. `get_agent` returns it in `config`, and the agent's
 `inspect_state` reports it as `compaction.agent_threshold_tokens` beside the
 effective `compaction.threshold_tokens`. An older daemon ignores the field
 and the agent compacts at its model's threshold, so check the feature first;

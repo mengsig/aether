@@ -194,6 +194,10 @@ at that size on every automatic path above, in place of its model's
 threshold. A value at or above the model's context window is capped at the
 window and still passed to the engine; its siblings on the same model keep the
 model's threshold (see [protocol](protocol.md), feature `compaction_tokens`).
+One provider limit remains: Claude Code takes an auto-compact window of at
+most 1,000,000 and folds 13,000 below it, so on Claude Code a threshold above
+987,000 compacts at about 987,000, though `inspect_state` reports the
+requested value.
 
 On a native session Aether still records context usage, but usage never
 requests an Aether summary or a task-boundary checkpoint, and automatic
