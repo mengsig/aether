@@ -8,6 +8,8 @@ from .. import protocol as _protocol
 
 class InvocationParams(TypedDict, total=False):
     effort: _protocol.Effort | None  # optional
+    effort_effective: _protocol.Effort | None  # optional
+    effort_requested: _protocol.Effort | None  # optional
     extensions: dict[str, Any]  # optional
     max_output_tokens: int | None  # optional
     temperature: float | None  # optional

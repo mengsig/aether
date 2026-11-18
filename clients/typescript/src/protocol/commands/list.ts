@@ -118,6 +118,17 @@ export function listRepositoryAliases(): ListRepositoryAliasesCommand {
 }
 
 /**
+ * Retired model IDs and the successors to use in their place.
+ */
+export interface ListRetiredModelsCommand {
+  "cmd": "list_retired_models";
+}
+
+export function listRetiredModels(): ListRetiredModelsCommand {
+  return { cmd: "list_retired_models" };
+}
+
+/**
  * Runs this store knows about, newest first.
  */
 export interface ListRunsCommand {

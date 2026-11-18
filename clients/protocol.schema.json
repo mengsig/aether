@@ -4306,6 +4306,19 @@
           "type": "object"
         },
         {
+          "description": "Retired model IDs and the successors to use in their place.",
+          "properties": {
+            "cmd": {
+              "const": "list_retired_models",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Built-in and user transcript modes from the daemon's configuration.",
           "properties": {
             "cmd": {
@@ -9835,7 +9848,30 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Canonical request effort before the adapter encodes it."
+        },
+        "effort_effective": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Effort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Effort override sent on the provider request or native launch, when known."
+        },
+        "effort_requested": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Effort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The agent's explicit choice before applying this link's model default."
         },
         "extensions": {
           "additionalProperties": true,
@@ -11453,6 +11489,16 @@
           "description": "Whether credentials resolve for the provider right now.",
           "type": "boolean"
         },
+        "efforts": {
+          "description": "Supported reasoning efforts. An empty list means none; older daemons omit this field.",
+          "items": {
+            "$ref": "#/$defs/Effort"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "is_default": {
           "type": "boolean"
         },
@@ -11464,6 +11510,13 @@
         },
         "provider_name": {
           "type": "string"
+        },
+        "superseded_by": {
+          "description": "Newer model ID on the same provider, when this model is still runnable.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "tier": {
           "default": null,
@@ -14643,6 +14696,25 @@
         {
           "properties": {
             "data": {
+              "items": {
+                "$ref": "#/$defs/RetiredModel"
+              },
+              "type": "array"
+            },
+            "reply": {
+              "const": "retired_models",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
               "$ref": "#/$defs/ViewModes"
             },
             "reply": {
@@ -15186,6 +15258,22 @@
         "artifact_payload_bytes",
         "history_payload_bytes",
         "pending_cleanup"
+      ],
+      "type": "object"
+    },
+    "RetiredModel": {
+      "description": "A retired model ID and its recommended successor, both provider-qualified.",
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "successor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "successor"
       ],
       "type": "object"
     },
