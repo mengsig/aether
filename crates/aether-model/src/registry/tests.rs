@@ -46,14 +46,14 @@ flow = "openrouter"
         .expect("openrouter oauth is not a subscription");
 }
 
-/// The builtin registry with `codex/gpt-6-astra` re-registered by an
-/// operator's `providers.toml` without a price; `openai/gpt-6-astra` keeps its.
+/// The builtin registry with `codex/gpt-6.2-astra` re-registered by an
+/// operator's `providers.toml` without a price; `openai/gpt-6.2-astra` keeps its.
 fn registry_with_unpriced_codex_astra() -> Registry {
     let mut reg = Registry::builtin();
     let file: ProvidersFile = toml::from_str(
         r#"
 [[providers.codex.add_models]]
-id = "gpt-6-astra"
+id = "gpt-6.2-astra"
 aliases = ["astra"]
 [providers.codex.add_models.capabilities]
 context_window = 272000
@@ -72,15 +72,15 @@ fn an_unpriced_subscription_model_borrows_its_api_twins_price() {
     let reg = registry_with_unpriced_codex_astra();
     let resolve = |r: &str| reg.resolve(&ModelRef::parse(r).expect(r)).expect(r);
 
-    let astra = resolve("codex/gpt-6-astra");
+    let astra = resolve("codex/gpt-6.2-astra");
     assert_eq!(
         astra.model.capabilities.cost, None,
         "the operator's entry carries no price, which is why an estimate exists"
     );
     let twin = reg
         .api_equivalent(&astra)
-        .expect("openai lists gpt-6-astra");
-    assert_eq!(twin.id, "gpt-6-astra");
+        .expect("openai lists gpt-6.2-astra");
+    assert_eq!(twin.id, "gpt-6.2-astra");
     let price = reg
         .api_equivalent_price(&astra)
         .expect("and it carries a list price");
@@ -134,7 +134,7 @@ fn a_model_with_no_priced_twin_is_left_unestimated() {
     assert_eq!(reg.api_equivalent_price(&unpriced_twin), None);
 
     // An API model is its own price; nothing to estimate from.
-    let api = resolve("openai/gpt-6-astra");
+    let api = resolve("openai/gpt-6.2-astra");
     assert_eq!(reg.api_equivalent(&api), None);
     assert_eq!(reg.api_equivalent_price(&api), None);
 }
@@ -186,13 +186,13 @@ fn a_session_prices_the_default_model_the_engine_actually_picked() {
     // Codex is a subscription with no price of its own: the session model is
     // estimated from the OpenAI API list price, never billed.
     let codex = resolve("codex/default");
-    let astra = resolve("openai/gpt-6-astra")
+    let astra = resolve("openai/gpt-6.2-astra")
         .model
         .capabilities
         .cost
-        .expect("openai prices gpt-6-astra");
+        .expect("openai prices gpt-6.2-astra");
     assert_eq!(
-        reg.session_model_price(&codex, "gpt-6-astra"),
+        reg.session_model_price(&codex, "gpt-6.2-astra"),
         Some(ModelPrice::ApiEquivalent(astra)),
         "the session named a model with an API twin"
     );
@@ -216,9 +216,9 @@ fn a_session_prices_the_default_model_the_engine_actually_picked() {
 
     // A configured model that already has a price or an estimate is the
     // cost authority; what the session reports cannot move it.
-    for configured in ["claude-code/sonnet", "codex/gpt-6-astra"] {
+    for configured in ["claude-code/sonnet", "codex/gpt-6.2-astra"] {
         let configured = resolve(configured);
-        for reported in ["claude-fable-5-1", "gpt-6-astra", "haiku"] {
+        for reported in ["claude-fable-5-1", "gpt-6.2-astra", "haiku"] {
             assert_eq!(
                 reg.session_model_price(&configured, reported),
                 None,
@@ -239,9 +239,9 @@ fn a_session_model_without_a_price_is_estimated_from_its_twin() {
         .expect("codex/default");
     let twin = reg
         .provider("openai")
-        .and_then(|openai| openai.model("gpt-6-astra"))
+        .and_then(|openai| openai.model("gpt-6.2-astra"))
         .and_then(|astra| astra.capabilities.cost)
-        .expect("openai prices gpt-6-astra");
+        .expect("openai prices gpt-6.2-astra");
     assert_eq!(
         reg.session_model_price(&codex, "astra"),
         Some(ModelPrice::ApiEquivalent(twin))
@@ -589,15 +589,15 @@ fn overrides_reject_colliding_model_ids_and_aliases() {
     for (settings, first, second, key) in [
         (
             r#"add_models = [{id = "custom", aliases = ["astra"]}]"#,
-            "gpt-6-astra",
+            "gpt-6.2-astra",
             "custom",
             "astra",
         ),
         (
-            r#"add_models = [{id = "custom", aliases = ["gpt-6-astra"]}]"#,
-            "gpt-6-astra",
+            r#"add_models = [{id = "custom", aliases = ["gpt-6.2-astra"]}]"#,
+            "gpt-6.2-astra",
             "custom",
-            "gpt-6-astra",
+            "gpt-6.2-astra",
         ),
         (
             r#"models = [{id = "first", aliases = ["shared"]}, {id = "second", aliases = ["shared"]}]"#,

@@ -6,6 +6,25 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+## 1.4.1
+
+Released 2026-11-18. GPT-6.2 Astra and GPT-6.2 Sol become the `astra` and
+`sol` defaults. The workspace and Python and TypeScript clients are 1.4.1.
+
+### Changed
+
+- **`astra` → `gpt-6.2-astra`, `sol` → `gpt-6.2-sol`** on `codex`, `openai`,
+  `openai-responses` and `openai-codex`. Strong-tier routing now picks
+  GPT-6.2 Astra; Terra stays the balanced default, with GPT-6.2 Sol next.
+  Each keeps its predecessor's tier, context window, compaction threshold,
+  output limit and effort defaults (Sol runs at high effort unless asked).
+- GPT-6.2 API prices are not published yet, so the OpenAI tables and Codex
+  estimates copy GPT-6 Astra's and GPT-6.1 Sol's prices.
+- `gpt-6-astra` and `gpt-6.1-sol` stay listed and valid by id, so existing
+  configs and plans still run; they are no longer the family defaults.
+- Retired GPT ids (`gpt-6-sol`, `gpt-5.6-sol`, `gpt-5.5`, `gpt-5.4`, …) now
+  point to `gpt-6.2-sol` as their successor.
+
 ## 1.4.0
 
 Released 2026-11-16. Bounded delegation (#430), approved task references

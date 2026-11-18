@@ -201,7 +201,7 @@ fn openai_priced(
     }
 }
 
-/// Operator's choice: GPT-6.1 Sol and Terra are strong and well priced at high
+/// Operator's choice: GPT-6.1/6.2 Sol and Terra are strong and well priced at high
 /// effort, but Codex defaults them to low. Shared by every provider serving them.
 const GPT_6_1_EFFORT: Effort = Effort::High;
 
@@ -220,7 +220,8 @@ fn openai_current_models() -> Vec<ModelDef> {
         openai_priced(1_050_000, 128_000, true, Some(cost))
     };
     vec![
-        ModelDef::new("gpt-6-astra", "GPT-6 Astra", gpt6(10.0, 50.0))
+        // GPT-6.2 prices are not published yet: copied from GPT-6 Astra and GPT-6.1 Sol.
+        ModelDef::new("gpt-6.2-astra", "GPT-6.2 Astra", gpt6(10.0, 50.0))
             .with_aliases(["astra"])
             .with_tier(ModelTier::Strong),
         // Listed before Sol so it is the balanced choice and the default.
@@ -228,13 +229,18 @@ fn openai_current_models() -> Vec<ModelDef> {
             .with_aliases(["terra", "gpt-5.6-terra"])
             .with_default_effort(GPT_6_1_EFFORT)
             .with_tier(ModelTier::Balanced),
-        ModelDef::new("gpt-6.1-sol", "GPT-6.1 Sol", gpt61(2.0, 10.0))
+        ModelDef::new("gpt-6.2-sol", "GPT-6.2 Sol", gpt61(2.0, 10.0))
             .with_aliases(["sol"])
             .with_default_effort(GPT_6_1_EFFORT)
             .with_tier(ModelTier::Balanced),
         ModelDef::new("gpt-6-luna", "GPT-6 Luna", gpt6(0.10, 0.50))
             .with_aliases(["luna"])
             .with_tier(ModelTier::Fast),
+        // Superseded, still valid by id for existing configs and plans.
+        ModelDef::new("gpt-6-astra", "GPT-6 Astra", gpt6(10.0, 50.0)).with_tier(ModelTier::Strong),
+        ModelDef::new("gpt-6.1-sol", "GPT-6.1 Sol", gpt61(2.0, 10.0))
+            .with_default_effort(GPT_6_1_EFFORT)
+            .with_tier(ModelTier::Balanced),
     ]
 }
 
@@ -414,7 +420,7 @@ const CODEX_CONTEXT: u32 = 272_000;
 /// ([`crate::Registry::api_equivalent_price`]) and reports it as an estimate.
 fn codex_models() -> Vec<ModelDef> {
     vec![
-        engine_model("gpt-6-astra", "GPT-6 Astra", CODEX_CONTEXT, 128_000)
+        engine_model("gpt-6.2-astra", "GPT-6.2 Astra", CODEX_CONTEXT, 128_000)
             .with_aliases(["astra"])
             .with_tier(ModelTier::Strong),
         // Listed before Sol so it is the balanced choice and the default.
@@ -422,13 +428,19 @@ fn codex_models() -> Vec<ModelDef> {
             .with_aliases(["terra", "gpt-5.6-terra"])
             .with_default_effort(GPT_6_1_EFFORT)
             .with_tier(ModelTier::Balanced),
-        engine_model("gpt-6.1-sol", "GPT-6.1 Sol", CODEX_CONTEXT, 128_000)
+        engine_model("gpt-6.2-sol", "GPT-6.2 Sol", CODEX_CONTEXT, 128_000)
             .with_aliases(["sol"])
             .with_default_effort(GPT_6_1_EFFORT)
             .with_tier(ModelTier::Balanced),
         engine_model("gpt-6-luna", "GPT-6 Luna", CODEX_CONTEXT, 128_000)
             .with_aliases(["luna"])
             .with_tier(ModelTier::Fast),
+        // Superseded, still valid by id for existing configs and plans.
+        engine_model("gpt-6-astra", "GPT-6 Astra", CODEX_CONTEXT, 128_000)
+            .with_tier(ModelTier::Strong),
+        engine_model("gpt-6.1-sol", "GPT-6.1 Sol", CODEX_CONTEXT, 128_000)
+            .with_default_effort(GPT_6_1_EFFORT)
+            .with_tier(ModelTier::Balanced),
         engine_model("default", "Codex default model", CODEX_CONTEXT, 128_000),
     ]
 }
