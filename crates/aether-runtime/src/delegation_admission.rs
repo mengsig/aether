@@ -89,17 +89,30 @@ impl Preflight<'_> {
 /// Why a child cannot run on its model's engine with the network it gets.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum EngineRefusal {
-    /// The CLI is missing or failed its probe; it is probed again later.
-    Unavailable(String),
+    /// The CLI is missing or failed its probe; a later probe may find it.
+    Unavailable { kind: EngineKind, why: String },
     /// The engine cannot run under the child's network policy.
     Network(String),
 }
 
 impl std::fmt::Display for EngineRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (Self::Unavailable(why) | Self::Network(why)) = self;
+        let (Self::Unavailable { why, .. } | Self::Network(why)) = self;
         f.write_str(why)
     }
+}
+
+/// `kind` as unusable for now, with the reason `detected` has for it.
+pub(crate) fn engine_unavailable(
+    detected: &DetectedEngines,
+    kind: EngineKind,
+    provider: &str,
+) -> EngineRefusal {
+    let why = format!(
+        "its engine is not available in this daemon: {}",
+        unavailable_text(kind, provider, detected.reason(&kind))
+    );
+    EngineRefusal::Unavailable { kind, why }
 }
 
 /// What stops `kind` from running a child of `provider` under `network`, by
@@ -111,11 +124,7 @@ pub(crate) fn engine_refusal(
     network: NetworkPolicy,
 ) -> Option<EngineRefusal> {
     let Some(engine) = detected.get(&kind) else {
-        let reason = detected.unavailable.get(&kind).map(String::as_str);
-        return Some(EngineRefusal::Unavailable(format!(
-            "its engine is not available in this daemon: {}",
-            unavailable_text(kind, provider, reason)
-        )));
+        return Some(engine_unavailable(detected, kind, provider));
     };
     engine
         .validate_network_policy(network == NetworkPolicy::Allowed)

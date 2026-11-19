@@ -38,28 +38,47 @@ pub(super) fn checked_agent_name(name: &str) -> Result<String> {
 }
 
 /// The field on which `scope` leaves `parent` once symlinks are followed, as
-/// the file tools follow them. A path that does not exist grants nothing.
-fn widened_on_disk(scope: &Scope, parent: &Scope) -> Option<&'static str> {
-    let parent_root = parent.workspace_root.as_ref()?;
-    let real = |path: &std::path::PathBuf| std::fs::canonicalize(path).ok();
-    let granted: Vec<std::path::PathBuf> = std::iter::once(parent_root)
-        .chain(&parent.allowed_paths)
-        .filter_map(real)
+/// the file tools follow them. `cwd` is where a parent with no root works.
+fn widened_on_disk(
+    scope: &Scope,
+    parent: &Scope,
+    cwd: Option<&std::path::Path>,
+) -> Result<Option<&'static str>> {
+    use std::path::{Path, PathBuf};
+    let parent_root = parent.workspace_root.as_deref().or(cwd);
+    let named: Vec<&Path> = parent_root
+        .into_iter()
+        .chain(parent.allowed_paths.iter().map(PathBuf::as_path))
         .collect();
-    let inside = |path: &std::path::PathBuf| {
-        real(path).is_none_or(|path| granted.iter().any(|root| path.starts_with(root)))
+    // A parent path that cannot be resolved grants nothing.
+    let granted: Vec<PathBuf> = named
+        .iter()
+        .filter_map(|path| aether_tools::fs::resolve_links(path).ok())
+        .collect();
+    let inside = |path: &Path| -> Result<bool> {
+        // The parent's own path leads wherever the parent's does.
+        if named.contains(&path) {
+            return Ok(true);
+        }
+        let leads_to = aether_tools::fs::resolve_links(path).map_err(|error| {
+            RuntimeError::Invalid(format!(
+                "child scope path {} cannot be resolved: {error}",
+                path.display()
+            ))
+        })?;
+        Ok(granted.iter().any(|root| leads_to.starts_with(root)))
     };
-    if scope
-        .workspace_root
-        .as_ref()
-        .is_some_and(|root| !inside(root))
+    if let Some(root) = &scope.workspace_root
+        && !inside(root)?
     {
-        return Some("workspace_root");
+        return Ok(Some("workspace_root"));
     }
-    if !scope.allowed_paths.iter().all(inside) {
-        return Some("allowed_paths");
+    for path in &scope.allowed_paths {
+        if !inside(path)? {
+            return Ok(Some("allowed_paths"));
+        }
     }
-    None
+    Ok(None)
 }
 
 impl Runtime {
@@ -211,15 +230,19 @@ impl Runtime {
         link.provider.auth.none && free
     }
 
+    /// Where an agent whose scope names no workspace root works.
+    pub(crate) fn unscoped_cwd(&self) -> Option<std::path::PathBuf> {
+        self.config
+            .workspace_root
+            .clone()
+            .or_else(|| std::env::current_dir().ok())
+    }
+
     /// What a root agent that asked for no scope works in.
     pub(super) fn default_root_scope(&self) -> Scope {
         Scope {
             network: self.config.network_default,
-            workspace_root: self
-                .config
-                .workspace_root
-                .clone()
-                .or_else(|| std::env::current_dir().ok()),
+            workspace_root: self.unscoped_cwd(),
             ..Default::default()
         }
     }
@@ -267,12 +290,15 @@ impl Runtime {
         } else {
             parent_scope
         };
-        // A managed worktree was resolved when its manifest was written.
-        let on_disk = || match isolated_workspace {
-            None => widened_on_disk(&checked, &parent_scope),
-            Some(_) => None,
+        let widened = match (checked.widened_field(&parent_scope), isolated_workspace) {
+            (Some(field), _) => Some(field),
+            // A managed worktree was resolved when its manifest was written.
+            (None, Some(_)) => None,
+            (None, None) => {
+                widened_on_disk(&checked, &parent_scope, self.unscoped_cwd().as_deref())?
+            }
         };
-        match checked.widened_field(&parent_scope).or_else(on_disk) {
+        match widened {
             Some(field) => Err(RuntimeError::Invalid(format!(
                 "child scope must narrow the parent's scope; `{field}` widens it"
             ))),

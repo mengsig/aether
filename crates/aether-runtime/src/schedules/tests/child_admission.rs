@@ -18,24 +18,26 @@ const OTHER_FRONTIER: (&str, &str) = ("anthropic", "claude-fable-5-1");
 const ENGINE_FAST: (&str, &str) = ("claude-code", "haiku");
 const KIND: EngineKind = EngineKind::CLAUDE_CODE;
 
-/// An engine that cannot run a child without network access.
-struct NeedsNetwork;
+/// A CLI engine; one that does not run offline needs network access.
+struct Cli {
+    runs_offline: bool,
+}
 
 #[async_trait::async_trait]
-impl aether_engine::Engine for NeedsNetwork {
+impl aether_engine::Engine for Cli {
     fn kind(&self) -> EngineKind {
         KIND
     }
 
     fn adapter(&self) -> String {
-        "needs-network".into()
+        "test-cli".into()
     }
 
     fn validate_network_policy(
         &self,
         network_access: bool,
     ) -> std::result::Result<(), EngineError> {
-        if network_access {
+        if network_access || self.runs_offline {
             return Ok(());
         }
         Err(EngineError::Unsupported("it cannot run offline".into()))
@@ -48,6 +50,16 @@ impl aether_engine::Engine for NeedsNetwork {
     ) -> std::result::Result<aether_engine::EngineRun, EngineError> {
         Err(EngineError::Unsupported("a test engine".into()))
     }
+}
+
+fn needs_network() -> Arc<dyn aether_engine::Engine> {
+    Arc::new(Cli {
+        runs_offline: false,
+    })
+}
+
+fn runs_offline() -> Arc<dyn aether_engine::Engine> {
+    Arc::new(Cli { runs_offline: true })
 }
 
 fn stage(runtime: &Runtime, job: &Schedule) -> StagedSpawn {
@@ -210,7 +222,7 @@ async fn a_cancellation_in_progress_ends_the_schedule_ahead_of_any_wait() {
 #[tokio::test]
 async fn an_engine_that_cannot_run_under_the_childs_network_refuses_it_then_or_later() {
     let (runtime, _dir) = fixture().await;
-    runtime.engines.mark_usable(KIND, Arc::new(NeedsNetwork));
+    runtime.engines.mark_usable(KIND, needs_network());
     let lead = creator(&runtime, None);
     let template = child_template(ENGINE_FAST, Effort::Low);
     let job = schedule(&runtime, &lead, template.clone());
@@ -228,7 +240,7 @@ async fn an_engine_that_cannot_run_under_the_childs_network_refuses_it_then_or_l
 #[tokio::test]
 async fn an_occurrence_waits_while_its_engine_is_unavailable() {
     let (runtime, _dir) = fixture().await;
-    runtime.engines.mark_usable(KIND, Arc::new(NeedsNetwork));
+    runtime.engines.mark_usable(KIND, needs_network());
     let lead = creator(&runtime, None);
     let template = child_template(ENGINE_FAST, Effort::Low);
     let job = schedule(&runtime, &lead, template.clone());
@@ -241,20 +253,83 @@ async fn an_occurrence_waits_while_its_engine_is_unavailable() {
     assert!(reason.contains("its engine is not available"), "{reason}");
     assert!(matches!(stored.status, ScheduleStatus::Active { .. }));
     assert_eq!(stored.deliveries, 0);
+    assert!(runtime.engines.wants_recheck(), "nothing else may probe it");
     let error = refused(&runtime, &lead, template);
     assert!(error.contains("its engine is not available"), "{error}");
 
-    runtime.engines.mark_usable(KIND, Arc::new(NeedsNetwork));
+    runtime.engines.mark_usable(KIND, needs_network());
+    assert!(spawned(&fire(&runtime, job.id)).is_some());
+}
+
+#[tokio::test]
+async fn an_occurrence_waits_while_its_engines_latest_probe_failed() {
+    let (runtime, _dir) = fixture().await;
+    runtime.engines.mark_usable(KIND, needs_network());
+    let lead = creator(&runtime, None);
+    let template = child_template(ENGINE_FAST, Effort::Low);
+    let job = schedule(&runtime, &lead, template.clone());
+    // Still on record as usable, but no turn would launch it.
+    runtime
+        .engines
+        .mark_suspect(KIND, "claude --version timed out");
+
+    let stored = fire(&runtime, job.id);
+    let reason = skip_reason(&stored).expect("waits for a probe that passes");
+    assert!(reason.contains("its engine is not available"), "{reason}");
+    assert!(reason.contains("claude --version timed out"), "{reason}");
+    assert_eq!(stored.deliveries, 0);
+    assert!(children(&runtime, lead.id).is_empty());
+
+    let probing = crate::scheduler::reprobe_wanted_engines(&runtime);
+    probing.expect("the wait asked for a probe").await.unwrap();
+    assert!(!runtime.engines.wants_recheck(), "asked for once");
+    assert!(crate::scheduler::reprobe_wanted_engines(&runtime).is_none());
+
+    let error = refused(&runtime, &lead, template);
+    assert!(error.contains("claude --version timed out"), "{error}");
+    assert!(
+        runtime.engines.wants_recheck(),
+        "a refused creation asks too"
+    );
+
+    runtime.engines.clear_suspect(KIND);
+    assert!(spawned(&fire(&runtime, job.id)).is_some());
+}
+
+#[tokio::test]
+async fn the_engines_verdict_is_the_one_under_the_hold() {
+    let (runtime, _dir) = fixture().await;
+    runtime.engines.mark_usable(KIND, runs_offline());
+    let lead = creator(&runtime, None);
+    let job = schedule(&runtime, &lead, child_template(ENGINE_FAST, Effort::Low));
+    change(&runtime, lead.id, |lead| {
+        lead.scope.network = NetworkPolicy::Denied;
+    });
+
+    // Staged while the engine ran offline; by the hold it no longer does.
+    let staged = stage(&runtime, &job);
+    runtime.engines.mark_usable(KIND, needs_network());
+    let (fired, commit) = decide(&runtime, &mut job.clone(), staged);
+    let error = fired.expect_err("refused by the engine now").to_string();
+    assert!(error.contains("it cannot run offline"), "{error}");
+    assert!(commit.mutations.is_empty());
+
+    // Staged while it could not; a refusal from then must not outlive it.
+    let staged = stage(&runtime, &job);
+    runtime.engines.mark_usable(KIND, runs_offline());
+    let (fired, commit) = decide(&runtime, &mut job.clone(), staged);
+    assert!(fired.unwrap().is_none(), "staged again on the next pass");
+    assert!(commit.mutations.is_empty() && children(&runtime, lead.id).is_empty());
     assert!(spawned(&fire(&runtime, job.id)).is_some());
 }
 
 #[cfg(unix)]
 #[tokio::test]
-async fn a_template_path_that_resolves_outside_its_creators_roots_is_refused() {
+async fn a_template_path_that_comes_to_lead_outside_its_creators_roots_is_refused() {
     let (runtime, dir) = fixture().await;
     let workspace = dir.path().join("workspace");
     let (inside, outside) = (workspace.join("sub"), dir.path().join("outside"));
-    std::fs::create_dir_all(&inside).unwrap();
+    std::fs::create_dir_all(&workspace).unwrap();
     std::fs::create_dir_all(&outside).unwrap();
     let lead = creator(&runtime, None);
     let lead = change(&runtime, lead.id, |lead| {
@@ -272,10 +347,10 @@ async fn a_template_path_that_resolves_outside_its_creators_roots_is_refused() {
         allowed_paths: vec![inside.clone()],
         ..lead.scope.clone()
     });
+    // Not there yet, so it leads nowhere but into the workspace.
     let job = schedule(&runtime, &lead, rooted.clone());
     schedule(&runtime, &lead, allowed.clone());
-    // The same lexical path, now the way out of the creator's workspace.
-    std::fs::remove_dir(&inside).unwrap();
+    // The same path appears, as the way out of the creator's workspace.
     std::os::unix::fs::symlink(&outside, &inside).unwrap();
 
     let widens = |field: &str| format!("`{field}` widens it");
@@ -286,6 +361,97 @@ async fn a_template_path_that_resolves_outside_its_creators_roots_is_refused() {
     let error = refused(&runtime, &lead, allowed);
     assert!(error.contains(&widens("allowed_paths")), "{error}");
     assert!(children(&runtime, lead.id).is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_missing_template_path_is_followed_through_the_links_above_it() {
+    let (runtime, dir) = fixture().await;
+    let workspace = dir.path().join("workspace");
+    let outside = dir.path().join("outside");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let (link, dangling) = (workspace.join("link"), workspace.join("dangling"));
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    std::os::unix::fs::symlink(dir.path().join("later"), &dangling).unwrap();
+    let lead = creator(&runtime, None);
+    let lead = change(&runtime, lead.id, |lead| {
+        lead.scope.workspace_root = Some(workspace.clone());
+    });
+    let template = |root: Option<&std::path::Path>, allowed: Option<&std::path::Path>| SpawnSpec {
+        scope: Some(Scope {
+            workspace_root: Some(root.unwrap_or(&workspace).to_path_buf()),
+            allowed_paths: allowed.into_iter().map(Into::into).collect(),
+            ..lead.scope.clone()
+        }),
+        ..child_template(FAST, Effort::Low)
+    };
+
+    // Nothing is at `link/new` yet; once something is, it is outside.
+    let error = refused(&runtime, &lead, template(None, Some(&link.join("new"))));
+    assert!(error.contains("`allowed_paths` widens it"), "{error}");
+    let error = refused(&runtime, &lead, template(Some(&link.join("new")), None));
+    assert!(error.contains("`workspace_root` widens it"), "{error}");
+    let error = refused(&runtime, &lead, template(Some(&dangling), None));
+    assert!(error.contains("`workspace_root` widens it"), "{error}");
+    let job = schedule(
+        &runtime,
+        &lead,
+        template(None, Some(&workspace.join("new"))),
+    );
+    assert!(spawned(&fire(&runtime, job.id)).is_some());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_path_that_cannot_be_resolved_is_refused_unless_it_is_its_creators_own() {
+    let (runtime, dir) = fixture().await;
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let endless = workspace.join("loop");
+    std::os::unix::fs::symlink(&endless, &endless).unwrap();
+    let lead = creator(&runtime, None);
+    let lead = change(&runtime, lead.id, |lead| {
+        lead.scope.workspace_root = Some(workspace.clone());
+        lead.scope.allowed_paths = vec![endless.clone()];
+    });
+
+    let beneath = SpawnSpec {
+        scope: Some(Scope {
+            allowed_paths: vec![endless.join("x")],
+            ..lead.scope.clone()
+        }),
+        ..child_template(FAST, Effort::Low)
+    };
+    let error = refused(&runtime, &lead, beneath);
+    assert!(error.contains("cannot be resolved"), "{error}");
+    // Its creator's scope as it stands leads nowhere its creator's does not.
+    let job = schedule(&runtime, &lead, child_template(FAST, Effort::Low));
+    let child = spawned(&fire(&runtime, job.id)).expect("inherits the scope");
+    let child = runtime.store.agent(child).unwrap().unwrap();
+    assert_eq!(child.scope.allowed_paths, vec![endless]);
+}
+
+#[tokio::test]
+async fn a_creator_without_a_workspace_root_is_held_to_where_it_works() {
+    let (runtime, dir) = fixture().await;
+    let lead = creator(&runtime, None);
+    assert_eq!(lead.scope.workspace_root, None);
+    let cwd = runtime.unscoped_cwd().expect("the file tools' root for it");
+    let rooted = |root: std::path::PathBuf| SpawnSpec {
+        scope: Some(Scope {
+            workspace_root: Some(root),
+            ..lead.scope.clone()
+        }),
+        ..child_template(FAST, Effort::Low)
+    };
+
+    let error = refused(&runtime, &lead, rooted(dir.path().to_path_buf()));
+    assert!(error.contains("`workspace_root` widens it"), "{error}");
+    let job = schedule(&runtime, &lead, rooted(cwd.join("src")));
+    let child = spawned(&fire(&runtime, job.id)).expect("a narrower place to work");
+    let child = runtime.store.agent(child).unwrap().unwrap();
+    assert_eq!(child.scope.workspace_root, Some(cwd.join("src")));
 }
 
 #[tokio::test]

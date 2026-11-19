@@ -11,7 +11,8 @@ use aether_store::Commit;
 use super::execution::{Fired, skipped};
 use crate::commands::{Preflight, PreparedAgent};
 use crate::delegation_admission::{
-    ChildReason, ChildRequest, EngineRefusal, Slots, engine_refusal, prepare_child,
+    ChildReason, ChildRequest, EngineRefusal, Slots, engine_refusal, engine_unavailable,
+    prepare_child,
 };
 use crate::{CommitHold, Result, Runtime, RuntimeError};
 
@@ -116,7 +117,7 @@ fn live_creator(runtime: &Runtime, id: AgentId) -> Result<Agent> {
 }
 
 /// What stops the template's engine from running a child now, by what the
-/// daemon has detected: the tick cannot wait on the probe `delegate` runs.
+/// daemon last detected: a tick cannot wait on the probe `delegate` runs.
 fn engine_block(
     runtime: &Runtime,
     template: &SpawnSpec,
@@ -139,19 +140,29 @@ fn engine_block(
         .map_or(creator.scope.network, |scope| scope.network);
     let detected = match runtime.engines.now() {
         Ok(detected) => detected,
-        Err(RuntimeError::Starting(why)) => return Ok(Some(EngineRefusal::Unavailable(why))),
+        Err(RuntimeError::Starting(why)) => {
+            return Ok(Some(EngineRefusal::Unavailable { kind, why }));
+        }
         Err(error) => return Err(error),
     };
-    Ok(engine_refusal(
-        &detected,
-        kind,
-        &resolved.provider.id,
-        network,
+    let provider = resolved.provider.id.as_str();
+    // No probe follows as in `delegate`, so only what a turn would launch.
+    if detected.launchable(&kind).is_none() {
+        return Ok(Some(engine_unavailable(&detected, kind, provider)));
+    }
+    Ok(engine_refusal(&detected, kind, provider, network))
+}
+
+fn refused_by_engine(template: &SpawnSpec, refusal: &EngineRefusal) -> RuntimeError {
+    let model = template.model.as_ref().map(ToString::to_string);
+    RuntimeError::Invalid(format!(
+        "delegation refused: {} cannot run this child: {refusal}",
+        model.as_deref().unwrap_or("its model")
     ))
 }
 
 /// The child `creator` would get from `template` now, unwritten: refused
-/// exactly when the same `delegate` call would be.
+/// when the same `delegate` call would be, the engine's verdict aside.
 fn prepare(
     runtime: &Runtime,
     template: &SpawnSpec,
@@ -160,13 +171,10 @@ fn prepare(
     slots: Slots,
 ) -> Result<PreparedAgent> {
     let request = child_request(template, objective)?;
-    if let Some(refusal) = engine_block(runtime, template, creator)? {
-        return Err(RuntimeError::Invalid(format!(
-            "delegation refused: {} cannot run this child: {refusal}",
-            request.model
-        )));
-    }
-    prepare_child(runtime, creator, request, &Actor::agent(creator.id), slots)
+    let child = prepare_child(runtime, creator, request, &Actor::agent(creator.id), slots)?;
+    debug_assert_eq!(child.agent.parent, Some(creator.id));
+    debug_assert_eq!(child.agent.run, creator.run, "a child joins its run");
+    Ok(child)
 }
 
 /// A new schedule's template, checked against its creator as it is now.
@@ -176,9 +184,15 @@ pub(super) fn check_template(
     creator: AgentId,
 ) -> Result<Checked> {
     let creator = live_creator(runtime, creator)?;
+    if let Some(refusal) = engine_block(runtime, template, &creator)? {
+        // Nothing else may probe an idle engine, and the caller may try again.
+        if let EngineRefusal::Unavailable { kind, .. } = &refusal {
+            runtime.engines.want_recheck(*kind);
+        }
+        return Err(refused_by_engine(template, &refusal));
+    }
     let objective = template.objective.clone();
     let child = prepare(runtime, template, objective, &creator, Slots::Counted)?;
-    debug_assert_eq!(child.agent.parent, Some(creator.id));
     Ok(Checked { creator, child })
 }
 
@@ -187,12 +201,12 @@ pub(super) fn check_creator_live(runtime: &Runtime, creator: AgentId) -> Result<
     live_creator(runtime, creator).map(|_| ())
 }
 
-/// Why this occurrence waits for the next one. None of these ends the
-/// schedule: each clears without anyone changing it.
+/// Why this occurrence waits for the next one, its engine aside. None of
+/// these ends the schedule: each clears without anyone changing it.
 fn waits(
     runtime: &Runtime,
     creator: &Agent,
-    template: &SpawnSpec,
+    role: &str,
     last_child: Option<AgentId>,
 ) -> Result<Option<String>> {
     if creator.paused {
@@ -201,13 +215,20 @@ fn waits(
     if let Some(reason) = previous_child_live(runtime, last_child)? {
         return Ok(Some(reason));
     }
-    if let Some(reason) = runtime.parallel_refusal(creator, template.role.trim())? {
-        return Ok(Some(reason));
+    runtime.parallel_refusal(creator, role.trim())
+}
+
+/// The engine's verdict on this occurrence, as it stands under the hold: a
+/// wait while it cannot be launched, with a new probe asked for, or a refusal.
+fn engine_wait(runtime: &Runtime, template: &SpawnSpec, creator: &Agent) -> Result<Option<String>> {
+    match engine_block(runtime, template, creator)? {
+        None => Ok(None),
+        Some(EngineRefusal::Unavailable { kind, why }) => {
+            runtime.engines.want_recheck(kind);
+            Ok(Some(why))
+        }
+        Some(refusal @ EngineRefusal::Network(_)) => Err(refused_by_engine(template, &refusal)),
     }
-    Ok(match engine_block(runtime, template, creator)? {
-        Some(EngineRefusal::Unavailable(why)) => Some(why),
-        Some(EngineRefusal::Network(_)) | None => None,
-    })
 }
 
 /// The overlap rule: the previous child, a restart of it, or anything either
@@ -254,9 +275,12 @@ pub(super) fn stage(
         return Ok(None);
     };
     // A full `max_parallel` is one of the waits, never this child's refusal.
-    let child = match waits(runtime, &creator, template, last_child)? {
-        Some(_) => Ok(None),
-        None => prepare(runtime, template, objective, &creator, Slots::LeftToCaller).map(Some),
+    // The engine's verdict belongs to the hold: nothing is staged against it.
+    let ready = waits(runtime, &creator, &template.role, last_child)?.is_none()
+        && engine_block(runtime, template, &creator)?.is_none();
+    let child = match ready {
+        true => prepare(runtime, template, objective, &creator, Slots::LeftToCaller).map(Some),
+        false => Ok(None),
     };
     Ok(Some(Staged { creator, child }))
 }
@@ -305,7 +329,10 @@ pub(super) fn fire(
     if !same_authority(&staged.creator, &creator) {
         return Ok(None);
     }
-    if let Some(reason) = waits(runtime, &creator, template, *last_child)? {
+    if let Some(reason) = waits(runtime, &creator, &template.role, *last_child)? {
+        return Ok(Some(skipped(reason)));
+    }
+    if let Some(reason) = engine_wait(runtime, template, &creator)? {
         return Ok(Some(skipped(reason)));
     }
     let Some(prepared) = staged.current_child(&creator)? else {

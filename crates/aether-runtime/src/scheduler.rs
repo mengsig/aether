@@ -69,7 +69,22 @@ async fn run(runtime: Arc<Runtime>) {
         if let Some(Err(e)) = contained(&runtime, "tick", || tick(&runtime)) {
             tracing::error!(error = %e, "scheduler tick failed");
         }
+        reprobe_wanted_engines(&runtime);
     }
+}
+
+/// Probe again, off the scheduler's task, each engine a schedule's occurrence
+/// waited on: a tick cannot wait for the probe, and nothing else may ask.
+pub(crate) fn reprobe_wanted_engines(
+    runtime: &Arc<Runtime>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    if !runtime.engines.wants_recheck() {
+        return None;
+    }
+    let runtime = runtime.clone();
+    Some(tokio::spawn(async move {
+        runtime.engines.recheck_wanted().await;
+    }))
 }
 
 /// A fault the tests inject into a named step.

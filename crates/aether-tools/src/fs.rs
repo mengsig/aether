@@ -321,6 +321,12 @@ fn allowed_roots(ctx: &ToolContext) -> Result<Vec<PathBuf>, ToolError> {
     Ok(roots)
 }
 
+/// Where `path` leads once its symlinks are followed, as [`resolve_path`]
+/// follows them: a dangling link too, and what does not exist yet as written.
+pub fn resolve_links(path: &Path) -> Result<PathBuf, ToolError> {
+    canonicalize_lenient(path, MAX_SYMLINK_REDIRECTS)
+}
+
 /// Canonicalize the longest existing prefix, then append the rest lexically.
 fn canonicalize_lenient(path: &Path, remaining_links: usize) -> Result<PathBuf, ToolError> {
     let comps: Vec<Component<'_>> = path.components().collect();

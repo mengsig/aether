@@ -197,6 +197,8 @@ pub(crate) struct EngineCatalog {
     probing: Option<Probing>,
     /// Each engine's probing history; held across a probe.
     rechecked: tokio::sync::Mutex<HashMap<EngineKind, ProbeHistory>>,
+    /// Engines a caller that cannot wait for a probe found unusable.
+    wanted: parking_lot::Mutex<HashSet<EngineKind>>,
     #[cfg(test)]
     hung: std::sync::atomic::AtomicBool,
 }
@@ -271,6 +273,24 @@ impl EngineCatalog {
         let mut detected = self.detected.write();
         detected.observe(kind, probe, &mut history.streak, at);
         detected.clone()
+    }
+
+    /// Ask for `kind` to be probed again, from code that cannot wait for
+    /// it: [`EngineCatalog::recheck_wanted`] does the probing.
+    pub(crate) fn want_recheck(&self, kind: EngineKind) {
+        self.wanted.lock().insert(kind);
+    }
+
+    pub(crate) fn wants_recheck(&self) -> bool {
+        !self.wanted.lock().is_empty()
+    }
+
+    /// Probe again each engine asked for since the last call.
+    pub(crate) async fn recheck_wanted(&self) {
+        let wanted = std::mem::take(&mut *self.wanted.lock());
+        for kind in wanted {
+            self.recheck(kind).await;
+        }
     }
 
     /// Between probes, a usable `kind` whose CLI has left `PATH` is suspect
