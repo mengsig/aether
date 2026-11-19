@@ -33,13 +33,14 @@ unpriced trials. Costs are API-equivalent. Each invocation exited 1 with
 `INCONCLUSIVE`: the harness needs 20 distinct paired tasks and this smoke uses
 10, and the v2 set is off its calibration target. Neither limit was removed.
 
-The Luna cost rise comes with the candidate's extra solves: two of them ran
-long (`batching-5` 300 s, and `batching-0`, which both passed, 391 s against
-56 s), while v1.4.1 stopped early on the tasks it failed. On the five tasks both arms passed, the
-candidate cost $0.0195 against $0.0239 for v1.4.1 (×0.82). One Luna run cannot
-separate model variance from the release; in 1.4.0's Luna
-confirmations one binary passed and failed the same task across repeats. These samples cannot exclude
-smaller or task-specific regressions.
+The Luna cost rise comes with the candidate's four extra solves, one of which
+ran long (`batching-5`, 300 s), while v1.4.1 stopped early on the tasks it
+failed. On the five tasks both arms passed, the candidate cost $0.0195
+against $0.0239 for v1.4.1 (×0.82), although it took 391 s against 56 s on
+one of them (`batching-0`). One Luna run cannot separate model variance from
+the release; in 1.4.0's Luna confirmations one binary passed and failed the
+same task across repeats. These samples cannot exclude smaller or
+task-specific regressions.
 
 ## Scope, ordering and load
 
