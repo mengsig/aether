@@ -247,13 +247,12 @@ looks like a boundary and is not one.
   for a child on the creator's own frontier-tier model, an isolated workspace,
   references, or budgets of the child's own. The provider's credentials are
   checked when the schedule is created and not again per occurrence: a child
-  whose credentials have since gone fails at its first turn. Each occurrence
-  checks the engine against what the daemon last detected and never waits
-  for a probe itself: while the engine is unavailable or its latest probe
-  failed the occurrence is skipped, and the daemon probes the engine again in
-  the background for a later one. A bare `wait_for`
-  does not wait on the schedule: with nothing else pending, its creator waits
-  with a timeout. The schedule belongs to the agent that created it: it ends
+  whose credentials have since gone fails at its first turn. An occurrence
+  runs on an engine the daemon last found launchable without probing it
+  again. One whose engine is unavailable, or whose latest probe failed, stays
+  due while the daemon probes the engine in the background, then runs or is
+  skipped on that answer. A bare `wait_for` does not wait on the schedule:
+  with nothing else pending, its creator waits with a timeout. The schedule belongs to the agent that created it: it ends
   when that agent does, a restart's successor does not take it over, and an
   exported run leaves it behind. Only the CLI schedules a fresh root run. A
   release without agent spawn schedules cannot read one that is active, paused

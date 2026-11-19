@@ -110,9 +110,9 @@ with `wait=false`, admitted by the same code:
   refused now, and the error carries `delegate`'s refusal. That includes a
   caller already at `max_parallel`. It is also refused while the latest probe
   of the template's engine failed; the daemon then probes that engine again
-  in the background, so a later call can succeed. The check is repeated as the schedule is
-  written, so a caller whose model, scope or policy changes meanwhile is
-  refused and creates it again.
+  in the background, so a later call can succeed. The check is repeated as
+  the schedule is written, so a caller whose model, scope or policy changes
+  meanwhile is refused and creates it again.
 - A call that is refused later ends the schedule, with the refusal as its
   error: a tightened policy, a narrowed scope, a template path that has come
   to lead outside the creator's workspace through a symlink, a spent
@@ -120,11 +120,12 @@ with `wait=false`, admitted by the same code:
   cancelled, an engine that cannot run under the child's network policy.
 - An occurrence is skipped, and the schedule stays active, while its previous
   child, a restart of it or anything beneath either is live, while the
-  creator is paused, while the creator is at `max_parallel`, and while the
-  template's engine cannot be launched: it is unavailable in the daemon or
-  its latest probe failed, and the daemon probes it again in the background
-  so that a later occurrence can run. Skipped occurrences do not
-  count against `max_deliveries`.
+  creator is paused, and while the creator is at `max_parallel`. Skipped
+  occurrences do not count against `max_deliveries`.
+- An occurrence whose engine cannot be launched, because it is unavailable in
+  the daemon or its latest probe failed, is not decided on that old result.
+  It stays due for the moment the daemon takes to probe the engine again in
+  the background, then runs if the probe passed and is skipped if it did not.
 - The schedule ends when its creator does, at its next occurrence, and cannot
   be resumed afterwards. The creator, or an operator, pauses, resumes and
   cancels it with `update_schedule` like any timer.

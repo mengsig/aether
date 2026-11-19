@@ -32,11 +32,12 @@ release is also the text of its GitHub release.
   child's messaging reach. A template `delegate` would refuse is refused when
   the schedule is created; one refused later ends the schedule with that
   refusal. An occurrence is skipped while the previous child's subtree is
-  live, the creator is paused, the creator is at `max_parallel` or the
-  template's engine cannot be launched: it is unavailable or its latest probe
-  failed, and the daemon probes it again meanwhile. Provider credentials are
-  checked when the schedule is created, not per occurrence. `max_deliveries` and pause, resume
-  and cancel work as for any timer. The schedule ends with its creator, and a
+  live, the creator is paused or the creator is at `max_parallel`. One whose
+  engine cannot be launched, because it is unavailable or its latest probe
+  failed, stays due while the daemon probes the engine again, and is skipped
+  if that probe fails too. Provider credentials are checked when the schedule
+  is created, not per occurrence. `max_deliveries` and pause, resume and
+  cancel work as for any timer. The schedule ends with its creator, and a
   bare `wait_for` does not wait on it. Schedules that start a fresh root run
   stay operator-only, and `aether schedule create` is unchanged.
 
@@ -62,12 +63,15 @@ release is also the text of its GitHub release.
   symlink out of it was accepted, and the child's file tools then followed
   it. Such a path is now refused as widening the parent's scope, as is one
   that does not exist yet beneath such a link, or that is a dangling link out.
-  A parent whose scope names no `workspace_root` works in the daemon's
-  workspace directory, and its child's paths are now held to that directory
-  and the parent's `allowed_paths`; any `workspace_root` was accepted before.
-  A child path that cannot be resolved is refused with the reason. A path the
-  parent names itself, a path that does not exist yet inside the parent's
-  roots and a child in an isolated workspace are accepted as before.
+  The child is held to what its parent's file tools reach: the parent's
+  `workspace_root` and `allowed_paths` where they really are, or where one
+  that does not exist yet will be once created as written. A parent whose
+  scope names no `workspace_root` works in the daemon's workspace directory
+  and its file tools ignore its `allowed_paths`, so its child's paths are now
+  held to that directory; any `workspace_root` was accepted before. A child
+  path that cannot be resolved is refused with the reason. A path the parent
+  names itself, a path that does not exist yet inside the parent's roots and
+  a child in an isolated workspace are accepted as before.
 
 - **A delegated child no longer starts with its parent's compaction
   threshold.** `delegate` copied the parent's `config.compaction_tokens` to
