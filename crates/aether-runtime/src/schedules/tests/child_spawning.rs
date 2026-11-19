@@ -8,15 +8,15 @@ use aether_core::agent::{AgentConfig, HostContext, NetworkPolicy, Scope};
 use aether_core::delegation::{DelegationPolicy, ModelTier, WorkerChoice};
 use aether_core::model::Effort;
 
-const FAST: (&str, &str) = ("anthropic", "claude-haiku-5-5");
-const BALANCED: (&str, &str) = ("anthropic", "claude-sonnet-5-5");
-const FRONTIER: (&str, &str) = ("anthropic", "claude-fable-5-2");
+pub(super) const FAST: (&str, &str) = ("anthropic", "claude-haiku-5-5");
+pub(super) const BALANCED: (&str, &str) = ("anthropic", "claude-sonnet-5-5");
+pub(super) const FRONTIER: (&str, &str) = ("anthropic", "claude-fable-5-2");
 
-fn model((provider, id): (&str, &str)) -> ModelRef {
+pub(super) fn model((provider, id): (&str, &str)) -> ModelRef {
     ModelRef::new(provider, id)
 }
 
-fn fast_only() -> DelegationPolicy {
+pub(super) fn fast_only() -> DelegationPolicy {
     DelegationPolicy {
         workers: vec![WorkerChoice {
             model: None,
@@ -28,7 +28,7 @@ fn fast_only() -> DelegationPolicy {
 }
 
 /// Any worker the tier ceiling allows, `limit` of them unfinished at once.
-fn at_most(limit: u32) -> DelegationPolicy {
+pub(super) fn at_most(limit: u32) -> DelegationPolicy {
     DelegationPolicy {
         max_parallel: Some(limit),
         ..DelegationPolicy::default()
@@ -36,7 +36,7 @@ fn at_most(limit: u32) -> DelegationPolicy {
 }
 
 /// An unstarted root on `chosen`, with `config` and network access.
-fn creator_with(runtime: &Runtime, chosen: (&str, &str), config: AgentConfig) -> Agent {
+pub(super) fn creator_with(runtime: &Runtime, chosen: (&str, &str), config: AgentConfig) -> Agent {
     let lead = runtime
         .create_agent(
             CreateAgentSpec {
@@ -62,7 +62,7 @@ fn creator_with(runtime: &Runtime, chosen: (&str, &str), config: AgentConfig) ->
 }
 
 /// A balanced-tier lead with `policy`.
-fn creator(runtime: &Runtime, policy: Option<DelegationPolicy>) -> Agent {
+pub(super) fn creator(runtime: &Runtime, policy: Option<DelegationPolicy>) -> Agent {
     let config = AgentConfig {
         delegation_policy: policy,
         ..AgentConfig::default()
@@ -71,7 +71,7 @@ fn creator(runtime: &Runtime, policy: Option<DelegationPolicy>) -> Agent {
 }
 
 /// Rewrite an agent's row, as an operator's update or its own progress would.
-fn change(runtime: &Runtime, id: AgentId, patch: impl FnOnce(&mut Agent)) -> Agent {
+pub(super) fn change(runtime: &Runtime, id: AgentId, patch: impl FnOnce(&mut Agent)) -> Agent {
     let mut agent = runtime.store.agent(id).unwrap().unwrap();
     patch(&mut agent);
     runtime
@@ -80,7 +80,7 @@ fn change(runtime: &Runtime, id: AgentId, patch: impl FnOnce(&mut Agent)) -> Age
     agent
 }
 
-fn child_template(chosen: (&str, &str), effort: Effort) -> SpawnSpec {
+pub(super) fn child_template(chosen: (&str, &str), effort: Effort) -> SpawnSpec {
     SpawnSpec {
         role: "poller".into(),
         name: None,
@@ -96,7 +96,7 @@ fn child_template(chosen: (&str, &str), effort: Effort) -> SpawnSpec {
     }
 }
 
-fn child_spec(template: SpawnSpec) -> CreateScheduleSpec {
+pub(super) fn child_spec(template: SpawnSpec) -> CreateScheduleSpec {
     CreateScheduleSpec {
         target: ScheduleTarget::Spawn(template),
         max_deliveries: None,
@@ -104,7 +104,7 @@ fn child_spec(template: SpawnSpec) -> CreateScheduleSpec {
     }
 }
 
-fn schedule(runtime: &Runtime, creator: &Agent, template: SpawnSpec) -> Schedule {
+pub(super) fn schedule(runtime: &Runtime, creator: &Agent, template: SpawnSpec) -> Schedule {
     let job = runtime
         .create_schedule(child_spec(template), Actor::agent(creator.id))
         .unwrap();
@@ -112,7 +112,7 @@ fn schedule(runtime: &Runtime, creator: &Agent, template: SpawnSpec) -> Schedule
     job
 }
 
-fn refused(runtime: &Runtime, creator: &Agent, template: SpawnSpec) -> String {
+pub(super) fn refused(runtime: &Runtime, creator: &Agent, template: SpawnSpec) -> String {
     let before = runtime.store.last_seq().unwrap();
     let error = runtime
         .create_schedule(child_spec(template), Actor::agent(creator.id))
@@ -126,7 +126,7 @@ fn refused(runtime: &Runtime, creator: &Agent, template: SpawnSpec) -> String {
     error
 }
 
-fn children(runtime: &Runtime, creator: AgentId) -> Vec<Agent> {
+pub(super) fn children(runtime: &Runtime, creator: AgentId) -> Vec<Agent> {
     runtime
         .store
         .agents(&aether_store::AgentFilter {
@@ -137,7 +137,7 @@ fn children(runtime: &Runtime, creator: AgentId) -> Vec<Agent> {
 }
 
 /// Fire the schedule's next occurrence and return it as that left it.
-fn fire(runtime: &Runtime, id: aether_core::id::ScheduleId) -> Schedule {
+pub(super) fn fire(runtime: &Runtime, id: aether_core::id::ScheduleId) -> Schedule {
     let due = runtime
         .store
         .schedule(id)
@@ -150,7 +150,7 @@ fn fire(runtime: &Runtime, id: aether_core::id::ScheduleId) -> Schedule {
 }
 
 /// The error a schedule ended with, and the same error in its history.
-fn ended_with(job: &Schedule) -> String {
+pub(super) fn ended_with(job: &Schedule) -> String {
     let ScheduleStatus::Failed { error, .. } = &job.status else {
         panic!("expected a failed schedule, got {:?}", job.status);
     };

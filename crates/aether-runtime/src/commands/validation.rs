@@ -37,6 +37,31 @@ pub(super) fn checked_agent_name(name: &str) -> Result<String> {
     Ok(trimmed.to_owned())
 }
 
+/// The field on which `scope` leaves `parent` once symlinks are followed, as
+/// the file tools follow them. A path that does not exist grants nothing.
+fn widened_on_disk(scope: &Scope, parent: &Scope) -> Option<&'static str> {
+    let parent_root = parent.workspace_root.as_ref()?;
+    let real = |path: &std::path::PathBuf| std::fs::canonicalize(path).ok();
+    let granted: Vec<std::path::PathBuf> = std::iter::once(parent_root)
+        .chain(&parent.allowed_paths)
+        .filter_map(real)
+        .collect();
+    let inside = |path: &std::path::PathBuf| {
+        real(path).is_none_or(|path| granted.iter().any(|root| path.starts_with(root)))
+    };
+    if scope
+        .workspace_root
+        .as_ref()
+        .is_some_and(|root| !inside(root))
+    {
+        return Some("workspace_root");
+    }
+    if !scope.allowed_paths.iter().all(inside) {
+        return Some("allowed_paths");
+    }
+    None
+}
+
 impl Runtime {
     /// Apply `guard` to every link a turn may land on, primary first. A
     /// fallback is not a lesser model: a turn runs on it with the same budget,
@@ -242,7 +267,12 @@ impl Runtime {
         } else {
             parent_scope
         };
-        match checked.widened_field(&parent_scope) {
+        // A managed worktree was resolved when its manifest was written.
+        let on_disk = || match isolated_workspace {
+            None => widened_on_disk(&checked, &parent_scope),
+            Some(_) => None,
+        };
+        match checked.widened_field(&parent_scope).or_else(on_disk) {
             Some(field) => Err(RuntimeError::Invalid(format!(
                 "child scope must narrow the parent's scope; `{field}` widens it"
             ))),

@@ -10,7 +10,9 @@ use aether_store::Commit;
 
 use super::execution::{Fired, skipped};
 use crate::commands::{Preflight, PreparedAgent};
-use crate::delegation_admission::{ChildReason, ChildRequest, Slots, prepare_child};
+use crate::delegation_admission::{
+    ChildReason, ChildRequest, EngineRefusal, Slots, engine_refusal, prepare_child,
+};
 use crate::{CommitHold, Result, Runtime, RuntimeError};
 
 /// What an occurrence has ready before the hold.
@@ -19,6 +21,29 @@ pub(super) struct Staged {
     creator: Agent,
     /// `None` when the occurrence had to wait, so nothing was prepared.
     child: Result<Option<PreparedAgent>>,
+}
+
+/// A new schedule's template, admitted against its creator as it was read.
+pub(super) struct Checked {
+    creator: Agent,
+    child: PreparedAgent,
+}
+
+impl Checked {
+    /// Under the hold the schedule is written under: refused exactly when
+    /// the same `delegate` call would be refused now.
+    pub(super) fn check_held(mut self, runtime: &Runtime, hold: &CommitHold<'_>) -> Result<()> {
+        let creator = live_creator(runtime, self.creator.id)?;
+        if !same_authority(&self.creator, &creator) {
+            return Err(RuntimeError::Invalid(
+                "your model, scope or delegation policy changed while this schedule was \
+                 being created; create it again"
+                    .into(),
+            ));
+        }
+        debug_assert_eq!(self.child.agent.parent, Some(creator.id));
+        runtime.check_prepared(hold, &mut self.child, Preflight::delegated())
+    }
 }
 
 /// The `delegate` call `template` stands for, with `objective` as its task.
@@ -90,6 +115,41 @@ fn live_creator(runtime: &Runtime, id: AgentId) -> Result<Agent> {
     creator_or_ending(runtime, id)?
 }
 
+/// What stops the template's engine from running a child now, by what the
+/// daemon has detected: the tick cannot wait on the probe `delegate` runs.
+fn engine_block(
+    runtime: &Runtime,
+    template: &SpawnSpec,
+    creator: &Agent,
+) -> Result<Option<EngineRefusal>> {
+    // A missing or unknown model is refused when the child is prepared.
+    let Some(Ok(resolved)) = template
+        .model
+        .as_ref()
+        .map(|model| runtime.models.resolve(model))
+    else {
+        return Ok(None);
+    };
+    let Some(kind) = crate::turn_engine::engine_kind(resolved.provider.protocol) else {
+        return Ok(None);
+    };
+    let network = template
+        .scope
+        .as_ref()
+        .map_or(creator.scope.network, |scope| scope.network);
+    let detected = match runtime.engines.now() {
+        Ok(detected) => detected,
+        Err(RuntimeError::Starting(why)) => return Ok(Some(EngineRefusal::Unavailable(why))),
+        Err(error) => return Err(error),
+    };
+    Ok(engine_refusal(
+        &detected,
+        kind,
+        &resolved.provider.id,
+        network,
+    ))
+}
+
 /// The child `creator` would get from `template` now, unwritten: refused
 /// exactly when the same `delegate` call would be.
 fn prepare(
@@ -100,6 +160,12 @@ fn prepare(
     slots: Slots,
 ) -> Result<PreparedAgent> {
     let request = child_request(template, objective)?;
+    if let Some(refusal) = engine_block(runtime, template, creator)? {
+        return Err(RuntimeError::Invalid(format!(
+            "delegation refused: {} cannot run this child: {refusal}",
+            request.model
+        )));
+    }
     prepare_child(runtime, creator, request, &Actor::agent(creator.id), slots)
 }
 
@@ -108,14 +174,16 @@ pub(super) fn check_template(
     runtime: &Runtime,
     template: &SpawnSpec,
     creator: AgentId,
-) -> Result<PreparedAgent> {
+) -> Result<Checked> {
     let creator = live_creator(runtime, creator)?;
     let objective = template.objective.clone();
-    prepare(runtime, template, objective, &creator, Slots::Counted)
+    let child = prepare(runtime, template, objective, &creator, Slots::Counted)?;
+    debug_assert_eq!(child.agent.parent, Some(creator.id));
+    Ok(Checked { creator, child })
 }
 
-/// Resuming needs a creator that can still have children.
-pub(super) fn check_resumable(runtime: &Runtime, creator: AgentId) -> Result<()> {
+/// Firing and resuming both need a creator that can still have children.
+pub(super) fn check_creator_live(runtime: &Runtime, creator: AgentId) -> Result<()> {
     live_creator(runtime, creator).map(|_| ())
 }
 
@@ -124,7 +192,7 @@ pub(super) fn check_resumable(runtime: &Runtime, creator: AgentId) -> Result<()>
 fn waits(
     runtime: &Runtime,
     creator: &Agent,
-    role: &str,
+    template: &SpawnSpec,
     last_child: Option<AgentId>,
 ) -> Result<Option<String>> {
     if creator.paused {
@@ -133,7 +201,13 @@ fn waits(
     if let Some(reason) = previous_child_live(runtime, last_child)? {
         return Ok(Some(reason));
     }
-    runtime.parallel_refusal(creator, role.trim())
+    if let Some(reason) = runtime.parallel_refusal(creator, template.role.trim())? {
+        return Ok(Some(reason));
+    }
+    Ok(match engine_block(runtime, template, creator)? {
+        Some(EngineRefusal::Unavailable(why)) => Some(why),
+        Some(EngineRefusal::Network(_)) | None => None,
+    })
 }
 
 /// The overlap rule: the previous child, a restart of it, or anything either
@@ -180,7 +254,7 @@ pub(super) fn stage(
         return Ok(None);
     };
     // A full `max_parallel` is one of the waits, never this child's refusal.
-    let child = match waits(runtime, &creator, &template.role, last_child)? {
+    let child = match waits(runtime, &creator, template, last_child)? {
         Some(_) => Ok(None),
         None => prepare(runtime, template, objective, &creator, Slots::LeftToCaller).map(Some),
     };
@@ -197,6 +271,20 @@ fn same_authority(staged: &Agent, now: &Agent) -> bool {
         && staged.fallbacks == now.fallbacks
 }
 
+impl Staged {
+    /// The child to admit against `creator`, read under the hold. `None`:
+    /// nothing was prepared, or its refusal was decided on a row since moved.
+    fn current_child(self, creator: &Agent) -> Result<Option<PreparedAgent>> {
+        debug_assert_eq!(self.creator.id, creator.id);
+        match self.child {
+            Ok(child) => Ok(child),
+            Err(error @ RuntimeError::Store(_)) => Err(error),
+            Err(_) if self.creator != *creator => Ok(None),
+            Err(refusal) => Err(refusal),
+        }
+    }
+}
+
 /// Fire one occurrence under the hold its commit is applied under. `None`:
 /// `staged` no longer matches the store, so the next pass stages it again.
 pub(super) fn fire(
@@ -204,26 +292,44 @@ pub(super) fn fire(
     hold: &CommitHold<'_>,
     commit: &mut Commit,
     creator: AgentId,
-    role: &str,
+    template: &SpawnSpec,
     last_child: &mut Option<AgentId>,
     staged: Result<Option<Staged>>,
 ) -> Result<Option<Fired>> {
     let creator = live_creator(runtime, creator)?;
+    // Ahead of every wait: a creator being cancelled gets no more children.
+    crate::cancellation::check_parent(runtime, hold, creator.id)?;
     let Some(staged) = staged? else {
         return Ok(None);
     };
     if !same_authority(&staged.creator, &creator) {
         return Ok(None);
     }
-    if let Some(reason) = waits(runtime, &creator, role, *last_child)? {
+    if let Some(reason) = waits(runtime, &creator, template, *last_child)? {
         return Ok(Some(skipped(reason)));
     }
-    let Some(prepared) = staged.child? else {
+    let Some(prepared) = staged.current_child(&creator)? else {
         return Ok(None);
     };
     if runtime.workspace_gc_reserves(&prepared.agent.scope) {
         return Ok(Some(skipped("workspace maintenance in progress")));
     }
+    let outcome = admit(runtime, hold, commit, prepared, &creator)?;
+    if let ScheduleOutcome::Spawned { agent, .. } = &outcome {
+        *last_child = Some(*agent);
+    }
+    // A child's repository is its parent's: there is nothing to seed.
+    Ok(Some((outcome, None)))
+}
+
+/// Add the child's creation to `commit`, as `delegate` admits one under its hold.
+fn admit(
+    runtime: &Runtime,
+    hold: &CommitHold<'_>,
+    commit: &mut Commit,
+    prepared: PreparedAgent,
+    creator: &Agent,
+) -> Result<ScheduleOutcome> {
     let (child, task, created) =
         runtime.admit_prepared(hold, prepared, Preflight::delegated(), None)?;
     let task =
@@ -236,12 +342,9 @@ pub(super) fn fire(
     debug_assert_eq!(child.run, creator.run, "a child joins its creator's run");
     commit.events.extend(created.events);
     commit.mutations.extend(created.mutations);
-    *last_child = Some(child.id);
-    let outcome = ScheduleOutcome::Spawned {
+    Ok(ScheduleOutcome::Spawned {
         agent: child.id,
         task: task.id,
         run: child.run,
-    };
-    // A child's repository is its parent's: there is nothing to seed.
-    Ok(Some((outcome, None)))
+    })
 }

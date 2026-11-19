@@ -15791,7 +15791,7 @@
               "type": "null"
             }
           ],
-          "description": "Spawn schedules: the root of the newest spawned run."
+          "description": "Spawn schedules: the newest agent started, a run's root or, for an\nagent's schedule, its creator's child."
         },
         "max_deliveries": {
           "format": "uint64",
@@ -15848,7 +15848,7 @@
               "type": "null"
             }
           ],
-          "description": "Delivery schedules: the agent that receives each trigger."
+          "description": "Delivery schedules: the agent that receives each trigger. An agent's\nspawn schedule that can still fire: its creator, beside `spawn`."
         },
         "updated_at": {
           "format": "date-time",
@@ -16366,7 +16366,7 @@
       "type": "object"
     },
     "SpawnSpec": {
-      "description": "Agent + task each spawn occurrence creates: a root in a new run, or its\ncreator's child. Fields as on `create_agent`; no parent or existing run.",
+      "description": "The agent and task each spawn occurrence creates: a root in a new run, or\nits creator's child. Fields as on `create_agent`; no parent or existing run.",
       "properties": {
         "approval": {
           "anyOf": [
@@ -16428,7 +16428,7 @@
               "type": "null"
             }
           ],
-          "description": "Absent: the daemon's default root scope when each run starts."
+          "description": "Absent: the daemon's default root scope when each run starts, or for\nan agent's schedule its creator's scope when each child starts."
         }
       },
       "required": [

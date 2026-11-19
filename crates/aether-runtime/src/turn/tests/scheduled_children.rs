@@ -197,7 +197,7 @@ async fn a_delegated_child_does_not_inherit_its_parents_compaction_threshold() {
 }
 
 #[tokio::test]
-async fn an_active_spawn_schedule_is_a_wake_source_for_its_creators_bare_wait() {
+async fn a_spawn_schedule_alone_does_not_let_its_creator_wait_bare() {
     let (mut h, _dir) = acting_lead().await;
     let mut task = h.ctx.task.clone().expect("the lead has a task");
     task.status = aether_core::task::TaskStatus::Active;
@@ -207,7 +207,6 @@ async fn an_active_spawn_schedule_is_a_wake_source_for_its_creators_bare_wait() 
         .expect("activate the lead's task");
     let nothing_wakes =
         |h: &ComposeHarness| super::waiting::bare_wait_has_no_wake_source(&h.runtime, &h.ctx.agent);
-    assert!(nothing_wakes(&h).expect("read"), "nothing pending yet");
 
     let created = run(
         &mut h,
@@ -216,19 +215,18 @@ async fn an_active_spawn_schedule_is_a_wake_source_for_its_creators_bare_wait() 
     .await;
     assert!(!created.is_error, "{}", created.content);
     assert!(
-        !nothing_wakes(&h).expect("read"),
-        "the next scheduled child will report to its creator"
+        nothing_wakes(&h).expect("read"),
+        "a schedule that can end without a child must not park its creator"
     );
 
     let reply: serde_json::Value = serde_json::from_str(&created.content).expect("json");
     let job: Schedule = serde_json::from_value(reply["schedule"].clone()).expect("schedule");
-    h.runtime
-        .update_schedule(
-            job.id,
-            aether_core::schedule::ScheduleAction::Cancel,
-            Actor::agent(h.ctx.agent.id),
-        )
-        .expect("cancel");
-    assert!(nothing_wakes(&h).expect("read"), "a cancelled one will not");
+    let due = job.status.next_due().expect("active");
+    crate::schedules::tick(&h.runtime, due).expect("tick");
+    assert_eq!(children(&h).len(), 1, "the occurrence started a child");
+    assert!(
+        !nothing_wakes(&h).expect("read"),
+        "the child reports to its creator like any other"
+    );
     h.runtime.shutdown().await;
 }

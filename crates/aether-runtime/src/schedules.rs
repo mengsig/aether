@@ -15,7 +15,7 @@ use aether_core::time::{Timestamp, now};
 use aether_store::{Commit, Mutation};
 use chrono::Datelike;
 
-use crate::commands::{Preflight, PreparedAgent};
+use crate::commands::Preflight;
 use crate::submission::{created_work_gone, wrong_shape};
 use crate::{Result, Runtime, RuntimeError};
 
@@ -159,7 +159,7 @@ impl Runtime {
         template: SpawnSpec,
         by: &Actor,
         busy: BusyPolicy,
-    ) -> Result<(SpawnSpec, Option<PreparedAgent>)> {
+    ) -> Result<(SpawnSpec, Option<child::Checked>)> {
         let refuse = |why: &str| Err(RuntimeError::Invalid(why.into()));
         if busy != BusyPolicy::Skip {
             return refuse(
@@ -231,7 +231,7 @@ impl Runtime {
         &self,
         hold: &crate::CommitHold<'_>,
         target: ScheduleTarget,
-        child: Option<PreparedAgent>,
+        child: Option<child::Checked>,
         by: &Actor,
     ) -> Result<ScheduleMode> {
         let template = match target {
@@ -247,14 +247,9 @@ impl Runtime {
             ScheduleTarget::Spawn(template) => template,
         };
         // As `delegate` would be refused now, atomically with the write.
-        if let Some(mut child) = child {
-            let creator = child.agent.parent.map(Actor::agent);
-            debug_assert_eq!(
-                creator.as_ref(),
-                Some(by),
-                "prepared as its creator's child"
-            );
-            self.check_prepared(hold, &mut child, Preflight::delegated())?;
+        if let Some(child) = child {
+            debug_assert!(matches!(by, Actor::Agent { .. }), "only an agent's has one");
+            child.check_held(self, hold)?;
         }
         Ok(ScheduleMode::Spawn {
             template,
@@ -300,8 +295,15 @@ impl Runtime {
                 "paused",
             ),
             (ScheduleAction::Pause, ScheduleStatus::Paused { .. })
-            | (ScheduleAction::Resume, ScheduleStatus::Active { .. })
             | (ScheduleAction::Cancel, ScheduleStatus::Cancelled { .. }) => {
+                self.commit_receipt(hold, Commit::new(), submission.as_ref(), &job)?;
+                return Ok(job);
+            }
+            (ScheduleAction::Resume, ScheduleStatus::Active { .. }) => {
+                // An ended creator refuses it even before the next tick says so.
+                if let Some(creator) = job.spawns_children_of() {
+                    child::check_creator_live(self, creator)?;
+                }
                 self.commit_receipt(hold, Commit::new(), submission.as_ref(), &job)?;
                 return Ok(job);
             }
@@ -344,7 +346,7 @@ impl Runtime {
             self.schedule_target(target, &job.owner)?;
         }
         if let Some(creator) = job.spawns_children_of() {
-            child::check_resumable(self, creator)?;
+            child::check_creator_live(self, creator)?;
         }
         Ok(())
     }

@@ -179,6 +179,9 @@ pub(super) fn skipped(reason: impl Into<String>) -> Fired {
     )
 }
 
+/// Decide one due occurrence under the hold: advance the schedule, then fire
+/// it unless a limit or the missed-run policy says not to. `None`: staged
+/// against rows that have since moved, so nothing may be written.
 pub(super) fn prepare_occurrence(
     runtime: &Runtime,
     hold: &crate::CommitHold<'_>,
@@ -195,12 +198,15 @@ pub(super) fn prepare_occurrence(
         job.status = ScheduleStatus::Exhausted { at };
         return Ok(Some(skipped("delivery limit reached")));
     }
-    // Checked before the missed-run policy, so a gone target fails the job
-    // even on an occurrence that would have been skipped.
+    // Checked before the missed-run policy, so a gone target or an ended
+    // creator fails the job even on an occurrence that would be skipped.
     let target = match job.target() {
         Some(id) => Some(runtime.schedule_target(id, &job.owner)?),
         None => None,
     };
+    if let Some(creator) = job.spawns_children_of() {
+        child::check_creator_live(runtime, creator)?;
+    }
     let planned = job
         .recurrence
         .plan_due(due, at, job.missed)
@@ -220,8 +226,35 @@ pub(super) fn prepare_occurrence(
         .deliveries
         .checked_add(1)
         .ok_or_else(|| RuntimeError::Invalid("schedule delivery counter exhausted".into()))?;
+    let Some(fired) = fire(runtime, hold, commit, job, target, spawn)? else {
+        return Ok(None);
+    };
+    // Only a delivered trigger or a started run counts against the limit.
+    if matches!(fired.0, ScheduleOutcome::Skipped { .. }) {
+        return Ok(Some(fired));
+    }
+    job.deliveries = deliveries;
+    if job
+        .max_deliveries
+        .is_some_and(|limit| deliveries >= limit.get())
+    {
+        job.status = ScheduleStatus::Exhausted { at };
+    }
+    Ok(Some(fired))
+}
+
+/// Deliver the trigger or start the run this occurrence stands for.
+fn fire(
+    runtime: &Runtime,
+    hold: &crate::CommitHold<'_>,
+    commit: &mut Commit,
+    job: &mut Schedule,
+    target: Option<Agent>,
+    spawn: Option<StagedSpawn>,
+) -> Result<Option<Fired>> {
     let creator = job.spawns_children_of();
-    let fired = match (&mut job.mode, target, spawn) {
+    let no_target = || RuntimeError::Internal(format!("schedule {} has no target to fire", job.id));
+    match (&mut job.mode, target, spawn) {
         (ScheduleMode::Deliver { last_inbox_seq, .. }, Some(target), None) => {
             if let Some(reason) = busy_reason(&target, *last_inbox_seq, job.busy) {
                 return Ok(Some(skipped(reason)));
@@ -238,12 +271,12 @@ pub(super) fn prepare_occurrence(
                 Actor::Scheduler,
             )?;
             *last_inbox_seq = Some(item.seq);
-            (ScheduleOutcome::Delivered { inbox: item.id }, None)
+            Ok(Some((ScheduleOutcome::Delivered { inbox: item.id }, None)))
         }
         (ScheduleMode::Spawn { last_spawned, .. }, None, Some(StagedSpawn::Root(prepared)))
             if creator.is_none() =>
         {
-            spawn_root(runtime, commit, last_spawned, prepared)?
+            spawn_root(runtime, commit, last_spawned, prepared).map(Some)
         }
         (
             ScheduleMode::Spawn {
@@ -253,34 +286,19 @@ pub(super) fn prepare_occurrence(
             None,
             Some(StagedSpawn::Child(staged)),
         ) => {
-            let creator = creator.ok_or_else(|| {
-                RuntimeError::Internal(format!("schedule {} has no creator to spawn under", job.id))
-            })?;
-            let role = template.role.as_str();
-            match child::fire(runtime, hold, commit, creator, role, last_spawned, staged)? {
-                Some(fired) => fired,
-                None => return Ok(None),
-            }
+            let creator = creator.ok_or_else(no_target)?;
+            child::fire(
+                runtime,
+                hold,
+                commit,
+                creator,
+                template,
+                last_spawned,
+                staged,
+            )
         }
-        _ => {
-            return Err(RuntimeError::Internal(format!(
-                "schedule {} has no target to fire",
-                job.id
-            )));
-        }
-    };
-    // Only a delivered trigger or a started run counts against the limit.
-    if matches!(fired.0, ScheduleOutcome::Skipped { .. }) {
-        return Ok(Some(fired));
+        _ => Err(no_target()),
     }
-    job.deliveries = deliveries;
-    if job
-        .max_deliveries
-        .is_some_and(|limit| deliveries >= limit.get())
-    {
-        job.status = ScheduleStatus::Exhausted { at };
-    }
-    Ok(Some(fired))
 }
 
 /// Start an operator's root run, or skip while its previous run is live.

@@ -2,7 +2,6 @@
 // Do not edit: change the Rust types and regenerate.
 
 import type {
-  Agent,
   AgentConfig,
   ApprovalPolicy,
   ModelRef,
@@ -10,8 +9,8 @@ import type {
 } from "../../protocol.ts";
 
 /**
- * Agent + task each spawn occurrence creates: a root in a new run, or its
- * creator's child. Fields as on `create_agent`; no parent or existing run.
+ * The agent and task each spawn occurrence creates: a root in a new run, or
+ * its creator's child. Fields as on `create_agent`; no parent or existing run.
  */
 export interface SpawnSpec {
   "approval"?: ApprovalPolicy | null;

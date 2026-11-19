@@ -236,6 +236,7 @@ async fn intervals_below_the_minimum_are_refused() {
     runtime.create_schedule(minimum, Actor::user()).unwrap();
 }
 
+mod child_admission;
 mod child_spawning;
 mod spawning;
 

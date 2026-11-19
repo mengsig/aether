@@ -225,3 +225,75 @@ fn spawn_schedules_round_trip_and_mixed_shapes_are_refused() {
     mixed["last_inbox_seq"] = serde_json::json!(3);
     assert!(serde_json::from_value::<Schedule>(mixed).is_err());
 }
+
+const CREATOR: &str = "agt_01K4QZ5B6X9Q1N6D7W8E3R2T4Y";
+
+fn agents_spawn_schedule(status: ScheduleStatus) -> Schedule {
+    let mut job: Schedule = serde_json::from_str(V8_SCHEDULE).unwrap();
+    job.owner = Actor::agent(CREATOR.parse().unwrap());
+    job.mode = ScheduleMode::Spawn {
+        template: template(),
+        last_spawned: None,
+    };
+    job.status = status;
+    job
+}
+
+#[test]
+fn an_agents_spawn_schedule_is_stored_in_a_shape_older_releases_refuse() {
+    let at = at("2026-09-09T12:00:00Z");
+    let failed = ScheduleStatus::Failed {
+        at,
+        error: "its creator ended".into(),
+    };
+    let can_fire_again = [
+        ScheduleStatus::Active { next_due: at },
+        ScheduleStatus::Paused { next_due: at },
+        failed,
+    ];
+    for status in can_fire_again {
+        let job = agents_spawn_schedule(status);
+        let body = serde_json::to_value(&job).unwrap();
+        // Releases without agent spawn schedules read a `spawn` only with no
+        // `target`, and a `target` only with a `run`: they refuse this one.
+        assert_eq!(body["target"], CREATOR, "{body}");
+        assert!(body.get("run").is_none() && body.get("spawn").is_some());
+        assert_eq!(serde_json::from_value::<Schedule>(body).unwrap(), job);
+    }
+    for status in [
+        ScheduleStatus::Cancelled { at },
+        ScheduleStatus::Exhausted { at },
+    ] {
+        let job = agents_spawn_schedule(status);
+        let body = serde_json::to_value(&job).unwrap();
+        assert!(
+            body.get("target").is_none(),
+            "nothing left to guard: {body}"
+        );
+        assert_eq!(serde_json::from_value::<Schedule>(body).unwrap(), job);
+    }
+}
+
+#[test]
+fn a_spawn_schedule_with_the_wrong_creator_mark_is_refused() {
+    let at = at("2026-09-09T12:00:00Z");
+    let active = agents_spawn_schedule(ScheduleStatus::Active { next_due: at });
+    let refused = |body: serde_json::Value| {
+        let error = serde_json::from_value::<Schedule>(body).unwrap_err();
+        assert!(error.to_string().contains("names its creator"), "{error}");
+    };
+    let marked = serde_json::to_value(&active).unwrap();
+
+    let mut unmarked = marked.clone();
+    unmarked.as_object_mut().unwrap().remove("target");
+    refused(unmarked);
+    let mut another = marked.clone();
+    another["target"] = serde_json::json!("agt_01K4QZ5B6X9Q1N6D7W8E3R2T4Z");
+    refused(another);
+    let mut operators = marked.clone();
+    operators["owner"] = serde_json::json!({"actor": "user"});
+    refused(operators);
+    let mut cancelled = marked;
+    cancelled["status"] = serde_json::json!({"state": "cancelled", "at": "2026-09-09T12:00:00Z"});
+    refused(cancelled);
+}

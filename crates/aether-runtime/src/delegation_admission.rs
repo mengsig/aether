@@ -2,11 +2,13 @@
 //! agent's spawn schedule both ask here, so neither admits what the other
 //! refuses.
 
-use aether_core::agent::{Agent, HostContext, Scope};
+use aether_core::agent::{Agent, HostContext, NetworkPolicy, Scope};
 use aether_core::event::Actor;
 use aether_core::model::{Effort, ModelRef};
+use aether_engine::EngineKind;
 
 use crate::commands::{Preflight, PreparedAgent};
+use crate::engine_access::{DetectedEngines, unavailable_text};
 use crate::{CreateAgentSpec, Result, Runtime, RuntimeError};
 
 /// The child one `delegate` call asks for.
@@ -82,6 +84,43 @@ impl Preflight<'_> {
             ..Preflight::default()
         }
     }
+}
+
+/// Why a child cannot run on its model's engine with the network it gets.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum EngineRefusal {
+    /// The CLI is missing or failed its probe; it is probed again later.
+    Unavailable(String),
+    /// The engine cannot run under the child's network policy.
+    Network(String),
+}
+
+impl std::fmt::Display for EngineRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (Self::Unavailable(why) | Self::Network(why)) = self;
+        f.write_str(why)
+    }
+}
+
+/// What stops `kind` from running a child of `provider` under `network`, by
+/// what `detected` holds. `delegate` asks it of a fresh probe.
+pub(crate) fn engine_refusal(
+    detected: &DetectedEngines,
+    kind: EngineKind,
+    provider: &str,
+    network: NetworkPolicy,
+) -> Option<EngineRefusal> {
+    let Some(engine) = detected.get(&kind) else {
+        let reason = detected.unavailable.get(&kind).map(String::as_str);
+        return Some(EngineRefusal::Unavailable(format!(
+            "its engine is not available in this daemon: {}",
+            unavailable_text(kind, provider, reason)
+        )));
+    };
+    engine
+        .validate_network_policy(network == NetworkPolicy::Allowed)
+        .err()
+        .map(|error| EngineRefusal::Network(error.to_string()))
 }
 
 /// Why `parent` may not have this child: its delegation policy, or without

@@ -190,22 +190,11 @@ pub(super) fn bare_wait_has_no_wake_source(runtime: &Runtime, agent: &Agent) -> 
     {
         return Ok(false);
     }
-    Ok(!a_schedule_will_wake(runtime, agent)?)
-}
-
-/// A timer that will deliver to `agent`, or a spawn schedule of its own whose
-/// next child reports to it like any other child.
-fn a_schedule_will_wake(runtime: &Runtime, agent: &Agent) -> Result<bool> {
-    let due_again =
-        |schedule: &aether_core::schedule::Schedule| schedule.status.next_due().is_some();
-    let delivers = runtime.store.schedules(Some(agent.id))?;
-    if delivers.iter().any(due_again) {
-        return Ok(true);
-    }
-    let all = runtime.store.schedules(None)?;
-    Ok(all
+    Ok(!runtime
+        .store
+        .schedules(Some(agent.id))?
         .iter()
-        .any(|schedule| schedule.spawns_children_of() == Some(agent.id) && due_again(schedule)))
+        .any(|schedule| schedule.status.next_due().is_some()))
 }
 
 /// A task is in `caller`'s scope for `wait_for` when it is bound (by owner

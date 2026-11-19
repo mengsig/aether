@@ -66,7 +66,7 @@ const DELEGATED_LEAF_ADDED_BYTES: usize = 300;
 const ASKING_ADDED_BYTES: usize = 200;
 const DELEGATED_LEAD_ADDED_BYTES: usize = 470;
 /// What `create_schedule`'s `spawn` template adds to a surface that is not a leaf.
-const SCHEDULE_SPAWN_ADDED_BYTES: usize = 650;
+const SCHEDULE_SPAWN_ADDED_BYTES: usize = 770;
 
 fn tool_surface_agent(h: &Harness) -> aether_core::agent::Agent {
     h.runtime

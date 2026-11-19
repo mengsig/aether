@@ -72,8 +72,8 @@ impl BusyPolicy {
     }
 }
 
-/// Agent + task each spawn occurrence creates: a root in a new run, or its
-/// creator's child. Fields as on `create_agent`; no parent or existing run.
+/// The agent and task each spawn occurrence creates: a root in a new run, or
+/// its creator's child. Fields as on `create_agent`; no parent or existing run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpawnSpec {
     pub role: String,
@@ -87,7 +87,8 @@ pub struct SpawnSpec {
     pub model: Option<ModelRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fallbacks: Vec<ModelRef>,
-    /// Absent: the daemon's default root scope when each run starts.
+    /// Absent: the daemon's default root scope when each run starts, or for
+    /// an agent's schedule its creator's scope when each child starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<Scope>,
     /// Budgets bound each run. Absolute deadline (stale by run two) and
@@ -277,7 +278,8 @@ pub struct ScheduleWire {
     pub id: ScheduleId,
     pub name: String,
     pub owner: Actor,
-    /// Delivery schedules: the agent that receives each trigger.
+    /// Delivery schedules: the agent that receives each trigger. An agent's
+    /// spawn schedule that can still fire: its creator, beside `spawn`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<AgentId>,
     /// Delivery schedules: the target's run.
@@ -286,7 +288,8 @@ pub struct ScheduleWire {
     /// Spawn schedules: the template each occurrence starts a run from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawn: Option<SpawnSpec>,
-    /// Spawn schedules: the root of the newest spawned run.
+    /// Spawn schedules: the newest agent started, a run's root or, for an
+    /// agent's schedule, its creator's child.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_spawned: Option<AgentId>,
     pub recurrence: Recurrence,
@@ -306,6 +309,20 @@ pub struct ScheduleWire {
     pub updated_at: Timestamp,
 }
 
+/// The `target` an agent's spawn schedule is stored with while it can still
+/// fire: its creator. A release that would run it as an operator's root run
+/// refuses a `spawn` with a `target`, so it reads none of it.
+fn downgrade_guard(owner: &Actor, status: &ScheduleStatus) -> Option<AgentId> {
+    let Actor::Agent { id } = owner else {
+        return None;
+    };
+    let ended = matches!(
+        status,
+        ScheduleStatus::Cancelled { .. } | ScheduleStatus::Exhausted { .. }
+    );
+    (!ended).then_some(*id)
+}
+
 impl TryFrom<ScheduleWire> for Schedule {
     type Error = String;
 
@@ -318,10 +335,19 @@ impl TryFrom<ScheduleWire> for Schedule {
                     last_inbox_seq: wire.last_inbox_seq,
                 }
             }
-            (None, None, Some(template)) if wire.last_inbox_seq.is_none() => ScheduleMode::Spawn {
-                template,
-                last_spawned: wire.last_spawned,
-            },
+            (creator, None, Some(template)) if wire.last_inbox_seq.is_none() => {
+                if creator != downgrade_guard(&wire.owner, &wire.status) {
+                    return Err(
+                        "an agent's spawn schedule names its creator as `target` while it \
+                         can still fire, and no other spawn schedule has a `target`"
+                            .into(),
+                    );
+                }
+                ScheduleMode::Spawn {
+                    template,
+                    last_spawned: wire.last_spawned,
+                }
+            }
             _ => {
                 return Err(
                     "a schedule has either `target` and `run` or a `spawn` template".into(),
@@ -358,7 +384,10 @@ impl From<Schedule> for ScheduleWire {
             ScheduleMode::Spawn {
                 template,
                 last_spawned,
-            } => (None, None, None, Some(template), last_spawned),
+            } => {
+                let creator = downgrade_guard(&job.owner, &job.status);
+                (creator, None, None, Some(template), last_spawned)
+            }
         };
         Self {
             id: job.id,
