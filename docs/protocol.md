@@ -190,6 +190,16 @@ A client must check that the `Welcome` lists `host_context` before sending
 `config.host_context`: an older daemon silently ignores the field and creates
 a full agent.
 
+`retired_models` in `Welcome.features` enables `list_retired_models` on protocol
+26. Its `retired_models` reply carries an array of fully qualified `model` and
+`successor` strings. For example, `codex/gpt-6-sol` points to
+`codex/gpt-6.2-sol`. Archon skips the request when talking to a daemon without
+this feature. The existing `list_models` command keeps its array of active
+models. Read `superseded_by` (a model id on the same provider) and `efforts`
+(an array of the effort levels the route sends distinctly, not a guarantee
+that the model accepts each) as optional. An absent list means the daemon did
+not report them.
+
 `operator_memory_roles` means `create_memory` accepts the `role` and
 `repository_role` operator scopes and the `repository` field on both repository
 scopes. Check this feature before sending any of them. An older daemon rejects
@@ -299,6 +309,19 @@ Rust client refuses all of them to such a daemon.
 [read models](#read-models)) and keeps `append_note`'s `important` flag (see
 [notes](#notes)). An older daemon refuses the command and drops the flag; the
 Rust client refuses both to such a daemon.
+
+`compaction_tokens` means `create_agent` accepts `config.compaction_tokens`:
+the context size, at least 100,000, at which that agent compacts in place of
+its model's threshold (see [who compacts](engines.md#who-compacts)). Below
+that, Claude Code's auto-compact window and the Anthropic server trigger
+would raise it, so the create is refused. It is capped at the context window
+of whichever model runs the turn, set at creation only, and never inherited
+by a child; absent keeps the model's threshold. On Claude Code a value above
+987,000 compacts at about 987,000, the most its auto-compact window allows. `get_agent` returns it in `config`, and the agent's
+`inspect_state` reports it as `compaction.agent_threshold_tokens` beside the
+effective `compaction.threshold_tokens`. An older daemon ignores the field
+and the agent compacts at its model's threshold, so check the feature first;
+the Rust client refuses such a create itself.
 
 `remote_mounts` means `configure_remote` accepts `settings.mounts` (see
 [remote settings](remote.md#runtime-settings-remotesettings)). An older

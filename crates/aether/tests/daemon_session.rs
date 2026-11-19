@@ -39,6 +39,11 @@ enum Launcher {
 fn launch(root: &Path, mode: Launcher) -> Daemon {
     assert!(root.is_dir());
     assert!(root.is_absolute());
+    // The readiness deadline measures the detached launch. Initialize the fixture store first.
+    drop(
+        aether_store::SqliteStore::open(root.join("data/aether.db"))
+            .expect("prepare fixture store"),
+    );
     let mut command = Command::new(env!("CARGO_BIN_EXE_aether"));
     command
         .args(["daemon", "--foreground", "--detached"])

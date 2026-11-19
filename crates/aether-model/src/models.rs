@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use aether_core::model::{CapabilityProfile, ModelError, ModelErrorClass, ModelRef};
+use aether_core::model::{CapabilityProfile, Effort, ModelError, ModelErrorClass, ModelRef};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -53,6 +53,9 @@ pub enum ModelsError {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelInfo {
+    pub superseded_by: Option<String>,
+    /// Effort overrides the adapter can send for this model, in increasing order.
+    pub efforts: Vec<Effort>,
     pub tier: Option<ModelTier>,
     pub model: ModelRef,
     pub aliases: Vec<String>,
@@ -191,17 +194,53 @@ impl Models {
     /// override (by canonical id or alias), else the catalog's.
     pub fn tier(&self, r: &ModelRef) -> Option<ModelTier> {
         let canonical = self.canonical(r);
-        self.config
-            .models
-            .tiers
-            .iter()
-            .find(|(key, _)| {
-                ModelRef::parse(key).is_some_and(|key| self.canonical(&key) == canonical)
-            })
-            .map(|(_, tier)| *tier)
-            .or_else(|| {
+        if crate::retired::supersession(&canonical.provider, &canonical.model).is_some() {
+            return None;
+        }
+        self.configured_tier(&canonical).or_else(|| {
+            self.registry
+                .catalog_tier(&canonical.provider, &canonical.model)
+        })
+    }
+
+    /// The band used to admit an explicitly named delegate, including superseded pins.
+    pub fn delegation_tier(&self, r: &ModelRef) -> Option<ModelTier> {
+        let canonical = self.canonical(r);
+        self.configured_tier(&canonical).or_else(|| {
+            if let Some(old) = crate::retired::supersession(&canonical.provider, &canonical.model) {
+                let listed = self
+                    .registry
+                    .provider(&canonical.provider)?
+                    .model(&canonical.model)?;
+                return listed.tier.or(Some(old.previous_tier));
+            }
+            self.registry
+                .catalog_tier(&canonical.provider, &canonical.model)
+        })
+    }
+
+    fn configured_tier(&self, canonical: &ModelRef) -> Option<ModelTier> {
+        self.config.models.tiers.iter().find_map(|(key, tier)| {
+            ModelRef::parse(key)
+                .filter(|key| self.canonical(key) == *canonical)
+                .map(|_| *tier)
+        })
+    }
+
+    /// Built-in retirement guidance excluding ids explicitly restored by provider overrides.
+    pub fn retired(&self) -> impl Iterator<Item = (String, String)> + '_ {
+        crate::retired::entries()
+            .filter(|(provider, id, _)| {
                 self.registry
-                    .catalog_tier(&canonical.provider, &canonical.model)
+                    .provider(provider)
+                    .and_then(|p| p.model(id))
+                    .is_none()
+            })
+            .map(|(provider, id, successor)| {
+                (
+                    format!("{provider}/{id}"),
+                    format!("{provider}/{successor}"),
+                )
             })
     }
 
@@ -213,6 +252,9 @@ impl Models {
             .filter(|p| p.enabled)
             .flat_map(|p| {
                 p.models.iter().map(move |m| ModelInfo {
+                    superseded_by: crate::retired::supersession(&p.id, &m.id)
+                        .map(|s| s.successor.to_owned()),
+                    efforts: p.protocol.efforts(&m.capabilities).to_vec(),
                     tier: self.tier(&ModelRef::new(&p.id, &m.id)),
                     model: ModelRef::new(&p.id, &m.id),
                     aliases: m.aliases.clone(),
@@ -685,6 +727,28 @@ mod tests {
             "an operator value reaches the catalogue"
         );
         assert_eq!(threshold("openai", "gpt-6.2-astra").1, None);
+    }
+
+    #[test]
+    fn catalogue_lists_distinct_effort_overrides_per_model() {
+        use Effort::{High, Low, Max, Medium, XHigh};
+
+        let catalogue = builtin_models(AetherConfig::default()).list();
+        let all = &[Low, Medium, High, XHigh, Max][..];
+        let chat = &[Low, Medium, High][..];
+        for (provider, model, expected) in [
+            ("codex", "gpt-6.1-sol", all),
+            ("claude-code", "claude-opus-5-5", all),
+            ("anthropic", "claude-opus-5-5", all),
+            ("openai-responses", "gpt-6.1-sol", chat),
+            ("openai", "gpt-6.1-sol", chat),
+            ("groq", "openai/gpt-oss-120b", chat),
+            ("groq", "llama-3.3-70b-versatile", &[]),
+        ] {
+            let model = ModelRef::new(provider, model);
+            let info = catalogue.iter().find(|info| info.model == model).unwrap();
+            assert_eq!(info.efforts, expected, "{model}");
+        }
     }
 
     #[test]

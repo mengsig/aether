@@ -333,6 +333,9 @@ pub(crate) enum Cmd {
         after_help = "Budgets: API providers accept token and turn limits, and dollar limits when a model price is configured (cost is estimated from list prices). Claude Code accepts token, turn and dollar limits (list-price estimates or provider-reported cost). Codex accepts token and turn limits; dollar limits are refused because it reports no enforceable dollar cost. Subscription API-equivalent estimates do not enforce dollar budgets."
     )]
     Models {
+        /// List retired model IDs and their successors.
+        #[arg(long)]
+        retired: bool,
         /// Print the result as JSON.
         #[arg(long)]
         json: bool,

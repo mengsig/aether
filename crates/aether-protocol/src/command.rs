@@ -594,6 +594,8 @@ pub enum Command {
     },
 
     ListModels,
+    /// Retired model IDs and the successors to use in their place.
+    ListRetiredModels,
     /// Built-in and user transcript modes from the daemon's configuration.
     ListViewModes,
     AuthStatus,

@@ -1,7 +1,7 @@
 //! Canonical request → OpenAI Responses body.
 
 use aether_core::model::{
-    CapabilityProfile, ContentBlock, Effort, Message, MessageRole, ModelRequest, ThinkingSupport,
+    CapabilityProfile, ContentBlock, Message, MessageRole, ModelRequest, ThinkingSupport,
     ToolChoice, ToolResultBlock,
 };
 use serde_json::{Value, json};
@@ -68,10 +68,8 @@ pub fn build(req: &ModelRequest, profile: &CapabilityProfile, dialect: Dialect) 
     }
     if profile.thinking != ThinkingSupport::None || profile.effort {
         let mut reasoning = json!({});
-        if profile.effort
-            && let Some(effort) = req.effort
-        {
-            reasoning["effort"] = json!(reasoning_effort(effort));
+        if let Some(effort) = dialect.protocol().effective_effort(profile, req.effort) {
+            reasoning["effort"] = json!(effort.as_str());
         }
         // Without a summary the reasoning item streams no text at all, and the
         // person sees a silent gap where the model was thinking.
@@ -130,16 +128,6 @@ pub fn build(req: &ModelRequest, profile: &CapabilityProfile, dialect: Dialect) 
     }
 
     body
-}
-
-/// Responses accepts minimal/low/medium/high; the higher Aether levels
-/// collapse to `high` rather than failing on a server that lacks them.
-fn reasoning_effort(effort: Effort) -> &'static str {
-    match effort {
-        Effort::Low => "low",
-        Effort::Medium => "medium",
-        Effort::High | Effort::XHigh | Effort::Max => "high",
-    }
 }
 
 fn build_input(req: &ModelRequest) -> Vec<Value> {
@@ -256,8 +244,32 @@ fn push_assistant(out: &mut Vec<Value>, msg: &Message) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aether_core::model::{ModelRef, SystemBlock, ToolSpec};
+    use aether_core::model::{Effort, ModelRef, SystemBlock, ToolSpec};
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn upper_efforts_send_high_only_on_effort_models() {
+        let mut req = ModelRequest::new(ModelRef::new("openai", "sol"), vec![]);
+        let plain = CapabilityProfile::default();
+        let profile = CapabilityProfile {
+            effort: true,
+            ..Default::default()
+        };
+        for dialect in [Dialect::OpenAi, Dialect::Codex] {
+            for level in [Effort::XHigh, Effort::Max] {
+                req.effort = Some(level);
+                assert_eq!(
+                    build(&req, &profile, dialect)["reasoning"]["effort"],
+                    "high"
+                );
+                assert!(
+                    build(&req, &plain, dialect)
+                        .pointer("/reasoning/effort")
+                        .is_none()
+                );
+            }
+        }
+    }
 
     #[test]
     fn request_shape_with_tools_results_and_reasoning() {

@@ -434,9 +434,15 @@ async fn cli_with_socket(
                 Command::SendMessage { .. } => {
                     Err(ErrorReply::new(ErrorCode::NotFound, "unknown agent"))
                 }
+                Command::ListRetiredModels => Ok(Reply::RetiredModels(vec![aether_protocol::RetiredModel {
+                    model: "mock/m0".into(),
+                    successor: "mock/m1".into(),
+                }])),
                 Command::ListModels if stub.invalid_models => Err(ErrorReply::invalid("model selection refused")),
                 Command::ListModels if stub.reject_models => Err(ErrorReply::new(ErrorCode::NotFound, HOSTILE)),
                 Command::ListModels => Ok(Reply::Models(vec![aether_protocol::ModelInfo {
+                    superseded_by: Some("m2".into()),
+                    efforts: Some(vec![aether_core::model::Effort::High]),
                     tier: None,
                     model: aether_core::model::ModelRef::new(
                         "mock",
@@ -1898,6 +1904,52 @@ fn schedule_recurrence_error_requires_one_of_the_two_modes() {
     assert_eq!(out.status.code(), Some(2));
     let text = stderr(&out);
     assert!(text.contains("--every <EVERY>|--cron <CRON>"), "{text}");
+}
+
+#[tokio::test]
+async fn model_catalogs_keep_distinct_json_arrays() {
+    let active = cli(&["models", "--json"], Stub::default()).await;
+    assert!(active.status.success(), "{}", stderr(&active));
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&active.stdout).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["model"], json!({"provider": "mock", "model": "m1"}));
+    assert_eq!(rows[0]["superseded_by"], "m2");
+    assert_eq!(rows[0]["efforts"], json!(["high"]));
+
+    let retired_stub = || Stub {
+        features: vec![aether_protocol::features::RETIRED_MODELS.into()],
+        reject_models: true,
+        ..Default::default()
+    };
+    let retired = cli(&["models", "--retired", "--json"], retired_stub()).await;
+    assert!(retired.status.success(), "{}", stderr(&retired));
+    let rows: serde_json::Value = serde_json::from_slice(&retired.stdout).unwrap();
+    assert_eq!(rows, json!([{"model":"mock/m0", "successor":"mock/m1"}]));
+
+    let table = cli(&["models", "--retired"], retired_stub()).await;
+    assert!(table.status.success(), "{}", stderr(&table));
+    let table = stdout(&table);
+    let mut lines = table.lines();
+    assert!(lines.next().unwrap().contains("successor"), "{table}");
+    assert_eq!(
+        lines.next().unwrap().split_whitespace().collect::<Vec<_>>(),
+        ["mock/m0", "mock/m1"]
+    );
+    assert_eq!(lines.next(), None);
+}
+
+#[tokio::test]
+async fn retired_models_requires_daemon_discovery() {
+    let output = cli(&["models", "--retired", "--json"], Stub::default()).await;
+    assert_eq!(output.status.code(), Some(1));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["error"]["code"], "unimplemented");
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("retired_models")
+    );
 }
 
 #[tokio::test]

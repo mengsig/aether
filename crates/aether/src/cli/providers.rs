@@ -224,9 +224,25 @@ fn auth_detail(info: &AuthInfo) -> Option<String> {
     })
 }
 
-pub async fn models(socket: impl Into<aether_client::Endpoint>, json: bool) -> anyhow::Result<()> {
+pub async fn models(
+    socket: impl Into<aether_client::Endpoint>,
+    json: bool,
+    retired: bool,
+) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect_or_start(&socket).await?;
+    if retired {
+        let rows = client.list_retired_models().await?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&rows)?);
+        } else {
+            println!("{:<40} successor", "retired model");
+            for row in rows {
+                println!("{:<40} {}", sane(&row.model), sane(&row.successor));
+            }
+        }
+        return Ok(());
+    }
     let rows = client.list_models().await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&rows)?);
@@ -585,6 +601,8 @@ mod price_tests {
             ..Default::default()
         };
         aether_protocol::ModelInfo {
+            superseded_by: None,
+            efforts: None,
             tier: None,
             model: ModelRef::new("claude-code", model),
             aliases: vec!["opus".into()],

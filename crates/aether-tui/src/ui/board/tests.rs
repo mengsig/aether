@@ -31,6 +31,8 @@ fn mock_app(cursor: fn(&Fleet) -> AgentId) -> Fleet {
     app.models = ["sonnet-5.5", "haiku-4.5", "opus-5.5"]
         .into_iter()
         .map(|model| ModelInfo {
+            superseded_by: None,
+            efforts: None,
             tier: None,
             aliases: Vec::new(),
             model: ModelRef::new("anthropic", model),

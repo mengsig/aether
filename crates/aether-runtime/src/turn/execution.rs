@@ -277,7 +277,7 @@ pub(super) async fn run_link(
     // A link that cannot even be built was never usable: an unknown or
     // disabled provider, a model the registry no longer lists. That is a
     // reason to try the next link, not to spend the turn's verdict here.
-    let resolved = match runtime.models.resolve(model) {
+    let resolved = match runtime.resolve_for_agent(&ctx.agent, model) {
         Ok(r) => r,
         Err(e) => return unusable_link(runtime, ctx, model, rest, e.to_string()),
     };
@@ -399,6 +399,8 @@ pub(super) async fn run_link(
     });
 
     let mut snapshot = assembled.snapshot;
+    snapshot.params.effort_requested = ctx.agent.config.effort;
+    snapshot.params.effort_effective = client.effective_effort(&resolved, assembled.request.effort);
     snapshot.memory_retrieval = memories.trace.clone();
     let input_budget = resolved
         .model

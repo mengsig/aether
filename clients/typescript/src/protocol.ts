@@ -311,6 +311,7 @@ export * from "./protocol/types/ResourceHolding.ts";
 export * from "./protocol/types/ResourceKey.ts";
 export * from "./protocol/types/Result_of_Reply_or_ErrorReply.ts";
 export * from "./protocol/types/RetentionPreview.ts";
+export * from "./protocol/types/RetiredModel.ts";
 export * from "./protocol/types/Retraction.ts";
 export * from "./protocol/types/RetrievalExplain.ts";
 export * from "./protocol/types/RetrievalTrace.ts";

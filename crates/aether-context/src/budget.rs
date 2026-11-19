@@ -107,4 +107,28 @@ mod tests {
             100_000
         );
     }
+
+    #[test]
+    fn an_agents_own_threshold_replaces_the_models_and_a_sibling_keeps_it() {
+        let model = CapabilityProfile {
+            context_window: 1_000_000,
+            compaction_tokens: Some(256_000),
+            ..Default::default()
+        };
+        let own = ContextBudget::for_profile(&model.clone().for_agent(Some(160_000)), None);
+        assert!(!own.over_threshold(159_999));
+        assert!(own.over_threshold(160_000));
+        assert_eq!(own.threshold_tokens(), 160_000);
+        let sibling = ContextBudget::for_profile(&model.clone().for_agent(None), None);
+        assert!(!sibling.over_threshold(160_000));
+        assert_eq!(sibling.threshold_tokens(), 256_000);
+        let above = ContextBudget::for_profile(&model.for_agent(Some(2_000_000)), None);
+        assert_eq!(above.threshold_tokens(), 1_000_000, "bounded by the window");
+        let proportional = CapabilityProfile {
+            context_window: 200_000,
+            ..Default::default()
+        };
+        let own = ContextBudget::for_profile(&proportional.for_agent(Some(100_000)), None);
+        assert!(own.over_threshold(100_000), "replaces the fraction too");
+    }
 }

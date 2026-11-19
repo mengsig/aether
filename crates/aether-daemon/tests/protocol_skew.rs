@@ -11,6 +11,64 @@ use aether_protocol::compat::MIN_PROTOCOL_VERSION;
 use serde_json::{Value, json};
 use support::{RawConn, TestDaemon};
 
+#[tokio::test]
+async fn old_clients_can_still_decode_the_active_model_catalog() {
+    #[derive(serde::Deserialize)]
+    struct LegacyModel {
+        model: aether_core::model::ModelRef,
+        name: String,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(tag = "reply", content = "data", rename_all = "snake_case")]
+    enum LegacyReply {
+        Models(Vec<LegacyModel>),
+    }
+
+    let daemon = TestDaemon::start().await;
+    let mut old = RawConn::connect(&daemon.socket).await.unwrap();
+    old.hello(MIN_PROTOCOL_VERSION).await.unwrap();
+    let response = old.call(json!({"cmd": "list_models"})).await;
+    let reply = &response["result"]["Ok"];
+    let LegacyReply::Models(models) = serde_json::from_value(reply.clone()).unwrap();
+    let superseded = aether_core::model::ModelRef::new("codex", "gpt-6.1-sol");
+    let index = models
+        .iter()
+        .position(|row| row.model == superseded)
+        .unwrap();
+    assert!(!models[index].name.is_empty());
+    let row = &reply["data"][index];
+    assert_eq!(row["superseded_by"], "gpt-6.2-sol");
+    assert!(!row["efforts"].as_array().unwrap().is_empty());
+    assert!(
+        reply["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["efforts"].is_array())
+    );
+
+    let mut current = RawConn::connect(&daemon.socket).await.unwrap();
+    let welcome = current.hello(PROTOCOL_VERSION).await.unwrap();
+    assert!(
+        welcome["features"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("retired_models"))
+    );
+    let response = current.call(json!({"cmd": "list_retired_models"})).await;
+    let reply = &response["result"]["Ok"];
+    assert_eq!(reply["reply"], "retired_models");
+    let rows = reply["data"].as_array().unwrap();
+    assert!(rows.contains(&json!({"model": "codex/gpt-6-sol", "successor": "codex/gpt-6.2-sol"})));
+    assert!(
+        models
+            .iter()
+            .all(|row| row.model.to_string() != "codex/gpt-6-sol")
+    );
+    daemon.stop().await;
+}
+
 async fn save_watcher(conn: &mut RawConn, config: &Value, revision: u64) -> Value {
     conn.call(json!({
         "cmd":"configure_github_watcher",
@@ -381,5 +439,44 @@ async fn memories_recorded_by_the_operator_are_listed_by_that_filter() {
             .contains("unknown variant `imported_operator`"),
         "{refused}"
     );
+    daemon.stop().await;
+}
+
+/// `compaction_tokens` is announced and kept for the client that sends it,
+/// while a client one version back, which never sends it, gets agents
+/// whose config carries no such key.
+#[tokio::test]
+async fn compaction_tokens_is_announced_and_absent_for_clients_that_omit_it() {
+    let daemon = TestDaemon::start().await;
+    let mut current = RawConn::connect(&daemon.socket).await.expect("connect");
+    let welcome = current.hello(PROTOCOL_VERSION).await.expect("served");
+    let features = welcome["features"].as_array().expect("features");
+    assert!(features.contains(&json!("compaction_tokens")), "{welcome}");
+    let created = current
+        .call(
+            json!({"cmd": "create_agent", "role": "skew", "start": false,
+            "model": {"provider": "claude-code", "model": "opus"},
+            "config": {"compaction_tokens": 160000}}),
+        )
+        .await;
+    let id = created["result"]["Ok"]["data"]["id"].clone();
+    assert!(id.is_string(), "{created}");
+    let shown = current.call(json!({"cmd": "get_agent", "id": id})).await;
+    assert_eq!(
+        shown["result"]["Ok"]["data"]["config"]["compaction_tokens"], 160_000,
+        "{shown}"
+    );
+
+    let mut old = RawConn::connect(&daemon.socket).await.expect("connect");
+    old.hello(MIN_PROTOCOL_VERSION).await.expect("served");
+    let created = old
+        .call(
+            json!({"cmd": "create_agent", "role": "skew", "start": false,
+            "model": {"provider": "claude-code", "model": "opus"}}),
+        )
+        .await;
+    let config = &created["result"]["Ok"]["data"]["config"];
+    assert!(config.is_object(), "{created}");
+    assert!(config.get("compaction_tokens").is_none(), "{created}");
     daemon.stop().await;
 }

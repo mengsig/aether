@@ -58,6 +58,8 @@ fn default_true() -> bool {
 
 /// Extension key marking a provider that compacts the context on its server.
 pub const SERVER_COMPACTION_KEY: &str = "aether.server_compaction";
+/// Request extension carrying an agent's own server compaction trigger.
+pub const SERVER_COMPACTION_TOKENS_KEY: &str = "anthropic.compaction_tokens";
 
 impl CapabilityProfile {
     /// Whether the provider folds old context itself, so Aether need not.
@@ -66,6 +68,21 @@ impl CapabilityProfile {
             .get(SERVER_COMPACTION_KEY)
             .and_then(Value::as_bool)
             .unwrap_or(false)
+    }
+
+    /// The profile one agent runs under: its own compaction threshold, when it
+    /// set one, replaces the model's, never above the window.
+    pub fn for_agent(mut self, compaction_tokens: Option<u32>) -> Self {
+        let Some(tokens) = compaction_tokens else {
+            return self;
+        };
+        assert!(
+            tokens > 0,
+            "an agent compaction threshold is validated as positive"
+        );
+        self.compaction_tokens = Some(tokens.min(self.context_window));
+        debug_assert!(self.compaction_tokens <= Some(self.context_window));
+        self
     }
 }
 

@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn model_info_aliases_are_optional_and_roundtrip() {
+fn model_catalog_metadata_is_optional_and_roundtrips() {
     let legacy = serde_json::json!({
         "model": {"provider": "claude-code", "model": "claude-opus-5-5"},
         "name": "Claude Opus 5.5",
@@ -12,16 +12,29 @@ fn model_info_aliases_are_optional_and_roundtrip() {
     });
     let mut info: ModelInfo = serde_json::from_value(legacy.clone()).unwrap();
     assert!(info.aliases.is_empty());
+    assert!(info.superseded_by.is_none());
+    assert_eq!(info.efforts, None);
     assert!(info.tier.is_none());
     let mut expected = legacy;
     expected["tier"] = serde_json::Value::Null;
     assert_eq!(serde_json::to_value(&info).unwrap(), expected);
     assert_eq!(decode::<ModelInfo>(&encode(&info).unwrap()).unwrap(), info);
 
+    info.efforts = Some(Vec::new());
+    assert_eq!(
+        serde_json::to_value(&info).unwrap()["efforts"],
+        serde_json::json!([])
+    );
+    assert_eq!(decode::<ModelInfo>(&encode(&info).unwrap()).unwrap(), info);
+
     info.tier = Some("strong".into());
+    info.superseded_by = Some("new-model".into());
+    info.efforts = Some(vec![Effort::High, Effort::XHigh]);
     info.aliases = vec!["opus".into(), "opus-5-5".into()];
     let wire = serde_json::to_value(&info).unwrap();
     assert_eq!(wire["tier"], "strong");
+    assert_eq!(wire["superseded_by"], "new-model");
+    assert_eq!(wire["efforts"], serde_json::json!(["high", "x_high"]));
     assert_eq!(wire["aliases"], serde_json::json!(["opus", "opus-5-5"]));
     assert_eq!(decode::<ModelInfo>(&encode(&info).unwrap()).unwrap(), info);
 }

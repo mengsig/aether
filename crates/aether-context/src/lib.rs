@@ -350,12 +350,22 @@ impl ContextManager {
                 serde_json::Value::String("summarized".to_owned()),
             );
         }
+        // The adapter knows only the model's threshold; an agent's own rides here.
+        if let Some(tokens) = budget.compaction_tokens.filter(|_| {
+            caps.compacts_on_server() && inputs.agent.config.compaction_tokens.is_some()
+        }) {
+            extensions.insert(
+                aether_core::model::SERVER_COMPACTION_TOKENS_KEY.to_owned(),
+                serde_json::Value::from(tokens),
+            );
+        }
         InvocationParams {
             effort,
             thinking,
             max_output_tokens: Some(budget.reserve_output),
             temperature: None,
             extensions,
+            ..Default::default()
         }
     }
 }

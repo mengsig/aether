@@ -1,7 +1,7 @@
 use super::*;
 
 fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<ToolOutcome> {
-    let resolved = runtime.models.resolve(&ctx.agent.model)?;
+    let resolved = runtime.resolve_for_agent(&ctx.agent, &ctx.agent.model)?;
     let agent = runtime
         .store
         .agent(ctx.agent.id)?
@@ -72,6 +72,7 @@ fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<ToolOutcome> {
             "model": runtime.models.compactor_for(&agent.model),
             "effort": runtime.models.config().model.compactor_effort.unwrap_or(aether_core::model::Effort::Medium),
             "threshold_tokens": threshold,
+            "agent_threshold_tokens": agent.config.compaction_tokens,
             "threshold_percent_of_window": threshold_percent_of_window,
             "manual_minimum": "Engine: any nonempty recorded transcript. API: an older complete turn beyond the six-entry retained tail.",
             "task_boundary": "Long-lived agents after at least six new transcript entries.",
@@ -98,6 +99,59 @@ fn delegation_state(agent: &Agent) -> serde_json::Value {
     }
 }
 
+#[derive(serde::Serialize)]
+struct ProviderReadiness {
+    configured: bool,
+    available: bool,
+    error: Option<String>,
+}
+
+async fn provider_readiness(
+    runtime: &Runtime,
+    provider: &aether_model::registry::ProviderDef,
+    network: aether_core::agent::NetworkPolicy,
+) -> ProviderReadiness {
+    let status = runtime.models.auth_status(&provider.id).await;
+    let engines = runtime.engines.ready().await;
+    let kind = crate::turn_engine::engine_kind(provider.protocol);
+    let engine_error = kind.and_then(|kind| match engines.get(&kind) {
+        None => Some("Provider engine is not available in this daemon".to_owned()),
+        Some(engine) => engine
+            .validate_network_policy(network == aether_core::agent::NetworkPolicy::Allowed)
+            .err()
+            .map(|error| error.to_string()),
+    });
+    ProviderReadiness {
+        configured: status.configured,
+        available: status.configured && engine_error.is_none(),
+        error: status.error.or(engine_error),
+    }
+}
+
+fn model_entry(
+    info: &aether_model::ModelInfo,
+    status: &ProviderReadiness,
+    cost: Option<aether_core::model::ModelCost>,
+) -> serde_json::Value {
+    let mut entry = serde_json::json!({
+        "model": info.model,
+        "name": info.name,
+        "provider_name": info.provider_name,
+        "configured": status.configured,
+        "available": status.available,
+        "context_window": info.capabilities.context_window,
+        "compaction_threshold_tokens": aether_context::ContextBudget::for_profile(&info.capabilities, None).threshold_tokens(),
+        "effort_supported": info.capabilities.effort,
+        "efforts": info.efforts.iter().map(|effort| effort.as_str()).collect::<Vec<_>>(),
+        "tier": info.tier,
+        "api_equivalent_cost": cost,
+    });
+    if let Some(successor) = &info.superseded_by {
+        entry["superseded_by"] = serde_json::json!(successor);
+    }
+    entry
+}
+
 async fn list_models(
     runtime: &Arc<Runtime>,
     ctx: &TurnCtx,
@@ -120,41 +174,22 @@ async fn list_models(
         .into_iter()
         .filter(|info| names.contains(&info.name))
     {
-        if !statuses.contains_key(&info.model.provider) {
-            let status = runtime.models.auth_status(&info.model.provider).await;
-            let resolved = runtime.models.resolve(&info.model)?;
-            let engines = runtime.engines.ready().await;
-            let engine_error = crate::turn_engine::engine_kind(resolved.provider.protocol)
-                .and_then(|kind| match engines.get(&kind) {
-                    None => Some("Provider engine is not available in this daemon".to_owned()),
-                    Some(engine) => engine
-                        .validate_network_policy(
-                            network == aether_core::agent::NetworkPolicy::Allowed,
-                        )
-                        .err()
-                        .map(|error| error.to_string()),
-                });
-            let engine_available = engine_error.is_none();
-            let error = status.error.or(engine_error);
-            statuses.insert(
-                info.model.provider.clone(),
-                serde_json::json!({"configured": status.configured,
-                    "available": status.configured && engine_available, "error": error}),
-            );
-        }
-        let configured = statuses[&info.model.provider]["configured"].as_bool() == Some(true);
-        let available = statuses[&info.model.provider]["available"].as_bool() == Some(true);
-        let selected = provider.as_ref().is_none_or(|p| *p == info.model.provider);
         let resolved = runtime.models.resolve(&info.model)?;
+        let status = match statuses.entry(info.model.provider.clone()) {
+            std::collections::btree_map::Entry::Occupied(row) => row.into_mut(),
+            std::collections::btree_map::Entry::Vacant(row) => {
+                row.insert(provider_readiness(runtime, &resolved.provider, network).await)
+            }
+        };
         let cost = resolved
             .model
             .capabilities
             .cost
             .or_else(|| runtime.models.registry().api_equivalent_price(&resolved));
-        let entry = serde_json::json!({"model": info.model, "name": info.name, "provider_name": info.provider_name, "configured": configured, "available": available, "context_window": info.capabilities.context_window, "compaction_threshold_tokens": aether_context::ContextBudget::for_profile(&info.capabilities, None).threshold_tokens(), "effort_supported": info.capabilities.effort, "tier": info.tier, "api_equivalent_cost": cost});
-        if selected {
+        let entry = model_entry(&info, status, cost);
+        if provider.as_ref().is_none_or(|p| *p == info.model.provider) {
             models.push(entry);
-        } else if available {
+        } else if status.available {
             alternatives.push(entry);
         }
     }
@@ -163,7 +198,17 @@ async fn list_models(
             "No models matched. Use list_models without a provider to discover enabled providers.",
         ));
     }
-    let data = serde_json::json!({"providers": statuses, "models": models, "configured_alternatives": alternatives, "current_model": ctx.agent.model,
+    let retired: Vec<_> = runtime
+        .models
+        .retired()
+        .filter(|(model, _)| {
+            provider
+                .as_ref()
+                .is_none_or(|p| model.split_once('/').is_some_and(|(id, _)| id == p))
+        })
+        .map(|(model, successor)| serde_json::json!({"model": model, "successor": successor}))
+        .collect();
+    let data = serde_json::json!({"retired": retired, "providers": statuses, "models": models, "configured_alternatives": alternatives, "current_model": ctx.agent.model,
         "guidance": "Choose a connection with available=true. configured reports credentials; available also checks the engine and your current network policy. Inspect configured_alternatives before declaring a model family unavailable. Each model has a tier (fast, balanced, strong, frontier; null when unranked), a capability band within its provider; a provider may lack a tier. Prefer capability first, then cost within a suitable tier: frontier or strong for the hardest work, balanced for demanding work, fast for focused, low-cost work. Select by tier, never by model name. Give workers the balanced or fast tier, not current_model; a delegation policy (inspect_state) bounds what you may choose. Respect explicit model choices and budgets. API-equivalent prices are not subscription charges. Reasoning with tools on an OpenAI model requires the openai-responses provider on the API path."});
     Ok(crate::inspection::outcome(runtime, data))
 }

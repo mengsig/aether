@@ -189,6 +189,16 @@ depends on who runs the model loop.
 | `/compact` and `aether compact` on a direct Anthropic agent | The API's summarize compaction, asked for once on request. Its signed summary replaces the history and the fold is recorded as `compaction.native`. If the API cannot compact, Aether's own checkpoint runs instead. | Now, or as soon as a running turn ends. | Nothing; it uses the agent's model. |
 | `/compact` and `aether compact` on other agents, and an agent's `request_checkpoint` | The same Aether checkpoint, on any agent. The compactor model writes the summary: `model.compactor` when it is set, otherwise a model of the agent's own provider, which for a native agent is a model of the same CLI. A Claude Code or Codex compactor writes it in a fresh, isolated CLI session; this is not the CLI's own `/compact`. An API compactor writes it with an API request, for a native agent too. A native compactor cannot run for an agent in a container backend, which needs an API compactor. | Only on request, before the agent's next turn. | The compactor model and effort. |
 
+An agent created with `config.compaction_tokens` (at least 100,000) compacts
+at that size on every automatic path above, in place of its model's
+threshold. A value at or above the model's context window is capped at the
+window and still passed to the engine; its siblings on the same model keep the
+model's threshold (see [protocol](protocol.md), feature `compaction_tokens`).
+One provider limit remains: Claude Code takes an auto-compact window of at
+most 1,000,000 and folds 13,000 below it, so on Claude Code a threshold above
+987,000 compacts at about 987,000, though `inspect_state` reports the
+requested value.
+
 On a native session Aether still records context usage, but usage never
 requests an Aether summary or a task-boundary checkpoint, and automatic
 requests stored by an older version are ignored. Explicit checkpoints and
@@ -385,9 +395,12 @@ capability flags, and always beats a model default. GPT-6.1 Terra and Sol declar
 at high unless asked otherwise; the default is applied per turn, never written
 to the agent's config.
 
-Invocation snapshots record the effort the turn launched with, or `None` when
-native selection is used. An omitted override does not prove which effective effort the
-native model used; comparisons must capture that separately.
+Invocation snapshot parameters report `effort_requested` and `effort_effective`.
+The effective value describes the effort override Aether sent. When a native
+engine selects its own effort, that value is unknown. On Codex, an explicit
+`max` sends the native `max` override. The OpenAI Chat and Responses adapters
+send `high` for `x_high` and `max` on models with effort support. Older
+snapshots can lack both fields.
 
 ## Claude prompt-cache tier
 

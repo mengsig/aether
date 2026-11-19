@@ -234,6 +234,8 @@ fn snapshot(app: &mut App, make: impl Fn(&App) -> Box<dyn BottomView>, title: &s
 
 fn model(provider: &str, name: &str, configured: bool) -> ModelInfo {
     ModelInfo {
+        superseded_by: None,
+        efforts: None,
         tier: None,
         aliases: Vec::new(),
         model: ModelRef::new(provider, name),
@@ -494,6 +496,8 @@ fn model_view_applies_only_what_changed() {
     let current = app.tree.nodes[&agent_id(&app)].agent.model.clone();
     app.models = vec![
         ModelInfo {
+            superseded_by: None,
+            efforts: None,
             tier: None,
             model: current.clone(),
             ..model("anthropic", "x", true)
@@ -1335,6 +1339,8 @@ fn stocked_app() -> App {
     let current = app.tree.nodes[&agent].agent.model.clone();
     app.models = vec![
         ModelInfo {
+            superseded_by: None,
+            efforts: None,
             tier: None,
             model: current,
             ..model("anthropic", "x", true)

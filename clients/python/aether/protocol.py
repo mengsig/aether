@@ -138,6 +138,7 @@ from ._protocol_commands.list import (
     list_models,
     list_notifications,
     list_repository_aliases,
+    list_retired_models,
     list_runs,
     list_schedules,
     list_tasks,
