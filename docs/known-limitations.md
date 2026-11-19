@@ -245,17 +245,19 @@ looks like a boundary and is not one.
 - An agent's spawn schedule (`create_schedule` with `spawn`) repeats one
   `delegate` call, so it cannot carry what belongs to a single call: a `reason`
   for a child on the creator's own frontier-tier model, an isolated workspace,
-  references, or budgets of the child's own. The template's engine and
-  provider credentials are checked when the schedule is created and not again
-  per occurrence; a child whose engine has since gone fails at its first turn.
-  The schedule belongs to the agent that created it: it ends when that agent
-  does, a restart's successor does not take it over, and an exported run
-  leaves it behind. Only the CLI schedules a fresh root run. A release without
-  agent spawn schedules reads one as an operator's and starts each occurrence
-  as a fresh root run, outside its creator's policy and budgets: before
-  downgrading to such a release, cancel them with `aether schedule cancel`
-  (`aether schedule list --json` shows each schedule's `owner`). See
-  [harness tools](harness-tools.md).
+  references, or budgets of the child's own. The provider's credentials are
+  checked when the schedule is created and not again per occurrence: a child
+  whose credentials have since gone fails at its first turn. Each occurrence
+  checks the engine against what the daemon last detected rather than probing
+  it afresh, and waits while the engine is unavailable. A bare `wait_for`
+  does not wait on the schedule: with nothing else pending, its creator waits
+  with a timeout. The schedule belongs to the agent that created it: it ends
+  when that agent does, a restart's successor does not take it over, and an
+  exported run leaves it behind. Only the CLI schedules a fresh root run. A
+  release without agent spawn schedules cannot read one that is active, paused
+  or failed: cancel those before a downgrade, as
+  [upgrading](upgrading.md#downgrading-with-agent-spawn-schedules) describes.
+  See [harness tools](harness-tools.md).
 - `aether workspace diff` attributes commits in a shared workspace by the
   HEADs recorded at each turn's start and end, so another agent's commits in
   the same window are included; the reply flags such diffs `ambiguous`. There

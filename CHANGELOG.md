@@ -32,12 +32,36 @@ release is also the text of its GitHub release.
   child's messaging reach. A template `delegate` would refuse is refused when
   the schedule is created; one refused later ends the schedule with that
   refusal. An occurrence is skipped while the previous child's subtree is
-  live, the creator is paused or the creator is at `max_parallel`.
-  `max_deliveries` and pause, resume and cancel work as for any timer. The
-  schedule ends with its creator. Schedules that start a fresh root run stay
-  operator-only, and `aether schedule create` is unchanged.
+  live, the creator is paused, the creator is at `max_parallel` or the
+  template's engine is unavailable. Provider credentials are checked when the
+  schedule is created, not per occurrence. `max_deliveries` and pause, resume
+  and cancel work as for any timer. The schedule ends with its creator, and a
+  bare `wait_for` does not wait on it. Schedules that start a fresh root run
+  stay operator-only, and `aether schedule create` is unchanged.
+
+### Before downgrading
+
+- **Cancel agent spawn schedules before downgrading to 1.4.2 or earlier.** An
+  agent's spawn schedule that is active, paused or failed is stored in a
+  shape those releases refuse, so that none of them runs it as an operator's
+  schedule, in a fresh root run outside its creator's policy and budgets. A
+  daemon that old then fails to list schedules and fires none while such a
+  schedule is due. Find them with `aether schedule list --json` (an `owner`
+  that is an agent, and a `spawn`) and cancel each with
+  `aether schedule cancel` first. Cancelled and exhausted schedules, delivery
+  schedules and an operator's spawn schedules are stored as before.
+  [Upgrading](docs/upgrading.md#downgrading-with-agent-spawn-schedules) has
+  the steps.
 
 ### Fixed
+
+- **A child's scope is checked where its paths lead.** `delegate` and
+  `create_agent` compared a child's `workspace_root` and `allowed_paths` with
+  its parent's as text, so a path inside the parent's workspace that is a
+  symlink out of it was accepted, and the child's file tools then followed
+  it. Such a path is now refused as widening the parent's scope. A path that
+  does not exist yet is still accepted, and a child in an isolated workspace
+  is unaffected.
 
 - **A delegated child no longer starts with its parent's compaction
   threshold.** `delegate` copied the parent's `config.compaction_tokens` to

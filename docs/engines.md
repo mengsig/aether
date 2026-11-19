@@ -769,8 +769,10 @@ callers arriving meanwhile share the latest outcome. A started agent
 with the probe's reason, unless that probe was inconclusive (below). A parked agent (`aether new`) is still created: its
 CLI may be installed before it runs. Spawn schedules and their runs are not
 refused either: each run's first turn probes the CLI again. An agent's own
-spawn schedule is checked as `delegate` is when it is created, and not again
-per occurrence.
+spawn schedule is checked as `delegate` is when it is created. Each occurrence
+then goes by what the daemon last detected, without a new probe: it waits
+while the engine is unavailable, and the schedule ends if the engine cannot
+run under the child's network policy.
 
 A usable engine is not given up on one failed probe. A probe that times out,
 or whose CLI the OS could not start for now, keeps the last good detection, and a Codex app-server probe that times out is

@@ -107,23 +107,33 @@ with `wait=false`, admitted by the same code:
   approval policy and host context, and reports to the caller's inbox. Its
   messaging reach is a child's.
 - Creating the schedule is refused when the same `delegate` call would be
-  refused now, with the same message.
+  refused now, and the error carries `delegate`'s refusal. That includes a
+  caller already at `max_parallel`. The check is repeated as the schedule is
+  written, so a caller whose model, scope or policy changes meanwhile is
+  refused and creates it again.
 - A call that is refused later ends the schedule, with the refusal as its
   error: a tightened policy, a narrowed scope, a spent
-  `[scheduler] run_budget_usd`, a creator that became a leaf.
+  `[scheduler] run_budget_usd`, a creator that became a leaf or is being
+  cancelled, an engine that cannot run under the child's network policy.
 - An occurrence is skipped, and the schedule stays active, while its previous
-  child or anything beneath that child is live, while the creator is paused,
-  and while the creator is at `max_parallel`. Skipped occurrences do not count
-  against `max_deliveries`.
+  child, a restart of it or anything beneath either is live, while the
+  creator is paused, while the creator is at `max_parallel`, and while the
+  template's engine is unavailable in the daemon. Skipped occurrences do not
+  count against `max_deliveries`.
 - The schedule ends when its creator does, at its next occurrence, and cannot
   be resumed afterwards. The creator, or an operator, pauses, resumes and
   cancels it with `update_schedule` like any timer.
+- The schedule is not something a bare `wait_for` can wait on: a creator with
+  nothing else pending waits with `timeout_seconds` or `wake_at`, or on a
+  child's task once one exists.
 
 A template carries nothing that belongs to a single `delegate` call: no
-`reason`, so it cannot name the caller's own frontier-tier model, and no
-isolated workspace, references or budgets of its own. Delegate directly for
-those. Timers that start a fresh root run per occurrence stay operator-only
-(`aether schedule create --objective`).
+`reason`, so it can name the caller's own frontier-tier model only where the
+caller's delegation policy names that model, and no isolated workspace,
+references or budgets of its own. Delegate directly for those. The provider's
+credentials are checked when the schedule is created and not again per
+occurrence. Timers that start a fresh root run per occurrence stay
+operator-only (`aether schedule create --objective`).
 
 `remember` takes a `scope`: `repository` (the default; the agent's own scope
 when it has no repository), `global`, `role` (agents with the caller's role,

@@ -135,3 +135,28 @@ The [vNext security audit](security/vnext-audit.md) changed these:
 5. **Reopen the phone app** on each paired browser at the same address.
 6. **Archon, if you use it.** Update to Archon 1.5.0 and follow its upgrade
    notes; `archon remote setup` then mounts it at `/archon`.
+
+## Downgrading with agent spawn schedules
+
+An agent's own spawn schedule (`create_schedule` with `spawn`) starts a child
+of its creator per occurrence, inside what `delegate` allows that agent.
+Aether 1.4.2 and earlier have no such schedule: they would read it as an
+operator's and start each occurrence as a fresh root run, outside the
+creator's delegation policy, scope and budgets.
+
+To keep that from happening, a schedule of this kind that is active, paused
+or failed is stored with its creator as `target` beside `spawn`, a shape
+those releases refuse. A daemon that old cannot list schedules while one is
+stored, cannot cancel it, and fires no schedule while one is due.
+
+Before downgrading to 1.4.2 or earlier:
+
+1. List them: `aether schedule list --json`, and look for entries whose
+   `owner` is an agent and that have a `spawn`.
+2. Cancel each: `aether schedule cancel <id>`. A cancelled or exhausted
+   schedule is stored in the shape every release reads.
+3. Downgrade.
+
+If you have already downgraded, install the newer release again, cancel them
+and downgrade once more. Delivery schedules and schedules created with
+`aether schedule create --objective` are unaffected.
