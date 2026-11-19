@@ -492,6 +492,8 @@ mod tests {
         let model = node.agent.model.clone();
         app.context_tokens.insert(id, 82_000);
         app.models.push(ModelInfo {
+            superseded_by: None,
+            efforts: None,
             tier: None,
             aliases: Vec::new(),
             model,

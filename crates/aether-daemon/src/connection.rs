@@ -420,6 +420,7 @@ where
                                                     features::DELTA_ORDER.into(),
                                                     features::USAGE_BREAKDOWN.into(),
                                                     features::VIEW_MODES.into(),
+                                                    features::RETIRED_MODELS.into(),
                                                     features::REMOTE_MOUNTS.into(),
                                                     features::CONVERSATION.into(),
                                                     features::COMPACTION_TOKENS.into(),

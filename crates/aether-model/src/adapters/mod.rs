@@ -9,12 +9,12 @@ pub mod streaming;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
-use aether_core::model::CapabilityProfile;
+use aether_core::model::{CapabilityProfile, Effort};
 use reqwest::header::{HeaderMap, HeaderName};
 use serde_json::{Map, Value};
 
 use crate::http::RetryPolicy;
-use crate::registry::ProviderFlags;
+use crate::registry::{Protocol, ProviderFlags};
 
 /// How a resolved credential is presented on the wire. Adapters decide the
 /// header: Anthropic sends API keys as `x-api-key`, OpenAI as a bearer.
@@ -85,6 +85,17 @@ impl AdapterConfig {
         self.capabilities.get(model).cloned().unwrap_or_default()
     }
 
+    // A cached client may not hold a profile for an unlisted model.
+    fn effective_effort(
+        &self,
+        protocol: Protocol,
+        model: &str,
+        effort: Option<Effort>,
+    ) -> Option<Effort> {
+        let profile = self.capabilities.get(model)?;
+        protocol.effective_effort(profile, effort)
+    }
+
     pub fn with_capability(mut self, model: impl Into<String>, profile: CapabilityProfile) -> Self {
         self.capabilities.insert(model.into(), profile);
         self
@@ -120,6 +131,40 @@ pub fn merge_extra_body(body: &mut Map<String, Value>, extra: &Map<String, Value
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn effective_effort_uses_the_active_clients_dialect_and_cached_profile() {
+        use crate::ModelClient;
+        use openai_chat::OpenAiChatClient;
+
+        let model = crate::Registry::builtin()
+            .resolve(&aether_core::model::ModelRef::new("anthropic", "opus"))
+            .unwrap();
+        let empty = AdapterConfig::new("https://example.test", RequestAuth::None);
+        let cached = empty
+            .clone()
+            .with_capability(&model.model.id, model.model.capabilities.clone());
+        let requested = Some(Effort::Max);
+        assert_eq!(
+            model
+                .provider
+                .protocol
+                .effective_effort(&model.model.capabilities, requested),
+            requested
+        );
+        assert_eq!(
+            OpenAiChatClient::new(empty)
+                .unwrap()
+                .effective_effort(&model, requested),
+            None
+        );
+        assert_eq!(
+            OpenAiChatClient::new(cached)
+                .unwrap()
+                .effective_effort(&model, requested),
+            Some(Effort::High)
+        );
+    }
 
     #[test]
     fn debug_prints_a_fingerprint_never_the_secret() {

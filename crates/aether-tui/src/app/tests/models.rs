@@ -5,6 +5,8 @@ use super::*;
 fn catalogue_lookup_respects_provider_and_case_and_remembers_aliases_canonically() {
     let (mut app, _) = app_with_agent();
     let entry = |provider: &str| ModelInfo {
+        superseded_by: None,
+        efforts: None,
         tier: None,
         model: ModelRef::new(provider, "claude-opus-5-5"),
         aliases: vec!["opus".into(), "opus-5-5".into()],
@@ -106,6 +108,8 @@ fn model_switches_the_current_agent_and_default_moves_only_the_session() {
             ["mock/a", "anthropic/opus", "claude-code/haiku"]
                 .into_iter()
                 .map(|m| ModelInfo {
+                    superseded_by: None,
+                    efforts: None,
                     tier: None,
                     aliases: Vec::new(),
                     model: ModelChain::parse(m).expect("model").primary,
@@ -1036,6 +1040,8 @@ fn only_the_no_model_code_sends_a_failed_creation_to_login() {
 fn an_agents_own_compaction_threshold_replaces_its_models_within_the_window() {
     let (mut app, id) = app_with_agent();
     app.models = vec![ModelInfo {
+        superseded_by: None,
+        efforts: None,
         tier: None,
         model: ModelRef::new("claude-code", "claude-opus-5-5"),
         aliases: vec!["opus".into()],

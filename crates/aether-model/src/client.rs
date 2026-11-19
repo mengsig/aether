@@ -3,8 +3,8 @@
 use std::pin::Pin;
 
 use aether_core::model::{
-    AccumulateError, ModelError, ModelErrorClass, ModelRequest, ModelResponse, StreamAccumulator,
-    StreamEvent,
+    AccumulateError, Effort, ModelError, ModelErrorClass, ModelRequest, ModelResponse,
+    StreamAccumulator, StreamEvent,
 };
 use futures::{Stream, StreamExt};
 use tokio_util::sync::CancellationToken;
@@ -16,6 +16,18 @@ pub type ModelStream = Pin<Box<dyn Stream<Item = Result<StreamEvent, ModelError>
 pub trait ModelClient: Send + Sync {
     /// Adapter name and version, e.g. `anthropic-messages/1`. Recorded in snapshots.
     fn adapter(&self) -> &str;
+
+    /// The effort override this client will encode for the resolved model.
+    fn effective_effort(
+        &self,
+        model: &crate::ResolvedModel,
+        effort: Option<Effort>,
+    ) -> Option<Effort> {
+        model
+            .provider
+            .protocol
+            .effective_effort(&model.model.capabilities, effort)
+    }
 
     /// Send a request and return its event stream. Errors before the first
     /// byte are returned here; errors mid-stream arrive as stream items.

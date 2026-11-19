@@ -349,6 +349,8 @@ fn ascii_board_inspector_over_every_status() {
                 ..Default::default()
             };
             app.models.push(aether_protocol::ModelInfo {
+                superseded_by: None,
+                efforts: None,
                 tier: None,
                 aliases: Vec::new(),
                 model: node.agent.model.clone(),

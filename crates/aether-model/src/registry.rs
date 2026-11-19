@@ -45,6 +45,36 @@ protocols! {
 }
 
 impl Protocol {
+    /// Effort levels this route sends distinctly for the given model.
+    pub fn efforts(self, capabilities: &CapabilityProfile) -> &'static [Effort] {
+        use Effort::{High, Low, Max, Medium, XHigh};
+        if !capabilities.effort && !self.is_engine() {
+            return &[];
+        }
+        match self {
+            Self::Codex | Self::ClaudeCode | Self::AnthropicMessages => {
+                &[Low, Medium, High, XHigh, Max]
+            }
+            Self::OpenaiChatCompletions | Self::OpenaiResponses | Self::OpenaiCodexResponses => {
+                &[Low, Medium, High]
+            }
+        }
+    }
+
+    /// The highest supported level at or below the canonical request's effort.
+    pub fn effective_effort(
+        self,
+        capabilities: &CapabilityProfile,
+        requested: Option<Effort>,
+    ) -> Option<Effort> {
+        let requested = requested?;
+        self.efforts(capabilities)
+            .iter()
+            .rev()
+            .copied()
+            .find(|level| *level <= requested)
+    }
+
     /// Whether runtime accounting can enforce a dollar cap on this model.
     pub fn reports_cost(self, capabilities: &CapabilityProfile) -> bool {
         match self {
@@ -526,6 +556,9 @@ impl Registry {
     pub fn catalog_tier(&self, provider: &str, model: &str) -> Option<ModelTier> {
         let provider = self.provider(provider)?;
         let def = provider.resolve_model(model)?;
+        if crate::retired::supersession(&provider.id, &def.id).is_some() {
+            return None;
+        }
         if def.tier.is_some() {
             return def.tier;
         }

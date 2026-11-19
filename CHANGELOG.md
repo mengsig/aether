@@ -6,6 +6,20 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+- `aether models --json` keeps its array and reports `efforts` (the levels the route
+  sends distinctly, not a guarantee the model accepts each) and
+  `superseded_by`. Explicit ids still work for Fable 5.1, GPT-6 Astra and
+  GPT-6.1 Sol. Tier selection skips them. Use `aether models --retired` for
+  replacement guidance, or read `retired` in the MCP `list_models` result.
+  Archon can check `Welcome.features` for `retired_models` before requesting
+  the retired array. All new catalog fields are optional for readers.
+- Invocation snapshots record requested and effective reasoning effort,
+  including OpenAI-compatible requests that send `high` for `x_high` or
+  `max`. The effective value describes the override Aether sent.
+- These additions need no store migration. After an update that migrates the
+  store, binary downgrade is unsupported because the older daemon refuses
+  the newer schema. Use the feature switches for rollback.
+
 ### Added
 
 - **Per-agent compaction threshold.** `create_agent` accepts an optional
@@ -46,6 +60,7 @@ Released 2026-11-18. GPT-6.2 Astra and GPT-6.2 Sol become the `astra` and
 Released 2026-11-16. Bounded delegation (#430), approved task references
 (#431), questions keyed by sequence (#432), and terminal detachment (#433). The workspace and Python
 and TypeScript clients are 1.4.0.
+
 
 ### Added
 
@@ -149,6 +164,7 @@ fix (#421). The workspace and the Python and TypeScript clients are 1.3.1.
   file midpoint changed ownership as the store grew; this corrects the
   benchmark rather than changing memory recovery behavior.
 
+
 ### Added
 
 - **One conversation for the TUI and a phone.** `append_note` takes
@@ -220,6 +236,7 @@ before updating.
 - **Remote access to Archon 1.5.0 needs this release.** `archon remote
   setup` mounts archond on this listener at `/archon`; Archon 1.5.0 runs the
   queue on Aether 1.2.11 too.
+
 
 ### Added
 
@@ -548,6 +565,7 @@ underlined as file links in the transcript (#355). The new release bench
 history compares nine releases, 1.0.0 through 1.2.8, in one run (#357). No
 change to the daemon, the protocol (version 25) or the store (schema 28).
 
+
 ### Added
 
 - **The agent board can be resized from the keyboard (#346).** While the
@@ -619,6 +637,7 @@ schema 28, unchanged.
 - Replies on one connection can arrive out of request order. Every Aether
   client already matches them by `id`; a client of your own must too (see
   [Reply order](docs/protocol.md#reply-order)).
+
 
 ### Added
 
@@ -871,6 +890,7 @@ older clients see no change. Store schema 28 (was 27).
   no agent when its engine is missing or unusable, `--every` refuses an
   interval under 60 seconds, and `aether daemon --workspace` refuses a path
   that is not an existing directory.
+
 
 ### Added
 
@@ -1203,6 +1223,7 @@ status fields are additive. Store schema 27 (was 26).
   detached job) are now stopped when the agent ends. Start anything meant to
   outlive its agent outside Aether.
 
+
 ### Added
 
 - **Leftover processes are reaped when an agent ends (Linux).** Each engine
@@ -1339,6 +1360,7 @@ additive. Store schema 26, unchanged.
 - Messages and task objectives above 2 MiB are refused; attach large content
   as a file or artifact.
 
+
 ### Added
 
 - **Hard spend stop per run.** `[scheduler] run_hard_stop_usd` and
@@ -1419,6 +1441,7 @@ fields are additive. Store schema 26, unchanged.
   still running 1.2.1 keeps its old context windows, compaction and approval
   gating until it restarts. From 1.2.2 on, a yes to the update offer on launch
   does this for you.
+
 
 ### Added
 
@@ -1508,6 +1531,7 @@ side pane that previews local files, Ctrl+V pasting the clipboard image, and
 two fixes to the GitHub watcher. Protocol version 24, unchanged; the new
 commands and replies are additive. Store schema 26 (was 25): a
 `notifications` table, created idempotently on first start.
+
 
 ### Added
 

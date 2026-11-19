@@ -40,6 +40,7 @@ import type {
   RepositoryAlias,
   RepositoryAliasReport,
   RetentionPreview,
+  RetiredModel,
   RetrievalExplain,
   RunListing,
   RunReport,
@@ -403,6 +404,11 @@ export interface ReplyModels {
   "reply": "models";
 }
 
+export interface ReplyRetiredModels {
+  "data": Array<RetiredModel>;
+  "reply": "retired_models";
+}
+
 export interface ReplyViewModes {
   "data": ViewModes;
   "reply": "view_modes";
@@ -564,6 +570,7 @@ export type Reply =
     ReplyRunImported |
     ReplyMcpServers |
     ReplyModels |
+    ReplyRetiredModels |
     ReplyViewModes |
     ReplyProviders |
     ReplyProviderUsage |

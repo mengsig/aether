@@ -23,7 +23,6 @@ fn every_builtin_model_has_its_declared_tier() {
     let expected = [
         ("claude-opus-5-5", ModelTier::Strong),
         ("claude-fable-5-2", ModelTier::Frontier),
-        ("claude-fable-5-1", ModelTier::Frontier),
         ("claude-sonnet-5-5", ModelTier::Balanced),
         ("claude-haiku-5-5", ModelTier::Fast),
     ];
@@ -41,8 +40,6 @@ fn every_builtin_model_has_its_declared_tier() {
         ("gpt-6.1-terra", ModelTier::Balanced),
         ("gpt-6.2-sol", ModelTier::Balanced),
         ("gpt-6-luna", ModelTier::Fast),
-        ("gpt-6-astra", ModelTier::Strong),
-        ("gpt-6.1-sol", ModelTier::Balanced),
     ];
     for provider in ["codex", "openai", "openai-responses"] {
         for (model, want) in expected {
@@ -245,11 +242,7 @@ fn gpt_6_1_terra_is_the_first_balanced_model_on_every_gpt_provider() {
             .filter(|info| info.tier == Some(ModelTier::Balanced))
             .map(|info| info.model.model.as_str())
             .collect();
-        assert_eq!(
-            balanced,
-            ["gpt-6.1-terra", "gpt-6.2-sol", "gpt-6.1-sol"],
-            "{provider}"
-        );
+        assert_eq!(balanced, ["gpt-6.1-terra", "gpt-6.2-sol"], "{provider}");
     }
 }
 
@@ -266,6 +259,32 @@ fn gpt_6_2_astra_is_the_first_strong_model_on_every_gpt_provider() {
             .filter(|info| info.tier == Some(ModelTier::Strong))
             .map(|info| info.model.model.as_str())
             .collect();
-        assert_eq!(strong, ["gpt-6.2-astra", "gpt-6-astra"], "{provider}");
+        assert_eq!(strong, ["gpt-6.2-astra"], "{provider}");
     }
+}
+
+#[test]
+fn superseded_models_stay_unranked_even_with_an_operator_tier_override() {
+    let models = load(
+        "[models.tiers]\n\"claude-code/fable-5-1\" = \"balanced\"",
+        "",
+    );
+    let old = ModelRef::new("claude-code", "fable-5-1");
+    assert_eq!(models.tier(&old), None);
+    assert!(models.resolve(&old).is_ok());
+    assert_eq!(models.delegation_tier(&old), Some(ModelTier::Balanced));
+    let astra = ModelRef::new("codex", "gpt-6-astra");
+    assert_eq!(models.tier(&astra), None);
+    assert_eq!(models.delegation_tier(&astra), Some(ModelTier::Strong));
+}
+
+#[test]
+fn retired_list_omits_an_id_restored_as_an_operator_alias() {
+    let models = load(
+        "",
+        "[[providers.codex.add_models]]\nid = \"custom\"\naliases = [\"gpt-6-sol\"]",
+    );
+    let retired: std::collections::BTreeMap<_, _> = models.retired().collect();
+    assert!(!retired.contains_key("codex/gpt-6-sol"));
+    assert_eq!(retired["openai/gpt-6-sol"], "openai/gpt-6.2-sol");
 }

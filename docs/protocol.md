@@ -190,6 +190,16 @@ A client must check that the `Welcome` lists `host_context` before sending
 `config.host_context`: an older daemon silently ignores the field and creates
 a full agent.
 
+`retired_models` in `Welcome.features` enables `list_retired_models` on protocol
+26. Its `retired_models` reply carries an array of fully qualified `model` and
+`successor` strings. For example, `codex/gpt-6-sol` points to
+`codex/gpt-6.2-sol`. Archon skips the request when talking to a daemon without
+this feature. The existing `list_models` command keeps its array of active
+models. Read `superseded_by` (a model id on the same provider) and `efforts`
+(an array of the effort levels the route sends distinctly, not a guarantee
+that the model accepts each) as optional. An absent list means the daemon did
+not report them.
+
 `operator_memory_roles` means `create_memory` accepts the `role` and
 `repository_role` operator scopes and the `repository` field on both repository
 scopes. Check this feature before sending any of them. An older daemon rejects

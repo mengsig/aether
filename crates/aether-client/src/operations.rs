@@ -6,7 +6,7 @@ use aether_core::task::Task;
 use aether_core::tool::{ApprovalDecision, ApprovalRequest};
 use aether_protocol::{
     AuthInfo, Command, CreateTask, DaemonStatus, ModelInfo, NewApprovalRule, ProviderInfo,
-    RememberSpec, Reply, TaskQuery,
+    RememberSpec, Reply, RetiredModel, TaskQuery,
 };
 
 impl Client {
@@ -259,6 +259,13 @@ impl Client {
         match self.request(Command::ListModels).await? {
             Reply::Models(m) => Ok(m),
             other => Err(unexpected("models", &other)),
+        }
+    }
+
+    pub async fn list_retired_models(&self) -> Result<Vec<RetiredModel>> {
+        match self.request(Command::ListRetiredModels).await? {
+            Reply::RetiredModels(rows) => Ok(rows),
+            other => Err(unexpected("retired models", &other)),
         }
     }
 

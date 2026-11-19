@@ -57,6 +57,37 @@ async fn gpt_6_1_sol_requests_high_unless_an_effort_was_asked_for() {
 }
 
 #[tokio::test]
+async fn api_turn_records_the_requested_effort_and_the_sent_override() {
+    use Effort::{High, Max, XHigh};
+
+    for (provider, model, requested, effective) in [
+        ("openai", "sol", Some(XHigh), Some(High)),
+        ("openai-responses", "astra", Some(Max), Some(High)),
+        ("openai-responses", "sol", None, Some(High)),
+        ("openai-responses", "luna", None, None),
+        ("anthropic", "opus", Some(XHigh), Some(XHigh)),
+        ("groq", "llama-3.3-70b-versatile", Some(Max), None),
+    ] {
+        let h = harness(vec![ScriptedClient::tool_call(
+            "complete_task",
+            json!({"summary": "done"}),
+        )])
+        .await;
+        let mut spec = spec("check the turn record");
+        spec.model = Some(ModelRef::new(provider, model));
+        spec.config.as_mut().unwrap().effort = requested;
+        let (agent, _) = h.runtime.create_agent(spec, Actor::user()).unwrap();
+        h.wait_until(agent.id, |s| s.is_terminal()).await;
+        let calls = h.store.invocations_for_agent(agent.id).unwrap();
+        let snapshot = h.store.snapshot(calls[0].snapshot_id).unwrap().unwrap();
+        let params = snapshot.params;
+        assert_eq!(params.effort_requested, requested, "{provider}/{model}");
+        assert_eq!(params.effort_effective, effective, "{provider}/{model}");
+        assert_eq!(params.effort, h.client.requests()[0].effort);
+    }
+}
+
+#[tokio::test]
 async fn child_creation_requires_effort_before_writing_any_state() {
     let h = harness(vec![]).await;
     let (parent, _) = h

@@ -5,7 +5,7 @@
 pub mod request;
 pub mod stream;
 
-use aether_core::model::{ModelError, ModelErrorClass, ModelRequest};
+use aether_core::model::{Effort, ModelError, ModelErrorClass, ModelRequest};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use tokio_util::sync::CancellationToken;
 
@@ -79,6 +79,18 @@ fn value(v: &str) -> Result<HeaderValue, ModelError> {
 impl ModelClient for OpenAiChatClient {
     fn adapter(&self) -> &str {
         ADAPTER
+    }
+
+    fn effective_effort(
+        &self,
+        model: &crate::ResolvedModel,
+        effort: Option<Effort>,
+    ) -> Option<Effort> {
+        self.config.effective_effort(
+            crate::Protocol::OpenaiChatCompletions,
+            &model.model.id,
+            effort,
+        )
     }
 
     async fn stream(

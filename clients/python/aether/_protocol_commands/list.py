@@ -82,6 +82,11 @@ def list_repository_aliases() -> dict[str, Any]:
     frame: dict[str, Any] = {"cmd": "list_repository_aliases"}
     return frame
 
+def list_retired_models() -> dict[str, Any]:
+    """Retired model IDs and the successors to use in their place."""
+    frame: dict[str, Any] = {"cmd": "list_retired_models"}
+    return frame
+
 def list_runs(*, limit: int) -> dict[str, Any]:
     """Runs this store knows about, newest first."""
     frame: dict[str, Any] = {"cmd": "list_runs"}
