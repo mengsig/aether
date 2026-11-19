@@ -108,17 +108,22 @@ with `wait=false`, admitted by the same code:
   messaging reach is a child's.
 - Creating the schedule is refused when the same `delegate` call would be
   refused now, and the error carries `delegate`'s refusal. That includes a
-  caller already at `max_parallel`. The check is repeated as the schedule is
+  caller already at `max_parallel`. It is also refused while the latest probe
+  of the template's engine failed; the daemon then probes that engine again
+  in the background, so a later call can succeed. The check is repeated as the schedule is
   written, so a caller whose model, scope or policy changes meanwhile is
   refused and creates it again.
 - A call that is refused later ends the schedule, with the refusal as its
-  error: a tightened policy, a narrowed scope, a spent
+  error: a tightened policy, a narrowed scope, a template path that has come
+  to lead outside the creator's workspace through a symlink, a spent
   `[scheduler] run_budget_usd`, a creator that became a leaf or is being
   cancelled, an engine that cannot run under the child's network policy.
 - An occurrence is skipped, and the schedule stays active, while its previous
   child, a restart of it or anything beneath either is live, while the
   creator is paused, while the creator is at `max_parallel`, and while the
-  template's engine is unavailable in the daemon. Skipped occurrences do not
+  template's engine cannot be launched: it is unavailable in the daemon or
+  its latest probe failed, and the daemon probes it again in the background
+  so that a later occurrence can run. Skipped occurrences do not
   count against `max_deliveries`.
 - The schedule ends when its creator does, at its next occurrence, and cannot
   be resumed afterwards. The creator, or an operator, pauses, resumes and

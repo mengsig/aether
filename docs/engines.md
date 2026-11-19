@@ -770,9 +770,11 @@ with the probe's reason, unless that probe was inconclusive (below). A parked ag
 CLI may be installed before it runs. Spawn schedules and their runs are not
 refused either: each run's first turn probes the CLI again. An agent's own
 spawn schedule is checked as `delegate` is when it is created. Each occurrence
-then goes by what the daemon last detected, without a new probe: it waits
-while the engine is unavailable, and the schedule ends if the engine cannot
-run under the child's network policy.
+then goes by what the daemon last detected and does not wait for a probe:
+it is skipped while the engine is not launchable, whether unavailable or
+suspect (below), and the daemon probes that CLI again in the background, so
+a later occurrence runs once a probe passes. The schedule ends if the engine
+cannot run under the child's network policy.
 
 A usable engine is not given up on one failed probe. A probe that times out,
 or whose CLI the OS could not start for now, keeps the last good detection, and a Codex app-server probe that times out is
