@@ -4,6 +4,7 @@ use aether_core::id::AgentId;
 use aether_core::model::ModelRef;
 use aether_store::AgentFilter;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 /// A child may gate more than its parent, never less. One rule,
 /// one message, whether it fires at creation or on a live agent.
@@ -37,30 +38,63 @@ pub(super) fn checked_agent_name(name: &str) -> Result<String> {
     Ok(trimmed.to_owned())
 }
 
-/// The field on which `scope` leaves `parent` once symlinks are followed, as
-/// the file tools follow them. `cwd` is where a parent with no root works.
-fn widened_on_disk(
-    scope: &Scope,
-    parent: &Scope,
-    cwd: Option<&std::path::Path>,
-) -> Result<Option<&'static str>> {
-    use std::path::{Path, PathBuf};
-    let parent_root = parent.workspace_root.as_deref().or(cwd);
-    let named: Vec<&Path> = parent_root
-        .into_iter()
-        .chain(parent.allowed_paths.iter().map(PathBuf::as_path))
-        .collect();
-    // A parent path that cannot be resolved grants nothing.
-    let granted: Vec<PathBuf> = named
-        .iter()
-        .filter_map(|path| aether_tools::fs::resolve_links(path).ok())
-        .collect();
-    let inside = |path: &Path| -> Result<bool> {
-        // The parent's own path leads wherever the parent's does.
-        if named.contains(&path) {
-            return Ok(true);
+/// Where `path` leads once its links are followed as the file tools follow
+/// them. A relative path is read from the daemon's directory, as the OS reads it.
+fn leads_to(path: &Path) -> std::result::Result<PathBuf, String> {
+    let absolute = std::path::absolute(path).map_err(|error| error.to_string())?;
+    let resolved = aether_tools::fs::resolve_links(&absolute).map_err(|error| error.to_string())?;
+    debug_assert!(resolved.is_absolute(), "resolved from an absolute path");
+    Ok(resolved)
+}
+
+/// The real path of `path`, or where it will be once created as written.
+/// `None`: it cannot be read, or its spelling climbs out of what is missing.
+fn real_or_once_created(path: &Path) -> Option<PathBuf> {
+    let absolute = std::path::absolute(path).ok()?;
+    let mut existing = absolute.as_path();
+    let mut missing = Vec::new();
+    loop {
+        match std::fs::canonicalize(existing) {
+            Ok(real) => {
+                debug_assert!(real.is_absolute());
+                return Some(
+                    missing
+                        .iter()
+                        .rev()
+                        .fold(real, |path, name| path.join(name)),
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return None,
         }
-        let leads_to = aether_tools::fs::resolve_links(path).map_err(|error| {
+        // `None` for `..`: once created, such a path is somewhere else.
+        missing.push(existing.file_name()?);
+        existing = existing.parent()?;
+    }
+}
+
+/// The directories `parent`'s file tools reach, counting a path of its that
+/// is not there yet: its root and allowed paths, or only `cwd` without a root.
+fn granted_roots(parent: &Scope, cwd: &Path) -> Vec<PathBuf> {
+    let named: Vec<&Path> = match &parent.workspace_root {
+        Some(root) => std::iter::once(root.as_path())
+            .chain(parent.allowed_paths.iter().map(PathBuf::as_path))
+            .collect(),
+        // Without a root its file tools work in `cwd` and ignore `allowed_paths`.
+        None => vec![cwd],
+    };
+    debug_assert!(!named.is_empty(), "a scope works somewhere");
+    let granted: Vec<PathBuf> = named.into_iter().filter_map(real_or_once_created).collect();
+    debug_assert!(granted.iter().all(|root| root.is_absolute()));
+    granted
+}
+
+/// The field on which `scope` leaves `parent` once links are followed, as
+/// the file tools follow them. `cwd` is where a parent with no root works.
+fn widened_on_disk(scope: &Scope, parent: &Scope, cwd: &Path) -> Result<Option<&'static str>> {
+    let granted = granted_roots(parent, cwd);
+    let inside = |path: &Path| -> Result<bool> {
+        let leads_to = leads_to(path).map_err(|error| {
             RuntimeError::Invalid(format!(
                 "child scope path {} cannot be resolved: {error}",
                 path.display()
@@ -69,12 +103,17 @@ fn widened_on_disk(
         Ok(granted.iter().any(|root| leads_to.starts_with(root)))
     };
     if let Some(root) = &scope.workspace_root
+        && scope.workspace_root != parent.workspace_root
         && !inside(root)?
     {
         return Ok(Some("workspace_root"));
     }
+    // The parent's own allowed path leads where the parent's does, unless the
+    // child would use it and the parent cannot: a rootless agent's are unused.
+    let same_use = parent.workspace_root.is_some() || scope.workspace_root.is_none();
     for path in &scope.allowed_paths {
-        if !inside(path)? {
+        let parents_own = same_use && parent.allowed_paths.contains(path);
+        if !parents_own && !inside(path)? {
             return Ok(Some("allowed_paths"));
         }
     }
@@ -295,7 +334,9 @@ impl Runtime {
             // A managed worktree was resolved when its manifest was written.
             (None, Some(_)) => None,
             (None, None) => {
-                widened_on_disk(&checked, &parent_scope, self.unscoped_cwd().as_deref())?
+                // As `tool_context` places the file tools of a rootless agent.
+                let cwd = self.unscoped_cwd().unwrap_or_else(|| PathBuf::from("."));
+                widened_on_disk(&checked, &parent_scope, &cwd)?
             }
         };
         match widened {

@@ -249,7 +249,7 @@ impl Runtime {
         // As `delegate` would be refused now, atomically with the write.
         if let Some(child) = child {
             debug_assert!(matches!(by, Actor::Agent { .. }), "only an agent's has one");
-            child.check_held(self, hold)?;
+            child.check_held(self, hold, &template)?;
         }
         Ok(ScheduleMode::Spawn {
             template,

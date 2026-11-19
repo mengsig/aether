@@ -9,6 +9,9 @@ use std::time::{Duration, Instant};
 /// The shortest gap between two probes of one unusable engine, so a burst
 /// of turns and creations shares one probe rather than each running the CLI.
 const RECHECK_INTERVAL: Duration = Duration::from_secs(2);
+/// How long a probe asked for by [`EngineCatalog::want_recheck`] speaks for
+/// its engine: long enough for the scheduler's next pass to read it.
+const ANSWER_STANDS: Duration = Duration::from_secs(5);
 
 /// A usable engine is recorded unusable only after this many failed probes
 /// in a row, spanning at least [`DEMOTE_SPAN`]: one probe that failed under
@@ -197,10 +200,17 @@ pub(crate) struct EngineCatalog {
     probing: Option<Probing>,
     /// Each engine's probing history; held across a probe.
     rechecked: tokio::sync::Mutex<HashMap<EngineKind, ProbeHistory>>,
-    /// Engines a caller that cannot wait for a probe found unusable.
-    wanted: parking_lot::Mutex<HashSet<EngineKind>>,
+    asked: parking_lot::Mutex<AskedProbes>,
     #[cfg(test)]
     hung: std::sync::atomic::AtomicBool,
+}
+
+/// Probes asked for by code that cannot wait for one.
+#[derive(Default)]
+struct AskedProbes {
+    wanted: HashSet<EngineKind>,
+    /// When the latest probe asked for of each engine answered.
+    answered: HashMap<EngineKind, Instant>,
 }
 
 /// What probing an engine again needs.
@@ -278,18 +288,39 @@ impl EngineCatalog {
     /// Ask for `kind` to be probed again, from code that cannot wait for
     /// it: [`EngineCatalog::recheck_wanted`] does the probing.
     pub(crate) fn want_recheck(&self, kind: EngineKind) {
-        self.wanted.lock().insert(kind);
+        self.asked.lock().wanted.insert(kind);
     }
 
     pub(crate) fn wants_recheck(&self) -> bool {
-        !self.wanted.lock().is_empty()
+        !self.asked.lock().wanted.is_empty()
     }
 
-    /// Probe again each engine asked for since the last call.
+    /// Whether a probe asked for of `kind` answered so recently that what is
+    /// detected of it now is that probe's verdict.
+    pub(crate) fn recheck_answered(&self, kind: EngineKind) -> bool {
+        let asked = self.asked.lock();
+        let answered = asked.answered.get(&kind);
+        answered.is_some_and(|at| at.elapsed() < ANSWER_STANDS)
+    }
+
+    /// Probe again each engine asked for since the last call, and record
+    /// that it answered.
     pub(crate) async fn recheck_wanted(&self) {
-        let wanted = std::mem::take(&mut *self.wanted.lock());
+        let wanted = std::mem::take(&mut self.asked.lock().wanted);
         for kind in wanted {
+            // Rate-limited or not, this leaves detected the outcome of a
+            // probe no older than `RECHECK_INTERVAL`.
             self.recheck(kind).await;
+            self.asked.lock().answered.insert(kind, Instant::now());
+        }
+    }
+
+    /// Age every answer as [`ANSWER_STANDS`] passing would.
+    #[cfg(test)]
+    pub(crate) fn outlast_recheck_answers(&self) {
+        for at in self.asked.lock().answered.values_mut() {
+            *at = at.checked_sub(ANSWER_STANDS).unwrap_or(*at);
+            assert!(at.elapsed() >= ANSWER_STANDS, "the clock is too young");
         }
     }
 

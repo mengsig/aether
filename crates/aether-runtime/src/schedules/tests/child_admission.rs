@@ -104,6 +104,21 @@ fn held_creation_refusal(
     error
 }
 
+/// Fire a schedule whose engine cannot be launched: it stays due, untouched,
+/// until the probe it asks for has answered, and the pass after decides it.
+async fn fire_after_the_probe(runtime: &Arc<Runtime>, id: aether_core::id::ScheduleId) -> Schedule {
+    let before = runtime.store.schedule(id).unwrap().unwrap();
+    assert_eq!(fire(runtime, id), before, "no verdict without an answer");
+    let probing = crate::scheduler::reprobe_wanted_engines(runtime);
+    probing
+        .expect("the occurrence asked for a probe")
+        .await
+        .unwrap();
+    let again = crate::scheduler::reprobe_wanted_engines(runtime);
+    assert!(again.is_none(), "asked for once");
+    fire(runtime, id)
+}
+
 fn fail(runtime: &Runtime, id: AgentId) {
     change(runtime, id, |agent| {
         agent.status = AgentStatus::Failed {
@@ -238,7 +253,7 @@ async fn an_engine_that_cannot_run_under_the_childs_network_refuses_it_then_or_l
 }
 
 #[tokio::test]
-async fn an_occurrence_waits_while_its_engine_is_unavailable() {
+async fn an_occurrence_is_skipped_for_its_engine_only_on_a_probes_answer() {
     let (runtime, _dir) = fixture().await;
     runtime.engines.mark_usable(KIND, needs_network());
     let lead = creator(&runtime, None);
@@ -248,52 +263,64 @@ async fn an_occurrence_waits_while_its_engine_is_unavailable() {
         .engines
         .mark_unavailable(KIND, "claude --version exited 1");
 
-    let stored = fire(&runtime, job.id);
-    let reason = skip_reason(&stored).expect("waits for the engine");
+    let stored = fire_after_the_probe(&runtime, job.id).await;
+    let reason = skip_reason(&stored).expect("the probe found no engine either");
     assert!(reason.contains("its engine is not available"), "{reason}");
     assert!(matches!(stored.status, ScheduleStatus::Active { .. }));
     assert_eq!(stored.deliveries, 0);
-    assert!(runtime.engines.wants_recheck(), "nothing else may probe it");
     let error = refused(&runtime, &lead, template);
     assert!(error.contains("its engine is not available"), "{error}");
+    assert!(
+        runtime.engines.wants_recheck(),
+        "a refusal asks for one too"
+    );
 
     runtime.engines.mark_usable(KIND, needs_network());
     assert!(spawned(&fire(&runtime, job.id)).is_some());
 }
 
 #[tokio::test]
-async fn an_occurrence_waits_while_its_engines_latest_probe_failed() {
+async fn an_occurrence_does_not_go_by_an_old_answer_about_a_suspect_engine() {
     let (runtime, _dir) = fixture().await;
     runtime.engines.mark_usable(KIND, needs_network());
     let lead = creator(&runtime, None);
-    let template = child_template(ENGINE_FAST, Effort::Low);
-    let job = schedule(&runtime, &lead, template.clone());
+    let job = schedule(&runtime, &lead, child_template(ENGINE_FAST, Effort::Low));
     // Still on record as usable, but no turn would launch it.
     runtime
         .engines
         .mark_suspect(KIND, "claude --version timed out");
 
-    let stored = fire(&runtime, job.id);
-    let reason = skip_reason(&stored).expect("waits for a probe that passes");
-    assert!(reason.contains("its engine is not available"), "{reason}");
+    let skipped = fire_after_the_probe(&runtime, job.id).await;
+    let reason = skip_reason(&skipped).expect("the probe failed too");
     assert!(reason.contains("claude --version timed out"), "{reason}");
-    assert_eq!(stored.deliveries, 0);
+    assert_eq!(skipped.deliveries, 0);
     assert!(children(&runtime, lead.id).is_empty());
 
-    let probing = crate::scheduler::reprobe_wanted_engines(&runtime);
-    probing.expect("the wait asked for a probe").await.unwrap();
-    assert!(!runtime.engines.wants_recheck(), "asked for once");
-    assert!(crate::scheduler::reprobe_wanted_engines(&runtime).is_none());
-
-    let error = refused(&runtime, &lead, template);
-    assert!(error.contains("claude --version timed out"), "{error}");
-    assert!(
-        runtime.engines.wants_recheck(),
-        "a refused creation asks too"
-    );
-
+    // By the next occurrence that answer says nothing: it asks again, and
+    // runs on the probe that finds the engine instead of being skipped.
+    runtime.engines.outlast_recheck_answers();
+    assert_eq!(fire(&runtime, job.id), skipped, "due until a probe answers");
+    assert!(runtime.engines.wants_recheck());
     runtime.engines.clear_suspect(KIND);
     assert!(spawned(&fire(&runtime, job.id)).is_some());
+}
+
+#[tokio::test]
+async fn creation_is_refused_when_its_engine_turned_suspect_before_the_hold() {
+    let (runtime, _dir) = fixture().await;
+    runtime.engines.mark_usable(KIND, needs_network());
+    let lead = creator(&runtime, None);
+    let template = child_template(ENGINE_FAST, Effort::Low);
+
+    let error = held_creation_refusal(&runtime, &lead, template.clone(), || {
+        runtime
+            .engines
+            .mark_suspect(KIND, "claude --version timed out");
+    });
+    assert!(error.contains("claude --version timed out"), "{error}");
+    assert!(runtime.engines.wants_recheck(), "for the caller's next try");
+    runtime.engines.clear_suspect(KIND);
+    schedule(&runtime, &lead, template);
 }
 
 #[tokio::test]
@@ -430,6 +457,85 @@ async fn a_path_that_cannot_be_resolved_is_refused_unless_it_is_its_creators_own
     let child = spawned(&fire(&runtime, job.id)).expect("inherits the scope");
     let child = runtime.store.agent(child).unwrap().unwrap();
     assert_eq!(child.scope.allowed_paths, vec![endless]);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_creators_path_its_file_tools_cannot_reach_grants_its_child_nothing() {
+    let (runtime, dir) = fixture().await;
+    let (workspace, outside) = (dir.path().join("workspace"), dir.path().join("outside"));
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    // Spelled through a directory that is not there, so it leads nowhere.
+    let unreachable = workspace.join("missing/../../outside");
+    let later = dir.path().join("later");
+    let door = workspace.join("door");
+    std::os::unix::fs::symlink(&outside, &door).unwrap();
+    let lead = creator(&runtime, None);
+    let lead = change(&runtime, lead.id, |lead| {
+        lead.scope.workspace_root = Some(workspace.clone());
+        lead.scope.allowed_paths = vec![unreachable.clone(), later.clone()];
+    });
+    let allowed = |path: std::path::PathBuf| SpawnSpec {
+        scope: Some(Scope {
+            allowed_paths: vec![path],
+            ..lead.scope.clone()
+        }),
+        ..child_template(FAST, Effort::Low)
+    };
+
+    let error = refused(&runtime, &lead, allowed(door));
+    assert!(error.contains("`allowed_paths` widens it"), "{error}");
+    // One that is only not made yet is where it will be made.
+    let job = schedule(&runtime, &lead, allowed(later.join("sub")));
+    assert!(spawned(&fire(&runtime, job.id)).is_some());
+}
+
+#[tokio::test]
+async fn a_rootless_creators_allowed_paths_root_no_child() {
+    let (runtime, dir) = fixture().await;
+    let elsewhere = dir.path().to_path_buf();
+    let lead = creator(&runtime, None);
+    let lead = change(&runtime, lead.id, |lead| {
+        lead.scope.allowed_paths = vec![elsewhere.clone()];
+    });
+    let cwd = runtime.unscoped_cwd().expect("the file tools' root for it");
+    let scoped = |root: Option<std::path::PathBuf>| SpawnSpec {
+        scope: Some(Scope {
+            workspace_root: root,
+            ..lead.scope.clone()
+        }),
+        ..child_template(FAST, Effort::Low)
+    };
+
+    // Its file tools work in `cwd` alone, whatever `allowed_paths` says.
+    let error = refused(&runtime, &lead, scoped(Some(elsewhere.clone())));
+    assert!(error.contains("`workspace_root` widens it"), "{error}");
+    // With a root of its own, the child's file tools would use the path.
+    let error = refused(&runtime, &lead, scoped(Some(cwd.join("src"))));
+    assert!(error.contains("`allowed_paths` widens it"), "{error}");
+    // As rootless as its creator, it has no more use of it.
+    let job = schedule(&runtime, &lead, scoped(None));
+    assert!(spawned(&fire(&runtime, job.id)).is_some());
+}
+
+#[tokio::test]
+async fn a_relative_template_path_is_read_from_the_daemons_directory() {
+    let (runtime, _dir) = fixture().await;
+    let lead = creator(&runtime, None);
+    assert_eq!(runtime.unscoped_cwd(), std::env::current_dir().ok());
+    let rooted = |root: &str| SpawnSpec {
+        scope: Some(Scope {
+            workspace_root: Some(root.into()),
+            ..lead.scope.clone()
+        }),
+        ..child_template(FAST, Effort::Low)
+    };
+
+    // Not made yet, and inside where its creator works.
+    schedule(&runtime, &lead, rooted("not-made-yet"));
+    let error = refused(&runtime, &lead, rooted("../not-made-yet"));
+    assert!(error.contains("`workspace_root` widens it"), "{error}");
 }
 
 #[tokio::test]

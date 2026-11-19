@@ -33,7 +33,12 @@ pub(super) struct Checked {
 impl Checked {
     /// Under the hold the schedule is written under: refused exactly when
     /// the same `delegate` call would be refused now.
-    pub(super) fn check_held(mut self, runtime: &Runtime, hold: &CommitHold<'_>) -> Result<()> {
+    pub(super) fn check_held(
+        mut self,
+        runtime: &Runtime,
+        hold: &CommitHold<'_>,
+        template: &SpawnSpec,
+    ) -> Result<()> {
         let creator = live_creator(runtime, self.creator.id)?;
         if !same_authority(&self.creator, &creator) {
             return Err(RuntimeError::Invalid(
@@ -42,6 +47,8 @@ impl Checked {
                     .into(),
             ));
         }
+        // A probe may have failed since the template was checked.
+        refuse_engine_block(runtime, template, &creator)?;
         debug_assert_eq!(self.child.agent.parent, Some(creator.id));
         runtime.check_prepared(hold, &mut self.child, Preflight::delegated())
     }
@@ -161,6 +168,18 @@ fn refused_by_engine(template: &SpawnSpec, refusal: &EngineRefusal) -> RuntimeEr
     ))
 }
 
+/// Refuse a new schedule whose engine could not run its child now. Nothing
+/// else may probe an idle engine, so a probe is asked for the caller's next try.
+fn refuse_engine_block(runtime: &Runtime, template: &SpawnSpec, creator: &Agent) -> Result<()> {
+    let Some(refusal) = engine_block(runtime, template, creator)? else {
+        return Ok(());
+    };
+    if let EngineRefusal::Unavailable { kind, .. } = &refusal {
+        runtime.engines.want_recheck(*kind);
+    }
+    Err(refused_by_engine(template, &refusal))
+}
+
 /// The child `creator` would get from `template` now, unwritten: refused
 /// when the same `delegate` call would be, the engine's verdict aside.
 fn prepare(
@@ -184,13 +203,7 @@ pub(super) fn check_template(
     creator: AgentId,
 ) -> Result<Checked> {
     let creator = live_creator(runtime, creator)?;
-    if let Some(refusal) = engine_block(runtime, template, &creator)? {
-        // Nothing else may probe an idle engine, and the caller may try again.
-        if let EngineRefusal::Unavailable { kind, .. } = &refusal {
-            runtime.engines.want_recheck(*kind);
-        }
-        return Err(refused_by_engine(template, &refusal));
-    }
+    refuse_engine_block(runtime, template, &creator)?;
     let objective = template.objective.clone();
     let child = prepare(runtime, template, objective, &creator, Slots::Counted)?;
     Ok(Checked { creator, child })
@@ -218,14 +231,30 @@ fn waits(
     runtime.parallel_refusal(creator, role.trim())
 }
 
-/// The engine's verdict on this occurrence, as it stands under the hold: a
-/// wait while it cannot be launched, with a new probe asked for, or a refusal.
-fn engine_wait(runtime: &Runtime, template: &SpawnSpec, creator: &Agent) -> Result<Option<String>> {
+/// What the engine lets an occurrence do, as it stands under the hold.
+enum EngineVerdict {
+    Launch,
+    /// A probe asked for answered, and the engine still cannot be launched.
+    Skip(String),
+    /// It cannot be launched and no probe has answered yet: one is asked for.
+    AwaitProbe,
+}
+
+/// The engine's verdict under the hold. An occurrence is skipped only on a
+/// probe's answer, as `delegate` refuses only after its own probe.
+fn engine_verdict(
+    runtime: &Runtime,
+    template: &SpawnSpec,
+    creator: &Agent,
+) -> Result<EngineVerdict> {
     match engine_block(runtime, template, creator)? {
-        None => Ok(None),
+        None => Ok(EngineVerdict::Launch),
         Some(EngineRefusal::Unavailable { kind, why }) => {
+            if runtime.engines.recheck_answered(kind) {
+                return Ok(EngineVerdict::Skip(why));
+            }
             runtime.engines.want_recheck(kind);
-            Ok(Some(why))
+            Ok(EngineVerdict::AwaitProbe)
         }
         Some(refusal @ EngineRefusal::Network(_)) => Err(refused_by_engine(template, &refusal)),
     }
@@ -332,8 +361,11 @@ pub(super) fn fire(
     if let Some(reason) = waits(runtime, &creator, &template.role, *last_child)? {
         return Ok(Some(skipped(reason)));
     }
-    if let Some(reason) = engine_wait(runtime, template, &creator)? {
-        return Ok(Some(skipped(reason)));
+    match engine_verdict(runtime, template, &creator)? {
+        EngineVerdict::Launch => {}
+        EngineVerdict::Skip(reason) => return Ok(Some(skipped(reason))),
+        // Still due: a pass after the probe's answer decides it.
+        EngineVerdict::AwaitProbe => return Ok(None),
     }
     let Some(prepared) = staged.current_child(&creator)? else {
         return Ok(None);
