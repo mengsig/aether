@@ -6,35 +6,55 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
-- `aether models --json` keeps its array and reports `efforts` (the levels the route
-  sends distinctly, not a guarantee the model accepts each) and
-  `superseded_by`. Explicit ids still work for Fable 5.1, GPT-6 Astra and
-  GPT-6.1 Sol. Tier selection skips them. Use `aether models --retired` for
-  replacement guidance, or read `retired` in the MCP `list_models` result.
-  Archon can check `Welcome.features` for `retired_models` before requesting
-  the retired array. All new catalog fields are optional for readers.
-- Invocation snapshots record requested and effective reasoning effort,
-  including OpenAI-compatible requests that send `high` for `x_high` or
-  `max`. The effective value describes the override Aether sent.
+## 1.4.2
+
+Released 2026-11-19. A per-agent compaction threshold (#443), and a model
+catalog that reports superseded and retired models and the efforts each route
+sends, with the effective effort recorded per turn (#444). The workspace and
+Python and TypeScript clients are 1.4.2.
+
+### Added
+
+- **Per-agent compaction threshold (#443).** `create_agent` accepts an
+  optional `config.compaction_tokens`: the context size, at least 100,000, at
+  which that agent compacts, in place of its model's threshold and capped at
+  the model's window. It reaches every automatic path: Claude Code's
+  auto-compact window, Codex's `model_auto_compact_token_limit`, the
+  Anthropic API's server compaction trigger and Aether's own fold. Siblings
+  on the same model keep the model's threshold; children do not inherit it.
+  `inspect_state` reports it as `compaction.agent_threshold_tokens`,
+  `get_agent` in `config`, and the TUI's context bar counts down to it. The
+  daemon announces the `compaction_tokens` feature; an older daemon ignores
+  the field, so a client checks the feature first, and the Rust client
+  refuses such a create itself. Absent, nothing changes. On Claude Code a
+  value above 987,000 compacts at about 987,000.
+- **Superseded and retired models in the catalog (#444).** `aether models
+  --json` keeps its array and reports `efforts` (the levels the route sends
+  distinctly, not a guarantee the model accepts each) and `superseded_by`.
+  Explicit ids still work for Fable 5.1, GPT-6 Astra and GPT-6.1 Sol; tier
+  selection skips them. Use `aether models --retired` for replacement
+  guidance, or read `retired` in the MCP `list_models` result. Archon can
+  check `Welcome.features` for `retired_models` before requesting the
+  retired array. All new catalog fields are optional for readers.
+- **Effective effort per turn (#444).** Invocation snapshots record the
+  requested and the effective reasoning effort, including OpenAI-compatible
+  requests that send `high` for `x_high` or `max`. The effective value
+  describes the override Aether sent, not what the provider ran.
+
+### Upgrade notes
+
 - These additions need no store migration. After an update that migrates the
   store, binary downgrade is unsupported because the older daemon refuses
   the newer schema. Use the feature switches for rollback.
 
-### Added
+### Known limitations
 
-- **Per-agent compaction threshold.** `create_agent` accepts an optional
-  `config.compaction_tokens`: the context size, at least 100,000, at which
-  that agent compacts, in place of its model's threshold and capped at the
-  model's window. It
-  reaches every automatic path: Claude Code's auto-compact window, Codex's
-  `model_auto_compact_token_limit`, the Anthropic API's server compaction
-  trigger and Aether's own fold. Siblings on the same model keep the model's
-  threshold; children do not inherit it. `inspect_state` reports it as
-  `compaction.agent_threshold_tokens`, `get_agent` in `config`, and the TUI's
-  context bar counts down to it. The daemon announces the `compaction_tokens`
-  feature; an older daemon ignores the field, so a client checks the feature
-  first, and the Rust client refuses such a create itself. Absent, nothing
-  changes.
+- Engine routes (Claude Code, Codex) cannot say which effort levels a model
+  accepts, so `efforts` comes from the route's raw capabilities; per-model
+  effort data for engine routes is a follow-up.
+- The retirement table also lists models of disabled providers.
+- A delegation refusal can cite a superseded model's former rank, which the
+  routing catalog no longer shows.
 
 ## 1.4.1
 
