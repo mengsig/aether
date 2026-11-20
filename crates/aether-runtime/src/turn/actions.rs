@@ -17,8 +17,9 @@ pub(crate) async fn apply_action(
     ctx: &mut TurnCtx,
     action: HarnessAction,
     effects: &mut ToolEffects,
+    mutation_approved: bool,
 ) -> Result<ToolOutcome> {
-    let mut outcome = dispatch_action(runtime, ctx, action, effects).await?;
+    let mut outcome = dispatch_action(runtime, ctx, action, effects, mutation_approved).await?;
     aether_tools::redact_outcome(runtime.tool_runtime.redactor(), &mut outcome);
     Ok(outcome)
 }
@@ -28,6 +29,7 @@ async fn dispatch_action(
     ctx: &mut TurnCtx,
     action: HarnessAction,
     effects: &mut ToolEffects,
+    mutation_approved: bool,
 ) -> Result<ToolOutcome> {
     use HarnessAction as A;
     match action {
@@ -46,7 +48,7 @@ async fn dispatch_action(
         | A::SendMessage { .. }) => delegation::apply(runtime, ctx, effects, action).await,
         action
         @ (A::CreateSchedule { .. } | A::ListSchedules { .. } | A::UpdateSchedule { .. }) => {
-            schedules::apply(runtime, ctx, action).await
+            schedules::apply(runtime, ctx, action, mutation_approved).await
         }
         action @ (A::CompleteTask { .. }
         | A::FailTask { .. }

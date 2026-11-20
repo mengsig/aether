@@ -40,6 +40,7 @@ async fn a_1m_model_added_in_providers_toml_measures_context_against_1m() {
                 &mut ctx,
                 HarnessAction::InspectState,
                 &mut ToolEffects::default(),
+                false,
             )
             .await
             .expect("inspect_state");

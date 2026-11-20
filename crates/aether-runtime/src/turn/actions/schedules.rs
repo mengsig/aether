@@ -28,13 +28,14 @@ async fn create_schedule(
     runtime: &Arc<Runtime>,
     ctx: &TurnCtx,
     spec: CreateScheduleSpec,
+    mutation_approved: bool,
 ) -> Result<ToolOutcome> {
     if let ScheduleTarget::Spawn(template) = &spec.target
         && let Some(refusal) = spawn_refusal(runtime, ctx, template).await?
     {
         return Ok(refusal);
     }
-    match runtime.create_schedule(spec, ctx.base_actor.clone()) {
+    match runtime.create_schedule_from_tool(spec, ctx.base_actor.clone(), mutation_approved) {
         Ok(job) => Ok(ToolOutcome::ok(
             serde_json::json!({"schedule":job}).to_string(),
         )),
@@ -80,8 +81,9 @@ fn update_schedule(
     ctx: &TurnCtx,
     id: aether_core::id::ScheduleId,
     action: aether_core::schedule::ScheduleAction,
+    mutation_approved: bool,
 ) -> Result<ToolOutcome> {
-    match runtime.update_schedule(id, action, ctx.base_actor.clone()) {
+    match runtime.update_schedule_from_tool(id, action, ctx.base_actor.clone(), mutation_approved) {
         Ok(job) => Ok(ToolOutcome::ok(
             serde_json::json!({"schedule":job}).to_string(),
         )),
@@ -95,11 +97,16 @@ pub(super) async fn apply(
     runtime: &Arc<Runtime>,
     ctx: &TurnCtx,
     action: HarnessAction,
+    mutation_approved: bool,
 ) -> Result<ToolOutcome> {
     match action {
-        HarnessAction::CreateSchedule { spec } => create_schedule(runtime, ctx, spec).await,
+        HarnessAction::CreateSchedule { spec } => {
+            create_schedule(runtime, ctx, spec, mutation_approved).await
+        }
         HarnessAction::ListSchedules { id } => list_schedules(runtime, ctx, id),
-        HarnessAction::UpdateSchedule { id, action } => update_schedule(runtime, ctx, id, action),
+        HarnessAction::UpdateSchedule { id, action } => {
+            update_schedule(runtime, ctx, id, action, mutation_approved)
+        }
         other => unreachable!("not a schedule action: {other:?}"),
     }
 }

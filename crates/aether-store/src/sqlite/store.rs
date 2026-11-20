@@ -23,7 +23,7 @@ use aether_core::memory_admission::MemoryAdmission;
 use aether_core::model::{Message, Usage};
 use aether_core::notification::Notification;
 use aether_core::repository::RepositoryAlias;
-use aether_core::schedule::{Schedule, ScheduleOccurrence};
+use aether_core::schedule::{Schedule, ScheduleOccurrence, StoredSchedule};
 use aether_core::snapshot::{Invocation, InvocationSnapshot, SnapshotMemories};
 use aether_core::task::Task;
 use aether_core::time::{Timestamp, now};
@@ -982,25 +982,31 @@ impl Store for SqliteStore {
     }
 
     fn schedule(&self, id: ScheduleId) -> Result<Option<Schedule>> {
-        self.read_one("SELECT body FROM schedules WHERE id=?1", &id.to_string())
+        let job = self.read_one::<StoredSchedule>(
+            "SELECT body FROM schedules WHERE id=?1",
+            &id.to_string(),
+        )?;
+        Ok(job.map(|job| job.0))
     }
 
     fn schedules(&self, target: Option<AgentId>) -> Result<Vec<Schedule>> {
         let conn = self.read_conn()?;
-        Self::read_many(
+        let jobs = Self::read_many::<StoredSchedule>(
             &conn,
             "SELECT body FROM schedules WHERE (?1 IS NULL OR target=?1) ORDER BY id",
             &[&target.map(|id| id.to_string())],
-        )
+        )?;
+        Ok(jobs.into_iter().map(|job| job.0).collect())
     }
 
     fn due_schedules(&self, at: Timestamp, limit: usize) -> Result<Vec<Schedule>> {
         let conn = self.read_conn()?;
-        Self::read_many(
+        let jobs = Self::read_many::<StoredSchedule>(
             &conn,
             "SELECT body FROM schedules WHERE next_due <= ?1 ORDER BY next_due, id LIMIT ?2",
             &[&schedule_time(at), &(limit.min(i64::MAX as usize) as i64)],
-        )
+        )?;
+        Ok(jobs.into_iter().map(|job| job.0).collect())
     }
 
     fn schedule_history(&self, id: ScheduleId, limit: usize) -> Result<Vec<ScheduleOccurrence>> {

@@ -108,6 +108,9 @@ with `wait=false`, admitted by the same code:
   messaging reach is a child's. The creator needs access to `delegate` at
   creation and at firing. If the creator requires approvals, the child must
   run on an engine that can enforce them.
+- Creating or resuming a spawn schedule needs approval if the creator's
+  policy gates mutations. That decision covers occurrences until the schedule
+  is paused or ends.
 - Creating the schedule is refused when the same `delegate` call would be
   refused now, and the error carries `delegate`'s refusal. That includes a
   caller already at `max_parallel`. It is also refused while the latest probe

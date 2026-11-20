@@ -15936,7 +15936,7 @@
               "type": "null"
             }
           ],
-          "description": "Delivery schedules: the agent that receives each trigger. An agent's\nspawn schedule that can still fire: its creator, beside `spawn`."
+          "description": "Delivery schedules: the agent that receives each trigger."
         },
         "updated_at": {
           "format": "date-time",

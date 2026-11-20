@@ -603,7 +603,7 @@ pub(super) async fn drive(
                     let verdict = match park.as_mut() {
                         Some(park) => {
                             park.refused(&tool);
-                            Verdict { allow: false, message: Some(TURN_IS_OVER.to_owned()) }
+                            Verdict { allow: false, approved: false, message: Some(TURN_IS_OVER.to_owned()) }
                         }
                         None => {
                             let declared = side_effect.unwrap_or_else(|| side_effect_of(&tool));

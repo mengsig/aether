@@ -270,7 +270,7 @@ impl Schedule {
     }
 }
 
-/// Wire/storage shape of [`Schedule`]. Delivery schedules keep protocol 8's
+/// Wire shape of [`Schedule`]. Delivery schedules keep protocol 8's
 /// fields and order; `busy` and `last` appear only when set.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[doc(hidden)]
@@ -278,8 +278,7 @@ pub struct ScheduleWire {
     pub id: ScheduleId,
     pub name: String,
     pub owner: Actor,
-    /// Delivery schedules: the agent that receives each trigger. An agent's
-    /// spawn schedule that can still fire: its creator, beside `spawn`.
+    /// Delivery schedules: the agent that receives each trigger.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<AgentId>,
     /// Delivery schedules: the target's run.
@@ -309,6 +308,46 @@ pub struct ScheduleWire {
     pub updated_at: Timestamp,
 }
 
+/// Persistent schedules and their submission receipts carry the downgrade
+/// guard. Protocol replies use [`Schedule`]'s compatible wire shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "ScheduleWire", into = "ScheduleWire")]
+pub struct StoredSchedule(pub Schedule);
+
+impl TryFrom<ScheduleWire> for StoredSchedule {
+    type Error = String;
+
+    fn try_from(mut wire: ScheduleWire) -> Result<Self, String> {
+        if wire.spawn.is_some() {
+            if wire.target != downgrade_guard(&wire.owner, &wire.status) {
+                return Err(
+                    "an agent's spawn schedule names its creator as `target` while it \
+                     can still fire, and no other spawn schedule has a `target`"
+                        .into(),
+                );
+            }
+            wire.target = None;
+        }
+        Schedule::try_from(wire).map(Self)
+    }
+}
+
+impl From<StoredSchedule> for ScheduleWire {
+    fn from(StoredSchedule(job): StoredSchedule) -> Self {
+        let creator = if matches!(job.mode, ScheduleMode::Spawn { .. }) {
+            downgrade_guard(&job.owner, &job.status)
+        } else {
+            None
+        };
+        let mut wire = Self::from(job);
+        if let Some(creator) = creator {
+            debug_assert!(wire.spawn.is_some() && wire.target.is_none() && wire.run.is_none());
+            wire.target = Some(creator);
+        }
+        wire
+    }
+}
+
 /// The `target` an agent's spawn schedule is stored with while it can still
 /// fire: its creator. A release that would run it as an operator's root run
 /// refuses a `spawn` with a `target`, so it reads none of it.
@@ -335,19 +374,10 @@ impl TryFrom<ScheduleWire> for Schedule {
                     last_inbox_seq: wire.last_inbox_seq,
                 }
             }
-            (creator, None, Some(template)) if wire.last_inbox_seq.is_none() => {
-                if creator != downgrade_guard(&wire.owner, &wire.status) {
-                    return Err(
-                        "an agent's spawn schedule names its creator as `target` while it \
-                         can still fire, and no other spawn schedule has a `target`"
-                            .into(),
-                    );
-                }
-                ScheduleMode::Spawn {
-                    template,
-                    last_spawned: wire.last_spawned,
-                }
-            }
+            (None, None, Some(template)) if wire.last_inbox_seq.is_none() => ScheduleMode::Spawn {
+                template,
+                last_spawned: wire.last_spawned,
+            },
             _ => {
                 return Err(
                     "a schedule has either `target` and `run` or a `spawn` template".into(),
@@ -384,10 +414,7 @@ impl From<Schedule> for ScheduleWire {
             ScheduleMode::Spawn {
                 template,
                 last_spawned,
-            } => {
-                let creator = downgrade_guard(&job.owner, &job.status);
-                (creator, None, None, Some(template), last_spawned)
-            }
+            } => (None, None, None, Some(template), last_spawned),
         };
         Self {
             id: job.id,

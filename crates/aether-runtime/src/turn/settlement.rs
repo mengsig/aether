@@ -37,6 +37,7 @@ pub(super) async fn settle_resolved_approvals(
     let requested = requested_calls(&events);
     let settled = settled_calls(&events, &BTreeMap::new());
     let mut runnable = Vec::new();
+    let mut mutation_approvals = BTreeSet::new();
     let mut commit = Commit::new();
     for (approval, decision) in approvals {
         if settled.contains_key(&approval.call_id) {
@@ -68,7 +69,12 @@ pub(super) async fn settle_resolved_approvals(
                         }));
                         ctx.agent.stats.tool_calls += 1;
                     }
-                    None => runnable.push((call, tool)),
+                    None => {
+                        if approval.side_effect == aether_core::tool::SideEffectClass::Mutation {
+                            mutation_approvals.insert(call.id);
+                        }
+                        runnable.push((call, tool));
+                    }
                 },
                 None => commit.push_event(ctx.draft(EventKind::ToolFailed {
                     call: call.id,
@@ -124,7 +130,9 @@ pub(super) async fn settle_resolved_approvals(
                     }
                 }
                 Ok(ToolExecution::Action(action)) => {
-                    let outcome = apply_action(runtime, ctx, action, &mut effects).await?;
+                    let mutation_approved = mutation_approvals.contains(&result.call.id);
+                    let outcome =
+                        apply_action(runtime, ctx, action, &mut effects, mutation_approved).await?;
                     EventKind::ToolSucceeded {
                         call: result.call.id,
                         outcome: outcome.with_duration(duration),

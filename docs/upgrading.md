@@ -154,7 +154,9 @@ creator's delegation policy, scope and budgets.
 To keep that from happening, a schedule of this kind that is active, paused
 or failed is stored with its creator as `target` beside `spawn`, a shape
 those releases refuse. A daemon that old cannot list schedules while one is
-stored, cannot cancel it, and fires no schedule while one is due.
+stored, cannot cancel it, and fires no schedule while one is due. A 1.4.2
+client connected to a newer daemon can still list and cancel those schedules.
+The downgrade marker is stored on disk only.
 
 Before downgrading to 1.4.2 or earlier:
 

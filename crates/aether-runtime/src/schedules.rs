@@ -9,7 +9,7 @@ use aether_core::id::{AgentId, ScheduleId};
 use aether_core::idempotency::{Submission, SubmissionOutcome};
 use aether_core::schedule::{
     BusyPolicy, MIN_INTERVAL_SECONDS, Recurrence, Schedule, ScheduleMode, ScheduleStatus,
-    ScheduleTarget, SpawnSpec,
+    ScheduleTarget, SpawnSpec, StoredSchedule,
 };
 use aether_core::time::{Timestamp, now};
 use aether_store::{Commit, Mutation};
@@ -21,6 +21,7 @@ use crate::{Result, Runtime, RuntimeError};
 
 pub use aether_core::schedule::{CreateScheduleSpec, ScheduleAction};
 
+mod approval;
 mod child;
 mod execution;
 use execution::spawn_request;
@@ -63,33 +64,29 @@ impl Runtime {
         by: Actor,
         submission: Option<Submission>,
     ) -> Result<Schedule> {
+        self.create_schedule_admitted(spec, by, submission, false)
+    }
+
+    pub(crate) fn create_schedule_from_tool(
+        &self,
+        spec: CreateScheduleSpec,
+        by: Actor,
+        mutation_approved: bool,
+    ) -> Result<Schedule> {
+        self.create_schedule_admitted(spec, by, None, mutation_approved)
+    }
+
+    fn create_schedule_admitted(
+        &self,
+        spec: CreateScheduleSpec,
+        by: Actor,
+        submission: Option<Submission>,
+        mutation_approved: bool,
+    ) -> Result<Schedule> {
         if let Some(outcome) = self.recorded_submission(submission.as_ref())? {
             return self.replayed_schedule(outcome);
         }
-        let name = spec.name.trim();
-        if name.is_empty() || name.len() > 256 {
-            return Err(RuntimeError::Invalid(
-                "schedule name must contain 1–256 bytes".into(),
-            ));
-        }
-        // The name is echoed into a spawned run's one-line objective suffix
-        // and into terminal listings.
-        if name.chars().any(char::is_control) {
-            return Err(RuntimeError::Invalid(
-                "schedule name must not contain control characters".into(),
-            ));
-        }
-        check_interval(&spec.recurrence)?;
-        crate::commands::check_payload_size("schedule payload", &spec.payload)?;
-        if let ScheduleTarget::Spawn(template) = &spec.target {
-            // Each run's objective is the template plus the payload and a
-            // line naming the schedule; the slack covers that line.
-            const SUFFIX_SLACK: usize = 1024;
-            crate::commands::check_text_size(
-                "scheduled run objective (template and payload)",
-                template.objective.len() + spec.payload.to_string().len() + SUFFIX_SLACK,
-            )?;
-        }
+        validate_schedule_spec(&spec)?;
         let at = now();
         let next_due = next_occurrence(&spec.recurrence, at)?;
         // An agent's template comes with the child it would get now, for the
@@ -114,10 +111,13 @@ impl Runtime {
             drop(hold);
             return self.replayed_schedule(outcome);
         }
+        if matches!(&target, ScheduleTarget::Spawn(_)) {
+            self.check_spawn_approval(&hold, &by, mutation_approved)?;
+        }
         let mode = self.initial_mode(&hold, target, child, &by)?;
         let schedule = Schedule {
             id: ScheduleId::new(),
-            name: name.into(),
+            name: spec.name.trim().into(),
             owner: by.clone(),
             mode,
             recurrence: spec.recurrence,
@@ -133,14 +133,25 @@ impl Runtime {
         };
         let mut commit = Commit::new();
         record_schedule(&mut commit, &schedule, "created", by);
-        crate::submission::record_receipt(&mut commit, submission.as_ref(), &schedule)?;
-        self.apply_held(hold, commit)?;
-        Ok(schedule)
+        self.commit_schedule(hold, commit, submission.as_ref(), schedule)
+    }
+
+    fn commit_schedule(
+        &self,
+        hold: crate::CommitHold<'_>,
+        commit: Commit,
+        submission: Option<&Submission>,
+        schedule: Schedule,
+    ) -> Result<Schedule> {
+        let stored = StoredSchedule(schedule);
+        self.commit_receipt(hold, commit, submission, &stored)?;
+        Ok(stored.0)
     }
 
     fn replayed_schedule(&self, outcome: SubmissionOutcome) -> Result<Schedule> {
         if let SubmissionOutcome::Receipt { value } = outcome {
-            return serde_json::from_value(value)
+            return serde_json::from_value::<StoredSchedule>(value)
+                .map(|stored| stored.0)
                 .map_err(|e| RuntimeError::Internal(format!("decode schedule receipt: {e}")));
         }
         let SubmissionOutcome::Schedule { schedule } = outcome else {
@@ -273,8 +284,29 @@ impl Runtime {
         by: Actor,
         submission: Option<aether_core::idempotency::Submission>,
     ) -> Result<Schedule> {
+        self.update_schedule_admitted(id, action, by, submission, false)
+    }
+
+    pub(crate) fn update_schedule_from_tool(
+        &self,
+        id: ScheduleId,
+        action: ScheduleAction,
+        by: Actor,
+        mutation_approved: bool,
+    ) -> Result<Schedule> {
+        self.update_schedule_admitted(id, action, by, None, mutation_approved)
+    }
+
+    fn update_schedule_admitted(
+        &self,
+        id: ScheduleId,
+        action: ScheduleAction,
+        by: Actor,
+        submission: Option<Submission>,
+        mutation_approved: bool,
+    ) -> Result<Schedule> {
         let hold = self.hold();
-        if let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())? {
+        if let Some(StoredSchedule(receipt)) = self.replay_receipt(&hold, submission.as_ref())? {
             return Ok(receipt);
         }
         let mut job = self
@@ -286,8 +318,27 @@ impl Runtime {
                 "only the owner or an operator can change schedule {id}"
             )));
         }
+        if action == ScheduleAction::Resume && matches!(&job.mode, ScheduleMode::Spawn { .. }) {
+            self.check_spawn_approval(&hold, &by, mutation_approved)?;
+        }
         let at = now();
-        let (status, verb) = match (action, &job.status) {
+        let Some((status, verb)) = self.schedule_change(&job, action, at)? else {
+            return self.commit_schedule(hold, Commit::new(), submission.as_ref(), job);
+        };
+        job.status = status;
+        job.updated_at = at;
+        let mut commit = Commit::new();
+        record_schedule(&mut commit, &job, verb, by);
+        self.commit_schedule(hold, commit, submission.as_ref(), job)
+    }
+
+    fn schedule_change(
+        &self,
+        job: &Schedule,
+        action: ScheduleAction,
+        at: Timestamp,
+    ) -> Result<Option<(ScheduleStatus, &'static str)>> {
+        let change = match (action, &job.status) {
             (ScheduleAction::Pause, ScheduleStatus::Active { next_due }) => (
                 ScheduleStatus::Paused {
                     next_due: *next_due,
@@ -296,19 +347,17 @@ impl Runtime {
             ),
             (ScheduleAction::Pause, ScheduleStatus::Paused { .. })
             | (ScheduleAction::Cancel, ScheduleStatus::Cancelled { .. }) => {
-                self.commit_receipt(hold, Commit::new(), submission.as_ref(), &job)?;
-                return Ok(job);
+                return Ok(None);
             }
             (ScheduleAction::Resume, ScheduleStatus::Active { .. }) => {
                 // An ended creator refuses it even before the next tick says so.
                 if let Some(creator) = job.spawns_children_of() {
                     child::check_creator_live(self, creator)?;
                 }
-                self.commit_receipt(hold, Commit::new(), submission.as_ref(), &job)?;
-                return Ok(job);
+                return Ok(None);
             }
             (ScheduleAction::Resume, ScheduleStatus::Paused { next_due }) => {
-                self.check_delivery_target(&job)?;
+                self.check_delivery_target(job)?;
                 (
                     ScheduleStatus::Active {
                         next_due: *next_due,
@@ -317,7 +366,7 @@ impl Runtime {
                 )
             }
             (ScheduleAction::Resume, ScheduleStatus::Failed { .. }) => {
-                self.check_delivery_target(&job)?;
+                self.check_delivery_target(job)?;
                 (
                     ScheduleStatus::Active {
                         next_due: next_occurrence(&job.recurrence, at)?,
@@ -327,15 +376,12 @@ impl Runtime {
             }
             (ScheduleAction::Cancel, _) => (ScheduleStatus::Cancelled { at }, "cancelled"),
             (action, status) => {
-                return Err(RuntimeError::Invalid(refused_change(id, action, status)));
+                return Err(RuntimeError::Invalid(refused_change(
+                    job.id, action, status,
+                )));
             }
         };
-        job.status = status;
-        job.updated_at = at;
-        let mut commit = Commit::new();
-        record_schedule(&mut commit, &job, verb, by);
-        self.commit_receipt(hold, commit, submission.as_ref(), &job)?;
-        Ok(job)
+        Ok(Some(change))
     }
 
     /// A spawn schedule has no target to recheck; its next occurrence
@@ -403,6 +449,34 @@ impl Runtime {
             "agents may schedule only themselves or their descendants".into(),
         ))
     }
+}
+
+fn validate_schedule_spec(spec: &CreateScheduleSpec) -> Result<()> {
+    let name = spec.name.trim();
+    if name.is_empty() || name.len() > 256 {
+        return Err(RuntimeError::Invalid(
+            "schedule name must contain 1–256 bytes".into(),
+        ));
+    }
+    // The name is echoed into a spawned run's one-line objective suffix
+    // and into terminal listings.
+    if name.chars().any(char::is_control) {
+        return Err(RuntimeError::Invalid(
+            "schedule name must not contain control characters".into(),
+        ));
+    }
+    check_interval(&spec.recurrence)?;
+    crate::commands::check_payload_size("schedule payload", &spec.payload)?;
+    if let ScheduleTarget::Spawn(template) = &spec.target {
+        // Each run's objective is the template plus the payload and a
+        // line naming the schedule; the slack covers that line.
+        const SUFFIX_SLACK: usize = 1024;
+        crate::commands::check_text_size(
+            "scheduled run objective (template and payload)",
+            template.objective.len() + spec.payload.to_string().len() + SUFFIX_SLACK,
+        )?;
+    }
+    Ok(())
 }
 
 /// Every occurrence starts in `root` on this host, so a path that only exists

@@ -101,9 +101,15 @@ pub(super) async fn run(
     h: &mut ComposeHarness,
     action: HarnessAction,
 ) -> aether_core::tool::ToolOutcome {
-    apply_action(&h.runtime, &mut h.ctx, action, &mut ToolEffects::default())
-        .await
-        .expect("a refusal is a tool outcome")
+    apply_action(
+        &h.runtime,
+        &mut h.ctx,
+        action,
+        &mut ToolEffects::default(),
+        false,
+    )
+    .await
+    .expect("a refusal is a tool outcome")
 }
 
 /// An unstarted child stays unfinished, so it holds a `max_parallel` slot.

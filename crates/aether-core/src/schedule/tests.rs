@@ -253,24 +253,30 @@ fn an_agents_spawn_schedule_is_stored_in_a_shape_older_releases_refuse() {
     ];
     for status in can_fire_again {
         let job = agents_spawn_schedule(status);
-        let body = serde_json::to_value(&job).unwrap();
+        let body = serde_json::to_value(StoredSchedule(job.clone())).unwrap();
         // Releases without agent spawn schedules read a `spawn` only with no
         // `target`, and a `target` only with a `run`: they refuse this one.
         assert_eq!(body["target"], CREATOR, "{body}");
         assert!(body.get("run").is_none() && body.get("spawn").is_some());
-        assert_eq!(serde_json::from_value::<Schedule>(body).unwrap(), job);
+        assert_eq!(
+            serde_json::from_value::<StoredSchedule>(body).unwrap().0,
+            job
+        );
     }
     for status in [
         ScheduleStatus::Cancelled { at },
         ScheduleStatus::Exhausted { at },
     ] {
         let job = agents_spawn_schedule(status);
-        let body = serde_json::to_value(&job).unwrap();
+        let body = serde_json::to_value(StoredSchedule(job.clone())).unwrap();
         assert!(
             body.get("target").is_none(),
             "nothing left to guard: {body}"
         );
-        assert_eq!(serde_json::from_value::<Schedule>(body).unwrap(), job);
+        assert_eq!(
+            serde_json::from_value::<StoredSchedule>(body).unwrap().0,
+            job
+        );
     }
 }
 
@@ -279,10 +285,10 @@ fn a_spawn_schedule_with_the_wrong_creator_mark_is_refused() {
     let at = at("2026-09-09T12:00:00Z");
     let active = agents_spawn_schedule(ScheduleStatus::Active { next_due: at });
     let refused = |body: serde_json::Value| {
-        let error = serde_json::from_value::<Schedule>(body).unwrap_err();
+        let error = serde_json::from_value::<StoredSchedule>(body).unwrap_err();
         assert!(error.to_string().contains("names its creator"), "{error}");
     };
-    let marked = serde_json::to_value(&active).unwrap();
+    let marked = serde_json::to_value(StoredSchedule(active)).unwrap();
 
     let mut unmarked = marked.clone();
     unmarked.as_object_mut().unwrap().remove("target");

@@ -257,7 +257,7 @@ impl SqliteStore {
                 tx.execute(
                     "INSERT INTO schedules(id, target, next_due, body) VALUES (?1, ?2, ?3, ?4)
                      ON CONFLICT(id) DO UPDATE SET target=excluded.target, next_due=excluded.next_due, body=excluded.body",
-                    params![job.id.to_string(), job.target().map(|id| id.to_string()), job.status.next_due().map(schedule_time), tally.json("schedules", &job)?],
+                    params![job.id.to_string(), job.target().map(|id| id.to_string()), job.status.next_due().map(schedule_time), tally.json("schedules", &aether_core::schedule::StoredSchedule(job))?],
                 )?;
             }
             Mutation::RecordScheduleOccurrence(occurrence) => {

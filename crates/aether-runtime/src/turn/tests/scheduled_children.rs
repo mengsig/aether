@@ -230,3 +230,183 @@ async fn a_spawn_schedule_alone_does_not_let_its_creator_wait_bare() {
     );
     h.runtime.shutdown().await;
 }
+
+async fn schedule_tool(
+    h: &mut ComposeHarness,
+    name: &str,
+    input: serde_json::Value,
+) -> ToolEffects {
+    let ctx = Arc::new(tool_context(&h.runtime, &h.ctx));
+    run_tool_calls(
+        &h.runtime,
+        &mut h.ctx,
+        &ctx,
+        InvocationId::new(),
+        vec![("schedule".into(), name.into(), input)],
+        &CancellationToken::new(),
+    )
+    .await
+    .expect("run schedule tool")
+}
+
+async fn answer_schedule_tool(h: &mut ComposeHarness, effects: ToolEffects, tool: &str) {
+    assert_eq!(effects.pending_approvals.len(), 1, "{tool}");
+    let id = effects.pending_approvals[0];
+    let approval = h.runtime.store.approval(id).unwrap().unwrap();
+    assert_eq!(approval.tool, tool);
+    assert_eq!(
+        approval.side_effect,
+        aether_core::tool::SideEffectClass::Mutation
+    );
+    h.runtime
+        .resolve_approval(id, ApprovalDecision::Approved, Actor::user(), None, None)
+        .expect("approve schedule tool");
+    let ctx = Arc::new(tool_context(&h.runtime, &h.ctx));
+    settle_resolved_approvals(&h.runtime, &mut h.ctx, &ctx, &CancellationToken::new())
+        .await
+        .expect("settle approval");
+}
+
+fn stored_schedules(h: &ComposeHarness) -> Vec<Schedule> {
+    h.runtime.store.schedules(None).expect("schedules")
+}
+
+#[tokio::test]
+async fn api_schedule_spawn_create_and_resume_gate_only_mutations() {
+    use aether_core::schedule::ScheduleStatus;
+    use serde_json::json;
+
+    for gated in [true, false] {
+        let (mut h, _dir) = acting_lead().await;
+        if gated {
+            rewrite_lead(&mut h, |lead| {
+                lead.config.approval.require_for =
+                    [aether_core::tool::SideEffectClass::Mutation].into();
+            });
+        }
+        let input = json!({"name":"poll","payload":null,"every_seconds":3600,"spawn":{
+            "role":"poller","objective":"Check the queue",
+            "model":"anthropic/claude-sonnet-5-5","effort":"medium"
+        }});
+        let create = schedule_tool(&mut h, "create_schedule", input).await;
+        if gated {
+            assert!(stored_schedules(&h).is_empty());
+            answer_schedule_tool(&mut h, create, "create_schedule").await;
+        } else {
+            assert!(create.pending_approvals.is_empty());
+        }
+        let jobs = stored_schedules(&h);
+        assert_eq!(jobs.len(), 1);
+        let job = &jobs[0];
+        assert_eq!(job.spawns_children_of(), Some(h.ctx.agent.id));
+        assert!(matches!(job.status, ScheduleStatus::Active { .. }));
+        let id = job.id;
+        let pause =
+            schedule_tool(&mut h, "update_schedule", json!({"id":id,"action":"pause"})).await;
+        assert!(pause.pending_approvals.is_empty());
+        assert!(matches!(
+            stored_schedules(&h)[0].status,
+            ScheduleStatus::Paused { .. }
+        ));
+
+        let resume = schedule_tool(
+            &mut h,
+            "update_schedule",
+            json!({"id":id,"action":"resume"}),
+        )
+        .await;
+        if gated {
+            assert!(matches!(
+                stored_schedules(&h)[0].status,
+                ScheduleStatus::Paused { .. }
+            ));
+            answer_schedule_tool(&mut h, resume, "update_schedule").await;
+        } else {
+            assert!(resume.pending_approvals.is_empty());
+        }
+        assert!(matches!(
+            stored_schedules(&h)[0].status,
+            ScheduleStatus::Active { .. }
+        ));
+        assert!(children(&h).is_empty());
+        h.runtime.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn api_plain_schedule_create_and_resume_stay_read_only() {
+    use aether_core::schedule::ScheduleStatus;
+    use serde_json::json;
+
+    let (mut h, _dir) = acting_lead().await;
+    rewrite_lead(&mut h, |lead| {
+        lead.config.approval.require_for = [aether_core::tool::SideEffectClass::Mutation].into();
+    });
+    let create = schedule_tool(
+        &mut h,
+        "create_schedule",
+        json!({
+            "name":"message","payload":"check in","every_seconds":3600
+        }),
+    )
+    .await;
+    assert!(create.pending_approvals.is_empty());
+    let jobs = stored_schedules(&h);
+    assert_eq!(jobs.len(), 1);
+    let id = jobs[0].id;
+    assert_eq!(jobs[0].target(), Some(h.ctx.agent.id));
+    for (action, active) in [("pause", false), ("resume", true)] {
+        let update =
+            schedule_tool(&mut h, "update_schedule", json!({"id":id,"action":action})).await;
+        assert!(update.pending_approvals.is_empty());
+        assert_eq!(
+            matches!(
+                stored_schedules(&h)[0].status,
+                ScheduleStatus::Active { .. }
+            ),
+            active
+        );
+    }
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn spawn_schedule_admission_rechecks_the_current_policy() {
+    use aether_core::schedule::{ScheduleAction, ScheduleStatus};
+    use aether_core::tool::SideEffectClass::Mutation;
+
+    let (mut h, _dir) = acting_lead().await;
+    let HarnessAction::CreateSchedule { spec } =
+        spawn_schedule("anthropic/claude-sonnet-5-5", Effort::Medium)
+    else {
+        panic!("expected a spawn schedule");
+    };
+    let by = h.ctx.base_actor.clone();
+    let job = h.runtime.create_schedule(spec.clone(), by.clone()).unwrap();
+    h.runtime
+        .update_schedule(job.id, ScheduleAction::Pause, by.clone())
+        .unwrap();
+    rewrite_lead(&mut h, |lead| {
+        lead.config.approval.require_for = [Mutation].into()
+    });
+
+    let create = h
+        .runtime
+        .create_schedule_from_tool(spec, by.clone(), false)
+        .unwrap_err();
+    let resume = h
+        .runtime
+        .update_schedule_from_tool(job.id, ScheduleAction::Resume, by, false)
+        .unwrap_err();
+    for refusal in [create, resume] {
+        assert!(
+            refusal.to_string().contains("requires mutation approval"),
+            "{refusal}"
+        );
+    }
+    let jobs = stored_schedules(&h);
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].id, job.id);
+    assert!(matches!(jobs[0].status, ScheduleStatus::Paused { .. }));
+    h.runtime.shutdown().await;
+}
