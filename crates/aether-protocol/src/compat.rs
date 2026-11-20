@@ -561,6 +561,7 @@ mod tests {
             ("list_models", &[]),
             ("list_notifications", &[]),
             ("list_repository_aliases", &[]),
+            ("list_retired_models", &[]),
             ("list_runs", &["limit"]),
             ("list_schedules", &[]),
             ("list_tasks", &["query"]),

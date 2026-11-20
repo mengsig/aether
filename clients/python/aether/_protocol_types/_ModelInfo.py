@@ -11,8 +11,10 @@ class ModelInfo(TypedDict, total=False):
     auth_source: str | None  # optional
     capabilities: _protocol.CapabilityProfile
     configured: bool
+    efforts: list[_protocol.Effort] | None  # optional
     is_default: bool
     model: _protocol.ModelRef
     name: str
     provider_name: str
+    superseded_by: str | None  # optional
     tier: str | None  # optional

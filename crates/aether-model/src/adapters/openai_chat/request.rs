@@ -1,13 +1,13 @@
 //! Canonical request → OpenAI Chat Completions body.
 
 use aether_core::model::{
-    CapabilityProfile, ContentBlock, Effort, Message, MessageRole, ModelRequest, ToolChoice,
+    CapabilityProfile, ContentBlock, Message, MessageRole, ModelRequest, ToolChoice,
     ToolResultBlock,
 };
 use serde_json::{Value, json};
 
 use crate::adapters::merge_extra_body;
-use crate::registry::ProviderFlags;
+use crate::registry::{Protocol, ProviderFlags};
 
 /// Fail before sending an unsupported GPT-6 tool request; never silently drop
 /// tools, lower effort, or switch the operator's configured endpoint.
@@ -112,10 +112,8 @@ pub fn build(req: &ModelRequest, profile: &CapabilityProfile, flags: &ProviderFl
         };
         obj.insert(key.into(), json!(max));
     }
-    if profile.effort
-        && let Some(effort) = req.effort
-    {
-        obj.insert("reasoning_effort".into(), json!(reasoning_effort(effort)));
+    if let Some(effort) = Protocol::OpenaiChatCompletions.effective_effort(profile, req.effort) {
+        obj.insert("reasoning_effort".into(), json!(effort.as_str()));
     }
     if let Some(t) = req.temperature {
         obj.insert("temperature".into(), json!(t));
@@ -142,16 +140,6 @@ pub fn build(req: &ModelRequest, profile: &CapabilityProfile, flags: &ProviderFl
     }
 
     body
-}
-
-/// OpenAI-compatible servers accept low/medium/high; the higher Aether
-/// levels collapse to `high` rather than failing on servers that lack them.
-fn reasoning_effort(effort: Effort) -> &'static str {
-    match effort {
-        Effort::Low => "low",
-        Effort::Medium => "medium",
-        Effort::High | Effort::XHigh | Effort::Max => "high",
-    }
 }
 
 fn build_messages(req: &ModelRequest) -> Vec<Value> {
@@ -274,8 +262,28 @@ fn push_assistant(out: &mut Vec<Value>, msg: &Message) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aether_core::model::{ModelRef, SystemBlock, ToolSpec};
+    use aether_core::model::{Effort, ModelRef, SystemBlock, ToolSpec};
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn upper_efforts_send_high_only_on_effort_models() {
+        let mut req = ModelRequest::new(ModelRef::new("openai", "sol"), vec![]);
+        let plain = CapabilityProfile::default();
+        let profile = CapabilityProfile {
+            effort: true,
+            ..Default::default()
+        };
+        let flags = ProviderFlags::default();
+        for level in [Effort::XHigh, Effort::Max] {
+            req.effort = Some(level);
+            assert_eq!(build(&req, &profile, &flags)["reasoning_effort"], "high");
+            assert!(
+                build(&req, &plain, &flags)
+                    .get("reasoning_effort")
+                    .is_none()
+            );
+        }
+    }
 
     #[test]
     fn request_shape_with_tools_and_results() {

@@ -63,6 +63,37 @@ const RETIRED: &[RetiredModel] = &[
     },
 ];
 
+pub(crate) fn entries() -> impl Iterator<Item = (&'static str, &'static str, &'static str)> {
+    RETIRED.iter().flat_map(|entry| {
+        entry.providers.iter().flat_map(move |provider| {
+            entry
+                .ids
+                .iter()
+                .map(move |id| (*provider, *id, entry.successor))
+        })
+    })
+}
+
+pub(crate) struct Supersession {
+    pub successor: &'static str,
+    pub previous_tier: crate::ModelTier,
+}
+
+/// Explicit pins retain their delegation limits after a family default moves.
+pub(crate) fn supersession(provider: &str, id: &str) -> Option<Supersession> {
+    use crate::ModelTier::{Balanced, Frontier, Strong};
+    let (successor, previous_tier) = match id {
+        "claude-fable-5-1" if CLAUDE.contains(&provider) => ("claude-fable-5-2", Frontier),
+        "gpt-6-astra" if GPT.contains(&provider) => ("gpt-6.2-astra", Strong),
+        "gpt-6.1-sol" if GPT.contains(&provider) => ("gpt-6.2-sol", Balanced),
+        _ => return None,
+    };
+    Some(Supersession {
+        successor,
+        previous_tier,
+    })
+}
+
 /// Replacement guidance for a retired id on its built-in provider.
 pub fn successor(provider: &str, id: &str) -> Option<&'static str> {
     RETIRED

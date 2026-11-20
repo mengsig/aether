@@ -40,16 +40,15 @@ pub use codex_app::CodexAppEngine;
 pub use detect::{DetectError, EngineVersion};
 pub use usage::{RequestUsage, UsageRequestId};
 
-/// The `model_reasoning_effort` value a Codex launch (`codex_app.rs`,
-/// `codex.rs`) passes for one of Codex's reasoning-effort levels - today a
-/// direct 1:1 mapping onto Aether's own five, kept as its own function
-/// so a future Codex level that stops matching Aether's own name has one
-/// place to translate instead of every call site. Codex does not validate
-/// this at launch: a level a given model does not support is accepted and
-/// echoed back, not refused, so per-model support is a fact about the
-/// model, never this function's concern.
+/// Encode the native override used by Codex exec and app-server launches.
 pub fn codex_effort_arg(effort: Effort) -> &'static str {
-    effort.as_str()
+    match effort {
+        Effort::Low => "low",
+        Effort::Medium => "medium",
+        Effort::High => "high",
+        Effort::XHigh => "xhigh",
+        Effort::Max => "max",
+    }
 }
 
 /// Which engine a turn runs on, as an opaque name.

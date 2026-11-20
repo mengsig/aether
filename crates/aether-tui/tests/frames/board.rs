@@ -40,6 +40,8 @@ fn context_window(app: &mut App, window: u32, compaction_tokens: Option<u32>) {
     use aether_protocol::ModelInfo;
     let model = app.selected_agent().expect("a viewed agent").model.clone();
     app.models.push(ModelInfo {
+        superseded_by: None,
+        efforts: None,
         tier: None,
         aliases: Vec::new(),
         name: model.model.clone(),

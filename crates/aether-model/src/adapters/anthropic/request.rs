@@ -1,13 +1,14 @@
 //! Canonical request → Anthropic Messages API body.
 
 use aether_core::model::{
-    CapabilityProfile, ContentBlock, Effort, Message, MessageRole, ModelError, ModelErrorClass,
+    CapabilityProfile, ContentBlock, Message, MessageRole, ModelError, ModelErrorClass,
     ModelRequest, ThinkingMode, ThinkingSupport, ToolChoice, ToolResultBlock,
 };
 use reqwest::header::HeaderMap;
 use serde_json::{Value, json};
 
 use crate::adapters::merge_extra_body;
+use crate::registry::Protocol;
 
 pub const API_VERSION: &str = "2023-06-01";
 /// Beta required when authenticating with an OAuth bearer token.
@@ -96,13 +97,8 @@ pub fn build(req: &ModelRequest, profile: &CapabilityProfile) -> Result<BuiltReq
         obj.insert("thinking".into(), thinking);
     }
 
-    if profile.effort
-        && let Some(effort) = req.effort
-    {
-        obj.insert(
-            "output_config".into(),
-            json!({"effort": effort_str(effort)}),
-        );
+    if let Some(effort) = Protocol::AnthropicMessages.effective_effort(profile, req.effort) {
+        obj.insert("output_config".into(), json!({"effort": effort.as_str()}));
     }
 
     if let Some(t) = req.temperature {
@@ -317,10 +313,6 @@ pub(super) fn validate_thinking(body: &Value, headers: &HeaderMap) -> Result<(),
     Ok(())
 }
 
-fn effort_str(effort: Effort) -> &'static str {
-    effort.as_str()
-}
-
 /// Server-side compaction at `tokens` input tokens. The returned compaction
 /// block stays in the transcript and is replayed with the next request.
 /// Where the server folds: the agent's own trigger from the request (already
@@ -475,7 +467,7 @@ fn internal(msg: &str) -> ModelError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aether_core::model::{ModelRef, SystemBlock, ToolSpec};
+    use aether_core::model::{Effort, ModelRef, SystemBlock, ToolSpec};
     use pretty_assertions::assert_eq;
 
     fn adaptive_profile() -> CapabilityProfile {

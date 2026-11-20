@@ -389,6 +389,8 @@ pub(crate) mod tests {
         });
         app.selected = None;
         app.models = vec![aether_protocol::ModelInfo {
+            superseded_by: None,
+            efforts: None,
             tier: None,
             aliases: Vec::new(),
             model: ModelRef::new("anthropic", "claude-opus-5-5"),

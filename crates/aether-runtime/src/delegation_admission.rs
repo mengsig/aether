@@ -144,12 +144,12 @@ pub(crate) fn policy_refusal(
     let models = &runtime.models;
     let model = models.canonical(&request.model);
     let parent_model = models.canonical(&parent.model);
-    let parent_tier = models.tier(&parent_model);
+    let parent_tier = models.delegation_tier(&parent_model);
     let role = request.role.trim();
     let child = Candidate {
         role,
         model: &model,
-        tier: models.tier(&model),
+        tier: models.delegation_tier(&model),
         effort: request.effort,
     };
     let policy = parent

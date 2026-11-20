@@ -8,6 +8,8 @@ import type {
 
 export interface InvocationParams {
   "effort"?: Effort | null;
+  "effort_effective"?: Effort | null;
+  "effort_requested"?: Effort | null;
   "extensions"?: Record<string, unknown>;
   "max_output_tokens"?: number | null;
   "temperature"?: number | null;

@@ -99,8 +99,8 @@ impl Command {
             | Self::LatestCheckpoint { .. } | Self::GetArtifact { .. }
             | Self::ListArtifacts { .. } | Self::ReadArtifact { .. } | Self::Memories { .. }
             | Self::ListRuns { .. } | Self::GetRunReport { .. } | Self::Replay { .. }
-            | Self::ListModels | Self::ListViewModes | Self::AuthStatus | Self::Providers | Self::GetAttention
-            | Self::ListWorkspaces { .. } | Self::GetPushConfig
+            | Self::ListModels | Self::ListRetiredModels | Self::ListViewModes | Self::AuthStatus | Self::Providers
+            | Self::GetAttention | Self::ListWorkspaces { .. } | Self::GetPushConfig
             | Self::ListRepositoryAliases | Self::ListNotifications { .. }
             | Self::GetNotification { .. } | Self::ListAgentsPage { .. }
             | Self::GetTranscriptPage { .. } | Self::GetConversation { .. } | Self::UsageBreakdown { .. } | Self::MemoryMigrationStatus => Access::Observe,

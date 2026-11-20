@@ -60,6 +60,7 @@ import type {
   ListModelsCommand,
   ListNotificationsCommand,
   ListRepositoryAliasesCommand,
+  ListRetiredModelsCommand,
   ListRunsCommand,
   ListSchedulesCommand,
   ListTasksCommand,
@@ -181,6 +182,7 @@ export type Command =
   | ListModelsCommand
   | ListNotificationsCommand
   | ListRepositoryAliasesCommand
+  | ListRetiredModelsCommand
   | ListRunsCommand
   | ListSchedulesCommand
   | ListTasksCommand

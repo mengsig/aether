@@ -396,9 +396,12 @@ capability flags, and always beats a model default. GPT-6.1 Terra and Sol declar
 at high unless asked otherwise; the default is applied per turn, never written
 to the agent's config.
 
-Invocation snapshots record the effort the turn launched with, or `None` when
-native selection is used. An omitted override does not prove which effective effort the
-native model used; comparisons must capture that separately.
+Invocation snapshot parameters report `effort_requested` and `effort_effective`.
+The effective value describes the effort override Aether sent. When a native
+engine selects its own effort, that value is unknown. On Codex, an explicit
+`max` sends the native `max` override. The OpenAI Chat and Responses adapters
+send `high` for `x_high` and `max` on models with effort support. Older
+snapshots can lack both fields.
 
 ## Claude prompt-cache tier
 

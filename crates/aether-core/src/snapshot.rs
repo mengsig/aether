@@ -107,6 +107,13 @@ pub struct ContextLayer {
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InvocationParams {
+    /// The agent's explicit choice before applying this link's model default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort_requested: Option<Effort>,
+    /// Effort override sent on the provider request or native launch, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort_effective: Option<Effort>,
+    /// Canonical request effort before the adapter encodes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<Effort>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -239,5 +246,20 @@ impl Invocation {
     pub fn duration_ms(&self) -> Option<u64> {
         self.finished_at
             .map(|f| (f - self.started_at).num_milliseconds().max(0) as u64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_params_keep_the_canonical_effort_without_inferring_the_wire_effort() {
+        let old = serde_json::json!({"effort": "max", "extensions": {}});
+        let params: InvocationParams = serde_json::from_value(old.clone()).expect("legacy params");
+        assert_eq!(params.effort, Some(Effort::Max));
+        assert_eq!(params.effort_requested, None);
+        assert_eq!(params.effort_effective, None);
+        assert_eq!(serde_json::to_value(params).expect("serialize"), old);
     }
 }

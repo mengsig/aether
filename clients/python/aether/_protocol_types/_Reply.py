@@ -58,6 +58,7 @@ from ._ReplyReplay import ReplyReplay
 from ._ReplyRepositoryAliased import ReplyRepositoryAliased
 from ._ReplyRepositoryAliases import ReplyRepositoryAliases
 from ._ReplyRetentionPreview import ReplyRetentionPreview
+from ._ReplyRetiredModels import ReplyRetiredModels
 from ._ReplyRunExported import ReplyRunExported
 from ._ReplyRunImported import ReplyRunImported
 from ._ReplyRunReport import ReplyRunReport
@@ -146,6 +147,7 @@ Reply = (
     ReplyRunImported |
     ReplyMcpServers |
     ReplyModels |
+    ReplyRetiredModels |
     ReplyViewModes |
     ReplyProviders |
     ReplyProviderUsage |

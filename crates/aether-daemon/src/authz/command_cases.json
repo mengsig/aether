@@ -568,6 +568,12 @@
   {
     "access": "observe",
     "command": {
+      "cmd": "list_retired_models"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
       "cmd": "auth_status"
     }
   },
