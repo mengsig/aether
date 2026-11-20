@@ -15879,7 +15879,7 @@
               "type": "null"
             }
           ],
-          "description": "Spawn schedules: the root of the newest spawned run."
+          "description": "Spawn schedules: the newest agent started, a run's root or, for an\nagent's schedule, its creator's child."
         },
         "max_deliveries": {
           "format": "uint64",
@@ -16015,7 +16015,7 @@
           "type": "object"
         },
         {
-          "description": "A spawn schedule started a run: its root agent and task.",
+          "description": "A spawn schedule started an agent and its task: a root, or its creator's child.",
           "properties": {
             "agent": {
               "$ref": "#/$defs/AgentId"
@@ -16454,7 +16454,7 @@
       "type": "object"
     },
     "SpawnSpec": {
-      "description": "Root agent + task each spawn occurrence creates, in a new run. Fields as on\n`create_agent`; no parent or existing run.",
+      "description": "The agent and task each spawn occurrence creates: a root in a new run, or\nits creator's child. Fields as on `create_agent`; no parent or existing run.",
       "properties": {
         "approval": {
           "anyOf": [
@@ -16516,7 +16516,7 @@
               "type": "null"
             }
           ],
-          "description": "Absent: the daemon's default root scope when each run starts."
+          "description": "Absent: the daemon's default root scope when each run starts, or for\nan agent's schedule its creator's scope when each child starts."
         }
       },
       "required": [

@@ -100,6 +100,8 @@ fn due_queue_orders_subseconds_and_excludes_paused_jobs() {
     };
     // Spawn schedules have no target: due and listed, never matched by one.
     let mut spawn = job();
+    let creator = AgentId::new();
+    spawn.owner = Actor::agent(creator);
     spawn.mode = ScheduleMode::Spawn {
         template: SpawnSpec {
             role: "coordinator".into(),
@@ -121,6 +123,20 @@ fn due_queue_orders_subseconds_and_excludes_paused_jobs() {
             .commit(Commit::new().mutate(Mutation::UpsertSchedule(job.clone())))
             .expect("insert");
     }
+    assert_eq!(store.schedule(spawn.id).unwrap(), Some(spawn.clone()));
+    let raw: String = store
+        .read_conn()
+        .unwrap()
+        .query_row(
+            "SELECT body FROM schedules WHERE id=?1",
+            [spawn.id.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let stored: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(stored["target"], serde_json::json!(creator));
+    assert!(stored.get("spawn").is_some());
+    assert!(store.schedules(Some(creator)).unwrap().is_empty());
     assert_eq!(
         store.due_schedules(first.created_at, 10).expect("due"),
         vec![first.clone()]

@@ -6,6 +6,67 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Added
+
+- **Agents can schedule their own children.** `create_schedule` takes `spawn`
+  in place of `target`: `delegate`'s arguments for a child (`role`,
+  `objective`, `model`, `effort`, and optionally `name`, `instructions`,
+  `leaf`, `host_context`, `workspace_root`, `allowed_paths`, `network`). Each
+  occurrence is that `delegate` call made with `wait=false` and admitted by
+  the same code, so the child is the creator's child in the creator's run:
+  inside its delegation policy, `max_parallel`, tier ceiling and scope, under
+  its budgets and `[scheduler] run_budget_usd`, with its host context and a
+  child's messaging reach. Creating and firing a spawn schedule require
+  access to `delegate`. A gated creator's child must keep its required
+  approvals and use an engine that can enforce them. A template `delegate`
+  would refuse is refused when the schedule is created. A refusal at firing
+  ends the schedule and records the reason. An occurrence is skipped while
+  the previous child's subtree is live, the creator is paused or the creator
+  is at `max_parallel`. An occurrence whose engine is unavailable or whose
+  latest probe failed stays due while the daemon probes the engine again, and
+  is skipped if that probe fails too. Provider credentials are checked when
+  the schedule is created, not per occurrence. `max_deliveries`, pause, resume
+  and cancel work as for any timer. The schedule ends with its creator, and a
+  bare `wait_for` does not wait on it. Schedules that start a fresh root run
+  stay operator-only, and `aether schedule create` is unchanged.
+
+### Before downgrading
+
+- **Cancel agent spawn schedules before downgrading to 1.4.2 or earlier.** An
+  agent's spawn schedule that is active, paused or failed is stored in a
+  shape those releases refuse, so that none of them runs it as an operator's
+  schedule, in a fresh root run outside its creator's policy and budgets. A
+  daemon that old then fails to list schedules and fires none while such a
+  schedule is due. Find them with `aether schedule list --json` (an `owner`
+  that is an agent, and a `spawn`) and cancel each with
+  `aether schedule cancel` first. Cancelled and exhausted schedules, delivery
+  schedules and an operator's spawn schedules are stored as before.
+  [Upgrading](docs/upgrading.md#downgrading-with-agent-spawn-schedules) has
+  the steps.
+
+### Fixed
+
+- **A child's scope is checked where its paths lead.** `delegate` and
+  `create_agent` compared a child's `workspace_root` and `allowed_paths` with
+  its parent's as text, so a path inside the parent's workspace that is a
+  symlink out of it was accepted, and the child's file tools then followed
+  it. Such a path is now refused as widening the parent's scope, as is one
+  that does not exist yet beneath such a link, or that is a dangling link out.
+  The child is held to what its parent's file tools reach: the parent's
+  `workspace_root` and `allowed_paths` where they really are, or where one
+  that does not exist yet will be once created as written. A parent whose
+  scope names no `workspace_root` works in the daemon's workspace directory
+  and its file tools ignore its `allowed_paths`, so its child's paths are now
+  held to that directory; any `workspace_root` was accepted before. A child
+  path that cannot be resolved is refused with the reason. A path the parent
+  names itself, a path that does not exist yet inside the parent's roots and
+  a child in an isolated workspace are accepted as before.
+
+- **A delegated child no longer starts with its parent's compaction
+  threshold.** `delegate` copied the parent's `config.compaction_tokens` to
+  the child, on whatever model the child ran; the child now compacts at its
+  own model's threshold, as documented.
+
 ## 1.4.2
 
 Released 2026-11-19. A per-agent compaction threshold (#443), and a model

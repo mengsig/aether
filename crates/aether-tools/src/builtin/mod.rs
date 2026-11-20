@@ -59,6 +59,38 @@ pub(crate) fn parse_field<T: serde::de::DeserializeOwned>(
         .map_err(|e| ToolError::InvalidInput(format!("{tool_field}: {e}")))
 }
 
+/// The scope a caller asked a child to start in: its own, narrowed by the
+/// fields it set, or `None` when it set none and the child inherits.
+pub(crate) fn requested_scope(
+    ctx: &crate::tool::ToolContext,
+    workspace_root: Option<&str>,
+    allowed_paths: &[String],
+    network: Option<bool>,
+) -> Option<aether_core::agent::Scope> {
+    use aether_core::agent::NetworkPolicy;
+    if workspace_root.is_none() && allowed_paths.is_empty() && network.is_none() {
+        return None;
+    }
+    let mut scope = ctx.scope.clone();
+    if let Some(root) = workspace_root {
+        scope.workspace_root = Some(crate::fs::lexical_resolve(ctx, root));
+    }
+    if !allowed_paths.is_empty() {
+        scope.allowed_paths = allowed_paths
+            .iter()
+            .map(|p| crate::fs::lexical_resolve(ctx, p))
+            .collect();
+    }
+    if let Some(allowed) = network {
+        scope.network = if allowed {
+            NetworkPolicy::Allowed
+        } else {
+            NetworkPolicy::Denied
+        };
+    }
+    Some(scope)
+}
+
 /// Tools that act on the workspace and shell. The shell tools share one
 /// background-process registry, so a process started by `bash` is the same
 /// one `shell_output` and `shell_stop` see.

@@ -1,5 +1,5 @@
 use super::*;
-use aether_core::shell_network::gated_class;
+use aether_core::tool::SideEffectClass;
 
 /// What to tell a model that named a tool it cannot use. A tool the registry
 /// has but this agent's exposure or scope withholds says which, so a denied
@@ -289,6 +289,7 @@ pub(super) async fn run_tool_calls(
     let mut effects = ToolEffects::default();
     let mut runnable: Vec<(ToolCall, Arc<dyn Tool>)> = Vec::new();
     let mut commit = Commit::new();
+    let mut mutation_approvals = BTreeSet::new();
     let visible: BTreeSet<String> = runtime
         .agent_tool_specs(&ctx.agent)
         .into_iter()
@@ -322,18 +323,14 @@ pub(super) async fn run_tool_calls(
             }));
             continue;
         };
-        let descriptor = tool.descriptor();
+        let declared = tool.descriptor().side_effect;
+        let class = runtime.tool_call_class(ctx.agent.id, &name, &call.input, declared)?;
         aether_tools::ToolRuntime::prepare(&mut call, tool.as_ref(), tool_ctx);
-        let class = gated_class(descriptor.side_effect, &call.input);
         commit.push_event(ctx.draft(EventKind::ToolRequested {
             call: call.clone(),
             side_effect: class,
         }));
-        let gated = ctx
-            .agent
-            .config
-            .approval
-            .requires_raised(descriptor.side_effect, class);
+        let gated = runtime.tool_needs_approval(&ctx.agent, &name, declared, class)?;
         if gated {
             let argument = tool.rule_argument(&call.input);
             let approval = ApprovalRequest {
@@ -370,7 +367,12 @@ pub(super) async fn run_tool_calls(
                         note.clone(),
                     );
                     match decision {
-                        ApprovalDecision::Approved => runnable.push((call, tool)),
+                        ApprovalDecision::Approved => {
+                            if class == SideEffectClass::Mutation {
+                                mutation_approvals.insert(call.id);
+                            }
+                            runnable.push((call, tool));
+                        }
                         ApprovalDecision::Denied => {
                             commit.push_event(ctx.draft(EventKind::ToolDenied {
                                 call: call.id,
@@ -499,7 +501,9 @@ pub(super) async fn run_tool_calls(
                 }
                 Ok(ToolExecution::Action(action)) => {
                     ctx.agent.stats.tool_calls += 1;
-                    let outcome = apply_action(runtime, ctx, action, &mut effects).await?;
+                    let mutation_approved = mutation_approvals.contains(&result.call.id);
+                    let outcome =
+                        apply_action(runtime, ctx, action, &mut effects, mutation_approved).await?;
                     runtime.apply(Commit::new().event(ctx.draft(EventKind::ToolSucceeded {
                         call: result.call.id,
                         outcome: outcome.with_duration(duration),

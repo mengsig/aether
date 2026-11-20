@@ -20,10 +20,15 @@ use aether_core::schedule::ScheduleOccurrence;
 // No engine discovery, native process or model turn. The background scheduler
 // is cancelled before fixture agents are created; tests advance timers directly.
 async fn fixture() -> (Arc<Runtime>, tempfile::TempDir) {
+    fixture_with_run_budget(None).await
+}
+
+async fn fixture_with_run_budget(run_budget_usd: Option<f64>) -> (Arc<Runtime>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let runtime = Runtime::start_with_engines(
         RuntimeConfig {
             default_model: Some(ModelRef::new("anthropic", "claude-sonnet-5-5")),
+            run_budget_usd,
             delegated_workspace_root: Some(dir.path().join("managed")),
             ..Default::default()
         },
@@ -231,6 +236,8 @@ async fn intervals_below_the_minimum_are_refused() {
     runtime.create_schedule(minimum, Actor::user()).unwrap();
 }
 
+mod child_admission;
+mod child_spawning;
 mod spawning;
 
 fn template() -> SpawnSpec {

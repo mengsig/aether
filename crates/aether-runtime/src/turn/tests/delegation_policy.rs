@@ -3,7 +3,7 @@ use aether_core::agent::AgentConfig;
 use aether_core::delegation::{DelegationPolicy, ModelTier, WorkerChoice};
 use aether_core::model::Effort;
 
-fn adaptive_policy() -> DelegationPolicy {
+pub(super) fn adaptive_policy() -> DelegationPolicy {
     DelegationPolicy {
         workers: vec![WorkerChoice {
             model: None,
@@ -19,7 +19,7 @@ fn adaptive_policy() -> DelegationPolicy {
 }
 
 /// A lead on the frontier model carrying `policy`, as Archon creates one.
-async fn lead_harness(policy: DelegationPolicy) -> (ComposeHarness, tempfile::TempDir) {
+pub(super) async fn lead_harness(policy: DelegationPolicy) -> (ComposeHarness, tempfile::TempDir) {
     // A scripted client stands in for provider auth, as in a real daemon
     // with credentials; the children's turns are never inspected.
     let dir = tempfile::tempdir().expect("config dir");
@@ -72,7 +72,12 @@ async fn lead_harness(policy: DelegationPolicy) -> (ComposeHarness, tempfile::Te
     (ComposeHarness { runtime, ctx }, dir)
 }
 
-fn delegate(role: &str, model: &str, effort: Effort, reason: Option<&str>) -> HarnessAction {
+pub(super) fn delegate(
+    role: &str,
+    model: &str,
+    effort: Effort,
+    reason: Option<&str>,
+) -> HarnessAction {
     HarnessAction::Delegate {
         role: role.into(),
         name: None,
@@ -92,10 +97,19 @@ fn delegate(role: &str, model: &str, effort: Effort, reason: Option<&str>) -> Ha
     }
 }
 
-async fn run(h: &mut ComposeHarness, action: HarnessAction) -> aether_core::tool::ToolOutcome {
-    apply_action(&h.runtime, &mut h.ctx, action, &mut ToolEffects::default())
-        .await
-        .expect("a refusal is a tool outcome")
+pub(super) async fn run(
+    h: &mut ComposeHarness,
+    action: HarnessAction,
+) -> aether_core::tool::ToolOutcome {
+    apply_action(
+        &h.runtime,
+        &mut h.ctx,
+        action,
+        &mut ToolEffects::default(),
+        false,
+    )
+    .await
+    .expect("a refusal is a tool outcome")
 }
 
 /// An unstarted child stays unfinished, so it holds a `max_parallel` slot.

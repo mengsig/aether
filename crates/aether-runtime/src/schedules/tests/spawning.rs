@@ -7,14 +7,14 @@ fn roots(runtime: &Runtime) -> Vec<Agent> {
         .unwrap()
 }
 
-fn spawned(job: &Schedule) -> Option<AgentId> {
+pub(super) fn spawned(job: &Schedule) -> Option<AgentId> {
     match &job.mode {
         ScheduleMode::Spawn { last_spawned, .. } => *last_spawned,
         ScheduleMode::Deliver { .. } => None,
     }
 }
 
-fn end_run(runtime: &Runtime, id: AgentId) {
+pub(super) fn end_run(runtime: &Runtime, id: AgentId) {
     let mut root = runtime.store.agent(id).unwrap().unwrap();
     root.status = AgentStatus::Completed { summary: None };
     runtime
@@ -109,7 +109,7 @@ async fn spawn_skips_while_its_previous_run_is_live_and_says_so() {
     assert_eq!(stored.deliveries, 2);
 }
 
-fn skip_reason(job: &Schedule) -> Option<String> {
+pub(super) fn skip_reason(job: &Schedule) -> Option<String> {
     match &job.last.as_ref()?.outcome {
         ScheduleOutcome::Skipped { reason } => Some(reason.clone()),
         _ => None,
@@ -208,7 +208,7 @@ async fn spawn_missed_runs_follow_the_policy_and_the_limit_exhausts() {
 }
 
 #[tokio::test]
-async fn spawn_templates_are_operator_only_and_checked_at_creation() {
+async fn spawn_templates_are_checked_at_creation_for_whoever_asks() {
     let (runtime, _dir) = fixture().await;
     let owner = agent(&runtime, None);
     let refused = |spec: CreateScheduleSpec, by: Actor| {
@@ -222,7 +222,12 @@ async fn spawn_templates_are_operator_only_and_checked_at_creation() {
             spawn_spec(MissedRunPolicy::Coalesce),
             Actor::agent(owner.id)
         )
-        .contains("operator")
+        .contains("names its model and effort"),
+        "an operator's template is not a `delegate` call an agent could make"
+    );
+    assert!(
+        refused(spawn_spec(MissedRunPolicy::Coalesce), Actor::Scheduler)
+            .contains("only an operator or an agent")
     );
     let mut queued = spawn_spec(MissedRunPolicy::Coalesce);
     queued.busy = BusyPolicy::QueueOne;
@@ -334,7 +339,7 @@ async fn prepared_schedule_spawn_rechecks_workspace_gc_admission() {
         });
         let mut job = runtime.create_schedule(spec, Actor::user()).unwrap();
         let due = job.status.next_due().unwrap();
-        let prepared = super::super::execution::prepare_spawn(&runtime, &job, due).unwrap();
+        let staged = super::super::execution::stage_spawn(&runtime, &job, due);
         if reserved {
             *runtime.workspace_gc_active.lock() = Some(workspace);
         } else {
@@ -349,10 +354,13 @@ async fn prepared_schedule_spawn_rechecks_workspace_gc_admission() {
             &mut job,
             due,
             due,
-            Some(Ok(prepared)),
+            Some(staged),
         );
         if reserved {
-            assert!(matches!(result.unwrap().0, ScheduleOutcome::Skipped { .. }));
+            let fired = result
+                .unwrap()
+                .expect("an operator's occurrence is never restaged");
+            assert!(matches!(fired.0, ScheduleOutcome::Skipped { .. }));
         } else {
             assert!(result.unwrap_err().to_string().contains("disappeared"));
         }

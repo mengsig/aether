@@ -249,6 +249,10 @@ async fn harness_with(
 
 /// An agent whose scope allows the network, which every MCP server needs.
 fn start_agent(h: &Harness) -> AgentId {
+    start_agent_with_approval(h, ApprovalPolicy::default())
+}
+
+fn start_agent_with_approval(h: &Harness, policy: ApprovalPolicy) -> AgentId {
     let (agent, _) = h
         .runtime
         .create_agent(
@@ -266,7 +270,7 @@ fn start_agent(h: &Harness) -> AgentId {
                 }),
                 // The gate is what this file tests, so it is asked for
                 // outright rather than left to the shipped default (yolo).
-                approval: Some(ApprovalPolicy::default()),
+                approval: Some(policy),
                 ..Default::default()
             },
             Actor::user(),
@@ -838,6 +842,143 @@ async fn provider_usage_bridge_tool_returns_unknown_enabled_providers_read_only(
         assert_eq!(row["headroom"]["observed_at"], serde_json::Value::Null);
     }
     assert!(h.store.pending_approvals().unwrap().is_empty());
+    h.finish.take().unwrap().send(()).unwrap();
+    h.runtime.shutdown().await;
+}
+
+async fn bridge_schedule_call(
+    h: &Harness,
+    bridge: &BridgeCredentials,
+    tool: &str,
+    input: serde_json::Value,
+    decision: Option<ApprovalDecision>,
+) -> (String, bool) {
+    let call = h
+        .runtime
+        .engine_tool(bridge.agent, &bridge.token, tool.into(), input);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::pin!(call);
+        if let Some(decision) = decision {
+            let before = h.store.schedules(None).unwrap();
+            let pending = tokio::select! {
+                result = &mut call => panic!("{tool} answered before approval: {result:?}"),
+                pending = wait_for_approval(h.store.as_ref()) => pending,
+            };
+            assert_eq!(pending.tool, tool);
+            assert_eq!(pending.agent_id, bridge.agent);
+            assert_eq!(pending.side_effect, SideEffectClass::Mutation);
+            assert_eq!(h.store.schedules(None).unwrap(), before);
+            h.runtime
+                .resolve_approval(pending.id, decision, Actor::user(), None, None)
+                .expect("answer schedule approval");
+        }
+        let reply = call.await.expect("schedule reply");
+        assert!(h.store.pending_approvals().unwrap().is_empty());
+        reply
+    })
+    .await
+    .expect("schedule bridge call settled within five seconds")
+}
+
+async fn schedule_bridge(gated: bool) -> (Harness, BridgeCredentials) {
+    let mut h = harness().await;
+    let policy = if gated {
+        ApprovalPolicy {
+            require_for: [SideEffectClass::Mutation].into(),
+        }
+    } else {
+        ApprovalPolicy::none()
+    };
+    let agent = start_agent_with_approval(&h, policy);
+    let bridge = tokio::time::timeout(Duration::from_secs(5), h.ready.recv())
+        .await
+        .expect("engine started")
+        .expect("bridge credentials");
+    assert_eq!(bridge.agent, agent);
+    (h, bridge)
+}
+
+async fn update_bridge_schedule(
+    h: &Harness,
+    bridge: &BridgeCredentials,
+    id: aether_core::id::ScheduleId,
+    action: &str,
+    decision: Option<ApprovalDecision>,
+) -> aether_core::schedule::ScheduleStatus {
+    let (reply, failed) = bridge_schedule_call(
+        h,
+        bridge,
+        "update_schedule",
+        json!({"id":id,"action":action}),
+        decision,
+    )
+    .await;
+    assert!(!failed, "{reply}");
+    h.store.schedule(id).unwrap().unwrap().status
+}
+
+#[tokio::test]
+async fn bridge_schedule_spawn_create_and_resume_gate_only_mutations() {
+    use aether_core::schedule::{Schedule, ScheduleStatus};
+
+    for gated in [true, false] {
+        let (mut h, bridge) = schedule_bridge(gated).await;
+        let spawn = json!({"name":"poll","payload":null,"every_seconds":3600,"spawn":{
+            "role":"poller","objective":"Check the queue",
+            "model":"ollama/qwen3:32b","effort":"medium"
+        }});
+        if gated {
+            let (reply, failed) = bridge_schedule_call(
+                &h,
+                &bridge,
+                "create_schedule",
+                spawn.clone(),
+                Some(ApprovalDecision::Denied),
+            )
+            .await;
+            assert!(failed, "{reply}");
+            assert!(h.store.schedules(None).unwrap().is_empty());
+        }
+        let approve = gated.then_some(ApprovalDecision::Approved);
+        let (reply, failed) =
+            bridge_schedule_call(&h, &bridge, "create_schedule", spawn, approve).await;
+        assert!(!failed, "{reply}");
+        let job = serde_json::from_str::<serde_json::Value>(&reply).unwrap();
+        let job: Schedule = serde_json::from_value(job["schedule"].clone()).unwrap();
+        assert_eq!(job.spawns_children_of(), Some(bridge.agent));
+        assert!(matches!(
+            update_bridge_schedule(&h, &bridge, job.id, "pause", None).await,
+            ScheduleStatus::Paused { .. }
+        ));
+        assert!(matches!(
+            update_bridge_schedule(&h, &bridge, job.id, "resume", approve).await,
+            ScheduleStatus::Active { .. }
+        ));
+        h.finish.take().unwrap().send(()).unwrap();
+        h.runtime.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn bridge_schedule_deliver_create_and_resume_stay_read_only() {
+    use aether_core::schedule::ScheduleStatus;
+
+    let (mut h, bridge) = schedule_bridge(true).await;
+    let input = json!({"name":"message","payload":"check in","every_seconds":3600});
+    let (reply, failed) = bridge_schedule_call(&h, &bridge, "create_schedule", input, None).await;
+    assert!(!failed, "{reply}");
+    let jobs = h.store.schedules(None).unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].target(), Some(bridge.agent));
+    let id = jobs[0].id;
+    assert!(matches!(
+        update_bridge_schedule(&h, &bridge, id, "pause", None).await,
+        ScheduleStatus::Paused { .. }
+    ));
+    assert!(matches!(
+        update_bridge_schedule(&h, &bridge, id, "resume", None).await,
+        ScheduleStatus::Active { .. }
+    ));
     h.finish.take().unwrap().send(()).unwrap();
     h.runtime.shutdown().await;
 }

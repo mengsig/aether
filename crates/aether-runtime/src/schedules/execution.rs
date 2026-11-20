@@ -1,4 +1,4 @@
-use super::{about, check_calendar_range, record_schedule};
+use super::{about, check_calendar_range, child, record_schedule};
 use crate::{
     CreateAgentSpec, Result, Runtime, RuntimeError,
     commands::{Preflight, PreparedAgent},
@@ -39,19 +39,9 @@ pub(super) fn spawn_request(template: &SpawnSpec, objective: String) -> CreateAg
     }
 }
 
-/// The run a spawn occurrence due at `due` starts. One line after the
-/// template's objective names the schedule, the due time and any payload.
-pub(super) fn prepare_spawn(
-    runtime: &Runtime,
-    job: &Schedule,
-    due: Timestamp,
-) -> Result<PreparedAgent> {
-    let ScheduleMode::Spawn { template, .. } = &job.mode else {
-        return Err(RuntimeError::Internal(format!(
-            "schedule {} does not spawn runs",
-            job.id
-        )));
-    };
+/// A spawn occurrence's task: one line after the template's objective names
+/// the schedule, the due time and any payload.
+fn occurrence_objective(job: &Schedule, template: &SpawnSpec, due: Timestamp) -> String {
     let mut objective = format!(
         "{}\n\nScheduled run of `{}` ({}) due {}.",
         template.objective.trim(),
@@ -60,24 +50,58 @@ pub(super) fn prepare_spawn(
         due.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
     );
     if !job.payload.is_null() {
-        // Compact JSON keeps it on one line; operator-supplied, shown as is.
+        // Compact JSON keeps it on one line; supplied by the owner, shown as is.
         objective.push_str(&format!(" Payload: {}", job.payload));
     }
-    runtime.prepare_agent(
-        spawn_request(template, objective),
-        &Actor::Scheduler,
-        Preflight::default(),
-    )
+    objective
+}
+
+/// What a spawn occurrence has ready before the hold: an operator's root run,
+/// or an agent's child with the creator it was decided against.
+// Built once per occurrence and consumed; boxing would buy only an allocation.
+#[allow(clippy::large_enum_variant)]
+pub(super) enum StagedSpawn {
+    Root(Result<PreparedAgent>),
+    Child(Result<Option<child::Staged>>),
+}
+
+/// Build the run a spawn occurrence due at `due` starts. Outside the hold,
+/// since preparing an agent may run `git`.
+pub(super) fn stage_spawn(runtime: &Runtime, job: &Schedule, due: Timestamp) -> StagedSpawn {
+    let ScheduleMode::Spawn {
+        template,
+        last_spawned,
+    } = &job.mode
+    else {
+        return StagedSpawn::Root(Err(RuntimeError::Internal(format!(
+            "schedule {} does not spawn runs",
+            job.id
+        ))));
+    };
+    let objective = occurrence_objective(job, template, due);
+    match job.spawns_children_of() {
+        Some(creator) => StagedSpawn::Child(child::stage(
+            runtime,
+            template,
+            objective,
+            creator,
+            *last_spawned,
+        )),
+        None => StagedSpawn::Root(runtime.prepare_agent(
+            spawn_request(template, objective),
+            &Actor::Scheduler,
+            Preflight::default(),
+        )),
+    }
 }
 
 /// One bounded pass. Storage failures retain the original due time, so the
 /// next tick retries the same transaction without duplicating a delivery.
 pub(crate) fn tick(runtime: &Runtime, at: Timestamp) -> Result<()> {
     for queued in runtime.store.due_schedules(at, 128)? {
-        // Built outside the hold, since preparing an agent may run `git`; used
-        // only if the job is unchanged under the hold.
+        // Built outside the hold; used only if the job is unchanged under it.
         let spawn = match (&queued.mode, queued.status.next_due()) {
-            (ScheduleMode::Spawn { .. }, Some(due)) => Some(prepare_spawn(runtime, &queued, due)),
+            (ScheduleMode::Spawn { .. }, Some(due)) => Some(stage_spawn(runtime, &queued, due)),
             _ => None,
         };
         let hold = runtime.hold();
@@ -95,7 +119,10 @@ pub(crate) fn tick(runtime: &Runtime, at: Timestamp) -> Result<()> {
         let mut commit = Commit::new();
         let result = prepare_occurrence(runtime, &hold, &mut commit, &mut job, due, at, spawn);
         let (outcome, spawned) = match result {
-            Ok(fired) => fired,
+            Ok(Some(fired)) => fired,
+            // Staged against a creator that has since changed: nothing is
+            // written, and the next pass stages the same due time again.
+            Ok(None) => continue,
             // Store failures are transient candidates, not a failed job. No
             // state from a partially built commit may reach the database.
             Err(error @ RuntimeError::Store(_)) => return Err(error),
@@ -141,9 +168,9 @@ pub(crate) fn tick(runtime: &Runtime, at: Timestamp) -> Result<()> {
 }
 
 /// What an occurrence did, and the root it spawned, if any.
-type Fired = (ScheduleOutcome, Option<Agent>);
+pub(super) type Fired = (ScheduleOutcome, Option<Agent>);
 
-fn skipped(reason: impl Into<String>) -> Fired {
+pub(super) fn skipped(reason: impl Into<String>) -> Fired {
     (
         ScheduleOutcome::Skipped {
             reason: reason.into(),
@@ -152,6 +179,9 @@ fn skipped(reason: impl Into<String>) -> Fired {
     )
 }
 
+/// Decide one due occurrence under the hold: advance the schedule, then fire
+/// it unless a limit or the missed-run policy says not to. `None`: staged
+/// against rows that have since moved, so nothing may be written.
 pub(super) fn prepare_occurrence(
     runtime: &Runtime,
     hold: &crate::CommitHold<'_>,
@@ -159,21 +189,24 @@ pub(super) fn prepare_occurrence(
     job: &mut Schedule,
     due: Timestamp,
     at: Timestamp,
-    spawn: Option<Result<PreparedAgent>>,
-) -> Result<Fired> {
+    spawn: Option<StagedSpawn>,
+) -> Result<Option<Fired>> {
     if job
         .max_deliveries
         .is_some_and(|limit| job.deliveries >= limit.get())
     {
         job.status = ScheduleStatus::Exhausted { at };
-        return Ok(skipped("delivery limit reached"));
+        return Ok(Some(skipped("delivery limit reached")));
     }
-    // Checked before the missed-run policy, so a gone target fails the job
-    // even on an occurrence that would have been skipped.
+    // Checked before the missed-run policy, so a gone target or an ended
+    // creator fails the job even on an occurrence that would be skipped.
     let target = match job.target() {
         Some(id) => Some(runtime.schedule_target(id, &job.owner)?),
         None => None,
     };
+    if let Some(creator) = job.spawns_children_of() {
+        child::check_creator_live(runtime, creator)?;
+    }
     let planned = job
         .recurrence
         .plan_due(due, at, job.missed)
@@ -186,17 +219,45 @@ pub(super) fn prepare_occurrence(
         next_due: planned.next_due,
     };
     if !planned.deliver {
-        return Ok(skipped("missed occurrences skipped by policy"));
+        return Ok(Some(skipped("missed occurrences skipped by policy")));
     }
     // Before any mode field changes, so a refusal leaves nothing half-applied.
     let deliveries = job
         .deliveries
         .checked_add(1)
         .ok_or_else(|| RuntimeError::Invalid("schedule delivery counter exhausted".into()))?;
-    let fired = match (&mut job.mode, target) {
-        (ScheduleMode::Deliver { last_inbox_seq, .. }, Some(target)) => {
+    let Some(fired) = fire(runtime, hold, commit, job, target, spawn)? else {
+        return Ok(None);
+    };
+    // Only a delivered trigger or a started run counts against the limit.
+    if matches!(fired.0, ScheduleOutcome::Skipped { .. }) {
+        return Ok(Some(fired));
+    }
+    job.deliveries = deliveries;
+    if job
+        .max_deliveries
+        .is_some_and(|limit| deliveries >= limit.get())
+    {
+        job.status = ScheduleStatus::Exhausted { at };
+    }
+    Ok(Some(fired))
+}
+
+/// Deliver the trigger or start the run this occurrence stands for.
+fn fire(
+    runtime: &Runtime,
+    hold: &crate::CommitHold<'_>,
+    commit: &mut Commit,
+    job: &mut Schedule,
+    target: Option<Agent>,
+    spawn: Option<StagedSpawn>,
+) -> Result<Option<Fired>> {
+    let creator = job.spawns_children_of();
+    let no_target = || RuntimeError::Internal(format!("schedule {} has no target to fire", job.id));
+    match (&mut job.mode, target, spawn) {
+        (ScheduleMode::Deliver { last_inbox_seq, .. }, Some(target), None) => {
             if let Some(reason) = busy_reason(&target, *last_inbox_seq, job.busy) {
-                return Ok(skipped(reason));
+                return Ok(Some(skipped(reason)));
             }
             let item = runtime.push_inbox(
                 hold,
@@ -210,53 +271,69 @@ pub(super) fn prepare_occurrence(
                 Actor::Scheduler,
             )?;
             *last_inbox_seq = Some(item.seq);
-            (ScheduleOutcome::Delivered { inbox: item.id }, None)
+            Ok(Some((ScheduleOutcome::Delivered { inbox: item.id }, None)))
         }
-        (ScheduleMode::Spawn { last_spawned, .. }, None) => {
-            if let Some(reason) = previous_run_live(runtime, *last_spawned)? {
-                return Ok(skipped(reason));
-            }
-            let PreparedAgent {
-                agent,
-                task,
-                commit: created,
-                ..
-            } = spawn.ok_or_else(|| {
-                RuntimeError::Internal("spawn occurrence was not prepared".into())
-            })??;
-            if runtime.workspace_gc_reserves(&agent.scope) {
-                return Ok(skipped("workspace maintenance in progress"));
-            }
-            runtime.recheck_workspace_gc_admission(&agent.scope)?;
-            let task = task.ok_or_else(|| {
-                RuntimeError::Internal("a spawned run must carry its task".into())
-            })?;
-            commit.events.extend(created.events);
-            commit.mutations.extend(created.mutations);
-            commit.push_mutation(Mutation::UpsertAgent(agent.clone()));
-            *last_spawned = Some(agent.id);
-            let outcome = ScheduleOutcome::Spawned {
-                agent: agent.id,
-                task: task.id,
-                run: agent.run,
-            };
-            (outcome, Some(agent))
+        (ScheduleMode::Spawn { last_spawned, .. }, None, Some(StagedSpawn::Root(prepared)))
+            if creator.is_none() =>
+        {
+            spawn_root(runtime, commit, last_spawned, prepared).map(Some)
         }
-        _ => {
-            return Err(RuntimeError::Internal(format!(
-                "schedule {} has no target to fire",
-                job.id
-            )));
+        (
+            ScheduleMode::Spawn {
+                template,
+                last_spawned,
+            },
+            None,
+            Some(StagedSpawn::Child(staged)),
+        ) => {
+            let creator = creator.ok_or_else(no_target)?;
+            child::fire(
+                runtime,
+                hold,
+                commit,
+                creator,
+                template,
+                last_spawned,
+                staged,
+            )
         }
-    };
-    job.deliveries = deliveries;
-    if job
-        .max_deliveries
-        .is_some_and(|limit| deliveries >= limit.get())
-    {
-        job.status = ScheduleStatus::Exhausted { at };
+        _ => Err(no_target()),
     }
-    Ok(fired)
+}
+
+/// Start an operator's root run, or skip while its previous run is live.
+fn spawn_root(
+    runtime: &Runtime,
+    commit: &mut Commit,
+    last_spawned: &mut Option<AgentId>,
+    prepared: Result<PreparedAgent>,
+) -> Result<Fired> {
+    if let Some(reason) = previous_run_live(runtime, *last_spawned)? {
+        return Ok(skipped(reason));
+    }
+    let PreparedAgent {
+        agent,
+        task,
+        commit: created,
+        ..
+    } = prepared?;
+    if runtime.workspace_gc_reserves(&agent.scope) {
+        return Ok(skipped("workspace maintenance in progress"));
+    }
+    runtime.recheck_workspace_gc_admission(&agent.scope)?;
+    let task =
+        task.ok_or_else(|| RuntimeError::Internal("a spawned run must carry its task".into()))?;
+    debug_assert!(agent.parent.is_none(), "an operator's run is a root");
+    commit.events.extend(created.events);
+    commit.mutations.extend(created.mutations);
+    commit.push_mutation(Mutation::UpsertAgent(agent.clone()));
+    *last_spawned = Some(agent.id);
+    let outcome = ScheduleOutcome::Spawned {
+        agent: agent.id,
+        task: task.id,
+        run: agent.run,
+    };
+    Ok((outcome, Some(agent)))
 }
 
 /// Why the next spawn must wait: any agent of the previous run is still live.

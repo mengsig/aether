@@ -8,7 +8,7 @@ from .. import protocol as _protocol
 
 class ScheduleOutcomeSpawned(TypedDict, total=False):
     """
-    A spawn schedule started a run: its root agent and task.
+    A spawn schedule started an agent and its task: a root, or its creator's child.
     """
     agent: _protocol.AgentId
     outcome: Literal["spawned"]

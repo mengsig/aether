@@ -520,7 +520,7 @@ pub(super) fn handle_event(
             }
             for block in &content {
                 if let ContentBlock::ToolUse { id, name, input } = block {
-                    let class = engine_call_class(runtime, name, input);
+                    let class = engine_call_class(runtime, ctx.agent.id, name, input)?;
                     // The engine ran this itself, so Aether has no outcome to
                     // replay; the key still says which calls are one effect.
                     let idempotency_key = class

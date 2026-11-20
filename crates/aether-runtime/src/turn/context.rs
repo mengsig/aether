@@ -6,8 +6,7 @@ pub(crate) fn tool_context(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> ToolContext
         .scope
         .workspace_root
         .clone()
-        .or_else(|| runtime.config.workspace_root.clone())
-        .or_else(|| std::env::current_dir().ok())
+        .or_else(|| runtime.unscoped_cwd())
         .unwrap_or_else(|| std::path::PathBuf::from("."));
     ToolContext {
         agent_id: ctx.agent.id,

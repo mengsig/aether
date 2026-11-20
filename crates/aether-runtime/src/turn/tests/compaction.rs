@@ -156,6 +156,7 @@ async fn explicit_requests_do_not_replace_a_pending_model_handoff() {
             reason: "manual".into(),
         },
         &mut ToolEffects::default(),
+        false,
     )
     .await
     .expect("agent request");
@@ -269,6 +270,7 @@ async fn delegating_onto_an_unusable_engine_names_its_probe_reason() {
         &mut h.ctx,
         delegate,
         &mut ToolEffects::default(),
+        false,
     )
     .await
     .expect("a refusal is a tool outcome");

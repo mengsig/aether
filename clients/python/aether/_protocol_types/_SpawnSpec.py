@@ -8,8 +8,8 @@ from .. import protocol as _protocol
 
 class SpawnSpec(TypedDict, total=False):
     """
-    Root agent + task each spawn occurrence creates, in a new run. Fields as on
-    `create_agent`; no parent or existing run.
+    The agent and task each spawn occurrence creates: a root in a new run, or
+    its creator's child. Fields as on `create_agent`; no parent or existing run.
     """
     approval: _protocol.ApprovalPolicy | None  # optional
     config: _protocol.AgentConfig | None  # optional

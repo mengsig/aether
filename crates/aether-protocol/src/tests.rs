@@ -668,6 +668,7 @@ mod idempotency;
 
 #[path = "tests/resolution.rs"]
 mod resolution;
+mod schedules;
 
 #[test]
 fn event_query_before_is_optional_and_old_wire_shape_is_unchanged() {

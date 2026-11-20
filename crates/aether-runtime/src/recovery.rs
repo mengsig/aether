@@ -873,6 +873,12 @@ fn recovery_side_effect(
         .or_else(|| name.strip_prefix("aether__"))
         .or_else(|| name.strip_prefix("aether."))
     {
+        // The schedule gate records the call-specific class, above its descriptor.
+        if matches!(bare, "create_schedule" | "update_schedule")
+            && recorded == SideEffectClass::Mutation
+        {
+            return recorded;
+        }
         return runtime
             .tools
             .get(bare)
