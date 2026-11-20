@@ -16,15 +16,17 @@ release is also the text of its GitHub release.
   the same code, so the child is the creator's child in the creator's run:
   inside its delegation policy, `max_parallel`, tier ceiling and scope, under
   its budgets and `[scheduler] run_budget_usd`, with its host context and a
-  child's messaging reach. A template `delegate` would refuse is refused when
-  the schedule is created; one refused later ends the schedule with that
-  refusal. An occurrence is skipped while the previous child's subtree is
-  live, the creator is paused or the creator is at `max_parallel`. One whose
-  engine cannot be launched, because it is unavailable or its latest probe
-  failed, stays due while the daemon probes the engine again, and is skipped
-  if that probe fails too. Provider credentials are checked when the schedule
-  is created, not per occurrence. `max_deliveries` and pause, resume and
-  cancel work as for any timer. The schedule ends with its creator, and a
+  child's messaging reach. Creating and firing a spawn schedule require
+  access to `delegate`. A gated creator's child must keep its required
+  approvals and use an engine that can enforce them. A template `delegate`
+  would refuse is refused when the schedule is created. A refusal at firing
+  ends the schedule and records the reason. An occurrence is skipped while
+  the previous child's subtree is live, the creator is paused or the creator
+  is at `max_parallel`. An occurrence whose engine is unavailable or whose
+  latest probe failed stays due while the daemon probes the engine again, and
+  is skipped if that probe fails too. Provider credentials are checked when
+  the schedule is created, not per occurrence. `max_deliveries`, pause, resume
+  and cancel work as for any timer. The schedule ends with its creator, and a
   bare `wait_for` does not wait on it. Schedules that start a fresh root run
   stay operator-only, and `aether schedule create` is unchanged.
 

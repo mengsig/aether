@@ -5,38 +5,49 @@ use super::child_spawning::{
     BALANCED, FAST, FRONTIER, at_most, change, child_spec, child_template, children, creator,
     creator_with, ended_with, fast_only, fire, model, refused, schedule,
 };
-use super::spawning::{skip_reason, spawned};
+use super::spawning::{end_run, skip_reason, spawned};
 use super::*;
 use crate::schedules::execution::{self, Fired, StagedSpawn};
 use aether_core::agent::{AgentConfig, ApprovalPolicy, NetworkPolicy, Scope};
 use aether_core::delegation::{DelegationPolicy, WorkerChoice};
 use aether_core::model::Effort;
-use aether_core::tool::SideEffectClass;
+use aether_core::tool::{SideEffectClass, ToolExposure};
 use aether_engine::{EngineError, EngineKind};
 
 const OTHER_FRONTIER: (&str, &str) = ("anthropic", "claude-fable-5-1");
 const ENGINE_FAST: (&str, &str) = ("claude-code", "haiku");
 const KIND: EngineKind = EngineKind::CLAUDE_CODE;
+const CODEX_FAST: (&str, &str) = ("codex", "gpt-6-luna");
+const CODEX: EngineKind = EngineKind::CODEX;
 
-/// A CLI engine; one that does not run offline needs network access.
 struct Cli {
+    kind: EngineKind,
     runs_offline: bool,
+    gates_permissions: bool,
+    on_network_check: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
 #[async_trait::async_trait]
 impl aether_engine::Engine for Cli {
     fn kind(&self) -> EngineKind {
-        KIND
+        self.kind
     }
 
     fn adapter(&self) -> String {
         "test-cli".into()
     }
 
+    fn gates_permissions(&self) -> bool {
+        self.gates_permissions
+    }
+
     fn validate_network_policy(
         &self,
         network_access: bool,
     ) -> std::result::Result<(), EngineError> {
+        if let Some(on_network_check) = &self.on_network_check {
+            on_network_check();
+        }
         if network_access || self.runs_offline {
             return Ok(());
         }
@@ -54,12 +65,38 @@ impl aether_engine::Engine for Cli {
 
 fn needs_network() -> Arc<dyn aether_engine::Engine> {
     Arc::new(Cli {
+        kind: KIND,
         runs_offline: false,
+        gates_permissions: true,
+        on_network_check: None,
     })
 }
 
 fn runs_offline() -> Arc<dyn aether_engine::Engine> {
-    Arc::new(Cli { runs_offline: true })
+    Arc::new(Cli {
+        kind: KIND,
+        runs_offline: true,
+        gates_permissions: true,
+        on_network_check: None,
+    })
+}
+
+fn codex_engine(runtime: &Runtime, gates_permissions: bool) {
+    runtime.engines.mark_usable(
+        CODEX,
+        Arc::new(Cli {
+            kind: CODEX,
+            runs_offline: true,
+            gates_permissions,
+            on_network_check: None,
+        }),
+    );
+}
+
+fn without_delegate() -> ToolExposure {
+    ToolExposure::Only {
+        names: ["create_schedule".into()].into(),
+    }
 }
 
 fn stage(runtime: &Runtime, job: &Schedule) -> StagedSpawn {
@@ -249,6 +286,130 @@ async fn an_engine_that_cannot_run_under_the_childs_network_refuses_it_then_or_l
     assert!(error.contains("it cannot run offline"), "{error}");
     let error = refused(&runtime, &lead, template);
     assert!(error.contains("it cannot run offline"), "{error}");
+    assert!(children(&runtime, lead.id).is_empty());
+}
+
+#[tokio::test]
+async fn a_spawn_schedule_needs_delegate_exposure_then_and_at_firing() {
+    let (runtime, _dir) = fixture().await;
+    let lead = creator(&runtime, None);
+    let template = child_template(FAST, Effort::Low);
+    let job = schedule(&runtime, &lead, template.clone());
+    let lead = change(&runtime, lead.id, |lead| {
+        lead.config.tools = without_delegate()
+    });
+    assert!(lead.config.tools.allows("create_schedule"));
+    let error = ended_with(&fire(&runtime, job.id));
+    assert!(error.contains("`delegate`"), "{error}");
+    let error = refused(&runtime, &lead, template);
+    assert!(error.contains("`delegate`"), "{error}");
+    assert!(children(&runtime, lead.id).is_empty());
+
+    let inbox = runtime
+        .create_schedule(spec(lead.id), Actor::agent(lead.id))
+        .expect("delivery needs no delegate authority");
+    let inbox = fire(&runtime, inbox.id);
+    assert_eq!(inbox.target(), Some(lead.id));
+    assert_eq!(inbox.deliveries, 1);
+}
+
+#[tokio::test]
+async fn a_spawn_schedule_requires_delegate_exposure_under_the_creation_hold() {
+    let (runtime, _dir) = fixture().await;
+    let lead = creator(&runtime, None);
+    let template = child_template(FAST, Effort::Low);
+    let error = held_creation_refusal(&runtime, &lead, template, || {
+        change(&runtime, lead.id, |lead| {
+            lead.config.tools = without_delegate()
+        });
+    });
+    assert!(error.contains("`delegate`"), "{error}");
+    assert!(children(&runtime, lead.id).is_empty());
+}
+
+#[tokio::test]
+async fn an_ungated_engine_refuses_a_gated_creators_schedule_then_or_later() {
+    let (runtime, _dir) = fixture().await;
+    codex_engine(&runtime, false);
+    let lead = creator(&runtime, None);
+    let template = child_template(CODEX_FAST, Effort::Low);
+    let job = schedule(&runtime, &lead, template.clone());
+    let spawned = spawned(&fire(&runtime, job.id)).expect("an ungated creator may spawn");
+    end_run(&runtime, spawned);
+    runtime
+        .set_approvals(lead.id, ApprovalPolicy::default(), false, Actor::user())
+        .unwrap();
+
+    let error = ended_with(&fire(&runtime, job.id));
+    assert!(error.contains("required approvals"), "{error}");
+    let error = refused(&runtime, &lead, template);
+    assert!(error.contains("required approvals"), "{error}");
+    assert_eq!(
+        children(&runtime, lead.id).len(),
+        1,
+        "only the ungated occurrence spawned"
+    );
+}
+
+#[tokio::test]
+async fn an_engine_that_loses_approval_gating_is_refused_under_both_holds() {
+    let (runtime, _dir) = fixture().await;
+    codex_engine(&runtime, true);
+    let lead = creator(&runtime, None);
+    runtime
+        .set_approvals(lead.id, ApprovalPolicy::default(), false, Actor::user())
+        .unwrap();
+    let template = child_template(CODEX_FAST, Effort::Low);
+    let mut job = schedule(&runtime, &lead, template.clone());
+    let staged = stage(&runtime, &job);
+    let error = held_creation_refusal(&runtime, &lead, template, || {
+        codex_engine(&runtime, false);
+    });
+    assert!(error.contains("required approvals"), "{error}");
+    let (decision, commit) = decide(&runtime, &mut job, staged);
+    let error = decision
+        .expect_err("engine lost approval gating")
+        .to_string();
+    assert!(error.contains("required approvals"), "{error}");
+    assert!(commit.mutations.is_empty());
+    assert!(children(&runtime, lead.id).is_empty());
+}
+
+#[tokio::test]
+async fn an_engine_that_regains_gating_cannot_admit_a_child_prepared_without_approvals() {
+    let (runtime, _dir) = fixture().await;
+    codex_engine(&runtime, true);
+    let lead = creator(&runtime, None);
+    runtime
+        .set_approvals(lead.id, ApprovalPolicy::default(), false, Actor::user())
+        .unwrap();
+    let mut job = schedule(&runtime, &lead, child_template(CODEX_FAST, Effort::Low));
+
+    let weak = Arc::downgrade(&runtime);
+    runtime.engines.mark_usable(
+        CODEX,
+        Arc::new(Cli {
+            kind: CODEX,
+            runs_offline: true,
+            gates_permissions: true,
+            on_network_check: Some(Box::new(move || {
+                // Change the detection after staging picked its engine, before preparation.
+                codex_engine(&weak.upgrade().expect("runtime is live"), false);
+            })),
+        }),
+    );
+    let staged = stage(&runtime, &job);
+    assert!(!runtime.engine_can_gate(&model(CODEX_FAST)).unwrap());
+    codex_engine(&runtime, true);
+    let (decision, commit) = decide(&runtime, &mut job, staged);
+    let error = decision
+        .expect_err("the prepared policy lost approvals")
+        .to_string();
+    assert!(
+        error.contains("prepared child dropped required approvals"),
+        "{error}"
+    );
+    assert!(commit.mutations.is_empty());
     assert!(children(&runtime, lead.id).is_empty());
 }
 

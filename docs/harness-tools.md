@@ -105,7 +105,9 @@ with `wait=false`, admitted by the same code:
   caller's delegation policy and `max_parallel`, starts in the caller's scope
   as it is when the occurrence fires, inherits its cost budget, deadline,
   approval policy and host context, and reports to the caller's inbox. Its
-  messaging reach is a child's.
+  messaging reach is a child's. The creator needs access to `delegate` at
+  creation and at firing. If the creator requires approvals, the child must
+  run on an engine that can enforce them.
 - Creating the schedule is refused when the same `delegate` call would be
   refused now, and the error carries `delegate`'s refusal. That includes a
   caller already at `max_parallel`. It is also refused while the latest probe
@@ -116,8 +118,9 @@ with `wait=false`, admitted by the same code:
 - A call that is refused later ends the schedule, with the refusal as its
   error: a tightened policy, a narrowed scope, a template path that has come
   to lead outside the creator's workspace through a symlink, a spent
-  `[scheduler] run_budget_usd`, a creator that became a leaf or is being
-  cancelled, an engine that cannot run under the child's network policy.
+  `[scheduler] run_budget_usd`, loss of access to `delegate`, a creator that
+  is being cancelled, or an engine that cannot enforce the child's approvals
+  or network policy.
 - An occurrence is skipped, and the schedule stays active, while its previous
   child, a restart of it or anything beneath either is live, while the
   creator is paused, and while the creator is at `max_parallel`. Skipped

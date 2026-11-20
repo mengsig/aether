@@ -86,18 +86,18 @@ impl Preflight<'_> {
     }
 }
 
-/// Why a child cannot run on its model's engine with the network it gets.
+/// Why a child cannot run on its model's engine under its inherited policy.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum EngineRefusal {
     /// The CLI is missing or failed its probe; a later probe may find it.
     Unavailable { kind: EngineKind, why: String },
-    /// The engine cannot run under the child's network policy.
-    Network(String),
+    /// The engine cannot honor a policy the child must keep.
+    Policy(String),
 }
 
 impl std::fmt::Display for EngineRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (Self::Unavailable { why, .. } | Self::Network(why)) = self;
+        let (Self::Unavailable { why, .. } | Self::Policy(why)) = self;
         f.write_str(why)
     }
 }
@@ -129,7 +129,7 @@ pub(crate) fn engine_refusal(
     engine
         .validate_network_policy(network == NetworkPolicy::Allowed)
         .err()
-        .map(|error| EngineRefusal::Network(error.to_string()))
+        .map(|error| EngineRefusal::Policy(error.to_string()))
 }
 
 /// Why `parent` may not have this child: its delegation policy, or without

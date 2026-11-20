@@ -31,8 +31,7 @@ pub(super) struct Checked {
 }
 
 impl Checked {
-    /// Under the hold the schedule is written under: refused exactly when
-    /// the same `delegate` call would be refused now.
+    /// Recheck current authority and the prepared child under the schedule's hold.
     pub(super) fn check_held(
         mut self,
         runtime: &Runtime,
@@ -40,6 +39,7 @@ impl Checked {
         template: &SpawnSpec,
     ) -> Result<()> {
         let creator = live_creator(runtime, self.creator.id)?;
+        check_delegate_exposure(runtime, &creator)?;
         if !same_authority(&self.creator, &creator) {
             return Err(RuntimeError::Invalid(
                 "your model, scope or delegation policy changed while this schedule was \
@@ -47,9 +47,9 @@ impl Checked {
                     .into(),
             ));
         }
-        // A probe may have failed since the template was checked.
+        // Engine detection may have changed since the template was checked.
         refuse_engine_block(runtime, template, &creator)?;
-        debug_assert_eq!(self.child.agent.parent, Some(creator.id));
+        check_prepared_approvals(runtime, &self.child, &creator)?;
         runtime.check_prepared(hold, &mut self.child, Preflight::delegated())
     }
 }
@@ -123,6 +123,25 @@ fn live_creator(runtime: &Runtime, id: AgentId) -> Result<Agent> {
     creator_or_ending(runtime, id)?
 }
 
+fn check_delegate_exposure(runtime: &Runtime, creator: &Agent) -> Result<()> {
+    const DELEGATE: &str = "delegate";
+    let exposure = &creator.config.tools;
+    if let Some(reason) = runtime
+        .tools
+        .withheld_reason(DELEGATE, exposure, &creator.scope)
+    {
+        return Err(RuntimeError::Invalid(format!(
+            "delegation refused: a spawn schedule requires access to `{DELEGATE}`: {reason}"
+        )));
+    }
+    if runtime.tools.get(DELEGATE).is_none() {
+        return Err(RuntimeError::Invalid(format!(
+            "delegation refused: a spawn schedule requires the `{DELEGATE}` tool"
+        )));
+    }
+    Ok(())
+}
+
 /// What stops the template's engine from running a child now, by what the
 /// daemon last detected: a tick cannot wait on the probe `delegate` runs.
 fn engine_block(
@@ -154,8 +173,13 @@ fn engine_block(
     };
     let provider = resolved.provider.id.as_str();
     // No probe follows as in `delegate`, so only what a turn would launch.
-    if detected.launchable(&kind).is_none() {
+    let Some(engine) = detected.launchable(&kind) else {
         return Ok(Some(engine_unavailable(&detected, kind, provider)));
+    };
+    if !runtime.config.yolo && !creator.config.approval.is_yolo() && !engine.gates_permissions() {
+        return Ok(Some(EngineRefusal::Policy(
+            "its engine cannot enforce the creator's required approvals".into(),
+        )));
     }
     Ok(engine_refusal(&detected, kind, provider, network))
 }
@@ -166,6 +190,28 @@ fn refused_by_engine(template: &SpawnSpec, refusal: &EngineRefusal) -> RuntimeEr
         "delegation refused: {} cannot run this child: {refusal}",
         model.as_deref().unwrap_or("its model")
     ))
+}
+
+/// Preparation may have seen a different engine and dropped the policy.
+fn check_prepared_approvals(
+    runtime: &Runtime,
+    child: &PreparedAgent,
+    creator: &Agent,
+) -> Result<()> {
+    debug_assert_eq!(child.agent.parent, Some(creator.id));
+    debug_assert_eq!(child.agent.run, creator.run);
+    if !runtime.config.yolo
+        && !child
+            .agent
+            .config
+            .approval
+            .is_narrowing_of(&creator.config.approval)
+    {
+        return Err(RuntimeError::Invalid(
+            "delegation refused: the prepared child dropped required approvals".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Refuse a new schedule whose engine could not run its child now. Nothing
@@ -203,6 +249,7 @@ pub(super) fn check_template(
     creator: AgentId,
 ) -> Result<Checked> {
     let creator = live_creator(runtime, creator)?;
+    check_delegate_exposure(runtime, &creator)?;
     refuse_engine_block(runtime, template, &creator)?;
     let objective = template.objective.clone();
     let child = prepare(runtime, template, objective, &creator, Slots::Counted)?;
@@ -256,7 +303,7 @@ fn engine_verdict(
             runtime.engines.want_recheck(kind);
             Ok(EngineVerdict::AwaitProbe)
         }
-        Some(refusal @ EngineRefusal::Network(_)) => Err(refused_by_engine(template, &refusal)),
+        Some(refusal @ EngineRefusal::Policy(_)) => Err(refused_by_engine(template, &refusal)),
     }
 }
 
@@ -352,6 +399,7 @@ pub(super) fn fire(
     let creator = live_creator(runtime, creator)?;
     // Ahead of every wait: a creator being cancelled gets no more children.
     crate::cancellation::check_parent(runtime, hold, creator.id)?;
+    check_delegate_exposure(runtime, &creator)?;
     let Some(staged) = staged? else {
         return Ok(None);
     };
@@ -370,6 +418,7 @@ pub(super) fn fire(
     let Some(prepared) = staged.current_child(&creator)? else {
         return Ok(None);
     };
+    check_prepared_approvals(runtime, &prepared, &creator)?;
     if runtime.workspace_gc_reserves(&prepared.agent.scope) {
         return Ok(Some(skipped("workspace maintenance in progress")));
     }
