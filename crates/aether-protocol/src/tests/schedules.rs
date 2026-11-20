@@ -25,7 +25,7 @@ impl TryFrom<ScheduleWire> for V26Schedule {
 #[derive(Deserialize)]
 #[serde(tag = "reply", content = "data", rename_all = "snake_case")]
 enum V26Reply {
-    Schedule(V26Schedule),
+    Schedule(Box<V26Schedule>),
     Schedules(Vec<V26Schedule>),
 }
 
@@ -102,7 +102,7 @@ fn v26_client_decodes_active_agent_spawn_schedule_replies() {
         let V26Frame::Reply { id, result } = decode(&line).unwrap();
         assert_eq!(id, 42);
         let entries = match result.unwrap() {
-            V26Reply::Schedule(entry) => vec![entry],
+            V26Reply::Schedule(entry) => vec![*entry],
             V26Reply::Schedules(entries) => entries,
         };
         assert_eq!(entries.len(), 1);
