@@ -50,10 +50,12 @@ release is also the text of its GitHub release.
   closed".** The daemon reconnects a dropped MCP server and the engine bridge
   reconnects to the daemon, with bounded backoff. A call the drop interrupted
   is replayed only when it is read-only, an idempotent mutation or carries an
-  `idempotency_key`; any other fails as a structured `tool_transport_failed`
-  error naming the tool, whether a retry is safe and the cause. A turn that
-  ends on a failed tool call is recorded as a `turn_ended_after_tool_error`
-  custom event.
+  `idempotency_key` its tool declares; any other fails as a structured
+  `tool_transport_failed` error naming the tool, whether a retry is safe and
+  the cause. An HTTP error answer is reported as itself, not replayed. A turn
+  that ends on a failed tool call is recorded as a
+  `turn_ended_after_tool_error` custom event, for Codex too when an MCP
+  tool's result carries `isError` on a completed item.
 
 - **One-shot delegation preserves the caller's approval gates and tool
   exposure.** Admission refuses engines that cannot enforce the required

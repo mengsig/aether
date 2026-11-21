@@ -16,9 +16,16 @@ When a server's connection drops (its process exits, its pipe or socket
 closes, or a call times out), Aether reconnects on the next call. A call the
 drop interrupted is sent again, after a 200 ms and then an 800 ms backoff,
 only when sending it twice is safe: the server's tool is classed `read_only`
-or `idempotent_mutation`, or the call carries a non-blank `idempotency_key`.
-A call the server never received, because the connection could not be opened,
-is retried the same way whatever its class.
+or `idempotent_mutation`, or the tool's input schema declares an
+`idempotency_key` property and the call gives a non-blank one. Declaring the
+key is the tool's promise to answer a repeat with the first result, so a key
+the schema does not declare makes nothing safe. A call the server never
+received, because the connection could not be opened, is retried the same way
+whatever its class.
+
+A server that answers badly, with an HTTP error status or a body that is not
+JSON-RPC, has not dropped the call. The connection is reset, but the call is
+not sent again, and it fails with that answer (`bad response: http 503 ...`).
 
 Any other call is not sent again, since it may already have had effects. It
 fails, as do retries that run out, with a structured tool error in place of
