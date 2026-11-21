@@ -261,6 +261,7 @@ mod tests {
                 "read_note",
                 serde_json::json!({"key": "k"}),
                 &caller,
+                false,
             )
             .await
             .expect("the strict server is sent nothing it refuses");

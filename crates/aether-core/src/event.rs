@@ -13,6 +13,12 @@ pub use actor::{Actor, DeviceRole, OperatorOrigin};
 pub use kind::EventKind;
 pub use triggers::{CompactionTrigger, RecoveryClass};
 
+/// The `custom` event a turn's end records when its last tool result was an
+/// error and no tool call followed: the failure may have gone unanswered, so
+/// a host can wake the agent or tell the operator. Its payload names the
+/// agent, the turn, the tool, the error (truncated) and the time.
+pub const TURN_ENDED_AFTER_TOOL_ERROR: &str = "turn_ended_after_tool_error";
+
 /// Acknowledging a request does not imply the asynchronous compaction succeeded.
 pub fn compaction_request_notice(follow_up: &str) -> String {
     format!(

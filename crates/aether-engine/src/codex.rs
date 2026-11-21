@@ -605,6 +605,16 @@ fn account(usage: &Value, state: &mut ParseState) -> Vec<EngineEvent> {
     events
 }
 
+/// Whether a finished MCP tool call failed. An MCP server reports a failed
+/// tool in its result's `isError`, which Codex may leave on a `completed` item.
+pub(crate) fn mcp_call_failed(item: &Value) -> bool {
+    let result = &item["result"];
+    item["status"].as_str() == Some("failed")
+        || item["error"].is_object()
+        || result["isError"].as_bool() == Some(true)
+        || result["is_error"].as_bool() == Some(true)
+}
+
 fn item_events(kind: &str, item: &Value) -> Vec<EngineEvent> {
     let id = item
         .get("id")
@@ -750,7 +760,7 @@ fn item_events(kind: &str, item: &Value) -> Vec<EngineEvent> {
                 EngineEvent::ToolResult {
                     tool_use_id: id,
                     content: result,
-                    is_error: item.get("status").and_then(Value::as_str) == Some("failed"),
+                    is_error: mcp_call_failed(item),
                 },
             ]
         }

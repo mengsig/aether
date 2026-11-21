@@ -119,11 +119,7 @@ pub(super) fn record_end(runtime: &Runtime, ctx: &TurnCtx, next: Next) -> Result
             agent.transition(AgentStatus::Ready, at)?;
             commit.push_mutation(Mutation::ClearLease(agent.id));
             commit.push_event(ctx.draft(EventKind::LeaseReleased));
-            commit.push_event(ctx.draft(EventKind::AgentTurnCompleted {
-                turn: ctx.turn,
-                invocation,
-                next: AgentStatusKind::Ready,
-            }));
+            push_turn_completed(&mut commit, ctx, invocation, AgentStatusKind::Ready, at);
             commit.push_mutation(Mutation::UpsertAgent(agent));
         }
         Next::Waiting(condition) => {
@@ -140,22 +136,14 @@ pub(super) fn record_end(runtime: &Runtime, ctx: &TurnCtx, next: Next) -> Result
             commit.push_mutation(Mutation::ClearLease(agent.id));
             commit.push_event(ctx.draft(EventKind::LeaseReleased));
             commit.push_event(ctx.draft(EventKind::AgentWaiting { condition }));
-            commit.push_event(ctx.draft(EventKind::AgentTurnCompleted {
-                turn: ctx.turn,
-                invocation,
-                next: AgentStatusKind::Waiting,
-            }));
+            push_turn_completed(&mut commit, ctx, invocation, AgentStatusKind::Waiting, at);
             match owed_by {
                 Some(by) => runtime.ready_for_compaction(&hold, &mut commit, &mut agent, by)?,
                 None => commit.push_mutation(Mutation::UpsertAgent(agent)),
             }
         }
         Next::Completed(summary) => {
-            commit.push_event(ctx.draft(EventKind::AgentTurnCompleted {
-                turn: ctx.turn,
-                invocation,
-                next: AgentStatusKind::Completed,
-            }));
+            push_turn_completed(&mut commit, ctx, invocation, AgentStatusKind::Completed, at);
             reap = Some(runtime.terminate_agent(
                 &hold,
                 &mut commit,
@@ -165,11 +153,7 @@ pub(super) fn record_end(runtime: &Runtime, ctx: &TurnCtx, next: Next) -> Result
             )?);
         }
         Next::Failed(error) => {
-            commit.push_event(ctx.draft(EventKind::AgentTurnCompleted {
-                turn: ctx.turn,
-                invocation,
-                next: AgentStatusKind::Failed,
-            }));
+            push_turn_completed(&mut commit, ctx, invocation, AgentStatusKind::Failed, at);
             reap = Some(runtime.terminate_agent(
                 &hold,
                 &mut commit,
@@ -190,11 +174,7 @@ pub(super) fn record_end(runtime: &Runtime, ctx: &TurnCtx, next: Next) -> Result
             commit.push_event(ctx.draft(EventKind::LeaseReleased));
             commit.push_event(ctx.draft(EventKind::AgentInterrupted { turn: ctx.turn }));
             commit.push_event(ctx.draft(EventKind::AgentWaiting { condition }));
-            commit.push_event(ctx.draft(EventKind::AgentTurnCompleted {
-                turn: ctx.turn,
-                invocation,
-                next: AgentStatusKind::Waiting,
-            }));
+            push_turn_completed(&mut commit, ctx, invocation, AgentStatusKind::Waiting, at);
             // An operator stop stands: an owed fold waits for the next turn.
             commit.push_mutation(Mutation::UpsertAgent(agent));
         }
@@ -227,11 +207,7 @@ pub(super) fn record_end(runtime: &Runtime, ctx: &TurnCtx, next: Next) -> Result
                 &suspension,
                 &ctx.base_actor,
             )?;
-            commit.push_event(ctx.draft(EventKind::AgentTurnCompleted {
-                turn: ctx.turn,
-                invocation,
-                next: AgentStatusKind::Blocked,
-            }));
+            push_turn_completed(&mut commit, ctx, invocation, AgentStatusKind::Blocked, at);
             commit.push_mutation(Mutation::UpsertAgent(agent));
             bench = Some((cause.model.provider.clone(), suspension.reason));
         }
@@ -250,11 +226,7 @@ pub(super) fn record_end(runtime: &Runtime, ctx: &TurnCtx, next: Next) -> Result
             let (by, reason) = request.map_or((Actor::System, reason), |request| {
                 (request.by, request.reason)
             });
-            commit.push_event(ctx.draft(EventKind::AgentTurnCompleted {
-                turn: ctx.turn,
-                invocation,
-                next: AgentStatusKind::Cancelled,
-            }));
+            push_turn_completed(&mut commit, ctx, invocation, AgentStatusKind::Cancelled, at);
             reap = Some(runtime.terminate_agent(
                 &hold,
                 &mut commit,
@@ -270,6 +242,25 @@ pub(super) fn record_end(runtime: &Runtime, ctx: &TurnCtx, next: Next) -> Result
         bench,
         cancelled,
     }))
+}
+
+/// The turn's `agent.turn_completed`, then at once the event that says it
+/// ended on an unanswered tool error, so a host finds the two together.
+fn push_turn_completed(
+    commit: &mut Commit,
+    ctx: &TurnCtx,
+    invocation: Option<InvocationId>,
+    next: AgentStatusKind,
+    at: Timestamp,
+) {
+    commit.push_event(ctx.draft(EventKind::AgentTurnCompleted {
+        turn: ctx.turn,
+        invocation,
+        next,
+    }));
+    if let Some(failed) = &ctx.unanswered_tool_error {
+        commit.push_event(ctx.draft(failed.turn_ended(ctx, at)));
+    }
 }
 
 /// The steps that follow a durable end: reaping, benching a spent provider,

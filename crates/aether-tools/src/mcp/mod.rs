@@ -20,7 +20,9 @@ use std::time::Duration;
 
 use aether_core::id::{AgentId, TaskId};
 pub use aether_core::mcp::qualified_name;
-use aether_core::mcp::{McpAuth, McpAuthState, McpServerHealth, McpServerState, McpToolInfo};
+use aether_core::mcp::{
+    McpAuth, McpAuthState, McpServerHealth, McpServerState, McpToolInfo, TOOL_TRANSPORT_FAILED,
+};
 use aether_core::redact::{redact_argv, redact_locator};
 use aether_core::time::{Timestamp, now};
 use aether_core::tool::SideEffectClass;
@@ -68,6 +70,10 @@ pub enum McpError {
     Timeout,
     #[error("protocol error: {0}")]
     Protocol(String),
+    /// The server answered, but not with a usable reply: an HTTP error
+    /// status or a body that is not JSON-RPC. The call reached it.
+    #[error("bad response: {0}")]
+    BadResponse(String),
     #[error("server error {code}: {message}")]
     Server { code: i64, message: String },
     #[error("no MCP server named `{0}` is configured")]
@@ -78,14 +84,37 @@ pub enum McpError {
     /// The server's required token is missing; it was not contacted.
     #[error("auth_failed: {0}")]
     AuthFailed(String),
+    /// The connection dropped and the call could not be completed over a new
+    /// one. `retryable` is false when the call may already have taken effect.
+    #[error("{TOOL_TRANSPORT_FAILED}: {cause}")]
+    TransportFailed { retryable: bool, cause: String },
 }
+
+/// What one try at a call came to: an answer to return, or a dropped
+/// connection the caller may reconnect and retry over.
+enum Attempt {
+    Done(Result<McpCallResult, McpError>),
+    Dropped { error: McpError, sent: bool },
+}
+
+/// The waits before each reconnect a call may make: bounded, so a server that
+/// stays down fails the call in about a second rather than hanging the turn.
+const CALL_BACKOFF: [Duration; 2] = [Duration::from_millis(200), Duration::from_millis(800)];
 
 impl McpError {
     /// Whether the connection is worth keeping. A protocol or application
     /// error says something about the call; a transport failure says the
     /// server is gone.
     fn is_fatal(&self) -> bool {
-        matches!(self, Self::Transport(_) | Self::Closed | Self::Timeout)
+        // A timed-out stdio reply may still arrive and desynchronise the stream.
+        self.is_dropped() || matches!(self, Self::BadResponse(_) | Self::Timeout)
+    }
+
+    /// Whether the connection was lost without an answer, so a new one may
+    /// get one. A bad response was an answer, and asking again repeats it; a
+    /// timeout reached a live server that may still be running the call.
+    fn is_dropped(&self) -> bool {
+        matches!(self, Self::Transport(_) | Self::Closed)
     }
 }
 
@@ -471,14 +500,17 @@ impl McpManager {
     }
 
     /// Call a tool on a server for `caller`, connecting first if needed. A
-    /// transport failure marks the server failed and withdraws its tools; the
-    /// call reports the failure instead of retrying behind the model's back.
+    /// dropped connection marks the server failed and is reconnected with
+    /// bounded backoff. The call itself is sent again only when `replay_safe`
+    /// (its tool is classed read-only or idempotent); otherwise it fails as
+    /// [`McpError::TransportFailed`], since it may already have taken effect.
     pub async fn call(
         &self,
         server: &str,
         tool: &str,
         arguments: serde_json::Value,
         caller: &McpCaller,
+        replay_safe: bool,
     ) -> Result<McpCallResult, McpError> {
         let slot = self
             .servers
@@ -493,40 +525,89 @@ impl McpManager {
         } else {
             None
         };
-        let mut guard = slot.client.lock().await;
+        let mut waits = CALL_BACKOFF.iter();
+        loop {
+            // Held for one try only, so the wait below never blocks the
+            // server's other callers or its discovery.
+            let attempt = {
+                let mut guard = slot.client.lock().await;
+                self.attempt_call(&slot, &mut guard, tool, &arguments, meta.clone())
+                    .await
+            };
+            let (error, sent) = match attempt {
+                Attempt::Done(result) => return result,
+                Attempt::Dropped { error, sent } => (error, sent),
+            };
+            let replayable = !sent || replay_safe;
+            let next_wait = if replayable { waits.next() } else { None };
+            let Some(wait) = next_wait else {
+                tracing::warn!(server = %slot.spec.name, tool, %error, sent, "mcp: call lost its transport");
+                return Err(McpError::TransportFailed {
+                    retryable: replayable,
+                    cause: error.to_string(),
+                });
+            };
+            tracing::info!(server = %slot.spec.name, tool, %error, "mcp: reconnecting to retry the call");
+            tokio::time::sleep(*wait).await;
+        }
+    }
+
+    /// One try at a call over the slot's connection, opening it if needed.
+    /// `sent` says whether the request may have reached the server.
+    async fn attempt_call(
+        &self,
+        slot: &ServerSlot,
+        guard: &mut Option<Arc<McpClient>>,
+        tool: &str,
+        arguments: &serde_json::Value,
+        meta: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> Attempt {
         if guard.is_none() {
-            match self.connect(&slot).await {
+            match self.connect(slot).await {
                 Ok((client, tools, capped)) => {
                     *guard = Some(client);
-                    self.publish(&slot, McpServerState::Ready, tools, capped);
+                    self.publish(slot, McpServerState::Ready, tools, capped);
                 }
                 Err(e) => {
                     self.publish(
-                        &slot,
+                        slot,
                         McpServerState::Failed,
                         Vec::new(),
                         Some(e.to_string()),
                     );
-                    return Err(e);
+                    if e.is_dropped() {
+                        return Attempt::Dropped {
+                            error: e,
+                            sent: false,
+                        };
+                    }
+                    return Attempt::Done(Err(e));
                 }
             }
         }
         let Some(client) = guard.clone() else {
-            return Err(McpError::Transport("no connection after connect".into()));
+            return Attempt::Done(Err(McpError::Transport(
+                "no connection after connect".into(),
+            )));
         };
-        match client.call_tool(tool, arguments, meta).await {
-            Ok(result) => Ok(result),
+        match client.call_tool(tool, arguments.clone(), meta).await {
             Err(e) if e.is_fatal() => {
                 *guard = None;
                 self.publish(
-                    &slot,
+                    slot,
                     McpServerState::Failed,
                     Vec::new(),
                     Some(e.to_string()),
                 );
-                Err(e)
+                if !e.is_dropped() {
+                    return Attempt::Done(Err(e));
+                }
+                Attempt::Dropped {
+                    error: e,
+                    sent: true,
+                }
             }
-            Err(e) => Err(e),
+            result => Attempt::Done(result),
         }
     }
 
