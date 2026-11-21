@@ -126,6 +126,30 @@ fn unanswered_errors(store: &dyn Store, id: AgentId) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// Asserts each `turn_ended_after_tool_error` comes right after its turn's
+/// `agent.turn_completed`, with nothing between them; returns how many.
+fn assert_adjacent_to_turn_end(store: &dyn Store, id: AgentId) -> usize {
+    let events = store
+        .events(0, 10_000, &EventFilter::for_agent(id))
+        .expect("events");
+    let mut reported = 0;
+    for (at, event) in events.iter().enumerate() {
+        let EventKind::Custom { name, payload } = &event.kind else {
+            continue;
+        };
+        if name != aether_core::event::TURN_ENDED_AFTER_TOOL_ERROR {
+            continue;
+        }
+        let previous = at.checked_sub(1).map(|before| &events[before].kind);
+        assert!(
+            matches!(previous, Some(EventKind::AgentTurnCompleted { turn, .. }) if payload["turn"] == *turn),
+            "right after its turn_completed, got {previous:?}"
+        );
+        reported += 1;
+    }
+    reported
+}
+
 async fn run_turn(h: &Harness, id: AgentId, turns: u32) {
     h.runtime
         .send_message(
@@ -201,6 +225,11 @@ async fn a_turn_ending_on_a_failed_call_is_reported_once_for_every_engine() {
             })
             .expect("the turn ended");
         assert_eq!(payload["turn"], ended_turn, "{model}: the turn that ended");
+        assert_eq!(
+            assert_adjacent_to_turn_end(h.store.as_ref(), id),
+            1,
+            "{model}"
+        );
 
         // The next turn retries the call and it works: nothing more to report.
         run_turn(&h, id, 2).await;
@@ -210,4 +239,37 @@ async fn a_turn_ending_on_a_failed_call_is_reported_once_for_every_engine() {
             "{model}: a failure a later call answered is not reported"
         );
     }
+}
+
+#[tokio::test]
+async fn a_final_turn_ending_on_a_failed_call_reports_it_right_after_the_turn() {
+    let engine = Arc::new(FailingCallEngine {
+        kind: EngineKind::CLAUDE_CODE,
+        runs: AtomicUsize::new(0),
+    });
+    let h = harness_with_engine(engine, Arc::default(), Arc::default()).await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                role: "worker".into(),
+                start: true,
+                model: Some(ModelRef::new("claude-code", "haiku")),
+                objective: Some("check the policy".into()),
+                config: Some(AgentConfig {
+                    approval: ApprovalPolicy::none(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .expect("create");
+    let ended = wait_for(h.store.as_ref(), agent.id, |a| a.status.is_terminal()).await;
+    assert!(ended.status.is_terminal(), "{:?}", ended.status);
+    assert_eq!(
+        assert_adjacent_to_turn_end(h.store.as_ref(), agent.id),
+        1,
+        "a terminal end reports it once, before the agent's own end events"
+    );
 }
