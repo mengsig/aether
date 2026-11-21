@@ -168,13 +168,33 @@ fn transport_failed(id: Value, tool: &str, retryable: bool, cause: &str) -> Valu
     })
 }
 
-/// Whether the model gave this call an idempotency key, which makes sending it
-/// to the daemon again one effect rather than two.
-fn carries_idempotency_key(input: &Value) -> bool {
-    input
-        .get("idempotency_key")
-        .and_then(Value::as_str)
-        .is_some_and(|key| !key.trim().is_empty())
+/// Whether sending this call to the daemon again is one effect: the daemon
+/// offers `tool` with an `idempotency_key` in its schema and the call gives
+/// one. Asked after a drop; a daemon that cannot say makes it unsafe.
+async fn replays_as_one_effect(
+    client: &Client,
+    agent: AgentId,
+    token: &str,
+    tool: &str,
+    input: &Value,
+) -> bool {
+    let tools = match tool_list(client, agent, token).await {
+        Ok(tools) => tools,
+        Err(error) => {
+            tracing::warn!(%agent, tool, %error, "bridge: cannot tell whether a dropped call may be replayed");
+            return false;
+        }
+    };
+    tools
+        .iter()
+        .find(|offered| offered["name"] == tool)
+        .is_some_and(|offered| {
+            aether_core::mcp::carries_declared_idempotency_key(&offered["inputSchema"], input)
+        })
+}
+
+fn dropped_mid_call(error: &ClientError) -> String {
+    format!("the connection to the Aether daemon dropped mid-call: {error}")
 }
 
 /// Serve MCP on stdin/stdout until the engine closes the pipe. A daemon that
@@ -302,23 +322,37 @@ async fn call_tool(socket: &Path, agent: AgentId, token: &str, id: Value, params
         .unwrap_or("")
         .to_owned();
     let input = params.get("arguments").cloned().unwrap_or(json!({}));
-    let replay_safe = carries_idempotency_key(&input);
     let mut waits = RECONNECT_BACKOFF.iter();
+    let mut last_drop: Option<ClientError> = None;
+    // Whether sending the call again is one effect: asked after the first drop.
+    let mut replay_safe: Option<bool> = None;
     loop {
         let client = match connect(socket).await {
-            Ok(client) => client,
+            // Approval and native wait replies deliberately have no deadline.
+            Ok(client) => client.without_request_timeout(),
             Err(NoConnection { reason, transient }) => {
                 tracing::warn!(%agent, tool = %name, "bridge: {reason}");
-                // Nothing reached the daemon, so calling again is safe.
+                // Safe to call again unless a drop left the daemon maybe running it.
+                let retryable = last_drop.is_none() || replay_safe == Some(true);
                 return match transient {
-                    true => transport_failed(id, &name, true, &reason),
+                    true => transport_failed(id, &name, retryable, &reason),
                     false => tool_error(id, &reason),
                 };
             }
         };
-        // Approval and native wait replies deliberately have no deadline.
+        if let Some(error) = &last_drop {
+            let safe = match replay_safe {
+                Some(safe) => safe,
+                None => replays_as_one_effect(&client, agent, token, &name, &input).await,
+            };
+            replay_safe = Some(safe);
+            if !safe {
+                tracing::warn!(%agent, tool = %name, %error, "bridge: the daemon connection dropped mid-call");
+                return transport_failed(id, &name, false, &dropped_mid_call(error));
+            }
+            tracing::info!(%agent, tool = %name, %error, "bridge: replaying a keyed call after a dropped connection");
+        }
         let reply = client
-            .without_request_timeout()
             .request(Command::EngineTool {
                 agent,
                 token: token.to_owned(),
@@ -330,18 +364,15 @@ async fn call_tool(socket: &Path, agent: AgentId, token: &str, id: Value, params
             Err(error) if is_transport_drop(&error) => error,
             reply => return answered(id, reply),
         };
-        // The daemon may already have run it: only a keyed call is sent again.
-        let Some(wait) = waits.next().filter(|_| replay_safe) else {
-            tracing::warn!(%agent, tool = %name, %error, "bridge: the daemon connection dropped mid-call");
-            return transport_failed(
-                id,
-                &name,
-                false,
-                &format!("the connection to the Aether daemon dropped mid-call: {error}"),
-            );
+        // The daemon may already have run it, so the next pass replays it
+        // only when the tool's own idempotency_key makes that one effect.
+        let Some(wait) = waits.next() else {
+            debug_assert_eq!(replay_safe, Some(true), "only a safe call is replayed");
+            tracing::warn!(%agent, tool = %name, %error, "bridge: the daemon connection kept dropping");
+            return transport_failed(id, &name, true, &dropped_mid_call(&error));
         };
-        tracing::info!(%agent, tool = %name, %error, "bridge: replaying a keyed call after a dropped connection");
         tokio::time::sleep(*wait).await;
+        last_drop = Some(error);
     }
 }
 

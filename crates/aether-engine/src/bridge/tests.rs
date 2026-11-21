@@ -168,7 +168,9 @@ async fn mock_connection(
             Command::EngineTools { agent, token } => {
                 assert_eq!(agent, expected_agent);
                 assert_eq!(token, TOKEN);
-                Ok(Reply::EngineTools { tools: vec![] })
+                Ok(Reply::EngineTools {
+                    tools: offered_tools(),
+                })
             }
             Command::EngineTool {
                 agent,
@@ -204,8 +206,14 @@ async fn mock_connection(
                     }
                     // The first one drops the connection without a reply,
                     // like a daemon that restarts mid-call.
-                    "flaky" if flaky.fetch_add(1, Ordering::SeqCst) == 0 => return,
-                    "flaky" => Ok(Reply::EngineTool {
+                    "flaky" | "flaky_unkeyed" if flaky.fetch_add(1, Ordering::SeqCst) == 0 => {
+                        return;
+                    }
+                    "always_drops" => {
+                        flaky.fetch_add(1, Ordering::SeqCst);
+                        return;
+                    }
+                    "flaky" | "flaky_unkeyed" => Ok(Reply::EngineTool {
                         content: "recovered".into(),
                         is_error: false,
                     }),
@@ -282,7 +290,11 @@ async fn held_tool_does_not_block_later_tool_ping_or_tool_list() {
         match reply["id"].clone() {
             id if id == "message" => assert_eq!(reply["result"]["content"][0]["text"], "delivered"),
             id if id == 3 => assert_eq!(reply["result"], json!({})),
-            id if id == 4 => assert_eq!(reply["result"]["tools"], json!([permission_tool()])),
+            id if id == 4 => {
+                let tools = reply["result"]["tools"].as_array().expect("a tool list");
+                assert_eq!(tools.len(), offered_tools().len() + 1);
+                assert_eq!(tools.last(), Some(&permission_tool()));
+            }
             id => panic!("unexpected reply while first call is still held: {id}"),
         }
         assert!(!ids.contains(&reply["id"]), "each id answered once");
@@ -535,9 +547,73 @@ fn explanation(text: &str) -> String {
     }
 }
 
-fn flaky_request(id: usize, arguments: Value) -> Value {
+/// The mock daemon's tools: `flaky` and `always_drops` declare an
+/// `idempotency_key`, so a keyed call to them is one effect when sent again.
+fn offered_tools() -> Vec<aether_core::model::ToolSpec> {
+    let spec = |name: &str, properties: Value| aether_core::model::ToolSpec {
+        name: name.into(),
+        description: format!("{name} (test)"),
+        input_schema: json!({"type": "object", "properties": properties}),
+        strict: false,
+    };
+    let keyed = json!({"idempotency_key": {"type": "string"}});
+    vec![
+        spec("flaky", keyed.clone()),
+        spec("always_drops", keyed),
+        spec("flaky_unkeyed", json!({})),
+    ]
+}
+
+fn call_request(id: usize, name: &str, arguments: Value) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "method": "tools/call",
-        "params": {"name": "flaky", "arguments": arguments}})
+        "params": {"name": name, "arguments": arguments}})
+}
+
+fn flaky_request(id: usize, arguments: Value) -> Value {
+    call_request(id, "flaky", arguments)
+}
+
+#[tokio::test]
+async fn a_key_the_tool_does_not_declare_does_not_make_a_dropped_call_replayable() {
+    let mut fixture = Fixture::new();
+    fixture
+        .send(call_request(
+            1,
+            "flaky_unkeyed",
+            json!({"idempotency_key": "once"}),
+        ))
+        .await;
+    let reply = fixture.reply().await;
+    let failure = &reply["result"]["structuredContent"];
+    assert_eq!(failure["error"], "tool_transport_failed", "{reply}");
+    assert_eq!(failure["retryable"], false, "nothing promised one effect");
+    assert_eq!(fixture.flaky.load(Ordering::SeqCst), 1, "sent exactly once");
+    fixture.close_input().await;
+}
+
+#[tokio::test]
+async fn a_keyed_call_whose_daemon_keeps_dropping_fails_retryable() {
+    let mut fixture = Fixture::new();
+    fixture
+        .send(call_request(
+            1,
+            "always_drops",
+            json!({"idempotency_key": "once"}),
+        ))
+        .await;
+    let reply = fixture.reply().await;
+    let failure = &reply["result"]["structuredContent"];
+    assert_eq!(failure["error"], "tool_transport_failed", "{reply}");
+    assert_eq!(
+        failure["retryable"], true,
+        "a keyed call stays safe to send again"
+    );
+    assert_eq!(
+        fixture.flaky.load(Ordering::SeqCst),
+        RECONNECT_BACKOFF.len() + 1,
+        "the first try and one replay per backoff, then no more"
+    );
+    fixture.close_input().await;
 }
 
 #[tokio::test]
