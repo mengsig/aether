@@ -331,7 +331,6 @@ async fn a_servers_state_is_a_durable_event() {
                     "write_note".into(),
                     "read_env".into(),
                     "echo_request".into(),
-                    "post_once".into(),
                 ],
             },
             EventKind::McpServerFailed {
