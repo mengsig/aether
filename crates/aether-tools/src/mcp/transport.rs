@@ -433,7 +433,7 @@ impl HttpTransport {
             // Never the body itself: it is the peer's text, it becomes the
             // server's durable health error, and a server that echoes the
             // request would write our own bearer token into the log.
-            return Err(McpError::Transport(format!(
+            return Err(McpError::BadResponse(format!(
                 "http {} with a {}-byte body",
                 status.as_u16(),
                 body.len()
@@ -451,7 +451,7 @@ impl HttpTransport {
         }
         serde_json::from_str(&body)
             .map(Some)
-            .map_err(|e| McpError::Transport(format!("malformed response body: {e}")))
+            .map_err(|e| McpError::BadResponse(format!("malformed response body: {e}")))
     }
 }
 
@@ -481,7 +481,7 @@ async fn read_bounded_body(mut response: reqwest::Response) -> Result<String, Mc
         }
     }
     String::from_utf8(bytes)
-        .map_err(|e| McpError::Transport(format!("response body is not utf-8: {e}")))
+        .map_err(|e| McpError::BadResponse(format!("response body is not utf-8: {e}")))
 }
 
 /// The reply to `id` carried by an SSE body. A server may put log

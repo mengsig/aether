@@ -70,6 +70,10 @@ pub enum McpError {
     Timeout,
     #[error("protocol error: {0}")]
     Protocol(String),
+    /// The server answered, but not with a usable reply: an HTTP error
+    /// status or a body that is not JSON-RPC. The call reached it.
+    #[error("bad response: {0}")]
+    BadResponse(String),
     #[error("server error {code}: {message}")]
     Server { code: i64, message: String },
     #[error("no MCP server named `{0}` is configured")]
@@ -102,6 +106,12 @@ impl McpError {
     /// error says something about the call; a transport failure says the
     /// server is gone.
     fn is_fatal(&self) -> bool {
+        self.is_dropped() || matches!(self, Self::BadResponse(_))
+    }
+
+    /// Whether the connection was lost without an answer, so a new one may
+    /// get one. A bad response was an answer, and asking again repeats it.
+    fn is_dropped(&self) -> bool {
         matches!(self, Self::Transport(_) | Self::Closed | Self::Timeout)
     }
 }
@@ -513,13 +523,16 @@ impl McpManager {
         } else {
             None
         };
-        let mut guard = slot.client.lock().await;
         let mut waits = CALL_BACKOFF.iter();
         loop {
-            let (error, sent) = match self
-                .attempt_call(&slot, &mut guard, tool, &arguments, meta.clone())
-                .await
-            {
+            // Held for one try only, so the wait below never blocks the
+            // server's other callers or its discovery.
+            let attempt = {
+                let mut guard = slot.client.lock().await;
+                self.attempt_call(&slot, &mut guard, tool, &arguments, meta.clone())
+                    .await
+            };
+            let (error, sent) = match attempt {
                 Attempt::Done(result) => return result,
                 Attempt::Dropped { error, sent } => (error, sent),
             };
@@ -560,7 +573,7 @@ impl McpManager {
                         Vec::new(),
                         Some(e.to_string()),
                     );
-                    if e.is_fatal() {
+                    if e.is_dropped() {
                         return Attempt::Dropped {
                             error: e,
                             sent: false,
@@ -584,6 +597,9 @@ impl McpManager {
                     Vec::new(),
                     Some(e.to_string()),
                 );
+                if !e.is_dropped() {
+                    return Attempt::Done(Err(e));
+                }
                 Attempt::Dropped {
                     error: e,
                     sent: true,

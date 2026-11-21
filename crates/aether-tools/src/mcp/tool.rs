@@ -133,7 +133,8 @@ impl Tool for McpTool {
         cancel: CancellationToken,
     ) -> Result<ToolExecution, ToolError> {
         let caller = McpCaller::of(ctx);
-        let replay_safe = self.info.side_effect.safe_to_retry() || carries_idempotency_key(&input);
+        let replay_safe = self.info.side_effect.safe_to_retry()
+            || aether_core::mcp::carries_declared_idempotency_key(&self.input_schema, &input);
         let call = self
             .manager
             .call(&self.server, &self.info.name, input, &caller, replay_safe);
@@ -207,15 +208,6 @@ impl McpTool {
             ..Default::default()
         })
     }
-}
-
-/// Whether the model gave this call an idempotency key, which makes sending it
-/// again one effect rather than two.
-fn carries_idempotency_key(input: &Value) -> bool {
-    input
-        .get("idempotency_key")
-        .and_then(Value::as_str)
-        .is_some_and(|key| !key.trim().is_empty())
 }
 
 /// `structuredContent` if it fits the budget, else nothing plus the line

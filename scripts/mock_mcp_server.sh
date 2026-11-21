@@ -21,7 +21,8 @@ tools_json='{"tools":[
   {"name":"read_note","description":"Read the note.","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},
   {"name":"write_note","description":"Write the note.","inputSchema":{"type":"object","properties":{"key":{"type":"string"},"text":{"type":"string"}},"required":["key","text"]}},
   {"name":"read_env","description":"Report one variable of this server own environment (test only).","inputSchema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}},
-  {"name":"echo_request","description":"Return the raw tools/call request as text (test only).","inputSchema":{"type":"object"}}
+  {"name":"echo_request","description":"Return the raw tools/call request as text (test only).","inputSchema":{"type":"object"}},
+  {"name":"post_once","description":"Post a message; a repeat under the same idempotency_key is the first post.","inputSchema":{"type":"object","properties":{"text":{"type":"string"},"idempotency_key":{"type":"string"}},"required":["text"]}}
 ]}'
 
 while IFS= read -r line; do
@@ -51,6 +52,7 @@ while IFS= read -r line; do
       case "$name" in
         read_note)  emit "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"note contents\"}]}}" ;;
         write_note) emit "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"written\"}]}}" ;;
+        post_once)  emit "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"posted\"}]}}" ;;
         read_env)
           var=$(printf '%s' "$line" | sed -n 's/.*"key":"\([A-Za-z_][A-Za-z0-9_]*\)".*/\1/p')
           value=$(printenv "$var" || echo UNSET)

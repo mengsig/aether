@@ -136,7 +136,8 @@ async fn tools_are_discovered_classified_and_callable() {
             "mcp__mock__read_note",
             "mcp__mock__write_note",
             "mcp__mock__read_env",
-            "mcp__mock__echo_request"
+            "mcp__mock__echo_request",
+            "mcp__mock__post_once"
         ]
     );
 
@@ -413,9 +414,12 @@ async fn a_server_does_not_inherit_a_variable_the_daemon_hides() {
 /// A minimal streamable-HTTP MCP server on a raw socket, which puts a log
 /// notification on the SSE stream before every reply - exactly what a real
 /// server does, and what a client that takes the first event gets wrong.
-/// Returns its address; it stops when `stop` is cancelled.
+/// Returns its address; it stops when `stop` is cancelled. A `tools/call` is
+/// counted in `calls`, and answered with `call_status` when that is not 200.
 async fn chatty_sse_server(
     stop: tokio_util::sync::CancellationToken,
+    call_status: u16,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
 ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
@@ -446,6 +450,18 @@ async fn chatty_sse_server(
                         .and_then(|digits| digits.parse().ok())
                 })
                 .unwrap_or(0);
+            let is_call = request.contains("\"tools/call\"");
+            if is_call {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            if is_call && call_status != 200 {
+                let response = format!(
+                    "HTTP/1.1 {call_status} Refused\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.shutdown().await;
+                continue;
+            }
             let result = if request.contains("\"tools/list\"") {
                 json!({"tools": [{
                     "name": "ask",
@@ -482,21 +498,8 @@ async fn chatty_sse_server(
 #[tokio::test]
 async fn an_http_server_that_logs_before_replying_is_still_understood() {
     let stop = tokio_util::sync::CancellationToken::new();
-    let (address, serving) = chatty_sse_server(stop.clone()).await;
-    let manager = McpManager::new(
-        vec![McpServerSpec {
-            name: "remote".into(),
-            transport: McpTransportSpec::Http {
-                url: format!("http://{address}/mcp"),
-                token: None,
-            },
-            classes: BTreeMap::new(),
-            send_caller_meta: false,
-            auth: None,
-        }],
-        None,
-        no_hidden(),
-    );
+    let (address, serving) = chatty_sse_server(stop.clone(), 200, Default::default()).await;
+    let manager = remote_http(address);
     manager.discover_all().await;
 
     // Taking the first SSE event would have made this `Failed` with
@@ -516,6 +519,50 @@ async fn an_http_server_that_logs_before_replying_is_still_understood() {
         .expect("call");
     assert_eq!(result.text, "answered");
     assert!(!result.is_error);
+
+    stop.cancel();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), serving).await;
+}
+
+fn remote_http(address: std::net::SocketAddr) -> Arc<McpManager> {
+    McpManager::new(
+        vec![McpServerSpec {
+            name: "remote".into(),
+            transport: McpTransportSpec::Http {
+                url: format!("http://{address}/mcp"),
+                token: None,
+            },
+            classes: BTreeMap::from([("ask".to_owned(), SideEffectClass::ReadOnly)]),
+            send_caller_meta: false,
+            auth: None,
+        }],
+        None,
+        no_hidden(),
+    )
+}
+
+#[tokio::test]
+async fn an_http_error_answer_is_reported_as_itself_and_never_replayed() {
+    let stop = tokio_util::sync::CancellationToken::new();
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (address, serving) = chatty_sse_server(stop.clone(), 503, calls.clone()).await;
+    let manager = remote_http(address);
+    manager.discover_all().await;
+    assert_eq!(manager.health()[0].state, McpServerState::Ready);
+
+    let error = manager
+        .call("remote", "ask", json!({"q": "hello"}), &caller(), true)
+        .await
+        .expect_err("the server refused the call");
+    assert!(
+        matches!(&error, McpError::BadResponse(text) if text.contains("http 503")),
+        "an answer is not a dropped connection: {error:?}"
+    );
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "asking again would only repeat the answer"
+    );
 
     stop.cancel();
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), serving).await;
@@ -766,7 +813,7 @@ async fn a_server_whose_required_token_is_missing_is_never_contacted() {
 #[tokio::test]
 async fn an_optional_token_connects_without_one_and_says_so() {
     let stop = tokio_util::sync::CancellationToken::new();
-    let (address, serving) = chatty_sse_server(stop.clone()).await;
+    let (address, serving) = chatty_sse_server(stop.clone(), 200, Default::default()).await;
     let manager = McpManager::new(
         vec![http_with_auth(
             format!("http://{address}/mcp"),
@@ -889,7 +936,25 @@ async fn a_mutating_call_whose_connection_drops_is_not_replayed_and_says_so() {
 }
 
 #[tokio::test]
-async fn a_mutating_call_with_an_idempotency_key_is_replayed() {
+async fn a_mutating_call_with_a_declared_idempotency_key_is_replayed() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (manager, calls) = dropping_once(dir.path());
+    let ToolExecution::Outcome(outcome) = execute(
+        &manager,
+        "mcp__mock__post_once",
+        json!({"text": "t", "idempotency_key": "post-1"}),
+    )
+    .await
+    else {
+        panic!("an MCP call ends in an outcome");
+    };
+    assert!(!outcome.is_error, "{}", outcome.content);
+    assert_eq!(outcome.content, "posted");
+    assert_eq!(received(&calls), ["post_once", "post_once"]);
+}
+
+#[tokio::test]
+async fn a_key_the_tool_does_not_declare_does_not_make_a_mutation_replayable() {
     let dir = tempfile::tempdir().expect("tempdir");
     let (manager, calls) = dropping_once(dir.path());
     let ToolExecution::Outcome(outcome) = execute(
@@ -901,9 +966,16 @@ async fn a_mutating_call_with_an_idempotency_key_is_replayed() {
     else {
         panic!("an MCP call ends in an outcome");
     };
-    assert!(!outcome.is_error, "{}", outcome.content);
-    assert_eq!(outcome.content, "written");
-    assert_eq!(received(&calls), ["write_note", "write_note"]);
+    assert!(outcome.is_error);
+    assert_eq!(
+        received(&calls),
+        ["write_note"],
+        "write_note never promised to deduplicate, so it is sent once"
+    );
+    let failure: serde_json::Value =
+        serde_json::from_str(&outcome.content).expect("the result is structured");
+    assert_eq!(failure["error"], "tool_transport_failed");
+    assert_eq!(failure["retryable"], false);
 }
 
 #[tokio::test]
