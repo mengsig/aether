@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use aether_core::agent::{AgentConfig, AgentStatus, AgentStatusKind, ApprovalPolicy};
@@ -50,6 +51,7 @@ fn credentials_of(turn: &EngineTurn) -> BridgeCredentials {
 /// at a time and, when it wants to, interrupt the turn that is holding them.
 struct HeldEngine {
     ready: mpsc::Sender<BridgeCredentials>,
+    gates: Arc<AtomicBool>,
 }
 
 #[async_trait::async_trait]
@@ -70,6 +72,10 @@ impl Engine for HeldEngine {
                 "fixture offline dependency missing".into(),
             ))
         }
+    }
+
+    fn gates_permissions(&self) -> bool {
+        self.gates.load(Ordering::SeqCst)
     }
 
     async fn run(
@@ -107,6 +113,8 @@ struct Harness {
     runtime: Arc<Runtime>,
     store: Arc<dyn Store>,
     ready: mpsc::Receiver<BridgeCredentials>,
+    /// Whether the fixture engine asks before acting; starts true.
+    gates: Arc<AtomicBool>,
     _workspace: tempfile::TempDir,
     _config: tempfile::TempDir,
 }
@@ -150,7 +158,11 @@ async fn harness_over(
     let models = Arc::new(Models::load(Some(config_dir.path().to_path_buf())).expect("models"));
 
     let (ready_tx, ready) = mpsc::channel(16);
-    let engine: Arc<dyn Engine> = Arc::new(HeldEngine { ready: ready_tx });
+    let gates = Arc::new(AtomicBool::new(true));
+    let engine: Arc<dyn Engine> = Arc::new(HeldEngine {
+        ready: ready_tx,
+        gates: gates.clone(),
+    });
     let mut engines: HashMap<EngineKind, Arc<dyn Engine>> = HashMap::new();
     engines.insert(EngineKind::CLAUDE_CODE, engine);
     // The mock intentionally never exits on its own, so integration tests
@@ -189,6 +201,7 @@ async fn harness_over(
         runtime,
         store,
         ready,
+        gates,
         _workspace: workspace,
         _config: config_dir,
     }
@@ -286,3 +299,6 @@ mod idempotent;
 
 #[path = "spawn/readers.rs"]
 mod readers;
+
+#[path = "spawn/gating.rs"]
+mod gating;

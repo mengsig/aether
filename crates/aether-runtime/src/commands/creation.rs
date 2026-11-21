@@ -167,7 +167,7 @@ impl Runtime {
         }
         if let Some(parent) = &prepared.parent {
             let agent = &mut prepared.agent;
-            self.inherit_from_parent(hold, parent, agent, preflight.inherit_limits)?;
+            self.inherit_from_parent(hold, parent, agent, preflight)?;
             crate::cancellation::check_parent(self, hold, parent.id)?;
             if preflight.parallel_limit {
                 self.check_parallel_limit(hold, parent.id, agent.role.as_str())?;
@@ -521,7 +521,7 @@ impl Runtime {
         _hold: &CommitHold<'_>,
         derived_from: &Agent,
         agent: &mut Agent,
-        inherit_limits: bool,
+        preflight: Preflight<'_>,
     ) -> Result<()> {
         let parent = self.live_agent(derived_from.id, "parent")?;
         // Derived from the old row, so possibly wider than the parent now.
@@ -534,7 +534,10 @@ impl Runtime {
                 parent.id
             )));
         }
-        if inherit_limits {
+        if let Some(staged) = preflight.delegating_parent {
+            crate::delegation_admission::check_child_authority(self, staged, &parent, agent)?;
+        }
+        if preflight.inherit_limits {
             agent.config.deadline = narrower_limit(agent.config.deadline, parent.config.deadline);
             agent.config.cost_budget =
                 narrower_limit(agent.config.cost_budget, parent.config.cost_budget);

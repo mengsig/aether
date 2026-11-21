@@ -178,6 +178,8 @@ pub(crate) struct Preflight<'a> {
     /// Recheck the parent's `delegation_policy.max_parallel` under the hold.
     /// Set by `delegate`; a person creating a child is never refused for it.
     pub parallel_limit: bool,
+    /// Parent whose authority the tool used to choose and configure this child.
+    pub delegating_parent: Option<&'a Agent>,
     #[cfg(test)]
     pub before_hold: Option<(
         &'a std::sync::mpsc::Sender<()>,

@@ -301,50 +301,52 @@ impl Runtime {
         };
         let parent_scope = self.resolved_scope(&parent.scope)?;
         let scope = requested.unwrap_or_else(|| parent_scope.clone());
-        let checked = if let Some(workspace) = isolated_workspace {
-            if scope.workspace_root.as_deref() != Some(workspace) {
-                return Err(RuntimeError::Invalid(
-                    "isolated delegation scope changed before creation; retry delegation".into(),
-                ));
-            }
-            let managed_root =
-                self.config
-                    .delegated_workspace_root
-                    .as_deref()
-                    .ok_or_else(|| {
-                        RuntimeError::Invalid("managed workspaces are not configured".into())
-                    })?;
-            let manifest = crate::workspace::load(managed_root, workspace)?;
-            if manifest.parent != parent.id {
-                return Err(RuntimeError::Invalid(
-                    "isolated workspace parent does not match the delegating agent".into(),
-                ));
-            }
-            self.remap_managed_scope(&scope, &manifest)?
+        let (checked, parent_scope) = if let Some(workspace) = isolated_workspace {
+            (
+                self.isolated_source_scope(&scope, workspace, parent.id)?,
+                Self::canonical_workspace_scope(&parent_scope)?,
+            )
         } else {
-            scope.clone()
+            (scope.clone(), parent_scope)
         };
-        let parent_scope = if isolated_workspace.is_some() {
-            Self::canonical_workspace_scope(&parent_scope)?
-        } else {
-            parent_scope
-        };
-        let widened = match (checked.widened_field(&parent_scope), isolated_workspace) {
-            (Some(field), _) => Some(field),
-            // A managed worktree was resolved when its manifest was written.
-            (None, Some(_)) => None,
-            (None, None) => {
-                // As `tool_context` places the file tools of a rootless agent.
-                let cwd = self.unscoped_cwd().unwrap_or_else(|| PathBuf::from("."));
-                widened_on_disk(&checked, &parent_scope, &cwd)?
-            }
-        };
+        let widened = self.widened_scope(&checked, &parent_scope)?;
         match widened {
             Some(field) => Err(RuntimeError::Invalid(format!(
                 "child scope must narrow the parent's scope; `{field}` widens it"
             ))),
             None => Ok(scope),
         }
+    }
+
+    fn isolated_source_scope(
+        &self,
+        scope: &Scope,
+        workspace: &Path,
+        parent: AgentId,
+    ) -> Result<Scope> {
+        if scope.workspace_root.as_deref() != Some(workspace) {
+            return Err(RuntimeError::Invalid(
+                "isolated delegation scope changed before creation; retry delegation".into(),
+            ));
+        }
+        let managed_root = self
+            .config
+            .delegated_workspace_root
+            .as_deref()
+            .ok_or_else(|| RuntimeError::Invalid("managed workspaces are not configured".into()))?;
+        let manifest = crate::workspace::load(managed_root, workspace)?;
+        debug_assert_eq!(manifest.workspace, workspace);
+        if manifest.parent != parent {
+            return Err(RuntimeError::Invalid(
+                "isolated workspace parent does not match the delegating agent".into(),
+            ));
+        }
+        let logical = self.remap_managed_scope(scope, &manifest)?;
+        debug_assert_eq!(
+            logical.workspace_root.as_deref(),
+            Some(manifest.source.as_path())
+        );
+        Ok(logical)
     }
 
     fn canonical_workspace_scope(scope: &Scope) -> Result<Scope> {
@@ -407,6 +409,17 @@ impl Runtime {
                     })
             })
             .collect::<Result<_>>()?;
+        let snapshot = Scope {
+            workspace_root: Some(manifest.workspace.clone()),
+            ..Default::default()
+        };
+        if let Some(field) = widened_on_disk(scope, &snapshot, &manifest.workspace)? {
+            return Err(RuntimeError::Invalid(format!(
+                "isolated delegation `{field}` leads outside its workspace snapshot"
+            )));
+        }
+        debug_assert_eq!(logical.allowed_paths.len(), scope.allowed_paths.len());
+        debug_assert_eq!(logical.network, scope.network);
         Ok(logical)
     }
 
@@ -451,7 +464,18 @@ impl Runtime {
         } else {
             parent.scope.clone()
         };
-        self.widened_field_resolved(&logical, &parent_scope)
+        self.widened_scope(
+            &self.resolved_scope(&logical)?,
+            &self.resolved_scope(&parent_scope)?,
+        )
+    }
+
+    fn widened_scope(&self, scope: &Scope, parent: &Scope) -> Result<Option<&'static str>> {
+        if let Some(field) = scope.widened_field(parent) {
+            return Ok(Some(field));
+        }
+        let cwd = self.unscoped_cwd().unwrap_or_else(|| PathBuf::from("."));
+        widened_on_disk(scope, parent, &cwd)
     }
 
     /// The field on which `scope` widens `parent`, both repositories resolved:
@@ -656,6 +680,29 @@ impl Runtime {
             return Ok(());
         };
         check_narrows_parent(policy, &parent)
+    }
+
+    /// Check stored children when they are about to run again. An ancestor may
+    /// have tightened its policy while a child was terminal or on an old daemon.
+    pub(crate) fn ancestor_approval_refusal(&self, agent: &Agent) -> Result<Option<String>> {
+        let Some(parent) = agent.parent.filter(|_| !self.config.yolo) else {
+            return Ok(None);
+        };
+        let ancestors = self.store.ancestry(&[parent])?;
+        debug_assert!(ancestors.is_empty() || ancestors.iter().any(|row| row.id == parent));
+        let stricter = ancestors.iter().find(|ancestor| {
+            !agent
+                .config
+                .approval
+                .is_narrowing_of(&ancestor.config.approval)
+        });
+        Ok(stricter.map(|ancestor| {
+            format!(
+                "agent {}'s approval policy drops gates required by ancestor {}; tighten its \
+                 approvals before it can run again",
+                agent.id, ancestor.id
+            )
+        }))
     }
 }
 

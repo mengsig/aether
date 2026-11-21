@@ -145,6 +145,66 @@ async fn explicit_narrower_delegation_limits_are_preserved() {
     runtime.shutdown().await;
 }
 
+#[tokio::test]
+async fn delegated_children_recheck_parent_authority_under_the_creation_hold() {
+    use crate::delegation_admission::{ChildReason, ChildRequest, Slots, prepare_child};
+    use aether_core::tool::ToolExposure;
+
+    let (runtime, _workspace, _config) = runtime().await;
+    let mut lead = parent(&runtime, now() + chrono::Duration::hours(1));
+    for update in [
+        AgentUpdate {
+            model: Some(ModelRef::new("anthropic", "claude-haiku-5-5")),
+            ..Default::default()
+        },
+        AgentUpdate {
+            tools: Some(ToolExposure::Only {
+                names: ["delegate".into()].into(),
+            }),
+            ..Default::default()
+        },
+    ] {
+        let request = ChildRequest {
+            role: "worker".into(),
+            name: None,
+            objective: "check the tree".into(),
+            instructions: None,
+            model: lead.model.clone(),
+            effort: Effort::Low,
+            scope: None,
+            leaf: true,
+            host_context: None,
+            reason: ChildReason::Omitted,
+        };
+        let staged = prepare_child(
+            &runtime,
+            &lead,
+            request,
+            &Actor::agent(lead.id),
+            Slots::Counted,
+        )
+        .expect("the child fits the original authority");
+        assert_eq!(staged.agent.config.tools, lead.config.tools);
+        assert_eq!(staged.agent.model, lead.model);
+        let current = runtime
+            .update_agent(lead.id, update, Actor::user())
+            .unwrap();
+        let hold = runtime.hold();
+        let refusal = runtime
+            .admit_prepared(&hold, staged, Preflight::delegated(&lead), None)
+            .err()
+            .expect("the child's authority was decided against an older parent");
+        assert!(
+            refusal.to_string().contains("authority changed"),
+            "{refusal}"
+        );
+        lead = current;
+    }
+    assert_eq!(runtime.store.agents(&Default::default()).unwrap().len(), 1);
+    assert!(runtime.store.tasks(&Default::default()).unwrap().is_empty());
+    runtime.shutdown().await;
+}
+
 /// `max_parallel` is rechecked under the creation hold: a child created
 /// while a delegation waits between its count and its commit fills the slot.
 #[tokio::test]

@@ -46,6 +46,12 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **One-shot delegation preserves the caller's approval gates and tool
+  exposure.** Admission refuses engines that cannot enforce the required
+  approvals. Existing children are held to their ancestors' gates when they
+  run again, and isolated workspace grants must stay inside the snapshot.
+  Ordinary `delegate` calls keep their read-only approval classification.
+
 - **A child's scope is checked where its paths lead.** `delegate` and
   `create_agent` compared a child's `workspace_root` and `allowed_paths` with
   its parent's as text, so a path inside the parent's workspace that is a

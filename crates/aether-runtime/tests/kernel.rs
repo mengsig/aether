@@ -169,6 +169,8 @@ mod crash_recovery;
 mod deadline_warnings;
 #[path = "kernel/delegation.rs"]
 mod delegation;
+#[path = "kernel/delegation_approval.rs"]
+mod delegation_approval;
 #[path = "kernel/delegation_policy.rs"]
 mod delegation_policy;
 #[path = "kernel/delegation_references.rs"]

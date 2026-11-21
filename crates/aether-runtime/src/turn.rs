@@ -449,12 +449,15 @@ fn start_commit(
     Ok(commit)
 }
 
-/// Why the agent may not take turn `turn`: its turn limit, or a budget.
+/// Why the agent may not take turn `turn`: its limits or inherited gates.
 fn turn_refused(runtime: &Runtime, agent: &Agent, turn: u32) -> Result<Option<String>> {
     if let Some(max) = agent.config.max_turns
         && turn > max
     {
         return Ok(Some(format!("turn limit of {max} reached")));
+    }
+    if let Some(refusal) = runtime.ancestor_approval_refusal(agent)? {
+        return Ok(Some(refusal));
     }
     // Same predicate the scheduler enforces, in case the last turn crossed
     // the line after the tick that dispatched this one.
