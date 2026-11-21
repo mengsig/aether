@@ -159,7 +159,7 @@ async fn tools_are_discovered_classified_and_callable() {
     assert!(rx.try_recv().is_err(), "no change means no announcement");
 
     let result = manager
-        .call("mock", "read_note", json!({"key": "k"}), &caller())
+        .call("mock", "read_note", json!({"key": "k"}), &caller(), false)
         .await
         .expect("call");
     assert_eq!(result.text, "note contents");
@@ -345,7 +345,7 @@ async fn a_server_that_dies_is_reported_and_never_hangs() {
     // reason rather than wait for an answer that will never come.
     let error = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        manager.call("mock", "read_note", json!({"key": "k"}), &caller()),
+        manager.call("mock", "read_note", json!({"key": "k"}), &caller(), false),
     )
     .await
     .expect("the call must not hang")
@@ -400,7 +400,7 @@ async fn a_server_does_not_inherit_a_variable_the_daemon_hides() {
     let manager = McpManager::new(vec![spec(classes(), BTreeMap::new())], None, hidden);
     manager.discover_all().await;
     let seen = manager
-        .call("mock", "read_env", json!({"key": "HOME"}), &caller())
+        .call("mock", "read_env", json!({"key": "HOME"}), &caller(), false)
         .await
         .expect("call");
     assert_eq!(
@@ -511,7 +511,7 @@ async fn an_http_server_that_logs_before_replying_is_still_understood() {
 
     // And a call would have looked like one that returned nothing at all.
     let result = manager
-        .call("remote", "ask", json!({"q": "hello"}), &caller())
+        .call("remote", "ask", json!({"q": "hello"}), &caller(), false)
         .await
         .expect("call");
     assert_eq!(result.text, "answered");
@@ -673,7 +673,7 @@ async fn a_server_that_rejects_unknown_params_is_unchanged_unless_it_opts_in() {
     let manager = McpManager::new(vec![spec(classes(), strict.clone())], None, no_hidden());
     manager.discover_all().await;
     let result = manager
-        .call("mock", "read_note", json!({"key": "k"}), &caller())
+        .call("mock", "read_note", json!({"key": "k"}), &caller(), false)
         .await
         .expect("nothing the strict server refuses is sent");
     assert_eq!(result.text, "note contents");
@@ -706,7 +706,7 @@ async fn a_server_that_rejects_unknown_params_is_unchanged_unless_it_opts_in() {
     let manager = McpManager::new(vec![opted_in(strict)], None, no_hidden());
     manager.discover_all().await;
     let error = manager
-        .call("mock", "read_note", json!({"key": "k"}), &caller())
+        .call("mock", "read_note", json!({"key": "k"}), &caller(), false)
         .await
         .expect_err("the strict server refuses `_meta`");
     assert!(error.to_string().contains("_meta"), "{error}");
@@ -742,9 +742,12 @@ async fn a_server_whose_required_token_is_missing_is_never_contacted() {
     tokio::time::timeout(quick, manager.discover_all())
         .await
         .expect("refused without a round trip");
-    let call = tokio::time::timeout(quick, manager.call("remote", "ask", json!({}), &caller()))
-        .await
-        .expect("refused without a round trip");
+    let call = tokio::time::timeout(
+        quick,
+        manager.call("remote", "ask", json!({}), &caller(), false),
+    )
+    .await
+    .expect("refused without a round trip");
     assert!(matches!(call, Err(McpError::AuthFailed(_))), "{call:?}");
 
     let health = &manager.health()[0];
@@ -783,4 +786,146 @@ async fn an_optional_token_connects_without_one_and_says_so() {
 
     stop.cancel();
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), serving).await;
+}
+
+/// The mock server, set to drop its connection on the first call it receives
+/// and to log every call, plus the files that prove what happened.
+fn dropping_once(dir: &std::path::Path) -> (Arc<McpManager>, std::path::PathBuf) {
+    let calls = dir.join("calls.log");
+    let env = BTreeMap::from([
+        (
+            "AETHER_MOCK_MCP_DROP_ONCE".to_owned(),
+            dir.join("dropped").display().to_string(),
+        ),
+        (
+            "AETHER_MOCK_MCP_CALLS".to_owned(),
+            calls.display().to_string(),
+        ),
+    ]);
+    (
+        McpManager::new(vec![spec(classes(), env)], None, no_hidden()),
+        calls,
+    )
+}
+
+fn received(calls: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(calls)
+        .expect("the server logged its calls")
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+async fn execute(manager: &Arc<McpManager>, tool: &str, input: serde_json::Value) -> ToolExecution {
+    manager.discover_all().await;
+    let registry = ToolRegistry::with_builtins().with_mcp(manager.clone());
+    let tool = registry.get(tool).expect("the tool is offered");
+    tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        tool.execute(input, &ctx(), Default::default()),
+    )
+    .await
+    .expect("a dropped call must never hang")
+    .expect("a dropped call is a tool result, not an internal error")
+}
+
+#[tokio::test]
+async fn a_read_only_call_whose_connection_drops_is_replayed_and_succeeds() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (manager, calls) = dropping_once(dir.path());
+    let ToolExecution::Outcome(outcome) =
+        execute(&manager, "mcp__mock__read_note", json!({"key": "k"})).await
+    else {
+        panic!("an MCP call ends in an outcome");
+    };
+    assert!(!outcome.is_error, "{}", outcome.content);
+    assert_eq!(outcome.content, "note contents");
+    assert!(
+        dir.path().join("dropped").exists(),
+        "the first try was dropped"
+    );
+    assert_eq!(
+        received(&calls),
+        ["read_note", "read_note"],
+        "sent twice: dropped, then replayed"
+    );
+    assert_eq!(
+        manager.health()[0].state,
+        McpServerState::Ready,
+        "reconnected"
+    );
+}
+
+#[tokio::test]
+async fn a_mutating_call_whose_connection_drops_is_not_replayed_and_says_so() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (manager, calls) = dropping_once(dir.path());
+    let ToolExecution::Outcome(outcome) = execute(
+        &manager,
+        "mcp__mock__write_note",
+        json!({"key": "k", "text": "t"}),
+    )
+    .await
+    else {
+        panic!("an MCP call ends in an outcome");
+    };
+    assert!(outcome.is_error);
+    assert_eq!(
+        received(&calls),
+        ["write_note"],
+        "a call that may have run is sent once"
+    );
+    let failure: serde_json::Value =
+        serde_json::from_str(&outcome.content).expect("the result is structured, not bare text");
+    assert_eq!(failure["error"], "tool_transport_failed");
+    assert_eq!(failure["tool"], "mcp__mock__write_note");
+    assert_eq!(
+        failure["retryable"], false,
+        "it may already have taken effect"
+    );
+    let cause = failure["cause"].as_str().expect("a cause");
+    assert!(cause.contains("closed"), "{cause}");
+    assert_eq!(outcome.structured.as_ref(), Some(&failure));
+}
+
+#[tokio::test]
+async fn a_mutating_call_with_an_idempotency_key_is_replayed() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (manager, calls) = dropping_once(dir.path());
+    let ToolExecution::Outcome(outcome) = execute(
+        &manager,
+        "mcp__mock__write_note",
+        json!({"key": "k", "text": "t", "idempotency_key": "write-1"}),
+    )
+    .await
+    else {
+        panic!("an MCP call ends in an outcome");
+    };
+    assert!(!outcome.is_error, "{}", outcome.content);
+    assert_eq!(outcome.content, "written");
+    assert_eq!(received(&calls), ["write_note", "write_note"]);
+}
+
+#[tokio::test]
+async fn a_replayable_call_to_a_server_that_keeps_dying_fails_retryable() {
+    let env = BTreeMap::from([("AETHER_MOCK_MCP_DIE".to_owned(), "1".to_owned())]);
+    let manager = McpManager::new(vec![spec(classes(), env)], None, no_hidden());
+    manager.discover_all().await;
+    let started = std::time::Instant::now();
+    let error = manager
+        .call("mock", "read_note", json!({"key": "k"}), &caller(), true)
+        .await
+        .expect_err("a server that dies after every listing never answers");
+    let McpError::TransportFailed { retryable, cause } = &error else {
+        panic!("a lost transport is typed: {error:?}");
+    };
+    assert!(*retryable, "a read-only call is safe to try again later");
+    assert!(
+        cause.contains("closed") || cause.contains("transport"),
+        "the cause is the drop itself: {cause}"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "the backoff is bounded"
+    );
 }

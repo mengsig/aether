@@ -113,6 +113,30 @@ impl McpServerHealth {
     }
 }
 
+/// The `error` a tool result carries when the connection to the daemon or an
+/// upstream MCP server dropped and the call was not completed.
+pub const TOOL_TRANSPORT_FAILED: &str = "tool_transport_failed";
+
+/// Characters of a transport failure's cause kept in the result.
+const MAX_TRANSPORT_CAUSE_CHARS: usize = 1_000;
+
+/// The structured result of a call whose transport failed. `retryable` says
+/// whether calling again is safe: nothing reached the server, or the call is
+/// read-only or idempotent. A call that may have taken effect is `false`.
+pub fn tool_transport_failed(tool: &str, retryable: bool, cause: &str) -> serde_json::Value {
+    debug_assert!(!tool.is_empty(), "a transport failure names its tool");
+    let cause = match cause.trim() {
+        "" => "the connection closed".to_owned(),
+        text => text.chars().take(MAX_TRANSPORT_CAUSE_CHARS).collect(),
+    };
+    serde_json::json!({
+        "error": TOOL_TRANSPORT_FAILED,
+        "tool": tool,
+        "retryable": retryable,
+        "cause": cause,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,5 +156,20 @@ mod tests {
         assert_ne!(sanitize_name("Files"), sanitize_name("files"));
         // Anything else does: `read.file` and `read_file` do.
         assert_eq!(sanitize_name("read.file"), sanitize_name("read_file"));
+    }
+
+    #[test]
+    fn a_transport_failure_names_its_tool_and_bounds_its_cause() {
+        let failure = tool_transport_failed("mcp__s__write", false, &"x".repeat(5_000));
+        assert_eq!(failure["error"], TOOL_TRANSPORT_FAILED);
+        assert_eq!(failure["tool"], "mcp__s__write");
+        assert_eq!(failure["retryable"], false);
+        let cause = failure["cause"].as_str().expect("a cause");
+        assert_eq!(cause.chars().count(), MAX_TRANSPORT_CAUSE_CHARS);
+        let blank = tool_transport_failed("t", true, "  ");
+        assert_eq!(
+            blank["cause"], "the connection closed",
+            "never an empty cause"
+        );
     }
 }

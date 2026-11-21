@@ -133,9 +133,10 @@ impl Tool for McpTool {
         cancel: CancellationToken,
     ) -> Result<ToolExecution, ToolError> {
         let caller = McpCaller::of(ctx);
+        let replay_safe = self.info.side_effect.safe_to_retry() || carries_idempotency_key(&input);
         let call = self
             .manager
-            .call(&self.server, &self.info.name, input, &caller);
+            .call(&self.server, &self.info.name, input, &caller, replay_safe);
         let result = tokio::select! {
             result = call => result,
             _ = cancel.cancelled() => return Err(ToolError::Cancelled),
@@ -143,6 +144,9 @@ impl Tool for McpTool {
         let result = match result {
             Ok(result) => result,
             Err(McpError::InvalidArguments(reason)) => return Err(ToolError::InvalidInput(reason)),
+            Err(McpError::TransportFailed { retryable, cause }) => {
+                return Ok(self.transport_failed(retryable, &cause));
+            }
             Err(e) => {
                 return Err(ToolError::Internal(format!(
                     "mcp server `{}`: {e}",
@@ -181,6 +185,37 @@ impl Tool for McpTool {
             ..Default::default()
         }))
     }
+}
+
+impl McpTool {
+    /// The structured result of a call whose connection dropped: never a bare
+    /// "connection closed", so the model and the host can tell what to do.
+    fn transport_failed(&self, retryable: bool, cause: &str) -> ToolExecution {
+        let failure = aether_core::mcp::tool_transport_failed(
+            &self.info.qualified_name,
+            retryable,
+            &format!("mcp server `{}`: {cause}", self.server),
+        );
+        debug_assert_eq!(failure["retryable"], retryable);
+        ToolExecution::Outcome(ToolOutcome {
+            content: failure.to_string(),
+            is_error: true,
+            structured: Some(failure),
+            // A call that cannot be replayed may have reached the server.
+            side_effect_occurred: (!retryable && self.info.side_effect.is_mutating())
+                .then_some(true),
+            ..Default::default()
+        })
+    }
+}
+
+/// Whether the model gave this call an idempotency key, which makes sending it
+/// again one effect rather than two.
+fn carries_idempotency_key(input: &Value) -> bool {
+    input
+        .get("idempotency_key")
+        .and_then(Value::as_str)
+        .is_some_and(|key| !key.trim().is_empty())
 }
 
 /// `structuredContent` if it fits the budget, else nothing plus the line
