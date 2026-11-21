@@ -81,6 +81,66 @@ async fn api_delegate_inherits_gates_without_asking_for_the_delegation() {
 }
 
 #[tokio::test]
+async fn api_delegate_refuses_a_tool_withheld_during_the_turn() {
+    let h = harness(vec![
+        delegate_to("anthropic/claude-sonnet-5-5"),
+        ScriptedClient::tool_call("complete_task", json!({"summary":"done"})),
+    ])
+    .await;
+    let release = h.client.hold_next_response();
+    let mut spec = spec("delegate a worker");
+    spec.approval = Some(mutation_gates());
+    let (parent, _) = h.runtime.create_agent(spec, Actor::user()).unwrap();
+    assert!(parent.config.tools.allows("delegate"));
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        h.wait_for("parent's model request", || !h.client.requests().is_empty()),
+    )
+    .await
+    .expect("model request within five seconds");
+    let current = h
+        .runtime
+        .update_agent(
+            parent.id,
+            AgentUpdate {
+                tools: Some(ToolExposure::Except {
+                    names: ["delegate".into()].into(),
+                }),
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .unwrap();
+    assert!(!current.config.tools.allows("delegate"));
+    release.cancel();
+
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        h.wait_for("delegate reply", || {
+            types(h.store.as_ref(), parent.id)
+                .iter()
+                .any(|kind| kind == "tool.succeeded")
+        }),
+    )
+    .await
+    .expect("delegate settled without asking for approval");
+    let events = h
+        .store
+        .events(0, 1000, &EventFilter::for_agent(parent.id))
+        .unwrap();
+    let outcome = settled_outcome(&events, "delegate");
+    assert!(
+        outcome.is_error && outcome.content.contains("withholds `delegate`"),
+        "{}",
+        outcome.content
+    );
+    assert_eq!(h.store.agents(&AgentFilter::default()).unwrap().len(), 1);
+    assert_eq!(h.store.tasks(&Default::default()).unwrap().len(), 1);
+    assert!(h.store.pending_approvals().unwrap().is_empty());
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn waking_or_restarting_a_delegated_child_rechecks_parent_approvals() {
     let h = harness(vec![
         delegate_to("anthropic/claude-sonnet-5-5"),

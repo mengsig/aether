@@ -192,8 +192,7 @@ async fn delegated_children_recheck_parent_authority_under_the_creation_hold() {
         let hold = runtime.hold();
         let refusal = runtime
             .admit_prepared(&hold, staged, Preflight::delegated(&lead), None)
-            .err()
-            .expect("the child's authority was decided against an older parent");
+            .expect_err("the child's authority was decided against an older parent");
         assert!(
             refusal.to_string().contains("authority changed"),
             "{refusal}"
