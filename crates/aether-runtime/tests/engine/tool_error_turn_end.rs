@@ -6,9 +6,39 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 const FAILED_TOOL: &str = "mcp__aether__mcp__archon__model_policy";
 
 /// Its first turn ends right after a failed call, as the incident's did; every
-/// later turn retries the call, which works, before it answers.
+/// later turn retries the call, which works, before it answers. As Codex, the
+/// failed call is what Codex's own output parser makes of a real line.
 struct FailingCallEngine {
+    kind: EngineKind,
     runs: AtomicUsize,
+}
+
+/// A failed call as the engine reports it: Codex marks an MCP tool's error
+/// answer only in its result's `isError`, leaving the item `completed`.
+fn failed_call(kind: EngineKind) -> Vec<EngineEvent> {
+    if kind != EngineKind::CODEX {
+        return vec![
+            tool_use("call-1", FAILED_TOOL),
+            tool_result("call-1", "Connection closed", true),
+        ];
+    }
+    let line = serde_json::json!({"type": "item.completed", "item": {
+        "id": "call-1", "type": "mcp_tool_call", "server": "aether",
+        "tool": "mcp__archon__model_policy", "arguments": {"repo": "example"},
+        "result": {"content": [{"type": "text", "text": "Connection closed"}], "isError": true},
+        "status": "completed"}});
+    let events = aether_engine::codex::parse_line(
+        &line.to_string(),
+        &mut aether_engine::codex::ParseState::default(),
+    );
+    assert!(
+        matches!(
+            events.last(),
+            Some(EngineEvent::ToolResult { is_error: true, .. })
+        ),
+        "Codex's parser keeps the error: {events:?}"
+    );
+    events
 }
 
 fn tool_use(id: &str, name: &str) -> EngineEvent {
@@ -34,7 +64,7 @@ fn tool_result(id: &str, content: &str, is_error: bool) -> EngineEvent {
 #[async_trait::async_trait]
 impl Engine for FailingCallEngine {
     fn kind(&self) -> EngineKind {
-        EngineKind::CLAUDE_CODE
+        self.kind
     }
 
     fn adapter(&self) -> String {
@@ -48,10 +78,7 @@ impl Engine for FailingCallEngine {
     ) -> Result<EngineRun, EngineError> {
         let first = self.runs.fetch_add(1, Ordering::SeqCst) == 0;
         let (events, rx) = mpsc::channel(16);
-        let mut script = vec![
-            tool_use("call-1", FAILED_TOOL),
-            tool_result("call-1", "Connection closed", true),
-        ];
+        let mut script = failed_call(self.kind);
         if !first {
             script.push(tool_use("call-2", FAILED_TOOL));
             script.push(tool_result("call-2", "Allowed models: any", false));
@@ -115,11 +142,15 @@ async fn run_turn(h: &Harness, id: AgentId, turns: u32) {
 
 #[tokio::test]
 async fn a_turn_ending_on_a_failed_call_is_reported_once_for_every_engine() {
-    for model in [
-        ModelRef::new("claude-code", "haiku"),
-        ModelRef::new("codex", "gpt-6-luna"),
+    for (kind, model) in [
+        (
+            EngineKind::CLAUDE_CODE,
+            ModelRef::new("claude-code", "haiku"),
+        ),
+        (EngineKind::CODEX, ModelRef::new("codex", "gpt-6-luna")),
     ] {
         let engine = Arc::new(FailingCallEngine {
+            kind,
             runs: AtomicUsize::new(0),
         });
         let h = harness_with_engine(engine, Arc::default(), Arc::default()).await;
@@ -156,7 +187,8 @@ async fn a_turn_ending_on_a_failed_call_is_reported_once_for_every_engine() {
         let payload = &reported[0];
         assert_eq!(payload["agent_id"], id.to_string(), "{model}");
         assert_eq!(payload["tool"], FAILED_TOOL, "{model}");
-        assert_eq!(payload["error"], "Connection closed", "{model}");
+        let error = payload["error"].as_str().expect("the error text");
+        assert!(error.contains("Connection closed"), "{model}: {error}");
         assert!(payload["at"].is_string(), "{model}: {payload}");
         let ended_turn = h
             .store

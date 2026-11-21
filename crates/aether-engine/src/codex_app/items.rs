@@ -101,7 +101,7 @@ pub(super) fn tool_result_of(item: &Value) -> Option<(String, bool)> {
             } else {
                 content
             };
-            Some((content, status == "failed" || item["error"].is_object()))
+            Some((content, crate::codex::mcp_call_failed(item)))
         }
         "webSearch" => {
             let n = item["results"].as_array().map(Vec::len).unwrap_or(0);

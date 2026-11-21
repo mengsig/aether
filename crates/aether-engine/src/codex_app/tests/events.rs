@@ -265,3 +265,34 @@ fn recorded_rate_limits_retain_resets_through_normalization() {
         assert_eq!(usage.windows[0].quota.used_percent, 42);
     }
 }
+
+#[test]
+fn an_mcp_tool_that_answers_with_an_error_is_a_failed_result() {
+    let mut s = TurnState::new(turn(None, false));
+    s.thread_id = Some("th".into());
+    let item = |is_error: bool| {
+        json!({"item": {"type": "mcpToolCall", "id": "m1", "server": "archon", "tool": "model_policy", "arguments": {},
+            "result": {"content": [{"type": "text", "text": "no such model"}], "isError": is_error}, "status": "completed"}})
+    };
+    let events = s.notification("item/completed", &item(true));
+    assert_eq!(
+        events.last(),
+        Some(&EngineEvent::ToolResult {
+            tool_use_id: "m1".into(),
+            content: "no such model".into(),
+            is_error: true
+        }),
+        "a completed item whose result is an error is still an error"
+    );
+    let events = s.notification("item/completed", &item(false));
+    assert!(
+        matches!(
+            events.last(),
+            Some(EngineEvent::ToolResult {
+                is_error: false,
+                ..
+            })
+        ),
+        "{events:?}"
+    );
+}
