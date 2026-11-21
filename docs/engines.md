@@ -99,6 +99,15 @@ description says why, and every tool call returns that explanation as a tool
 error: the socket, both protocol windows and the fix (`aether stop`, then
 start Aether again).
 
+A bridge that loses its daemon connection reconnects on the next call,
+retrying a refused connection after a 200 ms and then an 800 ms backoff. A
+call the drop interrupted is sent again only when it carries an
+`idempotency_key`, because the bridge cannot tell which tools are read-only;
+the daemon applies its own retry rules to the MCP servers behind it (see
+[MCP servers](mcp-servers.md#dropped-connections)). Otherwise the call ends
+in a `tool_transport_failed` tool error naming the tool, whether a retry is
+safe (`retryable`) and the `cause`, never a bare "Connection closed".
+
 ## Claude context windows
 
 A context window is how much a model can work with in one request:

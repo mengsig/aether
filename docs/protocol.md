@@ -716,6 +716,23 @@ ones are counted), each cut to one line of 400 characters. A note reaches one
 turn only. `append_note` is an operate command, so an observer device cannot
 send it. Check the `notes` feature first.
 
+## Turns that end on a failed call
+
+When an agent's turn ends and the last tool result of that turn was an error,
+with no tool call after it, Aether records one `custom` event named
+`turn_ended_after_tool_error`, committed with the turn's
+`agent.turn_completed` and right after it. It is recorded for turns run by a
+native engine (Claude Code or Codex). Its payload:
+
+```json
+{"agent_id": "agt_...", "turn": 59, "tool": "mcp__archon__model_policy",
+ "error": "Connection closed", "at": "2026-11-21T10:26:28.147Z"}
+```
+
+`turn` matches the turn's `agent.turn_completed`. `error` is the result's
+text, cut to 2000 characters. A host can use it to wake an agent that stopped
+on an error it never handled.
+
 ## Notification center
 
 The daemon keeps one durable notification center. A notification is a

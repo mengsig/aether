@@ -10,6 +10,29 @@ Aether's bridge. Both paths end in the same connection.
 Each server is a single connection shared by every agent: one process for a
 stdio server, one endpoint for an HTTP one.
 
+## Dropped connections
+
+When a server's connection drops (its process exits, its pipe or socket
+closes, or a call times out), Aether reconnects on the next call. A call the
+drop interrupted is sent again, after a 200 ms and then an 800 ms backoff,
+only when sending it twice is safe: the server's tool is classed `read_only`
+or `idempotent_mutation`, or the call carries a non-blank `idempotency_key`.
+A call the server never received, because the connection could not be opened,
+is retried the same way whatever its class.
+
+Any other call is not sent again, since it may already have had effects. It
+fails, as do retries that run out, with a structured tool error in place of
+the bare transport text:
+
+```json
+{"error": "tool_transport_failed", "tool": "mcp__archon__model_policy",
+ "retryable": false, "cause": "mcp server `archon`: ..."}
+```
+
+`retryable` is `true` when calling again unchanged is safe, and `false` when
+the call may have run. `cause` is the transport error, at most 1000
+characters. The same object is the result's text and its structured content.
+
 ## Tokens
 
 An HTTP server can name an environment variable that holds its bearer token:
