@@ -481,11 +481,11 @@ async fn read_bounded_body(mut response: reqwest::Response) -> Result<String, Mc
         return Err(too_big(declared as usize));
     }
     let mut bytes: Vec<u8> = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|e| McpError::Transport(format!("cannot read response: {e}")))?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(|e| match e.is_timeout() {
+        // The headers came, so the server has the request and may act on it.
+        true => McpError::Timeout,
+        false => McpError::Transport(format!("cannot read response: {e}")),
+    })? {
         bytes.extend_from_slice(&chunk);
         if bytes.len() > MAX_MESSAGE_BYTES {
             return Err(too_big(bytes.len()));
@@ -626,6 +626,39 @@ mod tests {
         )
         .expect("transport");
         (transport, serving)
+    }
+
+    #[tokio::test]
+    async fn a_body_that_stalls_after_its_headers_is_a_timeout_not_a_drop() {
+        use tokio::io::AsyncReadExt as _;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("address");
+        let serving = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut request = [0u8; 4096];
+            assert_ne!(socket.read(&mut request).await.expect("request"), 0);
+            let head = "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 64\r\n\r\n{\"jsonrpc\"";
+            socket.write_all(head.as_bytes()).await.expect("headers");
+            let again = tokio::time::timeout(Duration::from_secs(1), listener.accept()).await;
+            assert!(again.is_err(), "the call was sent a second time");
+            drop(socket);
+        });
+        let transport = HttpTransport::new(
+            format!("http://{address}/mcp"),
+            None,
+            Duration::from_millis(300),
+        )
+        .expect("transport");
+        let error = transport
+            .request("tools/call", json!({}))
+            .await
+            .expect_err("the body never finishes");
+        assert!(matches!(error, McpError::Timeout), "{error:?}");
+        assert!(!error.is_dropped(), "a timeout is never replayed");
+        serving.await.expect("server");
     }
 
     #[tokio::test]
