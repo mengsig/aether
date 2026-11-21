@@ -428,17 +428,10 @@ impl HttpTransport {
             .and_then(|v| v.to_str().ok())
             .unwrap_or_default()
             .to_owned();
-        let body = read_bounded_body(response).await?;
         if !status.is_success() {
-            // Never the body itself: it is the peer's text, it becomes the
-            // server's durable health error, and a server that echoes the
-            // request would write our own bearer token into the log.
-            return Err(McpError::BadResponse(format!(
-                "http {} with a {}-byte body",
-                status.as_u16(),
-                body.len()
-            )));
+            return Err(error_status(status, response).await);
         }
+        let body = read_bounded_body(response).await?;
         if body.trim().is_empty() {
             return Ok(None);
         }
@@ -453,6 +446,19 @@ impl HttpTransport {
             .map(Some)
             .map_err(|e| McpError::BadResponse(format!("malformed response body: {e}")))
     }
+}
+
+/// A non-success answer, however its body ends: the status was received, so
+/// the call reached the server even when the body is cut short or too big.
+async fn error_status(status: reqwest::StatusCode, response: reqwest::Response) -> McpError {
+    debug_assert!(!status.is_success(), "only an error status is reported");
+    // Never the body itself: it is the peer's text, it becomes the server's
+    // durable health error, and an echo would log our own bearer token.
+    let body = match read_bounded_body(response).await {
+        Ok(body) => format!("a {}-byte body", body.len()),
+        Err(error) => format!("an unreadable body ({error})"),
+    };
+    McpError::BadResponse(format!("http {} with {body}", status.as_u16()))
 }
 
 /// The whole response body as text, refusing one past the cap. reqwest
@@ -539,7 +545,8 @@ impl Transport for HttpTransport {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         match self.post(&envelope(id, method, params)).await? {
             Some(message) => unwrap_result(message, id),
-            None => Err(McpError::Transport(
+            // The server answered over HTTP, just not with this reply.
+            None => Err(McpError::BadResponse(
                 "the server sent no reply to this request".into(),
             )),
         }

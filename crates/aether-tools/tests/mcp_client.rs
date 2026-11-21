@@ -415,10 +415,10 @@ async fn a_server_does_not_inherit_a_variable_the_daemon_hides() {
 /// notification on the SSE stream before every reply - exactly what a real
 /// server does, and what a client that takes the first event gets wrong.
 /// Returns its address; it stops when `stop` is cancelled. A `tools/call` is
-/// counted in `calls`, and answered with `call_status` when that is not 200.
+/// counted in `calls`, and answered with the raw `call_reply` when one is set.
 async fn chatty_sse_server(
     stop: tokio_util::sync::CancellationToken,
-    call_status: u16,
+    call_reply: Option<&'static str>,
     calls: Arc<std::sync::atomic::AtomicUsize>,
 ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -454,11 +454,8 @@ async fn chatty_sse_server(
             if is_call {
                 calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
-            if is_call && call_status != 200 {
-                let response = format!(
-                    "HTTP/1.1 {call_status} Refused\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
-                );
-                let _ = socket.write_all(response.as_bytes()).await;
+            if let Some(reply) = call_reply.filter(|_| is_call) {
+                let _ = socket.write_all(reply.as_bytes()).await;
                 let _ = socket.shutdown().await;
                 continue;
             }
@@ -498,7 +495,7 @@ async fn chatty_sse_server(
 #[tokio::test]
 async fn an_http_server_that_logs_before_replying_is_still_understood() {
     let stop = tokio_util::sync::CancellationToken::new();
-    let (address, serving) = chatty_sse_server(stop.clone(), 200, Default::default()).await;
+    let (address, serving) = chatty_sse_server(stop.clone(), None, Default::default()).await;
     let manager = remote_http(address);
     manager.discover_all().await;
 
@@ -542,30 +539,52 @@ fn remote_http(address: std::net::SocketAddr) -> Arc<McpManager> {
 }
 
 #[tokio::test]
-async fn an_http_error_answer_is_reported_as_itself_and_never_replayed() {
-    let stop = tokio_util::sync::CancellationToken::new();
-    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let (address, serving) = chatty_sse_server(stop.clone(), 503, calls.clone()).await;
-    let manager = remote_http(address);
-    manager.discover_all().await;
-    assert_eq!(manager.health()[0].state, McpServerState::Ready);
+async fn an_http_answer_that_is_not_a_reply_is_reported_as_itself_and_never_replayed() {
+    let cases: [(&'static str, &str); 4] = [
+        (
+            "HTTP/1.1 503 Refused\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+            "http 503 with a 0-byte body",
+        ),
+        (
+            "HTTP/1.1 500 Broken\r\ncontent-length: 4096\r\nconnection: close\r\n\r\ncut short",
+            "http 500 with an unreadable body",
+        ),
+        (
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: 17\r\n\
+             connection: close\r\n\r\ndata: {not json\n\n",
+            "no reply to this request",
+        ),
+        (
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 9\r\n\
+             connection: close\r\n\r\n{not json",
+            "malformed response body",
+        ),
+    ];
+    for (reply, expected) in cases {
+        let stop = tokio_util::sync::CancellationToken::new();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (address, serving) = chatty_sse_server(stop.clone(), Some(reply), calls.clone()).await;
+        let manager = remote_http(address);
+        manager.discover_all().await;
+        assert_eq!(manager.health()[0].state, McpServerState::Ready);
 
-    let error = manager
-        .call("remote", "ask", json!({"q": "hello"}), &caller(), true)
-        .await
-        .expect_err("the server refused the call");
-    assert!(
-        matches!(&error, McpError::BadResponse(text) if text.contains("http 503")),
-        "an answer is not a dropped connection: {error:?}"
-    );
-    assert_eq!(
-        calls.load(std::sync::atomic::Ordering::SeqCst),
-        1,
-        "asking again would only repeat the answer"
-    );
+        let error = manager
+            .call("remote", "ask", json!({"q": "hello"}), &caller(), true)
+            .await
+            .expect_err("the server answered with no usable reply");
+        assert!(
+            matches!(&error, McpError::BadResponse(text) if text.contains(expected)),
+            "an answer is not a dropped connection: {error:?}, wanted {expected}"
+        );
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "{expected}: asking again would only repeat the answer"
+        );
 
-    stop.cancel();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), serving).await;
+        stop.cancel();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), serving).await;
+    }
 }
 
 /// The `tools/call` request the mock received, as `echo_request` reports it.
@@ -813,7 +832,7 @@ async fn a_server_whose_required_token_is_missing_is_never_contacted() {
 #[tokio::test]
 async fn an_optional_token_connects_without_one_and_says_so() {
     let stop = tokio_util::sync::CancellationToken::new();
-    let (address, serving) = chatty_sse_server(stop.clone(), 200, Default::default()).await;
+    let (address, serving) = chatty_sse_server(stop.clone(), None, Default::default()).await;
     let manager = McpManager::new(
         vec![http_with_auth(
             format!("http://{address}/mcp"),
