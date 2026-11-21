@@ -102,8 +102,11 @@ start Aether again).
 A bridge that loses its daemon connection reconnects on the next call,
 retrying a refused connection after a 200 ms and then an 800 ms backoff. A
 call the drop interrupted is sent again only when the tool, as the daemon
-lists it, declares an `idempotency_key` and the call gives one. The bridge
-cannot tell which tools are read-only, and the daemon applies its own retry
+lists it, declares an `idempotency_key` and the call gives one. For a call
+that gives a key, the bridge asks the daemon for that schema before sending
+it, on a connection of its own, and waits at most 5 seconds; with no answer
+the call is sent but never replayed. The bridge cannot tell which tools are
+read-only, and the daemon applies its own retry
 rules to the MCP servers behind it (see
 [MCP servers](mcp-servers.md#dropped-connections)). Otherwise, or once the
 retries run out, the call ends in a `tool_transport_failed` tool error naming

@@ -149,11 +149,16 @@ pub fn carries_declared_idempotency_key(
         .get("properties")
         .and_then(|properties| properties.get(IDEMPOTENCY_KEY_FIELD))
         .is_some();
-    let given = input
+    declared && gives_idempotency_key(input)
+}
+
+/// Whether the call gives a non-blank `idempotency_key`, whether or not its
+/// tool declares one.
+pub fn gives_idempotency_key(input: &serde_json::Value) -> bool {
+    input
         .get(IDEMPOTENCY_KEY_FIELD)
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|key| !key.trim().is_empty());
-    declared && given
+        .is_some_and(|key| !key.trim().is_empty())
 }
 
 /// The argument a tool declares to make a repeated call one effect.
