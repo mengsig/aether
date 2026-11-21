@@ -68,6 +68,7 @@ pub(super) async fn lead_harness(policy: DelegationPolicy) -> (ComposeHarness, t
         user_reply_pending: false,
         reply_given_unrecorded: false,
         start_handoff: None,
+        unanswered_tool_error: None,
     };
     (ComposeHarness { runtime, ctx }, dir)
 }

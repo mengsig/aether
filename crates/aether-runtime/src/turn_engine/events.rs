@@ -562,6 +562,8 @@ pub(super) fn handle_event(
                         }));
                     }
                     ctx.agent.stats.tool_calls += 1;
+                    // A later call answers whatever an earlier one failed with.
+                    ctx.unanswered_tool_error = None;
                     state.ran_tools = true;
                 }
             }
@@ -671,6 +673,8 @@ pub(super) fn handle_event(
                 return Ok(());
             }
             state.progressed |= !cancelled_result;
+            ctx.unanswered_tool_error =
+                is_error.then(|| crate::turn::FailedToolCall::new(&call.tool, &content));
             let (call, started) = (call.id, call.started);
             let outcome = ToolOutcome {
                 content: content.clone(),

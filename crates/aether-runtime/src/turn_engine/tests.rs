@@ -478,6 +478,7 @@ pub(super) async fn started_agent_ctx(runtime: &Arc<Runtime>) -> TurnCtx {
         user_reply_pending: false,
         reply_given_unrecorded: false,
         start_handoff: None,
+        unanswered_tool_error: None,
     }
 }
 

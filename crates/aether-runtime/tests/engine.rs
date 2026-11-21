@@ -118,6 +118,8 @@ mod telemetry;
 mod temp_dir;
 #[path = "engine/tool_bound.rs"]
 mod tool_bound;
+#[path = "engine/tool_error_turn_end.rs"]
+mod tool_error_turn_end;
 #[path = "engine/tool_surface.rs"]
 mod tool_surface;
 #[path = "engine/transient_retry.rs"]

@@ -264,6 +264,9 @@ pub(super) fn record_end(runtime: &Runtime, ctx: &TurnCtx, next: Next) -> Result
             )?);
         }
     }
+    if let Some(failed) = &ctx.unanswered_tool_error {
+        commit.push_event(ctx.draft(failed.turn_ended(ctx, at)));
+    }
     runtime.apply_held(hold, commit)?;
     Ok(Some(Ended {
         reap,
