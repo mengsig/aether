@@ -76,13 +76,22 @@ pub(crate) enum Slots {
 
 impl Preflight<'_> {
     /// What every delegated child is held to under its creation hold.
-    pub(crate) fn delegated() -> Preflight<'static> {
+    pub(crate) fn delegated(parent: &Agent) -> Preflight<'_> {
         Preflight {
             run_budget: true,
             inherit_limits: true,
             parallel_limit: true,
+            delegating_parent: Some(parent),
             ..Preflight::default()
         }
+    }
+}
+
+impl ChildRequest {
+    pub(crate) fn network(&self, parent: &Agent) -> NetworkPolicy {
+        self.scope
+            .as_ref()
+            .map_or(parent.scope.network, |scope| scope.network)
     }
 }
 
@@ -115,21 +124,67 @@ pub(crate) fn engine_unavailable(
     EngineRefusal::Unavailable { kind, why }
 }
 
-/// What stops `kind` from running a child of `provider` under `network`, by
+/// What stops `kind` from running a child of `provider` under its policy, by
 /// what `detected` holds. `delegate` asks it of a fresh probe.
 pub(crate) fn engine_refusal(
     detected: &DetectedEngines,
     kind: EngineKind,
     provider: &str,
     network: NetworkPolicy,
+    approvals_required: bool,
 ) -> Option<EngineRefusal> {
     let Some(engine) = detected.get(&kind) else {
         return Some(engine_unavailable(detected, kind, provider));
     };
+    if approvals_required && !engine.gates_permissions() {
+        return Some(EngineRefusal::Policy(
+            "its engine cannot enforce the creator's required approvals".into(),
+        ));
+    }
     engine
         .validate_network_policy(network == NetworkPolicy::Allowed)
         .err()
         .map(|error| EngineRefusal::Policy(error.to_string()))
+}
+
+/// Check the authority used to prepare the child against the parent at commit.
+pub(crate) fn check_child_authority(
+    runtime: &Runtime,
+    staged: &Agent,
+    parent: &Agent,
+    child: &Agent,
+) -> Result<()> {
+    debug_assert_eq!(staged.id, parent.id);
+    debug_assert_eq!(child.parent, Some(parent.id));
+    debug_assert_eq!(child.run, parent.run);
+    debug_assert!(child.fallbacks.is_empty(), "delegation chooses one model");
+    if parent.config.leaf
+        || parent.model != staged.model
+        || parent.scope != staged.scope
+        || parent.config.delegation_policy != staged.config.delegation_policy
+        || parent.config.tools != child.config.tools
+    {
+        return Err(RuntimeError::Invalid(
+            "the parent's model, scope or delegation authority changed; retry delegation".into(),
+        ));
+    }
+    if !runtime.config.yolo {
+        if !child
+            .config
+            .approval
+            .is_narrowing_of(&parent.config.approval)
+        {
+            return Err(RuntimeError::Invalid(
+                "the prepared child dropped required approvals".into(),
+            ));
+        }
+        if !child.config.approval.is_yolo() && !runtime.engine_can_gate(&child.model)? {
+            return Err(RuntimeError::Invalid(
+                "the child's engine cannot enforce required approvals".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Why `parent` may not have this child: its delegation policy, or without
@@ -208,6 +263,8 @@ fn canonical_policy(
 /// less what belongs to the parent alone, with the request's own choices.
 pub(crate) fn child_spec(parent: &Agent, request: ChildRequest) -> CreateAgentSpec {
     let mut config = parent.config.clone();
+    // The default plus `approval: None` lets preparation inherit the current policy.
+    config.approval = Default::default();
     config.deadline = None;
     config.cost_budget = None;
     // The parent's policy bounds the parent's children, not the child's.
@@ -237,8 +294,6 @@ pub(crate) fn child_spec(parent: &Agent, request: ChildRequest) -> CreateAgentSp
         repository_root: None,
         parent: Some(parent.id),
         config: Some(config),
-        // Inherited from the parent by the runtime; a delegating agent does
-        // not get to choose its child's gates.
         approval: None,
         run: Some(parent.run),
         start: true,
@@ -263,16 +318,13 @@ pub(crate) fn prepare_child(
         return Err(RuntimeError::Invalid(refusal));
     }
     let model = request.model.clone();
-    let network = request
-        .scope
-        .as_ref()
-        .map_or(parent.scope.network, |scope| scope.network);
+    let network = request.network(parent);
     let prepared = runtime.prepare_agent(
         child_spec(parent, request),
         by,
         Preflight {
             checked: Some((&model, network)),
-            ..Preflight::delegated()
+            ..Preflight::delegated(parent)
         },
     )?;
     debug_assert_eq!(prepared.agent.parent, Some(parent.id));

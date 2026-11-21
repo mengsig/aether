@@ -18,39 +18,22 @@ pub(super) async fn delegation_refusal(
     runtime: &Runtime,
     requested: &ModelRef,
     network: aether_core::agent::NetworkPolicy,
-    parent_model: &ModelRef,
+    parent: &Agent,
     reason: impl std::fmt::Display,
 ) -> Result<ToolOutcome> {
     let mut providers = BTreeMap::new();
     let mut alternatives = BTreeSet::new();
     let mut same_id: Vec<(ModelRef, aether_model::Protocol)> = Vec::new();
+    let approvals_required = !runtime.config.yolo && !parent.config.approval.is_yolo();
     for info in runtime.models.list() {
         let (available, protocol) = match providers.get(&info.model.provider) {
             Some(cached) => *cached,
             None => {
                 let resolved = runtime.models.resolve(&info.model)?;
                 let protocol = resolved.provider.protocol;
-                let engine_ready = match crate::turn_engine::engine_kind(protocol) {
-                    None => true,
-                    Some(kind) => runtime
-                        .engines
-                        .ready()
-                        .await
-                        .get(&kind)
-                        .is_some_and(|engine| {
-                            engine
-                                .validate_network_policy(
-                                    network == aether_core::agent::NetworkPolicy::Allowed,
-                                )
-                                .is_ok()
-                        }),
-                };
-                let configured = runtime
-                    .models
-                    .auth_status(&info.model.provider)
-                    .await
-                    .configured;
-                let available = engine_ready && configured;
+                let available =
+                    delegation_provider_ready(runtime, &resolved, network, approvals_required)
+                        .await;
                 providers.insert(info.model.provider.clone(), (available, protocol));
                 (available, protocol)
             }
@@ -68,7 +51,7 @@ pub(super) async fn delegation_refusal(
         same_id.sort_by(|(a, _), (b, _)| a.cmp(b));
         let parent_protocol = runtime
             .models
-            .resolve(parent_model)
+            .resolve(&parent.model)
             .ok()
             .map(|resolved| resolved.provider.protocol);
         let chosen = same_id
@@ -81,14 +64,44 @@ pub(super) async fn delegation_refusal(
         )));
     }
     let alternatives = if alternatives.is_empty() {
-        "none under the requested network policy; use list_models to inspect provider readiness"
-            .into()
+        let approvals = if approvals_required {
+            " and required approvals"
+        } else {
+            ""
+        };
+        format!(
+            "none under the requested network policy{approvals}; use list_models to inspect provider readiness"
+        )
     } else {
         alternatives.into_iter().collect::<Vec<_>>().join(", ")
     };
     Ok(ToolOutcome::error(format!(
         "Cannot delegate to model `{requested}`: {reason}. Locally runnable models: {alternatives}"
     )))
+}
+
+async fn delegation_provider_ready(
+    runtime: &Runtime,
+    resolved: &aether_model::ResolvedModel,
+    network: aether_core::agent::NetworkPolicy,
+    approvals_required: bool,
+) -> bool {
+    let provider = &resolved.provider;
+    if let Some(kind) = crate::turn_engine::engine_kind(provider.protocol) {
+        let detected = runtime.engines.ready().await;
+        if crate::delegation_admission::engine_refusal(
+            &detected,
+            kind,
+            &provider.id,
+            network,
+            approvals_required,
+        )
+        .is_some()
+        {
+            return false;
+        }
+    }
+    runtime.models.auth_status(&provider.id).await.configured
 }
 
 pub(super) fn unavailable(

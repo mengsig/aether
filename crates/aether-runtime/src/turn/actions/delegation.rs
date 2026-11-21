@@ -113,67 +113,61 @@ async fn delegate(
         Ok(submission) => submission,
         Err(refusal) => return Ok(refusal),
     };
-    if let (Some(submission), Some(keyed)) = (&submission, &request.idempotency) {
-        match runtime.replay_created_agent(submission, ctx.base_actor.clone()) {
-            Ok(Some((child, created))) => {
-                // The receipt is the task as created; whether to wait needs it as it is now.
-                let task = match created {
-                    Some(task) => runtime.store.task(task.id)?,
-                    None => None,
-                };
-                return Ok(replayed_outcome(
-                    effects,
-                    &child,
-                    task,
-                    request.wait,
-                    &keyed.key,
-                ));
-            }
-            Ok(None) => {}
-            // A key reused for a different request: the caller's mistake.
-            Err(RuntimeError::Invalid(conflict)) => {
-                return Ok(ToolOutcome::error(format!(
-                    "delegation refused: {conflict}"
-                )));
-            }
-            Err(fault) => return Err(fault),
-        }
+    if let (Some(submission), Some(keyed)) = (&submission, &request.idempotency)
+        && let Some(outcome) =
+            replay_delegation(runtime, ctx, effects, &request, submission, keyed)?
+    {
+        return Ok(outcome);
     }
-    let network = request
-        .child
-        .scope
-        .as_ref()
-        .map_or(parent.scope.network, |scope| scope.network);
-    let requested = request.child.model.clone();
-    let child_on_engine =
-        match check_delegation_target(runtime, &requested, network, &parent).await? {
-            Ok(on_engine) => on_engine,
-            Err(refusal) => return Ok(refusal),
-        };
+    if !parent.config.tools.allows("delegate") {
+        return Ok(ToolOutcome::error(
+            "delegation refused: the current tools mode withholds `delegate`",
+        ));
+    }
+    let child_on_engine = match check_delegation_target(
+        runtime,
+        &request.child.model,
+        request.child.network(&parent),
+        &parent,
+    )
+    .await?
+    {
+        Ok(on_engine) => on_engine,
+        Err(refusal) => return Ok(refusal),
+    };
     if let Some(refusal) = policy_refusal(runtime, &parent, &request.child, Slots::Counted)? {
         return Ok(ToolOutcome::error(refusal));
     }
-    let own_references = ctx.task.as_ref().map_or(&[][..], |task| &task.references);
-    let (reference_scope, inherited_references) = crate::references::delegated_references(
-        &parent.scope,
-        own_references,
-        request.inherit_references,
-    );
-    let (child_scope, isolated) = match prepare_child_scope(runtime, &parent, &request).await? {
+    create_delegated_child(
+        runtime,
+        ctx,
+        effects,
+        &parent,
+        request,
+        child_on_engine,
+        submission,
+    )
+    .await
+}
+
+async fn create_delegated_child(
+    runtime: &Arc<Runtime>,
+    ctx: &TurnCtx,
+    effects: &mut ToolEffects,
+    parent: &Agent,
+    request: DelegateRequest,
+    child_on_engine: bool,
+    submission: Option<Submission>,
+) -> Result<ToolOutcome> {
+    let requested = request.child.model.clone();
+    let network = request.child.network(parent);
+    let (child_scope, isolated) = match prepare_child_scope(runtime, parent, &request).await? {
         Ok(prepared) => prepared,
         Err(refusal) => return Ok(refusal),
     };
     let wait = request.wait;
     let key = request.idempotency.as_ref().map(|keyed| keyed.key.clone());
-    let spec = CreateAgentSpec {
-        references: request.references,
-        inherited_references,
-        reference_scope,
-        ..child_spec(
-            &ctx.agent,
-            placed(request.child, child_scope, isolated.is_some()),
-        )
-    };
+    let spec = delegation_spec(ctx, parent, request, child_scope, isolated.is_some());
     let created = runtime.create_agent_with_preflight(
         spec,
         ctx.base_actor.clone(),
@@ -182,36 +176,59 @@ async fn delegate(
             isolated_workspace: isolated
                 .as_ref()
                 .map(|manifest| manifest.workspace.as_path()),
-            ..crate::commands::Preflight::delegated()
+            ..crate::commands::Preflight::delegated(parent)
         },
         submission,
     );
-    match created {
-        Ok((child, task)) => {
-            // Advisory (VISION §3.6 limit 3): never `?`, so a read failure
-            // cannot fail the turn on a delegation that already committed.
-            let status = cap_status(runtime, &ctx.agent, child_on_engine);
-            let vision = runtime
-                .models
-                .resolve(&requested)
-                .is_ok_and(|resolved| resolved.model.capabilities.vision);
-            let reference_note = task.as_ref().and_then(|task| {
-                crate::references::delegated_reference_note(&task.references, vision)
-            });
-            Ok(delegated_outcome(
-                effects,
-                &child,
-                Delegated {
-                    task_id: task.as_ref().map(|t| t.id),
-                    wait,
-                    key: key.as_deref(),
-                    reference_note,
-                },
-                isolated.as_ref(),
-                &status,
-            ))
-        }
-        Err(e) => Ok(refuse_delegation(runtime, isolated, e)?),
+    let (child, task) = match created {
+        Ok(created) => created,
+        Err(error) => return refuse_delegation(runtime, isolated, error),
+    };
+    debug_assert_eq!(child.parent, Some(parent.id));
+    debug_assert_eq!(child.run, parent.run);
+    let status = cap_status(runtime, parent, child_on_engine);
+    let vision = runtime
+        .models
+        .resolve(&requested)
+        .is_ok_and(|resolved| resolved.model.capabilities.vision);
+    let reference_note = task
+        .as_ref()
+        .and_then(|task| crate::references::delegated_reference_note(&task.references, vision));
+    Ok(delegated_outcome(
+        effects,
+        &child,
+        Delegated {
+            task_id: task.as_ref().map(|t| t.id),
+            wait,
+            key: key.as_deref(),
+            reference_note,
+        },
+        isolated.as_ref(),
+        &status,
+    ))
+}
+
+fn delegation_spec(
+    ctx: &TurnCtx,
+    parent: &Agent,
+    request: DelegateRequest,
+    child_scope: Option<Scope>,
+    isolated: bool,
+) -> CreateAgentSpec {
+    let own_references = ctx.task.as_ref().map_or(&[][..], |task| &task.references);
+    let (reference_scope, inherited_references) = crate::references::delegated_references(
+        &parent.scope,
+        own_references,
+        request.inherit_references,
+    );
+    let spec = child_spec(parent, placed(request.child, child_scope, isolated));
+    debug_assert_eq!(spec.parent, Some(ctx.agent.id));
+    debug_assert_eq!(spec.run, Some(ctx.agent.run));
+    CreateAgentSpec {
+        references: request.references,
+        inherited_references,
+        reference_scope,
+        ..spec
     }
 }
 
@@ -242,6 +259,39 @@ fn delegate_submission(
     Submission::new(&scoped, &keyed.request)
         .map(Some)
         .map_err(|e| ToolOutcome::error(e.to_string()))
+}
+
+fn replay_delegation(
+    runtime: &Runtime,
+    ctx: &TurnCtx,
+    effects: &mut ToolEffects,
+    request: &DelegateRequest,
+    submission: &Submission,
+    keyed: &aether_tools::DelegateKey,
+) -> Result<Option<ToolOutcome>> {
+    let (child, created) = match runtime.replay_created_agent(submission, ctx.base_actor.clone()) {
+        Ok(Some(created)) => created,
+        Ok(None) => return Ok(None),
+        Err(RuntimeError::Invalid(conflict)) => {
+            return Ok(Some(ToolOutcome::error(format!(
+                "delegation refused: {conflict}"
+            ))));
+        }
+        Err(fault) => return Err(fault),
+    };
+    debug_assert_eq!(child.parent, Some(ctx.agent.id));
+    debug_assert_eq!(child.run, ctx.agent.run);
+    let task = match created {
+        Some(task) => runtime.store.task(task.id)?,
+        None => None,
+    };
+    Ok(Some(replayed_outcome(
+        effects,
+        &child,
+        task,
+        request.wait,
+        &keyed.key,
+    )))
 }
 
 /// The reply to a repeat of a delegate call that already created its child.
@@ -306,7 +356,7 @@ pub(super) async fn check_delegation_target(
     let resolved = match runtime.models.resolve(requested) {
         Ok(resolved) => resolved,
         Err(error) => {
-            return delegation_refusal(runtime, requested, network, &parent.model, error)
+            return delegation_refusal(runtime, requested, network, parent, error)
                 .await
                 .map(Err);
         }
@@ -314,8 +364,15 @@ pub(super) async fn check_delegation_target(
     let engine_kind = crate::turn_engine::engine_kind(resolved.provider.protocol);
     if let Some(kind) = engine_kind {
         let detected = runtime.engines.recheck(kind).await;
-        if let Some(refusal) = engine_refusal(&detected, kind, &resolved.provider.id, network) {
-            return delegation_refusal(runtime, requested, network, &parent.model, refusal)
+        let approvals_required = !runtime.config.yolo && !parent.config.approval.is_yolo();
+        if let Some(refusal) = engine_refusal(
+            &detected,
+            kind,
+            &resolved.provider.id,
+            network,
+            approvals_required,
+        ) {
+            return delegation_refusal(runtime, requested, network, parent, refusal)
                 .await
                 .map(Err);
         }
@@ -327,7 +384,7 @@ pub(super) async fn check_delegation_target(
                 runtime,
                 requested,
                 network,
-                &parent.model,
+                parent,
                 format!(
                     "provider authentication is not configured. {}",
                     status.error.unwrap_or_default()

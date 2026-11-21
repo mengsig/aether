@@ -49,8 +49,7 @@ impl Checked {
         }
         // Engine detection may have changed since the template was checked.
         refuse_engine_block(runtime, template, &creator)?;
-        check_prepared_approvals(runtime, &self.child, &creator)?;
-        runtime.check_prepared(hold, &mut self.child, Preflight::delegated())
+        runtime.check_prepared(hold, &mut self.child, Preflight::delegated(&creator))
     }
 }
 
@@ -173,15 +172,17 @@ fn engine_block(
     };
     let provider = resolved.provider.id.as_str();
     // No probe follows as in `delegate`, so only what a turn would launch.
-    let Some(engine) = detected.launchable(&kind) else {
+    if detected.launchable(&kind).is_none() {
         return Ok(Some(engine_unavailable(&detected, kind, provider)));
-    };
-    if !runtime.config.yolo && !creator.config.approval.is_yolo() && !engine.gates_permissions() {
-        return Ok(Some(EngineRefusal::Policy(
-            "its engine cannot enforce the creator's required approvals".into(),
-        )));
     }
-    Ok(engine_refusal(&detected, kind, provider, network))
+    let approvals_required = !runtime.config.yolo && !creator.config.approval.is_yolo();
+    Ok(engine_refusal(
+        &detected,
+        kind,
+        provider,
+        network,
+        approvals_required,
+    ))
 }
 
 fn refused_by_engine(template: &SpawnSpec, refusal: &EngineRefusal) -> RuntimeError {
@@ -190,28 +191,6 @@ fn refused_by_engine(template: &SpawnSpec, refusal: &EngineRefusal) -> RuntimeEr
         "delegation refused: {} cannot run this child: {refusal}",
         model.as_deref().unwrap_or("its model")
     ))
-}
-
-/// Preparation may have seen a different engine and dropped the policy.
-fn check_prepared_approvals(
-    runtime: &Runtime,
-    child: &PreparedAgent,
-    creator: &Agent,
-) -> Result<()> {
-    debug_assert_eq!(child.agent.parent, Some(creator.id));
-    debug_assert_eq!(child.agent.run, creator.run);
-    if !runtime.config.yolo
-        && !child
-            .agent
-            .config
-            .approval
-            .is_narrowing_of(&creator.config.approval)
-    {
-        return Err(RuntimeError::Invalid(
-            "delegation refused: the prepared child dropped required approvals".into(),
-        ));
-    }
-    Ok(())
 }
 
 /// Refuse a new schedule whose engine could not run its child now. Nothing
@@ -418,7 +397,6 @@ pub(super) fn fire(
     let Some(prepared) = staged.current_child(&creator)? else {
         return Ok(None);
     };
-    check_prepared_approvals(runtime, &prepared, &creator)?;
     if runtime.workspace_gc_reserves(&prepared.agent.scope) {
         return Ok(Some(skipped("workspace maintenance in progress")));
     }
@@ -439,7 +417,7 @@ fn admit(
     creator: &Agent,
 ) -> Result<ScheduleOutcome> {
     let (child, task, created) =
-        runtime.admit_prepared(hold, prepared, Preflight::delegated(), None)?;
+        runtime.admit_prepared(hold, prepared, Preflight::delegated(creator), None)?;
     let task =
         task.ok_or_else(|| RuntimeError::Internal("a scheduled child must carry its task".into()))?;
     debug_assert_eq!(

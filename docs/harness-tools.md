@@ -94,6 +94,13 @@ by default; `busy="queue_one"` delivers anyway but never stacks a second unread
 trigger. Trigger delivery does not imply task completion; inspect results and
 delivery history separately.
 
+One-shot `delegate` is classified as read-only for approvals. Its child joins
+the caller's subtree and run budget. Admission applies the caller's current
+delegation policy, keeps its registered tool exposure, and checks that the
+child's scope and network access stay within the caller's. The child keeps
+the caller's approval gates, so an engine that cannot enforce them is refused.
+The runtime rechecks inherited approvals before a stored child runs again.
+
 `create_schedule` with `spawn` in place of `target` starts a child of the
 caller on each occurrence. `spawn` takes `delegate`'s arguments for the child:
 `role`, `objective`, `model` and `effort`, and optionally `name`,
@@ -109,8 +116,9 @@ with `wait=false`, admitted by the same code:
   creation and at firing. If the creator requires approvals, the child must
   run on an engine that can enforce them.
 - Creating or resuming a spawn schedule needs approval if the creator's
-  policy gates mutations. That decision covers occurrences until the schedule
-  is paused or ends.
+  policy gates mutations. The decision authorizes recurring delegation until
+  the schedule is paused or ends. Each occurrence can create a child without
+  a new call from the creator.
 - Creating the schedule is refused when the same `delegate` call would be
   refused now, and the error carries `delegate`'s refusal. That includes a
   caller already at `max_parallel`. It is also refused while the latest probe
@@ -205,6 +213,7 @@ isolated child can delegate again, choosing a shared or isolated workspace for
 each of its own children. Isolated delegation currently requires the host
 execution backend; the container backend cannot access a linked worktree's Git
 metadata outside its workspace mount.
+An isolated child's additional path grants must resolve inside its snapshot.
 
 An isolated child sees a snapshot of the source workspace at delegation time.
 The snapshot includes tracked working-tree content (including staged,
