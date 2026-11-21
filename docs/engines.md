@@ -99,19 +99,23 @@ description says why, and every tool call returns that explanation as a tool
 error: the socket, both protocol windows and the fix (`aether stop`, then
 start Aether again).
 
-A bridge that loses its daemon connection reconnects on the next call,
-retrying a refused connection after a 200 ms and then an 800 ms backoff. A
-call the drop interrupted is sent again only when the tool, as the daemon
-lists it, declares an `idempotency_key` and the call gives one. For a call
-that gives a key, the bridge asks the daemon for that schema before sending
-it, on a connection of its own, and waits at most 5 seconds; with no answer
-the call is sent but never replayed. The bridge cannot tell which tools are
-read-only, and the daemon applies its own retry
-rules to the MCP servers behind it (see
-[MCP servers](mcp-servers.md#dropped-connections)). Otherwise, or once the
-retries run out, the call ends in a `tool_transport_failed` tool error naming
-the tool, whether calling again is safe (`retryable`) and the `cause`, never a
-bare "Connection closed".
+A bridge that loses its daemon connection reconnects on the next call. Each
+connect, the handshake included, may take 5 seconds; a refused or stalled one
+is tried again after a 200 ms and then an 800 ms backoff. A call that never
+reached the daemon ends, once those run out, in a `tool_transport_failed` tool
+error with `retryable: true`. A call whose connection drops after it was sent
+is never sent again, since the bridge cannot see the tool's side-effect class:
+it ends in `tool_transport_failed` with `retryable: false`. The error names the
+tool and the `cause`, never a bare "Connection closed". The daemon applies its
+own class-based retries to the MCP servers behind it (see
+[MCP servers](mcp-servers.md#dropped-connections)).
+
+Claude Code can write a `result` and then keep streaming the same turn: on
+2026-11-21 a tool call followed one 2 seconds later. So after a successful
+Claude Code result that owes nothing, Aether keeps the engine's stdin open
+for 5 seconds. If the model streams output or calls a tool in that time, the
+result was not final and the turn goes on until the next result. Otherwise
+stdin closes and the turn ends as before.
 
 ## Claude context windows
 

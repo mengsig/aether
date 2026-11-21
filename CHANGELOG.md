@@ -46,16 +46,24 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **A tool call Claude Code streams after a mid-turn `result` is served,
+  not lost.** Aether ended the turn and closed stdin at Claude Code's first
+  `result`. A tool call streamed 2 seconds later then failed inside Claude
+  Code with a bare "Connection closed", and nothing woke the agent. Aether
+  now holds a successful result that owes nothing for 5 seconds. Any output in that
+  window continues the turn.
+
 - **A dropped tool connection no longer ends in a bare "Connection
-  closed".** The daemon reconnects a dropped MCP server and the engine bridge
-  reconnects to the daemon, with bounded backoff. A call the drop interrupted
-  is replayed only when it is read-only, an idempotent mutation or carries an
-  `idempotency_key` its tool declares; any other fails as a structured
-  `tool_transport_failed` error naming the tool, whether a retry is safe and
-  the cause. An HTTP error answer is reported as itself, not replayed. A turn
-  that ends on a failed tool call is recorded as a
-  `turn_ended_after_tool_error` custom event, for Codex too when an MCP
-  tool's result carries `isError` on a completed item.
+  closed".** The daemon reconnects a dropped MCP server, and the engine
+  bridge reconnects to the daemon, with bounded backoff and a bounded connect
+  and handshake. A call the drop interrupted is replayed only when its tool
+  is classed `read_only` or `idempotent_mutation` in config. Any other call
+  fails as a structured `tool_transport_failed` error, naming the tool,
+  whether a retry is safe and the cause. An HTTP error answer, a malformed
+  body or a timeout is reported as itself, not replayed. A turn that ends on
+  a failed tool call is recorded as a `turn_ended_after_tool_error` custom
+  event. Codex turns record it too when an MCP tool's result carries
+  `isError` on a completed item.
 
 - **One-shot delegation preserves the caller's approval gates and tool
   exposure.** Admission refuses engines that cannot enforce the required

@@ -12,20 +12,21 @@ stdio server, one endpoint for an HTTP one.
 
 ## Dropped connections
 
-When a server's connection drops (its process exits, its pipe or socket
-closes, or a call times out), Aether reconnects on the next call. A call the
-drop interrupted is sent again, after a 200 ms and then an 800 ms backoff,
-only when sending it twice is safe: the server's tool is classed `read_only`
-or `idempotent_mutation`, or the tool's input schema declares an
-`idempotency_key` property and the call gives a non-blank one. Declaring the
-key is the tool's promise to answer a repeat with the first result, so a key
-the schema does not declare makes nothing safe. A call the server never
-received, because the connection could not be opened, is retried the same way
-whatever its class.
+When a server's connection drops (its process exits, or its pipe or socket
+closes), Aether reconnects on the next call. A call the drop interrupted is
+sent again, after a 200 ms and then an 800 ms backoff, only when its tool is
+classed `read_only` or `idempotent_mutation` in the server's `[[mcp.servers]]`
+config. The class is known before the call is sent, and nothing else, such as
+an `idempotency_key` argument, makes a call safe to replay. A call the server
+never received, because the connection could not be opened, is retried the
+same way whatever its class. Every connect and request is bounded by the
+20-second MCP request timeout.
 
-A server that answers badly, with an HTTP error status or a body that is not
-JSON-RPC, has not dropped the call. The connection is reset, but the call is
-not sent again, and it fails with that answer (`bad response: http 503 ...`).
+A server that answers badly, with an HTTP error status, a body that is not
+JSON-RPC or an SSE stream with no reply to the call, has not dropped the call.
+Neither has one that times out, since it may still be running the call. The
+connection is reset, but the call is not sent again, and it fails with that
+answer (`bad response: http 503 ...`, `timeout`).
 
 Any other call is not sent again, since it may already have had effects. It
 fails, as do retries that run out, with a structured tool error in place of
