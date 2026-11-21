@@ -136,8 +136,7 @@ async fn tools_are_discovered_classified_and_callable() {
             "mcp__mock__read_note",
             "mcp__mock__write_note",
             "mcp__mock__read_env",
-            "mcp__mock__echo_request",
-            "mcp__mock__post_once"
+            "mcp__mock__echo_request"
         ]
     );
 
@@ -857,6 +856,13 @@ async fn an_optional_token_connects_without_one_and_says_so() {
 /// The mock server, set to drop its connection on the first call it receives
 /// and to log every call, plus the files that prove what happened.
 fn dropping_once(dir: &std::path::Path) -> (Arc<McpManager>, std::path::PathBuf) {
+    dropping_once_with(dir, classes())
+}
+
+fn dropping_once_with(
+    dir: &std::path::Path,
+    classes: BTreeMap<String, SideEffectClass>,
+) -> (Arc<McpManager>, std::path::PathBuf) {
     let calls = dir.join("calls.log");
     let env = BTreeMap::from([
         (
@@ -869,7 +875,7 @@ fn dropping_once(dir: &std::path::Path) -> (Arc<McpManager>, std::path::PathBuf)
         ),
     ]);
     (
-        McpManager::new(vec![spec(classes(), env)], None, no_hidden()),
+        McpManager::new(vec![spec(classes, env)], None, no_hidden()),
         calls,
     )
 }
@@ -955,25 +961,27 @@ async fn a_mutating_call_whose_connection_drops_is_not_replayed_and_says_so() {
 }
 
 #[tokio::test]
-async fn a_mutating_call_with_a_declared_idempotency_key_is_replayed() {
+async fn a_call_to_a_tool_classed_idempotent_is_replayed() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let (manager, calls) = dropping_once(dir.path());
+    let mut classes = classes();
+    classes.insert("write_note".to_owned(), SideEffectClass::IdempotentMutation);
+    let (manager, calls) = dropping_once_with(dir.path(), classes);
     let ToolExecution::Outcome(outcome) = execute(
         &manager,
-        "mcp__mock__post_once",
-        json!({"text": "t", "idempotency_key": "post-1"}),
+        "mcp__mock__write_note",
+        json!({"key": "k", "text": "t"}),
     )
     .await
     else {
         panic!("an MCP call ends in an outcome");
     };
     assert!(!outcome.is_error, "{}", outcome.content);
-    assert_eq!(outcome.content, "posted");
-    assert_eq!(received(&calls), ["post_once", "post_once"]);
+    assert_eq!(outcome.content, "written");
+    assert_eq!(received(&calls), ["write_note", "write_note"]);
 }
 
 #[tokio::test]
-async fn a_key_the_tool_does_not_declare_does_not_make_a_mutation_replayable() {
+async fn an_idempotency_key_does_not_make_an_unclassed_mutation_replayable() {
     let dir = tempfile::tempdir().expect("tempdir");
     let (manager, calls) = dropping_once(dir.path());
     let ToolExecution::Outcome(outcome) = execute(
@@ -989,7 +997,7 @@ async fn a_key_the_tool_does_not_declare_does_not_make_a_mutation_replayable() {
     assert_eq!(
         received(&calls),
         ["write_note"],
-        "write_note never promised to deduplicate, so it is sent once"
+        "only the configured class decides replay, so it is sent once"
     );
     let failure: serde_json::Value =
         serde_json::from_str(&outcome.content).expect("the result is structured");

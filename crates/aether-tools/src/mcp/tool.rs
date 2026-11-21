@@ -133,8 +133,8 @@ impl Tool for McpTool {
         cancel: CancellationToken,
     ) -> Result<ToolExecution, ToolError> {
         let caller = McpCaller::of(ctx);
-        let replay_safe = self.info.side_effect.safe_to_retry()
-            || aether_core::mcp::carries_declared_idempotency_key(&self.input_schema, &input);
+        // Decided from the configured class alone, before anything is sent.
+        let replay_safe = self.info.side_effect.safe_to_retry();
         let call = self
             .manager
             .call(&self.server, &self.info.name, input, &caller, replay_safe);

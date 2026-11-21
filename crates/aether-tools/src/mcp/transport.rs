@@ -262,7 +262,8 @@ impl StdioTransport {
                 return unwrap_result(message, id);
             }
         }
-        Err(McpError::Transport(
+        // It kept talking, just never with this reply: an answer, not a drop.
+        Err(McpError::BadResponse(
             "server did not answer within the tolerated number of messages".into(),
         ))
     }
@@ -295,11 +296,11 @@ async fn read_bounded_line(reader: &mut Reader) -> Result<Option<Vec<u8>>, McpEr
         };
         reader.consume(taken);
         if line.len() > MAX_MESSAGE_BYTES {
-            // Transport, not Protocol: the rest of the oversized line is
+            // A bad response, not Protocol: the rest of the oversized line is
             // still in the pipe, so framing is lost and every later read
             // would be garbage. Fatal drops the connection and fails the
             // server, rather than leaving it advertised as Ready.
-            return Err(McpError::Transport(format!(
+            return Err(McpError::BadResponse(format!(
                 "a server message passed the {MAX_MESSAGE_BYTES}-byte cap; the stream can no \
                  longer be framed"
             )));
@@ -409,7 +410,11 @@ impl HttpTransport {
             .json(message)
             .send()
             .await
-            .map_err(|e| McpError::Transport(format!("request failed: {e}")))?;
+            .map_err(|e| match e.is_timeout() {
+                // The server may have it and still be working on it.
+                true => McpError::Timeout,
+                false => McpError::Transport(format!("request failed: {e}")),
+            })?;
         if let Some(id) = response
             .headers()
             .get("mcp-session-id")

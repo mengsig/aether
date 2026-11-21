@@ -121,8 +121,8 @@ pub const TOOL_TRANSPORT_FAILED: &str = "tool_transport_failed";
 const MAX_TRANSPORT_CAUSE_CHARS: usize = 1_000;
 
 /// The structured result of a call whose transport failed. `retryable` says
-/// whether calling again is safe: nothing reached the server, or the call is
-/// read-only or idempotent. A call that may have taken effect is `false`.
+/// whether calling again is safe: nothing reached the server, or its tool is
+/// classed read-only or idempotent. A call that may have taken effect is `false`.
 pub fn tool_transport_failed(tool: &str, retryable: bool, cause: &str) -> serde_json::Value {
     debug_assert!(!tool.is_empty(), "a transport failure names its tool");
     let cause = match cause.trim() {
@@ -136,33 +136,6 @@ pub fn tool_transport_failed(tool: &str, retryable: bool, cause: &str) -> serde_
         "cause": cause,
     })
 }
-
-/// Whether sending this call twice is one effect because of its key: the
-/// tool declares `idempotency_key` in its input schema, so it promises to
-/// answer a repeat with the first result, and the call gives a non-blank one.
-/// A key the tool does not declare promises nothing.
-pub fn carries_declared_idempotency_key(
-    input_schema: &serde_json::Value,
-    input: &serde_json::Value,
-) -> bool {
-    let declared = input_schema
-        .get("properties")
-        .and_then(|properties| properties.get(IDEMPOTENCY_KEY_FIELD))
-        .is_some();
-    declared && gives_idempotency_key(input)
-}
-
-/// Whether the call gives a non-blank `idempotency_key`, whether or not its
-/// tool declares one.
-pub fn gives_idempotency_key(input: &serde_json::Value) -> bool {
-    input
-        .get(IDEMPOTENCY_KEY_FIELD)
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|key| !key.trim().is_empty())
-}
-
-/// The argument a tool declares to make a repeated call one effect.
-const IDEMPOTENCY_KEY_FIELD: &str = "idempotency_key";
 
 #[cfg(test)]
 mod tests {
@@ -183,26 +156,6 @@ mod tests {
         assert_ne!(sanitize_name("Files"), sanitize_name("files"));
         // Anything else does: `read.file` and `read_file` do.
         assert_eq!(sanitize_name("read.file"), sanitize_name("read_file"));
-    }
-
-    #[test]
-    fn only_a_key_the_tool_declares_makes_a_replay_one_effect() {
-        let keyed = serde_json::json!({"properties": {"idempotency_key": {"type": "string"}}});
-        let plain = serde_json::json!({"properties": {"text": {"type": "string"}}});
-        let with_key = serde_json::json!({"idempotency_key": "k-1"});
-        assert!(carries_declared_idempotency_key(&keyed, &with_key));
-        assert!(
-            !carries_declared_idempotency_key(&plain, &with_key),
-            "a key the tool never declared promises nothing"
-        );
-        assert!(!carries_declared_idempotency_key(
-            &keyed,
-            &serde_json::json!({"idempotency_key": "  "})
-        ));
-        assert!(!carries_declared_idempotency_key(
-            &keyed,
-            &serde_json::json!({})
-        ));
     }
 
     #[test]

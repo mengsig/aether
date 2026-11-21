@@ -106,13 +106,15 @@ impl McpError {
     /// error says something about the call; a transport failure says the
     /// server is gone.
     fn is_fatal(&self) -> bool {
-        self.is_dropped() || matches!(self, Self::BadResponse(_))
+        // A timed-out stdio reply may still arrive and desynchronise the stream.
+        self.is_dropped() || matches!(self, Self::BadResponse(_) | Self::Timeout)
     }
 
     /// Whether the connection was lost without an answer, so a new one may
-    /// get one. A bad response was an answer, and asking again repeats it.
+    /// get one. A bad response was an answer, and asking again repeats it; a
+    /// timeout reached a live server that may still be running the call.
     fn is_dropped(&self) -> bool {
-        matches!(self, Self::Transport(_) | Self::Closed | Self::Timeout)
+        matches!(self, Self::Transport(_) | Self::Closed)
     }
 }
 
@@ -500,7 +502,7 @@ impl McpManager {
     /// Call a tool on a server for `caller`, connecting first if needed. A
     /// dropped connection marks the server failed and is reconnected with
     /// bounded backoff. The call itself is sent again only when `replay_safe`
-    /// (read-only, idempotent or keyed); otherwise it fails as
+    /// (its tool is classed read-only or idempotent); otherwise it fails as
     /// [`McpError::TransportFailed`], since it may already have taken effect.
     pub async fn call(
         &self,
