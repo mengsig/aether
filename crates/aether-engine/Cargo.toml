@@ -39,3 +39,4 @@ tempfile = { workspace = true }
 [dev-dependencies]
 aether-context = { workspace = true }
 nix = { workspace = true, features = ["socket"] }
+tokio = { workspace = true, features = ["test-util"] }

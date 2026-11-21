@@ -38,15 +38,11 @@ struct Fixture {
     _dir: tempfile::TempDir,
 }
 
-/// What the mock daemon counts and how it misbehaves, shared by connections.
+/// What the mock daemon counts, shared by its connections.
 #[derive(Clone, Default)]
 struct DaemonScript {
     /// How many `flaky` calls reached the daemon; the first is dropped.
     flaky: Arc<AtomicUsize>,
-    /// How many tool lists it answered.
-    lists: Arc<AtomicUsize>,
-    /// Never answer a tool list, like a daemon too busy to.
-    stall_lists: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Drop for Fixture {
@@ -179,13 +175,7 @@ async fn mock_connection(
             Command::EngineTools { agent, token } => {
                 assert_eq!(agent, expected_agent);
                 assert_eq!(token, TOKEN);
-                if script.stall_lists.load(Ordering::SeqCst) {
-                    std::future::pending::<()>().await;
-                }
-                let listed_before = script.lists.fetch_add(1, Ordering::SeqCst);
-                Ok(Reply::EngineTools {
-                    tools: offered_tools(listed_before),
-                })
+                Ok(Reply::EngineTools { tools: vec![] })
             }
             Command::EngineTool {
                 agent,
@@ -221,16 +211,8 @@ async fn mock_connection(
                     }
                     // The first one drops the connection without a reply,
                     // like a daemon that restarts mid-call.
-                    "flaky" | "flaky_unkeyed" | "flaky_rekeyed"
-                        if flaky.fetch_add(1, Ordering::SeqCst) == 0 =>
-                    {
-                        return;
-                    }
-                    "always_drops" => {
-                        flaky.fetch_add(1, Ordering::SeqCst);
-                        return;
-                    }
-                    "flaky" | "flaky_unkeyed" | "flaky_rekeyed" => Ok(Reply::EngineTool {
+                    "flaky" if flaky.fetch_add(1, Ordering::SeqCst) == 0 => return,
+                    "flaky" => Ok(Reply::EngineTool {
                         content: "recovered".into(),
                         is_error: false,
                     }),
@@ -307,11 +289,7 @@ async fn held_tool_does_not_block_later_tool_ping_or_tool_list() {
         match reply["id"].clone() {
             id if id == "message" => assert_eq!(reply["result"]["content"][0]["text"], "delivered"),
             id if id == 3 => assert_eq!(reply["result"], json!({})),
-            id if id == 4 => {
-                let tools = reply["result"]["tools"].as_array().expect("a tool list");
-                assert_eq!(tools.len(), offered_tools(0).len() + 1);
-                assert_eq!(tools.last(), Some(&permission_tool()));
-            }
+            id if id == 4 => assert_eq!(reply["result"]["tools"], json!([permission_tool()])),
             id => panic!("unexpected reply while first call is still held: {id}"),
         }
         assert!(!ids.contains(&reply["id"]), "each id answered once");
@@ -564,108 +542,13 @@ fn explanation(text: &str) -> String {
     }
 }
 
-/// The mock daemon's tools: `flaky` and `always_drops` declare an
-/// `idempotency_key`, so a keyed call to them is one effect when sent again;
-/// `flaky_rekeyed` declares it only once a list has been given before.
-fn offered_tools(listed_before: usize) -> Vec<aether_core::model::ToolSpec> {
-    let spec = |name: &str, properties: Value| aether_core::model::ToolSpec {
-        name: name.into(),
-        description: format!("{name} (test)"),
-        input_schema: json!({"type": "object", "properties": properties}),
-        strict: false,
-    };
-    let keyed = json!({"idempotency_key": {"type": "string"}});
-    let rekeyed = if listed_before == 0 {
-        json!({})
-    } else {
-        keyed.clone()
-    };
-    vec![
-        spec("flaky", keyed.clone()),
-        spec("always_drops", keyed),
-        spec("flaky_unkeyed", json!({})),
-        spec("flaky_rekeyed", rekeyed),
-    ]
-}
-
-fn call_request(id: usize, name: &str, arguments: Value) -> Value {
-    json!({"jsonrpc": "2.0", "id": id, "method": "tools/call",
-        "params": {"name": name, "arguments": arguments}})
-}
-
-fn flaky_request(id: usize, arguments: Value) -> Value {
-    call_request(id, "flaky", arguments)
-}
-
 #[tokio::test]
-async fn a_key_the_tool_does_not_declare_does_not_make_a_dropped_call_replayable() {
+async fn a_call_whose_daemon_connection_drops_is_not_replayed_and_says_so() {
     let mut fixture = Fixture::new();
     fixture
-        .send(call_request(
-            1,
-            "flaky_unkeyed",
-            json!({"idempotency_key": "once"}),
-        ))
+        .send(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "flaky", "arguments": {"idempotency_key": "once"}}}))
         .await;
-    let reply = fixture.reply().await;
-    let failure = &reply["result"]["structuredContent"];
-    assert_eq!(failure["error"], "tool_transport_failed", "{reply}");
-    assert_eq!(failure["retryable"], false, "nothing promised one effect");
-    assert_eq!(
-        fixture.script.flaky.load(Ordering::SeqCst),
-        1,
-        "sent exactly once"
-    );
-    fixture.close_input().await;
-}
-
-#[tokio::test]
-async fn a_keyed_call_whose_daemon_keeps_dropping_fails_retryable() {
-    let mut fixture = Fixture::new();
-    fixture
-        .send(call_request(
-            1,
-            "always_drops",
-            json!({"idempotency_key": "once"}),
-        ))
-        .await;
-    let reply = fixture.reply().await;
-    let failure = &reply["result"]["structuredContent"];
-    assert_eq!(failure["error"], "tool_transport_failed", "{reply}");
-    assert_eq!(
-        failure["retryable"], true,
-        "a keyed call stays safe to send again"
-    );
-    assert_eq!(
-        fixture.script.flaky.load(Ordering::SeqCst),
-        RECONNECT_BACKOFF.len() + 1,
-        "the first try and one replay per backoff, then no more"
-    );
-    fixture.close_input().await;
-}
-
-#[tokio::test]
-async fn a_keyed_call_whose_daemon_connection_drops_is_replayed_and_succeeds() {
-    let mut fixture = Fixture::new();
-    fixture
-        .send(flaky_request(1, json!({"idempotency_key": "once"})))
-        .await;
-    let reply = fixture.reply().await;
-    assert_eq!(reply["id"], 1);
-    assert_eq!(reply["result"]["isError"], false, "{reply}");
-    assert_eq!(reply["result"]["content"][0]["text"], "recovered");
-    assert_eq!(
-        fixture.script.flaky.load(Ordering::SeqCst),
-        2,
-        "dropped once, then replayed"
-    );
-    fixture.close_input().await;
-}
-
-#[tokio::test]
-async fn an_unkeyed_call_whose_daemon_connection_drops_is_not_replayed_and_says_so() {
-    let mut fixture = Fixture::new();
-    fixture.send(flaky_request(1, json!({}))).await;
     let reply = fixture.reply().await;
     assert_eq!(reply["id"], 1);
     assert_eq!(reply["result"]["isError"], true, "{reply}");
@@ -674,7 +557,7 @@ async fn an_unkeyed_call_whose_daemon_connection_drops_is_not_replayed_and_says_
     assert_eq!(failure["tool"], "flaky");
     assert_eq!(
         failure["retryable"], false,
-        "the daemon may already have run it"
+        "the daemon may already have run it, key or not"
     );
     let cause = failure["cause"].as_str().expect("a cause");
     assert!(cause.contains("dropped mid-call"), "{cause}");
@@ -693,56 +576,48 @@ async fn an_unkeyed_call_whose_daemon_connection_drops_is_not_replayed_and_says_
     fixture.close_input().await;
 }
 
-#[tokio::test]
-async fn replay_is_decided_by_the_schema_the_call_was_sent_under() {
-    let mut fixture = Fixture::new();
-    fixture
-        .send(call_request(
-            1,
-            "flaky_rekeyed",
-            json!({"idempotency_key": "once"}),
-        ))
-        .await;
-    let reply = fixture.reply().await;
-    let failure = &reply["result"]["structuredContent"];
-    assert_eq!(failure["error"], "tool_transport_failed", "{reply}");
-    assert_eq!(
-        failure["retryable"], false,
-        "the tool that ran it promised nothing"
-    );
-    assert_eq!(
-        fixture.script.flaky.load(Ordering::SeqCst),
-        1,
-        "sent exactly once"
-    );
-    assert_eq!(
-        fixture.script.lists.load(Ordering::SeqCst),
-        1,
-        "asked once, before sending"
-    );
-    fixture.close_input().await;
+/// A daemon that accepts the socket and then never answers the handshake.
+fn stalled_daemon_at(socket: &Path, accepted: Arc<AtomicUsize>) -> JoinHandle<()> {
+    let listener = UnixListener::bind(socket).expect("bind stalled daemon");
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        loop {
+            let (stream, _) = listener.accept().await.expect("accept");
+            accepted.fetch_add(1, Ordering::SeqCst);
+            held.push(stream);
+        }
+    })
 }
 
-#[tokio::test]
-async fn a_daemon_that_never_lists_its_tools_cannot_stall_a_keyed_call() {
-    let mut fixture = Fixture::new();
-    fixture.script.stall_lists.store(true, Ordering::SeqCst);
-    fixture
-        .send(flaky_request(1, json!({"idempotency_key": "once"})))
-        .await;
-    let line = tokio::time::timeout(SCHEMA_LOOKUP_TIMEOUT + DEADLINE, fixture.output.next_line())
-        .await
-        .expect("a stalled tool list is bounded")
-        .expect("read reply")
-        .expect("reply before EOF");
-    let reply: Value = serde_json::from_str(&line).expect("JSON reply");
+#[tokio::test(start_paused = true)]
+async fn a_stalled_daemon_fails_the_call_within_bounded_reconnects() {
+    let dir = tempfile::tempdir().expect("temporary socket directory");
+    let socket = dir.path().join("daemon.sock");
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let daemon = stalled_daemon_at(&socket, accepted.clone());
+    let started = tokio::time::Instant::now();
+    let params = json!({"name": "send_message", "arguments": {}});
+    let reply = call_tool(&socket, AgentId::new(), TOKEN, json!(7), &params).await;
+    let waited = started.elapsed();
+    daemon.abort();
+    let backoff: Duration = RECONNECT_BACKOFF.iter().sum();
+    let bound = CONNECT_TIMEOUT * (RECONNECT_BACKOFF.len() as u32 + 1) + backoff;
+    assert!(
+        waited <= bound,
+        "every connect is bounded: {waited:?} > {bound:?}"
+    );
+    assert_eq!(reply["id"], 7);
+    assert_eq!(reply["result"]["isError"], true, "{reply}");
     let failure = &reply["result"]["structuredContent"];
     assert_eq!(failure["error"], "tool_transport_failed", "{reply}");
-    assert_eq!(failure["retryable"], false, "unknown safety is not safe");
-    assert_eq!(
-        fixture.script.flaky.load(Ordering::SeqCst),
-        1,
-        "sent exactly once"
+    assert_eq!(failure["retryable"], true, "nothing reached the daemon");
+    let cause = failure["cause"].as_str().expect("a cause");
+    assert!(
+        cause.contains("did not finish the MCP bridge's connect and handshake"),
+        "{cause}"
     );
-    fixture.close_input().await;
+    assert!(
+        accepted.load(Ordering::SeqCst) >= 1,
+        "the bridge did connect"
+    );
 }

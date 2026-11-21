@@ -78,14 +78,18 @@ fn unavailable_tool(reason: &str) -> Value {
 }
 
 /// The waits before each reconnect to the daemon: bounded, so a daemon that
-/// stays away fails the call in about a second rather than hanging the turn.
+/// stays away fails the call in seconds rather than hanging the turn.
 const RECONNECT_BACKOFF: [Duration; 2] = [Duration::from_millis(200), Duration::from_millis(800)];
+
+/// How long one connect may take, the Hello handshake included. A daemon that
+/// accepts the socket but never answers must not hold the engine's call.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Why the bridge has no connection, in terms the operator can act on.
 struct NoConnection {
     reason: String,
-    /// The socket could not be reached at all, as opposed to a daemon that
-    /// answered and refused this bridge: only the first can heal by itself.
+    /// The daemon could not be reached or did not answer in time, as opposed
+    /// to a daemon that answered and refused this bridge: only the first can heal.
     transient: bool,
 }
 
@@ -99,26 +103,35 @@ fn is_transport_drop(error: &ClientError) -> bool {
 }
 
 /// A connection to the daemon, reconnecting with bounded backoff while the
-/// socket cannot be reached, or why there is none: the socket, both protocol
-/// windows and the fix.
+/// socket cannot be reached or the handshake stalls, or why there is none.
 async fn connect(socket: &Path) -> Result<Client, NoConnection> {
     let mut waits = RECONNECT_BACKOFF.iter();
     loop {
-        let error = match Client::connect(socket).await {
-            Ok(client) => return Ok(client),
-            Err(error) => error,
+        let failure = match tokio::time::timeout(CONNECT_TIMEOUT, Client::connect(socket)).await {
+            Ok(Ok(client)) => return Ok(client),
+            Ok(Err(error)) => NoConnection {
+                reason: unreachable_daemon(socket, &error),
+                transient: is_transport_drop(&error),
+            },
+            Err(_) => NoConnection {
+                reason: stalled_daemon(socket),
+                transient: true,
+            },
         };
-        let transient = is_transport_drop(&error);
-        match waits.next().filter(|_| transient) {
+        match waits.next().filter(|_| failure.transient) {
             Some(wait) => tokio::time::sleep(*wait).await,
-            None => {
-                return Err(NoConnection {
-                    reason: unreachable_daemon(socket, &error),
-                    transient,
-                });
-            }
+            None => return Err(failure),
         }
     }
+}
+
+fn stalled_daemon(socket: &Path) -> String {
+    format!(
+        "the Aether daemon at {} did not finish the MCP bridge's connect and handshake \
+         within {} ms",
+        socket.display(),
+        CONNECT_TIMEOUT.as_millis()
+    )
 }
 
 fn unreachable_daemon(socket: &Path, error: &ClientError) -> String {
@@ -166,46 +179,6 @@ fn transport_failed(id: Value, tool: &str, retryable: bool, cause: &str) -> Valu
             "isError": true
         }
     })
-}
-
-/// How long the bridge waits for the tool list it decides replay safety from.
-/// Past it the call is sent anyway, just never replayed.
-const SCHEMA_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Whether sending this call to the daemon again is one effect: the daemon
-/// offers `tool` with an `idempotency_key` in its schema and the call gives
-/// one. Asked before the call is sent, so it describes the tool that receives
-/// it, on a connection of its own and bounded; when the daemon cannot say, no.
-async fn replays_as_one_effect(
-    socket: &Path,
-    agent: AgentId,
-    token: &str,
-    tool: &str,
-    input: &Value,
-) -> bool {
-    if !aether_core::mcp::gives_idempotency_key(input) {
-        return false;
-    }
-    let listed = match connect(socket).await {
-        Ok(client) => {
-            let client = client.with_request_timeout(SCHEMA_LOOKUP_TIMEOUT);
-            tool_list(&client, agent, token).await
-        }
-        Err(NoConnection { reason, .. }) => Err(anyhow::anyhow!(reason)),
-    };
-    let tools = match listed {
-        Ok(tools) => tools,
-        Err(error) => {
-            tracing::warn!(%agent, tool, %error, "bridge: cannot tell whether the call may be replayed");
-            return false;
-        }
-    };
-    tools
-        .iter()
-        .find(|offered| offered["name"] == tool)
-        .is_some_and(|offered| {
-            aether_core::mcp::carries_declared_idempotency_key(&offered["inputSchema"], input)
-        })
 }
 
 fn dropped_mid_call(error: &ClientError) -> String {
@@ -337,48 +310,34 @@ async fn call_tool(socket: &Path, agent: AgentId, token: &str, id: Value, params
         .unwrap_or("")
         .to_owned();
     let input = params.get("arguments").cloned().unwrap_or(json!({}));
-    let replay_safe = replays_as_one_effect(socket, agent, token, &name, &input).await;
-    let mut waits = RECONNECT_BACKOFF.iter();
-    let mut dropped = false;
-    loop {
-        let client = match connect(socket).await {
-            // Approval and native wait replies deliberately have no deadline.
-            Ok(client) => client.without_request_timeout(),
-            Err(NoConnection { reason, transient }) => {
-                tracing::warn!(%agent, tool = %name, "bridge: {reason}");
-                // Safe to call again unless a drop left the daemon maybe running it.
-                let retryable = !dropped || replay_safe;
-                return match transient {
-                    true => transport_failed(id, &name, retryable, &reason),
-                    false => tool_error(id, &reason),
-                };
-            }
-        };
-        let reply = client
-            .request(Command::EngineTool {
-                agent,
-                token: token.to_owned(),
-                name: name.clone(),
-                input: input.clone(),
-            })
-            .await;
-        let error = match reply {
-            Err(error) if is_transport_drop(&error) => error,
-            reply => return answered(id, reply),
-        };
-        // The daemon may already have run it: only a call its tool's own
-        // idempotency_key makes one effect is sent again.
-        if !replay_safe {
-            tracing::warn!(%agent, tool = %name, %error, "bridge: the daemon connection dropped mid-call");
-            return transport_failed(id, &name, false, &dropped_mid_call(&error));
+    let client = match connect(socket).await {
+        // Approval and native wait replies deliberately have no deadline.
+        Ok(client) => client.without_request_timeout(),
+        Err(NoConnection { reason, transient }) => {
+            tracing::warn!(%agent, tool = %name, "bridge: {reason}");
+            // Nothing reached the daemon, so calling again is safe.
+            return match transient {
+                true => transport_failed(id, &name, true, &reason),
+                false => tool_error(id, &reason),
+            };
         }
-        let Some(wait) = waits.next() else {
-            tracing::warn!(%agent, tool = %name, %error, "bridge: the daemon connection kept dropping");
-            return transport_failed(id, &name, true, &dropped_mid_call(&error));
-        };
-        tracing::info!(%agent, tool = %name, %error, "bridge: replaying a keyed call after a dropped connection");
-        tokio::time::sleep(*wait).await;
-        dropped = true;
+    };
+    let reply = client
+        .request(Command::EngineTool {
+            agent,
+            token: token.to_owned(),
+            name: name.clone(),
+            input,
+        })
+        .await;
+    match reply {
+        // The daemon may already have run it, and the bridge cannot see the
+        // tool's side-effect class: never sent twice, and not safe to repeat.
+        Err(error) if is_transport_drop(&error) => {
+            tracing::warn!(%agent, tool = %name, %error, "bridge: the daemon connection dropped mid-call");
+            transport_failed(id, &name, false, &dropped_mid_call(&error))
+        }
+        reply => answered(id, reply),
     }
 }
 
