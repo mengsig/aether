@@ -4,6 +4,7 @@
 //! stdout is the protocol channel; nothing else may be written to it.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use aether_client::{Client, ClientError};
 use aether_core::id::AgentId;
@@ -76,12 +77,48 @@ fn unavailable_tool(reason: &str) -> Value {
     })
 }
 
-/// A connection to the daemon, or why there is none in terms the operator
-/// can act on: the socket, both protocol windows and the fix.
-async fn connect(socket: &Path) -> Result<Client, String> {
-    Client::connect(socket)
-        .await
-        .map_err(|error| unreachable_daemon(socket, &error))
+/// The waits before each reconnect to the daemon: bounded, so a daemon that
+/// stays away fails the call in about a second rather than hanging the turn.
+const RECONNECT_BACKOFF: [Duration; 2] = [Duration::from_millis(200), Duration::from_millis(800)];
+
+/// Why the bridge has no connection, in terms the operator can act on.
+struct NoConnection {
+    reason: String,
+    /// The socket could not be reached at all, as opposed to a daemon that
+    /// answered and refused this bridge: only the first can heal by itself.
+    transient: bool,
+}
+
+/// Whether an error means the connection to the daemon dropped or never
+/// opened, rather than a daemon that answered and refused.
+fn is_transport_drop(error: &ClientError) -> bool {
+    matches!(
+        error,
+        ClientError::Io(_) | ClientError::Disconnected | ClientError::DeliveryUnconfirmed(_)
+    )
+}
+
+/// A connection to the daemon, reconnecting with bounded backoff while the
+/// socket cannot be reached, or why there is none: the socket, both protocol
+/// windows and the fix.
+async fn connect(socket: &Path) -> Result<Client, NoConnection> {
+    let mut waits = RECONNECT_BACKOFF.iter();
+    loop {
+        let error = match Client::connect(socket).await {
+            Ok(client) => return Ok(client),
+            Err(error) => error,
+        };
+        let transient = is_transport_drop(&error);
+        match waits.next().filter(|_| transient) {
+            Some(wait) => tokio::time::sleep(*wait).await,
+            None => {
+                return Err(NoConnection {
+                    reason: unreachable_daemon(socket, &error),
+                    transient,
+                });
+            }
+        }
+    }
 }
 
 fn unreachable_daemon(socket: &Path, error: &ClientError) -> String {
@@ -110,6 +147,34 @@ fn tool_error(id: Value, text: &str) -> Value {
         "jsonrpc": "2.0", "id": id,
         "result": { "content": [{ "type": "text", "text": text }], "isError": true }
     })
+}
+
+/// A call whose connection to the daemon failed: never a bare "connection
+/// closed", so the model and its host can tell whether to call again.
+fn transport_failed(id: Value, tool: &str, retryable: bool, cause: &str) -> Value {
+    let tool = if tool.is_empty() {
+        "(unnamed tool)"
+    } else {
+        tool
+    };
+    let failure = aether_core::mcp::tool_transport_failed(tool, retryable, cause);
+    json!({
+        "jsonrpc": "2.0", "id": id,
+        "result": {
+            "content": [{ "type": "text", "text": failure.to_string() }],
+            "structuredContent": failure,
+            "isError": true
+        }
+    })
+}
+
+/// Whether the model gave this call an idempotency key, which makes sending it
+/// to the daemon again one effect rather than two.
+fn carries_idempotency_key(input: &Value) -> bool {
+    input
+        .get("idempotency_key")
+        .and_then(Value::as_str)
+        .is_some_and(|key| !key.trim().is_empty())
 }
 
 /// Serve MCP on stdin/stdout until the engine closes the pipe. A daemon that
@@ -216,7 +281,7 @@ async fn handle_request(socket: &Path, agent: AgentId, token: &str, req: Value) 
 async fn list_tools(socket: &Path, agent: AgentId, token: &str, id: Value) -> Value {
     let client = match connect(socket).await {
         Ok(client) => client,
-        Err(reason) => {
+        Err(NoConnection { reason, .. }) => {
             tracing::warn!(%agent, "bridge: {reason}");
             let tools = [permission_tool(), unavailable_tool(&reason)];
             return json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": tools } });
@@ -237,23 +302,51 @@ async fn call_tool(socket: &Path, agent: AgentId, token: &str, id: Value, params
         .unwrap_or("")
         .to_owned();
     let input = params.get("arguments").cloned().unwrap_or(json!({}));
-    let client = match connect(socket).await {
-        Ok(client) => client,
-        Err(reason) => {
-            tracing::warn!(%agent, tool = %name, "bridge: {reason}");
-            return tool_error(id, &reason);
-        }
-    };
-    // Approval and native wait replies deliberately have no deadline.
-    let reply = client
-        .without_request_timeout()
-        .request(Command::EngineTool {
-            agent,
-            token: token.to_owned(),
-            name,
-            input,
-        })
-        .await;
+    let replay_safe = carries_idempotency_key(&input);
+    let mut waits = RECONNECT_BACKOFF.iter();
+    loop {
+        let client = match connect(socket).await {
+            Ok(client) => client,
+            Err(NoConnection { reason, transient }) => {
+                tracing::warn!(%agent, tool = %name, "bridge: {reason}");
+                // Nothing reached the daemon, so calling again is safe.
+                return match transient {
+                    true => transport_failed(id, &name, true, &reason),
+                    false => tool_error(id, &reason),
+                };
+            }
+        };
+        // Approval and native wait replies deliberately have no deadline.
+        let reply = client
+            .without_request_timeout()
+            .request(Command::EngineTool {
+                agent,
+                token: token.to_owned(),
+                name: name.clone(),
+                input: input.clone(),
+            })
+            .await;
+        let error = match reply {
+            Err(error) if is_transport_drop(&error) => error,
+            reply => return answered(id, reply),
+        };
+        // The daemon may already have run it: only a keyed call is sent again.
+        let Some(wait) = waits.next().filter(|_| replay_safe) else {
+            tracing::warn!(%agent, tool = %name, %error, "bridge: the daemon connection dropped mid-call");
+            return transport_failed(
+                id,
+                &name,
+                false,
+                &format!("the connection to the Aether daemon dropped mid-call: {error}"),
+            );
+        };
+        tracing::info!(%agent, tool = %name, %error, "bridge: replaying a keyed call after a dropped connection");
+        tokio::time::sleep(*wait).await;
+    }
+}
+
+/// The engine's answer to a call the daemon replied to, or refused.
+fn answered(id: Value, reply: Result<Reply, ClientError>) -> Value {
     match reply {
         Ok(Reply::EngineTool { content, is_error }) => json!({
             "jsonrpc": "2.0", "id": id,
