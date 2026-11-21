@@ -253,7 +253,6 @@ fn push_turn_completed(
     next: AgentStatusKind,
     at: Timestamp,
 ) {
-    debug_assert!(ctx.turn > 0, "a completed turn is numbered");
     commit.push_event(ctx.draft(EventKind::AgentTurnCompleted {
         turn: ctx.turn,
         invocation,
