@@ -62,6 +62,41 @@ pub(super) struct DriveResult {
     pub(super) answer_jobs: crate::turn::AnswerJobs,
 }
 
+/// How long Claude Code's result is held, when nothing is owed, before stdin
+/// closes: it can stream a tool call after a mid-turn result (2 s later on 2026-11-21).
+pub(super) const RESULT_QUIET_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Why a plain engine result is held instead of ending the turn at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeldResult {
+    /// Background work or a steered message is still owed an answer.
+    Owed,
+    /// Nothing is owed; the engine gets [`RESULT_QUIET_GRACE`] to go on.
+    Quiet,
+}
+
+/// Model output or a tool call after a held result: the result was not final.
+fn continues_after_result(event: &EngineEvent) -> bool {
+    event_may_start_request(event) && !matches!(event, EngineEvent::BackgroundTask { .. })
+}
+
+/// The turn goes on past a held result: forget it and its deadline, so only
+/// the engine's next result, its exit or the stall watchdog can end the turn.
+fn reopen_held_result(
+    held: &mut Option<HeldResult>,
+    settled: &mut Option<EngineOutcome>,
+    settle_deadline: &mut Option<tokio::time::Instant>,
+    answered_over_jobs: &mut bool,
+) {
+    if held.take().is_none() {
+        return;
+    }
+    debug_assert!(settled.is_some(), "a held result is a settled one");
+    *settled = None;
+    *settle_deadline = None;
+    *answered_over_jobs = false;
+}
+
 fn event_has_activity(event: &EngineEvent, ctx: &TurnCtx) -> bool {
     match event {
         EngineEvent::Session { .. }
@@ -302,6 +337,8 @@ pub(super) async fn drive(
     // or to a steered message it has not folded in yet.
     let mut settled: Option<EngineOutcome> = None;
     let mut settle_deadline: Option<tokio::time::Instant> = None;
+    // Set while `settled` is a plain result that later engine output reopens.
+    let mut held_result: Option<HeldResult> = None;
     // A harness action ended the turn; the engine is winding down and may
     // not decide the agent's state again.
     let mut park: Option<Park> = None;
@@ -468,6 +505,9 @@ pub(super) async fn drive(
                         receipt_seen = false;
                     }
                     request_after_stop |= starts_request && park.as_ref().is_some_and(|park| park.stop_requested);
+                    if continues_after_result(event) && park.is_none() && reap_grace.is_none() {
+                        reopen_held_result(&mut held_result, &mut settled, &mut settle_deadline, &mut answered_over_jobs);
+                    }
                 }
                 activity_seen |= active;
                 state.interruption = interruption_cause(runtime, ctx, cancel, park.as_ref(), budget_stop.as_ref());
@@ -516,13 +556,17 @@ pub(super) async fn drive(
                         continue;
                     }
                     let owed = !background.is_empty() || !steering.outstanding.is_empty();
-                    if !owed || input.is_none() {
+                    // Claude Code can stream on after a successful result; a failed one goes to
+                    // the cleanup below, which merges any later receipt and refuses later calls.
+                    let quiet = engine.kind() == super::EngineKind::CLAUDE_CODE && !effects.terminal() && !o.is_error;
+                    if input.is_none() || (!owed && !quiet) {
                         // Close stdin first so the engine exits on its own.
                         drop(input.take());
                         break o;
                     }
                     settled = Some(o);
-                    settle_deadline = None;
+                    held_result = Some(if owed { HeldResult::Owed } else { HeldResult::Quiet });
+                    settle_deadline = (!owed).then(|| tokio::time::Instant::now() + RESULT_QUIET_GRACE);
                 }
                 Some(EngineEvent::BackgroundTask { id, running }) => {
                     // Filled from the engine's own stdout, so bounded like
@@ -581,6 +625,7 @@ pub(super) async fn drive(
                         record_consumed(runtime, ctx, pending)?;
                     }
                     // The engine is answering it; its next result decides.
+                    held_result = None;
                     settled = None;
                     answered_over_jobs = false;
                     settle_deadline = None;
@@ -770,6 +815,10 @@ pub(super) async fn drive(
             }, if deferred.is_none() => {
                 touch_pending = true;
                 tool_touch_pending = true;
+                // A call after a held result means the engine is still at work.
+                if next.is_some() && park.is_none() && reap_grace.is_none() {
+                    reopen_held_result(&mut held_result, &mut settled, &mut settle_deadline, &mut answered_over_jobs);
+                }
                 if let Some((req, settled)) = next {
                     receipt_seen = false;
                     activity_seen = true;
@@ -926,6 +975,11 @@ pub(super) async fn drive(
                 STEER_GRACE
             };
             settle_deadline = Some(tokio::time::Instant::now() + grace);
+        }
+        // A message steered into a quiet hold gets the steering grace to be folded in.
+        if held_result == Some(HeldResult::Quiet) && !steering.outstanding.is_empty() {
+            held_result = Some(HeldResult::Owed);
+            settle_deadline = Some(tokio::time::Instant::now() + STEER_GRACE);
         }
     };
     if let Some(reason) = overdue_reason {

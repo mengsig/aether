@@ -73,6 +73,8 @@ mod known_secrets;
 mod launch_context;
 #[path = "engine/memory.rs"]
 mod memory;
+#[path = "engine/mid_turn_result.rs"]
+mod mid_turn_result;
 #[path = "engine/native_cache_ttl_pricing.rs"]
 mod native_cache_ttl_pricing;
 #[path = "engine/native_compaction.rs"]
