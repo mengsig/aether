@@ -27,7 +27,7 @@ dependencies = [
  "fs4",
  "futures",
  "hex",
- "nix 0.31.3",
+ "nix 0.32.0",
  "pty-process",
  "qrcode",
  "reqwest",
@@ -174,7 +174,7 @@ dependencies = [
  "base64 0.23.1",
  "futures",
  "hex",
- "nix 0.31.3",
+ "nix 0.32.0",
  "rand 0.10.3",
  "rustix",
  "serde",
@@ -315,7 +315,7 @@ dependencies = [
  "fs4",
  "futures",
  "hex",
- "nix 0.31.3",
+ "nix 0.32.0",
  "parking_lot",
  "rand 0.10.3",
  "regex",
@@ -338,7 +338,7 @@ dependencies = [
 name = "aether-spawn"
 version = "1.4.2"
 dependencies = [
- "nix 0.31.3",
+ "nix 0.32.0",
  "pty-process",
  "rustix",
  "tempfile",
@@ -379,7 +379,7 @@ dependencies = [
  "globset",
  "ignore",
  "mime",
- "nix 0.31.3",
+ "nix 0.32.0",
  "pty-process",
  "rand 0.10.3",
  "regex",
@@ -418,7 +418,7 @@ dependencies = [
  "html2text",
  "html5ever",
  "image",
- "nix 0.31.3",
+ "nix 0.32.0",
  "pulldown-cmark",
  "rand 0.10.3",
  "ratatui",
@@ -2386,9 +2386,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.31.3"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+checksum = "77730ed34f01f4990cb2ea67fec715ecebc6fab9a6396cf83c5529b13f581bdc"
 dependencies = [
  "bitflags 2.13.1",
  "cfg-if",
