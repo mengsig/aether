@@ -100,9 +100,8 @@ impl CostGap {
 /// cannot make what was already spent smaller - so nothing silently stops
 /// firing when a model or engine reports no price.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(try_from = "UsageWire")]
-// UsageWire is a lenient reader for old stores; the wire shape is Usage itself.
-#[schemars(!try_from)]
+#[serde(into = "UsageWire", try_from = "UsageWire")]
+#[schemars(!into, !try_from)]
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -115,7 +114,9 @@ pub struct Usage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_tokens: Option<u64>,
     /// Dollars over the invocations that could be priced. A floor when
-    /// `cost_complete` is false.
+    /// `cost_complete` is false. Omitted on the wire for an incomplete
+    /// total without a positive floor.
+    #[schemars(default, with = "Option<f64>")]
     pub cost_usd: f64,
     /// Every contribution's cost is accounted for. Adding usage cannot repair a gap;
     /// closing accounting may replace provisional usage for the same run.
@@ -162,30 +163,49 @@ fn is_zero(n: &u64) -> bool {
     *n == 0
 }
 
-/// Reads a store written before `cost_complete` existed, where an absent
-/// `cost_usd` was the only way to say nobody priced the invocation.
-#[derive(Deserialize)]
+/// Historical records may omit coverage and use a missing amount to convey it.
+#[derive(Serialize, Deserialize)]
 struct UsageWire {
     input_tokens: u64,
     output_tokens: u64,
     cache_read_tokens: u64,
     cache_write_tokens: u64,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero")]
     cache_write_1h_tokens: u64,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     reasoning_tokens: Option<u64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     cost_usd: Option<f64>,
     #[serde(default)]
     cost_complete: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     cost_gap: Option<CostGap>,
     #[serde(default)]
     cost_basis: CostBasis,
     /// Absent in a store written before estimates existed, and absent
     /// whenever nothing was estimated: both read as no estimate.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     estimated_cost_usd: Option<f64>,
+}
+
+impl From<Usage> for UsageWire {
+    fn from(usage: Usage) -> Self {
+        debug_assert!(usage.cache_write_1h_tokens <= usage.cache_write_tokens);
+        debug_assert!(usage.cost_usd.is_finite());
+        Self {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cache_read_tokens: usage.cache_read_tokens,
+            cache_write_tokens: usage.cache_write_tokens,
+            cache_write_1h_tokens: usage.cache_write_1h_tokens,
+            reasoning_tokens: usage.reasoning_tokens,
+            cost_usd: (usage.cost_complete || usage.cost_usd != 0.0).then_some(usage.cost_usd),
+            cost_complete: Some(usage.cost_complete),
+            cost_gap: usage.cost_gap,
+            cost_basis: usage.cost_basis,
+            estimated_cost_usd: usage.estimated_cost_usd,
+        }
+    }
 }
 
 impl TryFrom<UsageWire> for Usage {
@@ -198,7 +218,7 @@ impl TryFrom<UsageWire> for Usage {
                 w.cache_write_1h_tokens, w.cache_write_tokens
             ));
         }
-        let complete = w.cost_complete.unwrap_or(w.cost_usd.is_some());
+        let complete = w.cost_usd.is_some() && w.cost_complete.unwrap_or(true);
         let gap = (!complete).then_some(w.cost_gap.unwrap_or(CostGap::Unknown));
         Ok(Self {
             input_tokens: w.input_tokens,

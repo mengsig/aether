@@ -231,8 +231,6 @@ impl Runtime {
         if let Some(l) = update.long_lived {
             c.long_lived = l;
         }
-        // Budget and chain can move in one patch, so check what results.
-        self.check_cost_budget(&agent.model, &agent.fallbacks, agent.config.cost_budget)?;
         if matches!(
             by,
             Actor::User {

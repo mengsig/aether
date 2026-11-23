@@ -2,6 +2,7 @@ use super::*;
 use crate::sqlite::SqliteStore;
 use crate::{AgentFilter, Commit, Mutation, Store};
 use aether_core::agent::{AgentConfig, AgentStats, AgentStatus, AgentStatusKind, Role, Scope};
+use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::RunId;
 use aether_core::model::ModelRef;
 
@@ -206,6 +207,42 @@ fn a_ledger_row_reads_back_as_the_usage_it_was_written_from() {
         }
         assert_eq!(read[&agent.id], expected, "{}", agent.id);
     }
+}
+
+#[test]
+fn recorded_usage_omits_an_unknown_dollar_amount() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let usage = Usage::cost_only(None);
+    let agent = agent(RunId::new(), usage);
+    let record = EventDraft::new(
+        Actor::System,
+        EventKind::AgentUsageUpdated {
+            total: usage,
+            turn_usage: usage,
+            billing: None,
+        },
+    )
+    .agent(agent.id)
+    .run(agent.run);
+    store
+        .commit(
+            Commit::new()
+                .event(record)
+                .mutate(Mutation::UpsertAgent(agent.clone())),
+        )
+        .unwrap();
+
+    let body: String = store
+        .conn
+        .lock()
+        .query_row("SELECT body FROM events", [], |row| row.get(0))
+        .unwrap();
+    let event: serde_json::Value = serde_json::from_str(&body).unwrap();
+    for key in ["total", "turn_usage"] {
+        assert_eq!(event["kind"][key]["cost_complete"], false);
+        assert!(event["kind"][key].get("cost_usd").is_none());
+    }
+    assert_eq!(store.fleet_usage().unwrap(), usage);
 }
 
 /// One member billing tokens but no reasoning or estimate, with its totals

@@ -958,8 +958,10 @@ each other is text only.
 
 ## Usage and cost coverage
 
-`Usage.cost_usd` is the sum of known costs; `cost_complete: false` makes it a
-lower bound. `cost_basis` identifies list prices, provider receipts, or a mix.
+`Usage.cost_usd` is the sum of known costs. With `cost_complete: false`, a
+positive amount is a lower bound and an omitted amount means no positive
+cost was known. A complete zero is written as `cost_usd: 0`.
+`cost_basis` identifies list prices, provider receipts, or a mix.
 The optional `cost_gap` explains incomplete coverage: `unpriced` means reported
 usage had neither a price nor a provider cost; `unreported` means the engine
 did not fully report usage; `interrupted` means possibly billed work lacks

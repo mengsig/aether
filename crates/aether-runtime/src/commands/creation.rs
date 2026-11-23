@@ -361,7 +361,6 @@ impl Runtime {
                 "compaction_tokens must be at least {MIN_AGENT_COMPACTION_TOKENS}; leave it unset for the model's threshold"
             )));
         }
-        self.check_cost_budget(&model, &fallbacks, config.cost_budget)?;
         let run = spec
             .run
             .or_else(|| parent.as_ref().map(|p| p.run))
@@ -553,7 +552,6 @@ impl Runtime {
                     .cost_budget
                     .is_some_and(|child| child <= limit))
             );
-            self.check_cost_budget(&agent.model, &agent.fallbacks, agent.config.cost_budget)?;
         }
         // §3.8: a subtree pause holds what the held supervisor's own
         // in-flight turn goes on to delegate, and the same subtree resume
