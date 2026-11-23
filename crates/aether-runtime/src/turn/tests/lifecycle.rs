@@ -362,6 +362,7 @@ fn admits_after_park_refuses_effects_and_admits_reads() {
         objective: "do it".into(),
         instructions: None,
         model: ModelRef::new("p", "m"),
+        fallbacks: Vec::new(),
         effort: Effort::Low,
         scope: None,
         workspace_mode: WorkspaceMode::Shared,

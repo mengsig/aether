@@ -255,6 +255,7 @@ async fn delegating_onto_an_unusable_engine_names_its_probe_reason() {
         objective: "do it".into(),
         instructions: None,
         model: ModelRef::new("claude-code", "haiku"),
+        fallbacks: Vec::new(),
         effort: aether_core::model::Effort::Low,
         scope: None,
         workspace_mode: aether_tools::WorkspaceMode::Shared,

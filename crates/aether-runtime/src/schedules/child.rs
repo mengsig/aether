@@ -53,8 +53,7 @@ impl Checked {
     }
 }
 
-/// The `delegate` call `template` stands for, with `objective` as its task.
-/// Refuses what `delegate` has no argument for.
+/// The single-model `delegate` call `template` stands for.
 fn child_request(template: &SpawnSpec, objective: String) -> Result<ChildRequest> {
     let refuse = |why: &str| Err(RuntimeError::Invalid(why.into()));
     let config = template.config.clone().unwrap_or_default();
@@ -89,6 +88,7 @@ fn child_request(template: &SpawnSpec, objective: String) -> Result<ChildRequest
         objective,
         instructions: config.instructions,
         model,
+        fallbacks: Vec::new(),
         effort,
         scope: template.scope.clone(),
         leaf: config.leaf,

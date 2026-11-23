@@ -51,7 +51,7 @@ fn start_turns(
         let interrupt = cancel.child_token();
         // The turn starts on the first link that can carry it; the turn keeps
         // this up to date as it walks the rest of the chain.
-        let provider = available_link(&agent, &sched, &limits)
+        let provider = available_link(&agent, &sched, |provider| limits.get(provider).copied())
             .unwrap_or(&agent.model)
             .provider
             .clone();
@@ -146,19 +146,27 @@ fn link_unavailable_in(
 fn available_link<'a>(
     agent: &'a Agent,
     sched: &SchedulerState,
-    limits: &HashMap<String, u32>,
+    provider_limit: impl Fn(&str) -> Option<u32>,
 ) -> Option<&'a ModelRef> {
     std::iter::once(&agent.model)
         .chain(agent.fallbacks.iter())
         .find(|link| {
-            link_unavailable_in(
-                sched,
-                &link.provider,
-                limits.get(&link.provider).copied(),
-                None,
-            )
-            .is_none()
+            link_unavailable_in(sched, &link.provider, provider_limit(&link.provider), None)
+                .is_none()
         })
+}
+
+/// The engine classification for a delegation's concurrency advisory.
+pub(crate) fn child_uses_engine(runtime: &Runtime, child: &Agent, sched: &SchedulerState) -> bool {
+    if let Some(turn) = sched.running.get(&child.id) {
+        return turn.engine;
+    }
+    let registry = runtime.models.registry();
+    let link = available_link(child, sched, |id| registry.provider(id)?.max_concurrent)
+        .unwrap_or(&child.model);
+    registry
+        .provider(&link.provider)
+        .is_some_and(|provider| provider.protocol.is_engine())
 }
 
 /// Whether the link this agent would be admitted on is an engine - the same
@@ -170,7 +178,8 @@ fn runs_on_engine(
     limits: &HashMap<String, u32>,
     engines: &HashSet<String>,
 ) -> bool {
-    let link = available_link(agent, sched, limits).unwrap_or(&agent.model);
+    let link = available_link(agent, sched, |provider| limits.get(provider).copied())
+        .unwrap_or(&agent.model);
     engines.contains(&link.provider)
 }
 
@@ -276,7 +285,11 @@ pub(super) fn pick(
         .filter(|(_, r)| r.addressed || !lineage.capped(r.agent.id, sched))
         // 4. Per-provider limits, configured and from provider feedback. A
         //    fallback chain passes while any link can still carry the turn.
-        .filter(|(_, r)| r.addressed || available_link(&r.agent, sched, limits).is_some())
+        .filter(|(_, r)| {
+            r.addressed
+                || available_link(&r.agent, sched, |provider| limits.get(provider).copied())
+                    .is_some()
+        })
         // 4b. The daemon's engine cap, within the global limit: engine turns
         //     are what a subscription window is spent on, and 13 of them at
         //     once burn 13x a single agent's rate. An API turn
@@ -291,7 +304,8 @@ pub(super) fn pick(
         //    not `updated_at`: an inbox delivery or a status write must not
         //    send a candidate to the back of the queue.
         .min_by_key(|(index, r)| {
-            let link = available_link(&r.agent, sched, limits).unwrap_or(&r.agent.model);
+            let link = available_link(&r.agent, sched, |provider| limits.get(provider).copied())
+                .unwrap_or(&r.agent.model);
             (
                 !r.addressed,
                 std::cmp::Reverse(r.agent.config.priority),

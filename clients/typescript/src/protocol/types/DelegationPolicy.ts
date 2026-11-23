@@ -18,5 +18,6 @@ export interface DelegationPolicy {
   "exempt_roles"?: Array<string>;
   "max_effort"?: Effort | null;
   "max_parallel"?: number | null;
+  "require_independent_vendor"?: boolean;
   "workers"?: Array<WorkerChoice>;
 }

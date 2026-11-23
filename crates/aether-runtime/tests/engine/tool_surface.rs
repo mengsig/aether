@@ -150,6 +150,10 @@ async fn non_leaf_engine_tools_expose_the_catalog_and_explicit_delegation_choice
     let required = delegate.input_schema["required"].as_array().unwrap();
     assert!(required.contains(&serde_json::json!("model")));
     assert!(required.contains(&serde_json::json!("effort")));
+    assert!(!required.contains(&serde_json::json!("fallbacks")));
+    let fallbacks = &delegate.input_schema["properties"]["fallbacks"];
+    assert_eq!(fallbacks["type"], "array");
+    assert_eq!(fallbacks["items"]["type"], "string");
     assert_eq!(delegate.input_schema["additionalProperties"], false);
     let integrate = root
         .iter()

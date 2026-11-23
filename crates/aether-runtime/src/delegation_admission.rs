@@ -18,6 +18,7 @@ pub(crate) struct ChildRequest {
     pub objective: String,
     pub instructions: Option<String>,
     pub model: ModelRef,
+    pub fallbacks: Vec<ModelRef>,
     pub effort: Effort,
     /// Absent: the parent's scope as it is when the child is created.
     pub scope: Option<Scope>,
@@ -157,7 +158,6 @@ pub(crate) fn check_child_authority(
     debug_assert_eq!(staged.id, parent.id);
     debug_assert_eq!(child.parent, Some(parent.id));
     debug_assert_eq!(child.run, parent.run);
-    debug_assert!(child.fallbacks.is_empty(), "delegation chooses one model");
     if parent.config.leaf
         || parent.model != staged.model
         || parent.scope != staged.scope
@@ -178,67 +178,130 @@ pub(crate) fn check_child_authority(
                 "the prepared child dropped required approvals".into(),
             ));
         }
-        if !child.config.approval.is_yolo() && !runtime.engine_can_gate(&child.model)? {
-            return Err(RuntimeError::Invalid(
-                "the child's engine cannot enforce required approvals".into(),
-            ));
+        if !child.config.approval.is_yolo() {
+            for model in std::iter::once(&child.model).chain(&child.fallbacks) {
+                if !runtime.engine_can_gate(model)? {
+                    return Err(RuntimeError::Invalid(format!(
+                        "the child's engine for `{model}` cannot enforce required approvals"
+                    )));
+                }
+            }
         }
     }
     Ok(())
 }
 
-/// Why `parent` may not have this child: its delegation policy, or without
-/// one the tier ceiling, then the frontier-clone rule. `None` admits it.
+/// The first refusal across the child's chain; the same rules apply to each link.
 pub(crate) fn policy_refusal(
     runtime: &Runtime,
     parent: &Agent,
     request: &ChildRequest,
     slots: Slots,
 ) -> Result<Option<String>> {
-    use aether_core::delegation::{Candidate, admits_without_policy, needs_reason};
+    use aether_core::delegation::{Candidate, admits_without_policy};
     let models = &runtime.models;
-    let model = models.canonical(&request.model);
     let parent_model = models.canonical(&parent.model);
     let parent_tier = models.delegation_tier(&parent_model);
     let role = request.role.trim();
-    let child = Candidate {
-        role,
-        model: &model,
-        tier: models.delegation_tier(&model),
-        effort: request.effort,
-    };
     let policy = parent
         .config
         .delegation_policy
         .as_ref()
         .map(|policy| canonical_policy(runtime, policy));
-    let verdict = match &policy {
-        Some(policy) => {
-            let unfinished = match policy.max_parallel {
-                Some(_) if slots == Slots::Counted => {
-                    runtime.unfinished_children(parent.id, policy)?
-                }
-                _ => 0,
-            };
-            policy.admits(&child, parent_tier, unfinished)
+    let unfinished = match &policy {
+        Some(policy) if policy.max_parallel.is_some() && slots == Slots::Counted => {
+            runtime.unfinished_children(parent.id, policy)?
         }
-        None => admits_without_policy(&child, parent_tier),
+        _ => 0,
     };
-    if let Err(refusal) = verdict {
-        return Ok(Some(refusal));
-    }
-    let named_by_policy = policy
+    let independent = policy
         .as_ref()
-        .is_some_and(|policy| policy.names_model(role, &model));
-    let has_reason = matches!(request.reason, ChildReason::Given(_));
-    if needs_reason(&child, &parent_model) && !named_by_policy && !has_reason {
-        return Ok(Some(format!(
-            "delegation refused: {model} is your own frontier-tier model. Workers default to the \
-             balanced or fast tier (list_models shows each model's tier); {}",
-            request.reason.remedy()
-        )));
+        .is_some_and(|p| p.require_independent_vendor);
+    let parent_vendor = independent
+        .then(|| model_vendor(runtime, &parent_model))
+        .flatten();
+    for (index, link) in std::iter::once(&request.model)
+        .chain(&request.fallbacks)
+        .enumerate()
+    {
+        let model = models.canonical(link);
+        let child = Candidate {
+            role,
+            model: &model,
+            tier: models.delegation_tier(&model),
+            effort: request.effort,
+        };
+        let admitted = match &policy {
+            Some(policy) => policy.admits(&child, parent_tier, unfinished),
+            None => admits_without_policy(&child, parent_tier),
+        };
+        let verdict = admitted.and_then(|()| {
+            if independent {
+                check_vendor(runtime, link, parent_vendor)?;
+            }
+            let named_by_policy = policy.as_ref().is_some_and(|p| p.names_model(role, &model));
+            check_frontier_reason(&child, &parent_model, named_by_policy, &request.reason)
+        });
+        if let Err(refusal) = verdict {
+            return Ok(Some(if index == 0 {
+                refusal
+            } else {
+                format!("fallback model `{link}`: {refusal}")
+            }));
+        }
     }
     Ok(None)
+}
+
+fn check_frontier_reason(
+    child: &aether_core::delegation::Candidate<'_>,
+    parent_model: &ModelRef,
+    named_by_policy: bool,
+    reason: &ChildReason,
+) -> std::result::Result<(), String> {
+    if aether_core::delegation::needs_reason(child, parent_model)
+        && !named_by_policy
+        && !matches!(reason, ChildReason::Given(_))
+    {
+        return Err(format!(
+            "delegation refused: {} is your own frontier-tier model. Workers default to the \
+             balanced or fast tier (list_models shows each model's tier); {}",
+            child.model,
+            reason.remedy()
+        ));
+    }
+    Ok(())
+}
+
+fn model_vendor(runtime: &Runtime, model: &ModelRef) -> Option<&'static str> {
+    use aether_model::profile::ModelFamily;
+
+    let resolved = runtime.models.resolve(model).ok()?;
+    resolved
+        .provider
+        .protocol
+        .api_equivalent_provider()
+        .or(match resolved.family() {
+            Some(ModelFamily::Claude) => Some("anthropic"),
+            Some(ModelFamily::Gpt | ModelFamily::Codex) => Some("openai"),
+            None => None,
+        })
+}
+
+fn check_vendor(
+    runtime: &Runtime,
+    model: &ModelRef,
+    parent_vendor: Option<&str>,
+) -> std::result::Result<(), String> {
+    match (parent_vendor, model_vendor(runtime, model)) {
+        (Some(parent), Some(child)) if parent != child => Ok(()),
+        (Some(parent), Some(_)) => Err(format!(
+            "delegation refused: {model} shares your vendor `{parent}` and the policy requires a different vendor"
+        )),
+        _ => Err(format!(
+            "delegation refused: cannot establish that {model} is from a different vendor, as the policy requires"
+        )),
+    }
 }
 
 /// The policy with each named model in canonical form, so an alias matches.
@@ -287,8 +350,7 @@ pub(crate) fn child_spec(parent: &Agent, request: ChildRequest) -> CreateAgentSp
         name: request.name,
         objective: Some(request.objective),
         model: Some(request.model),
-        // Delegation always names its model; do not inherit the parent's chain.
-        fallbacks: Vec::new(),
+        fallbacks: request.fallbacks,
         scope: request.scope,
         // A delegated child inherits its parent's repository.
         repository_root: None,

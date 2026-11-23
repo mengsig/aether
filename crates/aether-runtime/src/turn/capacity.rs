@@ -67,13 +67,9 @@ const ANCESTRY_ROUNDS: usize = 4;
 /// `dispatch` admits against, so `queued` never disagrees with what starts
 /// the child (the `None`-cap default and an inherited ancestor cap were
 /// once both compared against the wrong count).
-/// `child_on_engine` says whether the child just created runs on an engine,
-/// so the daemon's engine cap is reported only where it actually applies.
-pub(super) fn cap_status(runtime: &Runtime, agent: &Agent, child_on_engine: bool) -> CapStatus {
-    let engine_cap = runtime
-        .config
-        .max_concurrent_engine_turns
-        .filter(|_| child_on_engine);
+pub(super) fn cap_status(runtime: &Runtime, agent: &Agent, child: &Agent) -> CapStatus {
+    debug_assert_eq!(child.parent, Some(agent.id));
+    debug_assert_eq!(child.run, agent.run);
     let mut wanted = BTreeSet::from([agent.id]);
     wanted.extend(runtime.sched.lock().on_provider().map(|(id, _)| *id));
     for _ in 0..ANCESTRY_ROUNDS {
@@ -91,14 +87,14 @@ pub(super) fn cap_status(runtime: &Runtime, agent: &Agent, child_on_engine: bool
             .filter(|id| !wanted.contains(id))
             .collect();
         if started.is_empty() {
-            return counted_status(runtime, agent, &chains, &sched, engine_cap);
+            return counted_status(runtime, agent, child, &chains, &sched);
         }
         drop(sched);
         wanted.extend(started);
     }
     // Turns kept starting meanwhile: count over the whole fleet, as before #314.
     match runtime.store.agents(&AgentFilter::default()) {
-        Ok(fleet) => counted_status(runtime, agent, &fleet, &runtime.sched.lock(), engine_cap),
+        Ok(fleet) => counted_status(runtime, agent, child, &fleet, &runtime.sched.lock()),
         Err(e) => unknown_status(runtime, agent, store_error_class(&e), &e.to_string()),
     }
 }
@@ -108,10 +104,14 @@ pub(super) fn cap_status(runtime: &Runtime, agent: &Agent, child_on_engine: bool
 fn counted_status(
     runtime: &Runtime,
     agent: &Agent,
+    child: &Agent,
     chains: &[Agent],
     sched: &SchedulerState,
-    engine_cap: Option<usize>,
 ) -> CapStatus {
+    let engine_cap = runtime
+        .config
+        .max_concurrent_engine_turns
+        .filter(|_| crate::scheduler::child_uses_engine(runtime, child, sched));
     match crate::scheduler::cap_holder(
         agent.id,
         chains,

@@ -45,6 +45,7 @@ fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<ToolOutcome> {
         "agent": agent.id,
         "parent": agent.parent,
         "model": agent.model,
+        "fallbacks": agent.fallbacks,
         "model_tier": runtime.models.tier(&agent.model),
         "effort": agent.config.effort,
         "task": ctx.task,
