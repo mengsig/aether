@@ -105,6 +105,69 @@ impl Engine for AccountingEngine {
     }
 }
 
+const OVERRIDDEN_SOL: &str = r#"
+[[providers.codex.add_models]]
+id = "sol"
+capabilities_from = "sol"
+[providers.codex.add_models.capabilities.cost]
+input_per_mtok = 3.0
+cache_read_per_mtok = 1.0
+output_per_mtok = 9.0
+"#;
+
+#[tokio::test]
+async fn codex_prices_all_reported_token_categories_as_an_estimate() {
+    let usage = aether_core::model::Usage {
+        input_tokens: 1_000,
+        cache_read_tokens: 2_000,
+        output_tokens: 3_000,
+        ..Default::default()
+    };
+    let h = harness_with_engine_and_providers_toml(
+        Arc::new(AccountingEngine {
+            per_message: None,
+            turn_cost: None,
+            turn_usage: usage,
+        }),
+        Arc::default(),
+        Arc::default(),
+        Some(OVERRIDDEN_SOL),
+    )
+    .await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                model: Some(ModelRef::new("codex", "sol")),
+                start: true,
+                objective: Some("measure usage".into()),
+                config: Some(AgentConfig {
+                    approval: ApprovalPolicy::none(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .unwrap();
+    let settled = tokio::time::timeout(
+        Duration::from_secs(5),
+        wait_for(h.store.as_ref(), agent.id, |a| a.status.is_terminal()),
+    )
+    .await
+    .expect("scripted turn completed");
+    let recorded = settled.stats.usage;
+    assert_eq!(recorded.total_tokens(), 6_000);
+    assert!((recorded.estimated_cost_usd.unwrap() - 0.032).abs() < 1e-12);
+    assert_eq!(
+        recorded.cost_basis,
+        aether_core::model::CostBasis::ListPrice
+    );
+    assert_eq!(recorded.cost_usd, 0.0);
+    assert!(!recorded.cost_complete);
+    h.runtime.shutdown().await;
+}
+
 /// A subscription turn still costs money. The engine path prices its
 /// invocations from the registry exactly as the API path does, so a report, a
 /// replay or a budget on an engine agent has a number to bind to.

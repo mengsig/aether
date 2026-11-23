@@ -139,6 +139,40 @@ fn a_model_with_no_priced_twin_is_left_unestimated() {
     assert_eq!(reg.api_equivalent_price(&api), None);
 }
 
+#[test]
+fn codex_rate_overrides_are_estimates_for_named_and_session_models() {
+    let mut registry = Registry::builtin();
+    let file: ProvidersFile = toml::from_str(
+        r#"
+[[providers.codex.add_models]]
+id = "sol"
+capabilities_from = "sol"
+[providers.codex.add_models.capabilities.cost]
+input_per_mtok = 3.0
+cache_read_per_mtok = 1.0
+output_per_mtok = 9.0
+"#,
+    )
+    .expect("providers.toml");
+    registry.apply_overrides(file).expect("override");
+    let sol = registry.resolve(&ModelRef::new("codex", "sol")).unwrap();
+    let override_rate = sol.model.capabilities.cost.unwrap();
+    let default = registry
+        .resolve(&ModelRef::new("codex", "default"))
+        .unwrap();
+
+    assert_eq!(registry.api_equivalent_price(&default), None);
+    assert_eq!(registry.api_equivalent_price(&sol), Some(override_rate));
+    assert_ne!(
+        registry.api_equivalent(&sol).unwrap().capabilities.cost,
+        Some(override_rate)
+    );
+    assert_eq!(
+        registry.session_model_price(&default, &sol.model.id),
+        Some(ModelPrice::ApiEquivalent(override_rate))
+    );
+}
+
 /// `default` is the standard configuration, and the CLI only
 /// says which model it picked once the session opens. That report is the
 /// one chance to price the turn - within the engine's own model list.

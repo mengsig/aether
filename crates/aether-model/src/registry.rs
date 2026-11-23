@@ -75,7 +75,7 @@ impl Protocol {
             .find(|level| *level <= requested)
     }
 
-    /// Whether runtime accounting can enforce a dollar cap on this model.
+    /// Whether this connection can contribute dollars to a cost budget.
     pub fn reports_cost(self, capabilities: &CapabilityProfile) -> bool {
         match self {
             Self::ClaudeCode => true,
@@ -538,15 +538,18 @@ impl Registry {
         self.provider(api)?.model(model_id)
     }
 
-    /// The price to estimate an unpriced subscription invocation with: the
-    /// list price of its API equivalent, as an estimate and never as billed
-    /// dollars. `None` where the model carries its own price - then its cost
-    /// is priced, not estimated - or where no equivalent is known.
+    /// The rate for an API-equivalent estimate. Codex model rates are
+    /// estimates, with priority over the corresponding API catalog rate.
+    /// Other connections use their own prices for cost accounting.
     pub fn api_equivalent_price(&self, subscription: &ResolvedModel) -> Option<ModelCost> {
-        if subscription.model.capabilities.cost.is_some() {
-            return None;
+        self.estimate_rate(&subscription.provider, &subscription.model)
+    }
+
+    fn estimate_rate(&self, provider: &ProviderDef, model: &ModelDef) -> Option<ModelCost> {
+        if let Some(cost) = model.capabilities.cost {
+            return (provider.protocol == Protocol::Codex).then_some(cost);
         }
-        self.api_equivalent(subscription)?.capabilities.cost
+        self.api_twin(provider, &model.id)?.capabilities.cost
     }
 
     /// The capability band of a model: its declared tier, else its output
@@ -607,13 +610,9 @@ impl Registry {
             return None;
         }
         let session = configured.provider.model(reported)?;
-        let price = match session.capabilities.cost {
-            Some(cost) => ModelPrice::Billed(cost),
-            None => ModelPrice::ApiEquivalent(
-                self.api_twin(&configured.provider, &session.id)?
-                    .capabilities
-                    .cost?,
-            ),
+        let price = match self.estimate_rate(&configured.provider, session) {
+            Some(rate) => ModelPrice::ApiEquivalent(rate),
+            None => ModelPrice::Billed(session.capabilities.cost?),
         };
         debug_assert!(
             is_payable(price.rate()),

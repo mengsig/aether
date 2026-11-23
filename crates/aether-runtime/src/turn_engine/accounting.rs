@@ -149,11 +149,7 @@ pub(super) fn has_budgeted_lineage(runtime: &Runtime, agent: AgentId) -> Result<
     Ok(false)
 }
 
-/// How one engine turn is priced: the registry's price for the model where it
-/// has one, and otherwise the list price of the API model behind the
-/// subscription, which can only ever produce an *estimate*. Never both - a
-/// priced invocation needs no estimate - which is what
-/// [`aether_model::Registry::api_equivalent_price`] guarantees.
+/// An engine turn contributes either priced cost or an API-equivalent estimate.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct TurnPricing {
     pub(crate) billed: Option<ModelCost>,
@@ -166,13 +162,21 @@ impl TurnPricing {
             !resolved.model.id.is_empty(),
             "pricing needs a resolved model"
         );
+        let estimate = runtime.models.registry().api_equivalent_price(resolved);
         let pricing = Self {
-            billed: resolved.model.capabilities.cost,
-            estimate: runtime.models.registry().api_equivalent_price(resolved),
+            billed: resolved
+                .model
+                .capabilities
+                .cost
+                .filter(|_| estimate.is_none()),
+            estimate,
         };
         debug_assert!(
             pricing.billed.is_none() || pricing.estimate.is_none(),
-            "a model with its own price must not also be estimated"
+            "a turn cannot use both pricing sources"
+        );
+        debug_assert!(
+            resolved.provider.protocol != aether_model::Protocol::Codex || pricing.billed.is_none()
         );
         pricing
     }
