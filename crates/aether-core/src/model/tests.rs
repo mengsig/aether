@@ -71,6 +71,8 @@ fn exhaustion_requires_explicit_error_evidence() {
     for message in [
         "You've hit your limit · resets Sep 18 at 2pm",
         "You've hit your usage limit.",
+        "You've hit your Fable limit",
+        "hit your Other limit",
         "Weekly limit reached",
         "Daily limit exceeded",
         "5-hour limit reached ∙ resets 2pm",
@@ -90,7 +92,10 @@ fn exhaustion_requires_explicit_error_evidence() {
         "daily limit may apply",
         "session expired",
         "rate limit reached for requests per minute",
+        "You've hit your rate limit for requests per minute",
         "unknown error",
+        "hit your Fable limiter",
+        "shit your Fable limit",
     ] {
         assert_eq!(provider_exhaustion(message), None, "{message}");
     }
