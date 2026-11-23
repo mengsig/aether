@@ -537,7 +537,10 @@ async fn a_long_lived_agent_falls_back_on_a_limit_after_its_task_settled() {
     );
     let reasons = fallback_reasons(h.store.as_ref(), agent.id);
     assert_eq!(reasons.len(), 1, "{reasons:?}");
-    assert!(reasons[0].contains("Weekly limit reached"), "{reasons:?}");
+    assert!(
+        reasons[0].contains("You've hit your Fable limit"),
+        "{reasons:?}"
+    );
     assert_eq!(
         later.prompts.lock().unwrap().len(),
         2,
