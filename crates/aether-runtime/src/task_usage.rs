@@ -10,12 +10,6 @@ use crate::{Result, Runtime, RuntimeError};
 
 const PAGE_SIZE: usize = 512;
 
-#[derive(Debug, Default)]
-struct TurnUsage {
-    usage: Usage,
-    has_snapshot: bool,
-}
-
 impl Runtime {
     /// Read a task with usage derived from its retained task-tagged events.
     pub fn get_task_with_usage(&self, id: TaskId) -> Result<Option<Task>> {
@@ -91,7 +85,7 @@ impl Runtime {
             ],
             ..EventFilter::default()
         };
-        let mut turns = BTreeMap::<AgentId, TurnUsage>::new();
+        let mut turns = BTreeMap::<AgentId, Usage>::new();
         let mut total = Usage::default();
         let mut after = 0;
         'pages: while after < through {
@@ -111,7 +105,7 @@ impl Runtime {
             }
         }
         for turn in turns.into_values() {
-            total += turn.usage;
+            total += turn;
         }
         Ok(total)
     }
@@ -119,7 +113,7 @@ impl Runtime {
     fn fold_task_event(
         &self,
         event: &Event,
-        turns: &mut BTreeMap<AgentId, TurnUsage>,
+        turns: &mut BTreeMap<AgentId, Usage>,
         total: &mut Usage,
     ) -> Result<()> {
         let Some(agent) = event.agent_id else {
@@ -127,8 +121,8 @@ impl Runtime {
         };
         debug_assert!(event.task_id.is_some());
         if matches!(&event.kind, EventKind::AgentStarted { .. }) {
-            if let Some(previous) = turns.insert(agent, TurnUsage::default()) {
-                *total += previous.usage;
+            if let Some(previous) = turns.insert(agent, Usage::default()) {
+                *total += previous;
             }
             return Ok(());
         }
@@ -137,17 +131,11 @@ impl Runtime {
         };
         match &event.kind {
             EventKind::AgentUsageUpdated { turn_usage, .. } => {
-                turn.usage = *turn_usage;
-                turn.has_snapshot = true;
+                *turn = *turn_usage;
             }
             EventKind::InvocationCompleted { usage, .. } => {
-                // Native message placeholders carry no counters; the turn snapshot covers them.
-                let placeholder = usage.total_tokens() == 0
-                    && !usage.has_cost_figure()
-                    && usage.cost_gap == Some(CostGap::Unreported);
-                if !turn.has_snapshot || !placeholder {
-                    turn.usage += *usage;
-                }
+                // A native message without counters leaves a gap until the next snapshot.
+                *turn += *usage;
             }
             EventKind::InvocationFailed {
                 invocation,
@@ -161,9 +149,9 @@ impl Runtime {
                             "failed invocation {invocation} does not match its task event"
                         )));
                     }
-                    turn.usage += record.usage;
+                    *turn += record.usage;
                 } else {
-                    turn.usage.mark_cost_gap(CostGap::Unreported);
+                    turn.mark_cost_gap(CostGap::Unreported);
                 }
             }
             _ => {}

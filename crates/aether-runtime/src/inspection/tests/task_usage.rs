@@ -18,6 +18,17 @@ fn usage_snapshot(usage: Usage) -> EventKind {
     }
 }
 
+fn invocation(usage: Usage) -> EventKind {
+    EventKind::InvocationCompleted {
+        invocation: InvocationId::new(),
+        snapshot: SnapshotId::new(),
+        model: ModelRef::new("example", "model"),
+        usage,
+        stop_reason: None,
+        duration_ms: 1,
+    }
+}
+
 #[tokio::test]
 async fn task_pages_include_only_task_ancestry_usage() {
     let (runtime, _config) = runtime().await;
@@ -32,14 +43,6 @@ async fn task_pages_include_only_task_ancestry_usage() {
         input_tokens,
         estimated_cost_usd,
         ..Usage::default()
-    };
-    let invocation = |usage| EventKind::InvocationCompleted {
-        invocation: InvocationId::new(),
-        snapshot: SnapshotId::new(),
-        model: ModelRef::new("example", "model"),
-        usage,
-        stop_reason: None,
-        duration_ms: 1,
     };
     let unreported = |tokens| {
         let mut usage = usage(tokens, None);
@@ -135,6 +138,46 @@ async fn task_usage_stops_at_an_invisible_descendant() {
         .unwrap();
     let scoped: Task = serde_json::from_str(page["text"].as_str().unwrap()).unwrap();
     assert_eq!(scoped.delegated_usage.unwrap().input_tokens, 0);
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn earlier_task_snapshot_cannot_cover_a_later_unreported_invocation() {
+    let (runtime, _config) = runtime().await;
+    let (agent, record) = create(&runtime, None);
+    let draft = |kind| event(agent.id, record.id, kind);
+    let mut placeholder = Usage::default();
+    placeholder.mark_cost_gap(CostGap::Unreported);
+    let first = Usage::cost_only(Some(0.25));
+    runtime
+        .store
+        .commit(
+            Commit::new()
+                .event(draft(EventKind::AgentStarted { turn: 1 }))
+                .event(draft(usage_snapshot(first)))
+                .event(draft(invocation(placeholder))),
+        )
+        .unwrap();
+
+    let own = || {
+        runtime
+            .get_task_with_usage(record.id)
+            .unwrap()
+            .unwrap()
+            .own_usage
+            .unwrap()
+    };
+    let uncovered = own();
+    assert_eq!(uncovered.cost_usd, 0.25);
+    assert_eq!(uncovered.cost_gap, Some(CostGap::Unreported));
+    assert!(!uncovered.cost_complete);
+
+    let settled = Usage::cost_only(Some(0.75));
+    runtime
+        .store
+        .commit(Commit::new().event(draft(usage_snapshot(settled))))
+        .unwrap();
+    assert_eq!(own(), settled);
     runtime.shutdown().await;
 }
 
