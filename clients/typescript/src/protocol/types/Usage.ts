@@ -24,7 +24,7 @@ export interface Usage {
   "cost_basis"?: CostBasis;
   "cost_complete": boolean;
   "cost_gap"?: CostGap | null;
-  "cost_usd": number;
+  "cost_usd"?: number | null;
   "estimated_cost_usd"?: number | null;
   "input_tokens": number;
   "output_tokens": number;
