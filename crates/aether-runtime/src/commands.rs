@@ -167,6 +167,7 @@ pub struct RuntimeStatus {
 /// check against a concurrent create; this can.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Preflight<'a> {
+    /// The task whose tool call requested this delegation.
     pub parent_task: Option<TaskId>,
     /// Model and network policy the caller already resolved. A mismatch means
     /// they changed mid-flight, and the caller is told to retry.

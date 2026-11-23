@@ -1,101 +1,93 @@
 use super::*;
+use aether_core::event::{EventDraft, EventKind};
+use aether_core::id::{InvocationId, SnapshotId};
+use aether_core::model::{CostGap, Usage};
+use aether_core::snapshot::Invocation;
+
+fn event(agent: AgentId, task: TaskId, kind: EventKind) -> EventDraft {
+    EventDraft::new(Actor::agent(agent), kind)
+        .agent(agent)
+        .task(task)
+}
+
+fn usage_snapshot(usage: Usage) -> EventKind {
+    EventKind::AgentUsageUpdated {
+        total: usage,
+        turn_usage: usage,
+        billing: None,
+    }
+}
 
 #[tokio::test]
 async fn task_pages_include_only_task_ancestry_usage() {
-    use aether_core::event::{EventDraft, EventKind};
-    use aether_core::model::{CostGap, Usage};
     let (runtime, _config) = runtime().await;
     let (root, parent) = create(&runtime, None);
     let (child, mut delegated) = create(&runtime, Some(root.id));
     let (_, unrelated) = create(&runtime, Some(root.id));
     delegated.parent_task = Some(parent.id);
-    runtime
-        .store
-        .commit(Commit::new().mutate(Mutation::UpsertTask(delegated.clone())))
-        .unwrap();
-    let draft = |agent, task, kind| {
-        EventDraft::new(Actor::agent(agent), kind)
-            .agent(agent)
-            .task(task)
-    };
-    let usage = |tokens, estimate| Usage {
-        input_tokens: tokens,
-        estimated_cost_usd: estimate,
+    let own = |kind| event(root.id, parent.id, kind);
+    let descendant = |kind| event(child.id, delegated.id, kind);
+    let other = |kind| event(root.id, unrelated.id, kind);
+    let usage = |input_tokens, estimated_cost_usd| Usage {
+        input_tokens,
+        estimated_cost_usd,
         ..Usage::default()
     };
-    let snapshot = |usage| EventKind::AgentUsageUpdated {
-        total: usage,
-        turn_usage: usage,
-        billing: None,
-    };
     let invocation = |usage| EventKind::InvocationCompleted {
-        invocation: aether_core::id::InvocationId::new(),
-        snapshot: aether_core::id::SnapshotId::new(),
+        invocation: InvocationId::new(),
+        snapshot: SnapshotId::new(),
         model: ModelRef::new("example", "model"),
         usage,
         stop_reason: None,
         duration_ms: 1,
     };
-    let mut unknown = usage(7, None);
-    unknown.mark_cost_gap(CostGap::Unreported);
-    let mut unreported = usage(0, None);
-    unreported.mark_cost_gap(CostGap::Unreported);
+    let unreported = |tokens| {
+        let mut usage = usage(tokens, None);
+        usage.mark_cost_gap(CostGap::Unreported);
+        usage
+    };
+    let start = |turn| EventKind::AgentStarted { turn };
     let commit = Commit::new()
-        .event(draft(
-            root.id,
-            parent.id,
-            EventKind::AgentStarted { turn: 1 },
-        ))
-        .event(draft(root.id, parent.id, snapshot(usage(10, Some(0.1)))))
-        .event(draft(root.id, parent.id, invocation(usage(5, None))))
-        .event(draft(root.id, parent.id, snapshot(usage(20, Some(0.2)))))
-        .event(draft(root.id, parent.id, invocation(usage(2, None))))
-        .event(draft(root.id, parent.id, invocation(Usage::default())))
-        .event(draft(
-            root.id,
-            unrelated.id,
-            EventKind::AgentStarted { turn: 2 },
-        ))
-        .event(draft(root.id, unrelated.id, snapshot(usage(1000, None))))
-        .event(draft(
-            root.id,
-            parent.id,
-            EventKind::AgentStarted { turn: 3 },
-        ))
-        .event(draft(root.id, parent.id, invocation(unreported)))
-        .event(draft(
-            child.id,
-            delegated.id,
-            EventKind::AgentStarted { turn: 1 },
-        ))
-        .event(draft(child.id, delegated.id, snapshot(unknown)))
-        .event(draft(
-            child.id,
-            delegated.id,
-            EventKind::AgentStarted { turn: 2 },
-        ))
-        .event(draft(child.id, delegated.id, snapshot(usage(3, Some(0.3)))));
+        .mutate(Mutation::UpsertTask(delegated.clone()))
+        .event(own(start(1)))
+        .event(own(usage_snapshot(usage(10, Some(0.1)))))
+        .event(own(invocation(usage(5, None))))
+        .event(own(usage_snapshot(usage(20, Some(0.2)))))
+        .event(own(invocation(usage(2, None))))
+        .event(own(invocation(unreported(0))))
+        .event(other(start(2)))
+        .event(other(usage_snapshot(usage(1000, None))))
+        .event(own(start(3)))
+        .event(own(invocation(unreported(0))))
+        .event(descendant(start(1)))
+        .event(descendant(usage_snapshot(unreported(7))))
+        .event(descendant(start(2)))
+        .event(descendant(usage_snapshot(usage(3, Some(0.3)))));
     runtime.store.commit(commit).unwrap();
-    let projected = runtime.get_task_with_usage(parent.id).unwrap().unwrap();
-    assert_eq!(projected.own_usage.unwrap().input_tokens, 22);
-    assert!(!projected.own_usage.unwrap().cost_complete);
+    assert_task_page_usage(&runtime, root.id, parent.id);
+    runtime.shutdown().await;
+}
+
+fn assert_task_page_usage(runtime: &Runtime, caller: AgentId, parent: TaskId) {
+    let projected = runtime.get_task_with_usage(parent).unwrap().unwrap();
+    let own = projected.own_usage.unwrap();
+    assert_eq!(own.input_tokens, 22);
+    assert_eq!(own.estimated_cost_usd, Some(0.2));
+    assert!(!own.cost_complete);
     let delegated_usage = projected.delegated_usage.unwrap();
     assert_eq!(delegated_usage.input_tokens, 10);
     assert_eq!(delegated_usage.estimated_cost_usd, Some(0.3));
     assert!(!delegated_usage.cost_complete);
-    let page = task(&runtime, root.id, parent.id, None, 0, MAX_TASK_CHARS)
+    let page = task(runtime, caller, parent, None, 0, MAX_TASK_CHARS)
         .unwrap()
         .structured
         .unwrap();
     let record: Task = serde_json::from_str(page["text"].as_str().unwrap()).unwrap();
     assert_eq!(record, projected);
-    runtime.shutdown().await;
 }
 
 #[tokio::test]
 async fn task_usage_stops_at_an_invisible_descendant() {
-    use aether_core::event::{EventDraft, EventKind};
-    use aether_core::model::Usage;
     let (runtime, _config) = runtime().await;
     let (root, parent) = create(&runtime, None);
     let (foreign, mut hidden) = create(&runtime, None);
@@ -147,8 +139,62 @@ async fn task_usage_stops_at_an_invisible_descendant() {
 }
 
 #[tokio::test]
+async fn task_usage_keeps_the_cost_of_a_failed_request_after_a_snapshot() {
+    let (runtime, _config) = runtime().await;
+    let (agent, task_record) = create(&runtime, None);
+    let at = aether_core::time::now();
+    let mut partial = Usage::cost_only(Some(0.25));
+    partial.input_tokens = 20;
+    partial.mark_cost_gap(CostGap::Interrupted);
+    let failed = Invocation {
+        id: InvocationId::new(),
+        snapshot_id: SnapshotId::new(),
+        agent_id: agent.id,
+        turn: 1,
+        model: agent.model.clone(),
+        started_at: at,
+        finished_at: Some(at),
+        content: Vec::new(),
+        usage: partial,
+        stop_reason: None,
+        error: Some("interrupted".into()),
+        provider_message_id: None,
+    };
+    let draft = |kind| event(agent.id, task_record.id, kind);
+    let first = Usage::cost_only(Some(0.5));
+    runtime
+        .store
+        .commit(
+            Commit::new()
+                .event(draft(EventKind::AgentStarted { turn: 1 }))
+                .event(draft(usage_snapshot(first)))
+                .event(draft(EventKind::InvocationFailed {
+                    invocation: failed.id,
+                    snapshot: failed.snapshot_id,
+                    error: "interrupted".into(),
+                    class: None,
+                    retryable: false,
+                    cancelled: true,
+                    partial: Vec::new(),
+                }))
+                .mutate(Mutation::PutInvocation(failed)),
+        )
+        .unwrap();
+
+    let projected = runtime
+        .get_task_with_usage(task_record.id)
+        .unwrap()
+        .unwrap();
+    let own = projected.own_usage.unwrap();
+    assert_eq!(own.input_tokens, 20);
+    assert_eq!(own.cost_usd, 0.75);
+    assert_eq!(own.cost_gap, Some(CostGap::Interrupted));
+    assert!(!own.cost_complete);
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn expired_history_omits_only_affected_usage() {
-    use aether_core::event::{EventDraft, EventKind};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("store.db");
     let runtime = Runtime::start_with_engines(
