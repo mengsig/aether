@@ -116,7 +116,7 @@ pub struct Usage {
     /// Dollars over the invocations that could be priced. A floor when
     /// `cost_complete` is false. Omitted on the wire for an incomplete
     /// total without a positive floor.
-    #[schemars(default, with = "Option<f64>")]
+    #[schemars(with = "Option<f64>", skip_serializing_if = "Option::is_none")]
     pub cost_usd: f64,
     /// Every contribution's cost is accounted for. Adding usage cannot repair a gap;
     /// closing accounting may replace provisional usage for the same run.
@@ -191,7 +191,6 @@ struct UsageWire {
 impl From<Usage> for UsageWire {
     fn from(usage: Usage) -> Self {
         debug_assert!(usage.cache_write_1h_tokens <= usage.cache_write_tokens);
-        debug_assert!(usage.cost_usd.is_finite());
         Self {
             input_tokens: usage.input_tokens,
             output_tokens: usage.output_tokens,
