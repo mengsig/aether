@@ -117,7 +117,8 @@ fn named_limit_hit(message: &str) -> bool {
         let Some(limit) = words.next() else {
             return false;
         };
-        name.chars().any(char::is_alphanumeric)
+        name != "rate"
+            && name.chars().any(char::is_alphanumeric)
             && name
                 .chars()
                 .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))

@@ -92,6 +92,7 @@ fn exhaustion_requires_explicit_error_evidence() {
         "daily limit may apply",
         "session expired",
         "rate limit reached for requests per minute",
+        "You've hit your rate limit for requests per minute",
         "unknown error",
         "hit your Fable limiter",
         "shit your Fable limit",
