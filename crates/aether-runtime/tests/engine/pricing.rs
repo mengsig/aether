@@ -138,6 +138,7 @@ async fn codex_prices_all_reported_token_categories_as_an_estimate() {
         .runtime
         .create_agent(
             CreateAgentSpec {
+                role: "worker".into(),
                 model: Some(ModelRef::new("codex", "sol")),
                 start: true,
                 objective: Some("measure usage".into()),
