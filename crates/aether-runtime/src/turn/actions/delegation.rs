@@ -162,6 +162,7 @@ async fn create_delegated_child(
         spec,
         ctx.base_actor.clone(),
         crate::commands::Preflight {
+            parent_task: ctx.task.as_ref().map(|task| task.id),
             checked: Some((&requested, network)),
             isolated_workspace: isolated
                 .as_ref()

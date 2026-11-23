@@ -145,29 +145,6 @@ impl Runtime {
         Ok(())
     }
 
-    /// Refuse a cost budget on a provider that reports no dollar cost: a hard
-    /// stop that silently never fires is worse than no stop at all.
-    pub(super) fn check_cost_budget(
-        &self,
-        model: &ModelRef,
-        fallbacks: &[ModelRef],
-        budget: Option<f64>,
-    ) -> Result<()> {
-        if budget.is_none() {
-            return Ok(());
-        }
-        Self::for_each_link(model, fallbacks, |link| {
-            if self.models.resolve(link)?.reports_cost() {
-                return Ok(());
-            }
-            Err(RuntimeError::Invalid(format!(
-                "provider `{}` reports no dollar cost, so a cost budget on it could never be \
-                 enforced; token caps are supported: set token_budget instead",
-                link.provider
-            )))
-        })
-    }
-
     /// VISION §16: an external engine (Claude Code, Codex) runs its own tools
     /// on the daemon's host - `turn_engine` never reads `scope.backend` - so
     /// `--backend container` on an engine-backed agent would read as
@@ -555,10 +532,8 @@ impl Runtime {
     /// reject a crossed budget without touching the daemon's write path at
     /// all, then under the commit hold for the authoritative verdict.
     ///
-    /// Cost is a floor: an engine that reports no dollar figure contributes
-    /// zero (`Usage::cost_complete`), so a crossed budget is certain while an
-    /// uncrossed one is only certain for the priced part. `cost_line` says
-    /// which it is.
+    /// Only the known cost floor can cross a budget. `cost_line` indicates
+    /// when that floor leaves out unpriced usage.
     pub(super) fn run_budget_refusal(&self, run: aether_core::id::RunId) -> Result<Option<String>> {
         let Some(budget) = self.config.run_budget_usd else {
             return Ok(None);

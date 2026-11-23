@@ -182,11 +182,11 @@ async fn list_models(
                 row.insert(provider_readiness(runtime, &resolved.provider, network).await)
             }
         };
-        let cost = resolved
-            .model
-            .capabilities
-            .cost
-            .or_else(|| runtime.models.registry().api_equivalent_price(&resolved));
+        let cost = runtime
+            .models
+            .registry()
+            .api_equivalent_price(&resolved)
+            .or(resolved.model.capabilities.cost);
         let entry = model_entry(&info, status, cost);
         if provider.as_ref().is_none_or(|p| *p == info.model.provider) {
             models.push(entry);

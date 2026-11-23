@@ -332,6 +332,11 @@ this prevents concatenating pages from different task versions. Individual
 pages need not be complete JSON documents. Completion/failure details also
 arrive through the inbox.
 
+The task's `own_usage` covers its own tagged work; `delegated_usage` covers
+visible descendant tasks, stopping at tasks outside the caller's scope. Either
+field is omitted if the required event history has expired. Usage changes also
+change the revision.
+
 This inventory does not prove ordinary-language reliability or provider
 steering parity; those acceptance checks remain open
 ([known limitations](known-limitations.md)).

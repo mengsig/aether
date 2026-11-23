@@ -958,8 +958,10 @@ each other is text only.
 
 ## Usage and cost coverage
 
-`Usage.cost_usd` is the sum of known costs; `cost_complete: false` makes it a
-lower bound. `cost_basis` identifies list prices, provider receipts, or a mix.
+`Usage.cost_usd` is the sum of known costs. With `cost_complete: false`, a
+positive amount is a lower bound and an omitted amount means no positive
+cost was known. A complete zero is written as `cost_usd: 0`.
+`cost_basis` identifies list prices, provider receipts, or a mix.
 The optional `cost_gap` explains incomplete coverage: `unpriced` means reported
 usage had neither a price nor a provider cost; `unreported` means the engine
 did not fully report usage; `interrupted` means possibly billed work lacks
@@ -1014,6 +1016,20 @@ No Welcome feature flag is needed: this is optional response metadata. Older
 daemons omit it, and clients must keep an absent reason unknown. Generated
 Python and TypeScript clients list the known reason strings; Rust readers map
 unrecognized strings to `unknown`.
+
+### Task usage
+
+Single-task reads (`get_task` and the harness `read_task`) include optional
+`own_usage` and `delegated_usage` fields. Each is derived from retained usage
+for the corresponding task IDs. `delegated_usage` follows `parent_task` links
+and includes the recorded usage of all linked descendants. Existing tasks
+without a link can still report their own usage. Expired event history leaves
+the affected field absent.
+
+The harness `read_task` follows only tasks created or owned by agents in the
+caller's delegated scope. List responses contain task records without the
+derived usage fields. A paged `read_task` restarts if new usage changes the
+revision.
 
 ## Memory proposals
 

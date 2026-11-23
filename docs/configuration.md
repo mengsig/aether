@@ -65,6 +65,30 @@ completed_run_days = 10
 Daemon configuration changes generally require a restart. GitHub watcher
 settings are stored in the daemon database and can be changed live.
 
+### Codex estimate rates
+
+`list_models` shows the rate used for each Codex model as
+`api_equivalent_cost`. By default the rate comes from the matching OpenAI API
+model. To override it for Codex, add a model entry in `providers.toml` and
+set its rates in dollars per million tokens. For example:
+
+```toml
+[[providers.codex.add_models]]
+id = "sol"
+name = "GPT-6.2 Sol"
+tier = "balanced"
+default_effort = "high"
+capabilities_from = "sol"
+
+[providers.codex.add_models.capabilities.cost]
+input_per_mtok = 3.0
+cache_read_per_mtok = 1.0
+output_per_mtok = 9.0
+```
+
+Usage records carry the result as `estimated_cost_usd`. Dollar budgets use
+known costs and leave subscription estimates out of their calculation.
+
 ## Model aliases
 
 `aether models` shows full model IDs. Either a full ID or an alias works in
@@ -91,7 +115,7 @@ section and key. Omitted settings use the shipped defaults.
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `model.default` | Balanced-tier model of the first ready provider (`claude-code/claude-sonnet-5-5`, `codex/gpt-6.1-terra`), which is priced | Choose the default `provider/model`. A malformed value fails config load; an unknown model is refused when an agent is created, naming the valid choices. It is never replaced silently. |
+| `model.default` | Balanced-tier model of the first ready provider (`claude-code/claude-sonnet-5-5`, `codex/gpt-6.1-terra`) | Choose the default `provider/model`. A malformed value fails config load; an unknown model is refused when an agent is created, naming the valid choices. It is never replaced silently. |
 | `providers.usage_stale_after` | `900` | Seconds before cached provider usage is stale; zero marks reports stale as soon as time advances. |
 | `providers.usage_refresh_interval` | `600` | Minimum seconds between explicit refresh attempts for one provider; must be positive. |
 | `providers.usage_refresh_timeout` | `15` | Probe deadline in seconds; must be positive. |

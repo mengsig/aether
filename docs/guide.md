@@ -279,6 +279,9 @@ names a path on the host.
 `--payload` is optional with `--target`: JSON, or plain text sent as a string.
 `aether run` accepts `--token-budget`, `--cost-budget` and `--max-turns`; cache
 reads and writes count as tokens, so keep a Claude Code budget above 20k.
+Dollar budgets enforce on known costs. Work whose cost is unknown or only
+reported as a subscription estimate can continue until the known spend
+reaches the budget. Token budgets still count reported tokens.
 `aether version` prints the build's version.
 
 A tick that finds a delivery schedule's target paused is recorded as skipped

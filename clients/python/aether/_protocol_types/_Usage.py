@@ -24,7 +24,7 @@ class Usage(TypedDict, total=False):
     cost_basis: _protocol.CostBasis  # optional
     cost_complete: bool
     cost_gap: _protocol.CostGap | None  # optional
-    cost_usd: float
+    cost_usd: float | None  # optional
     estimated_cost_usd: float | None  # optional
     input_tokens: int
     output_tokens: int

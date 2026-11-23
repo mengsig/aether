@@ -16766,6 +16766,17 @@
         "creator": {
           "$ref": "#/$defs/Actor"
         },
+        "delegated_usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Usage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Usage attributed to descendant tasks on single-task reads."
+        },
         "delegation_reason": {
           "description": "Why the delegating parent put this task on its own frontier model,\nas it said when it delegated.",
           "type": [
@@ -16793,6 +16804,17 @@
         },
         "objective": {
           "type": "string"
+        },
+        "own_usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Usage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Usage attributed directly to this task on single-task reads."
         },
         "owner": {
           "anyOf": [
@@ -18027,9 +18049,12 @@
           "description": "Missing-cost reason; absent for complete totals. Live missing usage is unreported;\nlegacy or unrecognized reasons read as unknown. Distinct reasons combine as mixed."
         },
         "cost_usd": {
-          "description": "Dollars over the invocations that could be priced. A floor when\n`cost_complete` is false.",
+          "description": "Dollars over the invocations that could be priced. A floor when\n`cost_complete` is false. Omitted on the wire for an incomplete\ntotal without a positive floor.",
           "format": "double",
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "estimated_cost_usd": {
           "description": "Dollars nobody billed, at the list price of the API model behind a\nsubscription one: an **estimate**, so it sits beside `cost_usd`\ninstead of in it. No budget reads it, and every surface labels it\n([`Self::estimate_said`]). Like `cost_usd` it is a floor - an unpriced\ninvocation whose model has no known API equivalent adds nothing - and\n`None` means nothing here was estimated at all.",
@@ -18063,7 +18088,6 @@
         "output_tokens",
         "cache_read_tokens",
         "cache_write_tokens",
-        "cost_usd",
         "cost_complete"
       ],
       "type": "object"

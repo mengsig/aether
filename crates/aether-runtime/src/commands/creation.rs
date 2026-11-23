@@ -361,7 +361,6 @@ impl Runtime {
                 "compaction_tokens must be at least {MIN_AGENT_COMPACTION_TOKENS}; leave it unset for the model's threshold"
             )));
         }
-        self.check_cost_budget(&model, &fallbacks, config.cost_budget)?;
         let run = spec
             .run
             .or_else(|| parent.as_ref().map(|p| p.run))
@@ -430,6 +429,7 @@ impl Runtime {
         let task = match spec.objective.filter(|o| !o.trim().is_empty()) {
             Some(objective) => {
                 let mut task = Task::new(objective.trim().to_owned(), by.clone(), run, at);
+                task.parent_task = preflight.parent_task;
                 task.delegation_reason = spec.delegation_reason;
                 task.references = resolved.references;
                 task.owner = Some(agent.id);
@@ -439,7 +439,7 @@ impl Runtime {
                 commit.push_event(
                     base(EventKind::TaskCreated {
                         objective: task.objective.clone(),
-                        parent_task: None,
+                        parent_task: task.parent_task,
                         dependencies: Vec::new(),
                         priority: task.priority,
                     })
@@ -553,7 +553,6 @@ impl Runtime {
                     .cost_budget
                     .is_some_and(|child| child <= limit))
             );
-            self.check_cost_budget(&agent.model, &agent.fallbacks, agent.config.cost_budget)?;
         }
         // §3.8: a subtree pause holds what the held supervisor's own
         // in-flight turn goes on to delegate, and the same subtree resume

@@ -136,23 +136,41 @@ async fn unpriced_stream_then_cancel_combines_both_gaps() {
 }
 
 #[tokio::test]
-async fn terminal_usage_without_a_model_price_is_unpriced() {
+async fn an_unpriced_codex_turn_can_continue_under_a_cost_budget() {
     let h = harness_with_engine_config(Arc::new(super::pricing::UsageEngine), |config| {
-        config.default_model = Some(ModelRef::new("claude-code", "default"))
+        config.default_model = Some(ModelRef::new("codex", "default"))
     })
     .await;
     let id = chat_agent(&h);
-    h.runtime
-        .send_message(id, vec![ContentBlock::text("go")], Actor::user())
-        .unwrap();
-    let agent = wait_for(h.store.as_ref(), id, |a| {
-        a.stats.turns == 1 && a.status.kind() == AgentStatusKind::Waiting
-    })
-    .await;
-    assert_eq!(agent.stats.usage.cost_gap, Some(CostGap::Unpriced));
-    assert!(!agent.stats.usage.cost_complete);
-    assert_eq!(agent.stats.usage.total_tokens(), 150_000);
-    assert_eq!(agent.stats.usage.cost_usd, 0.0);
+    let updated = h
+        .runtime
+        .update_agent(
+            id,
+            aether_runtime::AgentUpdate {
+                cost_budget: Some(0.01),
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .expect("Codex can carry a budget even without a known price");
+    assert_eq!(updated.config.cost_budget, Some(0.01));
+    for turn in 1..=2 {
+        h.runtime
+            .send_message(id, vec![ContentBlock::text("go")], Actor::user())
+            .unwrap();
+        let agent = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for(h.store.as_ref(), id, |a| {
+                a.stats.turns == turn && a.status.kind() == AgentStatusKind::Waiting
+            }),
+        )
+        .await
+        .expect("unknown cost must leave the agent able to take another turn");
+        assert_eq!(agent.stats.usage.cost_gap, Some(CostGap::Unpriced));
+        assert!(!agent.stats.usage.cost_complete);
+        assert_eq!(agent.stats.usage.total_tokens(), u64::from(turn) * 150_000);
+        assert_eq!(agent.stats.usage.estimated_cost_usd, None);
+    }
     h.runtime.shutdown().await;
 }
 

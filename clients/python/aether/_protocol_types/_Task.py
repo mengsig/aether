@@ -13,11 +13,13 @@ class Task(TypedDict, total=False):
     artifacts: list[_protocol.ArtifactId]  # optional
     created_at: str
     creator: _protocol.Actor
+    delegated_usage: _protocol.Usage | None  # optional
     delegation_reason: str | None  # optional
     dependencies: list[_protocol.TaskId]  # optional
     finished_at: str | None  # optional
     id: _protocol.TaskId
     objective: str
+    own_usage: _protocol.Usage | None  # optional
     owner: _protocol.AgentId | None  # optional
     parent_task: _protocol.TaskId | None  # optional
     priority: _protocol.Priority  # optional
