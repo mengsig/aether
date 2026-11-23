@@ -5919,6 +5919,10 @@
             "null"
           ]
         },
+        "require_independent_vendor": {
+          "description": "Every child model must have a known vendor different from its parent's.\nThis also applies to roles exempt from the worker limits.",
+          "type": "boolean"
+        },
         "workers": {
           "description": "Allowed children. Empty: any model at or below `default_tier`, or\nwithout that, any model not above the delegating agent's tier.",
           "items": {

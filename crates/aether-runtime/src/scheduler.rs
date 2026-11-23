@@ -29,7 +29,7 @@ use budgets::warn_once;
 use budgets::{enforce_budgets, enforce_deadlines};
 use dependencies::gate_dependencies;
 use dispatch::dispatch;
-pub(crate) use dispatch::{claim_link, hold_after_entry_refusal};
+pub(crate) use dispatch::{child_uses_engine, claim_link, hold_after_entry_refusal};
 use hard_stop::enforce_hard_stops;
 use lineage::Lineage;
 pub(crate) use lineage::{CapHolder, ResumeLimits, cap_holder, on_provider_descendants};

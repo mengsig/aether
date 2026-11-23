@@ -195,6 +195,30 @@ fn cap_over_the_whole_fleet(runtime: &Runtime, agent: &Agent, engine_cap: Option
 }
 
 #[tokio::test]
+async fn the_cap_advisory_uses_the_engine_fallback_when_the_primary_is_blocked() {
+    let (runtime, _dir) = quiet_runtime().await;
+    let lead = member(&runtime, None, 0);
+    let mut child = member(&runtime, Some(lead.id), 0);
+    child.model = ModelRef::new("openai", "gpt-6.2-sol");
+    child.fallbacks = vec![ModelRef::new("codex", "gpt-6.2-sol")];
+    let uses_engine =
+        || crate::scheduler::child_uses_engine(&runtime, &child, &runtime.sched.lock());
+    assert!(
+        !uses_engine(),
+        "an available API primary uses no engine slot"
+    );
+    crate::scheduler::backoff(
+        &runtime,
+        "openai",
+        "provider exhausted".into(),
+        std::time::Duration::from_secs(30),
+    )
+    .expect("back off the primary");
+    assert!(uses_engine(), "the eligible fallback uses an engine slot");
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn the_cap_advisory_counts_exactly_what_the_whole_fleet_gives() {
     let (runtime, _dir) = quiet_runtime().await;
     let top = member(&runtime, None, 0);
@@ -249,7 +273,7 @@ async fn the_cap_advisory_counts_exactly_what_the_whole_fleet_gives() {
             own.config.concurrency = own_cap;
             put(&runtime, &own);
             let expected = cap_over_the_whole_fleet(&runtime, &own, None);
-            let got = describe(&cap_status(&runtime, &own, false));
+            let got = describe(&cap_status(&runtime, &own, &live));
             assert_eq!(
                 got, expected,
                 "running {running:?} caps {top_cap:?}/{own_cap:?}"
@@ -303,7 +327,7 @@ async fn fleet_read_timing() {
         cap_over_the_whole_fleet(&runtime, &agent, None);
     });
     let cap_new = time(&|| {
-        cap_status(&runtime, &agent, false);
+        cap_status(&runtime, &agent, &child);
     });
     println!(
         "turn_refused: before {refused_old:?}, after {refused_new:?} ({OUTSIDE} agents outside)"

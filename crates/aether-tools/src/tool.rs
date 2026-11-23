@@ -167,6 +167,7 @@ pub enum HarnessAction {
         objective: String,
         instructions: Option<String>,
         model: ModelRef,
+        fallbacks: Vec<ModelRef>,
         effort: aether_core::model::Effort,
         scope: Option<Scope>,
         workspace_mode: WorkspaceMode,

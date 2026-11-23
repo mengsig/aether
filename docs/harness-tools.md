@@ -202,6 +202,25 @@ question hears only what arrived after it was asked, and an answer addressed
 to one question never answers another. When a held wait ends, its reply lists
 the questions still unanswered.
 
+### Delegated models
+
+Pass `fallbacks` to `delegate` as an ordered array of `provider/model` IDs.
+The child tries its primary model first when available, then uses the
+fallbacks in order when a provider cannot carry the turn. The caller's
+delegation policy applies to every model at the requested effort. If any
+link is refused, the reply names it and the child is never created.
+
+A policy with `require_independent_vendor: true` requires every link,
+including the primary, to have a known vendor different from the caller's
+configured primary model. The check treats Codex and GPT as OpenAI models
+and Claude Code and Claude as Anthropic models, using the registry's engine
+and model family declarations.
+
+A fresh quota report showing zero headroom for the primary provider adds a
+warning to the successful reply. Use `inspect_state`
+from the child to see its configured `model` and ordered `fallbacks`. Omitting
+`fallbacks` leaves the child with just its primary model.
+
 ### Delegated workspaces
 
 `delegate` defaults to `workspace_mode="shared"`, preserving the existing

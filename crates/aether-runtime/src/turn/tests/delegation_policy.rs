@@ -15,6 +15,7 @@ pub(super) fn adaptive_policy() -> DelegationPolicy {
         max_parallel: Some(1),
         exempt_roles: vec!["reviewer".into()],
         exempt_models: Vec::new(),
+        require_independent_vendor: false,
     }
 }
 
@@ -85,6 +86,7 @@ pub(super) fn delegate(
         objective: "part".into(),
         instructions: None,
         model: ModelRef::parse(model).expect("provider/model"),
+        fallbacks: Vec::new(),
         effort,
         scope: None,
         workspace_mode: aether_tools::WorkspaceMode::Shared,
@@ -175,6 +177,123 @@ async fn a_policy_refuses_a_child_outside_it_naming_the_allowed_choices() {
     assert!(
         children.expect("children").is_empty(),
         "a refusal created a child"
+    );
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_fallback_obeys_its_own_tier_and_effort_limits() {
+    let primary = "anthropic/claude-sonnet-5-5";
+    let haiku = "anthropic/claude-haiku-5-5";
+    let tiered = DelegationPolicy {
+        default_tier: Some(ModelTier::Balanced),
+        ..Default::default()
+    };
+    let with_efforts = DelegationPolicy {
+        workers: [(primary, Effort::Medium), (haiku, Effort::Low)]
+            .into_iter()
+            .map(|(model, effort)| WorkerChoice {
+                model: ModelRef::parse(model),
+                tier: None,
+                effort: Some(effort),
+            })
+            .collect(),
+        ..Default::default()
+    };
+    for (policy, fallback, why) in [
+        (tiered, "anthropic/claude-opus-5-5", "tier strong is above"),
+        (with_efforts, haiku, "effort medium is above"),
+    ] {
+        let (mut h, _dir) = lead_harness(policy).await;
+        let mut action = delegate("worker", primary, Effort::Medium, None);
+        let HarnessAction::Delegate { fallbacks, .. } = &mut action else {
+            panic!("expected delegate");
+        };
+        fallbacks.push(ModelRef::parse(fallback).unwrap());
+        let refusal = run(&mut h, action).await;
+        assert!(refusal.is_error, "{}", refusal.content);
+        assert!(
+            refusal
+                .content
+                .contains(&format!("fallback model `{fallback}`"))
+                && refusal.content.contains(why),
+            "{}",
+            refusal.content
+        );
+        h.runtime.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn an_independent_reviewer_cannot_fall_back_to_the_leads_vendor() {
+    let policy = DelegationPolicy {
+        require_independent_vendor: true,
+        exempt_roles: vec!["reviewer".into()],
+        ..Default::default()
+    };
+    let (mut h, _dir) = lead_harness(policy).await;
+    let mut action = delegate("reviewer", "openai/gpt-6.2-sol", Effort::Medium, None);
+    let HarnessAction::Delegate { fallbacks, .. } = &mut action else {
+        panic!("expected delegate");
+    };
+    fallbacks.push(ModelRef::new("claude-code", "haiku"));
+    let refusal = run(&mut h, action).await;
+    assert!(refusal.is_error, "{}", refusal.content);
+    assert!(
+        refusal
+            .content
+            .contains("fallback model `claude-code/haiku`")
+            && refusal.content.contains("shares your vendor `anthropic`"),
+        "{}",
+        refusal.content
+    );
+    let independent = delegate("reviewer", "openai/gpt-6.2-sol", Effort::Medium, None);
+    let allowed = run(&mut h, independent).await;
+    assert!(!allowed.is_error, "{}", allowed.content);
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_chain_warns_about_a_fresh_zero_headroom_report() {
+    use aether_core::provider::{ProviderUsage, QuotaWindow, UsageWindow};
+
+    let (mut h, _dir) = lead_harness(DelegationPolicy::default()).await;
+    let at = aether_core::time::now();
+    crate::scheduler::record_quota(
+        &h.runtime,
+        "anthropic",
+        ProviderUsage {
+            observed_at: at,
+            windows: vec![UsageWindow {
+                name: "five_hour".into(),
+                quota: QuotaWindow {
+                    used_percent: 100,
+                    window_minutes: Some(300),
+                    resets_at: Some(at + chrono::Duration::hours(1)),
+                },
+            }],
+        },
+    )
+    .unwrap();
+    let mut action = delegate(
+        "worker",
+        "anthropic/claude-sonnet-5-5",
+        Effort::Medium,
+        None,
+    );
+    let legacy = run(&mut h, action.clone()).await;
+    assert!(!legacy.is_error && !legacy.content.contains("zero quota headroom"));
+    let HarnessAction::Delegate { fallbacks, .. } = &mut action else {
+        panic!("expected delegate");
+    };
+    fallbacks.push(ModelRef::new("openai", "gpt-6.2-sol"));
+    let admitted = run(&mut h, action).await;
+    assert!(!admitted.is_error, "{}", admitted.content);
+    assert!(
+        admitted.content.contains("anthropic/claude-sonnet-5-5")
+            && admitted.content.contains("zero quota headroom"),
+        "{}",
+        admitted.content
     );
     h.runtime.shutdown().await;
 }

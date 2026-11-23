@@ -2,6 +2,32 @@ use super::*;
 use crate::tool::WorkspaceMode;
 
 #[tokio::test]
+async fn delegate_accepts_optional_ordered_fallbacks() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_in(dir.path());
+    let mut input = json!({
+        "role": "reviewer", "objective": "review it",
+        "model": "p/main", "effort": "medium"
+    });
+    let action = act(&Delegate, &ctx, input.clone()).await.unwrap();
+    assert!(matches!(action, HarnessAction::Delegate { fallbacks, .. } if fallbacks.is_empty()));
+
+    input["fallbacks"] = json!(["other/first", "router/org/second"]);
+    let action = act(&Delegate, &ctx, input.clone()).await.unwrap();
+    assert!(matches!(
+        action,
+        HarnessAction::Delegate { fallbacks, .. }
+            if fallbacks == [ModelRef::new("other", "first"), ModelRef::new("router", "org/second")]
+    ));
+    input["fallbacks"][1] = json!("bad");
+    let error = act(&Delegate, &ctx, input).await.unwrap_err().to_string();
+    assert!(
+        error.contains("fallbacks[1]") && error.contains("`bad`"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
 async fn delegation_requires_model_and_effort() {
     let dir = tempfile::tempdir().unwrap();
     let ctx = ctx_in(dir.path());

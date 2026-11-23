@@ -124,30 +124,21 @@ async fn delegate(
             "delegation refused: the current tools mode withholds `delegate`",
         ));
     }
-    let child_on_engine = match check_delegation_target(
-        runtime,
-        &request.child.model,
-        request.child.network(&parent),
-        &parent,
-    )
-    .await?
+    let network = request.child.network(&parent);
+    if let Err(refusal) =
+        check_delegation_target(runtime, &request.child.model, network, &parent).await?
     {
-        Ok(on_engine) => on_engine,
-        Err(refusal) => return Ok(refusal),
-    };
+        return Ok(refusal);
+    }
     if let Some(refusal) = policy_refusal(runtime, &parent, &request.child, Slots::Counted)? {
         return Ok(ToolOutcome::error(refusal));
     }
-    create_delegated_child(
-        runtime,
-        ctx,
-        effects,
-        &parent,
-        request,
-        child_on_engine,
-        submission,
-    )
-    .await
+    for link in &request.child.fallbacks {
+        if let Err(refusal) = check_delegation_target(runtime, link, network, &parent).await? {
+            return Ok(refusal);
+        }
+    }
+    create_delegated_child(runtime, ctx, effects, &parent, request, submission).await
 }
 
 async fn create_delegated_child(
@@ -156,7 +147,6 @@ async fn create_delegated_child(
     effects: &mut ToolEffects,
     parent: &Agent,
     request: DelegateRequest,
-    child_on_engine: bool,
     submission: Option<Submission>,
 ) -> Result<ToolOutcome> {
     let requested = request.child.model.clone();
@@ -186,7 +176,7 @@ async fn create_delegated_child(
     };
     debug_assert_eq!(child.parent, Some(parent.id));
     debug_assert_eq!(child.run, parent.run);
-    let status = cap_status(runtime, parent, child_on_engine);
+    let status = cap_status(runtime, parent, &child);
     let vision = runtime
         .models
         .resolve(&requested)
@@ -201,11 +191,35 @@ async fn create_delegated_child(
             task_id: task.as_ref().map(|t| t.id),
             wait,
             key: key.as_deref(),
-            reference_note,
+            notes: [reference_note, quota_warning(runtime, &child)],
         },
         isolated.as_ref(),
         &status,
     ))
+}
+
+/// Cached quota is advisory; the scheduler still decides which link runs.
+fn quota_warning(runtime: &Runtime, child: &Agent) -> Option<String> {
+    if child.fallbacks.is_empty() {
+        return None;
+    }
+    let at = aether_core::time::now();
+    let provider = &child.model.provider;
+    let headroom = {
+        let sched = runtime.sched.lock();
+        runtime.provider_headroom(sched.quotas.get(provider), at)
+    };
+    let exhausted = !headroom.stale
+        && headroom
+            .windows
+            .iter()
+            .any(|window| window.remaining_percent == 0 && window.resets_at.is_none_or(|r| r > at));
+    exhausted.then(|| {
+        format!(
+            " Warning: primary model `{}` is on provider `{provider}`, which reports zero quota headroom. The child has the requested fallbacks.",
+            child.model
+        )
+    })
 }
 
 fn delegation_spec(
@@ -345,14 +359,13 @@ pub(super) fn load_delegating_parent(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> C
     Ok(Ok(parent))
 }
 
-/// Model, engine and provider-auth checks; `Ok` carries whether the child
-/// runs on an engine.
+/// Model, engine and provider-auth checks for one link.
 pub(super) async fn check_delegation_target(
     runtime: &Arc<Runtime>,
     requested: &ModelRef,
     network: NetworkPolicy,
     parent: &Agent,
-) -> Checked<bool> {
+) -> Checked<()> {
     let resolved = match runtime.models.resolve(requested) {
         Ok(resolved) => resolved,
         Err(error) => {
@@ -394,7 +407,7 @@ pub(super) async fn check_delegation_target(
             .map(Err);
         }
     }
-    Ok(Ok(engine_kind.is_some()))
+    Ok(Ok(()))
 }
 
 /// The child's scope, and the snapshot manifest when the workspace is isolated.
@@ -584,8 +597,7 @@ struct Delegated<'a> {
     wait: bool,
     /// Echoed so the caller can repeat the call to learn its outcome.
     key: Option<&'a str>,
-    /// What references the child's task carries, and any delivery warning.
-    reference_note: Option<String>,
+    notes: [Option<String>; 2],
 }
 
 fn delegated_outcome(
@@ -599,7 +611,7 @@ fn delegated_outcome(
         task_id,
         wait,
         key,
-        reference_note,
+        notes,
     } = delegated;
     if wait && let Some(id) = task_id {
         merge_wait(effects, WaitCondition::Task { id });
@@ -617,7 +629,7 @@ fn delegated_outcome(
         },
         cap_note,
     ));
-    if let Some(note) = reference_note {
+    for note in notes.into_iter().flatten() {
         outcome.content.push_str(&note);
     }
     if let Some(manifest) = isolated {
@@ -743,6 +755,7 @@ pub(super) async fn apply(
             objective,
             instructions,
             model,
+            fallbacks,
             effort,
             scope,
             workspace_mode,
@@ -761,6 +774,7 @@ pub(super) async fn apply(
                     objective,
                     instructions,
                     model,
+                    fallbacks,
                     effort,
                     scope,
                     leaf,

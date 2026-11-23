@@ -171,6 +171,8 @@ mod deadline_warnings;
 mod delegation;
 #[path = "kernel/delegation_approval.rs"]
 mod delegation_approval;
+#[path = "kernel/delegation_fallback.rs"]
+mod delegation_fallback;
 #[path = "kernel/delegation_policy.rs"]
 mod delegation_policy;
 #[path = "kernel/delegation_references.rs"]

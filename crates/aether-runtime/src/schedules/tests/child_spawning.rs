@@ -732,6 +732,7 @@ async fn staging_leaves_a_full_max_parallel_to_the_wait_and_the_hold() {
         objective: "Check the queue".into(),
         instructions: None,
         model: model(FAST),
+        fallbacks: Vec::new(),
         effort: Effort::Low,
         scope: None,
         leaf: false,

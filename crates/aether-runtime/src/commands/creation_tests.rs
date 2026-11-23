@@ -170,6 +170,7 @@ async fn delegated_children_recheck_parent_authority_under_the_creation_hold() {
             objective: "check the tree".into(),
             instructions: None,
             model: lead.model.clone(),
+            fallbacks: Vec::new(),
             effort: Effort::Low,
             scope: None,
             leaf: true,

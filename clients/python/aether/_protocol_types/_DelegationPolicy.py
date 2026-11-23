@@ -16,4 +16,5 @@ class DelegationPolicy(TypedDict, total=False):
     exempt_roles: list[str]  # optional
     max_effort: _protocol.Effort | None  # optional
     max_parallel: int | None  # optional
+    require_independent_vendor: bool  # optional
     workers: list[_protocol.WorkerChoice]  # optional
