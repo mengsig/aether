@@ -182,6 +182,58 @@ async fn a_policy_refuses_a_child_outside_it_naming_the_allowed_choices() {
 }
 
 #[tokio::test]
+async fn an_engine_fallback_must_honor_required_approvals_and_network_denial() {
+    use aether_core::agent::{ApprovalPolicy, NetworkPolicy};
+    use aether_engine::{CodexEngine, EngineKind};
+
+    let (mut h, _dir) = lead_harness(DelegationPolicy::default()).await;
+    h.runtime.engines.mark_usable(
+        EngineKind::CODEX,
+        Arc::new(CodexEngine::new("unused", "0.130.0")),
+    );
+    let mut lead = h.ctx.agent.clone();
+    let fallback = ModelRef::new("codex", "gpt-6-luna");
+    for (approval, network, why) in [
+        (
+            ApprovalPolicy::default(),
+            NetworkPolicy::Allowed,
+            "cannot enforce the creator's required approvals",
+        ),
+        (
+            ApprovalPolicy::none(),
+            NetworkPolicy::Denied,
+            "Network-denied Codex turns require",
+        ),
+    ] {
+        lead.config.approval = approval;
+        lead.scope.network = network;
+        h.runtime
+            .store
+            .commit(Commit::new().mutate(Mutation::UpsertAgent(lead.clone())))
+            .expect("set the lead's authority");
+        let mut action = delegate("worker", "anthropic/claude-sonnet-5-5", Effort::Low, None);
+        let HarnessAction::Delegate { fallbacks, .. } = &mut action else {
+            panic!("expected delegate");
+        };
+        fallbacks.push(fallback.clone());
+        let refusal = run(&mut h, action).await;
+        assert!(
+            refusal.is_error
+                && refusal.content.contains("codex/gpt-6-luna")
+                && refusal.content.contains(why),
+            "{}",
+            refusal.content
+        );
+        assert_eq!(
+            h.runtime.store.agents(&Default::default()).unwrap().len(),
+            1
+        );
+        assert_eq!(h.runtime.store.tasks(&Default::default()).unwrap().len(), 1);
+    }
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_fallback_obeys_its_own_tier_and_effort_limits() {
     let primary = "anthropic/claude-sonnet-5-5";
     let haiku = "anthropic/claude-haiku-5-5";
