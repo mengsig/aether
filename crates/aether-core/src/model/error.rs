@@ -94,10 +94,35 @@ pub fn provider_exhaustion(message: &str) -> Option<ModelErrorClass> {
     ]
     .iter()
     .any(|signal| lower.contains(signal))
+        || named_limit_hit(&lower)
     {
         return Some(ModelErrorClass::UsageLimit);
     }
     None
+}
+
+fn named_limit_hit(message: &str) -> bool {
+    message.match_indices("hit your ").any(|(start, _)| {
+        if message[..start]
+            .chars()
+            .next_back()
+            .is_some_and(char::is_alphanumeric)
+        {
+            return false;
+        }
+        let mut words = message[start + "hit your ".len()..].split_whitespace();
+        let Some(name) = words.next() else {
+            return false;
+        };
+        let Some(limit) = words.next() else {
+            return false;
+        };
+        name.chars().any(char::is_alphanumeric)
+            && name
+                .chars()
+                .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
+            && limit.trim_end_matches(|c: char| !c.is_alphanumeric()) == "limit"
+    })
 }
 
 /// A model call failed.
