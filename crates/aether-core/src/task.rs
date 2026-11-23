@@ -220,6 +220,12 @@ pub struct Task {
     /// Approved images and files the owner must see, re-attached every turn.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub references: Vec<crate::reference::TaskReference>,
+    /// Usage attributed directly to this task on single-task reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub own_usage: Option<crate::model::Usage>,
+    /// Usage attributed to descendant tasks on single-task reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegated_usage: Option<crate::model::Usage>,
 }
 
 impl Task {
@@ -241,6 +247,8 @@ impl Task {
             finished_at: None,
             delegation_reason: None,
             references: Vec::new(),
+            own_usage: None,
+            delegated_usage: None,
         }
     }
 

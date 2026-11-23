@@ -429,6 +429,7 @@ impl Runtime {
         let task = match spec.objective.filter(|o| !o.trim().is_empty()) {
             Some(objective) => {
                 let mut task = Task::new(objective.trim().to_owned(), by.clone(), run, at);
+                task.parent_task = preflight.parent_task;
                 task.delegation_reason = spec.delegation_reason;
                 task.references = resolved.references;
                 task.owner = Some(agent.id);
@@ -438,7 +439,7 @@ impl Runtime {
                 commit.push_event(
                     base(EventKind::TaskCreated {
                         objective: task.objective.clone(),
-                        parent_task: None,
+                        parent_task: task.parent_task,
                         dependencies: Vec::new(),
                         priority: task.priority,
                     })

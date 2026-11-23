@@ -60,6 +60,7 @@ async fn stale_delegation_checks_create_neither_agents_nor_tasks() {
                 spec.clone(),
                 Actor::user(),
                 Preflight {
+                    parent_task: None,
                     checked: Some(checked),
                     run_budget: false,
                     inherit_limits: false,
@@ -85,6 +86,7 @@ async fn stale_delegation_checks_create_neither_agents_nor_tasks() {
             spec,
             Actor::user(),
             Preflight {
+                parent_task: None,
                 checked: Some((&parent.model, parent.scope.network)),
                 run_budget: false,
                 inherit_limits: false,

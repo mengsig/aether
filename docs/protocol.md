@@ -1,5 +1,16 @@
 # Daemon protocol
 
+`get_task` and the harness `read_task` include optional `own_usage` and
+`delegated_usage` fields on the task. The former covers work tagged with that
+task; the latter combines its descendant tasks via `parent_task`. Both use
+retained event history, including estimated and incomplete cost information.
+They do not include other work by the same agents. If history has expired,
+the affected field is omitted; the other field can still be available.
+`read_task` counts only descendants visible to the caller (created or owned
+by an agent in its delegated scope), and stops at an invisible task. List
+responses omit the derived fields. Usage can change between reads, so a paged `read_task` must
+restart if its revision changes.
+
 ## Request correlation and malformed frames
 
 Aether uses newline-delimited JSON. A client frame carries a nonzero unsigned
