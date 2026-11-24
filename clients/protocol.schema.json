@@ -5593,6 +5593,13 @@
     },
     "DaemonStatus": {
       "properties": {
+        "agent_slice": {
+          "description": "The systemd slice agents' engines run in and its limits, or why they\ndo not. Absent off Linux, and on older daemons.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "agents_blocked": {
           "format": "uint32",
           "minimum": 0,
