@@ -37,7 +37,14 @@ Things worth knowing:
 - **Host CI slots.** `make ci` first takes one of `CI_HOST_SLOTS` (default 1)
   host-wide slots that Archon's `make ci` shares, and says once that it waits
   when all are taken. `CI_HOST_SLOTS=0 make ci` or `make ci-checks` runs
-  without one; see [docs/ci.md](docs/ci.md#host-ci-slots).
+  without one; see [docs/ci.md](docs/ci.md#host-ci-slots). Once it holds a
+  slot it waits (30 minutes at most, `CI_MEM_WAIT_MAX_MIN`) until
+  `CI_MIN_FREE_GIB` (default 6, 0 disables) GiB of memory are available, then
+  runs at low priority: `systemd-run --user --scope` with `CPUWeight=20`,
+  `IOWeight=20` and `MemoryHigh=$CI_MEMORY_HIGH` (default 6G), plus `nice` and
+  `ionice` (only these two if `systemd-run` is unusable). `CI_LOW_PRIORITY=0`
+  turns that wrapping off. `CI_TEST_THREADS` (default 4) sets
+  `NEXTEST_TEST_THREADS` and `RUST_TEST_THREADS` unless you set them.
 - **cargo-nextest.** The test stage of `make ci` runs the tests under
   [cargo-nextest](https://nexte.st/) with one retry, and lists a test that
   passed only on its retry as `FLAKY`. Install it with
