@@ -6,6 +6,10 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+## 1.4.3
+
+The workspace and Python and TypeScript clients are 1.4.3.
+
 ### Added
 
 - **Agents run at low priority.** On Linux every engine scope joins
@@ -44,6 +48,23 @@ release is also the text of its GitHub release.
   bare `wait_for` does not wait on it. Schedules that start a fresh root run
   stay operator-only, and `aether schedule create` is unchanged.
 
+### Changed
+
+- **Cost accounting and delegated task rollups (#451, #456).** Codex token
+  rates can be configured as estimates without presenting subscription usage
+  as incurred cost. Tasks report their own usage and descendant rollups;
+  incomplete costs preserve known floors and unknown coverage, including
+  partial requests, while budgets can enforce known costs on unpriced links.
+- **Delegation fallbacks (#453, #455).** Delegated agents can use explicit
+  fallback chains; every link must pass the caller's policy, model-chain and
+  inherited approval checks.
+- **Dependencies updated (#448, #462).** Cargo and CI dependencies were
+  updated, retaining a compatible Unicode width version for terminal layout.
+- **CI resource controls hardened (#463, #464, #465).** Memory waiting and
+  low-priority execution also apply without a host slot; probes are bounded
+  and memory limits validated. `IOWeight` requires the `io` controller to be
+  delegated to the user manager.
+
 ### Before downgrading
 
 - **Cancel agent spawn schedules before downgrading to 1.4.2 or earlier.** An
@@ -60,6 +81,9 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **Named provider limits trigger fallback (#452, #454).** Provider messages
+  such as "You've hit your <name> limit" are classified as `UsageLimit`,
+  while transient rate limits retain their existing classification.
 - **A tool call Claude Code streams after a mid-turn `result` is served,
   not lost.** Aether ended the turn and closed stdin at Claude Code's first
   `result`. A tool call streamed 2 seconds later then failed inside Claude
