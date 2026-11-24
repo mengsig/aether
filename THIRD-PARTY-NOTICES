@@ -303,7 +303,7 @@ unicase 2.9.0: MIT OR Apache-2.0 (https://github.com/seanmonstar/unicase)
 unicode-ident 1.0.24: (MIT OR Apache-2.0) AND Unicode-3.0 (https://github.com/dtolnay/unicode-ident)
 unicode-segmentation 1.13.3: MIT OR Apache-2.0 (https://github.com/unicode-rs/unicode-segmentation)
 unicode-truncate 2.0.1: MIT OR Apache-2.0 (https://github.com/Aetf/unicode-truncate)
-unicode-width 0.2.3: MIT OR Apache-2.0 (https://github.com/unicode-rs/unicode-width)
+unicode-width 0.2.2: MIT OR Apache-2.0 (https://github.com/unicode-rs/unicode-width)
 untrusted 0.7.1: ISC (https://github.com/briansmith/untrusted)
 untrusted 0.9.0: ISC (https://github.com/briansmith/untrusted)
 url 2.5.8: MIT OR Apache-2.0 (https://github.com/servo/rust-url)
@@ -1262,7 +1262,7 @@ tungstenite 0.30.0 (LICENSE-APACHE)
 unicase 2.9.0 (LICENSE-APACHE)
 unicode-segmentation 1.13.3 (LICENSE-APACHE)
 unicode-truncate 2.0.1 (LICENSE-APACHE)
-unicode-width 0.2.3 (LICENSE-APACHE)
+unicode-width 0.2.2 (LICENSE-APACHE)
 url 2.5.8 (LICENSE-APACHE)
 utf8_iter 1.0.4 (LICENSE-APACHE)
 web_atoms 0.3.0 (LICENSE-APACHE)
@@ -5001,7 +5001,7 @@ DEALINGS IN THE SOFTWARE.
 fs4 1.1.0 (LICENSE-MIT)
 heck 0.5.0 (LICENSE-MIT)
 unicode-segmentation 1.13.3 (LICENSE-MIT)
-unicode-width 0.2.3 (LICENSE-MIT)
+unicode-width 0.2.2 (LICENSE-MIT)
 ------------------------------------------------------------------------------
 
 Copyright (c) 2015 The Rust Project Developers
@@ -11810,7 +11810,7 @@ authorization of the copyright holder.
 ------------------------------------------------------------------------------
 unicode-segmentation 1.13.3 (COPYRIGHT)
 unicode-truncate 2.0.1 (COPYRIGHT)
-unicode-width 0.2.3 (COPYRIGHT)
+unicode-width 0.2.2 (COPYRIGHT)
 ------------------------------------------------------------------------------
 
 Licensed under the Apache License, Version 2.0
