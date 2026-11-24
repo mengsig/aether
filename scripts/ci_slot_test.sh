@@ -234,6 +234,29 @@ CI_LOW_PRIORITY=0 PATH="$lpbin:$PATH" run_slot true 2>"$testdir/lp.err"
 [ ! -s "$LP_LOG" ] || fail "CI_LOW_PRIORITY=0 still wrapped"
 [ ! -s "$testdir/lp.err" ] || fail "CI_LOW_PRIORITY=0 printed: $(cat "$testdir/lp.err")"
 
+# Slot-free paths retain priority and thread policy without waiting for memory.
+noflockbin="$testdir/noflock-bin"
+mkdir "$noflockbin"
+ln -s "$(command -v sh)" "$noflockbin/sh"
+printf '#!/bin/sh\nexit 0\n' > "$noflockbin/true"
+chmod +x "$noflockbin/true"
+for tool in nice ionice systemd-run; do ln -s "$lpbin/$tool" "$noflockbin/$tool"; done
+for path in zero noflock; do
+    slot_path="$lpbin:$PATH"; slot_count=0
+    if [ "$path" = noflock ]; then slot_path=$noflockbin; slot_count=1; fi
+    : > "$LP_LOG"
+    # shellcheck disable=SC2016
+    threads=$(env -u NEXTEST_TEST_THREADS -u RUST_TEST_THREADS PATH="$slot_path" \
+        CI_HOST_SLOTS="$slot_count" CI_LOW_PRIORITY=1 CI_TEST_THREADS=2 \
+        CI_MIN_FREE_GIB=99 CI_SLOT_MEMINFO="$testdir/missing" \
+        sh "$slot" sh -c 'printf "%s %s" "$NEXTEST_TEST_THREADS" "$RUST_TEST_THREADS"' 2>"$testdir/free.err")
+    [ "$threads" = '2 2' ] || fail "$path path test threads: $threads"
+    grep -q 'CPUWeight=20 -p IOWeight=20 -p MemoryHigh=6G -- nice -n 19 ionice -c 3' "$LP_LOG" || fail "$path path skipped priority wrappers"
+    : > "$LP_LOG"
+    env PATH="$slot_path" CI_HOST_SLOTS="$slot_count" CI_LOW_PRIORITY=0 sh "$slot" true 2>"$testdir/free.err"
+    [ ! -s "$LP_LOG" ] || fail "$path path ignored CI_LOW_PRIORITY=0"
+done
+
 # Test threads.
 # shellcheck disable=SC2016
 show_threads='echo $NEXTEST_TEST_THREADS $RUST_TEST_THREADS'
