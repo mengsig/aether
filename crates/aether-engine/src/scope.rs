@@ -555,6 +555,24 @@ mod tests {
             on_parent.contains("MemoryHigh=infinity"),
             "{parent}: {on_parent}"
         );
+
+        // Turned all off, the limits are lifted from the scope still running there.
+        let off = aether_core::agent_slice::AgentSliceLimits {
+            cpu_weight: None,
+            io_weight: None,
+            memory_high: None,
+        };
+        apply(parent, slice, &off).await.expect("slice reset");
+        for unit in [slice.as_str(), parent.as_str()] {
+            let now = shown(unit);
+            for want in [
+                "CPUWeight=[not set]",
+                "IOWeight=[not set]",
+                "MemoryHigh=infinity",
+            ] {
+                assert!(now.contains(want), "{unit}: {now}");
+            }
+        }
         engine.kill().await.unwrap();
     }
 

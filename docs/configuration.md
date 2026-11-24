@@ -553,7 +553,8 @@ agents_memory_high = "8G" # bytes, or with K, M, G, T or %
 ```
 
 These are the defaults. `"off"` turns one limit off; with all three off,
-scopes stay where they ran before. `MemoryHigh` throttles and reclaims the
+scopes stay where they ran before, and the first engine resets whatever an
+earlier configuration left on the slices. `MemoryHigh` throttles and reclaims the
 agents' memory above the limit, all agents together, and never kills an
 agent. The weights sit on `aether.slice` too, since cgroup weights only
 compare siblings. The daemon sets the slice with `systemctl --user

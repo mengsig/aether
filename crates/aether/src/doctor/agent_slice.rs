@@ -26,7 +26,14 @@ pub fn check_agent_slice(
         return Check::ok(NAME, "not checked: config.toml does not load");
     };
     if limits.is_off() {
-        return Check::ok(NAME, "off: [resources] turns every agent limit off");
+        let off = "off: [resources] turns every agent limit off";
+        return match probe {
+            Ok(probe) => Check::ok(
+                NAME,
+                format!("{off}; {AGENT_SLICE} now has {}", one_line(&probe.shown)),
+            ),
+            Err(_) => Check::ok(NAME, off),
+        };
     }
     let probe = match probe {
         Ok(probe) => probe,
@@ -188,7 +195,19 @@ mod tests {
             memory_high: None,
         };
         let check = check_agent_slice(Some(&off), Err("unused".into()));
-        assert!(check.detail.starts_with("off"), "{}", check.detail);
+        assert_eq!(check.detail, "off: [resources] turns every agent limit off");
+        let earlier = Ok(SliceProbe {
+            shown: "CPUWeight=[not set]\nIOWeight=[not set]\nMemoryHigh=infinity\n".into(),
+            controllers: None,
+        });
+        let check = check_agent_slice(Some(&off), earlier);
+        assert!(
+            check
+                .detail
+                .ends_with("now has CPUWeight=[not set] IOWeight=[not set] MemoryHigh=infinity"),
+            "{}",
+            check.detail
+        );
         let check = check_agent_slice(None, Err("unused".into()));
         assert!(check.detail.contains("does not load"), "{}", check.detail);
     }
