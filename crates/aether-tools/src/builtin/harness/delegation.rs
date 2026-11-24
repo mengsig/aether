@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use aether_core::{
-    agent::{HostContext, NetworkPolicy},
+    agent::HostContext,
     id::AgentId,
     model::{Effort, ModelRef},
 };
@@ -30,6 +30,8 @@ struct DelegateInput {
     #[serde(default)]
     instructions: Option<String>,
     model: String,
+    #[serde(default)]
+    fallbacks: Vec<String>,
     // A raw `Value`, not `Effort`: direct enum deserialization loses the
     // field name through `serde::de::Error::custom` (aether-core/src/id.rs
     // and model.rs) - and a `String` field would drop it too, just for
@@ -59,6 +61,35 @@ struct DelegateInput {
     references: Vec<aether_core::reference::ReferenceRequest>,
     #[serde(default)]
     inherit_references: bool,
+}
+
+impl DelegateInput {
+    fn validate(&self) -> Result<(), ToolError> {
+        if self.role.trim().is_empty() {
+            return Err(ToolError::InvalidInput("role is empty".into()));
+        }
+        if self.objective.trim().is_empty() {
+            return Err(ToolError::InvalidInput("objective is empty".into()));
+        }
+        if let Some(key) = &self.idempotency_key {
+            validate_idempotency_key(key)?;
+        }
+        Ok(())
+    }
+
+    fn fallback_models(&self) -> Result<Vec<ModelRef>, ToolError> {
+        self.fallbacks
+            .iter()
+            .enumerate()
+            .map(|(index, link)| {
+                ModelRef::parse(link).ok_or_else(|| {
+                    ToolError::InvalidInput(format!(
+                        "fallbacks[{index}] must be `provider/model`, got `{link}`"
+                    ))
+                })
+            })
+            .collect()
+    }
 }
 
 /// Longest caller key: the runtime prefixes it with the calling agent, and
@@ -115,6 +146,7 @@ impl Tool for Delegate {
                     "name": {"type": "string", "description": "Short display name."},
                     "instructions": {"type": "string", "description": "Extra instructions for this child's task. Omitted instructions are empty; your own task instructions are not copied to the child."},
                     "model": {"type": "string", "description": "Required exact `provider/model` connection ID, e.g. `codex/gpt-6.1-terra` or `claude-code/opus`. Choose capability first, then cost within the suitable tier; list_models supplies current preferences and prices. Pass an ID your instructions name straight through; an unknown one is refused by name. Resolve a bare model family with list_models rather than guessing a vendor connection."},
+                    "fallbacks": {"type": "array", "items": {"type": "string"}, "description": "Ordered fallback `provider/model` IDs. Every link must satisfy your delegation policy at the requested effort."},
                     "effort": {"type": "string", "enum": ["low", "medium", "high", "xhigh", "max"], "description": "Required reasoning effort for this child's task. Choose explicitly; there is no inheritance default."},
                     "workspace_root": {"type": "string", "description": "Narrower workspace for the child. With isolated mode, select a Git repository root within your scope; omit to use your workspace root."},
                     "workspace_mode": {"type": "string", "enum": ["shared", "isolated"], "default": "shared", "description": "shared inherits or narrows your workspace. isolated snapshots the selected Git repository into a managed worktree; work remains there until integrate_workspace is called."},
@@ -151,16 +183,8 @@ impl Tool for Delegate {
         _cancel: CancellationToken,
     ) -> Result<ToolExecution, ToolError> {
         let keyed = keyed_request(&input);
-        let input: DelegateInput = parse_input(input)?;
-        if input.role.trim().is_empty() {
-            return Err(ToolError::InvalidInput("role is empty".into()));
-        }
-        if input.objective.trim().is_empty() {
-            return Err(ToolError::InvalidInput("objective is empty".into()));
-        }
-        if let Some(key) = &input.idempotency_key {
-            validate_idempotency_key(key)?;
-        }
+        let mut input: DelegateInput = parse_input(input)?;
+        input.validate()?;
         let reason = aether_core::delegation::normalize_reason(input.reason.as_deref())
             .map_err(ToolError::InvalidInput)?;
         let model = ModelRef::parse(&input.model).ok_or_else(|| {
@@ -169,36 +193,19 @@ impl Tool for Delegate {
                 input.model
             ))
         })?;
+        let fallbacks = input.fallback_models()?;
         let effort: Effort = crate::builtin::parse_field(&input.effort, "delegate.effort")?;
         let host_context: Option<HostContext> = input
             .host_context
             .as_ref()
             .map(|value| crate::builtin::parse_field(value, "delegate.host_context"))
             .transpose()?;
-        let wants_scope = input.workspace_root.is_some()
-            || !input.allowed_paths.is_empty()
-            || input.network.is_some();
-        let scope = wants_scope.then(|| {
-            let mut s = ctx.scope.clone();
-            if let Some(root) = &input.workspace_root {
-                s.workspace_root = Some(crate::fs::lexical_resolve(ctx, root));
-            }
-            if !input.allowed_paths.is_empty() {
-                s.allowed_paths = input
-                    .allowed_paths
-                    .iter()
-                    .map(|p| crate::fs::lexical_resolve(ctx, p))
-                    .collect();
-            }
-            if let Some(net) = input.network {
-                s.network = if net {
-                    NetworkPolicy::Allowed
-                } else {
-                    NetworkPolicy::Denied
-                };
-            }
-            s
-        });
+        let scope = crate::builtin::requested_scope(
+            ctx,
+            input.workspace_root.as_deref(),
+            &input.allowed_paths,
+            input.network,
+        );
         // A keyed call may repeat one that already ran under a since-narrowed
         // scope; its replay comes first, and creation still refuses a widening.
         if keyed.is_none()
@@ -209,12 +216,16 @@ impl Tool for Delegate {
                 "child scope must narrow the parent's scope".into(),
             ));
         }
+        for reference in &mut input.references {
+            reference.path = crate::fs::lexical_resolve(ctx, &reference.path);
+        }
         Ok(ToolExecution::Action(HarnessAction::Delegate {
             role: input.role,
             name: input.name,
             objective: input.objective,
             instructions: input.instructions,
             model,
+            fallbacks,
             effort,
             scope,
             workspace_mode: input.workspace_mode,
@@ -223,14 +234,7 @@ impl Tool for Delegate {
             host_context,
             idempotency: keyed,
             reason,
-            references: input
-                .references
-                .into_iter()
-                .map(|mut reference| {
-                    reference.path = crate::fs::lexical_resolve(ctx, &reference.path);
-                    reference
-                })
-                .collect(),
+            references: input.references,
             inherit_references: input.inherit_references,
         }))
     }

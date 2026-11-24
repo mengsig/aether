@@ -7,6 +7,7 @@ from .. import protocol as _protocol
 
 
 class DaemonStatus(TypedDict, total=False):
+    agent_slice: str | None  # optional
     agents_blocked: int
     agents_live: int
     agents_paused: int  # optional

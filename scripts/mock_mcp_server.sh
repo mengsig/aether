@@ -6,6 +6,10 @@
 #                             a server which dies is reported and never hangs.
 #   AETHER_MOCK_MCP_STRICT=1  refuse any tools/call carrying `_meta`, like a
 #                             server that rejects params it does not know.
+#   AETHER_MOCK_MCP_CALLS=<file>      append each tools/call's tool name to it.
+#   AETHER_MOCK_MCP_DROP_ONCE=<file>  on the first tools/call (while <file> is
+#                             absent) create <file> and exit without replying,
+#                             like a server whose connection drops mid-call.
 set -u
 
 emit() { printf '%s\n' "$1"; }
@@ -39,6 +43,11 @@ while IFS= read -r line; do
         continue
       fi
       name=$(printf '%s' "$line" | sed -n 's/.*"name":"\([a-z_]*\)".*/\1/p')
+      if [ -n "${AETHER_MOCK_MCP_CALLS:-}" ]; then printf '%s\n' "$name" >>"$AETHER_MOCK_MCP_CALLS"; fi
+      if [ -n "${AETHER_MOCK_MCP_DROP_ONCE:-}" ] && [ ! -e "$AETHER_MOCK_MCP_DROP_ONCE" ]; then
+        : >"$AETHER_MOCK_MCP_DROP_ONCE"
+        exit 0
+      fi
       case "$name" in
         read_note)  emit "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"note contents\"}]}}" ;;
         write_note) emit "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"written\"}]}}" ;;

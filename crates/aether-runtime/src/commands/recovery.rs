@@ -127,30 +127,7 @@ impl Runtime {
         let subsystem = self.store.agent_subsystem(id)?;
         self.refuse_collected_workspace(&old)?;
         self.models.resolve(&old.model)?;
-        // §16: the successor is a new agent under the same parent, and the
-        // parent may have been confined while this one sat Failed - a state
-        // `widest_live_descendant` cannot see. Restarting with the old scope
-        // would hand back what the tightening took away.
-        if let Some(parent_id) = old.parent {
-            let parent = self
-                .store
-                .agent(parent_id)?
-                .ok_or_else(|| RuntimeError::NotFound(parent_id.to_string()))?;
-            if parent.status.is_terminal() {
-                return Err(RuntimeError::Invalid(format!(
-                    "agent {id}'s parent {parent_id} is {}; nothing is left to contain the \
-                     restart",
-                    parent.status.kind()
-                )));
-            }
-            if let Some(field) = self.scope_widened_for_existing(&old.scope, &old, &parent)? {
-                return Err(RuntimeError::Invalid(format!(
-                    "agent {id}'s scope is wider than parent {parent_id}'s on `{field}`; the \
-                     parent was tightened after this agent ended, so restarting it would widen \
-                     the subtree again"
-                )));
-            }
-        }
+        self.check_recovery_parent(&old)?;
 
         let at = now();
         // Everything the new agent inherits was committed before this point,
@@ -415,26 +392,7 @@ impl Runtime {
         crate::cancellation::check_parent(self, hold, id)?;
         self.refuse_collected_workspace(agent)?;
         self.models.resolve(&agent.model)?;
-        // §16: the parent may have been confined while this agent sat Failed,
-        // a state `widest_live_descendant` cannot see (as for a restart).
-        if let Some(parent_id) = agent.parent {
-            let parent = self
-                .store
-                .agent(parent_id)?
-                .ok_or_else(|| RuntimeError::NotFound(parent_id.to_string()))?;
-            if parent.status.is_terminal() {
-                return Err(RuntimeError::Invalid(format!(
-                    "agent {id}'s parent {parent_id} is {}; wake the parent first",
-                    parent.status.kind()
-                )));
-            }
-            if let Some(field) = self.scope_widened_for_existing(&agent.scope, agent, &parent)? {
-                return Err(RuntimeError::Invalid(format!(
-                    "agent {id}'s scope is wider than parent {parent_id}'s on `{field}`; the \
-                     parent was tightened after this agent failed"
-                )));
-            }
-        }
+        self.check_recovery_parent(agent)?;
         // A limit that already stopped it would stop it again on the next
         // tick: the person raises it first, then wakes. Same three checks
         // as `start_turn`, since that is where the next turn would die.
@@ -461,6 +419,28 @@ impl Runtime {
                     "agent {id} is over its {reason}; raise it before waking"
                 )));
             }
+        }
+        Ok(())
+    }
+
+    /// Recovery re-admits a terminal child after changes to the live subtree
+    /// could have tightened its parent without changing the child's row.
+    fn check_recovery_parent(&self, agent: &Agent) -> Result<()> {
+        debug_assert!(agent.status.is_terminal());
+        let Some(parent_id) = agent.parent else {
+            return Ok(());
+        };
+        let parent = self.live_agent(parent_id, "parent for recovery")?;
+        debug_assert_ne!(agent.id, parent.id);
+        if let Some(field) = self.scope_widened_for_existing(&agent.scope, agent, &parent)? {
+            return Err(RuntimeError::Invalid(format!(
+                "agent {}'s scope is wider than parent {parent_id}'s on `{field}`; \
+                 narrow the child before recovery",
+                agent.id,
+            )));
+        }
+        if let Some(refusal) = self.ancestor_approval_refusal(agent)? {
+            return Err(RuntimeError::Invalid(refusal));
         }
         Ok(())
     }

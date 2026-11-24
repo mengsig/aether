@@ -58,6 +58,7 @@ pub(super) async fn doctor_report(socket: PathBuf, explicit_socket: bool) -> cra
     // A config that does not load is `check_config`'s to report.
     let config = aether_model::config::load_config(&paths.config_dir).ok();
     let configured_mcp = config.as_ref().map_or(0, |c| c.mcp.servers.len());
+    let agent_slice = config.as_ref().and_then(|c| c.resources.agent_slice().ok());
     let disk_floor = match &config {
         Some(c) => c.scheduler.disk_floor().ok().flatten(),
         None => Some(aether_core::disk::DiskFloor::Default),
@@ -99,6 +100,7 @@ pub(super) async fn doctor_report(socket: PathBuf, explicit_socket: bool) -> cra
             config.as_ref().and_then(|c| c.agents.temp_root.as_deref()),
             status.as_ref().map(|s| s.instance_id.as_str()),
         ),
+        doctor::check_agent_slice(agent_slice.as_ref(), doctor::probe_agent_slice().await),
         doctor::check_logs(&crate::logging::log_file("aetherd.log")),
         providers,
         doctor::check_engines(

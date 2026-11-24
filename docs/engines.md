@@ -51,8 +51,9 @@ Native delegation, agent messaging, workflows, and scheduling are disabled
 because they create state outside Aether’s tree, task lifecycle, limits, and
 event accounting. Claude’s native background-shell controls (`TaskOutput` and
 `TaskStop`) and code-review rendering (`ReportFindings`) remain available.
-Aether supports one-shot durable wakes and recurring schedules; the agent tool
-does not yet expose CLI spawn-target scheduling. Compaction is a
+Aether supports one-shot durable wakes and recurring schedules, including an
+agent's own schedule that delegates a child per occurrence; a fresh root run
+per occurrence is scheduled from the CLI. Compaction is a
 separate restricted invocation; its tool restrictions do not define what an
 ordinary agent should be able to use.
 
@@ -97,6 +98,24 @@ offers the permission handler and an `aether_unavailable` tool whose
 description says why, and every tool call returns that explanation as a tool
 error: the socket, both protocol windows and the fix (`aether stop`, then
 start Aether again).
+
+A bridge that loses its daemon connection reconnects on the next call. Each
+connect, the handshake included, may take 5 seconds; a refused or stalled one
+is tried again after a 200 ms and then an 800 ms backoff. A call that never
+reached the daemon ends, once those run out, in a `tool_transport_failed` tool
+error with `retryable: true`. A call whose connection drops after it was sent
+is never sent again, since the bridge cannot see the tool's side-effect class:
+it ends in `tool_transport_failed` with `retryable: false`. The error names the
+tool and the `cause`, never a bare "Connection closed". The daemon applies its
+own class-based retries to the MCP servers behind it (see
+[MCP servers](mcp-servers.md#dropped-connections)).
+
+Claude Code can write a `result` and then keep streaming the same turn: on
+2026-11-21 a tool call followed one 2 seconds later. So after a successful
+Claude Code result that owes nothing, Aether keeps the engine's stdin open
+for 5 seconds. If the model streams output or calls a tool in that time, the
+result was not final and the turn goes on until the next result. Otherwise
+stdin closes and the turn ends as before.
 
 ## Claude context windows
 
@@ -770,7 +789,14 @@ callers arriving meanwhile share the latest outcome. A started agent
 (`aether run`) whose engine is still unusable is refused before it exists,
 with the probe's reason, unless that probe was inconclusive (below). A parked agent (`aether new`) is still created: its
 CLI may be installed before it runs. Spawn schedules and their runs are not
-refused either: each run's first turn probes the CLI again.
+refused either: each run's first turn probes the CLI again. An agent's own
+spawn schedule is refused while the engine is suspect (below). An occurrence
+whose engine is launchable runs without a new probe. One whose engine is
+unavailable or suspect stays due while the daemon probes that CLI again in
+the background, then runs if the probe passed and is skipped if it did not.
+The schedule ends if the engine cannot run under the child's network policy
+or enforce its required approvals. A gated creator cannot schedule children
+on legacy Codex exec.
 
 A usable engine is not given up on one failed probe. A probe that times out,
 or whose CLI the OS could not start for now, keeps the last good detection, and a Codex app-server probe that times out is

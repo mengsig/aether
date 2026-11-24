@@ -16,7 +16,7 @@ fn scope(runtime: &Runtime, caller: AgentId) -> Result<(Vec<Agent>, BTreeSet<Age
     Ok((agents, ids))
 }
 
-fn visible(task: &Task, ids: &BTreeSet<AgentId>) -> bool {
+pub(crate) fn visible(task: &Task, ids: &BTreeSet<AgentId>) -> bool {
     task.owner.is_some_and(|id| ids.contains(&id))
         || task.creator.agent_id().is_some_and(|id| ids.contains(&id))
 }
@@ -116,6 +116,7 @@ pub(crate) fn task(
             "Task not found in your delegated scope. Copy its task ID from delegate or list_tasks.",
         ));
     };
+    let task = runtime.project_task_usage(task, Some(&ids))?;
     let serialized = serde_json::to_string(&task).map_err(|error| {
         RuntimeError::Internal(format!("could not serialize task {id}: {error}"))
     })?;
@@ -296,6 +297,8 @@ mod tests {
             .unwrap();
         (agent, task.unwrap())
     }
+
+    mod task_usage;
 
     #[tokio::test]
     async fn pages_include_terminal_ancestry_and_exclude_other_trees() {
@@ -519,7 +522,10 @@ mod tests {
             assert!(next as usize > offset);
             offset = next as usize;
         }
-        assert_eq!(serde_json::from_str::<Task>(&full).unwrap(), record);
+        assert_eq!(
+            serde_json::from_str::<Task>(&full).unwrap(),
+            runtime.project_task_usage(record.clone(), None).unwrap()
+        );
         assert!(
             task(&runtime, root.id, record.id, None, 256, 256)
                 .unwrap()

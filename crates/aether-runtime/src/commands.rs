@@ -167,6 +167,8 @@ pub struct RuntimeStatus {
 /// check against a concurrent create; this can.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Preflight<'a> {
+    /// The task whose tool call requested this delegation.
+    pub parent_task: Option<TaskId>,
     /// Model and network policy the caller already resolved. A mismatch means
     /// they changed mid-flight, and the caller is told to retry.
     pub checked: Option<(&'a ModelRef, aether_core::agent::NetworkPolicy)>,
@@ -178,6 +180,8 @@ pub(crate) struct Preflight<'a> {
     /// Recheck the parent's `delegation_policy.max_parallel` under the hold.
     /// Set by `delegate`; a person creating a child is never refused for it.
     pub parallel_limit: bool,
+    /// Parent whose authority the tool used to choose and configure this child.
+    pub delegating_parent: Option<&'a Agent>,
     #[cfg(test)]
     pub before_hold: Option<(
         &'a std::sync::mpsc::Sender<()>,

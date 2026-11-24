@@ -7,8 +7,10 @@
 
 use std::path::{Path, PathBuf};
 
+mod agent_slice;
 mod agent_temp;
 mod providers;
+pub use agent_slice::{check_agent_slice, probe_agent_slice};
 pub use agent_temp::check_agent_temp;
 #[cfg(test)]
 pub use providers::Fault;

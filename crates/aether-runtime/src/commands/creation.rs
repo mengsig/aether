@@ -120,14 +120,7 @@ impl Runtime {
         {
             return Err(RuntimeError::Invalid("a subsystem must be named".into()));
         }
-        let PreparedAgent {
-            mut agent,
-            task,
-            mut commit,
-            parent,
-            reference_images,
-        } = self.prepare_agent(spec, &by, preflight)?;
-        let run = agent.run;
+        let prepared = self.prepare_agent(spec, &by, preflight)?;
         #[cfg(test)]
         if let Some((prepared, proceed)) = preflight.before_hold {
             prepared
@@ -146,34 +139,68 @@ impl Runtime {
             drop(hold);
             return self.replayed_agent(outcome, by);
         }
+        let (agent, task, mut commit) =
+            self.admit_prepared(&hold, prepared, preflight, subsystem)?;
+        crate::submission::record_receipt(&mut commit, submission, &(agent.clone(), task.clone()))?;
+        self.apply_held(hold, commit)?;
+        self.seed_repository_knowledge(&agent, by);
+        Ok((agent, task))
+    }
+
+    /// What `prepared` must still pass under the hold its creation commits
+    /// under. Writes nothing, so a caller that only asks may stop here.
+    pub(crate) fn check_prepared(
+        &self,
+        hold: &CommitHold<'_>,
+        prepared: &mut PreparedAgent,
+        preflight: Preflight<'_>,
+    ) -> Result<()> {
         // Under the hold the create commits under, so the verdict is
         // linearized against concurrent usage commits rather than reading a
         // spend mid-write. It does not serialize delegations: creating a child
         // adds no spend, so K under-budget creates at once all still pass.
         // Ahead of the commit, so a refusal leaves no agent and no task behind.
         if preflight.run_budget
-            && let Some(refusal) = self.run_budget_refusal(run)?
+            && let Some(refusal) = self.run_budget_refusal(prepared.agent.run)?
         {
             return Err(RuntimeError::Invalid(refusal));
         }
-        if let Some(parent) = &parent {
-            self.inherit_from_parent(&hold, parent, &mut agent, preflight.inherit_limits)?;
-            crate::cancellation::check_parent(self, &hold, parent.id)?;
+        if let Some(parent) = &prepared.parent {
+            let agent = &mut prepared.agent;
+            self.inherit_from_parent(hold, parent, agent, preflight)?;
+            crate::cancellation::check_parent(self, hold, parent.id)?;
             if preflight.parallel_limit {
-                self.check_parallel_limit(&hold, parent.id, agent.role.as_str())?;
+                self.check_parallel_limit(hold, parent.id, agent.role.as_str())?;
             }
         }
-        self.recheck_workspace_gc_admission(&agent.scope)?;
+        self.recheck_workspace_gc_admission(&prepared.agent.scope)
+    }
+
+    /// `check_prepared`, then the commit that creates the agent; the caller
+    /// applies it under the same hold.
+    pub(crate) fn admit_prepared(
+        &self,
+        hold: &CommitHold<'_>,
+        mut prepared: PreparedAgent,
+        preflight: Preflight<'_>,
+        subsystem: Option<String>,
+    ) -> Result<(Agent, Option<Task>, Commit)> {
+        self.check_prepared(hold, &mut prepared, preflight)?;
+        let PreparedAgent {
+            agent,
+            task,
+            mut commit,
+            reference_images,
+            ..
+        } = prepared;
         // Last before the commit, so a refusal or a replay stores nothing.
-        self.store_images(&hold, &reference_images)?;
+        self.store_images(hold, &reference_images)?;
         commit.push_mutation(Mutation::CreateAgent {
             agent: agent.clone(),
             subsystem,
         });
-        crate::submission::record_receipt(&mut commit, submission, &(agent.clone(), task.clone()))?;
-        self.apply_held(hold, commit)?;
-        self.seed_repository_knowledge(&agent, by);
-        Ok((agent, task))
+        debug_assert_eq!(task.as_ref().map(|t| t.id), agent.current_task);
+        Ok((agent, task, commit))
     }
 
     /// Validate `spec` and build the agent, its task and their events,
@@ -334,7 +361,6 @@ impl Runtime {
                 "compaction_tokens must be at least {MIN_AGENT_COMPACTION_TOKENS}; leave it unset for the model's threshold"
             )));
         }
-        self.check_cost_budget(&model, &fallbacks, config.cost_budget)?;
         let run = spec
             .run
             .or_else(|| parent.as_ref().map(|p| p.run))
@@ -403,6 +429,7 @@ impl Runtime {
         let task = match spec.objective.filter(|o| !o.trim().is_empty()) {
             Some(objective) => {
                 let mut task = Task::new(objective.trim().to_owned(), by.clone(), run, at);
+                task.parent_task = preflight.parent_task;
                 task.delegation_reason = spec.delegation_reason;
                 task.references = resolved.references;
                 task.owner = Some(agent.id);
@@ -412,7 +439,7 @@ impl Runtime {
                 commit.push_event(
                     base(EventKind::TaskCreated {
                         objective: task.objective.clone(),
-                        parent_task: None,
+                        parent_task: task.parent_task,
                         dependencies: Vec::new(),
                         priority: task.priority,
                     })
@@ -446,17 +473,27 @@ impl Runtime {
         child_role: &str,
     ) -> Result<()> {
         let current = self.live_agent(parent, "parent")?;
-        let Some(policy) = &current.config.delegation_policy else {
-            return Ok(());
+        match self.parallel_refusal(&current, child_role)? {
+            Some(refusal) => Err(RuntimeError::Invalid(refusal)),
+            None => Ok(()),
+        }
+    }
+
+    /// Why `parent` may not have another unfinished child in `child_role`
+    /// yet, under its policy's `max_parallel`.
+    pub(crate) fn parallel_refusal(
+        &self,
+        parent: &Agent,
+        child_role: &str,
+    ) -> Result<Option<String>> {
+        let Some(policy) = &parent.config.delegation_policy else {
+            return Ok(None);
         };
         let Some(limit) = policy.max_parallel.filter(|_| !policy.exempts(child_role)) else {
-            return Ok(());
+            return Ok(None);
         };
-        let unfinished = self.unfinished_children(parent, policy)?;
-        if let Some(refusal) = policy.parallel_refusal(limit, unfinished) {
-            return Err(RuntimeError::Invalid(refusal));
-        }
-        Ok(())
+        let unfinished = self.unfinished_children(parent.id, policy)?;
+        Ok(policy.parallel_refusal(limit, unfinished))
     }
 
     /// Direct children that have not finished, exempt roles aside: what
@@ -484,7 +521,7 @@ impl Runtime {
         _hold: &CommitHold<'_>,
         derived_from: &Agent,
         agent: &mut Agent,
-        inherit_limits: bool,
+        preflight: Preflight<'_>,
     ) -> Result<()> {
         let parent = self.live_agent(derived_from.id, "parent")?;
         // Derived from the old row, so possibly wider than the parent now.
@@ -497,7 +534,10 @@ impl Runtime {
                 parent.id
             )));
         }
-        if inherit_limits {
+        if let Some(staged) = preflight.delegating_parent {
+            crate::delegation_admission::check_child_authority(self, staged, &parent, agent)?;
+        }
+        if preflight.inherit_limits {
             agent.config.deadline = narrower_limit(agent.config.deadline, parent.config.deadline);
             agent.config.cost_budget =
                 narrower_limit(agent.config.cost_budget, parent.config.cost_budget);
@@ -513,7 +553,6 @@ impl Runtime {
                     .cost_budget
                     .is_some_and(|child| child <= limit))
             );
-            self.check_cost_budget(&agent.model, &agent.fallbacks, agent.config.cost_budget)?;
         }
         // §3.8: a subtree pause holds what the held supervisor's own
         // in-flight turn goes on to delegate, and the same subtree resume

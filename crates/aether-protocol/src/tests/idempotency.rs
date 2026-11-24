@@ -274,6 +274,7 @@ fn a_create_carries_its_delegation_policy_in_config() {
         .as_ref()
         .and_then(|c| c.delegation_policy.as_ref());
     assert_eq!(decoded.and_then(|p| p.max_parallel), Some(2));
+    assert_eq!(decoded.map(|p| p.require_independent_vendor), Some(false));
     let digested = command
         .keyed_request()
         .expect("keyed")

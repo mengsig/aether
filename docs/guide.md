@@ -262,8 +262,9 @@ See [routing, authorization, and setup](github-watcher.md).
 ### Timers, webhooks, and clients
 
 Use `aether schedule --help` for recurring delivery and fresh-run schedules,
-or `wait_for` for a one-shot durable wake. The agent-facing scheduling tool
-does not yet expose every CLI scheduling mode. CLI schedule dates show whole
+or `wait_for` for a one-shot durable wake. An agent's `create_schedule` delivers to itself or a descendant, or with
+`spawn` starts a child of its own per occurrence; a fresh root run per
+occurrence is scheduled from the CLI only. CLI schedule dates show whole
 seconds in UTC; JSON preserves timestamp precision.
 
 ```sh
@@ -278,6 +279,9 @@ names a path on the host.
 `--payload` is optional with `--target`: JSON, or plain text sent as a string.
 `aether run` accepts `--token-budget`, `--cost-budget` and `--max-turns`; cache
 reads and writes count as tokens, so keep a Claude Code budget above 20k.
+Dollar budgets enforce on known costs. Work whose cost is unknown or only
+reported as a subscription estimate can continue until the known spend
+reaches the budget. Token budgets still count reported tokens.
 `aether version` prints the build's version.
 
 A tick that finds a delivery schedule's target paused is recorded as skipped

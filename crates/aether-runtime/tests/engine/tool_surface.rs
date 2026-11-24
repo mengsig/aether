@@ -65,6 +65,8 @@ const DELEGATED_LEAF_ADDED_BYTES: usize = 300;
 /// What `send_message` and `wait_for` add to say how to ask a parent.
 const ASKING_ADDED_BYTES: usize = 200;
 const DELEGATED_LEAD_ADDED_BYTES: usize = 470;
+/// What `create_schedule`'s `spawn` template adds to a surface that is not a leaf.
+const SCHEDULE_SPAWN_ADDED_BYTES: usize = 770;
 
 fn tool_surface_agent(h: &Harness) -> aether_core::agent::Agent {
     h.runtime
@@ -148,6 +150,10 @@ async fn non_leaf_engine_tools_expose_the_catalog_and_explicit_delegation_choice
     let required = delegate.input_schema["required"].as_array().unwrap();
     assert!(required.contains(&serde_json::json!("model")));
     assert!(required.contains(&serde_json::json!("effort")));
+    assert!(!required.contains(&serde_json::json!("fallbacks")));
+    let fallbacks = &delegate.input_schema["properties"]["fallbacks"];
+    assert_eq!(fallbacks["type"], "array");
+    assert_eq!(fallbacks["items"]["type"], "string");
     assert_eq!(delegate.input_schema["additionalProperties"], false);
     let integrate = root
         .iter()
@@ -227,7 +233,8 @@ async fn a_root_agent_sees_the_v1_1_0_surface_plus_only_the_playbook_and_notify(
                 + DELEGATE_KEY_ADDED_BYTES
                 + DELEGATION_POLICY_ADDED_BYTES
                 + REFERENCES_ADDED_BYTES
-                + ASKING_ADDED_BYTES,
+                + ASKING_ADDED_BYTES
+                + SCHEDULE_SPAWN_ADDED_BYTES,
         "{added}"
     );
     h.runtime.shutdown().await;
@@ -270,7 +277,8 @@ async fn delegated_agents_see_list_peers_and_only_a_lead_sees_the_playbook() {
                 + DELEGATE_KEY_ADDED_BYTES
                 + DELEGATION_POLICY_ADDED_BYTES
                 + REFERENCES_ADDED_BYTES
-                + ASKING_ADDED_BYTES,
+                + ASKING_ADDED_BYTES
+                + SCHEDULE_SPAWN_ADDED_BYTES,
         "{lead_added}"
     );
     h.runtime.shutdown().await;

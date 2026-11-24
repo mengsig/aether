@@ -262,7 +262,8 @@ impl StdioTransport {
                 return unwrap_result(message, id);
             }
         }
-        Err(McpError::Transport(
+        // It kept talking, just never with this reply: an answer, not a drop.
+        Err(McpError::BadResponse(
             "server did not answer within the tolerated number of messages".into(),
         ))
     }
@@ -295,11 +296,11 @@ async fn read_bounded_line(reader: &mut Reader) -> Result<Option<Vec<u8>>, McpEr
         };
         reader.consume(taken);
         if line.len() > MAX_MESSAGE_BYTES {
-            // Transport, not Protocol: the rest of the oversized line is
+            // A bad response, not Protocol: the rest of the oversized line is
             // still in the pipe, so framing is lost and every later read
             // would be garbage. Fatal drops the connection and fails the
             // server, rather than leaving it advertised as Ready.
-            return Err(McpError::Transport(format!(
+            return Err(McpError::BadResponse(format!(
                 "a server message passed the {MAX_MESSAGE_BYTES}-byte cap; the stream can no \
                  longer be framed"
             )));
@@ -409,7 +410,11 @@ impl HttpTransport {
             .json(message)
             .send()
             .await
-            .map_err(|e| McpError::Transport(format!("request failed: {e}")))?;
+            .map_err(|e| match e.is_timeout() {
+                // The server may have it and still be working on it.
+                true => McpError::Timeout,
+                false => McpError::Transport(format!("request failed: {e}")),
+            })?;
         if let Some(id) = response
             .headers()
             .get("mcp-session-id")
@@ -428,17 +433,10 @@ impl HttpTransport {
             .and_then(|v| v.to_str().ok())
             .unwrap_or_default()
             .to_owned();
-        let body = read_bounded_body(response).await?;
         if !status.is_success() {
-            // Never the body itself: it is the peer's text, it becomes the
-            // server's durable health error, and a server that echoes the
-            // request would write our own bearer token into the log.
-            return Err(McpError::Transport(format!(
-                "http {} with a {}-byte body",
-                status.as_u16(),
-                body.len()
-            )));
+            return Err(error_status(status, response).await);
         }
+        let body = read_bounded_body(response).await?;
         if body.trim().is_empty() {
             return Ok(None);
         }
@@ -451,8 +449,21 @@ impl HttpTransport {
         }
         serde_json::from_str(&body)
             .map(Some)
-            .map_err(|e| McpError::Transport(format!("malformed response body: {e}")))
+            .map_err(|e| McpError::BadResponse(format!("malformed response body: {e}")))
     }
+}
+
+/// A non-success answer, however its body ends: the status was received, so
+/// the call reached the server even when the body is cut short or too big.
+async fn error_status(status: reqwest::StatusCode, response: reqwest::Response) -> McpError {
+    debug_assert!(!status.is_success(), "only an error status is reported");
+    // Never the body itself: it is the peer's text, it becomes the server's
+    // durable health error, and an echo would log our own bearer token.
+    let body = match read_bounded_body(response).await {
+        Ok(body) => format!("a {}-byte body", body.len()),
+        Err(error) => format!("an unreadable body ({error})"),
+    };
+    McpError::BadResponse(format!("http {} with {body}", status.as_u16()))
 }
 
 /// The whole response body as text, refusing one past the cap. reqwest
@@ -470,18 +481,18 @@ async fn read_bounded_body(mut response: reqwest::Response) -> Result<String, Mc
         return Err(too_big(declared as usize));
     }
     let mut bytes: Vec<u8> = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|e| McpError::Transport(format!("cannot read response: {e}")))?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(|e| match e.is_timeout() {
+        // The headers came, so the server has the request and may act on it.
+        true => McpError::Timeout,
+        false => McpError::Transport(format!("cannot read response: {e}")),
+    })? {
         bytes.extend_from_slice(&chunk);
         if bytes.len() > MAX_MESSAGE_BYTES {
             return Err(too_big(bytes.len()));
         }
     }
     String::from_utf8(bytes)
-        .map_err(|e| McpError::Transport(format!("response body is not utf-8: {e}")))
+        .map_err(|e| McpError::BadResponse(format!("response body is not utf-8: {e}")))
 }
 
 /// The reply to `id` carried by an SSE body. A server may put log
@@ -539,7 +550,8 @@ impl Transport for HttpTransport {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         match self.post(&envelope(id, method, params)).await? {
             Some(message) => unwrap_result(message, id),
-            None => Err(McpError::Transport(
+            // The server answered over HTTP, just not with this reply.
+            None => Err(McpError::BadResponse(
                 "the server sent no reply to this request".into(),
             )),
         }
@@ -614,6 +626,39 @@ mod tests {
         )
         .expect("transport");
         (transport, serving)
+    }
+
+    #[tokio::test]
+    async fn a_body_that_stalls_after_its_headers_is_a_timeout_not_a_drop() {
+        use tokio::io::AsyncReadExt as _;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("address");
+        let serving = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut request = [0u8; 4096];
+            assert_ne!(socket.read(&mut request).await.expect("request"), 0);
+            let head = "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 64\r\n\r\n{\"jsonrpc\"";
+            socket.write_all(head.as_bytes()).await.expect("headers");
+            let again = tokio::time::timeout(Duration::from_secs(1), listener.accept()).await;
+            assert!(again.is_err(), "the call was sent a second time");
+            drop(socket);
+        });
+        let transport = HttpTransport::new(
+            format!("http://{address}/mcp"),
+            None,
+            Duration::from_millis(300),
+        )
+        .expect("transport");
+        let error = transport
+            .request("tools/call", json!({}))
+            .await
+            .expect_err("the body never finishes");
+        assert!(matches!(error, McpError::Timeout), "{error:?}");
+        assert!(!error.is_dropped(), "a timeout is never replayed");
+        serving.await.expect("server");
     }
 
     #[tokio::test]

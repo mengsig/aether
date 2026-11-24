@@ -72,8 +72,8 @@ impl BusyPolicy {
     }
 }
 
-/// Root agent + task each spawn occurrence creates, in a new run. Fields as on
-/// `create_agent`; no parent or existing run.
+/// The agent and task each spawn occurrence creates: a root in a new run, or
+/// its creator's child. Fields as on `create_agent`; no parent or existing run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpawnSpec {
     pub role: String,
@@ -87,7 +87,8 @@ pub struct SpawnSpec {
     pub model: Option<ModelRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fallbacks: Vec<ModelRef>,
-    /// Absent: the daemon's default root scope when each run starts.
+    /// Absent: the daemon's default root scope when each run starts, or for
+    /// an agent's schedule its creator's scope when each child starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<Scope>,
     /// Budgets bound each run. Absolute deadline (stale by run two) and
@@ -105,7 +106,8 @@ pub struct SpawnSpec {
 pub enum ScheduleTarget {
     /// Deliver the payload to this existing agent's inbox.
     Agent(AgentId),
-    /// Start a fresh root run from this template.
+    /// Start a fresh agent from this template: an operator's root run, or an
+    /// agent's own child.
     Spawn(SpawnSpec),
 }
 
@@ -257,9 +259,18 @@ impl Schedule {
             ScheduleMode::Spawn { .. } => None,
         }
     }
+
+    /// The agent whose children a spawn schedule starts: the agent that
+    /// created it. `None` for an operator's, whose runs are roots.
+    pub fn spawns_children_of(&self) -> Option<AgentId> {
+        match (&self.mode, &self.owner) {
+            (ScheduleMode::Spawn { .. }, Actor::Agent { id }) => Some(*id),
+            _ => None,
+        }
+    }
 }
 
-/// Wire/storage shape of [`Schedule`]. Delivery schedules keep protocol 8's
+/// Wire shape of [`Schedule`]. Delivery schedules keep protocol 8's
 /// fields and order; `busy` and `last` appear only when set.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[doc(hidden)]
@@ -276,7 +287,8 @@ pub struct ScheduleWire {
     /// Spawn schedules: the template each occurrence starts a run from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawn: Option<SpawnSpec>,
-    /// Spawn schedules: the root of the newest spawned run.
+    /// Spawn schedules: the newest agent started, a run's root or, for an
+    /// agent's schedule, its creator's child.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_spawned: Option<AgentId>,
     pub recurrence: Recurrence,
@@ -294,6 +306,60 @@ pub struct ScheduleWire {
     pub last: Option<ScheduleOccurrence>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+}
+
+/// Persistent schedules and their submission receipts carry the downgrade
+/// guard. Protocol replies use [`Schedule`]'s compatible wire shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "ScheduleWire", into = "ScheduleWire")]
+pub struct StoredSchedule(pub Schedule);
+
+impl TryFrom<ScheduleWire> for StoredSchedule {
+    type Error = String;
+
+    fn try_from(mut wire: ScheduleWire) -> Result<Self, String> {
+        if wire.spawn.is_some() {
+            if wire.target != downgrade_guard(&wire.owner, &wire.status) {
+                return Err(
+                    "an agent's spawn schedule names its creator as `target` while it \
+                     can still fire, and no other spawn schedule has a `target`"
+                        .into(),
+                );
+            }
+            wire.target = None;
+        }
+        Schedule::try_from(wire).map(Self)
+    }
+}
+
+impl From<StoredSchedule> for ScheduleWire {
+    fn from(StoredSchedule(job): StoredSchedule) -> Self {
+        let creator = if matches!(job.mode, ScheduleMode::Spawn { .. }) {
+            downgrade_guard(&job.owner, &job.status)
+        } else {
+            None
+        };
+        let mut wire = Self::from(job);
+        if let Some(creator) = creator {
+            debug_assert!(wire.spawn.is_some() && wire.target.is_none() && wire.run.is_none());
+            wire.target = Some(creator);
+        }
+        wire
+    }
+}
+
+/// The `target` an agent's spawn schedule is stored with while it can still
+/// fire: its creator. A release that would run it as an operator's root run
+/// refuses a `spawn` with a `target`, so it reads none of it.
+fn downgrade_guard(owner: &Actor, status: &ScheduleStatus) -> Option<AgentId> {
+    let Actor::Agent { id } = owner else {
+        return None;
+    };
+    let ended = matches!(
+        status,
+        ScheduleStatus::Cancelled { .. } | ScheduleStatus::Exhausted { .. }
+    );
+    (!ended).then_some(*id)
 }
 
 impl TryFrom<ScheduleWire> for Schedule {
@@ -408,7 +474,7 @@ pub enum ScheduleOutcome {
     Delivered {
         inbox: InboxItemId,
     },
-    /// A spawn schedule started a run: its root agent and task.
+    /// A spawn schedule started an agent and its task: a root, or its creator's child.
     Spawned {
         agent: AgentId,
         task: TaskId,

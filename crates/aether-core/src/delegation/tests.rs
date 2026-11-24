@@ -32,6 +32,7 @@ fn adaptive() -> DelegationPolicy {
         max_parallel: Some(2),
         exempt_roles: Vec::new(),
         exempt_models: Vec::new(),
+        require_independent_vendor: false,
     }
 }
 
@@ -251,7 +252,7 @@ fn the_description_names_exempt_models_and_their_tier_exception() {
     policy.exempt_roles = vec!["reviewer".into()];
     let plain = policy.describe();
     assert!(
-        plain.contains("roles reviewer unbounded by this policy but not above your tier"),
+        plain.contains("roles reviewer exempt from worker limits, at your tier or below"),
         "{plain}"
     );
     policy.exempt_models = vec![model("codex/gpt-6.2-astra")];
@@ -261,7 +262,7 @@ fn the_description_names_exempt_models_and_their_tier_exception() {
         "{named}"
     );
     assert!(
-        named.contains("other models not above your tier"),
+        named.contains("other models at your tier or below"),
         "{named}"
     );
     let sonnet = model("claude-code/sonnet");

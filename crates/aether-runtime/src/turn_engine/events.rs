@@ -520,7 +520,7 @@ pub(super) fn handle_event(
             }
             for block in &content {
                 if let ContentBlock::ToolUse { id, name, input } = block {
-                    let class = engine_call_class(runtime, name, input);
+                    let class = engine_call_class(runtime, ctx.agent.id, name, input)?;
                     // The engine ran this itself, so Aether has no outcome to
                     // replay; the key still says which calls are one effect.
                     let idempotency_key = class
@@ -562,6 +562,8 @@ pub(super) fn handle_event(
                         }));
                     }
                     ctx.agent.stats.tool_calls += 1;
+                    // A later call answers whatever an earlier one failed with.
+                    ctx.unanswered_tool_error = None;
                     state.ran_tools = true;
                 }
             }
@@ -671,6 +673,8 @@ pub(super) fn handle_event(
                 return Ok(());
             }
             state.progressed |= !cancelled_result;
+            ctx.unanswered_tool_error =
+                is_error.then(|| crate::turn::FailedToolCall::new(&call.tool, &content));
             let (call, started) = (call.id, call.started);
             let outcome = ToolOutcome {
                 content: content.clone(),

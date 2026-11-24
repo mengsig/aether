@@ -47,38 +47,14 @@ fn live_agents(h: &Harness) -> usize {
         .len()
 }
 
-/// A fallback is a model the turn really runs on, so every link
-/// of a chain faces the guards the primary faces. An MCP client composing
-/// `provider/model,provider/model` must not reach past a cost budget or a
-/// container backend by hiding the offending model behind the first link.
+/// A fallback is a model the turn really runs on, so the container guard
+/// must refuse an engine there just as it would on the primary.
 #[tokio::test]
-async fn every_fallback_link_faces_the_guards_the_primary_faces() {
+async fn the_container_guard_checks_fallback_links() {
     use aether_core::agent::ExecutionBackend;
 
     let h = chain_guard_harness().await;
     let before = live_agents(&h);
-
-    // A cost budget the second link could never enforce.
-    let budgeted = CreateAgentSpec {
-        fallbacks: vec![ModelRef::new("frugal", "nocost")],
-        config: Some(AgentConfig {
-            cost_budget: Some(1.0),
-            approval: ApprovalPolicy::none(),
-            ..Default::default()
-        }),
-        ..spec_on("spend a little", "anthropic", "claude-sonnet-5-5")
-    };
-    let err = h
-        .runtime
-        .create_agent(budgeted, Actor::user())
-        .expect_err("the budget cannot be enforced on the fallback");
-    assert!(
-        err.to_string().contains("fallback model `frugal/nocost`")
-            && err.to_string().contains("no dollar cost"),
-        "the refusal names the link and the guard: {err}"
-    );
-
-    // A container backend the second link would not be confined by.
     let contained = Scope {
         workspace_root: Some(h.workspace_root.clone()),
         backend: ExecutionBackend::Container {
@@ -102,106 +78,58 @@ async fn every_fallback_link_faces_the_guards_the_primary_faces() {
     );
     assert_eq!(before, live_agents(&h), "no agent was created");
 
-    // A chain whose every link passes both guards is created as before.
-    let mut ok = CreateAgentSpec {
-        fallbacks: vec![ModelRef::new("anthropic", "claude-haiku-5-5")],
-        config: Some(AgentConfig {
-            cost_budget: Some(1.0),
-            approval: ApprovalPolicy::none(),
-            ..Default::default()
-        }),
-        ..spec_on("build it", "anthropic", "claude-sonnet-5-5")
-    };
-    ok.scope = Some(contained);
-    let (agent, _) = h
-        .runtime
-        .create_agent(ok, Actor::user())
-        .expect("valid chain");
-    assert_eq!(
-        agent.fallbacks,
-        vec![ModelRef::new("anthropic", "claude-haiku-5-5")]
-    );
-
-    // And a live agent cannot be patched onto a chain that fails a guard.
-    let err = h
-        .runtime
-        .update_agent(
-            agent.id,
-            aether_runtime::AgentUpdate {
-                fallbacks: Some(vec![ModelRef::new("frugal", "nocost")]),
-                ..Default::default()
-            },
-            Actor::user(),
-        )
-        .expect_err("the same guards on update");
-    assert!(
-        err.to_string().contains("fallback model `frugal/nocost`"),
-        "{err}"
-    );
-    assert_eq!(
-        h.store.agent(agent.id).expect("a").expect("e").fallbacks,
-        vec![ModelRef::new("anthropic", "claude-haiku-5-5")],
-        "nothing was written"
-    );
-}
-
-/// The other order of the same pair: a chain with an unpriced link is fine
-/// until a cost budget arrives, and then the budget is refused rather than
-/// stored as a stop that fires on the primary and never on the fallback.
-#[tokio::test]
-async fn a_cost_budget_is_refused_when_a_fallback_link_reports_no_cost() {
-    let h = chain_guard_harness().await;
+    let priced = ModelRef::new("anthropic", "claude-haiku-5-5");
     let (agent, _) = h
         .runtime
         .create_agent(
             CreateAgentSpec {
-                fallbacks: vec![ModelRef::new("frugal", "nocost")],
-                ..spec_on("spend nothing", "anthropic", "claude-sonnet-5-5")
+                scope: Some(contained),
+                fallbacks: vec![priced.clone()],
+                ..spec_on("build it", "anthropic", "claude-sonnet-5-5")
             },
             Actor::user(),
         )
-        .expect("no budget, no guard to fail");
-    let err = h
-        .runtime
-        .update_agent(
-            agent.id,
-            aether_runtime::AgentUpdate {
-                cost_budget: Some(2.50),
-                ..Default::default()
-            },
-            Actor::user(),
-        )
-        .expect_err("the budget could not be enforced on the second link");
-    assert!(
-        err.to_string().contains("fallback model `frugal/nocost`")
-            && err.to_string().contains("no dollar cost"),
-        "the refusal names the link and the guard: {err}"
-    );
-    assert_eq!(
-        h.store
-            .agent(agent.id)
-            .expect("a")
-            .expect("e")
-            .config
-            .cost_budget,
-        None,
-        "nothing was written"
-    );
+        .expect("an API fallback works in a container");
+    assert_eq!(agent.fallbacks, vec![priced]);
+}
 
-    // Dropping the unpriced link is what makes the budget enforceable.
-    let budgeted = h
+#[tokio::test]
+async fn a_cost_budget_accepts_an_unpriced_fallback() {
+    let h = chain_guard_harness().await;
+    let fallback = ModelRef::new("frugal", "nocost");
+    let (agent, _) = h
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                fallbacks: vec![fallback.clone()],
+                objective: None,
+                start: false,
+                config: Some(AgentConfig {
+                    cost_budget: Some(1.0),
+                    approval: ApprovalPolicy::none(),
+                    ..Default::default()
+                }),
+                ..spec_on("spend a little", "anthropic", "claude-sonnet-5-5")
+            },
+            Actor::user(),
+        )
+        .expect("an unpriced fallback permits a budget for priced work");
+    assert_eq!(agent.config.cost_budget, Some(1.0));
+    assert_eq!(agent.fallbacks, vec![fallback]);
+
+    let updated = h
         .runtime
         .update_agent(
             agent.id,
             aether_runtime::AgentUpdate {
-                fallbacks: Some(vec![ModelRef::new("anthropic", "claude-haiku-5-5")]),
                 cost_budget: Some(2.50),
                 ..Default::default()
             },
             Actor::user(),
         )
-        .expect("every link prices its tokens");
-    assert_eq!(budgeted.config.cost_budget, Some(2.50));
+        .expect("the unpriced fallback does not prevent changing the budget");
+    assert_eq!(updated.config.cost_budget, Some(2.50));
+    assert_eq!(updated.fallbacks, agent.fallbacks);
 }
 
 /// VISION §1.6: a subscription seat pays for the primary, so

@@ -65,6 +65,30 @@ completed_run_days = 10
 Daemon configuration changes generally require a restart. GitHub watcher
 settings are stored in the daemon database and can be changed live.
 
+### Codex estimate rates
+
+`list_models` shows the rate used for each Codex model as
+`api_equivalent_cost`. By default the rate comes from the matching OpenAI API
+model. To override it for Codex, add a model entry in `providers.toml` and
+set its rates in dollars per million tokens. For example:
+
+```toml
+[[providers.codex.add_models]]
+id = "sol"
+name = "GPT-6.2 Sol"
+tier = "balanced"
+default_effort = "high"
+capabilities_from = "sol"
+
+[providers.codex.add_models.capabilities.cost]
+input_per_mtok = 3.0
+cache_read_per_mtok = 1.0
+output_per_mtok = 9.0
+```
+
+Usage records carry the result as `estimated_cost_usd`. Dollar budgets use
+known costs and leave subscription estimates out of their calculation.
+
 ## Model aliases
 
 `aether models` shows full model IDs. Either a full ID or an alias works in
@@ -91,7 +115,7 @@ section and key. Omitted settings use the shipped defaults.
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `model.default` | Balanced-tier model of the first ready provider (`claude-code/claude-sonnet-5-5`, `codex/gpt-6.1-terra`), which is priced | Choose the default `provider/model`. A malformed value fails config load; an unknown model is refused when an agent is created, naming the valid choices. It is never replaced silently. |
+| `model.default` | Balanced-tier model of the first ready provider (`claude-code/claude-sonnet-5-5`, `codex/gpt-6.1-terra`) | Choose the default `provider/model`. A malformed value fails config load; an unknown model is refused when an agent is created, naming the valid choices. It is never replaced silently. |
 | `providers.usage_stale_after` | `900` | Seconds before cached provider usage is stale; zero marks reports stale as soon as time advances. |
 | `providers.usage_refresh_interval` | `600` | Minimum seconds between explicit refresh attempts for one provider; must be positive. |
 | `providers.usage_refresh_timeout` | `15` | Probe deadline in seconds; must be positive. |
@@ -516,6 +540,31 @@ the engine forked before the move stays outside the scope and is found by its
 tag. Without a working user systemd the engine keeps its process group and tag
 alone; the engine is already running, so this never delays or fails it. Set
 `AETHER_ENGINE_SCOPE=0` in the daemon's environment to skip the scopes.
+
+Every engine scope joins `aether-agents.slice` (inside `aether.slice`), so
+the builds and tests agents run yield CPU and disk to the person's own
+programs. `[resources]` sets its limits:
+
+```toml
+[resources]
+agents_cpu_weight = 20    # 1-10000; app.slice has 100
+agents_io_weight = 20     # 1-10000
+agents_memory_high = "8G" # bytes, or with K, M, G, T or %
+```
+
+These are the defaults. `"off"` turns one limit off; with all three off,
+scopes stay where they ran before, and the first engine resets whatever an
+earlier configuration left on the slices. `MemoryHigh` throttles and reclaims the
+agents' memory above the limit, all agents together, and never kills an
+agent. The weights sit on `aether.slice` too, since cgroup weights only
+compare siblings. The daemon sets the slice with `systemctl --user
+set-property --runtime` when it starts its first engine, so a reboot forgets
+it. If that fails, engines run outside the slice, as before, and the daemon
+logs a warning once. `IOWeight` needs the user manager to delegate the `io`
+controller, which systemd does not by default. `aether status` shows the slice
+and its limits on its `slice` line, and `aether doctor` shows the configured
+limits beside what systemd holds, says which controller a limit lacks, and
+says once when there is no systemd user manager.
 
 What an agent leaves running when it ends depends on how it ends.
 

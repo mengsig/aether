@@ -6,6 +6,130 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+## 1.4.3
+
+The workspace and Python and TypeScript clients are 1.4.3.
+
+### Added
+
+- **Agents run at low priority.** On Linux every engine scope joins
+  `aether-agents.slice` with `CPUWeight=20`, `IOWeight=20` and
+  `MemoryHigh=8G`, so agents' builds and tests yield to the person's own
+  programs and are throttled, never killed, under memory pressure. Set by
+  `[resources] agents_cpu_weight`, `agents_io_weight` and
+  `agents_memory_high`; `"off"` turns one off. `aether status` and
+  `aether doctor` show the effective values; without systemd nothing changes
+  and doctor says so.
+- **`make ci` waits for memory and runs at low priority.** The host CI slot
+  waits for `CI_MIN_FREE_GIB` (6) GiB of available memory, at most
+  `CI_MEM_WAIT_MAX_MIN` (30) minutes, then runs the command in a
+  `systemd-run --user --scope` with `CPUWeight=20`, `IOWeight=20` and
+  `MemoryHigh=$CI_MEMORY_HIGH` (6G) under `nice` and `ionice`, and sets
+  `NEXTEST_TEST_THREADS` and `RUST_TEST_THREADS` to `CI_TEST_THREADS` (4).
+- **Agents can schedule their own children.** `create_schedule` takes `spawn`
+  in place of `target`: `delegate`'s arguments for a child (`role`,
+  `objective`, `model`, `effort`, and optionally `name`, `instructions`,
+  `leaf`, `host_context`, `workspace_root`, `allowed_paths`, `network`). Each
+  occurrence is that `delegate` call made with `wait=false` and admitted by
+  the same code, so the child is the creator's child in the creator's run:
+  inside its delegation policy, `max_parallel`, tier ceiling and scope, under
+  its budgets and `[scheduler] run_budget_usd`, with its host context and a
+  child's messaging reach. Creating and firing a spawn schedule require
+  access to `delegate`. A gated creator's child must keep its required
+  approvals and use an engine that can enforce them. A template `delegate`
+  would refuse is refused when the schedule is created. A refusal at firing
+  ends the schedule and records the reason. An occurrence is skipped while
+  the previous child's subtree is live, the creator is paused or the creator
+  is at `max_parallel`. An occurrence whose engine is unavailable or whose
+  latest probe failed stays due while the daemon probes the engine again, and
+  is skipped if that probe fails too. Provider credentials are checked when
+  the schedule is created, not per occurrence. `max_deliveries`, pause, resume
+  and cancel work as for any timer. The schedule ends with its creator, and a
+  bare `wait_for` does not wait on it. Schedules that start a fresh root run
+  stay operator-only, and `aether schedule create` is unchanged.
+
+### Changed
+
+- **Cost accounting and delegated task rollups (#451, #456).** Codex token
+  rates can be configured as estimates without presenting subscription usage
+  as incurred cost. Tasks report their own usage and descendant rollups;
+  incomplete costs preserve known floors and unknown coverage, including
+  partial requests, while budgets can enforce known costs on unpriced links.
+- **Delegation fallbacks (#453, #455).** Delegated agents can use explicit
+  fallback chains; every link must pass the caller's policy, model-chain and
+  inherited approval checks.
+- **Dependencies updated (#448, #462).** Cargo and CI dependencies were
+  updated, retaining a compatible Unicode width version for terminal layout.
+- **CI resource controls hardened (#463, #464, #465).** Memory waiting and
+  low-priority execution also apply without a host slot; probes are bounded
+  and memory limits validated. `IOWeight` requires the `io` controller to be
+  delegated to the user manager.
+
+### Before downgrading
+
+- **Cancel agent spawn schedules before downgrading to 1.4.2 or earlier.** An
+  agent's spawn schedule that is active, paused or failed is stored in a
+  shape those releases refuse, so that none of them runs it as an operator's
+  schedule, in a fresh root run outside its creator's policy and budgets. A
+  daemon that old then fails to list schedules and fires none while such a
+  schedule is due. Find them with `aether schedule list --json` (an `owner`
+  that is an agent, and a `spawn`) and cancel each with
+  `aether schedule cancel` first. Cancelled and exhausted schedules, delivery
+  schedules and an operator's spawn schedules are stored as before.
+  [Upgrading](docs/upgrading.md#downgrading-with-agent-spawn-schedules) has
+  the steps.
+
+### Fixed
+
+- **Named provider limits trigger fallback (#452, #454).** Provider messages
+  such as "You've hit your <name> limit" are classified as `UsageLimit`,
+  while transient rate limits retain their existing classification.
+- **A tool call Claude Code streams after a mid-turn `result` is served,
+  not lost.** Aether ended the turn and closed stdin at Claude Code's first
+  `result`. A tool call streamed 2 seconds later then failed inside Claude
+  Code with a bare "Connection closed", and nothing woke the agent. Aether
+  now holds a successful result that owes nothing for 5 seconds. Any output in that
+  window continues the turn.
+
+- **A dropped tool connection no longer ends in a bare "Connection
+  closed".** The daemon reconnects a dropped MCP server, and the engine
+  bridge reconnects to the daemon, with bounded backoff and a bounded connect
+  and handshake. A call the drop interrupted is replayed only when its tool
+  is classed `read_only` or `idempotent_mutation` in config. Any other call
+  fails as a structured `tool_transport_failed` error, naming the tool,
+  whether a retry is safe and the cause. An HTTP error answer, a malformed
+  body or a timeout is reported as itself, not replayed. A turn that ends on
+  a failed tool call is recorded as a `turn_ended_after_tool_error` custom
+  event. Codex turns record it too when an MCP tool's result carries
+  `isError` on a completed item.
+
+- **One-shot delegation preserves the caller's approval gates and tool
+  exposure.** Admission refuses engines that cannot enforce the required
+  approvals. Existing children are held to their ancestors' gates when they
+  run again, and isolated workspace grants must stay inside the snapshot.
+  Ordinary `delegate` calls keep their read-only approval classification.
+
+- **A child's scope is checked where its paths lead.** `delegate` and
+  `create_agent` compared a child's `workspace_root` and `allowed_paths` with
+  its parent's as text, so a path inside the parent's workspace that is a
+  symlink out of it was accepted, and the child's file tools then followed
+  it. Such a path is now refused as widening the parent's scope, as is one
+  that does not exist yet beneath such a link, or that is a dangling link out.
+  The child is held to what its parent's file tools reach: the parent's
+  `workspace_root` and `allowed_paths` where they really are, or where one
+  that does not exist yet will be once created as written. A parent whose
+  scope names no `workspace_root` works in the daemon's workspace directory
+  and its file tools ignore its `allowed_paths`, so its child's paths are now
+  held to that directory; any `workspace_root` was accepted before. A child
+  path that cannot be resolved is refused with the reason. A path the parent
+  names itself, a path that does not exist yet inside the parent's roots and
+  a child in an isolated workspace are accepted as before.
+
+- **A delegated child no longer starts with its parent's compaction
+  threshold.** `delegate` copied the parent's `config.compaction_tokens` to
+  the child, on whatever model the child ran; the child now compacts at its
+  own model's threshold, as documented.
+
 ## 1.4.2
 
 Released 2026-11-19. A per-agent compaction threshold (#443), and a model

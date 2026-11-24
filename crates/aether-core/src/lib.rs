@@ -5,6 +5,7 @@
 //! transitions are legal.
 
 pub mod agent;
+pub mod agent_slice;
 #[cfg(unix)]
 pub mod agent_temp;
 pub mod approval;

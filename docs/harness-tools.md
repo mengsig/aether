@@ -92,9 +92,68 @@ messages may wake the agent sooner. Recurrence uses `create_schedule` with
 Use `max_deliveries` to bound recurrence. A busy target skips the occurrence
 by default; `busy="queue_one"` delivers anyway but never stacks a second unread
 trigger. Trigger delivery does not imply task completion; inspect results and
-delivery history separately. Timers that start a fresh run per occurrence are
-operator-only (`aether schedule create --objective`); agents see them in
-`list_schedules` only when they target them, which spawn timers never do.
+delivery history separately.
+
+One-shot `delegate` is classified as read-only for approvals. Its child joins
+the caller's subtree and run budget. Admission applies the caller's current
+delegation policy, keeps its registered tool exposure, and checks that the
+child's scope and network access stay within the caller's. The child keeps
+the caller's approval gates, so an engine that cannot enforce them is refused.
+The runtime rechecks inherited approvals before a stored child runs again.
+
+`create_schedule` with `spawn` in place of `target` starts a child of the
+caller on each occurrence. `spawn` takes `delegate`'s arguments for the child:
+`role`, `objective`, `model` and `effort`, and optionally `name`,
+`instructions`, `leaf`, `host_context: "lean"`, `workspace_root`,
+`allowed_paths` and `network`. Each occurrence is that `delegate` call made
+with `wait=false`, admitted by the same code:
+
+- The child joins the caller's run as its child. It counts against the
+  caller's delegation policy and `max_parallel`, starts in the caller's scope
+  as it is when the occurrence fires, inherits its cost budget, deadline,
+  approval policy and host context, and reports to the caller's inbox. Its
+  messaging reach is a child's. The creator needs access to `delegate` at
+  creation and at firing. If the creator requires approvals, the child must
+  run on an engine that can enforce them.
+- Creating or resuming a spawn schedule needs approval if the creator's
+  policy gates mutations. The decision authorizes recurring delegation until
+  the schedule is paused or ends. Each occurrence can create a child without
+  a new call from the creator.
+- Creating the schedule is refused when the same `delegate` call would be
+  refused now, and the error carries `delegate`'s refusal. That includes a
+  caller already at `max_parallel`. It is also refused while the latest probe
+  of the template's engine failed; the daemon then probes that engine again
+  in the background, so a later call can succeed. The check is repeated as
+  the schedule is written, so a caller whose model, scope or policy changes
+  meanwhile is refused and creates it again.
+- A call that is refused later ends the schedule, with the refusal as its
+  error: a tightened policy, a narrowed scope, a template path that has come
+  to lead outside the creator's workspace through a symlink, a spent
+  `[scheduler] run_budget_usd`, loss of access to `delegate`, a creator that
+  is being cancelled, or an engine that cannot enforce the child's approvals
+  or network policy.
+- An occurrence is skipped, and the schedule stays active, while its previous
+  child, a restart of it or anything beneath either is live, while the
+  creator is paused, and while the creator is at `max_parallel`. Skipped
+  occurrences do not count against `max_deliveries`.
+- An occurrence whose engine cannot be launched, because it is unavailable in
+  the daemon or its latest probe failed, is not decided on that old result.
+  It stays due for the moment the daemon takes to probe the engine again in
+  the background, then runs if the probe passed and is skipped if it did not.
+- The schedule ends when its creator does, at its next occurrence, and cannot
+  be resumed afterwards. The creator, or an operator, pauses, resumes and
+  cancels it with `update_schedule` like any timer.
+- The schedule is not something a bare `wait_for` can wait on: a creator with
+  nothing else pending waits with `timeout_seconds` or `wake_at`, or on a
+  child's task once one exists.
+
+A template carries nothing that belongs to a single `delegate` call: no
+`reason`, so it can name the caller's own frontier-tier model only where the
+caller's delegation policy names that model, and no isolated workspace,
+references or budgets of its own. Delegate directly for those. The provider's
+credentials are checked when the schedule is created and not again per
+occurrence. Timers that start a fresh root run per occurrence stay
+operator-only (`aether schedule create --objective`).
 
 `remember` takes a `scope`: `repository` (the default; the agent's own scope
 when it has no repository), `global`, `role` (agents with the caller's role,
@@ -143,6 +202,25 @@ question hears only what arrived after it was asked, and an answer addressed
 to one question never answers another. When a held wait ends, its reply lists
 the questions still unanswered.
 
+### Delegated models
+
+Pass `fallbacks` to `delegate` as an ordered array of `provider/model` IDs.
+The child tries its primary model first when available, then uses the
+fallbacks in order when a provider cannot carry the turn. The caller's
+delegation policy applies to every model at the requested effort. If any
+link is refused, the reply names it and the child is never created.
+
+A policy with `require_independent_vendor: true` requires every link,
+including the primary, to have a known vendor different from the caller's
+configured primary model. The check treats Codex and GPT as OpenAI models
+and Claude Code and Claude as Anthropic models, using the registry's engine
+and model family declarations.
+
+A fresh quota report showing zero headroom for the primary provider adds a
+warning to the successful reply. Use `inspect_state`
+from the child to see its configured `model` and ordered `fallbacks`. Omitting
+`fallbacks` leaves the child with just its primary model.
+
 ### Delegated workspaces
 
 `delegate` defaults to `workspace_mode="shared"`, preserving the existing
@@ -154,6 +232,7 @@ isolated child can delegate again, choosing a shared or isolated workspace for
 each of its own children. Isolated delegation currently requires the host
 execution backend; the container backend cannot access a linked worktree's Git
 metadata outside its workspace mount.
+An isolated child's additional path grants must resolve inside its snapshot.
 
 An isolated child sees a snapshot of the source workspace at delegation time.
 The snapshot includes tracked working-tree content (including staged,
@@ -252,6 +331,11 @@ response. A changed record produces an error requiring a restart at offset zero;
 this prevents concatenating pages from different task versions. Individual
 pages need not be complete JSON documents. Completion/failure details also
 arrive through the inbox.
+
+The task's `own_usage` covers its own tagged work; `delegated_usage` covers
+visible descendant tasks, stopping at tasks outside the caller's scope. Either
+field is omitted if the required event history has expired. Usage changes also
+change the revision.
 
 This inventory does not prove ordinary-language reliability or provider
 steering parity; those acceptance checks remain open

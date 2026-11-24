@@ -130,6 +130,7 @@ async fn complete_task_preserves_budget_termination() {
             structured: None,
         },
         &mut ToolEffects::default(),
+        false,
     )
     .await
     .expect("complete task action");
@@ -149,6 +150,7 @@ async fn fail_task_preserves_budget_termination() {
             structured: None,
         },
         &mut ToolEffects::default(),
+        false,
     )
     .await
     .expect("fail task action");

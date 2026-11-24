@@ -72,13 +72,33 @@ async fn scheduled_wake_survives_restart_and_explains_why_it_woke() {
     );
 }
 
+const OVERRIDDEN_SOL: &str = r#"
+[[providers.codex.add_models]]
+id = "sol"
+name = "GPT-6.2 Sol"
+tier = "balanced"
+capabilities_from = "sol"
+[providers.codex.add_models.capabilities.cost]
+input_per_mtok = 3.0
+cache_read_per_mtok = 1.0
+output_per_mtok = 9.0
+"#;
+
 #[tokio::test]
 async fn state_tools_report_runtime_facts_without_mutating_task_state() {
-    let h = harness(vec![
-        ScriptedClient::tool_call("inspect_state", json!({})),
-        ScriptedClient::tool_call("list_models", json!({"provider":"codex"})),
-        ScriptedClient::tool_call("complete_task", json!({"summary":"done"})),
-    ])
+    let h = harness_full(
+        vec![
+            ScriptedClient::tool_call("inspect_state", json!({})),
+            ScriptedClient::tool_call("list_models", json!({"provider":"codex"})),
+            ScriptedClient::tool_call("complete_task", json!({"summary":"done"})),
+        ],
+        |_| {},
+        |_| {},
+        Some(OVERRIDDEN_SOL),
+        None,
+        None,
+        |_| {},
+    )
     .await;
     let (agent, _) = h
         .runtime
@@ -106,6 +126,10 @@ async fn state_tools_report_runtime_facts_without_mutating_task_state() {
         .iter()
         .find(|v| v.get("models").is_some())
         .expect("catalog result");
+    assert_catalog(catalog);
+}
+
+fn assert_catalog(catalog: &serde_json::Value) {
     assert!(!catalog["models"].as_array().unwrap().is_empty());
     let models = catalog["models"].as_array().unwrap();
     assert_eq!(models[0]["model"]["model"], "gpt-6.2-astra");
@@ -130,6 +154,10 @@ async fn state_tools_report_runtime_facts_without_mutating_task_state() {
             .all(|r| r["model"].as_str().unwrap().starts_with("codex/"))
     );
     assert_eq!(models[1]["api_equivalent_cost"]["input_per_mtok"], 1.0);
+    let sol_rate = &models[2]["api_equivalent_cost"];
+    assert_eq!(sol_rate["input_per_mtok"], 3.0);
+    assert_eq!(sol_rate["cache_read_per_mtok"], 1.0);
+    assert_eq!(sol_rate["output_per_mtok"], 9.0);
     assert_eq!(
         models[1]["compaction_threshold_tokens"], 272_000,
         "the catalog says where Codex compacts"

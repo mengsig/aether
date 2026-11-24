@@ -800,6 +800,7 @@ mod tests {
             storage: Default::default(),
             agents: Default::default(),
             build_cache: Default::default(),
+            resources: Default::default(),
             github_watcher: Default::default(),
             mcp: Default::default(),
             memory: Default::default(),

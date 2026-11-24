@@ -5,7 +5,7 @@ use std::num::NonZeroU64;
 use aether_core::id::{AgentId, ScheduleId};
 use aether_core::schedule::{
     BusyPolicy, CreateScheduleSpec, MIN_INTERVAL_SECONDS, MissedRunPolicy, Recurrence,
-    ScheduleAction, ScheduleTarget,
+    ScheduleAction,
 };
 use aether_core::tool::{ResourceKey, SideEffectClass, ToolDescriptor};
 use async_trait::async_trait;
@@ -14,6 +14,8 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::tool::{HarnessAction, Tool, ToolContext, ToolError, ToolExecution, parse_input};
+
+mod spawn;
 
 /// Distinguishes an omitted field (`#[serde(default)]` fires, giving `None`)
 /// from one present with any value, including `null` (giving `Some`). A
@@ -38,7 +40,7 @@ impl Tool for ScheduleTool {
         let (name, description, schema) = match self {
             Self::Create => (
                 "create_schedule",
-                "Create a durable recurring Aether timer that delivers to an existing agent. Use every_seconds OR a five-field cron expression with an IANA timezone (UTC by default). Target defaults to yourself; only yourself or your descendants are allowed. Payload is the future task instruction. Timers deliver inbox triggers under existing budgets and authority. Paused targets skip occurrences. When the target is busy, busy=skip (default) skips the occurrence; busy=queue_one delivers it while the target runs, once the previous trigger was consumed. Never more than one pending trigger per timer. Use max_deliveries for a finite timer, and list_schedules for history. This is distinct from one-shot wait_for(wake_at). This tool cannot create a spawn schedule (one that spawns a fresh agent per occurrence): that requires operator authority and is only available through the `aether schedule create --objective` CLI.",
+                "Create a recurring Aether timer. Use every_seconds or a five-field cron with optional IANA timezone (default UTC). `target` defaults to yourself and may name only you or a descendant. `payload` supplies the future task instruction. Inbox triggers use existing budgets and authority. Paused targets skip occurrences. For busy targets, busy=skip (default) skips; busy=queue_one delivers if no trigger is unread. With `spawn` instead of `target`, each occurrence is a delegate call with wait=false. Creation and firing require `delegate` access and an engine that honors your approvals. A refusal at firing ends the timer. It skips while the previous child is live, you are paused or at max_parallel, or its engine is unavailable. It ends when you do and does not wake a bare wait_for. Use max_deliveries for a finite timer, and list_schedules for history. This is distinct from one-shot wait_for(wake_at).",
                 json!({
                     "type":"object", "properties": {
                         "name":{"type":"string"}, "target":{"type":"string"},
@@ -46,7 +48,8 @@ impl Tool for ScheduleTool {
                         "timezone":{"type":"string"}, "payload":{},
                         "missed":{"type":"string","enum":["coalesce","skip"]},
                         "busy":{"type":"string","enum":["skip","queue_one"]},
-                        "max_deliveries":{"type":"integer","minimum":1}
+                        "max_deliveries":{"type":"integer","minimum":1},
+                        "spawn": spawn::schema()
                     }, "required":["name","payload"], "additionalProperties":false
                 }),
             ),
@@ -105,6 +108,10 @@ impl Tool for ScheduleTool {
                     #[serde(default, deserialize_with = "present")]
                     busy: Option<Value>,
                     max_deliveries: Option<NonZeroU64>,
+                    // `present`, so an explicit `null` is refused rather than
+                    // silently turning a spawn request into a delivery.
+                    #[serde(default, deserialize_with = "present")]
+                    spawn: Option<Value>,
                 }
                 let input: Input = parse_input(input)?;
                 let target = input
@@ -139,11 +146,10 @@ impl Tool for ScheduleTool {
                     }
                 };
                 HarnessAction::CreateSchedule {
-                    // Only `Agent` delivery targets: `checked_template` accepts a spawn
-                    // target only from an operator actor, never a tool call's `Actor::Agent`.
+                    // The runtime admits a spawn template as the caller's `delegate` call.
                     spec: CreateScheduleSpec {
                         name: input.name,
-                        target: ScheduleTarget::Agent(target.unwrap_or(ctx.agent_id)),
+                        target: spawn::target(target, input.spawn, ctx)?,
                         recurrence,
                         missed,
                         busy,
@@ -187,6 +193,7 @@ impl Tool for ScheduleTool {
 mod tests {
     use super::*;
     use crate::testing::ctx_in;
+    use aether_core::schedule::ScheduleTarget;
 
     async fn act(
         tool: &dyn Tool,
@@ -207,15 +214,142 @@ mod tests {
     }
 
     #[test]
-    fn create_schedule_descriptor_documents_the_spawn_limitation() {
-        let description = ScheduleTool::Create.descriptor().spec.description;
+    fn create_schedule_descriptor_offers_spawn_as_a_delegate_call() {
+        let spec = ScheduleTool::Create.descriptor().spec;
         assert!(
-            description.contains("cannot create a spawn schedule"),
-            "{description}"
+            !spec.description.contains("cannot create a spawn schedule"),
+            "{}",
+            spec.description
         );
         assert!(
-            description.contains("aether schedule create --objective"),
-            "{description}"
+            spec.description.contains("delegate call with wait=false"),
+            "{}",
+            spec.description
+        );
+        let spawn = &spec.input_schema["properties"]["spawn"];
+        assert_eq!(
+            spawn["required"],
+            json!(["role", "objective", "model", "effort"])
+        );
+        assert_eq!(spawn["properties"]["host_context"]["enum"], json!(["lean"]));
+        for per_call in ["reason", "wait", "workspace_mode", "references"] {
+            assert!(spawn["properties"].get(per_call).is_none(), "{per_call}");
+        }
+    }
+
+    fn spawn_template(action: HarnessAction) -> aether_core::schedule::SpawnSpec {
+        match action {
+            HarnessAction::CreateSchedule { spec } => match spec.target {
+                ScheduleTarget::Spawn(template) => template,
+                ScheduleTarget::Agent(id) => panic!("expected a spawn target, got {id}"),
+            },
+            other => panic!("expected create_schedule, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_schedule_spawn_builds_the_delegate_call_the_runtime_admits() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ctx_in(dir.path());
+        let action = act(
+            &ScheduleTool::Create,
+            &ctx,
+            json!({"name": "poll", "payload": null, "every_seconds": 300, "spawn": {
+                "role": "poller", "objective": "Check the queue",
+                "model": "anthropic/claude-haiku-5-5", "effort": "low",
+                "instructions": "Be brief", "leaf": true, "host_context": "lean",
+                "network": false
+            }}),
+        )
+        .await
+        .unwrap();
+        let template = spawn_template(action);
+        assert_eq!(template.role, "poller");
+        assert_eq!(
+            template.model,
+            Some(aether_core::model::ModelRef::new(
+                "anthropic",
+                "claude-haiku-5-5"
+            ))
+        );
+        assert!(template.fallbacks.is_empty() && template.approval.is_none());
+        let config = template.config.expect("the template's choices");
+        assert_eq!(
+            config,
+            aether_core::agent::AgentConfig {
+                instructions: Some("Be brief".into()),
+                effort: Some(aether_core::model::Effort::Low),
+                leaf: true,
+                host_context: aether_core::agent::HostContext::Lean,
+                ..Default::default()
+            },
+            "only what delegate lets a caller choose"
+        );
+        let scope = template.scope.expect("a narrowed scope");
+        assert_eq!(scope.network, aether_core::agent::NetworkPolicy::Denied);
+        assert_eq!(scope.workspace_root, ctx.scope.workspace_root);
+    }
+
+    #[tokio::test]
+    async fn create_schedule_spawn_without_scope_fields_inherits_the_creators_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ctx_in(dir.path());
+        let action = act(
+            &ScheduleTool::Create,
+            &ctx,
+            json!({"name": "poll", "payload": {}, "every_seconds": 300, "spawn": {
+                "role": "poller", "objective": "Check", "model": "a/b", "effort": "low"
+            }}),
+        )
+        .await
+        .unwrap();
+        let template = spawn_template(action);
+        assert_eq!(template.scope, None, "decided when each occurrence fires");
+        let config = template.config.expect("the template's choices");
+        assert_eq!(
+            config.host_context,
+            aether_core::agent::HostContext::Full,
+            "the runtime reads an unset host_context as the creator's"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_schedule_spawn_refuses_what_delegate_has_no_argument_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ctx = ctx_in(dir.path());
+        ctx.scope.network = aether_core::agent::NetworkPolicy::Denied;
+        let spawn = json!({"role": "r", "objective": "o", "model": "a/b", "effort": "low"});
+        let with = |field: &str, value: Value| {
+            let mut spawn = spawn.clone();
+            spawn[field] = value;
+            json!({"name": "n", "payload": {}, "every_seconds": 60, "spawn": spawn})
+        };
+        let both = json!({"name": "n", "payload": {}, "every_seconds": 60,
+            "target": ctx.agent_id.to_string(), "spawn": spawn});
+        let null = json!({"name": "n", "payload": {}, "every_seconds": 60, "spawn": null});
+        for (input, expected) in [
+            (both, "target OR spawn"),
+            (null, "create_schedule.spawn"),
+            (
+                with("effort", json!("extreme")),
+                "create_schedule.spawn.effort",
+            ),
+            (with("model", json!("bare")), "create_schedule.spawn.model"),
+            (with("role", json!(" ")), "create_schedule.spawn.role"),
+            (with("cost_budget", json!(5.0)), "create_schedule.spawn"),
+            (with("reason", json!("mine")), "create_schedule.spawn"),
+            (with("host_context", json!("full")), "only `lean`"),
+        ] {
+            let err = act(&ScheduleTool::Create, &ctx, input).await.unwrap_err();
+            let msg = invalid_input(&err);
+            assert!(msg.contains(expected), "{expected}: {msg}");
+        }
+        let wider = act(&ScheduleTool::Create, &ctx, with("network", json!(true)))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&wider, ToolError::Denied(msg) if msg.contains("must narrow yours")),
+            "{wider:?}"
         );
     }
 

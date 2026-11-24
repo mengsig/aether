@@ -76,7 +76,7 @@ async fn raised_limits_reach_delegation(after_old_deadline: bool, next_turn: boo
     let config = parent_spec.config.as_mut().unwrap();
     config.deadline = Some(old);
     config.cost_budget = Some(1.0);
-    let (parent, _) = h.runtime.create_agent(parent_spec, Actor::user()).unwrap();
+    let (parent, parent_task) = h.runtime.create_agent(parent_spec, Actor::user()).unwrap();
     h.wait_for("parent model request", || !h.client.requests().is_empty())
         .await;
     assert!(now() < old, "the original deadline must still be open");
@@ -100,6 +100,24 @@ async fn raised_limits_reach_delegation(after_old_deadline: bool, next_turn: boo
         })
         .unwrap();
     assert_eq!(children.len(), 1, "delegation should create one child");
+    let child_tasks = h
+        .store
+        .tasks(&TaskFilter {
+            owner: Some(children[0].id),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(child_tasks.len(), 1);
+    let parent_task = parent_task.unwrap();
+    assert_eq!(child_tasks[0].parent_task, Some(parent_task.id));
+    let task_usage = h
+        .runtime
+        .get_task_with_usage(parent_task.id)
+        .unwrap()
+        .unwrap();
+    let parent_after = h.store.agent(parent.id).unwrap().unwrap();
+    assert_eq!(task_usage.own_usage.unwrap(), parent_after.stats.usage);
+    assert_eq!(task_usage.delegated_usage.unwrap(), children[0].stats.usage);
     assert_eq!(children[0].config.deadline, Some(extended));
     assert_eq!(
         children[0].config.cost_budget,

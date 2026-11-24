@@ -7,6 +7,7 @@ mod heartbeat;
 mod lifecycle;
 mod prose_structured;
 mod resources;
+mod scheduled_children;
 mod stale_completion;
 mod subtree_reads;
 mod tool_results;
@@ -44,6 +45,7 @@ impl ComposeHarness {
             user_reply_pending: false,
             reply_given_unrecorded: false,
             start_handoff: None,
+            unanswered_tool_error: None,
         };
         (Self { runtime, ctx }, dir)
     }

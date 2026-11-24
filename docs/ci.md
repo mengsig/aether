@@ -82,6 +82,20 @@ when `make ci` ends, whether it passes, fails or is interrupted with Ctrl-C.
 it runs without a slot and says so. GitHub CI runs `scripts/ci.sh`, one job
 per runner, and is unaffected.
 
+Once it holds a slot, the slot waits until `MemAvailable` in `/proc/meminfo`
+reaches `CI_MIN_FREE_GIB` GiB (default 6; 0 disables). It says so once, then
+every 60 seconds, and after `CI_MEM_WAIT_MAX_MIN` minutes (default 30) runs
+anyway with a warning. It waits while holding the slot, so two queued runs
+cannot both count the same free memory. `CARGO_BUILD_JOBS` is sized after the
+wait. The command then runs at low priority:
+`systemd-run --user --scope --quiet -p CPUWeight=20 -p IOWeight=20
+-p MemoryHigh=$CI_MEMORY_HIGH` (default 6G; MemoryHigh throttles, never kills),
+with `nice -n 19` and `ionice -c 3` where installed. Without a usable
+`systemd-run --user` it uses `nice` and `ionice` alone and says so once.
+`CI_LOW_PRIORITY=0` turns the wrapping off. `CI_TEST_THREADS` (default 4)
+becomes `NEXTEST_TEST_THREADS` and `RUST_TEST_THREADS` unless either is
+already set.
+
 ## Where it runs, and what a fork can trigger
 
 Every job in the workflow runs on a GitHub-hosted runner: a fresh virtual machine

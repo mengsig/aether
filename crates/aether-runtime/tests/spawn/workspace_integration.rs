@@ -44,7 +44,7 @@ fn git(root: &std::path::Path, args: &[&str]) {
     );
 }
 
-fn init_repo(root: &std::path::Path) {
+pub(super) fn init_repo(root: &std::path::Path) {
     git(root, &["init", "-q"]);
     git(root, &["config", "user.name", "fixture"]);
     git(root, &["config", "user.email", "fixture@example.com"]);
@@ -177,6 +177,42 @@ async fn isolated_source_symlink_cannot_escape_parent_workspace() {
         0,
         "refused delegation leaves no worktree"
     );
+    h.runtime.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn isolated_delegate_refuses_a_path_grant_outside_its_snapshot() {
+    let managed = tempfile::tempdir().expect("managed workspaces");
+    let outside = tempfile::tempdir().expect("outside directory");
+    let mut h = harness_over(None, 10, "", Some(managed.path().to_path_buf())).await;
+    let root = h.runtime.config().workspace_root.as_ref().expect("root");
+    init_repo(root);
+    std::os::unix::fs::symlink(outside.path(), root.join("shortcut")).expect("path grant");
+    let parent = start_coordinator(&h, None);
+    let bridge = tokio::time::timeout(Duration::from_secs(5), h.ready.recv())
+        .await
+        .expect("parent started promptly")
+        .expect("parent bridge");
+    assert_eq!(bridge.agent, parent);
+
+    let (reply, is_error) = tokio::time::timeout(
+        Duration::from_secs(5),
+        h.runtime.engine_tool(
+            parent,
+            &bridge.token,
+            "delegate".into(),
+            json!({"model":"claude-code/haiku", "effort":"low", "role":"worker",
+               "objective":"inspect the snapshot", "workspace_mode":"isolated",
+               "allowed_paths":["shortcut"], "wait":false}),
+        ),
+    )
+    .await
+    .expect("delegate replied promptly")
+    .expect("bridge reply");
+    assert!(is_error && reply.contains("allowed_paths"), "{reply}");
+    assert!(children_of(h.store.as_ref(), parent).is_empty());
+    assert_eq!(std::fs::read_dir(managed.path()).unwrap().count(), 0);
     h.runtime.shutdown().await;
 }
 

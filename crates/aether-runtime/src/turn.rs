@@ -240,6 +240,45 @@ pub(crate) struct TurnCtx {
     /// The handoff this model owed when the turn started, before later
     /// selections could replace the ledger's latest request.
     pub(crate) start_handoff: Option<compaction::PendingCompaction>,
+    /// The turn's latest tool result, when it was an error and no tool call
+    /// came after it. Recorded at the turn's end as unanswered.
+    pub(crate) unanswered_tool_error: Option<FailedToolCall>,
+}
+
+/// A failed tool call: which tool, and what it said.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FailedToolCall {
+    pub(crate) tool: String,
+    pub(crate) error: String,
+}
+
+/// Characters of a failed call's error kept for the turn's end.
+const MAX_TOOL_ERROR_CHARS: usize = 2_000;
+
+impl FailedToolCall {
+    pub(crate) fn new(tool: &str, error: &str) -> Self {
+        let error: String = error.chars().take(MAX_TOOL_ERROR_CHARS).collect();
+        debug_assert!(error.chars().count() <= MAX_TOOL_ERROR_CHARS);
+        Self {
+            tool: tool.to_owned(),
+            error,
+        }
+    }
+
+    /// The `turn_ended_after_tool_error` event for a turn that ended on it.
+    pub(crate) fn turn_ended(&self, ctx: &TurnCtx, at: Timestamp) -> EventKind {
+        debug_assert!(!self.tool.is_empty(), "a failed call names its tool");
+        EventKind::Custom {
+            name: aether_core::event::TURN_ENDED_AFTER_TOOL_ERROR.into(),
+            payload: serde_json::json!({
+                "agent_id": ctx.agent.id,
+                "turn": ctx.turn,
+                "tool": self.tool,
+                "error": self.error,
+                "at": at,
+            }),
+        }
+    }
 }
 
 impl TurnCtx {
@@ -407,6 +446,7 @@ fn begin_turn(
         user_reply_pending: reply_obligation::load(runtime, agent_id)?,
         reply_given_unrecorded: false,
         start_handoff,
+        unanswered_tool_error: None,
     };
     let mut commit = start_commit(&ctx, &lease, task.as_mut(), at)?;
     commit.push_mutation(Mutation::UpsertAgent(agent.clone()));
@@ -449,12 +489,15 @@ fn start_commit(
     Ok(commit)
 }
 
-/// Why the agent may not take turn `turn`: its turn limit, or a budget.
+/// Why the agent may not take turn `turn`: its limits or inherited gates.
 fn turn_refused(runtime: &Runtime, agent: &Agent, turn: u32) -> Result<Option<String>> {
     if let Some(max) = agent.config.max_turns
         && turn > max
     {
         return Ok(Some(format!("turn limit of {max} reached")));
+    }
+    if let Some(refusal) = runtime.ancestor_approval_refusal(agent)? {
+        return Ok(Some(refusal));
     }
     // Same predicate the scheduler enforces, in case the last turn crossed
     // the line after the tick that dispatched this one.

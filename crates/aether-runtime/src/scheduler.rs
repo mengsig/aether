@@ -29,7 +29,7 @@ use budgets::warn_once;
 use budgets::{enforce_budgets, enforce_deadlines};
 use dependencies::gate_dependencies;
 use dispatch::dispatch;
-pub(crate) use dispatch::{claim_link, hold_after_entry_refusal};
+pub(crate) use dispatch::{child_uses_engine, claim_link, hold_after_entry_refusal};
 use hard_stop::enforce_hard_stops;
 use lineage::Lineage;
 pub(crate) use lineage::{CapHolder, ResumeLimits, cap_holder, on_provider_descendants};
@@ -60,6 +60,7 @@ async fn run(runtime: Arc<Runtime>) {
         _ = runtime.shutdown.cancelled() => return,
         _ = runtime.engines.ready() => {}
     }
+    let mut reprobing: Option<tokio::task::JoinHandle<()>> = None;
     loop {
         tokio::select! {
             _ = runtime.notify.notified() => {}
@@ -69,7 +70,27 @@ async fn run(runtime: Arc<Runtime>) {
         if let Some(Err(e)) = contained(&runtime, "tick", || tick(&runtime)) {
             tracing::error!(error = %e, "scheduler tick failed");
         }
+        // One at a time: a probe may outlast several passes.
+        if reprobing.as_ref().is_none_or(|probe| probe.is_finished()) {
+            reprobing = reprobe_wanted_engines(&runtime);
+        }
     }
+}
+
+/// Probe again, off the scheduler's task, each engine a schedule's occurrence
+/// is held on: a tick cannot wait for the probe, and nothing else may ask.
+/// The occurrence stays due and is decided by a pass after the answer.
+pub(crate) fn reprobe_wanted_engines(
+    runtime: &Arc<Runtime>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    if !runtime.engines.wants_recheck() {
+        return None;
+    }
+    let runtime = runtime.clone();
+    Some(tokio::spawn(async move {
+        runtime.engines.recheck_wanted().await;
+        runtime.notify.notify_one();
+    }))
 }
 
 /// A fault the tests inject into a named step.

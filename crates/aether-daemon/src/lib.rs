@@ -292,6 +292,13 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         path: "config.toml".into(),
         reason,
     };
+    aether_engine::set_agent_slice(
+        models
+            .config()
+            .resources
+            .agent_slice()
+            .map_err(config_error)?,
+    );
     let orphan_sweep_interval = models
         .config()
         .scheduler

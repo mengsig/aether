@@ -1,4 +1,7 @@
 use super::*;
+use crate::delegation_admission::{
+    ChildReason, ChildRequest, Slots, child_spec, engine_refusal, policy_refusal,
+};
 use crate::workspace::WorkspaceManifest;
 use aether_core::agent::{NetworkPolicy, Scope};
 use aether_core::idempotency::Submission;
@@ -6,29 +9,16 @@ use aether_core::task::Task;
 use std::path::{Path, PathBuf};
 
 struct DelegateRequest {
-    role: String,
-    name: Option<String>,
-    objective: String,
-    instructions: Option<String>,
-    model: ModelRef,
-    effort: aether_core::model::Effort,
-    scope: Option<Scope>,
+    child: ChildRequest,
     workspace_mode: aether_tools::WorkspaceMode,
     wait: bool,
-    leaf: bool,
-    host_context: Option<aether_core::agent::HostContext>,
     idempotency: Option<aether_tools::DelegateKey>,
-    reason: Option<String>,
     references: Vec<aether_core::reference::ReferenceRequest>,
     inherit_references: bool,
-    /// Filled from the caller's task when `inherit_references` is set.
-    inherited_references: Vec<aether_core::reference::TaskReference>,
-    /// Filled from the caller's scope: where `references` may be read from.
-    reference_scope: Option<crate::ReferenceScope>,
 }
 
 /// A refusal is a normal tool outcome; only infrastructure faults are `Err`.
-type Checked<T> = Result<std::result::Result<T, ToolOutcome>>;
+pub(super) type Checked<T> = Result<std::result::Result<T, ToolOutcome>>;
 
 struct IsolatedSource {
     canonical_source: PathBuf,
@@ -113,7 +103,7 @@ async fn delegate(
     runtime: &Arc<Runtime>,
     ctx: &TurnCtx,
     effects: &mut ToolEffects,
-    mut request: DelegateRequest,
+    request: DelegateRequest,
 ) -> Result<ToolOutcome> {
     let parent = match load_delegating_parent(runtime, ctx)? {
         Ok(parent) => parent,
@@ -123,102 +113,152 @@ async fn delegate(
         Ok(submission) => submission,
         Err(refusal) => return Ok(refusal),
     };
-    if let (Some(submission), Some(keyed)) = (&submission, &request.idempotency) {
-        match runtime.replay_created_agent(submission, ctx.base_actor.clone()) {
-            Ok(Some((child, created))) => {
-                // The receipt is the task as created; whether to wait needs it as it is now.
-                let task = match created {
-                    Some(task) => runtime.store.task(task.id)?,
-                    None => None,
-                };
-                return Ok(replayed_outcome(
-                    effects,
-                    &child,
-                    task,
-                    request.wait,
-                    &keyed.key,
-                ));
-            }
-            Ok(None) => {}
-            // A key reused for a different request: the caller's mistake.
-            Err(RuntimeError::Invalid(conflict)) => {
-                return Ok(ToolOutcome::error(format!(
-                    "delegation refused: {conflict}"
-                )));
-            }
-            Err(fault) => return Err(fault),
-        }
+    if let (Some(submission), Some(keyed)) = (&submission, &request.idempotency)
+        && let Some(outcome) =
+            replay_delegation(runtime, ctx, effects, &request, submission, keyed)?
+    {
+        return Ok(outcome);
     }
-    let network = request
-        .scope
-        .as_ref()
-        .map_or(parent.scope.network, |scope| scope.network);
-    let child_on_engine =
-        match check_delegation_target(runtime, &request.model, network, &parent).await? {
-            Ok(on_engine) => on_engine,
-            Err(refusal) => return Ok(refusal),
-        };
-    if let Err(refusal) = check_delegation_policy(runtime, &parent, &request)? {
+    if !parent.config.tools.allows("delegate") {
+        return Ok(ToolOutcome::error(
+            "delegation refused: the current tools mode withholds `delegate`",
+        ));
+    }
+    let network = request.child.network(&parent);
+    if let Err(refusal) =
+        check_delegation_target(runtime, &request.child.model, network, &parent).await?
+    {
         return Ok(refusal);
     }
-    let own_references = ctx.task.as_ref().map_or(&[][..], |task| &task.references);
-    (request.reference_scope, request.inherited_references) =
-        crate::references::delegated_references(
-            &parent.scope,
-            own_references,
-            request.inherit_references,
-        );
-    let (child_scope, isolated) = match prepare_child_scope(runtime, &parent, &request).await? {
+    if let Some(refusal) = policy_refusal(runtime, &parent, &request.child, Slots::Counted)? {
+        return Ok(ToolOutcome::error(refusal));
+    }
+    for link in &request.child.fallbacks {
+        if let Err(refusal) = check_delegation_target(runtime, link, network, &parent).await? {
+            return Ok(refusal);
+        }
+    }
+    create_delegated_child(runtime, ctx, effects, &parent, request, submission).await
+}
+
+async fn create_delegated_child(
+    runtime: &Arc<Runtime>,
+    ctx: &TurnCtx,
+    effects: &mut ToolEffects,
+    parent: &Agent,
+    request: DelegateRequest,
+    submission: Option<Submission>,
+) -> Result<ToolOutcome> {
+    let requested = request.child.model.clone();
+    let network = request.child.network(parent);
+    let (child_scope, isolated) = match prepare_child_scope(runtime, parent, &request).await? {
         Ok(prepared) => prepared,
         Err(refusal) => return Ok(refusal),
     };
     let wait = request.wait;
     let key = request.idempotency.as_ref().map(|keyed| keyed.key.clone());
-    let requested = request.model.clone();
-    let spec = child_spec(ctx, request, child_scope, isolated.is_some());
+    let spec = delegation_spec(ctx, parent, request, child_scope, isolated.is_some());
     let created = runtime.create_agent_with_preflight(
         spec,
         ctx.base_actor.clone(),
         crate::commands::Preflight {
+            parent_task: ctx.task.as_ref().map(|task| task.id),
             checked: Some((&requested, network)),
-            run_budget: true,
-            inherit_limits: true,
-            parallel_limit: true,
-            #[cfg(test)]
-            before_hold: None,
             isolated_workspace: isolated
                 .as_ref()
                 .map(|manifest| manifest.workspace.as_path()),
+            ..crate::commands::Preflight::delegated(parent)
         },
         submission,
     );
-    match created {
-        Ok((child, task)) => {
-            // Advisory (VISION §3.6 limit 3): never `?`, so a read failure
-            // cannot fail the turn on a delegation that already committed.
-            let status = cap_status(runtime, &ctx.agent, child_on_engine);
-            let vision = runtime
-                .models
-                .resolve(&requested)
-                .is_ok_and(|resolved| resolved.model.capabilities.vision);
-            let reference_note = task.as_ref().and_then(|task| {
-                crate::references::delegated_reference_note(&task.references, vision)
-            });
-            Ok(delegated_outcome(
-                effects,
-                &child,
-                Delegated {
-                    task_id: task.as_ref().map(|t| t.id),
-                    wait,
-                    key: key.as_deref(),
-                    reference_note,
-                },
-                isolated.as_ref(),
-                &status,
-            ))
-        }
-        Err(e) => Ok(refuse_delegation(runtime, isolated, e)?),
+    let (child, task) = match created {
+        Ok(created) => created,
+        Err(error) => return refuse_delegation(runtime, isolated, error),
+    };
+    debug_assert_eq!(child.parent, Some(parent.id));
+    debug_assert_eq!(child.run, parent.run);
+    let status = cap_status(runtime, parent, &child);
+    let vision = runtime
+        .models
+        .resolve(&requested)
+        .is_ok_and(|resolved| resolved.model.capabilities.vision);
+    let reference_note = task
+        .as_ref()
+        .and_then(|task| crate::references::delegated_reference_note(&task.references, vision));
+    Ok(delegated_outcome(
+        effects,
+        &child,
+        Delegated {
+            task_id: task.as_ref().map(|t| t.id),
+            wait,
+            key: key.as_deref(),
+            notes: [reference_note, quota_warning(runtime, &child)],
+        },
+        isolated.as_ref(),
+        &status,
+    ))
+}
+
+/// Cached quota is advisory; the scheduler still decides which link runs.
+fn quota_warning(runtime: &Runtime, child: &Agent) -> Option<String> {
+    if child.fallbacks.is_empty() {
+        return None;
     }
+    let at = aether_core::time::now();
+    let provider = &child.model.provider;
+    let headroom = {
+        let sched = runtime.sched.lock();
+        runtime.provider_headroom(sched.quotas.get(provider), at)
+    };
+    let exhausted = !headroom.stale
+        && headroom
+            .windows
+            .iter()
+            .any(|window| window.remaining_percent == 0 && window.resets_at.is_none_or(|r| r > at));
+    exhausted.then(|| {
+        format!(
+            " Warning: primary model `{}` is on provider `{provider}`, which reports zero quota headroom. The child has the requested fallbacks.",
+            child.model
+        )
+    })
+}
+
+fn delegation_spec(
+    ctx: &TurnCtx,
+    parent: &Agent,
+    request: DelegateRequest,
+    child_scope: Option<Scope>,
+    isolated: bool,
+) -> CreateAgentSpec {
+    let own_references = ctx.task.as_ref().map_or(&[][..], |task| &task.references);
+    let (reference_scope, inherited_references) = crate::references::delegated_references(
+        &parent.scope,
+        own_references,
+        request.inherit_references,
+    );
+    let spec = child_spec(parent, placed(request.child, child_scope, isolated));
+    debug_assert_eq!(spec.parent, Some(ctx.agent.id));
+    debug_assert_eq!(spec.run, Some(ctx.agent.run));
+    CreateAgentSpec {
+        references: request.references,
+        inherited_references,
+        reference_scope,
+        ..spec
+    }
+}
+
+/// The request as its child will run it: in `scope`, and told how an isolated
+/// workspace reaches its parent when it has one.
+fn placed(mut child: ChildRequest, scope: Option<Scope>, isolated: bool) -> ChildRequest {
+    child.scope = scope;
+    if isolated {
+        let instructions = child.instructions.get_or_insert_default();
+        if !instructions.is_empty() {
+            instructions.push_str("\n\n");
+        }
+        instructions.push_str(ISOLATED_INSTRUCTIONS);
+    }
+    child
 }
 
 /// The submission a keyed delegate call is recorded under: scoped to the
@@ -234,6 +274,39 @@ fn delegate_submission(
     Submission::new(&scoped, &keyed.request)
         .map(Some)
         .map_err(|e| ToolOutcome::error(e.to_string()))
+}
+
+fn replay_delegation(
+    runtime: &Runtime,
+    ctx: &TurnCtx,
+    effects: &mut ToolEffects,
+    request: &DelegateRequest,
+    submission: &Submission,
+    keyed: &aether_tools::DelegateKey,
+) -> Result<Option<ToolOutcome>> {
+    let (child, created) = match runtime.replay_created_agent(submission, ctx.base_actor.clone()) {
+        Ok(Some(created)) => created,
+        Ok(None) => return Ok(None),
+        Err(RuntimeError::Invalid(conflict)) => {
+            return Ok(Some(ToolOutcome::error(format!(
+                "delegation refused: {conflict}"
+            ))));
+        }
+        Err(fault) => return Err(fault),
+    };
+    debug_assert_eq!(child.parent, Some(ctx.agent.id));
+    debug_assert_eq!(child.run, ctx.agent.run);
+    let task = match created {
+        Some(task) => runtime.store.task(task.id)?,
+        None => None,
+    };
+    Ok(Some(replayed_outcome(
+        effects,
+        &child,
+        task,
+        request.wait,
+        &keyed.key,
+    )))
 }
 
 /// The reply to a repeat of a delegate call that already created its child.
@@ -274,7 +347,7 @@ fn replayed_outcome(
     outcome
 }
 
-fn load_delegating_parent(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Checked<Agent> {
+pub(super) fn load_delegating_parent(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Checked<Agent> {
     let parent = runtime
         .store
         .agent(ctx.agent.id)?
@@ -287,18 +360,17 @@ fn load_delegating_parent(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Checked<Agen
     Ok(Ok(parent))
 }
 
-/// Model, engine and provider-auth checks; `Ok` carries whether the child
-/// runs on an engine.
-async fn check_delegation_target(
+/// Model, engine and provider-auth checks for one link.
+pub(super) async fn check_delegation_target(
     runtime: &Arc<Runtime>,
     requested: &ModelRef,
     network: NetworkPolicy,
     parent: &Agent,
-) -> Checked<bool> {
+) -> Checked<()> {
     let resolved = match runtime.models.resolve(requested) {
         Ok(resolved) => resolved,
         Err(error) => {
-            return delegation_refusal(runtime, requested, network, &parent.model, error)
+            return delegation_refusal(runtime, requested, network, parent, error)
                 .await
                 .map(Err);
         }
@@ -306,21 +378,15 @@ async fn check_delegation_target(
     let engine_kind = crate::turn_engine::engine_kind(resolved.provider.protocol);
     if let Some(kind) = engine_kind {
         let detected = runtime.engines.recheck(kind).await;
-        let Some(engine) = detected.get(&kind) else {
-            let reason = format!(
-                "its engine is not available in this daemon: {}",
-                crate::engine_access::unavailable_text(
-                    kind,
-                    &resolved.provider.id,
-                    detected.unavailable.get(&kind).map(String::as_str),
-                )
-            );
-            return delegation_refusal(runtime, requested, network, &parent.model, reason)
-                .await
-                .map(Err);
-        };
-        if let Err(error) = engine.validate_network_policy(network == NetworkPolicy::Allowed) {
-            return delegation_refusal(runtime, requested, network, &parent.model, error)
+        let approvals_required = !runtime.config.yolo && !parent.config.approval.is_yolo();
+        if let Some(refusal) = engine_refusal(
+            &detected,
+            kind,
+            &resolved.provider.id,
+            network,
+            approvals_required,
+        ) {
+            return delegation_refusal(runtime, requested, network, parent, refusal)
                 .await
                 .map(Err);
         }
@@ -332,7 +398,7 @@ async fn check_delegation_target(
                 runtime,
                 requested,
                 network,
-                &parent.model,
+                parent,
                 format!(
                     "provider authentication is not configured. {}",
                     status.error.unwrap_or_default()
@@ -342,73 +408,7 @@ async fn check_delegation_target(
             .map(Err);
         }
     }
-    Ok(Ok(engine_kind.is_some()))
-}
-
-/// The delegating agent's policy, or without one the tier ceiling and the
-/// frontier-clone rule. A given `reason` is recorded on the child's task.
-fn check_delegation_policy(
-    runtime: &Arc<Runtime>,
-    parent: &Agent,
-    request: &DelegateRequest,
-) -> Checked<()> {
-    use aether_core::delegation::{Candidate, admits_without_policy, needs_reason};
-    let models = &runtime.models;
-    let model = models.canonical(&request.model);
-    let parent_model = models.canonical(&parent.model);
-    let parent_tier = models.delegation_tier(&parent_model);
-    let child = Candidate {
-        role: request.role.trim(),
-        model: &model,
-        tier: models.delegation_tier(&model),
-        effort: request.effort,
-    };
-    let policy = parent
-        .config
-        .delegation_policy
-        .as_ref()
-        .map(|policy| canonical_policy(runtime, policy));
-    let verdict = match &policy {
-        Some(policy) => {
-            let unfinished = match policy.max_parallel {
-                Some(_) => runtime.unfinished_children(parent.id, policy)?,
-                None => 0,
-            };
-            policy.admits(&child, parent_tier, unfinished)
-        }
-        None => admits_without_policy(&child, parent_tier),
-    };
-    if let Err(refusal) = verdict {
-        return Ok(Err(ToolOutcome::error(refusal)));
-    }
-    let named_by_policy = policy
-        .as_ref()
-        .is_some_and(|policy| policy.names_model(request.role.trim(), &model));
-    if needs_reason(&child, &parent_model) && !named_by_policy && request.reason.is_none() {
-        return Ok(Err(ToolOutcome::error(format!(
-            "delegation refused: {model} is your own frontier-tier model. Workers default to the balanced or fast tier (list_models shows each model's tier); \
-             choose one, or pass `reason` saying why this child needs your model. The reason is recorded on the child's task."
-        ))));
-    }
     Ok(Ok(()))
-}
-
-/// The policy with each named model in canonical form, so an alias matches.
-fn canonical_policy(
-    runtime: &Arc<Runtime>,
-    policy: &aether_core::delegation::DelegationPolicy,
-) -> aether_core::delegation::DelegationPolicy {
-    let mut canonical = policy.clone();
-    for worker in &mut canonical.workers {
-        if let Some(model) = &worker.model {
-            worker.model = Some(runtime.models.canonical(model));
-        }
-    }
-    for model in &mut canonical.exempt_models {
-        *model = runtime.models.canonical(model);
-    }
-    debug_assert_eq!(canonical.workers.len(), policy.workers.len());
-    canonical
 }
 
 /// The child's scope, and the snapshot manifest when the workspace is isolated.
@@ -418,9 +418,10 @@ async fn prepare_child_scope(
     request: &DelegateRequest,
 ) -> Checked<(Option<Scope>, Option<WorkspaceManifest>)> {
     if request.workspace_mode != aether_tools::WorkspaceMode::Isolated {
-        return Ok(Ok((request.scope.clone(), None)));
+        return Ok(Ok((request.child.scope.clone(), None)));
     }
     let requested = request
+        .child
         .scope
         .clone()
         .unwrap_or_else(|| parent.scope.clone());
@@ -550,60 +551,6 @@ fn relative_allowed_paths(
     Ok(relative_allowed_paths)
 }
 
-fn child_spec(
-    ctx: &TurnCtx,
-    request: DelegateRequest,
-    child_scope: Option<Scope>,
-    isolated: bool,
-) -> CreateAgentSpec {
-    let mut config = ctx.agent.config.clone();
-    config.deadline = None;
-    config.cost_budget = None;
-    // The parent's policy bounds the parent's children, not the child's.
-    config.delegation_policy = None;
-    // None at create_agent means inherit. Delegation instructions
-    // belong to this task; inheriting "spawn a child" recursively
-    // makes each leaf repeat its parent's orchestration work.
-    let mut child_instructions = request.instructions.unwrap_or_default();
-    if isolated {
-        if !child_instructions.is_empty() {
-            child_instructions.push_str("\n\n");
-        }
-        child_instructions.push_str(ISOLATED_INSTRUCTIONS);
-    }
-    config.instructions = Some(child_instructions);
-    config.effort = Some(request.effort);
-    config.long_lived = false;
-    config.leaf = request.leaf;
-    config.max_turns = None;
-    if let Some(host_context) = request.host_context {
-        config.host_context = host_context;
-    }
-    CreateAgentSpec {
-        subsystem: None,
-        role: request.role,
-        name: request.name,
-        objective: Some(request.objective),
-        model: Some(request.model),
-        // Delegation always names its model; do not inherit the parent's chain.
-        fallbacks: Vec::new(),
-        scope: child_scope,
-        // A delegated child inherits its parent's repository.
-        repository_root: None,
-        parent: Some(ctx.agent.id),
-        config: Some(config),
-        // Inherited from the parent by the runtime; a delegating
-        // agent does not get to choose its child's gates.
-        approval: None,
-        run: Some(ctx.agent.run),
-        start: true,
-        delegation_reason: request.reason,
-        references: request.references,
-        inherited_references: request.inherited_references,
-        reference_scope: request.reference_scope,
-    }
-}
-
 /// The advisory cap note and its structured form for the delegate reply.
 fn cap_note(status: &CapStatus) -> (String, serde_json::Value) {
     match status {
@@ -651,8 +598,7 @@ struct Delegated<'a> {
     wait: bool,
     /// Echoed so the caller can repeat the call to learn its outcome.
     key: Option<&'a str>,
-    /// What references the child's task carries, and any delivery warning.
-    reference_note: Option<String>,
+    notes: [Option<String>; 2],
 }
 
 fn delegated_outcome(
@@ -666,7 +612,7 @@ fn delegated_outcome(
         task_id,
         wait,
         key,
-        reference_note,
+        notes,
     } = delegated;
     if wait && let Some(id) = task_id {
         merge_wait(effects, WaitCondition::Task { id });
@@ -684,7 +630,7 @@ fn delegated_outcome(
         },
         cap_note,
     ));
-    if let Some(note) = reference_note {
+    for note in notes.into_iter().flatten() {
         outcome.content.push_str(&note);
     }
     if let Some(manifest) = isolated {
@@ -810,6 +756,7 @@ pub(super) async fn apply(
             objective,
             instructions,
             model,
+            fallbacks,
             effort,
             scope,
             workspace_mode,
@@ -822,23 +769,24 @@ pub(super) async fn apply(
             inherit_references,
         } => {
             let request = DelegateRequest {
-                role,
-                name,
-                objective,
-                instructions,
-                model,
-                effort,
-                scope,
+                child: ChildRequest {
+                    role,
+                    name,
+                    objective,
+                    instructions,
+                    model,
+                    fallbacks,
+                    effort,
+                    scope,
+                    leaf,
+                    host_context,
+                    reason: ChildReason::from_tool(reason),
+                },
                 workspace_mode,
                 wait,
-                leaf,
-                host_context,
                 idempotency,
-                reason,
                 references,
                 inherit_references,
-                inherited_references: Vec::new(),
-                reference_scope: None,
             };
             delegate(runtime, ctx, effects, request).await
         }

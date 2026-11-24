@@ -96,6 +96,10 @@ pub struct DelegationPolicy {
     /// orchestrator's own plan for those roles (Archon's `<stage>.review`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exempt_models: Vec<ModelRef>,
+    /// Every child model must have a known vendor different from its parent's.
+    /// This also applies to roles exempt from the worker limits.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub require_independent_vendor: bool,
 }
 
 /// A child as delegation sees it: its model, that model's tier when ranked,
@@ -163,8 +167,8 @@ impl DelegationPolicy {
         Ok(())
     }
 
-    /// Whether `child` may be created while `unfinished` direct children are
-    /// still running; the refusal names what the policy allows.
+    /// Check model, tier, effort and slots. Admission checks vendor identity
+    /// against the daemon's model registry.
     pub fn admits(
         &self,
         child: &Candidate<'_>,
@@ -287,6 +291,9 @@ impl DelegationPolicy {
         if !self.exempt_roles.is_empty() {
             parts.push(self.describe_exemptions());
         }
+        if self.require_independent_vendor {
+            parts.push("every child model must be from a different vendor than yours".into());
+        }
         debug_assert!(!parts.is_empty());
         parts.join(", ")
     }
@@ -295,11 +302,11 @@ impl DelegationPolicy {
         debug_assert!(!self.exempt_roles.is_empty());
         let roles = self.exempt_roles.join(", ");
         if self.exempt_models.is_empty() {
-            return format!("roles {roles} unbounded by this policy but not above your tier");
+            return format!("roles {roles} exempt from worker limits, at your tier or below");
         }
         let models: Vec<String> = self.exempt_models.iter().map(ToString::to_string).collect();
         format!(
-            "roles {roles} unbounded by this policy: any of {} at any tier, other models not above your tier",
+            "roles {roles} exempt from worker limits, with any of {} at any tier or other models at your tier or below",
             models.join(", ")
         )
     }

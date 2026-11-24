@@ -4,6 +4,48 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn usage_events_distinguish_missing_cost_from_zero_and_keep_positive_floors() {
+    use crate::event::EventKind;
+
+    let mut floor = Usage::cost_only(Some(0.25));
+    floor += Usage::cost_only(None);
+    let cases = [
+        (Usage::cost_only(None), None),
+        (Usage::cost_only(Some(0.0)), Some(0.0)),
+        (floor, Some(0.25)),
+    ];
+    for (usage, amount) in cases {
+        let event = EventKind::AgentUsageUpdated {
+            total: usage,
+            turn_usage: usage,
+            billing: None,
+        };
+        let wire = serde_json::to_value(&event).unwrap();
+        for key in ["total", "turn_usage"] {
+            assert_eq!(wire[key].get("cost_usd").and_then(|v| v.as_f64()), amount);
+            assert_eq!(wire[key].get("cost_usd").is_some(), amount.is_some());
+            assert_eq!(wire[key]["cost_complete"], usage.cost_complete);
+        }
+        assert_eq!(serde_json::from_value::<EventKind>(wire).unwrap(), event);
+    }
+}
+
+#[test]
+fn legacy_cost_records_keep_their_coverage() {
+    let mut wire = json!({"input_tokens": 1, "output_tokens": 0,
+        "cache_read_tokens": 0, "cache_write_tokens": 0});
+    let missing: Usage = serde_json::from_value(wire.clone()).unwrap();
+    assert!(!missing.cost_complete);
+    assert_eq!(missing.cost_gap, Some(CostGap::Unknown));
+    wire["cost_usd"] = json!(0.0);
+    let zero: Usage = serde_json::from_value(wire.clone()).unwrap();
+    assert!(zero.cost_complete);
+    assert_eq!(zero.cost_usd, 0.0);
+    wire["cost_complete"] = json!(false);
+    assert_eq!(serde_json::from_value::<Usage>(wire).unwrap(), missing);
+}
+
+#[test]
 fn cost_basis_tracks_pricing_and_survives_serialization_and_rollups() {
     let rate = ModelCost {
         input_per_mtok: 1.0,
@@ -71,6 +113,8 @@ fn exhaustion_requires_explicit_error_evidence() {
     for message in [
         "You've hit your limit · resets Sep 18 at 2pm",
         "You've hit your usage limit.",
+        "You've hit your Fable limit",
+        "hit your Other limit",
         "Weekly limit reached",
         "Daily limit exceeded",
         "5-hour limit reached ∙ resets 2pm",
@@ -90,7 +134,10 @@ fn exhaustion_requires_explicit_error_evidence() {
         "daily limit may apply",
         "session expired",
         "rate limit reached for requests per minute",
+        "You've hit your rate limit for requests per minute",
         "unknown error",
+        "hit your Fable limiter",
+        "shit your Fable limit",
     ] {
         assert_eq!(provider_exhaustion(message), None, "{message}");
     }

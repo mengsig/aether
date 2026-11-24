@@ -1166,3 +1166,28 @@ async fn run_reports_a_missing_program_when_the_workspace_exists() {
     );
     assert!(error.to_string().contains("not installed or not on PATH"));
 }
+
+#[test]
+fn an_mcp_tool_that_answers_with_an_error_is_a_failed_result() {
+    let mut st = ParseState::default();
+    let answered = r#"{"type":"item.completed","item":{"id":"m1","type":"mcp_tool_call","server":"archon","tool":"model_policy","arguments":{},"result":{"content":[{"type":"text","text":"no such model"}],"isError":true},"status":"completed"}}"#;
+    let events = parse_line(answered, &mut st);
+    assert!(
+        matches!(&events[..], [EngineEvent::Assistant { .. }, EngineEvent::ToolResult { tool_use_id, is_error: true, .. }] if tool_use_id == "m1"),
+        "a completed item whose result is an error is still an error: {events:?}"
+    );
+    let ok = answered.replace(r#","isError":true"#, "");
+    assert!(
+        matches!(
+            &parse_line(&ok, &mut st)[..],
+            [
+                _,
+                EngineEvent::ToolResult {
+                    is_error: false,
+                    ..
+                }
+            ]
+        ),
+        "a plain result is a success"
+    );
+}

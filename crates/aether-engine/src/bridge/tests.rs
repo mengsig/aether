@@ -1,6 +1,7 @@
 use super::*;
 use aether_protocol::{ClientFrame, ErrorCode, ErrorReply, ServerFrame, Welcome};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt as _, BufReader, DuplexStream, Lines, ReadHalf, WriteHalf};
 use tokio::net::UnixListener;
@@ -31,9 +32,17 @@ struct Fixture {
     held: mpsc::UnboundedReceiver<()>,
     closed: mpsc::UnboundedReceiver<()>,
     release: Arc<Notify>,
+    script: DaemonScript,
     bridge: JoinHandle<anyhow::Result<()>>,
     daemon: JoinHandle<()>,
     _dir: tempfile::TempDir,
+}
+
+/// What the mock daemon counts, shared by its connections.
+#[derive(Clone, Default)]
+struct DaemonScript {
+    /// How many `flaky` calls reached the daemon; the first is dropped.
+    flaky: Arc<AtomicUsize>,
 }
 
 impl Drop for Fixture {
@@ -53,6 +62,8 @@ impl Fixture {
         let (held_tx, held) = mpsc::unbounded_channel();
         let (closed_tx, closed) = mpsc::unbounded_channel();
         let daemon_release = release.clone();
+        let script = DaemonScript::default();
+        let daemon_script = script.clone();
         let daemon = tokio::spawn(async move {
             let mut connections = JoinSet::new();
             loop {
@@ -61,6 +72,7 @@ impl Fixture {
                         let (stream, _) = connection.expect("accept");
                         connections.spawn(mock_connection(
                             stream, agent, daemon_release.clone(), held_tx.clone(), closed_tx.clone(),
+                            daemon_script.clone(),
                         ));
                     }
                     done = connections.join_next(), if !connections.is_empty() => {
@@ -85,6 +97,7 @@ impl Fixture {
             held,
             closed,
             release,
+            script,
             bridge,
             daemon,
             _dir: dir,
@@ -132,7 +145,9 @@ async fn mock_connection(
     release: Arc<Notify>,
     held: mpsc::UnboundedSender<()>,
     closed: mpsc::UnboundedSender<()>,
+    script: DaemonScript,
 ) {
+    let flaky = &script.flaky;
     let (read, mut write) = stream.into_split();
     let mut lines = BufReader::new(read).lines();
     while let Some(line) = lines.next_line().await.expect("read daemon frame") {
@@ -194,6 +209,13 @@ async fn mock_connection(
                             is_error: false,
                         })
                     }
+                    // The first one drops the connection without a reply,
+                    // like a daemon that restarts mid-call.
+                    "flaky" if flaky.fetch_add(1, Ordering::SeqCst) == 0 => return,
+                    "flaky" => Ok(Reply::EngineTool {
+                        content: "recovered".into(),
+                        is_error: false,
+                    }),
                     "refused" => Err(ErrorReply::new(ErrorCode::Unauthorized, "turn expired")),
                     "unexpected" => Ok(Reply::Ok),
                     other => panic!("unexpected tool {other}"),
@@ -451,11 +473,10 @@ async fn session_without_a_daemon(socket: PathBuf) -> String {
         .await;
         assert_eq!(reply["id"], id);
         assert_eq!(reply["result"]["isError"], true, "{reply}");
-        assert_eq!(
-            reply["result"]["content"][0]["text"],
-            reason.as_str(),
-            "{name}"
-        );
+        let text = reply["result"]["content"][0]["text"]
+            .as_str()
+            .expect("a text result");
+        assert_eq!(explanation(text), reason, "{name}");
     }
     input.shutdown().await.expect("stdio EOF");
     tokio::time::timeout(DEADLINE, bridge)
@@ -506,4 +527,97 @@ async fn a_bridge_against_an_incompatible_daemon_names_both_windows() {
     ] {
         assert!(reason.contains(expected), "missing {expected}: {reason}");
     }
+}
+
+/// What a failed call says to the model: the text itself, or the cause of a
+/// structured transport failure, which also says calling again is safe since
+/// nothing reached a daemon.
+fn explanation(text: &str) -> String {
+    match serde_json::from_str::<Value>(text) {
+        Ok(failure) if failure["error"] == "tool_transport_failed" => {
+            assert_eq!(failure["retryable"], true, "nothing was sent: {failure}");
+            failure["cause"].as_str().expect("a cause").to_owned()
+        }
+        _ => text.to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn a_call_whose_daemon_connection_drops_is_not_replayed_and_says_so() {
+    let mut fixture = Fixture::new();
+    fixture
+        .send(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "flaky", "arguments": {"idempotency_key": "once"}}}))
+        .await;
+    let reply = fixture.reply().await;
+    assert_eq!(reply["id"], 1);
+    assert_eq!(reply["result"]["isError"], true, "{reply}");
+    let failure = &reply["result"]["structuredContent"];
+    assert_eq!(failure["error"], "tool_transport_failed");
+    assert_eq!(failure["tool"], "flaky");
+    assert_eq!(
+        failure["retryable"], false,
+        "the daemon may already have run it, key or not"
+    );
+    let cause = failure["cause"].as_str().expect("a cause");
+    assert!(cause.contains("dropped mid-call"), "{cause}");
+    let text = reply["result"]["content"][0]["text"]
+        .as_str()
+        .expect("text");
+    assert_eq!(
+        serde_json::from_str::<Value>(text).expect("JSON text"),
+        *failure
+    );
+    assert_eq!(
+        fixture.script.flaky.load(Ordering::SeqCst),
+        1,
+        "sent exactly once"
+    );
+    fixture.close_input().await;
+}
+
+/// A daemon that accepts the socket and then never answers the handshake.
+fn stalled_daemon_at(socket: &Path, accepted: Arc<AtomicUsize>) -> JoinHandle<()> {
+    let listener = UnixListener::bind(socket).expect("bind stalled daemon");
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        loop {
+            let (stream, _) = listener.accept().await.expect("accept");
+            accepted.fetch_add(1, Ordering::SeqCst);
+            held.push(stream);
+        }
+    })
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_stalled_daemon_fails_the_call_within_bounded_reconnects() {
+    let dir = tempfile::tempdir().expect("temporary socket directory");
+    let socket = dir.path().join("daemon.sock");
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let daemon = stalled_daemon_at(&socket, accepted.clone());
+    let started = tokio::time::Instant::now();
+    let params = json!({"name": "send_message", "arguments": {}});
+    let reply = call_tool(&socket, AgentId::new(), TOKEN, json!(7), &params).await;
+    let waited = started.elapsed();
+    daemon.abort();
+    let backoff: Duration = RECONNECT_BACKOFF.iter().sum();
+    let bound = CONNECT_TIMEOUT * (RECONNECT_BACKOFF.len() as u32 + 1) + backoff;
+    assert!(
+        waited <= bound,
+        "every connect is bounded: {waited:?} > {bound:?}"
+    );
+    assert_eq!(reply["id"], 7);
+    assert_eq!(reply["result"]["isError"], true, "{reply}");
+    let failure = &reply["result"]["structuredContent"];
+    assert_eq!(failure["error"], "tool_transport_failed", "{reply}");
+    assert_eq!(failure["retryable"], true, "nothing reached the daemon");
+    let cause = failure["cause"].as_str().expect("a cause");
+    assert!(
+        cause.contains("did not finish the MCP bridge's connect and handshake"),
+        "{cause}"
+    );
+    assert!(
+        accepted.load(Ordering::SeqCst) >= 1,
+        "the bridge did connect"
+    );
 }

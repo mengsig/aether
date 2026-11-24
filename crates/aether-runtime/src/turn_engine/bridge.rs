@@ -116,13 +116,15 @@ pub(super) async fn handle_request(
                 // built-in one would, matched against the same resources and
                 // argument a remembered rule would see on the API path.
                 let declared = tool.descriptor().side_effect;
+                let class =
+                    runtime.tool_call_class(ctx.agent.id, &req.name, &req.input, declared)?;
                 let gate = GateSubject {
                     native_call: None,
                     provider_call_id: None,
                     tool: &req.name,
                     input: &req.input,
                     declared,
-                    class: gated_class(declared, &req.input),
+                    class,
                     argument: tool.rule_argument(&req.input),
                     resources: tool.resources(&req.input, tool_ctx),
                     resources_known: tool.resources_known(&req.input),
@@ -198,7 +200,10 @@ pub(super) async fn handle_request(
                         // the reply waits for the answer or the child instead.
                         let holds =
                             native_jobs && !parked && effects.next.is_none() && held(&action);
-                        let outcome = apply_action(runtime, ctx, action, effects).await?;
+                        let mutation_approved =
+                            class == SideEffectClass::Mutation && verdict.approved;
+                        let outcome =
+                            apply_action(runtime, ctx, action, effects, mutation_approved).await?;
                         if holds
                             && let Some(Next::Waiting(condition)) = effects
                                 .next
@@ -281,7 +286,7 @@ async fn ask_beside_wait(
         "a pending native wait has not ended the turn"
     );
     let asked = effects.asked_seqs().len();
-    let outcome = apply_action(runtime, ctx, action, effects).await?;
+    let outcome = apply_action(runtime, ctx, action, effects, false).await?;
     // The question's own park would end the turn and stop the jobs.
     effects.next = None;
     let Some(&seq) = effects.asked_seqs().get(asked) else {
@@ -403,6 +408,8 @@ async fn decide_permission(
 /// What the runtime decided about an engine's permission prompt.
 pub(super) struct Verdict {
     pub(super) allow: bool,
+    /// A person or remembered rule granted approval for this call.
+    pub(super) approved: bool,
     pub(super) message: Option<String>,
 }
 
@@ -458,22 +465,23 @@ impl<'a> GateSubject<'a> {
 
 /// The class to record for a call the engine ran itself. Aether's own tools
 /// reach the engine through the bridge under an `mcp__aether__` prefix, so
-/// their real descriptor is what the log must carry; only a tool Aether does
-/// not know falls back to inferring from the name.
+/// the log records the class Aether gated, falling back to inference from
+/// the name for tools Aether does not know.
 pub(super) fn engine_call_class(
-    runtime: &Arc<Runtime>,
+    runtime: &Runtime,
+    agent: aether_core::id::AgentId,
     name: &str,
     input: &Value,
-) -> SideEffectClass {
+) -> Result<SideEffectClass> {
     // The contract tells the model both forms (`aether-engine`'s
     // `contract.rs`), so the dotted one has to be stripped too or the class
     // the gate used and the class the log records disagree.
     let bare = bridge_tool_name(name);
     let declared = match runtime.tools.get(bare) {
         Some(tool) => tool.descriptor().side_effect,
-        None => side_effect_of(name),
+        None => return Ok(gated_class(side_effect_of(name), input)),
     };
-    gated_class(declared, input)
+    runtime.tool_call_class(agent, bare, input, declared)
 }
 
 pub(super) fn bridge_tool_name(name: &str) -> &str {
@@ -506,12 +514,14 @@ pub(super) async fn permission_verdict(
         resources,
         resources_known,
     } = gate;
-    let allow = || Verdict {
+    let allow = |approved| Verdict {
         allow: true,
+        approved,
         message: None,
     };
     let refuse = |msg: &str| Verdict {
         allow: false,
+        approved: false,
         message: Some(msg.to_owned()),
     };
     let deny = |msg: &str| -> Result<Verdict> {
@@ -530,8 +540,8 @@ pub(super) async fn permission_verdict(
         }
         Ok(refuse(msg))
     };
-    if !ctx.agent.config.approval.requires_raised(declared, class) {
-        return Ok(allow());
+    if !runtime.tool_needs_approval(&ctx.agent, tool_name, declared, class)? {
+        return Ok(allow(false));
     }
     let approval = ApprovalRequest {
         id: ApprovalId::new(),
@@ -565,7 +575,7 @@ pub(super) async fn permission_verdict(
         );
         runtime.apply(commit)?;
         return match decision {
-            ApprovalDecision::Approved => Ok(allow()),
+            ApprovalDecision::Approved => Ok(allow(true)),
             ApprovalDecision::Denied => deny(&approval::describe_denial(rule, note.as_deref())),
         };
     }
@@ -636,7 +646,7 @@ pub(super) async fn permission_verdict(
     };
     open.open = false;
     match answer {
-        (ApprovalDecision::Approved, _) => Ok(allow()),
+        (ApprovalDecision::Approved, _) => Ok(allow(true)),
         (ApprovalDecision::Denied, note) => {
             deny(note.as_deref().unwrap_or("denied by the operator"))
         }

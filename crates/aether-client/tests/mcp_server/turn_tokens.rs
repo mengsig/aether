@@ -139,6 +139,7 @@ async fn aethers_own_mcp_client_drives_aethers_own_http_server() {
                 agent_id: aether_core::id::AgentId::new(),
                 task_id: None,
             },
+            false,
         )
         .await
         .expect("call through both halves");

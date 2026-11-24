@@ -4,6 +4,7 @@ use aether_core::id::AgentId;
 use aether_core::model::ModelRef;
 use aether_store::AgentFilter;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 /// A child may gate more than its parent, never less. One rule,
 /// one message, whether it fires at creation or on a live agent.
@@ -37,6 +38,88 @@ pub(super) fn checked_agent_name(name: &str) -> Result<String> {
     Ok(trimmed.to_owned())
 }
 
+/// Where `path` leads once its links are followed as the file tools follow
+/// them. A relative path is read from the daemon's directory, as the OS reads it.
+fn leads_to(path: &Path) -> std::result::Result<PathBuf, String> {
+    let absolute = std::path::absolute(path).map_err(|error| error.to_string())?;
+    let resolved = aether_tools::fs::resolve_links(&absolute).map_err(|error| error.to_string())?;
+    debug_assert!(resolved.is_absolute(), "resolved from an absolute path");
+    Ok(resolved)
+}
+
+/// The real path of `path`, or where it will be once created as written.
+/// `None`: it cannot be read, or its spelling climbs out of what is missing.
+fn real_or_once_created(path: &Path) -> Option<PathBuf> {
+    let absolute = std::path::absolute(path).ok()?;
+    let mut existing = absolute.as_path();
+    let mut missing = Vec::new();
+    loop {
+        match std::fs::canonicalize(existing) {
+            Ok(real) => {
+                debug_assert!(real.is_absolute());
+                return Some(
+                    missing
+                        .iter()
+                        .rev()
+                        .fold(real, |path, name| path.join(name)),
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return None,
+        }
+        // `None` for `..`: once created, such a path is somewhere else.
+        missing.push(existing.file_name()?);
+        existing = existing.parent()?;
+    }
+}
+
+/// The directories `parent`'s file tools reach, counting a path of its that
+/// is not there yet: its root and allowed paths, or only `cwd` without a root.
+fn granted_roots(parent: &Scope, cwd: &Path) -> Vec<PathBuf> {
+    let named: Vec<&Path> = match &parent.workspace_root {
+        Some(root) => std::iter::once(root.as_path())
+            .chain(parent.allowed_paths.iter().map(PathBuf::as_path))
+            .collect(),
+        // Without a root its file tools work in `cwd` and ignore `allowed_paths`.
+        None => vec![cwd],
+    };
+    debug_assert!(!named.is_empty(), "a scope works somewhere");
+    let granted: Vec<PathBuf> = named.into_iter().filter_map(real_or_once_created).collect();
+    debug_assert!(granted.iter().all(|root| root.is_absolute()));
+    granted
+}
+
+/// The field on which `scope` leaves `parent` once links are followed, as
+/// the file tools follow them. `cwd` is where a parent with no root works.
+fn widened_on_disk(scope: &Scope, parent: &Scope, cwd: &Path) -> Result<Option<&'static str>> {
+    let granted = granted_roots(parent, cwd);
+    let inside = |path: &Path| -> Result<bool> {
+        let leads_to = leads_to(path).map_err(|error| {
+            RuntimeError::Invalid(format!(
+                "child scope path {} cannot be resolved: {error}",
+                path.display()
+            ))
+        })?;
+        Ok(granted.iter().any(|root| leads_to.starts_with(root)))
+    };
+    if let Some(root) = &scope.workspace_root
+        && scope.workspace_root != parent.workspace_root
+        && !inside(root)?
+    {
+        return Ok(Some("workspace_root"));
+    }
+    // The parent's own allowed path leads where the parent's does, unless the
+    // child would use it and the parent cannot: a rootless agent's are unused.
+    let same_use = parent.workspace_root.is_some() || scope.workspace_root.is_none();
+    for path in &scope.allowed_paths {
+        let parents_own = same_use && parent.allowed_paths.contains(path);
+        if !parents_own && !inside(path)? {
+            return Ok(Some("allowed_paths"));
+        }
+    }
+    Ok(None)
+}
+
 impl Runtime {
     /// Apply `guard` to every link a turn may land on, primary first. A
     /// fallback is not a lesser model: a turn runs on it with the same budget,
@@ -60,29 +143,6 @@ impl Runtime {
             })?;
         }
         Ok(())
-    }
-
-    /// Refuse a cost budget on a provider that reports no dollar cost: a hard
-    /// stop that silently never fires is worse than no stop at all.
-    pub(super) fn check_cost_budget(
-        &self,
-        model: &ModelRef,
-        fallbacks: &[ModelRef],
-        budget: Option<f64>,
-    ) -> Result<()> {
-        if budget.is_none() {
-            return Ok(());
-        }
-        Self::for_each_link(model, fallbacks, |link| {
-            if self.models.resolve(link)?.reports_cost() {
-                return Ok(());
-            }
-            Err(RuntimeError::Invalid(format!(
-                "provider `{}` reports no dollar cost, so a cost budget on it could never be \
-                 enforced; token caps are supported: set token_budget instead",
-                link.provider
-            )))
-        })
     }
 
     /// VISION §16: an external engine (Claude Code, Codex) runs its own tools
@@ -186,15 +246,19 @@ impl Runtime {
         link.provider.auth.none && free
     }
 
+    /// Where an agent whose scope names no workspace root works.
+    pub(crate) fn unscoped_cwd(&self) -> Option<std::path::PathBuf> {
+        self.config
+            .workspace_root
+            .clone()
+            .or_else(|| std::env::current_dir().ok())
+    }
+
     /// What a root agent that asked for no scope works in.
     pub(super) fn default_root_scope(&self) -> Scope {
         Scope {
             network: self.config.network_default,
-            workspace_root: self
-                .config
-                .workspace_root
-                .clone()
-                .or_else(|| std::env::current_dir().ok()),
+            workspace_root: self.unscoped_cwd(),
             ..Default::default()
         }
     }
@@ -214,40 +278,52 @@ impl Runtime {
         };
         let parent_scope = self.resolved_scope(&parent.scope)?;
         let scope = requested.unwrap_or_else(|| parent_scope.clone());
-        let checked = if let Some(workspace) = isolated_workspace {
-            if scope.workspace_root.as_deref() != Some(workspace) {
-                return Err(RuntimeError::Invalid(
-                    "isolated delegation scope changed before creation; retry delegation".into(),
-                ));
-            }
-            let managed_root =
-                self.config
-                    .delegated_workspace_root
-                    .as_deref()
-                    .ok_or_else(|| {
-                        RuntimeError::Invalid("managed workspaces are not configured".into())
-                    })?;
-            let manifest = crate::workspace::load(managed_root, workspace)?;
-            if manifest.parent != parent.id {
-                return Err(RuntimeError::Invalid(
-                    "isolated workspace parent does not match the delegating agent".into(),
-                ));
-            }
-            self.remap_managed_scope(&scope, &manifest)?
+        let (checked, parent_scope) = if let Some(workspace) = isolated_workspace {
+            (
+                self.isolated_source_scope(&scope, workspace, parent.id)?,
+                Self::canonical_workspace_scope(&parent_scope)?,
+            )
         } else {
-            scope.clone()
+            (scope.clone(), parent_scope)
         };
-        let parent_scope = if isolated_workspace.is_some() {
-            Self::canonical_workspace_scope(&parent_scope)?
-        } else {
-            parent_scope
-        };
-        match checked.widened_field(&parent_scope) {
+        let widened = self.widened_scope(&checked, &parent_scope)?;
+        match widened {
             Some(field) => Err(RuntimeError::Invalid(format!(
                 "child scope must narrow the parent's scope; `{field}` widens it"
             ))),
             None => Ok(scope),
         }
+    }
+
+    fn isolated_source_scope(
+        &self,
+        scope: &Scope,
+        workspace: &Path,
+        parent: AgentId,
+    ) -> Result<Scope> {
+        if scope.workspace_root.as_deref() != Some(workspace) {
+            return Err(RuntimeError::Invalid(
+                "isolated delegation scope changed before creation; retry delegation".into(),
+            ));
+        }
+        let managed_root = self
+            .config
+            .delegated_workspace_root
+            .as_deref()
+            .ok_or_else(|| RuntimeError::Invalid("managed workspaces are not configured".into()))?;
+        let manifest = crate::workspace::load(managed_root, workspace)?;
+        debug_assert_eq!(manifest.workspace, workspace);
+        if manifest.parent != parent {
+            return Err(RuntimeError::Invalid(
+                "isolated workspace parent does not match the delegating agent".into(),
+            ));
+        }
+        let logical = self.remap_managed_scope(scope, &manifest)?;
+        debug_assert_eq!(
+            logical.workspace_root.as_deref(),
+            Some(manifest.source.as_path())
+        );
+        Ok(logical)
     }
 
     fn canonical_workspace_scope(scope: &Scope) -> Result<Scope> {
@@ -310,6 +386,17 @@ impl Runtime {
                     })
             })
             .collect::<Result<_>>()?;
+        let snapshot = Scope {
+            workspace_root: Some(manifest.workspace.clone()),
+            ..Default::default()
+        };
+        if let Some(field) = widened_on_disk(scope, &snapshot, &manifest.workspace)? {
+            return Err(RuntimeError::Invalid(format!(
+                "isolated delegation `{field}` leads outside its workspace snapshot"
+            )));
+        }
+        debug_assert_eq!(logical.allowed_paths.len(), scope.allowed_paths.len());
+        debug_assert_eq!(logical.network, scope.network);
         Ok(logical)
     }
 
@@ -354,7 +441,18 @@ impl Runtime {
         } else {
             parent.scope.clone()
         };
-        self.widened_field_resolved(&logical, &parent_scope)
+        self.widened_scope(
+            &self.resolved_scope(&logical)?,
+            &self.resolved_scope(&parent_scope)?,
+        )
+    }
+
+    fn widened_scope(&self, scope: &Scope, parent: &Scope) -> Result<Option<&'static str>> {
+        if let Some(field) = scope.widened_field(parent) {
+            return Ok(Some(field));
+        }
+        let cwd = self.unscoped_cwd().unwrap_or_else(|| PathBuf::from("."));
+        widened_on_disk(scope, parent, &cwd)
     }
 
     /// The field on which `scope` widens `parent`, both repositories resolved:
@@ -434,10 +532,8 @@ impl Runtime {
     /// reject a crossed budget without touching the daemon's write path at
     /// all, then under the commit hold for the authoritative verdict.
     ///
-    /// Cost is a floor: an engine that reports no dollar figure contributes
-    /// zero (`Usage::cost_complete`), so a crossed budget is certain while an
-    /// uncrossed one is only certain for the priced part. `cost_line` says
-    /// which it is.
+    /// Only the known cost floor can cross a budget. `cost_line` indicates
+    /// when that floor leaves out unpriced usage.
     pub(super) fn run_budget_refusal(&self, run: aether_core::id::RunId) -> Result<Option<String>> {
         let Some(budget) = self.config.run_budget_usd else {
             return Ok(None);
@@ -559,6 +655,29 @@ impl Runtime {
             return Ok(());
         };
         check_narrows_parent(policy, &parent)
+    }
+
+    /// Check stored children when they are about to run again. An ancestor may
+    /// have tightened its policy while a child was terminal or on an old daemon.
+    pub(crate) fn ancestor_approval_refusal(&self, agent: &Agent) -> Result<Option<String>> {
+        let Some(parent) = agent.parent.filter(|_| !self.config.yolo) else {
+            return Ok(None);
+        };
+        let ancestors = self.store.ancestry(&[parent])?;
+        debug_assert!(ancestors.is_empty() || ancestors.iter().any(|row| row.id == parent));
+        let stricter = ancestors.iter().find(|ancestor| {
+            !agent
+                .config
+                .approval
+                .is_narrowing_of(&ancestor.config.approval)
+        });
+        Ok(stricter.map(|ancestor| {
+            format!(
+                "agent {}'s approval policy drops gates required by ancestor {}; tighten its \
+                 approvals before it can run again",
+                agent.id, ancestor.id
+            )
+        }))
     }
 }
 

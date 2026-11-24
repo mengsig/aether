@@ -207,10 +207,8 @@ async fn a_budget_fires_on_the_priced_part_of_a_partly_unpriced_subtree() {
     assert_eq!(notes.len(), 1, "said once, not every tick: {notes:?}");
 }
 
-/// VISION §3.10 with §8: a budget that cannot be enforced is refused where it
-/// is set, not left as a hard stop that silently never fires.
 #[tokio::test]
-async fn a_cost_budget_is_refused_on_a_provider_that_reports_no_cost() {
+async fn a_cost_budget_survives_switching_to_an_unpriced_model() {
     let h = harness_full(
         vec![],
         |_| {},
@@ -225,58 +223,36 @@ async fn a_cost_budget_is_refused_on_a_provider_that_reports_no_cost() {
         |_| {},
     )
     .await;
-    let budgeted = |provider: &str, model: &str| CreateAgentSpec {
-        config: Some(AgentConfig {
-            cost_budget: Some(1.0),
-            approval: ApprovalPolicy::none(),
-            ..Default::default()
-        }),
-        ..spec_on("spend a little", provider, model)
-    };
-    let err = h
-        .runtime
-        .create_agent(budgeted("frugal", "nocost"), Actor::user())
-        .expect_err("a cost budget that cannot be enforced");
-    assert!(err.to_string().contains("no dollar cost"), "{err}");
-    assert!(
-        err.to_string()
-            .contains("token caps are supported: set token_budget"),
-        "{err}"
-    );
-
-    // A priced model takes the same budget.
     let (agent, _) = h
         .runtime
-        .create_agent(budgeted("anthropic", "claude-sonnet-5-5"), Actor::user())
-        .expect("priced model");
-    // And moving it onto the unpriced provider is refused too.
-    let err = h
+        .create_agent(
+            CreateAgentSpec {
+                objective: None,
+                start: false,
+                config: Some(AgentConfig {
+                    cost_budget: Some(1.0),
+                    approval: ApprovalPolicy::none(),
+                    ..Default::default()
+                }),
+                ..spec_on("spend a little", "anthropic", "claude-sonnet-5-5")
+            },
+            Actor::user(),
+        )
+        .expect("create a budgeted agent");
+    let model = ModelRef::new("frugal", "nocost");
+    let updated = h
         .runtime
         .update_agent(
             agent.id,
             aether_runtime::AgentUpdate {
-                model: Some(ModelRef::new("frugal", "nocost")),
+                model: Some(model.clone()),
                 ..Default::default()
             },
             Actor::user(),
         )
-        .expect_err("the pair is checked, not just the budget");
-    assert!(err.to_string().contains("no dollar cost"), "{err}");
-    assert!(
-        err.to_string()
-            .contains("token caps are supported: set token_budget"),
-        "{err}"
-    );
-    assert_eq!(
-        h.store
-            .agent(agent.id)
-            .expect("a")
-            .expect("exists")
-            .model
-            .provider,
-        "anthropic",
-        "a refused update changes nothing"
-    );
+        .expect("an unpriced model can retain a budget");
+    assert_eq!(updated.model, model);
+    assert_eq!(updated.config.cost_budget, Some(1.0));
 }
 
 /// VISION §1.1: one terminal decision per agent. A supervisor and a worker

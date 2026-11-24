@@ -34,9 +34,9 @@ pub(super) async fn dispatch(
     let store = rt.store().as_ref();
     match command {
         Command::CreateTask(req) => create_task(daemon, req, by, submission),
-        Command::GetTask { id } => store
-            .task(id)
-            .map_err(store_err)?
+        Command::GetTask { id } => rt
+            .get_task_with_usage(id)
+            .map_err(map_err)?
             .map(Reply::Task)
             .ok_or_else(|| ErrorReply::not_found(id)),
         Command::ListTasks { query } => {

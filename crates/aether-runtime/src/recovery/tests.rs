@@ -198,6 +198,16 @@ async fn native_reads_and_waits_retry_but_native_writes_and_unknown_mcp_require_
         ("aether.wait_for", Mutation, RecoveryClass::Retry),
         ("mcp__aether__delegate", ReadOnly, RecoveryClass::Retry),
         (
+            "mcp__aether__create_schedule",
+            Mutation,
+            RecoveryClass::Inspect,
+        ),
+        (
+            "mcp__aether__update_schedule",
+            ReadOnly,
+            RecoveryClass::Retry,
+        ),
+        (
             "mcp__aether__integrate_workspace",
             ReadOnly,
             RecoveryClass::Inspect,

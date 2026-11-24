@@ -148,6 +148,7 @@ async fn explicit_requests_do_not_replace_a_pending_model_handoff() {
         user_reply_pending: false,
         reply_given_unrecorded: false,
         start_handoff: None,
+        unanswered_tool_error: None,
     };
     let outcome = apply_action(
         &runtime,
@@ -156,6 +157,7 @@ async fn explicit_requests_do_not_replace_a_pending_model_handoff() {
             reason: "manual".into(),
         },
         &mut ToolEffects::default(),
+        false,
     )
     .await
     .expect("agent request");
@@ -253,6 +255,7 @@ async fn delegating_onto_an_unusable_engine_names_its_probe_reason() {
         objective: "do it".into(),
         instructions: None,
         model: ModelRef::new("claude-code", "haiku"),
+        fallbacks: Vec::new(),
         effort: aether_core::model::Effort::Low,
         scope: None,
         workspace_mode: aether_tools::WorkspaceMode::Shared,
@@ -269,6 +272,7 @@ async fn delegating_onto_an_unusable_engine_names_its_probe_reason() {
         &mut h.ctx,
         delegate,
         &mut ToolEffects::default(),
+        false,
     )
     .await
     .expect("a refusal is a tool outcome");

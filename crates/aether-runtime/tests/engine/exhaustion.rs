@@ -10,7 +10,8 @@ async fn weekly_exhaustion_suspends_even_when_native_outcome_says_interrupted() 
             is_error: true,
             interrupted,
             error: Some(
-                "You've hit your limit · resets Sep 18 at 2pm; sk-123456789012345678901234".into(),
+                "You've hit your Fable limit · resets Sep 18 at 2pm; sk-123456789012345678901234"
+                    .into(),
             ),
             session: Some("retained-session".into()),
             ..Default::default()
@@ -55,7 +56,10 @@ async fn weekly_exhaustion_suspends_even_when_native_outcome_says_interrupted() 
             panic!("expected a suspension")
         };
         assert_eq!(class, ExhaustionClass::UsageLimit);
-        assert!(detail.contains("resets Sep 18 at 2pm"), "{detail}");
+        assert!(
+            detail.contains("You've hit your Fable limit · resets Sep 18 at 2pm"),
+            "{detail}"
+        );
         assert!(detail.contains("claude-code"), "{detail}");
         assert!(!detail.contains("sk-123456789012345678901234"), "{detail}");
         assert_eq!(
@@ -217,7 +221,7 @@ async fn engine_exhaustion_uses_fallback_without_crossing_native_sessions() {
     }];
     first.push(EngineEvent::Done(EngineOutcome {
         is_error: true,
-        error: Some("Weekly limit reached; resets tomorrow 14:00".into()),
+        error: Some("You've hit your Fable limit; resets tomorrow 14:00".into()),
         ..Default::default()
     }));
     let mut second = vec![EngineEvent::Session {
@@ -287,7 +291,7 @@ async fn an_exhausted_engine_cause_survives_an_unrelated_fallback_failure() {
     let engine = QueuedEngine::new(vec![
         vec![EngineEvent::Done(EngineOutcome {
             is_error: true,
-            error: Some("Weekly limit reached; resets tomorrow 14:00".into()),
+            error: Some("You've hit your Fable limit; resets tomorrow 14:00".into()),
             ..Default::default()
         })],
         vec![EngineEvent::Done(EngineOutcome {
@@ -443,7 +447,7 @@ async fn a_long_lived_agent_falls_back_on_a_limit_after_its_task_settled() {
     let later = QueuedEngine::new(vec![
         vec![EngineEvent::Done(EngineOutcome {
             is_error: true,
-            error: Some("Weekly limit reached; resets tomorrow 14:00".into()),
+            error: Some("You've hit your Fable limit; resets tomorrow 14:00".into()),
             ..Default::default()
         })],
         answered("fallback answered the later turn"),
@@ -533,7 +537,10 @@ async fn a_long_lived_agent_falls_back_on_a_limit_after_its_task_settled() {
     );
     let reasons = fallback_reasons(h.store.as_ref(), agent.id);
     assert_eq!(reasons.len(), 1, "{reasons:?}");
-    assert!(reasons[0].contains("Weekly limit reached"), "{reasons:?}");
+    assert!(
+        reasons[0].contains("You've hit your Fable limit"),
+        "{reasons:?}"
+    );
     assert_eq!(
         later.prompts.lock().unwrap().len(),
         2,
@@ -821,4 +828,38 @@ async fn native_exhaustion_reaches_root_on_cancel_and_budget_exits() {
         }
         h.runtime.shutdown().await;
     }
+}
+
+#[tokio::test]
+async fn assistant_limit_text_does_not_trigger_exhaustion() {
+    let message = "You've hit your Fable limit";
+    let engine = QueuedEngine::new(vec![answered(message)]);
+    let h = harness_with_engine(
+        engine.clone(),
+        Arc::new(Mutex::new(vec![])),
+        Arc::new(Mutex::new(vec![])),
+    )
+    .await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                role: "assistant".into(),
+                start: true,
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .unwrap();
+    h.runtime
+        .send_message(agent.id, vec![ContentBlock::text("hello")], Actor::user())
+        .unwrap();
+    let waited = wait_for(h.store.as_ref(), agent.id, |agent| {
+        agent.stats.turns == 1 && matches!(agent.status, AgentStatus::Waiting { .. })
+    })
+    .await;
+    assert!(matches!(waited.status, AgentStatus::Waiting { .. }));
+    assert_eq!(engine.prompts.lock().unwrap().len(), 1);
+    assert_eq!(exhaustion_events(h.store.as_ref(), agent.id), 0);
+    h.runtime.shutdown().await;
 }

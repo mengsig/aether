@@ -9,8 +9,8 @@ import type {
 } from "../../protocol.ts";
 
 /**
- * Root agent + task each spawn occurrence creates, in a new run. Fields as on
- * `create_agent`; no parent or existing run.
+ * The agent and task each spawn occurrence creates: a root in a new run, or
+ * its creator's child. Fields as on `create_agent`; no parent or existing run.
  */
 export interface SpawnSpec {
   "approval"?: ApprovalPolicy | null;

@@ -5593,6 +5593,13 @@
     },
     "DaemonStatus": {
       "properties": {
+        "agent_slice": {
+          "description": "The systemd slice agents' engines run in and its limits, or why they\ndo not. Absent off Linux, and on older daemons.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "agents_blocked": {
           "format": "uint32",
           "minimum": 0,
@@ -5918,6 +5925,10 @@
             "integer",
             "null"
           ]
+        },
+        "require_independent_vendor": {
+          "description": "Every child model must have a known vendor different from its parent's.\nThis also applies to roles exempt from the worker limits.",
+          "type": "boolean"
         },
         "workers": {
           "description": "Allowed children. Empty: any model at or below `default_tier`, or\nwithout that, any model not above the delegating agent's tier.",
@@ -15879,7 +15890,7 @@
               "type": "null"
             }
           ],
-          "description": "Spawn schedules: the root of the newest spawned run."
+          "description": "Spawn schedules: the newest agent started, a run's root or, for an\nagent's schedule, its creator's child."
         },
         "max_deliveries": {
           "format": "uint64",
@@ -16015,7 +16026,7 @@
           "type": "object"
         },
         {
-          "description": "A spawn schedule started a run: its root agent and task.",
+          "description": "A spawn schedule started an agent and its task: a root, or its creator's child.",
           "properties": {
             "agent": {
               "$ref": "#/$defs/AgentId"
@@ -16454,7 +16465,7 @@
       "type": "object"
     },
     "SpawnSpec": {
-      "description": "Root agent + task each spawn occurrence creates, in a new run. Fields as on\n`create_agent`; no parent or existing run.",
+      "description": "The agent and task each spawn occurrence creates: a root in a new run, or\nits creator's child. Fields as on `create_agent`; no parent or existing run.",
       "properties": {
         "approval": {
           "anyOf": [
@@ -16516,7 +16527,7 @@
               "type": "null"
             }
           ],
-          "description": "Absent: the daemon's default root scope when each run starts."
+          "description": "Absent: the daemon's default root scope when each run starts, or for\nan agent's schedule its creator's scope when each child starts."
         }
       },
       "required": [
@@ -16762,6 +16773,17 @@
         "creator": {
           "$ref": "#/$defs/Actor"
         },
+        "delegated_usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Usage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Usage attributed to descendant tasks on single-task reads."
+        },
         "delegation_reason": {
           "description": "Why the delegating parent put this task on its own frontier model,\nas it said when it delegated.",
           "type": [
@@ -16789,6 +16811,17 @@
         },
         "objective": {
           "type": "string"
+        },
+        "own_usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Usage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Usage attributed directly to this task on single-task reads."
         },
         "owner": {
           "anyOf": [
@@ -18023,9 +18056,12 @@
           "description": "Missing-cost reason; absent for complete totals. Live missing usage is unreported;\nlegacy or unrecognized reasons read as unknown. Distinct reasons combine as mixed."
         },
         "cost_usd": {
-          "description": "Dollars over the invocations that could be priced. A floor when\n`cost_complete` is false.",
+          "description": "Dollars over the invocations that could be priced. A floor when\n`cost_complete` is false. Omitted on the wire for an incomplete\ntotal without a positive floor.",
           "format": "double",
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "estimated_cost_usd": {
           "description": "Dollars nobody billed, at the list price of the API model behind a\nsubscription one: an **estimate**, so it sits beside `cost_usd`\ninstead of in it. No budget reads it, and every surface labels it\n([`Self::estimate_said`]). Like `cost_usd` it is a floor - an unpriced\ninvocation whose model has no known API equivalent adds nothing - and\n`None` means nothing here was estimated at all.",
@@ -18059,7 +18095,6 @@
         "output_tokens",
         "cache_read_tokens",
         "cache_write_tokens",
-        "cost_usd",
         "cost_complete"
       ],
       "type": "object"

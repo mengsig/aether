@@ -73,6 +73,8 @@ mod known_secrets;
 mod launch_context;
 #[path = "engine/memory.rs"]
 mod memory;
+#[path = "engine/mid_turn_result.rs"]
+mod mid_turn_result;
 #[path = "engine/native_cache_ttl_pricing.rs"]
 mod native_cache_ttl_pricing;
 #[path = "engine/native_compaction.rs"]
@@ -118,6 +120,8 @@ mod telemetry;
 mod temp_dir;
 #[path = "engine/tool_bound.rs"]
 mod tool_bound;
+#[path = "engine/tool_error_turn_end.rs"]
+mod tool_error_turn_end;
 #[path = "engine/tool_surface.rs"]
 mod tool_surface;
 #[path = "engine/transient_retry.rs"]

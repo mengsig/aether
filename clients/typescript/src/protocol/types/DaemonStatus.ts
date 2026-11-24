@@ -18,6 +18,7 @@ import type {
 } from "../../protocol.ts";
 
 export interface DaemonStatus {
+  "agent_slice"?: string | null;
   "agents_blocked": number;
   "agents_live": number;
   "agents_paused"?: number;
