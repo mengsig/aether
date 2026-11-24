@@ -425,8 +425,9 @@ mod tests {
     use super::linux::{
         Unit, in_unit, start_scope, start_scope_args, unit_agents, unit_names, units_from_show,
     };
-    use super::slice::{apply, set_property_args};
+    use super::slice::{AgentSlice, set_property_args};
     use super::{Adoption, settled};
+    use aether_core::agent_slice::AgentSliceLimits;
     use aether_core::id::AgentId;
     use std::path::Path;
     use std::time::Duration;
@@ -497,83 +498,132 @@ mod tests {
         );
     }
 
-    /// Against the real user manager, on a slice of the test's own: the
-    /// engine lands in it and the slice carries the limits. Skipped without one.
-    #[tokio::test]
-    async fn an_engine_scope_runs_in_the_limited_slice() {
+    fn user_manager() -> bool {
         let manager = std::process::Command::new("systemctl")
             .args(["--user", "show-environment"])
             .output();
-        if !manager.is_ok_and(|out| out.status.success()) {
+        manager.is_ok_and(|out| out.status.success())
+    }
+
+    /// A throwaway agents' slice and its parent named after `stem`, removed on drop.
+    fn throwaway(stem: &str) -> (ThrowawaySlices, AgentSlice) {
+        let slices = ThrowawaySlices([format!("{stem}-agents.slice"), format!("{stem}.slice")]);
+        let slice: &'static str = slices.0[0].clone().leak();
+        let parent: &'static str = slices.0[1].clone().leak();
+        (slices, AgentSlice::new(parent, slice))
+    }
+
+    #[allow(clippy::unwrap_used)]
+    fn assert_limits(unit: &str, want: &[&str]) {
+        let out = std::process::Command::new("systemctl")
+            .args([
+                "--user",
+                "show",
+                unit,
+                "-p",
+                "CPUWeight,IOWeight,MemoryHigh",
+            ])
+            .output()
+            .unwrap();
+        let shown = String::from_utf8(out.stdout).unwrap();
+        for want in want {
+            assert!(shown.lines().any(|line| line == *want), "{unit}: {shown}");
+        }
+    }
+
+    #[allow(clippy::unwrap_used)]
+    fn cgroup_of(pid: u32) -> String {
+        std::fs::read_to_string(format!("/proc/{pid}/cgroup")).unwrap()
+    }
+
+    /// Against the real user manager, on slices of the test's own: the first
+    /// scope sets the limits and joins; all off later resets them, keeps out.
+    #[tokio::test]
+    async fn the_first_scope_sets_the_slice_and_all_off_resets_it() {
+        if !user_manager() {
             eprintln!("skipped: no systemd user manager");
             return;
         }
         let stem = format!("aethertest{}", std::process::id());
-        let slices = ThrowawaySlices([format!("{stem}-agents.slice"), format!("{stem}.slice")]);
+        let (slices, agents) = throwaway(&stem);
         let [slice, parent] = &slices.0;
-        let limits = aether_core::agent_slice::AgentSliceLimits {
+        agents.set(AgentSliceLimits {
             cpu_weight: Some(20),
             io_weight: Some(30),
             memory_high: Some("1G".into()),
-        };
-        apply(parent, slice, &limits).await.expect("slice set");
+        });
+        assert_eq!(agents.joined().await, Some(slice.as_str()));
+        let status = agents.status().unwrap();
+        assert_eq!(
+            status,
+            format!("{slice} CPUWeight=20 IOWeight=30 MemoryHigh=1G")
+        );
         let mut engine = tokio::process::Command::new("sleep")
             .arg("30")
             .kill_on_drop(true)
             .spawn()
             .unwrap();
+        let pid = engine.id().unwrap();
         let unit = format!("{stem}-engine.scope");
-        start_scope(engine.id().unwrap(), &unit, Some(slice))
+        start_scope(pid, &unit, Some(slice))
             .await
             .expect("scope started");
-        let cgroup =
-            std::fs::read_to_string(format!("/proc/{}/cgroup", engine.id().unwrap())).unwrap();
-        assert!(
-            cgroup.contains(&format!("/{parent}/{slice}/{unit}")),
-            "{cgroup}"
+        let placed = format!("/{parent}/{slice}/{unit}");
+        assert!(cgroup_of(pid).contains(&placed), "{}", cgroup_of(pid));
+        assert_limits(
+            slice,
+            &["CPUWeight=20", "IOWeight=30", "MemoryHigh=1073741824"],
         );
-        let shown = |unit: &str| {
-            let out = std::process::Command::new("systemctl")
-                .args([
-                    "--user",
-                    "show",
-                    unit,
-                    "-p",
-                    "CPUWeight,IOWeight,MemoryHigh",
-                ])
-                .output()
-                .unwrap();
-            String::from_utf8(out.stdout).unwrap()
-        };
-        let on_slice = shown(slice);
-        for want in ["CPUWeight=20", "IOWeight=30", "MemoryHigh=1073741824"] {
-            assert!(on_slice.contains(want), "{slice}: {on_slice}");
-        }
-        let on_parent = shown(parent);
-        assert!(on_parent.contains("CPUWeight=20"), "{parent}: {on_parent}");
-        assert!(
-            on_parent.contains("MemoryHigh=infinity"),
-            "{parent}: {on_parent}"
+        assert_limits(
+            parent,
+            &["CPUWeight=20", "IOWeight=30", "MemoryHigh=infinity"],
         );
 
-        // Turned all off, the limits are lifted from the scope still running there.
-        let off = aether_core::agent_slice::AgentSliceLimits {
+        // A later daemon with every limit off lifts them from the scope still there.
+        agents.set(AgentSliceLimits {
             cpu_weight: None,
             io_weight: None,
             memory_high: None,
-        };
-        apply(parent, slice, &off).await.expect("slice reset");
-        for unit in [slice.as_str(), parent.as_str()] {
-            let now = shown(unit);
-            for want in [
-                "CPUWeight=[not set]",
-                "IOWeight=[not set]",
-                "MemoryHigh=infinity",
-            ] {
-                assert!(now.contains(want), "{unit}: {now}");
-            }
-        }
+        });
+        assert_eq!(agents.joined().await, None, "an all-off slice took a scope");
+        assert_eq!(agents.status().as_deref(), Some("off"));
+        assert_eq!(
+            agents.joined().await,
+            None,
+            "settled off, it still takes none"
+        );
+        let reset = [
+            "CPUWeight=[not set]",
+            "IOWeight=[not set]",
+            "MemoryHigh=infinity",
+        ];
+        assert_limits(slice, &reset);
+        assert_limits(parent, &reset);
+        assert!(cgroup_of(pid).contains(&placed), "{}", cgroup_of(pid));
         engine.kill().await.unwrap();
+    }
+
+    /// Limits systemd refuses leave scopes where they ran before, once and for all.
+    #[tokio::test]
+    async fn a_slice_systemd_refuses_keeps_scopes_out() {
+        if !user_manager() {
+            eprintln!("skipped: no systemd user manager");
+            return;
+        }
+        let (_slices, agents) = throwaway(&format!("aethertestrefused{}", std::process::id()));
+        agents.set(AgentSliceLimits {
+            memory_high: Some("8X".into()),
+            ..AgentSliceLimits::default()
+        });
+        assert_eq!(agents.joined().await, None, "a refused slice took a scope");
+        let status = agents.status().unwrap();
+        assert!(status.contains("not set ("), "{status}");
+        assert!(status.ends_with("engines run outside it"), "{status}");
+        assert_eq!(
+            agents.joined().await,
+            None,
+            "a refused slice took a later scope"
+        );
     }
 
     /// Stops the test's slices and drops their runtime settings, even on a
