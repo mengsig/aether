@@ -184,6 +184,7 @@ async fn status(daemon: &Daemon) -> Result<Reply, ErrorReply> {
         mcp: s.mcp,
         low_disk: s.low_disk,
         writes: Some(s.writes),
+        agent_slice: aether_engine::agent_slice_status(),
         bridge: rt
             .config()
             .bridge

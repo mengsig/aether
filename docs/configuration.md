@@ -541,6 +541,30 @@ tag. Without a working user systemd the engine keeps its process group and tag
 alone; the engine is already running, so this never delays or fails it. Set
 `AETHER_ENGINE_SCOPE=0` in the daemon's environment to skip the scopes.
 
+Every engine scope joins `aether-agents.slice` (inside `aether.slice`), so
+the builds and tests agents run yield CPU and disk to the person's own
+programs. `[resources]` sets its limits:
+
+```toml
+[resources]
+agents_cpu_weight = 20    # 1-10000; app.slice has 100
+agents_io_weight = 20     # 1-10000
+agents_memory_high = "8G" # bytes, or with K, M, G, T or %
+```
+
+These are the defaults. `"off"` turns one limit off; with all three off,
+scopes stay where they ran before. `MemoryHigh` throttles and reclaims the
+agents' memory above the limit, all agents together, and never kills an
+agent. The weights sit on `aether.slice` too, since cgroup weights only
+compare siblings. The daemon sets the slice with `systemctl --user
+set-property --runtime` when it starts its first engine, so a reboot forgets
+it. If that fails, engines run outside the slice, as before, and the daemon
+logs a warning once. `IOWeight` needs the user manager to delegate the `io`
+controller, which systemd does not by default. `aether status` shows the slice
+and its limits on its `slice` line, and `aether doctor` shows the configured
+limits beside what systemd holds, says which controller a limit lacks, and
+says once when there is no systemd user manager.
+
 What an agent leaves running when it ends depends on how it ends.
 
 - A delegated child that completes normally under a live ancestor stops

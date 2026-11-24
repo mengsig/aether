@@ -38,6 +38,7 @@ pub use claude_code::ClaudeCodeEngine;
 pub use codex::CodexEngine;
 pub use codex_app::CodexAppEngine;
 pub use detect::{DetectError, EngineVersion};
+pub use scope::{agent_slice_status, set_agent_slice};
 pub use usage::{RequestUsage, UsageRequestId};
 
 /// Encode the native override used by Codex exec and app-server launches.
