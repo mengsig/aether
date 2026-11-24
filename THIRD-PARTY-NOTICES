@@ -33,15 +33,15 @@ block-buffer 0.12.1: MIT OR Apache-2.0 (https://github.com/RustCrypto/utils)
 bstr 1.13.1: MIT OR Apache-2.0 (https://github.com/BurntSushi/bstr)
 bytemuck 1.25.2: Zlib OR Apache-2.0 OR MIT (https://github.com/Lokathor/bytemuck)
 byteorder-lite 0.1.0: Unlicense OR MIT (https://github.com/image-rs/byteorder-lite)
-bytes 1.12.1: MIT (https://github.com/tokio-rs/bytes)
+bytes 1.12.2: MIT (https://github.com/tokio-rs/bytes)
 castaway 0.2.4: MIT (https://github.com/sagebind/castaway)
 cfg-if 1.0.4: MIT OR Apache-2.0 (https://github.com/rust-lang/cfg-if)
 chacha20 0.10.2: MIT OR Apache-2.0 (https://github.com/RustCrypto/stream-ciphers)
 chrono 0.4.45: MIT OR Apache-2.0 (https://github.com/chronotope/chrono)
 chrono-tz 0.10.4: MIT OR Apache-2.0 (https://github.com/chronotope/chrono-tz)
-clap 4.6.7: MIT OR Apache-2.0 (https://github.com/clap-rs/clap)
+clap 4.6.9: MIT OR Apache-2.0 (https://github.com/clap-rs/clap)
 clap_builder 4.6.7: MIT OR Apache-2.0 (https://github.com/clap-rs/clap)
-clap_derive 4.6.7: MIT OR Apache-2.0 (https://github.com/clap-rs/clap)
+clap_derive 4.6.9: MIT OR Apache-2.0 (https://github.com/clap-rs/clap)
 clap_lex 1.1.0: MIT OR Apache-2.0 (https://github.com/clap-rs/clap)
 cmov 0.5.4: Apache-2.0 OR MIT (https://github.com/RustCrypto/utils)
 color_quant 1.1.0: MIT (https://github.com/image-rs/color_quant.git)
@@ -174,7 +174,7 @@ mio 1.2.3: MIT (https://github.com/tokio-rs/mio)
 moxcms 0.8.1: BSD-3-Clause OR Apache-2.0 (https://github.com/awxkee/moxcms.git)
 multiversion_no_op 1.0.0: Apache-2.0 OR MIT (https://github.com/hsivonen/multiversion_no_op)
 new_debug_unreachable 1.0.6: MIT (https://github.com/mbrubeck/rust-debug-unreachable)
-nix 0.31.3: MIT (https://github.com/nix-rust/nix)
+nix 0.32.0: MIT (https://github.com/nix-rust/nix)
 nu-ansi-term 0.50.3: MIT (https://github.com/nushell/nu-ansi-term)
 num-conv 0.2.2: MIT OR Apache-2.0 (https://github.com/jhpratt/num-conv)
 num-traits 0.2.19: MIT OR Apache-2.0 (https://github.com/rust-num/num-traits)
@@ -199,10 +199,10 @@ proc-macro2 1.0.107: MIT OR Apache-2.0 (https://github.com/dtolnay/proc-macro2)
 pty-process 0.5.4: MIT (https://git.tozt.net/pty-process)
 pulldown-cmark 0.13.6: MIT (https://github.com/raphlinus/pulldown-cmark)
 pxfm 0.1.30: BSD-3-Clause OR Apache-2.0 (https://github.com/awxkee/pxfm)
-qrcode 0.14.1: MIT OR Apache-2.0 (https://github.com/kennytm/qrcode-rust)
+qrcode 0.15.0: MIT OR Apache-2.0 (https://github.com/kennytm/qrcode-rust)
 quick-error 2.0.1: MIT/Apache-2.0 (http://github.com/tailhook/quick-error)
 quote 1.0.47: MIT OR Apache-2.0 (https://github.com/dtolnay/quote)
-rand 0.10.3: MIT OR Apache-2.0 (https://github.com/rust-random/rand)
+rand 0.10.4: MIT OR Apache-2.0 (https://github.com/rust-random/rand)
 rand_core 0.10.1: MIT OR Apache-2.0 (https://github.com/rust-random/rand_core)
 ratatui 0.30.2: MIT (https://github.com/ratatui/ratatui)
 ratatui-core 0.1.2: MIT (https://github.com/ratatui/ratatui)
@@ -211,9 +211,9 @@ ratatui-macros 0.7.2: MIT (https://github.com/ratatui/ratatui)
 ratatui-widgets 0.3.2: MIT (https://github.com/ratatui/ratatui)
 ref-cast 1.0.27: MIT OR Apache-2.0 (https://github.com/dtolnay/ref-cast)
 ref-cast-impl 1.0.27: MIT OR Apache-2.0 (https://github.com/dtolnay/ref-cast)
-regex 1.13.1: MIT OR Apache-2.0 (https://github.com/rust-lang/regex)
-regex-automata 0.4.18: MIT OR Apache-2.0 (https://github.com/rust-lang/regex)
-regex-syntax 0.8.11: MIT OR Apache-2.0 (https://github.com/rust-lang/regex)
+regex 1.13.2: MIT OR Apache-2.0 (https://github.com/rust-lang/regex)
+regex-automata 0.4.19: MIT OR Apache-2.0 (https://github.com/rust-lang/regex)
+regex-syntax 0.8.12: MIT OR Apache-2.0 (https://github.com/rust-lang/regex)
 reqwest 0.13.5: MIT OR Apache-2.0 (https://github.com/seanmonstar/reqwest)
 rpassword 7.5.5: Apache-2.0 (https://github.com/conradkleinespel/rpassword)
 rtoolbox 0.0.6: Apache-2.0 (https://github.com/conradkleinespel/rtoolbox)
@@ -263,7 +263,7 @@ strum_macros 0.28.0: MIT (https://github.com/Peternator7/strum)
 subtle 2.6.1: BSD-3-Clause (https://github.com/dalek-cryptography/subtle)
 symlink 0.1.0: MIT/Apache-2.0 (https://gitlab.com/chris-morgan/symlink)
 syn 2.0.119: MIT OR Apache-2.0 (https://github.com/dtolnay/syn)
-syn 3.0.5: MIT OR Apache-2.0 (https://github.com/dtolnay/syn)
+syn 3.0.10: MIT OR Apache-2.0 (https://github.com/dtolnay/syn)
 sync_wrapper 1.0.2: Apache-2.0 (https://github.com/Actyx/sync_wrapper)
 synstructure 0.13.2: MIT (https://github.com/mystor/synstructure)
 tempfile 3.27.0: MIT OR Apache-2.0 (https://github.com/Stebalien/tempfile)
@@ -582,7 +582,7 @@ serde_derive 1.0.229 (LICENSE-MIT)
 serde_derive_internals 0.30.0 (LICENSE-MIT)
 serde_json 1.0.154 (LICENSE-MIT)
 syn 2.0.119 (LICENSE-MIT)
-syn 3.0.5 (LICENSE-MIT)
+syn 3.0.10 (LICENSE-MIT)
 thiserror 2.0.21 (LICENSE-MIT)
 thiserror-impl 2.0.21 (LICENSE-MIT)
 unicode-ident 1.0.24 (LICENSE-MIT)
@@ -724,7 +724,7 @@ serde_derive_internals 0.30.0 (LICENSE-APACHE)
 serde_json 1.0.154 (LICENSE-APACHE)
 simdutf8 0.1.5 (LICENSE-Apache)
 syn 2.0.119 (LICENSE-APACHE)
-syn 3.0.5 (LICENSE-APACHE)
+syn 3.0.10 (LICENSE-APACHE)
 sync_wrapper 1.0.2 (LICENSE)
 thiserror 2.0.21 (LICENSE-APACHE)
 thiserror-impl 2.0.21 (LICENSE-APACHE)
@@ -1136,9 +1136,9 @@ anstream 1.0.0 (LICENSE-MIT)
 anstyle 1.0.14 (LICENSE-MIT)
 anstyle-parse 1.0.0 (LICENSE-MIT)
 anstyle-query 1.1.5 (LICENSE-MIT)
-clap 4.6.7 (LICENSE-MIT)
+clap 4.6.9 (LICENSE-MIT)
 clap_builder 4.6.7 (LICENSE-MIT)
-clap_derive 4.6.7 (LICENSE-MIT)
+clap_derive 4.6.9 (LICENSE-MIT)
 clap_lex 1.1.0 (LICENSE-MIT)
 colorchoice 1.0.5 (LICENSE-MIT)
 is_terminal_polyfill 1.70.2 (LICENSE-MIT)
@@ -1232,10 +1232,10 @@ parking_lot 0.12.5 (LICENSE-APACHE)
 parking_lot_core 0.9.12 (LICENSE-APACHE)
 percent-encoding 2.3.2 (LICENSE-APACHE)
 png 0.18.1 (LICENSE-APACHE)
-qrcode 0.14.1 (LICENSE-APACHE.txt)
-regex 1.13.1 (LICENSE-APACHE)
-regex-automata 0.4.18 (LICENSE-APACHE)
-regex-syntax 0.8.11 (LICENSE-APACHE)
+qrcode 0.15.0 (LICENSE-APACHE.txt)
+regex 1.13.2 (LICENSE-APACHE)
+regex-automata 0.4.19 (LICENSE-APACHE)
+regex-syntax 0.8.12 (LICENSE-APACHE)
 rustix 1.1.6 (LICENSE-APACHE)
 rustls 0.23.43 (LICENSE-APACHE)
 rustls-native-certs 0.8.4 (LICENSE-APACHE)
@@ -2082,9 +2082,9 @@ THE SOFTWARE.
 bitflags 2.13.1 (LICENSE-MIT)
 log 0.4.34 (LICENSE-MIT)
 num-traits 0.2.19 (LICENSE-MIT)
-regex 1.13.1 (LICENSE-MIT)
-regex-automata 0.4.18 (LICENSE-MIT)
-regex-syntax 0.8.11 (LICENSE-MIT)
+regex 1.13.2 (LICENSE-MIT)
+regex-automata 0.4.19 (LICENSE-MIT)
+regex-syntax 0.8.12 (LICENSE-MIT)
 ------------------------------------------------------------------------------
 
 Copyright (c) 2014 The Rust Project Developers
@@ -2213,7 +2213,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 3. This notice may not be removed or altered from any source distribution.
 
 ------------------------------------------------------------------------------
-bytes 1.12.1 (LICENSE)
+bytes 1.12.2 (LICENSE)
 ------------------------------------------------------------------------------
 
 Copyright (c) 2018 Carl Lerche
@@ -2808,9 +2808,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ------------------------------------------------------------------------------
-clap 4.6.7 (LICENSE-APACHE)
+clap 4.6.9 (LICENSE-APACHE)
 clap_builder 4.6.7 (LICENSE-APACHE)
-clap_derive 4.6.7 (LICENSE-APACHE)
+clap_derive 4.6.9 (LICENSE-APACHE)
 serde_spanned 1.1.3 (LICENSE-APACHE)
 toml 1.2.1+spec-1.1.0 (LICENSE-APACHE)
 toml_datetime 1.1.3+spec-1.1.0 (LICENSE-APACHE)
@@ -8179,7 +8179,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-nix 0.31.3 (LICENSE)
+nix 0.32.0 (LICENSE)
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -9271,7 +9271,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-qrcode 0.14.1 (LICENSE-MIT.txt)
+qrcode 0.15.0 (LICENSE-MIT.txt)
 ------------------------------------------------------------------------------
 
 Copyright (c) 2016 kennytm
@@ -9318,7 +9318,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-rand 0.10.3 (COPYRIGHT)
+rand 0.10.4 (COPYRIGHT)
 ------------------------------------------------------------------------------
 
 Copyrights in the Rand project are retained by their contributors. No
@@ -9335,7 +9335,7 @@ The Rand project includes code from the Rust project
 published under these same licenses.
 
 ------------------------------------------------------------------------------
-rand 0.10.3 (LICENSE-APACHE)
+rand 0.10.4 (LICENSE-APACHE)
 ------------------------------------------------------------------------------
 
                               Apache License
@@ -9516,7 +9516,7 @@ TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
 END OF TERMS AND CONDITIONS
 
 ------------------------------------------------------------------------------
-rand 0.10.3 (LICENSE-MIT)
+rand 0.10.4 (LICENSE-MIT)
 ------------------------------------------------------------------------------
 
 Copyright 2018 Developers of the Rand project
