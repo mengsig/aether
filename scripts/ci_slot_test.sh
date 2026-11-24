@@ -231,6 +231,8 @@ grep -q '^nice -n 19 ionice' "$LP_LOG" || grep -q '^nice -n 19' "$LP_LOG" || fai
 grep -q '^ionice -c 3' "$LP_LOG" || fail "fallback skipped ionice"
 if grep -q '^systemd-run' "$LP_LOG"; then fail "systemd-run ran after a failed probe"; fi
 : > "$LP_LOG"
+# The positional arguments are expanded by the inner shell.
+# shellcheck disable=SC2016
 MOCK_SD_HANG=1 timeout 8 sh -c 'PATH="$1:$PATH" CI_LOW_PRIORITY=1 CI_HOST_SLOTS=1 sh "$2" touch "$3"' sh "$lpbin" "$slot" "$testdir/after-hang" 2>"$testdir/lp.err" || fail "hung probe blocked CI"
 [ -e "$testdir/after-hang" ] || fail "command did not run after hung probe"
 grep -q 'systemd-run --user unavailable; using nice/ionice only' "$testdir/lp.err" || fail "no fallback message after hung probe"
