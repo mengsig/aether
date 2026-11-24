@@ -202,6 +202,7 @@ for tool in nice ionice; do
 done
 cat > "$lpbin/systemd-run" <<'MOCK_SD'
 #!/bin/sh
+[ "${MOCK_SD_HANG:-0}" = 1 ] && exec sleep 30
 [ "${MOCK_SD_FAIL:-0}" = 1 ] && exit 1
 echo "systemd-run $*" >> "$LP_LOG"
 while [ "$#" -gt 0 ]; do case "$1" in --) shift; break ;; *) shift ;; esac; done
@@ -230,6 +231,14 @@ grep -q '^nice -n 19 ionice' "$LP_LOG" || grep -q '^nice -n 19' "$LP_LOG" || fai
 grep -q '^ionice -c 3' "$LP_LOG" || fail "fallback skipped ionice"
 if grep -q '^systemd-run' "$LP_LOG"; then fail "systemd-run ran after a failed probe"; fi
 : > "$LP_LOG"
+# The positional arguments are expanded by the inner shell.
+# shellcheck disable=SC2016
+MOCK_SD_HANG=1 timeout 8 sh -c 'PATH="$1:$PATH" CI_LOW_PRIORITY=1 CI_HOST_SLOTS=1 sh "$2" touch "$3"' sh "$lpbin" "$slot" "$testdir/after-hang" 2>"$testdir/lp.err" || fail "hung probe blocked CI"
+[ -e "$testdir/after-hang" ] || fail "command did not run after hung probe"
+grep -q 'systemd-run --user unavailable; using nice/ionice only' "$testdir/lp.err" || fail "no fallback message after hung probe"
+grep -q '^nice -n 19' "$LP_LOG" || fail "hung probe fallback skipped nice"
+grep -q '^ionice -c 3' "$LP_LOG" || fail "hung probe fallback skipped ionice"
+: > "$LP_LOG"
 CI_LOW_PRIORITY=0 PATH="$lpbin:$PATH" run_slot true 2>"$testdir/lp.err"
 [ ! -s "$LP_LOG" ] || fail "CI_LOW_PRIORITY=0 still wrapped"
 [ ! -s "$testdir/lp.err" ] || fail "CI_LOW_PRIORITY=0 printed: $(cat "$testdir/lp.err")"
@@ -241,6 +250,7 @@ ln -s "$(command -v sh)" "$noflockbin/sh"
 printf '#!/bin/sh\nexit 0\n' > "$noflockbin/true"
 chmod +x "$noflockbin/true"
 for tool in nice ionice systemd-run; do ln -s "$lpbin/$tool" "$noflockbin/$tool"; done
+ln -s "$(command -v timeout)" "$noflockbin/timeout"
 for path in zero noflock; do
     slot_path="$lpbin:$PATH"; slot_count=0
     if [ "$path" = noflock ]; then slot_path=$noflockbin; slot_count=1; fi
@@ -256,6 +266,13 @@ for path in zero noflock; do
     env PATH="$slot_path" CI_HOST_SLOTS="$slot_count" CI_LOW_PRIORITY=0 sh "$slot" true 2>"$testdir/free.err"
     [ ! -s "$LP_LOG" ] || fail "$path path ignored CI_LOW_PRIORITY=0"
 done
+rm "$noflockbin/timeout"
+: > "$LP_LOG"
+PATH="$noflockbin" CI_HOST_SLOTS=0 CI_LOW_PRIORITY=1 sh "$slot" true 2>"$testdir/free.err"
+grep -q 'systemd-run --user unavailable; using nice/ionice only' "$testdir/free.err" || fail "missing timeout did not fall back"
+grep -q '^nice -n 19' "$LP_LOG" || fail "missing timeout skipped nice"
+grep -q '^ionice -c 3' "$LP_LOG" || fail "missing timeout skipped ionice"
+if grep -q '^systemd-run' "$LP_LOG"; then fail "systemd-run ran without timeout"; fi
 
 # Test threads.
 # shellcheck disable=SC2016
