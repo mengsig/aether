@@ -285,12 +285,11 @@ async fn seccomp_keeps_sockets_inside_the_namespace() {
         "the host stream socket accepted {accepted:?}:\n{report}"
     );
     let accepted = nix::sys::socket::accept4(
-        std::os::fd::AsRawFd::as_raw_fd(&host_seqpacket),
+        &host_seqpacket,
         nix::sys::socket::SockFlag::SOCK_CLOEXEC,
     );
-    assert_eq!(
-        accepted,
-        Err(nix::errno::Errno::EAGAIN),
+    assert!(
+        matches!(accepted, Err(nix::errno::Errno::EAGAIN)),
         "the host seqpacket socket accepted:\n{report}"
     );
 }

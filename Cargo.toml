@@ -47,11 +47,11 @@ hyper = { version = "1.11.1", features = ["server", "http1"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }
 ignore = "0.4.33"
 indexmap = { version = "2.14.2", features = ["serde"] }
-nix = { version = "0.31.3", features = ["signal", "process", "user"] }
+nix = { version = "0.32.0", features = ["signal", "process", "user"] }
 open = "5.4.3"
 parking_lot = "0.12.5"
 pretty_assertions = "1.4.1"
-qrcode = { version = "0.14.1", default-features = false }
+qrcode = { version = "0.15.0", default-features = false }
 rand = "0.10.2"
 ratatui = "0.30.2"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "rustls", "charset", "http2"] }
@@ -77,7 +77,7 @@ tracing-appender = "0.2.5"
 tracing-core = "0.1.36"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 ulid = { version = "3.0.0", features = ["serde"] }
-unicode-width = "=0.2.2"
+unicode-width = "=0.2.3"
 unicode-segmentation = "1.13.3"
 url = "2.5.8"
 zstd = { version = "0.14", default-features = false }
