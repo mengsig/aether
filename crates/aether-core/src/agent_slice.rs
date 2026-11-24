@@ -101,9 +101,24 @@ pub fn parse_memory_high(what: &str, text: &str) -> Result<String, String> {
     if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return Err(invalid());
     }
-    let amount: u64 = digits.parse().map_err(|_| invalid())?;
+    let too_large = || format!("{what} `{text}` exceeds systemd's maximum finite memory size");
+    let amount: u64 = digits.parse().map_err(|_| too_large())?;
     if amount == 0 || (suffix == "%" && amount > 100) {
         return Err(invalid());
+    }
+    let factor = match suffix {
+        "K" => 1_u64 << 10,
+        "M" => 1_u64 << 20,
+        "G" => 1_u64 << 30,
+        "T" => 1_u64 << 40,
+        _ => 1,
+    };
+    if suffix != "%"
+        && amount
+            .checked_mul(factor)
+            .is_none_or(|bytes| bytes == u64::MAX)
+    {
+        return Err(too_large());
     }
     Ok(text.to_owned())
 }
@@ -161,5 +176,28 @@ mod tests {
         assert_eq!(parse_weight("w", 10_000), Ok(10_000));
         assert!(parse_weight("w", 0).is_err());
         assert!(parse_weight("w", 10_001).is_err());
+    }
+
+    #[test]
+    fn memory_sizes_must_fit_systemd_finite_limit() {
+        for (suffix, factor) in [
+            ("", 1_u64),
+            ("K", 1 << 10),
+            ("M", 1 << 20),
+            ("G", 1 << 30),
+            ("T", 1 << 40),
+        ] {
+            let max = (u64::MAX - 1) / factor;
+            let accepted = format!("{max}{suffix}");
+            let rejected = format!("{}{suffix}", max + 1);
+            assert_eq!(
+                parse_memory_high("memory", &accepted).as_deref(),
+                Ok(accepted.as_str())
+            );
+            assert!(
+                parse_memory_high("memory", &rejected).is_err(),
+                "accepted {rejected}"
+            );
+        }
     }
 }

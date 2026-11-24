@@ -182,7 +182,8 @@ run_command() {
     if [ "${CI_LOW_PRIORITY:-1}" != 0 ]; then
         if command -v ionice >/dev/null 2>&1; then set -- ionice -c 3 "$@"; fi
         if command -v nice >/dev/null 2>&1; then set -- nice -n 19 "$@"; fi
-        if command -v systemd-run >/dev/null 2>&1 && (exec 9>&-; systemd-run --user --scope --quiet true) >/dev/null 2>&1; then
+        if command -v systemd-run >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1 &&
+            (exec 9>&-; timeout -k 1 3 systemd-run --user --scope --quiet true) >/dev/null 2>&1; then
             set -- systemd-run --user --scope --quiet -p CPUWeight=20 -p IOWeight=20 \
                 -p "MemoryHigh=${CI_MEMORY_HIGH:-6G}" -- "$@"
         else
