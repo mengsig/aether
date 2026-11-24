@@ -193,11 +193,13 @@ run_command() {
 }
 
 [ "$#" -gt 0 ] || { echo "usage: $0 --status | command [argument...]" >&2; exit 2; }
-if [ "$1" != --status ] && { [ "$slots" -eq 0 ] || already_held; }; then exec "$@"; fi
+if [ "$1" != --status ] && [ "$slots" -eq 0 ]; then run_command "$@"; exit $?; fi
+if [ "$1" != --status ] && already_held; then exec "$@"; fi
 if ! command -v flock >/dev/null 2>&1; then
     [ "$1" != --status ] || { echo 'ci-slot: status needs flock' >&2; exit 1; }
     echo 'ci-slot: no flock on PATH (util-linux); running without a host CI slot' >&2
-    exec "$@"
+    run_command "$@"
+    exit $?
 fi
 mkdir -p "$dir/queue"
 if [ "$1" = --status ]; then show_status; exit 0; fi
