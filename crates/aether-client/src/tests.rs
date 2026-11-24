@@ -68,6 +68,7 @@ fn status(pid: u32) -> DaemonStatus {
         low_disk: None,
         writes: None,
         bridge: None,
+        agent_slice: None,
         stale: None,
         unavailable: Vec::new(),
     }

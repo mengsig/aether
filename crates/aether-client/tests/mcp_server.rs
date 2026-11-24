@@ -63,6 +63,7 @@ impl aether_client::mcp::CommandSink for RecordingSink {
                 low_disk: None,
                 writes: None,
                 bridge: None,
+                agent_slice: None,
                 stale: None,
                 unavailable: Vec::new(),
             }),

@@ -149,6 +149,9 @@ fn summary_lines(s: &aether_protocol::DaemonStatus) -> Vec<String> {
         out.push(writes_line(writes));
     }
     out.push(limits_line(s));
+    if let Some(slice) = &s.agent_slice {
+        out.push(format!("slice    {}", sane(slice)));
+    }
     out.push(approval_line(s));
     out
 }
@@ -646,6 +649,26 @@ mod tests {
         );
         assert!(text.contains("agents   unavailable: store busy"), "{text}");
         assert!(!text.contains("no live run"), "{text}");
+    }
+
+    #[test]
+    fn shows_the_agents_slice_when_the_daemon_reports_one() {
+        let at = aether_core::time::now();
+        let mut status = fixture(at);
+        let text = status_text(&status, &LocalInstall::default(), false, at).expect("renders");
+        assert!(!text.contains("slice    "), "{text}");
+        status.agent_slice =
+            Some("aether-agents.slice CPUWeight=20 IOWeight=20 MemoryHigh=8G".into());
+        let text = status_text(&status, &LocalInstall::default(), false, at).expect("renders");
+        assert!(
+            text.contains(
+                "\nslice    aether-agents.slice CPUWeight=20 IOWeight=20 MemoryHigh=8G\n"
+            ),
+            "{text}"
+        );
+        let json = status_text(&status, &LocalInstall::default(), true, at).expect("renders");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("JSON");
+        assert_eq!(value["agent_slice"], json!(status.agent_slice));
     }
 
     #[test]

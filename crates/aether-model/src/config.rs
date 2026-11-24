@@ -16,6 +16,7 @@ mod github_watcher;
 mod parsing;
 mod providers;
 mod remote;
+mod resources;
 mod retention;
 mod scheduler;
 mod storage;
@@ -27,6 +28,7 @@ pub use build_cache::{BuildCacheSection, BuildCacheVar};
 pub use github_watcher::{DEFAULT_REVIEW_SWEEP_PRS, GithubWatcherSection, MAX_REVIEW_SWEEP_PRS};
 pub use providers::ProvidersSection;
 pub use remote::RemoteSection;
+pub use resources::{ResourceSetting, ResourcesSection};
 pub use retention::RetentionSection;
 pub use storage::StorageSection;
 pub use update::UpdateSection;
@@ -103,6 +105,7 @@ pub struct AetherConfig {
     pub storage: StorageSection,
     pub agents: AgentsSection,
     pub build_cache: BuildCacheSection,
+    pub resources: ResourcesSection,
     pub github_watcher: GithubWatcherSection,
     pub mcp: McpSection,
     pub memory: MemorySection,
@@ -754,6 +757,7 @@ fn validate_config(config: &AetherConfig) -> Result<(), String> {
     config.agents.validate()?;
     config.storage.validate()?;
     config.build_cache.validate()?;
+    config.resources.agent_slice()?;
     config.github_watcher.review_sweep_prs()?;
     config.memory.retrieval.validate()?;
     for server in &config.mcp.servers {

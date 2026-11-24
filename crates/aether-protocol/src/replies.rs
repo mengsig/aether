@@ -100,6 +100,10 @@ pub struct DaemonStatus {
     /// build. Absent when engines have no bridge, and on older daemons.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bridge: Option<String>,
+    /// The systemd slice agents' engines run in and its limits, or why they
+    /// do not. Absent off Linux, and on older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_slice: Option<String>,
     /// Set when the daemon could not read its store, scheduler and disk in
     /// time and answered with what it read before. Every field but the
     /// daemon's identity, `default_model`, `bridge` and its configured limits

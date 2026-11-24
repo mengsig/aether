@@ -171,6 +171,15 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # name = "CARGO_TARGET_DIR"
 # dir = "cargo-target"
 
+# On Linux, agents' engines run in the systemd user slice aether-agents.slice,
+# so their builds and tests yield CPU and disk to your own programs and are
+# throttled, never killed, above memory_high. "off" turns one limit off.
+#
+# [resources]
+# agents_cpu_weight = 20
+# agents_io_weight = 20
+# agents_memory_high = "8G"
+
 # The GitHub watcher's review sweep reads at most this many pull requests per
 # pass and resumes where it stopped on the next one; a pass's 60-request
 # budget can end it sooner. Between 1 and 50.

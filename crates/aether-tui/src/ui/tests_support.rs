@@ -51,6 +51,7 @@ pub(crate) fn quiet_status() -> aether_protocol::DaemonStatus {
         low_disk: None,
         writes: None,
         bridge: None,
+        agent_slice: None,
         stale: None,
         unavailable: Vec::new(),
     }

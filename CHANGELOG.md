@@ -8,6 +8,20 @@ release is also the text of its GitHub release.
 
 ### Added
 
+- **Agents run at low priority.** On Linux every engine scope joins
+  `aether-agents.slice` with `CPUWeight=20`, `IOWeight=20` and
+  `MemoryHigh=8G`, so agents' builds and tests yield to the person's own
+  programs and are throttled, never killed, under memory pressure. Set by
+  `[resources] agents_cpu_weight`, `agents_io_weight` and
+  `agents_memory_high`; `"off"` turns one off. `aether status` and
+  `aether doctor` show the effective values; without systemd nothing changes
+  and doctor says so.
+- **`make ci` waits for memory and runs at low priority.** The host CI slot
+  waits for `CI_MIN_FREE_GIB` (6) GiB of available memory, at most
+  `CI_MEM_WAIT_MAX_MIN` (30) minutes, then runs the command in a
+  `systemd-run --user --scope` with `CPUWeight=20`, `IOWeight=20` and
+  `MemoryHigh=$CI_MEMORY_HIGH` (6G) under `nice` and `ionice`, and sets
+  `NEXTEST_TEST_THREADS` and `RUST_TEST_THREADS` to `CI_TEST_THREADS` (4).
 - **Agents can schedule their own children.** `create_schedule` takes `spawn`
   in place of `target`: `delegate`'s arguments for a child (`role`,
   `objective`, `model`, `effort`, and optionally `name`, `instructions`,

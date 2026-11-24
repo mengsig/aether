@@ -24,9 +24,9 @@ pub(crate) fn command(program: &str, agent: Option<AgentId>) -> tokio::process::
 }
 
 /// The longest a sweep waits for its agents' engines to settle into their
-/// scopes: both of an adoption's systemd waits, and a margin.
+/// scopes: an adoption's three systemd waits (slice, scope, move), and a margin.
 #[cfg(target_os = "linux")]
-pub(crate) const ADOPTION_BUDGET: std::time::Duration = std::time::Duration::from_secs(11);
+pub(crate) const ADOPTION_BUDGET: std::time::Duration = std::time::Duration::from_secs(16);
 
 /// Agents with an engine spawned but not yet in its scope, once per engine.
 static ADOPTING: std::sync::Mutex<Vec<AgentId>> = std::sync::Mutex::new(Vec::new());
@@ -99,6 +99,9 @@ pub(crate) async fn adopt(pid: Option<u32>, adoption: Adoption) {
     drop(adoption);
 }
 
+mod slice;
+pub use slice::{agent_slice_status, set_agent_slice};
+
 #[cfg(target_os = "linux")]
 pub(crate) use linux::{Unit, agent_units, agents_with_units, belongs_to, in_unit};
 
@@ -137,7 +140,7 @@ mod linux {
         unit.name.starts_with(&unit_prefix(agent))
     }
 
-    fn disabled() -> bool {
+    pub(super) fn disabled() -> bool {
         std::env::var(DISABLE_ENV).is_ok_and(|v| v == "0")
     }
 
@@ -153,32 +156,8 @@ mod linux {
             unit_prefix(agent),
             aether_core::id::ProcessId::new()
         );
-        let pid = pid.to_string();
-        let args = [
-            "--user",
-            "call",
-            "org.freedesktop.systemd1",
-            "/org/freedesktop/systemd1",
-            "org.freedesktop.systemd1.Manager",
-            "StartTransientUnit",
-            "ssa(sv)a(sa(sv))",
-            &unit,
-            "fail",
-            "2",
-            "PIDs",
-            "au",
-            "1",
-            &pid,
-            "CollectMode",
-            "s",
-            "inactive-or-failed",
-            "0",
-        ];
-        let moved = match run("busctl", &args).await {
-            Ok(_) => wait_moved(&pid, &unit).await,
-            Err(error) => Err(error),
-        };
-        if let Err(error) = moved {
+        let slice = super::slice::joined().await;
+        if let Err(error) = start_scope(pid, &unit, slice).await {
             // A machine without a user manager would repeat this for every engine.
             static WARNED: AtomicBool = AtomicBool::new(false);
             if WARNED.swap(true, Ordering::Relaxed) {
@@ -187,6 +166,56 @@ mod linux {
                 tracing::warn!(%agent, %error, "engine runs without a systemd scope; its process group and tag remain");
             }
         }
+    }
+
+    /// Start the transient scope `unit` holding `pid`, in `slice` when given,
+    /// and wait until `pid` is in it.
+    pub(super) async fn start_scope(
+        pid: u32,
+        unit: &str,
+        slice: Option<&str>,
+    ) -> Result<(), String> {
+        let pid = pid.to_string();
+        run("busctl", &start_scope_args(&pid, unit, slice)).await?;
+        wait_moved(&pid, unit).await
+    }
+
+    /// `busctl` arguments for `StartTransientUnit`, as `systemd-run --scope`
+    /// sends it; the scope is collected once it is empty.
+    pub(super) fn start_scope_args<'a>(
+        pid: &'a str,
+        unit: &'a str,
+        slice: Option<&'a str>,
+    ) -> Vec<&'a str> {
+        assert!(unit.ends_with(".scope"), "not a scope: {unit}");
+        assert!(
+            slice.is_none_or(|slice| slice.ends_with(".slice")),
+            "not a slice: {slice:?}"
+        );
+        let mut args = vec![
+            "--user",
+            "call",
+            "org.freedesktop.systemd1",
+            "/org/freedesktop/systemd1",
+            "org.freedesktop.systemd1.Manager",
+            "StartTransientUnit",
+            "ssa(sv)a(sa(sv))",
+            unit,
+            "fail",
+            if slice.is_some() { "3" } else { "2" },
+            "PIDs",
+            "au",
+            "1",
+            pid,
+            "CollectMode",
+            "s",
+            "inactive-or-failed",
+        ];
+        if let Some(slice) = slice {
+            args.extend(["Slice", "s", slice]);
+        }
+        args.push("0");
+        args
     }
 
     /// Wait for the queued job to move `pid` into `unit`: until it has, the
@@ -366,7 +395,7 @@ mod linux {
         own.starts_with(unit_dir)
     }
 
-    async fn systemctl(args: &[&str]) -> Result<String, String> {
+    pub(super) async fn systemctl(args: &[&str]) -> Result<String, String> {
         let mut full = vec!["--user"];
         full.extend_from_slice(args);
         run("systemctl", &full).await
@@ -393,8 +422,12 @@ mod linux {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::linux::{Unit, in_unit, unit_agents, unit_names, units_from_show};
+    use super::linux::{
+        Unit, in_unit, start_scope, start_scope_args, unit_agents, unit_names, units_from_show,
+    };
+    use super::slice::{AgentSlice, set_property_args};
     use super::{Adoption, settled};
+    use aether_core::agent_slice::AgentSliceLimits;
     use aether_core::id::AgentId;
     use std::path::Path;
     use std::time::Duration;
@@ -424,6 +457,191 @@ mod tests {
         finished.await.unwrap();
         drop(Adoption::begin(None));
         assert!(settled(&[agent], Duration::ZERO).await);
+    }
+
+    #[test]
+    fn a_scope_joins_the_agents_slice_only_when_given_one() {
+        let alone = start_scope_args("42", "a.scope", None);
+        assert_eq!(alone[9], "2");
+        assert!(!alone.contains(&"Slice"));
+        assert_eq!(alone.last(), Some(&"0"));
+        let joined = start_scope_args("42", "a.scope", Some("aether-agents.slice"));
+        assert_eq!(joined[9], "3", "the property count names the slice too");
+        let at = joined.iter().position(|arg| *arg == "Slice").unwrap();
+        assert_eq!(joined[at..], ["Slice", "s", "aether-agents.slice", "0"]);
+        assert_eq!(joined[10..at], alone[10..alone.len() - 1]);
+    }
+
+    #[test]
+    fn the_slice_gets_its_limits_and_the_parent_its_weights() {
+        let limits = aether_core::agent_slice::AgentSliceLimits::default();
+        assert_eq!(
+            set_property_args("aether-agents.slice", limits.slice_properties()),
+            [
+                "set-property",
+                "--runtime",
+                "aether-agents.slice",
+                "CPUWeight=20",
+                "IOWeight=20",
+                "MemoryHigh=8G"
+            ]
+        );
+        assert_eq!(
+            set_property_args("aether.slice", limits.weight_properties()),
+            [
+                "set-property",
+                "--runtime",
+                "aether.slice",
+                "CPUWeight=20",
+                "IOWeight=20"
+            ]
+        );
+    }
+
+    fn user_manager() -> bool {
+        let manager = std::process::Command::new("systemctl")
+            .args(["--user", "show-environment"])
+            .output();
+        manager.is_ok_and(|out| out.status.success())
+    }
+
+    /// A throwaway agents' slice and its parent named after `stem`, removed on drop.
+    fn throwaway(stem: &str) -> (ThrowawaySlices, AgentSlice) {
+        let slices = ThrowawaySlices([format!("{stem}-agents.slice"), format!("{stem}.slice")]);
+        let slice: &'static str = slices.0[0].clone().leak();
+        let parent: &'static str = slices.0[1].clone().leak();
+        (slices, AgentSlice::new(parent, slice))
+    }
+
+    #[allow(clippy::unwrap_used)]
+    fn assert_limits(unit: &str, want: &[&str]) {
+        let out = std::process::Command::new("systemctl")
+            .args([
+                "--user",
+                "show",
+                unit,
+                "-p",
+                "CPUWeight,IOWeight,MemoryHigh",
+            ])
+            .output()
+            .unwrap();
+        let shown = String::from_utf8(out.stdout).unwrap();
+        for want in want {
+            assert!(shown.lines().any(|line| line == *want), "{unit}: {shown}");
+        }
+    }
+
+    #[allow(clippy::unwrap_used)]
+    fn cgroup_of(pid: u32) -> String {
+        std::fs::read_to_string(format!("/proc/{pid}/cgroup")).unwrap()
+    }
+
+    /// Against the real user manager, on slices of the test's own: the first
+    /// scope sets the limits and joins; all off later resets them, keeps out.
+    #[tokio::test]
+    async fn the_first_scope_sets_the_slice_and_all_off_resets_it() {
+        if !user_manager() {
+            eprintln!("skipped: no systemd user manager");
+            return;
+        }
+        let stem = format!("aethertest{}", std::process::id());
+        let (slices, agents) = throwaway(&stem);
+        let [slice, parent] = &slices.0;
+        agents.set(AgentSliceLimits {
+            cpu_weight: Some(20),
+            io_weight: Some(30),
+            memory_high: Some("1G".into()),
+        });
+        assert_eq!(agents.joined().await, Some(slice.as_str()));
+        let status = agents.status().unwrap();
+        assert_eq!(
+            status,
+            format!("{slice} CPUWeight=20 IOWeight=30 MemoryHigh=1G")
+        );
+        let mut engine = tokio::process::Command::new("sleep")
+            .arg("30")
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let pid = engine.id().unwrap();
+        let unit = format!("{stem}-engine.scope");
+        start_scope(pid, &unit, Some(slice))
+            .await
+            .expect("scope started");
+        let placed = format!("/{parent}/{slice}/{unit}");
+        assert!(cgroup_of(pid).contains(&placed), "{}", cgroup_of(pid));
+        assert_limits(
+            slice,
+            &["CPUWeight=20", "IOWeight=30", "MemoryHigh=1073741824"],
+        );
+        assert_limits(
+            parent,
+            &["CPUWeight=20", "IOWeight=30", "MemoryHigh=infinity"],
+        );
+
+        // A later daemon with every limit off lifts them from the scope still there.
+        agents.set(AgentSliceLimits {
+            cpu_weight: None,
+            io_weight: None,
+            memory_high: None,
+        });
+        assert_eq!(agents.joined().await, None, "an all-off slice took a scope");
+        assert_eq!(agents.status().as_deref(), Some("off"));
+        assert_eq!(
+            agents.joined().await,
+            None,
+            "settled off, it still takes none"
+        );
+        let reset = [
+            "CPUWeight=[not set]",
+            "IOWeight=[not set]",
+            "MemoryHigh=infinity",
+        ];
+        assert_limits(slice, &reset);
+        assert_limits(parent, &reset);
+        assert!(cgroup_of(pid).contains(&placed), "{}", cgroup_of(pid));
+        engine.kill().await.unwrap();
+    }
+
+    /// Limits systemd refuses leave scopes where they ran before, once and for all.
+    #[tokio::test]
+    async fn a_slice_systemd_refuses_keeps_scopes_out() {
+        if !user_manager() {
+            eprintln!("skipped: no systemd user manager");
+            return;
+        }
+        let (_slices, agents) = throwaway(&format!("aethertestrefused{}", std::process::id()));
+        agents.set(AgentSliceLimits {
+            memory_high: Some("8X".into()),
+            ..AgentSliceLimits::default()
+        });
+        assert_eq!(agents.joined().await, None, "a refused slice took a scope");
+        let status = agents.status().unwrap();
+        assert!(status.contains("not set ("), "{status}");
+        assert!(status.ends_with("engines run outside it"), "{status}");
+        assert_eq!(
+            agents.joined().await,
+            None,
+            "a refused slice took a later scope"
+        );
+    }
+
+    /// Stops the test's slices and drops their runtime settings, even on a
+    /// failed assertion.
+    struct ThrowawaySlices([String; 2]);
+
+    impl Drop for ThrowawaySlices {
+        fn drop(&mut self) {
+            for verb in ["stop", "revert"] {
+                let done = std::process::Command::new("systemctl")
+                    .args(["--user", verb])
+                    .args(&self.0)
+                    .output();
+                if !done.as_ref().is_ok_and(|out| out.status.success()) {
+                    eprintln!("systemctl {verb} {:?}: {done:?}", self.0);
+                }
+            }
+        }
     }
 
     #[test]

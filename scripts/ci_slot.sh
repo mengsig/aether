@@ -2,10 +2,28 @@
 # Run a command in a host-wide CI slot shared with other repositories.
 set -eu
 
+require_whole() {
+    case "$2" in
+        '' | *[!0-9]*) echo "ci-slot: $1 must be a whole number, not '$2'" >&2; exit 2 ;;
+    esac
+}
 slots=${CI_HOST_SLOTS:-1}
-case "$slots" in
-    '' | *[!0-9]*) echo "ci-slot: CI_HOST_SLOTS must be a whole number, not '$slots'" >&2; exit 2 ;;
-esac
+require_whole CI_HOST_SLOTS "$slots"
+min_free_gib=${CI_MIN_FREE_GIB:-6}
+require_whole CI_MIN_FREE_GIB "$min_free_gib"
+mem_wait_max_min=${CI_MEM_WAIT_MAX_MIN:-30}
+require_whole CI_MEM_WAIT_MAX_MIN "$mem_wait_max_min"
+test_threads=${CI_TEST_THREADS:-4}
+require_whole CI_TEST_THREADS "$test_threads"
+# Test hooks: meminfo path, poll/progress intervals and wait cap in whole seconds.
+meminfo=${CI_SLOT_MEMINFO:-/proc/meminfo}
+mem_poll=${CI_SLOT_MEM_POLL_SECS:-5}
+mem_progress=${CI_SLOT_MEM_PROGRESS_SECS:-60}
+mem_cap_secs=${CI_SLOT_MEM_WAIT_MAX_SECS:-$((mem_wait_max_min * 60))}
+require_whole CI_SLOT_MEM_POLL_SECS "$mem_poll"
+require_whole CI_SLOT_MEM_PROGRESS_SECS "$mem_progress"
+require_whole CI_SLOT_MEM_WAIT_MAX_SECS "$mem_cap_secs"
+[ "$mem_poll" -gt 0 ] || { echo "ci-slot: CI_SLOT_MEM_POLL_SECS must be positive" >&2; exit 2; }
 dir="${XDG_RUNTIME_DIR:-/tmp}/heavy-ci"
 
 process_start() { sed 's/.*) //' "/proc/$1/stat" 2>/dev/null | awk '{print $20}'; }
@@ -126,6 +144,54 @@ set_jobs() {
     echo "ci-slot: CARGO_BUILD_JOBS=$jobs (memory-sized)" >&2
 }
 
+mem_available_kb() {
+    kb=$(awk '/^MemAvailable:/ {print $2}' "$meminfo") || { echo "ci-slot: cannot read $meminfo" >&2; exit 1; }
+    case "$kb" in '' | *[!0-9]*) echo "ci-slot: no MemAvailable in $meminfo" >&2; exit 1 ;; esac
+    printf '%s\n' "$kb"
+}
+gib_text() { awk -v kb="$1" 'BEGIN {printf "%.1f GiB", kb / 1048576}'; }
+
+# Waited for while holding the slot: it already serialises heavy work, and taking it
+# first stops two queued runs from both passing the check on the same free memory.
+wait_for_memory() {
+    [ "$min_free_gib" -gt 0 ] || return 0
+    need_kb=$((min_free_gib * 1048576))
+    have_kb=$(mem_available_kb)
+    [ "$have_kb" -lt "$need_kb" ] || return 0
+    echo "ci-slot: waiting for $min_free_gib GiB of free memory (MemAvailable $(gib_text "$have_kb"))" >&2
+    waited=0; since_progress=0
+    while [ "$have_kb" -lt "$need_kb" ]; do
+        if [ "$waited" -ge "$mem_cap_secs" ]; then
+            echo "ci-slot: WARNING: only $(gib_text "$have_kb") free after $((waited / 60)) min; running anyway" >&2
+            return 0
+        fi
+        sleep "$mem_poll"
+        waited=$((waited + mem_poll)); since_progress=$((since_progress + mem_poll))
+        have_kb=$(mem_available_kb)
+        if [ "$since_progress" -ge "$mem_progress" ] && [ "$have_kb" -lt "$need_kb" ]; then
+            echo "ci-slot: still waiting for $min_free_gib GiB of free memory (MemAvailable $(gib_text "$have_kb"), waited $((waited / 60)) min)" >&2
+            since_progress=0
+        fi
+    done
+}
+
+# Prefix the command with systemd-run, nice and ionice where usable; MemoryHigh only throttles.
+run_command() {
+    [ "${NEXTEST_TEST_THREADS+x}" ] || { NEXTEST_TEST_THREADS=$test_threads; export NEXTEST_TEST_THREADS; }
+    [ "${RUST_TEST_THREADS+x}" ] || { RUST_TEST_THREADS=$test_threads; export RUST_TEST_THREADS; }
+    if [ "${CI_LOW_PRIORITY:-1}" != 0 ]; then
+        if command -v ionice >/dev/null 2>&1; then set -- ionice -c 3 "$@"; fi
+        if command -v nice >/dev/null 2>&1; then set -- nice -n 19 "$@"; fi
+        if command -v systemd-run >/dev/null 2>&1 && (exec 9>&-; systemd-run --user --scope --quiet true) >/dev/null 2>&1; then
+            set -- systemd-run --user --scope --quiet -p CPUWeight=20 -p IOWeight=20 \
+                -p "MemoryHigh=${CI_MEMORY_HIGH:-6G}" -- "$@"
+        else
+            echo 'ci-slot: systemd-run --user unavailable; using nice/ionice only' >&2
+        fi
+    fi
+    (exec 9>&-; exec "$@")
+}
+
 [ "$#" -gt 0 ] || { echo "usage: $0 --status | command [argument...]" >&2; exit 2; }
 if [ "$1" != --status ] && { [ "$slots" -eq 0 ] || already_held; }; then exec "$@"; fi
 if ! command -v flock >/dev/null 2>&1; then
@@ -172,9 +238,10 @@ while :; do
                 rm -f "$ticket"
                 queue_unlock
                 AETHER_CI_SLOT_HELD="$$:$started:$file"; export AETHER_CI_SLOT_HELD
+                wait_for_memory
                 set_jobs
                 status=0
-                (exec 9>&-; exec "$@") || status=$?
+                run_command "$@" || status=$?
                 exit "$status"
             fi
             exec 9>&-
