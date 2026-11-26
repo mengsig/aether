@@ -787,3 +787,34 @@ fn superseded_models_resolve_by_id_and_never_acquire_a_tier_from_price() {
         }
     }
 }
+
+#[test]
+fn antigravity_is_an_unpriced_untiered_engine_provider() {
+    let all = providers();
+    let agy = all.iter().find(|p| p.id == "antigravity").unwrap();
+    assert_eq!(agy.protocol, Protocol::Antigravity);
+    assert!(agy.protocol.is_engine());
+    assert!(!agy.protocol.reports_cost(&agy.models[0].capabilities));
+    let ids: Vec<&str> = agy.models.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "gemini-4-hydrogen",
+            "gemini-4-neon",
+            "gemini-4-carbon",
+            "gemini-4-argon",
+            "gemini-3.8-flash",
+            "claude-opus-5-5",
+            "claude-sonnet-5-5",
+            "gpt-oss-120b"
+        ]
+    );
+    for model in &agy.models {
+        assert!(model.capabilities.cost.is_none() && model.tier.is_none());
+        assert_eq!(model.capabilities.context_window, 1_048_576);
+        assert_eq!(
+            agy.protocol.efforts(&model.capabilities),
+            [Effort::Low, Effort::Medium, Effort::High, Effort::XHigh]
+        );
+    }
+}

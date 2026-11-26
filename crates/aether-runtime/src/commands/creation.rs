@@ -5,6 +5,7 @@ use aether_core::agent::{Agent, AgentStats, AgentStatus, ApprovalPolicy, Role};
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::{AgentId, TaskId};
 use aether_core::idempotency::{Submission, SubmissionOutcome};
+use aether_core::model::ModelRef;
 use aether_core::task::{Task, TaskStatus};
 use aether_core::time::now;
 use aether_store::{Commit, Mutation};
@@ -247,6 +248,7 @@ impl Runtime {
                 "Inherited model changed during delegation checks; retry delegation".into(),
             ));
         }
+        let model = self.prefer_original(model);
         self.models.resolve(&model)?;
         // Inherited only alongside an inherited primary: a child given its own
         // model must not silently keep its parent's fallbacks.
@@ -258,6 +260,10 @@ impl Runtime {
                 .unwrap_or_default(),
             (true, true) => Vec::new(),
         };
+        let fallbacks: Vec<ModelRef> = fallbacks
+            .into_iter()
+            .map(|link| self.prefer_original(link))
+            .collect();
         for link in &fallbacks {
             self.models.resolve(link)?;
         }

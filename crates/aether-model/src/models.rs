@@ -328,6 +328,9 @@ impl Models {
             }
         }
         for provider in self.registry.providers().iter().filter(|p| p.enabled) {
+            if !can_be_default(provider) {
+                continue;
+            }
             let Some(first) = provider_default(provider) else {
                 continue;
             };
@@ -442,7 +445,7 @@ impl Models {
                     ),
                 )
             }
-            Protocol::ClaudeCode | Protocol::Codex => {
+            Protocol::ClaudeCode | Protocol::Codex | Protocol::Antigravity => {
                 return Err(ModelError::new(
                     ModelErrorClass::InvalidRequest,
                     format!(
@@ -587,6 +590,12 @@ fn provider_default(provider: &ProviderDef) -> Option<&ModelDef> {
                 .find(|m| provider.protocol.is_engine() && m.id == "default")
         });
     engine_choice.or(provider.models.first())
+}
+
+/// Antigravity is opt-in: its models are chosen by name, never as the
+/// automatic default.
+fn can_be_default(provider: &ProviderDef) -> bool {
+    provider.protocol != Protocol::Antigravity
 }
 
 #[cfg(test)]
@@ -907,6 +916,21 @@ mod tests {
             provider_default(anthropic).map(|m| m.id.as_str()),
             anthropic.models.first().map(|m| m.id.as_str())
         );
+    }
+
+    #[test]
+    fn antigravity_is_never_an_automatic_default() {
+        let registry = Registry::builtin();
+        let eligible: Vec<&str> = registry
+            .providers()
+            .iter()
+            .filter(|p| can_be_default(p))
+            .map(|p| p.id.as_str())
+            .collect();
+        assert!(eligible.contains(&"claude-code") && eligible.contains(&"codex"));
+        assert!(!eligible.contains(&"antigravity"));
+        let agy = registry.provider("antigravity").expect("builtin");
+        assert!(agy.models.iter().all(|m| m.tier.is_none()));
     }
 
     #[tokio::test]

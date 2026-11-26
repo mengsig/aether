@@ -149,10 +149,14 @@ impl DetectedEngines {
 
     /// Every engine unusable for one reason: detection itself failed.
     fn failed(reason: &str) -> Self {
-        let unavailable = [EngineKind::CLAUDE_CODE, EngineKind::CODEX]
-            .into_iter()
-            .map(|kind| (kind, reason.to_owned()))
-            .collect();
+        let unavailable = [
+            EngineKind::CLAUDE_CODE,
+            EngineKind::CODEX,
+            EngineKind::ANTIGRAVITY,
+        ]
+        .into_iter()
+        .map(|kind| (kind, reason.to_owned()))
+        .collect();
         Self {
             usable: HashMap::new(),
             unavailable,
@@ -445,14 +449,16 @@ pub(super) fn spawn_startup_probes(
 /// reports why rather than a generic "not installed".
 async fn detect_engines(prompt_cache_ttl: Option<PromptCacheTtl>) -> DetectedEngines {
     // Independent CLIs: probing them together bounds the wait by the slower one.
-    let (claude, codex) = tokio::join!(
+    let (claude, codex, antigravity) = tokio::join!(
         detect_engine(EngineKind::CLAUDE_CODE, prompt_cache_ttl),
-        detect_engine(EngineKind::CODEX, prompt_cache_ttl)
+        detect_engine(EngineKind::CODEX, prompt_cache_ttl),
+        detect_engine(EngineKind::ANTIGRAVITY, prompt_cache_ttl)
     );
     let mut detected = DetectedEngines::default();
     for (kind, probe) in [
         (EngineKind::CLAUDE_CODE, claude),
         (EngineKind::CODEX, codex),
+        (EngineKind::ANTIGRAVITY, antigravity),
     ] {
         match probe.found {
             Ok(engine) => detected.record(kind, Ok(engine)),
@@ -461,7 +467,7 @@ async fn detect_engines(prompt_cache_ttl: Option<PromptCacheTtl>) -> DetectedEng
     }
     debug_assert_eq!(
         detected.usable.len() + detected.unavailable.len(),
-        2,
+        3,
         "each engine is either usable or has a reason"
     );
     detected
@@ -474,6 +480,9 @@ async fn detect_engine(kind: EngineKind, prompt_cache_ttl: Option<PromptCacheTtl
     }
     if kind == EngineKind::CODEX {
         return detect_codex().await;
+    }
+    if kind == EngineKind::ANTIGRAVITY {
+        return detect_antigravity().await;
     }
     Probe {
         found: Err(format!(
@@ -515,6 +524,22 @@ async fn detect_claude(prompt_cache_ttl: Option<PromptCacheTtl>) -> Probe {
         }
         Err(reason) => {
             tracing::warn!(engine = "claude-code", %reason, "engine CLI unusable");
+            Probe {
+                inconclusive: inconclusive(&reason),
+                found: Err(reason.to_string()),
+            }
+        }
+    }
+}
+
+async fn detect_antigravity() -> Probe {
+    match aether_engine::AntigravityEngine::detect_verbose().await {
+        Ok(e) => Probe {
+            found: Ok(Arc::new(e)),
+            inconclusive: false,
+        },
+        Err(reason) => {
+            tracing::warn!(engine = "antigravity", %reason, "engine CLI unusable");
             Probe {
                 inconclusive: inconclusive(&reason),
                 found: Err(reason.to_string()),
@@ -611,6 +636,7 @@ impl Runtime {
         else {
             return Ok(());
         };
+        let model = self.prefer_original(model);
         // An unknown model is refused by creation itself, with its own error.
         let Ok(resolved) = self.models.resolve(&model) else {
             return Ok(());
@@ -635,6 +661,29 @@ impl Runtime {
             "model {model} runs on the {kind} engine, which this daemon cannot use: {}",
             unavailable_text(kind, &resolved.provider.id, Some(reason))
         )))
+    }
+
+    /// `model`, or its first-hand route when it is a secondary one
+    /// (`antigravity/claude-opus-5-5`) and the vendor's own engine is usable.
+    /// API-key originals are not consulted here: reading their sign-in is async.
+    pub(crate) fn prefer_original(&self, model: ModelRef) -> ModelRef {
+        let Ok(detected) = self.engines.now() else {
+            return model;
+        };
+        let registry = self.models.registry();
+        let usable = |provider: &str| {
+            registry
+                .provider(provider)
+                .and_then(|def| turn_engine::engine_kind(def.protocol))
+                .is_some_and(|kind| detected.launchable(&kind).is_some())
+        };
+        match aether_model::secondary::original_route(registry, &model, usable) {
+            Some(original) => {
+                tracing::info!(%model, %original, "using the original provider over a secondary route");
+                original
+            }
+            None => model,
+        }
     }
 
     /// Whether the startup probes, engine detection and the default model,
@@ -916,6 +965,31 @@ mod tests {
             .mark_inconclusive(KIND, "claude --version timed out");
         let created = runtime.check_engine_for(Some(&model), None).await;
         assert!(created.is_ok(), "{created:?}");
+        runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn secondary_routes_defer_to_a_usable_original_engine() {
+        let (runtime, _dir) = crate::test_runtime(|_| {}).await;
+        let secondary = ModelRef::new("antigravity", "claude-opus-5-5");
+        runtime
+            .engines
+            .mark_usable(KIND, Arc::new(Named("claude-code/test")));
+        assert_eq!(
+            runtime.prefer_original(secondary.clone()),
+            ModelRef::new("claude-code", "claude-opus-5-5"),
+            "the original provider wins while its engine is usable"
+        );
+        let gemini = ModelRef::new("antigravity", "gemini-4-neon");
+        assert_eq!(runtime.prefer_original(gemini.clone()), gemini);
+        runtime
+            .engines
+            .mark_unavailable(KIND, "claude is not on PATH");
+        assert_eq!(
+            runtime.prefer_original(secondary.clone()),
+            secondary,
+            "an Antigravity-only machine keeps the secondary route"
+        );
         runtime.shutdown().await;
     }
 

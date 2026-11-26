@@ -292,6 +292,58 @@ Each engine run gets the agent's own temp directory (see
   to the workspace-write sandbox's writable roots.
 - **Container backends** keep the container's own `/tmp`.
 
+## Antigravity (agy)
+
+Engine id `antigravity`. It needs `agy` 1.5.18 or newer, signed in: run `agy`
+once to sign in. Detection runs `agy --version` and `agy models`; a listing
+that fails is the signed-out state. Aether never reads agy's credentials or
+keyring.
+
+Models are `antigravity/gemini-4-hydrogen`, `gemini-4-neon`,
+`gemini-4-carbon`, `gemini-4-argon` and `gemini-3.8-flash`. Aether's effort
+picks agy's `-low`, `-medium`, `-high` or `-xhigh` variant of the model: the
+highest one `agy models` lists at or below the requested effort, else the
+lowest one listed. The models report no dollar cost and carry no tier, so
+they are never a default or a fallback; an agent runs on one only when it
+names it.
+
+### Transport: ACP, not print mode
+
+The adapter runs `agy acp` (Agent Client Protocol) for each turn. Print mode
+(`agy -p --input-format stream-json --output-format stream-json`) streams the
+same turn but cannot carry Aether's harness tools:
+
+- `--settings` rejects `mcpServers`, and agy reads MCP servers only from its
+  global config, which Aether does not edit.
+- A private `HOME` holding a generated MCP config loses the sign-in.
+- Headless print mode auto-denies permission requests instead of asking.
+
+ACP takes the Aether MCP bridge in `session/new`, so harness tools such as
+`complete_task` work (agy names them `mcp_aether_<tool>`; Aether records them
+as `mcp__aether__<tool>`). `session/request_permission` becomes an Aether
+approval, `session/set_model` selects the variant, `session/load` resumes,
+`session/cancel` interrupts, and the `session/prompt` result reports the
+turn's tokens (`usage_update` gives the context size). An agent without an
+approval policy runs with `--dangerously-skip-permissions`.
+
+Antigravity turns do not take messages mid-turn (they wait for the next
+turn) and have no native compaction. Scopes that deny network access are
+refused, because agy has no network sandbox.
+
+### Secondary routes
+
+agy also serves other vendors' models, exposed as
+`antigravity/claude-opus-5-5`, `antigravity/claude-sonnet-5-5` and
+`antigravity/gpt-oss-120b`. When an agent is created on one of them, or names
+one as a fallback, Aether uses the vendor's own engine instead whenever that
+engine is usable (`claude-code` for Claude models, `codex` for GPT models that
+Codex lists). The Antigravity route is kept only when it is not, for example
+on a machine signed in to Antigravity alone. API-key providers are not
+consulted for this choice.
+
+The opt-in live test runs one tiny `gemini-3.8-flash` low turn:
+`cargo test -p aether-engine antigravity_live -- --ignored`.
+
 ## Codex credentials and trust boundary
 
 The Codex model process retains its provider credentials for authentication.

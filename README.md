@@ -27,7 +27,7 @@ The binary goes into `~/.cargo/bin` by default; update a source build by pulling
 
 ## What you can do
 
-- Run Claude Code and Codex with their native tools and subscription sign-in,
+- Run Claude Code, Codex and Antigravity with their native tools and subscription sign-in,
   or use Aether's own loop with hosted APIs (Anthropic, OpenAI, xAI/Grok,
   Google/Gemini, Groq, OpenRouter), local servers (Ollama, LM Studio, vLLM,
   llama.cpp), or any OpenAI-compatible endpoint. Grok and Gemini need API keys,
@@ -53,6 +53,7 @@ CLI. Model access and billing depend on your provider account.
 | --- | --- | --- | --- |
 | [Claude Code](https://code.claude.com/docs/en/setup) (`claude`) | Native Claude agents | One engine | `curl -fsSL https://claude.ai/install.sh \| bash` |
 | [Codex](https://developers.openai.com/codex/cli) (`codex`) | Native OpenAI agents | One engine | `npm install -g @openai/codex` (needs Node/npm) |
+| [Antigravity](https://antigravity.google) (`agy`, 1.5.18 or newer) | Google models (opt-in, never a default) | Optional engine | Install `agy`, then run `agy` once to sign in |
 | [Git](https://git-scm.com/install/) | Worktrees, repository memory, GitHub checkouts | For repository features | Linux: `sudo apt-get install git`; macOS: `brew install git` |
 | [GitHub CLI](https://cli.github.com/) (`gh`) | Opt-in GitHub watcher | Optional; local tasks work without it | `brew install gh`; then `gh auth login` |
 | [Node.js/npm](https://nodejs.org/en/download) | npm install of Codex; TypeScript client; configured JS MCP servers | Optional; Claude/native binaries work without it | Follow the OS installer |
