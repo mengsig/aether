@@ -63,12 +63,33 @@ mod tests {
         assert_eq!(records[0].session_id, "new-thread");
         assert_eq!(records[0].agent_id, agent);
         assert!(runtime.store.agent(agent).unwrap().is_none());
-        assert!(
-            recorder
-                .record(EngineKind::new("unowned-engine"), "id", Vec::new())
-                .is_err()
-        );
+        let refused = recorder
+            .record(EngineKind::new("unowned-engine"), "id", Vec::new())
+            .unwrap_err();
+        assert!(refused.contains("unowned-engine"), "{refused}");
+        assert!(!refused.contains("corrupt"), "{refused}");
         assert_eq!(runtime.store.engine_session_ownerships().unwrap(), records);
+        runtime.shutdown().await;
+    }
+
+    /// A real `agy acp` 1.5.18 `session/new` id: every antigravity task
+    /// failed after its first turn while the store refused this shape.
+    #[tokio::test]
+    async fn ownership_recorder_accepts_a_real_antigravity_session() {
+        let (runtime, _dir) = crate::test_runtime(|_| {}).await;
+        let agent = AgentId::new();
+        let recorder = session_recorder(&runtime, agent);
+        let session = "e595a646-998a-44b5-b978-759aa2cfabf1";
+        recorder
+            .record(EngineKind::ANTIGRAVITY, session, Vec::new())
+            .unwrap();
+        let records = runtime.store.engine_session_ownerships().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            (records[0].engine.as_str(), records[0].session_id.as_str()),
+            ("antigravity", session)
+        );
+        assert_eq!(records[0].agent_id, agent);
         runtime.shutdown().await;
     }
 }
