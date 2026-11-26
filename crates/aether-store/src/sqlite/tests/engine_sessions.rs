@@ -32,7 +32,12 @@ fn ownership_is_explicit_and_first_owner_cannot_be_replaced() {
     write(repeated).unwrap();
     let mut conflicting = record.clone();
     conflicting.agent_id = AgentId::new();
-    assert!(write(conflicting).is_err());
+    let refused = write(conflicting).unwrap_err();
+    assert!(
+        matches!(refused, StoreError::OwnershipRefused(_)),
+        "{refused}"
+    );
+    assert!(refused.to_string().contains("already owned"), "{refused}");
     assert_eq!(store.engine_session_ownerships().unwrap(), vec![record]);
     write(ownership("codex", AgentId::new())).unwrap();
     assert_eq!(store.engine_session_ownerships().unwrap().len(), 2);
@@ -119,10 +124,76 @@ fn supplied_expired_owner_is_rejected_even_for_idempotent_creation() {
                     .mutate(Mutation::UpsertAgent(new_agent.clone()))
                     .mutate(Mutation::RecordEngineSessionOwnership(forged))
             ),
-            Err(StoreError::Corrupt(_))
+            Err(StoreError::OwnershipRefused(_))
         ));
         assert!(store.agent(new_agent.id).unwrap().is_none());
         let expected = if existing { vec![record] } else { vec![] };
         assert_eq!(store.engine_session_ownerships().unwrap(), expected);
     }
+}
+
+/// The session id a real `agy acp` 1.5.18 returned from `session/new`.
+const AGY_SESSION: &str = "e595a646-998a-44b5-b978-759aa2cfabf1";
+
+#[test]
+fn antigravity_ownership_accepts_the_real_agy_session_shape() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let mut record = ownership("antigravity", AgentId::new());
+    record.session_id = AGY_SESSION.into();
+    store
+        .commit(Commit::new().mutate(Mutation::RecordEngineSessionOwnership(record.clone())))
+        .unwrap();
+    assert_eq!(store.engine_session_ownerships().unwrap(), vec![record]);
+}
+
+#[test]
+fn antigravity_ownership_refuses_other_forms_without_claiming_corruption() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let valid = || {
+        let mut record = ownership("antigravity", AgentId::new());
+        record.session_id = AGY_SESSION.into();
+        record
+    };
+    let mut with_path = valid();
+    with_path
+        .log_paths
+        .push(format!("/home/user/.gemini/antigravity-cli/conversations/{AGY_SESSION}.db").into());
+    let cases = [
+        ("new-session", "not a lowercase UUID"),
+        (
+            "E595A646-998A-44B5-B978-759AA2CFABF1",
+            "not a lowercase UUID",
+        ),
+        ("e595a646998a44b5b978759aa2cfabf1", "not a lowercase UUID"),
+        (
+            "e595a646-998a-44b5-b978-759aa2cfabf1\n",
+            "not a lowercase UUID",
+        ),
+        (
+            "../e595a646-998a-44b5-b978-759aa2cf",
+            "not a lowercase UUID",
+        ),
+    ];
+    let mut refused: Vec<_> = cases
+        .iter()
+        .map(|(id, why)| {
+            let mut record = valid();
+            record.session_id = (*id).into();
+            (record, *why)
+        })
+        .collect();
+    refused.push((with_path, "no verifiable log paths"));
+    let mut unknown = valid();
+    unknown.engine = "unowned-engine".into();
+    refused.push((unknown, "has no ownership evidence form"));
+    for (record, why) in refused {
+        let error = store
+            .commit(Commit::new().mutate(Mutation::RecordEngineSessionOwnership(record)))
+            .unwrap_err();
+        assert!(matches!(error, StoreError::OwnershipRefused(_)), "{error}");
+        let message = error.to_string();
+        assert!(message.contains(why), "{message}");
+        assert!(!message.contains("corrupt"), "{message}");
+    }
+    assert!(store.engine_session_ownerships().unwrap().is_empty());
 }

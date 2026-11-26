@@ -419,7 +419,9 @@ expiry removes an agent, that same transaction records its terminal status and
 latest state time in session ownership. This evidence permits later native-log
 cleanup even with the default seven-day history and fourteen-day log windows:
 an expired agent cannot be woken or restarted. A currently present agent row
-always takes precedence over earlier expiry evidence.
+always takes precedence over earlier expiry evidence. Antigravity sessions are
+recorded by agy's session UUID with no log path: agy keeps them in its own
+database, which engine GC never deletes.
 
 Engine GC preserves user sessions, pre-upgrade sessions without ownership,
 unknown paths, missing owner history without expiry evidence, shared or ambiguous
