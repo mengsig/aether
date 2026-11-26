@@ -442,7 +442,11 @@ pub(super) fn spawn_startup_probes(
         // Opt-in engines are probed after startup detection, so a slow CLI
         // (`agy models`) never holds up the default ones; a turn waits on it.
         for kind in OPT_IN_ENGINES {
-            let detected = detecting.engines.recheck(kind).await;
+            // Shutdown drops the probe (killing its CLI), so it never holds the store open.
+            let detected = tokio::select! {
+                () = detecting.shutdown.cancelled() => return,
+                detected = detecting.engines.recheck(kind) => detected,
+            };
             debug_assert!(detected.launchable(&kind).is_some() || detected.reason(&kind).is_some());
         }
     });
