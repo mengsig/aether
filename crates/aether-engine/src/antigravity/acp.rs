@@ -57,6 +57,10 @@ pub(super) struct Shared {
 
 pub(super) type SharedState = Arc<Mutex<Shared>>;
 
+/// Records a fresh session as this agent's; it runs before any request is
+/// sent into the session, so an unowned session never receives the prompt.
+pub(super) type SessionOwner = Box<dyn FnMut(&str) -> Result<(), String> + Send>;
+
 pub(super) fn lock(shared: &SharedState) -> std::sync::MutexGuard<'_, Shared> {
     shared
         .lock()
@@ -124,10 +128,10 @@ pub(super) fn decision_line(shared: &SharedState, decision: &PermissionDecision)
 
 /// Parses the server's lines for one turn and writes the requests that
 /// follow from its answers.
-#[derive(Debug)]
 pub struct AcpState {
     plan: TurnPlan,
     shared: SharedState,
+    own_session: SessionOwner,
     /// Requests that follow an answer; dropped when the turn is over, which
     /// closes the server's stdin.
     out: Option<UnboundedSender<String>>,
@@ -143,10 +147,16 @@ pub struct AcpState {
 }
 
 impl AcpState {
-    pub(super) fn new(plan: TurnPlan, shared: SharedState, out: UnboundedSender<String>) -> Self {
+    pub(super) fn new(
+        plan: TurnPlan,
+        shared: SharedState,
+        out: UnboundedSender<String>,
+        own_session: SessionOwner,
+    ) -> Self {
         Self {
             plan,
             shared,
+            own_session,
             out: Some(out),
             text: String::new(),
             reply: String::new(),
@@ -231,6 +241,9 @@ impl AcpState {
         let Some(id) = id.filter(|id| !id.trim().is_empty()) else {
             return self.fail("agy acp started a session without an id".into(), true);
         };
+        if let Err(error) = (self.own_session)(&id) {
+            return self.fail(error, true);
+        }
         lock(&self.shared).session = Some(id.clone());
         self.ready = true;
         match self.plan.model.clone() {
@@ -496,11 +509,10 @@ fn usage_of(usage: &Value) -> Option<Usage> {
     })
 }
 
+/// Only the protocol's own code: other load errors (a missing MCP server, say)
+/// leave the session intact, so its context must not be dropped.
 fn lost(error: &Value) -> bool {
     error["code"].as_i64() == Some(SESSION_NOT_FOUND)
-        || error["message"]
-            .as_str()
-            .is_some_and(|m| m.to_ascii_lowercase().contains("not found"))
 }
 
 fn rpc_error(method: &str, error: &Value) -> String {

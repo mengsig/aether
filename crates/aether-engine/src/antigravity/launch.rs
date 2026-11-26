@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use super::AntigravityEngine;
 use super::acp::{self, AcpState, Shared, SharedState, TurnPlan};
 use crate::{
-    Engine, EngineError, EngineEvent, EngineLaunchContext, EngineOutcome, EngineRun, EngineTurn,
+    Engine, EngineError, EngineEvent, EngineKind, EngineLaunchContext, EngineRun, EngineTurn,
     PermissionDecision, run_process_with_env,
 };
 
@@ -31,12 +31,14 @@ pub(super) async fn launch(
     let shared: SharedState = std::sync::Arc::new(std::sync::Mutex::new(Shared::default()));
     let (out_tx, out_rx) = mpsc::unbounded_channel::<String>();
     let finished = CancellationToken::new();
-    let parse = parser(
-        AcpState::new(plan.clone(), shared.clone(), out_tx.clone()),
-        turn.clone(),
-        finished.clone(),
-        cancel.clone(),
-    );
+    let owner_turn = turn.clone();
+    let own_session: acp::SessionOwner = Box::new(move |id| {
+        owner_turn
+            .record_new_session(EngineKind::ANTIGRAVITY, id, Vec::new())
+            .map_err(|error| error.to_string())
+    });
+    let state = AcpState::new(plan.clone(), shared.clone(), out_tx.clone(), own_session);
+    let parse = parser(state, finished.clone());
     let process = run_process_with_env(
         &engine.program,
         args(&turn),
@@ -131,40 +133,18 @@ fn image_block(image: &crate::EngineImage) -> Option<Value> {
     }
 }
 
-/// The line parser, recording a fresh session's ownership as soon as the
-/// server names it; a failed record stops the turn before its prompt runs.
+/// The line parser; the turn's end releases the writers, closing stdin.
 fn parser(
     mut state: AcpState,
-    turn: EngineTurn,
     finished: CancellationToken,
-    cancel: CancellationToken,
 ) -> impl FnMut(&str) -> Vec<EngineEvent> + Send + 'static {
     move |line| {
         let events = state.parse_line(line);
-        for event in &events {
-            match event {
-                EngineEvent::Session { id, .. } => {
-                    if let Err(error) = turn.record_new_session(turn_kind(), id, Vec::new()) {
-                        cancel.cancel();
-                        finished.cancel();
-                        return vec![EngineEvent::Done(EngineOutcome {
-                            is_error: true,
-                            error: Some(error.to_string()),
-                            prompt_not_submitted: true,
-                            ..Default::default()
-                        })];
-                    }
-                }
-                EngineEvent::Done(_) => finished.cancel(),
-                _ => {}
-            }
+        if events.iter().any(|e| matches!(e, EngineEvent::Done(_))) {
+            finished.cancel();
         }
         events
     }
-}
-
-fn turn_kind() -> crate::EngineKind {
-    crate::EngineKind::ANTIGRAVITY
 }
 
 /// Write queued requests to the server until the turn is over; dropping

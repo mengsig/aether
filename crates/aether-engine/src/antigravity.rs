@@ -66,6 +66,13 @@ impl AntigravityEngine {
 
     async fn detect_verbose_on(path: Option<&std::path::Path>) -> Result<Self, DetectError> {
         let version = detect::probe_version("agy", path, None).await?;
+        if version < MIN_VERSION {
+            return Err(DetectError::TooOld {
+                program: "agy".into(),
+                detected: version,
+                minimum: MIN_VERSION,
+            });
+        }
         let listing =
             detect::probe_output("agy", &["models"], "a signed-in Google account", path).await?;
         let variants = parse_model_list(&listing);

@@ -66,7 +66,8 @@ fn turn() -> EngineTurn {
 fn state(plan: TurnPlan) -> (AcpState, SharedState, mpsc::UnboundedReceiver<String>) {
     let shared: SharedState = std::sync::Arc::new(std::sync::Mutex::new(Shared::default()));
     let (tx, rx) = mpsc::unbounded_channel();
-    (AcpState::new(plan, shared.clone(), tx), shared, rx)
+    let owner: acp::SessionOwner = Box::new(|_| Ok(()));
+    (AcpState::new(plan, shared.clone(), tx, owner), shared, rx)
 }
 
 fn sent(rx: &mut mpsc::UnboundedReceiver<String>) -> Vec<Value> {
@@ -356,6 +357,25 @@ fn a_missing_session_is_reported_lost_before_the_prompt() {
 }
 
 #[test]
+fn an_unrelated_load_error_keeps_the_session() {
+    let mut t = turn();
+    t.session = Some("kept".into());
+    let (mut state, _shared, mut rx) = state(turn_plan(&engine(), &t));
+    let events = state.parse_line(
+        r#"{"jsonrpc":"2.0","id":2,"error":{"code":-32603,"message":"MCP server not found: aether"}}"#,
+    );
+    let Some(EngineEvent::Done(outcome)) = events.last() else {
+        panic!("a failed load ends the turn: {events:?}");
+    };
+    assert!(outcome.is_error && outcome.prompt_not_submitted);
+    assert!(
+        !outcome.session_lost,
+        "only -32002 means the session is gone"
+    );
+    assert!(sent(&mut rx).is_empty(), "no prompt follows a failed load");
+}
+
+#[test]
 fn a_resumed_history_replay_is_not_this_turns_output() {
     let mut t = turn();
     t.session = Some("s0".into());
@@ -491,6 +511,68 @@ async fn launched_turn_answers_permissions_and_exits_when_done() {
     let log = std::fs::read_to_string(dir.path().join("requests.log")).unwrap();
     assert!(log.contains(r#""modelId":"gemini-3.8-flash-low""#));
     assert!(log.contains(r#""optionId":"allow""#));
+}
+
+/// With no model named the prompt would follow `session/new` at once; an
+/// ownership record that fails must keep it from ever reaching the server.
+#[tokio::test]
+async fn a_failed_ownership_record_sends_no_prompt() {
+    let dir = tempfile::tempdir().unwrap();
+    let program = dir.path().join("agy");
+    crate::test_script::write(&program, FAKE_ACP);
+    let engine = AntigravityEngine::new(program.to_string_lossy(), "1.5.18");
+    let recorder = std::sync::Arc::new(crate::ownership_tests::Recorder {
+        fail: true,
+        ..Default::default()
+    });
+    let mut t = turn();
+    t.cwd = dir.path().into();
+    t.model = None;
+    t.session_recorder = Some(recorder);
+    let mut run = engine.run(t, CancellationToken::new()).await.unwrap();
+    let outcome = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(event) = run.events.recv().await {
+            assert!(!matches!(event, EngineEvent::Session { .. }), "{event:?}");
+            if let EngineEvent::Done(outcome) = event {
+                return outcome;
+            }
+        }
+        panic!("the turn ended without Done");
+    })
+    .await
+    .expect("the turn finishes in seconds");
+    assert!(
+        outcome.is_error && outcome.prompt_not_submitted,
+        "{outcome:?}"
+    );
+    assert!(
+        outcome.session.is_none(),
+        "an unowned session is not reported"
+    );
+    let closed = tokio::time::timeout(Duration::from_secs(10), run.events.recv()).await;
+    assert!(
+        matches!(closed, Ok(None)),
+        "agy acp exits after the failure"
+    );
+    let log = std::fs::read_to_string(dir.path().join("requests.log")).unwrap();
+    assert!(log.contains("session/new"));
+    assert!(!log.contains("session/prompt"), "{log}");
+}
+
+#[tokio::test]
+async fn detection_rejects_an_agy_older_than_the_verified_one() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::test_script::write(
+        &dir.path().join("agy"),
+        &FAKE_ACP.replacen("echo 1.5.18", "echo 1.5.17", 1),
+    );
+    let error = AntigravityEngine::detect_verbose_on(Some(dir.path()))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, DetectError::TooOld { minimum, .. } if minimum == MIN_VERSION),
+        "{error}"
+    );
 }
 
 #[tokio::test]
