@@ -6,17 +6,35 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+## 1.4.4
+
+Released 2026-11-27. A new, opt-in engine: Antigravity, Google's `agy` CLI
+(#468). The workspace and Python and TypeScript clients are 1.4.4.
+
 ### Added
 
 - **Antigravity engine.** Aether drives Google's `agy` CLI (1.5.18 or newer)
-  over its Agent Client Protocol server, with Aether's harness tools,
-  approvals, resume, interrupt and token usage. It adds the Google models
-  `antigravity/gemini-4-hydrogen`, `gemini-4-neon`, `gemini-4-carbon`,
+  over its Agent Client Protocol server (`agy acp`), with Aether's harness
+  tools, approvals, resume, interrupt and token usage. It adds the Google
+  models `antigravity/gemini-4-hydrogen`, `gemini-4-neon`, `gemini-4-carbon`,
   `gemini-4-argon` and `gemini-3.8-flash`, where effort picks agy's matching
-  variant. The models are opt-in: never an automatic default or fallback.
-  agy's Claude and GPT models are secondary routes
-  (`antigravity/claude-opus-5-5`, ...), used only when the vendor's own engine
-  is not usable.
+  variant.
+  - *Enabling it:* install `agy` 1.5.18 or newer and run `agy` once to sign
+    in; `aether doctor` then reports the engine. Aether never reads agy's
+    credentials or keyring and never edits its global config.
+  - *Opt-in:* the Google models carry no tier and no price, so they are never
+    an automatic default or fallback. An agent runs on one only when it names
+    it, for example `aether run "Your task" --model
+    antigravity/gemini-3.8-flash`.
+  - *The original provider comes first:* agy's Claude and GPT models
+    (`antigravity/claude-opus-5-5`, `antigravity/claude-sonnet-5-5`,
+    `antigravity/gpt-oss-120b`) are secondary routes. When an agent is
+    created on one, or names one as a fallback, Aether uses the vendor's own
+    engine (`claude-code` or `codex`) whenever it is usable, and keeps the
+    route through agy only when it is not.
+  - Antigravity turns take no mid-turn messages and have no native
+    compaction, and a scope that denies network access is refused, because
+    agy has no network sandbox. See [docs/engines.md](docs/engines.md).
 
 ## 1.4.3
 
