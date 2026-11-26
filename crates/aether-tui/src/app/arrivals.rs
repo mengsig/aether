@@ -31,6 +31,30 @@ impl Arrivals {
         self.unseen.get(&agent).copied()
     }
 
+    /// The unseen cells the view mode actually shows: the divider sits above
+    /// the first of them and the count leaves out hidden or folded cells.
+    pub fn shown(
+        &self,
+        agent: AgentId,
+        transcript: &AgentTranscript,
+        policy: crate::view_modes::Policy<'_>,
+    ) -> Option<Unseen> {
+        let unseen = self.unseen(agent)?;
+        let mut first = None;
+        let mut count = 0;
+        let mut prev_failed = false;
+        for cell in transcript.cells.iter().filter(|c| policy.shows(&c.model)) {
+            let failed = policy.failed_tool_line(&cell.model);
+            let folded = failed && prev_failed;
+            prev_failed = failed;
+            if cell.id >= unseen.first && !folded && Self::counts(&cell.model) {
+                first.get_or_insert(cell.id);
+                count += 1;
+            }
+        }
+        first.map(|first| Unseen { first, count })
+    }
+
     /// What the operator's own message or a turn boundary adds is no news.
     fn counts(model: &CellModel) -> bool {
         !matches!(

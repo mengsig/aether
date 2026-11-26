@@ -450,3 +450,45 @@ fn preview_frames() {
         }
     }
 }
+
+#[test]
+fn a_hidden_first_arrival_neither_carries_the_divider_nor_counts() {
+    let (mut app, agent) = app_in(ThemeMode::Dark, 100);
+    app.view_mode = "focus".into();
+    assert!(
+        app.view_modes.modes.contains_key("focus"),
+        "the focus mode is built in"
+    );
+    push(&mut app, agent, 0, operator("Ship it"));
+    push(&mut app, agent, 1, reply("Working on it."));
+    app.track_arrivals(true);
+    push(
+        &mut app,
+        agent,
+        2,
+        CellModel::Exec {
+            call: None,
+            command: "cargo build".into(),
+            status: exec_status(),
+            output: String::new(),
+            exit: Some(0),
+            duration_ms: Some(10),
+            is_search: false,
+            artifacts: Vec::new(),
+        },
+    );
+    push(&mut app, agent, 3, reply("news one"));
+    push(&mut app, agent, 4, reply("news two"));
+    app.track_arrivals(false);
+    let shown = app
+        .arrivals
+        .shown(agent, &app.transcripts[&agent], app.policy(Some(agent)))
+        .expect("two shown arrivals");
+    assert_eq!(shown.count, 2);
+    let text = screen(&app, &mut ViewCache::default(), 100);
+    assert!(text.contains("── 2 new ──"), "{text}");
+}
+
+fn exec_status() -> crate::app::transcript::CallStatus {
+    crate::app::transcript::CallStatus::Succeeded
+}
