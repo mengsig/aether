@@ -182,6 +182,8 @@ pub fn missing_cli(kind: crate::EngineKind) -> Option<DetectError> {
         "claude"
     } else if kind == crate::EngineKind::CODEX {
         "codex"
+    } else if kind == crate::EngineKind::ANTIGRAVITY {
+        "agy"
     } else {
         return None;
     };
@@ -243,6 +245,37 @@ async fn probe_version_with_args(
 /// Run `<program> <capability_args>` (optionally on `path`) and report
 /// whether it answered - the structural check for a subcommand an older CLI
 /// may not have (codex-app's `app-server --help`).
+/// Run `program args` and return its stdout when it exits zero; a non-zero
+/// exit is the missing `capability`, with the CLI's own words as detail.
+pub(crate) async fn probe_output(
+    program: &str,
+    args: &[&str],
+    capability: &str,
+    path: Option<&Path>,
+) -> Result<String, DetectError> {
+    assert!(!args.is_empty(), "a capability probe runs a subcommand");
+    let output = run_probe(program, args, path, None)
+        .await?
+        .ok_or_else(|| DetectError::TimedOut {
+            program: program.to_owned(),
+            probe: args.join(" "),
+        })?
+        .map_err(|e| DetectError::NotInstalled {
+            program: program.to_owned(),
+            os_error: e.to_string(),
+        })?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DetectError::MissingCapability {
+            program: program.to_owned(),
+            capability: capability.to_owned(),
+            detail: bounded(&format!("{stdout} {stderr}")),
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 pub(crate) async fn probe_capability(
     program: &str,
     capability_args: &[&str],

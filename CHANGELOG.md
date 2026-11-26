@@ -6,6 +6,18 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Added
+
+- **Antigravity engine.** Aether drives Google's `agy` CLI (1.5.18 or newer)
+  over its Agent Client Protocol server, with Aether's harness tools,
+  approvals, resume, interrupt and token usage. It adds the Google models
+  `antigravity/gemini-4-hydrogen`, `gemini-4-neon`, `gemini-4-carbon`,
+  `gemini-4-argon` and `gemini-3.8-flash`, where effort picks agy's matching
+  variant. The models are opt-in: never an automatic default or fallback.
+  agy's Claude and GPT models are secondary routes
+  (`antigravity/claude-opus-5-5`, ...), used only when the vendor's own engine
+  is not usable.
+
 ## 1.4.3
 
 The workspace and Python and TypeScript clients are 1.4.3.

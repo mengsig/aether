@@ -15,6 +15,7 @@ pub mod models;
 pub mod profile;
 pub mod registry;
 pub mod retired;
+pub mod secondary;
 pub mod sse;
 pub mod testing;
 pub mod tier;

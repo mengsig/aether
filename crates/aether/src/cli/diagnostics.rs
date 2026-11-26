@@ -162,8 +162,13 @@ async fn engines_found() -> Vec<(String, crate::doctor::EngineStatus)> {
             )),
         },
     };
+    let antigravity = match aether_engine::AntigravityEngine::detect_verbose().await {
+        Ok(e) => EngineStatus::Ready(e.adapter()),
+        Err(e) => EngineStatus::Unavailable(e.to_string()),
+    };
     vec![
         ("claude-code".to_owned(), claude),
         ("codex".to_owned(), codex),
+        ("antigravity".to_owned(), antigravity),
     ]
 }

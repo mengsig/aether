@@ -101,7 +101,7 @@ fn under_test(protocol: Protocol) -> Option<AdapterUnderTest> {
                 ("include", empty_array as fn() -> Value),
             ][..],
         ),
-        Protocol::ClaudeCode | Protocol::Codex => return None,
+        Protocol::ClaudeCode | Protocol::Codex | Protocol::Antigravity => return None,
     };
     let (adapter, fixtures, path, auth_header, reasoning_tokens, required_body) = facts;
     Some(AdapterUnderTest {
@@ -158,7 +158,9 @@ fn client_for(a: &AdapterUnderTest, base_url: &str) -> Arc<dyn ModelClient> {
             )
             .expect("client"),
         ),
-        Protocol::ClaudeCode | Protocol::Codex => unreachable!("engines have no adapter"),
+        Protocol::ClaudeCode | Protocol::Codex | Protocol::Antigravity => {
+            unreachable!("engines have no adapter")
+        }
     }
 }
 
