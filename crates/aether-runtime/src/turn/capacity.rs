@@ -54,6 +54,7 @@ pub(super) fn store_error_class(e: &StoreError) -> &'static str {
             "retention snapshot exceeds its memory limit"
         }
         StoreError::AliasRefused(_) => "a refused repository alias",
+        StoreError::OwnershipRefused(_) => "refused engine session ownership evidence",
     }
 }
 

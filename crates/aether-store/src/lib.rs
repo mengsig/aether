@@ -141,6 +141,10 @@ pub enum StoreError {
     /// canonical for a registered alias, or a chain of aliases.
     #[error("{0}")]
     AliasRefused(String),
+    /// Engine session ownership evidence the store will not accept: an
+    /// invalid record, or one that conflicts with the session's first owner.
+    #[error("{0}")]
+    OwnershipRefused(String),
 }
 
 impl StoreError {
