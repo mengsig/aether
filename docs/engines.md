@@ -297,7 +297,9 @@ Each engine run gets the agent's own temp directory (see
 Engine id `antigravity`. It needs `agy` 1.5.18 or newer, signed in: run `agy`
 once to sign in. Detection runs `agy --version` and `agy models`; a listing
 that fails is the signed-out state. Aether never reads agy's credentials or
-keyring.
+keyring. agy is probed once Claude Code and Codex are detected, so a slow
+`agy models` never holds up the daemon's start; a turn on an Antigravity
+model waits for that probe.
 
 Models are `antigravity/gemini-4-hydrogen`, `gemini-4-neon`,
 `gemini-4-carbon`, `gemini-4-argon` and `gemini-3.8-flash`. Aether's effort

@@ -9,7 +9,8 @@ release is also the text of its GitHub release.
 ## 1.4.4
 
 Released 2026-11-27. A new, opt-in engine: Antigravity, Google's `agy` CLI
-(#468). The workspace and Python and TypeScript clients are 1.4.4.
+(#468, with its session-ownership fix #469). The workspace and Python and
+TypeScript clients are 1.4.4.
 
 ### Added
 
@@ -22,7 +23,8 @@ Released 2026-11-27. A new, opt-in engine: Antigravity, Google's `agy` CLI
   - *Enabling it:* install `agy` 1.5.18 or newer and run `agy` once to sign
     in; `aether doctor` then reports the engine, or says that agy is not
     signed in. Aether never reads agy's credentials or keyring and never
-    edits its global config.
+    edits its global config. agy is probed after Claude Code and Codex, so
+    it never delays the daemon's start.
   - *Opt-in:* the Google models carry no tier and no price, so they are never
     an automatic default or fallback. An agent runs on one only when it names
     it, for example `aether run "Your task" --model
