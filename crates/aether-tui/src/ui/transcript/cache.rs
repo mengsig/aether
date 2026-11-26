@@ -30,6 +30,8 @@ pub struct LayoutKey {
     pub names: u64,
     pub presentation: u32,
     pub compact: bool,
+    /// How many unseen entries the `N new` divider above this cell counts; 0 for none.
+    pub unseen: usize,
 }
 
 /// A key without its revision: one height per cell and layout, the latest.
@@ -170,6 +172,7 @@ mod tests {
             names: 0,
             presentation: 0,
             compact: false,
+            unseen: 0,
         }
     }
 

@@ -397,6 +397,7 @@ fn rows_for<'a>(
         tree: &app.tree,
         schedules: &app.schedules.jobs,
         names: app.names_version,
+        unseen: app.arrivals.unseen(agent),
     }
 }
 

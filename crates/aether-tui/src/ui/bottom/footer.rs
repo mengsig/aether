@@ -350,6 +350,16 @@ fn usage_side(
             ));
         }
     } else {
+        let unseen = app
+            .selected
+            .and_then(|agent| app.arrivals.unseen(agent))
+            .filter(|_| reading);
+        if let Some(unseen) = unseen {
+            items.push((
+                format!("{} new {}", unseen.count, theme.glyphs().down),
+                theme.accent().patch(theme.title()),
+            ));
+        }
         if reading {
             items.push((
                 format!(

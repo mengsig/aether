@@ -1,0 +1,88 @@
+── dark 100
+
+› Ship the TUI change when the build is green
+
+
+• The build is running; I will report when it ends.
+
+── 3 new ───────────────────────────────────────────────────────────────────────────────────────────
+• The build is green.
+
+╌╌ Outcome · qi_01M8C6RX156NXJH82V2FSD8KTD ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+│ Done: the nightly build is green and the release notes are drafted · https://example.com/pull/12
+
+╌╌ Blocker · qi_01M8C6RX156NXJH82V2FSD8KTD ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+│ waiting for a review before the merge
+
+• Working (0s • esc to interrupt) · 3 agents running
+
+› Steer aether
+
+  opus-5.5 high · aether
+  ? shortcuts · ctrl+g agents                                                                 $0.00
+── light 100
+
+› Ship the TUI change when the build is green
+
+
+• The build is running; I will report when it ends.
+
+── 3 new ───────────────────────────────────────────────────────────────────────────────────────────
+• The build is green.
+
+╌╌ Outcome · qi_01M8C6RX156NXJH82V2FSD8KTD ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+│ Done: the nightly build is green and the release notes are drafted · https://example.com/pull/12
+
+╌╌ Blocker · qi_01M8C6RX156NXJH82V2FSD8KTD ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+│ waiting for a review before the merge
+
+• Working (0s • esc to interrupt) · 3 agents running
+
+› Steer aether
+
+  opus-5.5 high · aether
+  ? shortcuts · ctrl+g agents                                                                 $0.00
+── dark 40
+› Ship the TUI change when the build …
+
+  when it ends.
+
+── 3 new ───────────────────────────────
+• The build is green.
+
+╌╌ Outcome · qi_01M8C6RX156NXJH82V2F… ╌╌
+│ Done: the nightly build is green and
+│ the release notes are drafted ·
+│ https://example.com/pull/12
+
+╌╌ Blocker · qi_01M8C6RX156NXJH82V2F… ╌╌
+│ waiting for a review before the merge
+
+• Working (0s • esc to interrupt)
+
+› Steer aether
+
+  opus-5.5 high · aether
+  ? shortcuts · ctrl+g agents     $0.00
+── light 40
+› Ship the TUI change when the build …
+
+  when it ends.
+
+── 3 new ───────────────────────────────
+• The build is green.
+
+╌╌ Outcome · qi_01M8C6RX156NXJH82V2F… ╌╌
+│ Done: the nightly build is green and
+│ the release notes are drafted ·
+│ https://example.com/pull/12
+
+╌╌ Blocker · qi_01M8C6RX156NXJH82V2F… ╌╌
+│ waiting for a review before the merge
+
+• Working (0s • esc to interrupt)
+
+› Steer aether
+
+  opus-5.5 high · aether
+  ? shortcuts · ctrl+g agents     $0.00

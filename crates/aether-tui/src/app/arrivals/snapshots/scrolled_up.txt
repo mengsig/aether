@@ -1,0 +1,88 @@
+── dark 100
+• answer number 19
+
+• answer number 20
+
+• answer number 21
+
+• answer number 22
+
+• answer number 23
+
+• answer number 24
+
+• answer number 25
+
+
+• Working (0s • esc to interrupt) · 3 agents running
+
+› Steer aether
+
+  opus-5.5 high · aether
+  ? shortcuts · ctrl+g agents                      2 new ↓ · ↑ reading · ctrl+end to follow · $0.00
+── light 100
+• answer number 19
+
+• answer number 20
+
+• answer number 21
+
+• answer number 22
+
+• answer number 23
+
+• answer number 24
+
+• answer number 25
+
+
+• Working (0s • esc to interrupt) · 3 agents running
+
+› Steer aether
+
+  opus-5.5 high · aether
+  ? shortcuts · ctrl+g agents                      2 new ↓ · ↑ reading · ctrl+end to follow · $0.00
+── dark 40
+• answer number 20
+
+• answer number 21
+
+• answer number 22
+
+• answer number 23
+
+• answer number 24
+
+• answer number 25
+
+• answer number 26
+
+
+• Working (0s • esc to interrupt)
+
+› Steer aether
+
+  opus-5.5 high · aether
+  ? shortcuts · ctrl+g agents   2 new ↓
+── light 40
+• answer number 20
+
+• answer number 21
+
+• answer number 22
+
+• answer number 23
+
+• answer number 24
+
+• answer number 25
+
+• answer number 26
+
+
+• Working (0s • esc to interrupt)
+
+› Steer aether
+
+  opus-5.5 high · aether
+  ? shortcuts · ctrl+g agents   2 new ↓

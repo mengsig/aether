@@ -701,10 +701,15 @@ fn ascii_notices_preserve_external_text() {
             kind,
             text: "literal a → b · c".into(),
         };
-        assert_eq!(
-            text_of(&cell.detail_lines(160, &ascii())),
-            "* literal a → b · c"
-        );
+        let shown = text_of(&cell.detail_lines(160, &ascii()));
+        match cell {
+            // A posted trigger keeps the text whole behind its gutter.
+            CellModel::Notice {
+                kind: NoticeKind::Trigger { .. },
+                ..
+            } => assert!(shown.ends_with("\n| literal a → b · c"), "{shown}"),
+            _ => assert_eq!(shown, "* literal a → b · c"),
+        }
     }
     let cell = CellModel::Error {
         message: "error".into(),
@@ -796,8 +801,9 @@ fn a_trigger_takes_one_row_and_details_show_it_whole() {
         .find_map(|(name, cell)| (name == "notice_trigger").then_some(cell))
         .expect("the notice_trigger fixture");
     let compact = cell.display_lines(60, &unicode());
-    assert_eq!(compact.len(), 1, "{}", text_of(&compact));
-    assert!(text_of(&compact).starts_with("• Trigger from github · {"));
+    assert_eq!(compact.len(), 2, "{}", text_of(&compact));
+    assert!(text_of(&compact).starts_with("╌╌ Trigger · github ╌"));
+    assert!(text_of(&compact).contains("\n│ {"), "{}", text_of(&compact));
     assert!(text_of(&compact).ends_with('…'), "{}", text_of(&compact));
     let detail = text_of(&cell.detail_lines(60, &unicode()));
     assert!(detail.lines().count() > 1);

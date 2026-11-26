@@ -49,3 +49,16 @@ pub fn detail_lines(cell: &CellModel, width: u16, theme: &Theme) -> Vec<Line<'st
 pub fn plain_lines(cell: &CellModel, width: u16) -> Vec<String> {
     plain(&display_lines(cell, width, &super::plain_theme()))
 }
+
+/// `── 3 new ──────` in the accent hue: where what the operator has not seen begins.
+pub fn new_divider(count: usize, width: u16, theme: &Theme) -> Line<'static> {
+    let rule = theme.glyphs().rule;
+    let lead = format!("{rule}{rule} {count} new ");
+    let fill = usize::from(width).saturating_sub(lead.width()) / rule.width().max(1);
+    let style = theme.accent();
+    let row = vec![
+        span(lead, style.patch(theme.title())),
+        span(rule.repeat(fill), style),
+    ];
+    Line::from(truncate(row, usize::from(width), theme))
+}

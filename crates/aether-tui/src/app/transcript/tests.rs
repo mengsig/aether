@@ -1515,9 +1515,23 @@ fn trigger_summaries_show_one_line_and_keep_json_in_details() {
         assert_eq!(text.detail_payload(), Some(payload.to_string().as_str()));
         assert_eq!(text.ascii("-"), expected.replace('·', "-"));
         let display = cell.display_lines(160, &theme);
-        assert_eq!(display.len(), 1);
-        assert!(display[0].to_string().contains(expected));
-        assert!(!display[0].to_string().contains("build_id"));
+        // A dashed header naming the source, then one body row when there is a summary.
+        let body = expected
+            .strip_prefix("Trigger from ci")
+            .unwrap()
+            .trim_start_matches(" · ");
+        assert_eq!(display.len(), 1 + usize::from(!body.is_empty()));
+        assert!(display[0].to_string().contains("Trigger · ci"));
+        assert!(
+            display
+                .get(1)
+                .is_none_or(|row| row.to_string().contains(body))
+        );
+        assert!(
+            display
+                .iter()
+                .all(|row| !row.to_string().contains("build_id"))
+        );
         let compact = crate::ui::cells::compact::line(cell, 160, &theme).unwrap();
         assert!(compact.to_string().contains(expected));
         assert!(!compact.to_string().contains("build_id"));
@@ -1686,7 +1700,8 @@ fn trigger_sources_and_payloads_are_bounded_even_in_details() {
         assert!(text.ends_with("[truncated]"));
         for width in [59, 60, 99, 100, 160] {
             let theme = crate::ui::theme::tokens::Theme::resolve(Default::default());
-            assert_eq!(cell.display_lines(width, &theme).len(), 1);
+            // The dashed header and one body row.
+            assert_eq!(cell.display_lines(width, &theme).len(), 2);
             let max_rows = if text.detail_payload().is_some() {
                 240
             } else {

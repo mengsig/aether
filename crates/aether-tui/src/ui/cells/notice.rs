@@ -6,7 +6,11 @@ use std::borrow::Cow;
 use aether_core::note::NoteLevel;
 use ratatui::text::Line;
 
-use super::text::{Layout, cap_layout, clean, plain, span, truncate, under, wrap_text_layout};
+use unicode_width::UnicodeWidthStr;
+
+use super::text::{
+    Layout, cap_layout, clean, plain, span, truncate, under, width_of, wrap_text_layout,
+};
 use super::{Tone, bullet};
 use crate::app::transcript::{CellModel, CompactionState, NoticeKind, NoticeText};
 use crate::format;
@@ -36,13 +40,9 @@ pub fn layout(cell: &CellModel, width: u16, detail: bool, theme: &Theme) -> Layo
             text,
         } => error(text, None, None, width, theme, detail),
         CellModel::Notice {
-            kind: NoticeKind::Trigger { .. },
+            kind: kind @ (NoticeKind::Trigger { .. } | NoticeKind::Note(_) | NoticeKind::Echo),
             text,
-        } if !detail => one_row(&authored(text, theme), width, theme),
-        CellModel::Notice {
-            kind: NoticeKind::Note(level),
-            text,
-        } => note(*level, &authored(text, theme), width, theme),
+        } => post(kind, text, width, theme, detail),
         CellModel::Notice { text, .. } => {
             let mut rows = sentence(Tone::Neutral, &authored(text, theme), width, theme);
             if detail && let Some(payload) = text.detail_payload() {
@@ -141,37 +141,166 @@ fn arrow(theme: &Theme) -> &'static str {
     if theme.ascii() { "->" } else { "→" }
 }
 
-/// `• ` and the sentence on one dim row, cut at the width; details wrap it whole.
-fn one_row(text: &str, width: usize, theme: &Theme) -> Layout {
-    let flat = clean(text).split_whitespace().collect::<Vec<_>>().join(" ");
-    let row = vec![
-        bullet(theme, Tone::Neutral),
-        span(" ", theme.text()),
-        span(flat, theme.secondary()),
-    ];
-    Layout::unmapped(vec![Line::from(truncate(row, width, theme))])
+/// A posted notice: a dashed header naming its kind and subject, then the
+/// body behind a gutter. Triggers keep to one body row until details open.
+fn post(
+    kind: &NoticeKind,
+    notice: &NoticeText,
+    width: usize,
+    theme: &Theme,
+    detail: bool,
+) -> Layout {
+    let text = authored(notice, theme);
+    let Post {
+        kind: label,
+        id,
+        body,
+    } = Post::of(kind, &text, theme);
+    let hue = match kind {
+        NoticeKind::Note(NoteLevel::Info) => theme.accent(),
+        NoticeKind::Note(NoteLevel::Applied) => theme.success(),
+        NoticeKind::Note(NoteLevel::Refused) => theme.failure(),
+        _ => theme.secondary(),
+    };
+    let mut rows = Layout::unmapped(vec![dashed_header(
+        &label,
+        id.as_deref(),
+        hue,
+        width,
+        theme,
+    )]);
+    let body = clean(&body);
+    if body.trim().is_empty() && !(detail && notice.detail_payload().is_some()) {
+        return rows;
+    }
+    let gutter = vec![span(format!("{} ", theme.glyphs().pipe), theme.rule())];
+    let style = match kind {
+        NoticeKind::Note(_) => theme.text(),
+        _ => theme.secondary(),
+    };
+    if matches!(kind, NoticeKind::Trigger { .. }) && !detail {
+        let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut row = gutter.clone();
+        row.push(span(flat, style));
+        rows.push(Line::from(truncate(row, width, theme)), Default::default());
+        return rows;
+    }
+    rows.append(wrap_text_layout(
+        &body,
+        style,
+        width,
+        gutter.clone(),
+        gutter.clone(),
+    ));
+    if detail && let Some(payload) = notice.detail_payload() {
+        rows.append(wrap_text_layout(
+            payload,
+            theme.secondary(),
+            width,
+            gutter.clone(),
+            gutter,
+        ));
+    }
+    rows
 }
 
-/// A label (`note`, `applied` or `refused`), then the client's text at full
-/// brightness: apart from the dim status notices and from anything the agent said.
-fn note(level: NoteLevel, text: &str, width: usize, theme: &Theme) -> Layout {
-    let (label, hue) = match level {
-        NoteLevel::Info => ("note", theme.accent()),
-        NoteLevel::Applied => ("applied", theme.success()),
-        NoteLevel::Refused => ("refused", theme.failure()),
+/// What a posted notice says it is, who it is about, and what it says.
+struct Post {
+    kind: String,
+    id: Option<String>,
+    body: String,
+}
+
+impl Post {
+    fn of(kind: &NoticeKind, text: &str, theme: &Theme) -> Self {
+        let (source, rest) = match kind {
+            NoticeKind::Trigger { .. } => {
+                let (head, rest) = text
+                    .split_once(&format!(" {} ", theme.glyphs().dot))
+                    .unwrap_or((text, ""));
+                match head.strip_prefix("Trigger from ") {
+                    Some(source) => (Some(source), rest),
+                    None => (None, text),
+                }
+            }
+            _ => (None, text),
+        };
+        if let Some((kind, id, body)) = titled(rest) {
+            return Self {
+                kind: kind.to_owned(),
+                id: Some(id.to_owned()),
+                body: body.to_owned(),
+            };
+        }
+        let label = match kind {
+            NoticeKind::Trigger { .. } => "Trigger",
+            NoticeKind::Echo => "Command",
+            NoticeKind::Note(NoteLevel::Info) => "Note",
+            NoticeKind::Note(NoteLevel::Applied) => "Applied",
+            NoticeKind::Note(NoteLevel::Refused) => "Refused",
+            _ => "Notice",
+        };
+        Self {
+            kind: label.to_owned(),
+            id: source.filter(|s| !s.is_empty()).map(str::to_owned),
+            body: rest.to_owned(),
+        }
+    }
+}
+
+/// `Outcome (qi_01…): Done: …` as `("Outcome", "qi_01…", "Done: …")`.
+fn titled(text: &str) -> Option<(&str, &str, &str)> {
+    let (kind, rest) = text.split_once(" (")?;
+    let (id, body) = rest.split_once(')')?;
+    let word = |c: char| c.is_alphabetic() || c == ' ';
+    let kind_ok = kind.chars().next().is_some_and(char::is_uppercase)
+        && kind.chars().all(word)
+        && kind.len() <= 24;
+    let id_ok = !id.is_empty() && id.len() <= 64 && !id.contains(char::is_whitespace);
+    if !(kind_ok && id_ok) {
+        return None;
+    }
+    let body = match body.strip_prefix(':') {
+        Some(body) => body,
+        None if body.is_empty() => body,
+        None => return None,
     };
-    let first = vec![
-        span(label, hue.patch(theme.title())),
-        span(" ", theme.text()),
+    Some((kind, id, body.trim_start()))
+}
+
+/// `╌╌ Outcome · qi_01M8… ╌╌╌╌╌╌╌╌`: the kind, the subject cut with an
+/// ellipsis rather than wrapped, and dashes out to the full width.
+fn dashed_header(
+    kind: &str,
+    id: Option<&str>,
+    hue: ratatui::style::Style,
+    width: usize,
+    theme: &Theme,
+) -> Line<'static> {
+    let g = theme.glyphs();
+    let lead = format!("{0}{0} ", g.dash);
+    // Room for the id: the lead, the kind, ` · `, a space and two dashes stay.
+    let fixed = lead.width() + kind.width() + 3 + 1 + 2;
+    let room = width.saturating_sub(fixed);
+    let id = id
+        .filter(|_| room >= 2)
+        .map(|id| truncate(vec![span(clean(id), theme.secondary())], room, theme));
+    let mut row = vec![
+        span(lead, theme.rule()),
+        span(kind.to_owned(), hue.patch(theme.title())),
     ];
-    let indent = " ".repeat(label.len() + 1);
-    wrap_text_layout(
-        &clean(text),
-        theme.text(),
-        width,
-        first,
-        vec![span(indent, theme.text())],
-    )
+    if let Some(id) = id {
+        row.push(span(format!(" {} ", g.dot), theme.rule()));
+        row.extend(id);
+    }
+    row.push(span(" ", theme.rule()));
+    let used = width_of(&row);
+    row.push(span(
+        g.dash
+            .repeat(width.saturating_sub(used) / g.dash.width().max(1)),
+        theme.rule(),
+    ));
+    Line::from(truncate(row, width, theme))
 }
 
 /// `• ` and one dim sentence, wrapped under a 2-column indent.
