@@ -439,8 +439,19 @@ pub(super) fn spawn_startup_probes(
             "engine detection finished"
         );
         detecting.engines.finish(found);
+        // Opt-in engines are probed after startup detection, so a slow CLI
+        // (`agy models`) never holds up the default ones; a turn waits on it.
+        for kind in OPT_IN_ENGINES {
+            let detected = detecting.engines.recheck(kind).await;
+            debug_assert!(detected.launchable(&kind).is_some() || detected.reason(&kind).is_some());
+        }
     });
 }
+
+/// Probed at startup before anything may use an engine.
+const STARTUP_ENGINES: [EngineKind; 2] = [EngineKind::CLAUDE_CODE, EngineKind::CODEX];
+/// Never a default or fallback, so probed once the startup engines are known.
+const OPT_IN_ENGINES: [EngineKind; 1] = [EngineKind::ANTIGRAVITY];
 
 /// The official CLIs installed on this machine, keyed by engine, plus why
 /// each omitted engine is unusable, keyed the same way. An engine this
@@ -449,17 +460,13 @@ pub(super) fn spawn_startup_probes(
 /// reports why rather than a generic "not installed".
 async fn detect_engines(prompt_cache_ttl: Option<PromptCacheTtl>) -> DetectedEngines {
     // Independent CLIs: probing them together bounds the wait by the slower one.
-    let (claude, codex, antigravity) = tokio::join!(
-        detect_engine(EngineKind::CLAUDE_CODE, prompt_cache_ttl),
-        detect_engine(EngineKind::CODEX, prompt_cache_ttl),
-        detect_engine(EngineKind::ANTIGRAVITY, prompt_cache_ttl)
+    let [claude_kind, codex_kind] = STARTUP_ENGINES;
+    let (claude, codex) = tokio::join!(
+        detect_engine(claude_kind, prompt_cache_ttl),
+        detect_engine(codex_kind, prompt_cache_ttl)
     );
     let mut detected = DetectedEngines::default();
-    for (kind, probe) in [
-        (EngineKind::CLAUDE_CODE, claude),
-        (EngineKind::CODEX, codex),
-        (EngineKind::ANTIGRAVITY, antigravity),
-    ] {
+    for (kind, probe) in [(claude_kind, claude), (codex_kind, codex)] {
         match probe.found {
             Ok(engine) => detected.record(kind, Ok(engine)),
             Err(reason) => detected.record_failure(kind, reason, probe.inconclusive),
@@ -467,7 +474,7 @@ async fn detect_engines(prompt_cache_ttl: Option<PromptCacheTtl>) -> DetectedEng
     }
     debug_assert_eq!(
         detected.usable.len() + detected.unavailable.len(),
-        3,
+        STARTUP_ENGINES.len(),
         "each engine is either usable or has a reason"
     );
     detected
@@ -966,6 +973,30 @@ mod tests {
         let created = runtime.check_engine_for(Some(&model), None).await;
         assert!(created.is_ok(), "{created:?}");
         runtime.shutdown().await;
+    }
+
+    #[test]
+    fn only_untiered_engines_are_probed_after_startup() {
+        let registry = aether_model::Registry::builtin();
+        let mut probed = HashSet::new();
+        for provider in registry.providers() {
+            let Some(kind) = crate::turn_engine::engine_kind(provider.protocol) else {
+                continue;
+            };
+            let opt_in = OPT_IN_ENGINES.contains(&kind);
+            assert!(
+                opt_in != STARTUP_ENGINES.contains(&kind),
+                "{kind} is probed exactly once"
+            );
+            if opt_in {
+                assert!(
+                    provider.models.iter().all(|m| m.tier.is_none()),
+                    "a model of {kind} could be a default, which startup would not wait for"
+                );
+            }
+            probed.insert(kind);
+        }
+        assert_eq!(probed.len(), STARTUP_ENGINES.len() + OPT_IN_ENGINES.len());
     }
 
     #[tokio::test]
