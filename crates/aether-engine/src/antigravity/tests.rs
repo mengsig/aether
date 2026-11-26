@@ -587,16 +587,16 @@ async fn detection_reads_version_and_signed_in_listing() {
     let signed_out = tempfile::tempdir().unwrap();
     crate::test_script::write(
         &signed_out.path().join("agy"),
-        "#!/bin/sh\n[ \"$1\" = --version ] && { echo 1.5.18; exit 0; }\necho 'Please sign in' >&2\nexit 1\n",
+        "#!/bin/sh\n[ \"$1\" = --version ] && { echo 1.5.18; exit 0; }\necho 'Fetching available models...'\necho 'Error: Please sign in.' >&2\nexit 1\n",
     );
     let error = AntigravityEngine::detect_verbose_on(Some(signed_out.path()))
         .await
         .unwrap_err();
-    assert!(
-        matches!(error, DetectError::MissingCapability { .. }),
-        "{error}"
+    assert!(matches!(error, DetectError::SignedOut { .. }), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "agy is not signed in (Error: Please sign in.); run `agy` once to sign in"
     );
-    assert!(error.to_string().contains("signed-in"));
 }
 
 /// One real turn on the cheapest model. Opt in with

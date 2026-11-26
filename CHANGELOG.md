@@ -20,8 +20,9 @@ Released 2026-11-27. A new, opt-in engine: Antigravity, Google's `agy` CLI
   `gemini-4-argon` and `gemini-3.8-flash`, where effort picks agy's matching
   variant.
   - *Enabling it:* install `agy` 1.5.18 or newer and run `agy` once to sign
-    in; `aether doctor` then reports the engine. Aether never reads agy's
-    credentials or keyring and never edits its global config.
+    in; `aether doctor` then reports the engine, or says that agy is not
+    signed in. Aether never reads agy's credentials or keyring and never
+    edits its global config.
   - *Opt-in:* the Google models carry no tier and no price, so they are never
     an automatic default or fallback. An agent runs on one only when it names
     it, for example `aether run "Your task" --model

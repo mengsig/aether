@@ -73,8 +73,9 @@ impl AntigravityEngine {
                 minimum: MIN_VERSION,
             });
         }
-        let listing =
-            detect::probe_output("agy", &["models"], "a signed-in Google account", path).await?;
+        let listing = detect::probe_output("agy", &["models"], "a signed-in Google account", path)
+            .await
+            .map_err(signed_out)?;
         let variants = parse_model_list(&listing);
         if variants.is_empty() {
             return Err(DetectError::MissingCapability {
@@ -132,6 +133,37 @@ impl AntigravityEngine {
             .find(|(_, level)| *level <= wanted)
             .unwrap_or(&listed[0]);
         format!("{family}-{}", chosen.0)
+    }
+}
+
+/// A failed `agy models` is the signed-out state. agy's own words are kept,
+/// without its progress lines ("Fetching available models..."), which are noise.
+fn signed_out(error: DetectError) -> DetectError {
+    let DetectError::MissingCapability {
+        program, detail, ..
+    } = error
+    else {
+        return error;
+    };
+    assert_eq!(
+        program, "agy",
+        "only agy's listing maps to its sign-in state"
+    );
+    let words: Vec<&str> = detail
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.ends_with("...") && !line.ends_with('…'))
+        .collect();
+    let detail = if words.is_empty() {
+        "`agy models` failed".to_owned()
+    } else {
+        words.join(" ")
+    };
+    debug_assert!(!detail.is_empty());
+    DetectError::SignedOut {
+        program,
+        sign_in: "agy".into(),
+        detail,
     }
 }
 
