@@ -37,7 +37,11 @@ TypeScript clients are 1.4.4.
     first, else its signed-in API (`anthropic` or `openai`). It keeps the
     route through agy only when neither is usable, or when the API would put
     a fallback of a subscription agent on a separate bill. An agent that has
-    not started an agy session yet is moved to the original before its turn.
+    not started an agy session yet is moved to the original before its turn,
+    with the API sign-ins read again, so an `aether login` or `aether logout`
+    in between counts. A delegated child runs the route its parent's
+    delegation policy admitted: if the policy names only the agy model, the
+    child stays on agy.
   - Antigravity turns take no mid-turn messages and have no native
     compaction, and a scope that denies network access is refused, because
     agy has no network sandbox. See [docs/engines.md](docs/engines.md).

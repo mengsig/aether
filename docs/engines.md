@@ -347,8 +347,16 @@ signed in to Antigravity alone.
 
 The choice is made at creation and again before each turn, so an agent
 created before an original was usable moves to it before its first agy
-session. An agent that already holds an agy session keeps its primary model,
-so its conversation is not handed off mid-flight; its fallbacks still move.
+session. Before such a turn the daemon reads the API sign-ins again when its
+last read is more than 2 seconds old, because `aether login` and
+`aether logout` run outside the daemon. An agent that already holds an agy
+session keeps its primary model, so its conversation is not handed off
+mid-flight; its fallbacks still move.
+
+A delegated child's chain is routed once, when it is delegated, and the
+parent's delegation policy admits the route the child will run. If the policy
+admits only the requested agy model, the child stays on agy. The child is not
+routed again later, so nothing moves it outside what the policy admitted.
 
 The opt-in live test runs one tiny `gemini-3.8-flash` low turn:
 `cargo test -p aether-engine antigravity_live -- --ignored`.

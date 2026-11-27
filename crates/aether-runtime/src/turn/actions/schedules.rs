@@ -20,7 +20,12 @@ async fn spawn_refusal(
         .scope
         .as_ref()
         .map_or(parent.scope.network, |scope| scope.network);
-    let checked = delegation::check_delegation_target(runtime, model, network, &parent).await?;
+    // The occurrence's child runs where its spawn routes it, so check that route.
+    if aether_model::secondary::has_original(model) {
+        runtime.refresh_signed_in_originals().await;
+    }
+    let routed = runtime.prefer_original(model.clone());
+    let checked = delegation::check_delegation_target(runtime, &routed, network, &parent).await?;
     Ok(checked.err())
 }
 

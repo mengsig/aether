@@ -1,6 +1,6 @@
 use super::*;
 use crate::delegation_admission::{
-    ChildReason, ChildRequest, Slots, child_spec, engine_refusal, policy_refusal,
+    ChildReason, ChildRequest, Slots, child_spec, engine_refusal, policy_refusal, route_request,
 };
 use crate::workspace::WorkspaceManifest;
 use aether_core::agent::{NetworkPolicy, Scope};
@@ -103,7 +103,7 @@ async fn delegate(
     runtime: &Arc<Runtime>,
     ctx: &TurnCtx,
     effects: &mut ToolEffects,
-    request: DelegateRequest,
+    mut request: DelegateRequest,
 ) -> Result<ToolOutcome> {
     let parent = match load_delegating_parent(runtime, ctx)? {
         Ok(parent) => parent,
@@ -124,6 +124,15 @@ async fn delegate(
             "delegation refused: the current tools mode withholds `delegate`",
         ));
     }
+    // Every check below, and creation, use the chain the child will run.
+    let child = &request.child;
+    if std::iter::once(&child.model)
+        .chain(&child.fallbacks)
+        .any(aether_model::secondary::has_original)
+    {
+        runtime.refresh_signed_in_originals().await;
+    }
+    route_request(runtime, &parent, &mut request.child, Slots::Counted)?;
     let network = request.child.network(&parent);
     if let Err(refusal) =
         check_delegation_target(runtime, &request.child.model, network, &parent).await?
@@ -367,12 +376,6 @@ pub(super) async fn check_delegation_target(
     network: NetworkPolicy,
     parent: &Agent,
 ) -> Checked<()> {
-    // The child runs where creation routes it, so check that route.
-    if aether_model::secondary::has_original(requested) {
-        runtime.refresh_signed_in_originals().await;
-    }
-    let routed = runtime.prefer_original(requested.clone());
-    let requested = &routed;
     let resolved = match runtime.models.resolve(requested) {
         Ok(resolved) => resolved,
         Err(error) => {

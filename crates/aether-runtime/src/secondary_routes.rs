@@ -3,6 +3,9 @@
 //! creation, and again before a turn for an agent created while that was unknown.
 
 use std::collections::HashSet;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 
 use aether_core::agent::{Agent, AgentStatus};
 use aether_core::event::{Actor, EventDraft, EventKind};
@@ -12,12 +15,51 @@ use aether_store::{Commit, Mutation};
 
 use crate::{Result, Runtime, turn_engine};
 
+/// How long a read of the API sign-ins routes turns. `aether login` runs in
+/// another process, so the daemon cannot hear of a change and reads again.
+const SIGN_IN_FRESH_FOR: Duration = Duration::from_secs(2);
+
+/// The API originals (`anthropic`, `openai`) with a usable sign-in, and when
+/// that read began and ended.
+#[derive(Debug, Default)]
+pub(crate) struct SignedInOriginals {
+    providers: HashSet<String>,
+    /// `(began, ended)`; `None` before the first read.
+    read: Option<(Instant, Instant)>,
+}
+
 impl Runtime {
     /// Read again which API providers serving a secondary route first-hand
     /// are signed in. Reading a sign-in is async, so routing uses this copy.
     pub async fn refresh_signed_in_originals(&self) {
-        let signed_in = signed_in_originals(&self.models).await;
-        *self.signed_in_originals.write() = signed_in;
+        let began = Instant::now();
+        let providers = signed_in_originals(&self.models).await;
+        let ended = Instant::now();
+        debug_assert!(ended >= began, "a read ends after it begins");
+        let mut cached = self.signed_in_originals.write();
+        // Two reads may overlap: the one begun later knows more.
+        if cached.read.is_some_and(|(other, _)| other > began) {
+            return;
+        }
+        *cached = SignedInOriginals {
+            providers,
+            read: Some((began, ended)),
+        };
+    }
+
+    /// Whether the cached sign-ins were read recently enough to route a turn.
+    /// Measured from the read's end, so a slow read cannot hold agents forever.
+    fn sign_ins_are_fresh(&self) -> bool {
+        self.signed_in_originals
+            .read()
+            .read
+            .is_some_and(|(_, ended)| ended.elapsed() < SIGN_IN_FRESH_FOR)
+    }
+
+    /// Test hook: forget when the sign-ins were read, as if they were old.
+    #[cfg(test)]
+    pub(crate) fn age_sign_ins(&self) {
+        self.signed_in_originals.write().read = None;
     }
 
     /// `model`, or its first-hand route when it is a secondary one and the
@@ -31,7 +73,8 @@ impl Runtime {
             return model;
         };
         let registry = self.models.registry();
-        let signed_in = self.signed_in_originals.read();
+        let cached = self.signed_in_originals.read();
+        let signed_in = &cached.providers;
         let usable = |provider: &str| {
             let Some(def) = registry.provider(provider) else {
                 return false;
@@ -65,7 +108,11 @@ impl Runtime {
     /// `fallbacks` behind `primary`, each secondary link on its original
     /// provider where usable, unless that would move a subscription
     /// `primary` onto another bill: such a link keeps its secondary route.
-    fn preferred_fallbacks(&self, primary: &ModelRef, fallbacks: Vec<ModelRef>) -> Vec<ModelRef> {
+    pub(crate) fn preferred_fallbacks(
+        &self,
+        primary: &ModelRef,
+        fallbacks: Vec<ModelRef>,
+    ) -> Vec<ModelRef> {
         let links = fallbacks.len();
         let routed: Vec<ModelRef> = fallbacks
             .into_iter()
@@ -102,28 +149,49 @@ async fn signed_in_originals(models: &Models) -> HashSet<String> {
     signed_in
 }
 
-/// Whether `agent` names a secondary route that an original could take over.
-fn has_secondary_link(agent: &Agent) -> bool {
-    std::iter::once(&agent.model)
-        .chain(&agent.fallbacks)
-        .any(secondary::has_original)
+/// Whether routing could move one of `agent`'s links now.
+fn could_move(agent: &Agent) -> bool {
+    let primary = agent.engine_session.is_none() && secondary::has_original(&agent.model);
+    primary || agent.fallbacks.iter().any(secondary::has_original)
 }
 
 /// Before a turn: move `agent`'s secondary links to their original providers
 /// when one became usable after creation, as for an agent created while
-/// detection ran. The primary moves only before the agent's first engine session.
-pub(crate) fn route_before_turn(runtime: &Runtime, agent: Agent) -> Result<Agent> {
-    if !has_secondary_link(&agent) || matches!(agent.status, AgentStatus::Running) {
-        return Ok(agent);
+/// detection ran. `None` holds the agent until the API sign-ins are read again.
+pub(crate) fn route_before_turn(runtime: &Runtime, agent: Agent) -> Result<Option<Agent>> {
+    // A delegated child keeps the chain its parent's policy admitted.
+    if agent.parent.is_some() || !could_move(&agent) {
+        return Ok(Some(agent));
     }
     // A native wait holds its engine turn open under a Waiting status.
-    if runtime.engine_turns.lock().contains_key(&agent.id) {
-        return Ok(agent);
+    if matches!(agent.status, AgentStatus::Running)
+        || runtime.engine_turns.lock().contains_key(&agent.id)
+    {
+        return Ok(Some(agent));
+    }
+    if !runtime.sign_ins_are_fresh() {
+        runtime.sign_in_read_wanted.store(true, Ordering::Release);
+        return Ok(None);
     }
     let (model, fallbacks) = rerouted(runtime, &agent);
     if model == agent.model && fallbacks == agent.fallbacks {
-        return Ok(agent);
+        return Ok(Some(agent));
     }
+    commit_route(runtime, agent, model, fallbacks).map(Some)
+}
+
+/// Write `agent`'s new chain, unless the agent moved since it was read.
+fn commit_route(
+    runtime: &Runtime,
+    agent: Agent,
+    model: ModelRef,
+    fallbacks: Vec<ModelRef>,
+) -> Result<Agent> {
+    debug_assert_eq!(
+        fallbacks.len(),
+        agent.fallbacks.len(),
+        "routing keeps every link"
+    );
     let hold = runtime.hold();
     let Some(mut current) = runtime.store.agent(agent.id)? else {
         return Ok(agent);
@@ -172,173 +240,18 @@ fn rerouted(runtime: &Runtime, agent: &Agent) -> (ModelRef, Vec<ModelRef>) {
     (model, fallbacks)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::commands::CreateAgentSpec;
-    use aether_core::agent::AgentConfig;
-    use aether_core::model::Effort;
-    use aether_engine::{Engine, EngineKind};
-    use std::sync::Arc;
-
-    struct ClaudeCode;
-
-    #[async_trait::async_trait]
-    impl Engine for ClaudeCode {
-        fn kind(&self) -> EngineKind {
-            EngineKind::CLAUDE_CODE
-        }
-
-        fn adapter(&self) -> String {
-            "claude-code/test".into()
-        }
-
-        async fn run(
-            &self,
-            _turn: aether_engine::EngineTurn,
-            _cancel: tokio_util::sync::CancellationToken,
-        ) -> std::result::Result<aether_engine::EngineRun, aether_engine::EngineError> {
-            Err(aether_engine::EngineError::Unsupported(
-                "a test engine".into(),
-            ))
-        }
+/// Read the API sign-ins again, off the scheduler's task, when a pass held an
+/// agent for them. The pass after the read routes it.
+pub(crate) fn read_wanted_sign_ins(runtime: &Arc<Runtime>) -> Option<tokio::task::JoinHandle<()>> {
+    if !runtime.sign_in_read_wanted.swap(false, Ordering::AcqRel) {
+        return None;
     }
-
-    /// A runtime whose engine detection has not finished, with an Anthropic
-    /// API key when `anthropic_key` is set.
-    async fn runtime(anthropic_key: bool) -> (Arc<Runtime>, tempfile::TempDir) {
-        let dir = tempfile::tempdir().expect("config dir");
-        let models = aether_model::Models::load(Some(dir.path().to_path_buf()))
-            .expect("models")
-            .with_env(move |name| {
-                (anthropic_key && name == "ANTHROPIC_API_KEY").then(|| "sk-test".to_owned())
-            });
-        let runtime = Runtime::start_with_engines_inner(
-            crate::RuntimeConfig {
-                holder: "unit-test".into(),
-                // Approvals would need detection; a yolo daemon creates without it.
-                yolo: true,
-                workspace_root: Some(dir.path().to_path_buf()),
-                ..Default::default()
-            },
-            Arc::new(aether_store::SqliteStore::open_in_memory().expect("store")),
-            Arc::new(models),
-            Arc::new(aether_tools::ToolRegistry::with_builtins()),
-            None,
-            crate::engine_access::EngineCatalog::default(),
-        )
-        .await
-        .expect("runtime");
-        (runtime, dir)
-    }
-
-    fn agy(model: &str) -> ModelRef {
-        ModelRef::new(secondary::SECONDARY_PROVIDER, model)
-    }
-
-    fn parked(model: ModelRef, fallbacks: Vec<ModelRef>) -> CreateAgentSpec {
-        CreateAgentSpec {
-            model: Some(model),
-            fallbacks,
-            config: Some(AgentConfig {
-                effort: Some(Effort::Low),
-                ..Default::default()
-            }),
-            start: false,
-            ..Default::default()
-        }
-    }
-
-    #[tokio::test]
-    async fn an_agent_created_during_detection_moves_to_its_original_before_a_turn() {
-        let (runtime, _dir) = runtime(false).await;
-        let spec = parked(agy("claude-opus-5-5"), vec![agy("claude-sonnet-5-5")]);
-        let (agent, _) = runtime.create_agent(spec, Actor::user()).expect("created");
-        assert_eq!(agent.model, agy("claude-opus-5-5"), "nothing is known yet");
-        runtime
-            .engines
-            .finish_with(EngineKind::CLAUDE_CODE, Arc::new(ClaudeCode));
-        route_before_turn(&runtime, agent.clone()).expect("routed");
-        let stored = runtime.store.agent(agent.id).unwrap().expect("stored");
-        assert_eq!(
-            stored.model,
-            ModelRef::new("claude-code", "claude-opus-5-5")
-        );
-        assert_eq!(
-            stored.fallbacks,
-            vec![ModelRef::new("claude-code", "claude-sonnet-5-5")]
-        );
-        runtime.shutdown().await;
-    }
-
-    #[tokio::test]
-    async fn a_primary_with_an_engine_session_keeps_its_route() {
-        let (runtime, _dir) = runtime(false).await;
-        let spec = parked(agy("claude-opus-5-5"), vec![agy("claude-sonnet-5-5")]);
-        let (mut agent, _) = runtime.create_agent(spec, Actor::user()).expect("created");
-        agent.engine_session = Some("agy-session".into());
-        runtime
-            .apply(Commit::new().mutate(Mutation::UpsertAgent(agent.clone())))
-            .expect("session stored");
-        runtime
-            .engines
-            .finish_with(EngineKind::CLAUDE_CODE, Arc::new(ClaudeCode));
-        let routed = route_before_turn(&runtime, agent).expect("routed");
-        assert_eq!(
-            routed.model,
-            agy("claude-opus-5-5"),
-            "no handoff mid-conversation"
-        );
-        assert_eq!(
-            routed.fallbacks,
-            vec![ModelRef::new("claude-code", "claude-sonnet-5-5")]
-        );
-        runtime.shutdown().await;
-    }
-
-    #[tokio::test]
-    async fn a_signed_in_api_original_takes_primary_and_fallback_routes() {
-        let (runtime, _dir) = runtime(true).await;
-        runtime
-            .engines
-            .finish_with(EngineKind::CODEX, Arc::new(ClaudeCode));
-        assert_eq!(
-            runtime.prefer_original(agy("claude-opus-5-5")),
-            agy("claude-opus-5-5"),
-            "a sign-in counts once it has been read"
-        );
+    let runtime = runtime.clone();
+    Some(tokio::spawn(async move {
         runtime.refresh_signed_in_originals().await;
-        let (model, fallbacks) =
-            runtime.preferred_chain(agy("claude-opus-5-5"), vec![agy("claude-sonnet-5-5")]);
-        assert_eq!(model, ModelRef::new("anthropic", "claude-opus-5-5"));
-        assert_eq!(
-            fallbacks,
-            vec![ModelRef::new("anthropic", "claude-sonnet-5-5")]
-        );
-        // Under a subscription primary, an API fallback would move the bill.
-        let (model, fallbacks) =
-            runtime.preferred_chain(agy("gemini-4-neon"), vec![agy("claude-sonnet-5-5")]);
-        assert_eq!(model, agy("gemini-4-neon"));
-        assert_eq!(fallbacks, vec![agy("claude-sonnet-5-5")]);
-        runtime.shutdown().await;
-    }
-
-    #[tokio::test]
-    async fn the_original_engine_outranks_a_signed_in_api() {
-        let (runtime, _dir) = runtime(true).await;
-        runtime
-            .engines
-            .finish_with(EngineKind::CLAUDE_CODE, Arc::new(ClaudeCode));
-        runtime.refresh_signed_in_originals().await;
-        assert_eq!(
-            runtime.prefer_original(agy("claude-opus-5-5")),
-            ModelRef::new("claude-code", "claude-opus-5-5")
-        );
-        assert_eq!(
-            runtime.prefer_original(agy("gemini-4-neon")),
-            agy("gemini-4-neon"),
-            "no original serves Gemini"
-        );
-        runtime.shutdown().await;
-    }
+        runtime.notify.notify_one();
+    }))
 }
+
+#[cfg(test)]
+mod tests;
