@@ -133,6 +133,71 @@ async fn direct_user_question_requires_visible_reply_before_waiting() {
     );
 }
 
+/// Waiting on your own task (or own messages) can never end: it is refused at
+/// once, while a child's task in the same call shape still waits.
+#[tokio::test]
+async fn wait_for_refuses_the_callers_own_task_but_not_a_childs() {
+    let (mut harness, _dir) = ComposeHarness::new().await;
+    let me = harness.ctx.agent.id;
+    let own = harness
+        .runtime
+        .create_task(
+            crate::CreateTaskSpec {
+                objective: "my own work".into(),
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .expect("own task");
+    harness.ctx.agent.current_task = Some(own.id);
+    let (_child, child_task) = harness
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                role: "worker".into(),
+                parent: Some(me),
+                objective: Some("child work".into()),
+                config: Some(aether_core::agent::AgentConfig {
+                    effort: Some(aether_core::model::Effort::Low),
+                    ..Default::default()
+                }),
+                start: false,
+                ..Default::default()
+            },
+            Actor::agent(me),
+        )
+        .expect("child");
+    let child_task = child_task.expect("child task").id;
+    let validate = |condition: &WaitCondition| {
+        validate_wait(&harness.runtime, &harness.ctx, condition, false).expect("validate")
+    };
+
+    let refusal =
+        validate(&WaitCondition::any_task([child_task, own.id])).expect("own task must be refused");
+    assert!(refusal.is_error);
+    assert!(
+        refusal.content.contains(&own.id.to_string()),
+        "{}",
+        refusal.content
+    );
+    assert!(refusal.content.contains("cannot wait for your own task"));
+    assert!(refusal.content.contains("complete_task"));
+
+    assert!(
+        validate(&WaitCondition::all_tasks([child_task])).is_none(),
+        "a child's task still waits"
+    );
+
+    let refusal = validate(&WaitCondition::MessageFrom { agent: me })
+        .expect("message_from self must be refused");
+    assert!(refusal.is_error);
+    assert!(
+        refusal.content.contains("message from yourself"),
+        "{}",
+        refusal.content
+    );
+}
+
 /// Stored parent links are data, not a guarantee: a chain deeper than the
 /// bound, a cycle or a dangling link must all end the walk.
 #[test]
