@@ -122,6 +122,20 @@ pub enum DetectError {
         capability: String,
         detail: String,
     },
+    /// A probe beyond the version check (`agy models`) exited non-zero for a
+    /// reason not recognised; `detail` is the CLI's own words.
+    ProbeFailed {
+        program: String,
+        probe: String,
+        detail: String,
+    },
+    /// The CLI works but has no signed-in account; `sign_in` is the command
+    /// that signs in, `detail` the CLI's own words.
+    SignedOut {
+        program: String,
+        sign_in: String,
+        detail: String,
+    },
 }
 
 impl std::fmt::Display for DetectError {
@@ -167,6 +181,22 @@ impl std::fmt::Display for DetectError {
             } => write!(
                 f,
                 "{program} does not support {capability} ({detail}); upgrade {program}"
+            ),
+            Self::ProbeFailed {
+                program,
+                probe,
+                detail,
+            } => write!(
+                f,
+                "`{program} {probe}` failed ({detail}); check that it works from a terminal, then retry"
+            ),
+            Self::SignedOut {
+                program,
+                sign_in,
+                detail,
+            } => write!(
+                f,
+                "{program} is not signed in ({detail}); run `{sign_in}` once to sign in"
             ),
         }
     }

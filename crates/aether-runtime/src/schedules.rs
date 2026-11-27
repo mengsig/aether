@@ -23,6 +23,7 @@ pub use aether_core::schedule::{CreateScheduleSpec, ScheduleAction};
 
 mod approval;
 mod child;
+pub(crate) use child::routed_request;
 mod execution;
 use execution::spawn_request;
 pub(crate) use execution::tick;

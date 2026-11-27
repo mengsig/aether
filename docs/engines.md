@@ -297,7 +297,9 @@ Each engine run gets the agent's own temp directory (see
 Engine id `antigravity`. It needs `agy` 1.5.18 or newer, signed in: run `agy`
 once to sign in. Detection runs `agy --version` and `agy models`; a listing
 that fails is the signed-out state. Aether never reads agy's credentials or
-keyring.
+keyring. agy is probed once Claude Code and Codex are detected, so a slow
+`agy models` never holds up the daemon's start; a turn on an Antigravity
+model waits for that probe.
 
 Models are `antigravity/gemini-4-hydrogen`, `gemini-4-neon`,
 `gemini-4-carbon`, `gemini-4-argon` and `gemini-3.8-flash`. Aether's effort
@@ -335,11 +337,31 @@ refused, because agy has no network sandbox.
 agy also serves other vendors' models, exposed as
 `antigravity/claude-opus-5-5`, `antigravity/claude-sonnet-5-5` and
 `antigravity/gpt-oss-120b`. When an agent is created on one of them, or names
-one as a fallback, Aether uses the vendor's own engine instead whenever that
-engine is usable (`claude-code` for Claude models, `codex` for GPT models that
-Codex lists). The Antigravity route is kept only when it is not, for example
-on a machine signed in to Antigravity alone. API-key providers are not
-consulted for this choice.
+one as a fallback, Aether uses the vendor's own provider instead whenever it
+is usable: first its engine (`claude-code` for Claude models, `codex` for GPT
+models that Codex lists), then its API provider (`anthropic` or `openai`)
+when that is signed in. A fallback stays on agy when the API route would put
+an agent that runs on a subscription onto a separate bill. The Antigravity
+route is kept only when no original is usable, for example on a machine
+signed in to Antigravity alone.
+
+The choice is made at creation and again before each turn, so an agent
+created before an original was usable moves to it before its first agy
+session. Before such a turn the daemon reads the API sign-ins again when its
+last read is more than 2 seconds old, because `aether login` and
+`aether logout` run outside the daemon. An agent that already holds an agy
+session keeps its primary model, so its conversation is not handed off
+mid-flight; its fallbacks still move.
+
+A delegated child's chain is routed once, when it is delegated, and the
+parent's delegation policy admits the route the child will run. If the policy
+admits only the requested agy model, the child stays on agy. The child is not
+routed again later, so nothing moves it outside what the policy admitted.
+An agent's spawn schedule routes its child the same way: when the schedule is
+created, and again for each occurrence when it fires, after reading the API
+sign-ins again when the last read is more than 2 seconds old. The engine
+checks at creation and at firing are for that route, not for the model the
+template names.
 
 The opt-in live test runs one tiny `gemini-3.8-flash` low turn:
 `cargo test -p aether-engine antigravity_live -- --ignored`.

@@ -25,8 +25,10 @@ async fn refreshing_disabled_probes_returns_provider_status_without_spending() {
             .count()
     );
     for provider in providers {
-        let engine_provider =
-            matches!(provider["provider"].as_str(), Some("codex" | "claude-code"));
+        let engine_provider = matches!(
+            provider["provider"].as_str(),
+            Some("codex" | "claude-code" | "antigravity")
+        );
         assert_eq!(
             provider["status"],
             if engine_provider {

@@ -587,16 +587,33 @@ async fn detection_reads_version_and_signed_in_listing() {
     let signed_out = tempfile::tempdir().unwrap();
     crate::test_script::write(
         &signed_out.path().join("agy"),
-        "#!/bin/sh\n[ \"$1\" = --version ] && { echo 1.5.18; exit 0; }\necho 'Please sign in' >&2\nexit 1\n",
+        "#!/bin/sh\n[ \"$1\" = --version ] && { echo 1.5.18; exit 0; }\necho 'Fetching available models...'\necho 'Error: Please sign in.' >&2\nexit 1\n",
     );
     let error = AntigravityEngine::detect_verbose_on(Some(signed_out.path()))
         .await
         .unwrap_err();
-    assert!(
-        matches!(error, DetectError::MissingCapability { .. }),
-        "{error}"
+    assert!(matches!(error, DetectError::SignedOut { .. }), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "agy is not signed in (Error: Please sign in.); run `agy` once to sign in"
     );
-    assert!(error.to_string().contains("signed-in"));
+}
+
+#[tokio::test]
+async fn detection_keeps_a_listing_failure_that_is_not_a_sign_in() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::test_script::write(
+        &dir.path().join("agy"),
+        "#!/bin/sh\n[ \"$1\" = --version ] && { echo 1.5.18; exit 0; }\necho 'Fetching available models...'\necho 'Error: network unreachable' >&2\nexit 1\n",
+    );
+    let error = AntigravityEngine::detect_verbose_on(Some(dir.path()))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, DetectError::ProbeFailed { .. }), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "`agy models` failed (Error: network unreachable); check that it works from a terminal, then retry"
+    );
 }
 
 /// One real turn on the cheapest model. Opt in with

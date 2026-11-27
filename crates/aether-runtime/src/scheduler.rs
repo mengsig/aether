@@ -61,6 +61,7 @@ async fn run(runtime: Arc<Runtime>) {
         _ = runtime.engines.ready() => {}
     }
     let mut reprobing: Option<tokio::task::JoinHandle<()>> = None;
+    let mut reading_sign_ins: Option<tokio::task::JoinHandle<()>> = None;
     loop {
         tokio::select! {
             _ = runtime.notify.notified() => {}
@@ -73,6 +74,12 @@ async fn run(runtime: Arc<Runtime>) {
         // One at a time: a probe may outlast several passes.
         if reprobing.as_ref().is_none_or(|probe| probe.is_finished()) {
             reprobing = reprobe_wanted_engines(&runtime);
+        }
+        if reading_sign_ins
+            .as_ref()
+            .is_none_or(|read| read.is_finished())
+        {
+            reading_sign_ins = crate::secondary_routes::read_wanted_sign_ins(&runtime);
         }
     }
 }
@@ -296,6 +303,9 @@ fn prepare_agent(
     agent: Agent,
     canaries: &std::collections::HashMap<String, aether_core::id::AgentId>,
 ) -> Result<Option<Runnable>> {
+    let Some(agent) = crate::secondary_routes::route_before_turn(runtime, agent)? else {
+        return Ok(None);
+    };
     let woken = match &agent.status {
         // Limit 1 outranks the gate: a person's words reach an agent the
         // scheduler is holding back, and the gate re-applies after the

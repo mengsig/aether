@@ -58,8 +58,8 @@ impl AntigravityEngine {
     }
 
     /// Find `agy`, read its version, and confirm it is signed in by listing
-    /// its models. Credentials are never read: a listing that fails is the
-    /// signed-out state.
+    /// its models. Credentials are never read: a listing that fails for want
+    /// of a sign-in is the signed-out state.
     pub async fn detect_verbose() -> Result<Self, DetectError> {
         Self::detect_verbose_on(None).await
     }
@@ -73,8 +73,9 @@ impl AntigravityEngine {
                 minimum: MIN_VERSION,
             });
         }
-        let listing =
-            detect::probe_output("agy", &["models"], "a signed-in Google account", path).await?;
+        let listing = detect::probe_output("agy", &["models"], "a signed-in Google account", path)
+            .await
+            .map_err(listing_failed)?;
         let variants = parse_model_list(&listing);
         if variants.is_empty() {
             return Err(DetectError::MissingCapability {
@@ -133,6 +134,58 @@ impl AntigravityEngine {
             .unwrap_or(&listed[0]);
         format!("{family}-{}", chosen.0)
     }
+}
+
+/// Why `agy models` failed: signed out when agy's words say so, else a
+/// neutral failure. agy's progress lines ("Fetching available models...") are dropped.
+fn listing_failed(error: DetectError) -> DetectError {
+    let DetectError::MissingCapability {
+        program, detail, ..
+    } = error
+    else {
+        return error;
+    };
+    assert_eq!(program, "agy", "only agy's listing is read here");
+    let words: Vec<&str> = detail
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.ends_with("...") && !line.ends_with('…'))
+        .collect();
+    let detail = if words.is_empty() {
+        "it printed nothing".to_owned()
+    } else {
+        words.join(" ")
+    };
+    debug_assert!(!detail.is_empty());
+    if !names_a_sign_in_failure(&detail) {
+        return DetectError::ProbeFailed {
+            program,
+            probe: "models".into(),
+            detail,
+        };
+    }
+    DetectError::SignedOut {
+        program,
+        sign_in: "agy".into(),
+        detail,
+    }
+}
+
+/// Whether a CLI's error text says it has no usable account.
+fn names_a_sign_in_failure(detail: &str) -> bool {
+    const SIGNS: [&str; 9] = [
+        "sign in",
+        "sign-in",
+        "signed in",
+        "signed out",
+        "log in",
+        "login",
+        "logged in",
+        "authenticat",
+        "unauthorized",
+    ];
+    let detail = detail.to_lowercase();
+    SIGNS.iter().any(|sign| detail.contains(sign))
 }
 
 /// The model ids in `agy models` output: one `id<TAB>name` per line, after

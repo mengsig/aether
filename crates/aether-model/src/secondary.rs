@@ -21,6 +21,14 @@ fn originals(model: &str) -> &'static [&'static str] {
     }
 }
 
+/// Every provider that serves some secondary model first-hand.
+pub const ORIGINAL_PROVIDERS: [&str; 4] = ["claude-code", "anthropic", "codex", "openai"];
+
+/// Whether `model` is a secondary route that some original provider could serve.
+pub fn has_original(model: &ModelRef) -> bool {
+    model.provider == SECONDARY_PROVIDER && !originals(&model.model).is_empty()
+}
+
 /// The first-hand route for a secondary `model`: the first original provider
 /// that `usable` accepts and that lists the same model id. `None` keeps `model`.
 pub fn original_route(
@@ -79,6 +87,27 @@ mod tests {
         assert_eq!(route("gemini-4-neon", &["claude-code", "codex"]), None);
         let direct = ModelRef::new("claude-code", "claude-opus-5-5");
         assert!(original_route(&Registry::builtin(), &direct, |_| true).is_none());
+    }
+
+    #[test]
+    fn every_original_is_listed_once() {
+        for model in ["claude-opus-5-5", "gpt-6.2-sol"] {
+            for provider in originals(model) {
+                assert!(ORIGINAL_PROVIDERS.contains(provider), "{provider}");
+            }
+        }
+        assert!(has_original(&ModelRef::new(
+            SECONDARY_PROVIDER,
+            "claude-opus-5-5"
+        )));
+        assert!(!has_original(&ModelRef::new(
+            SECONDARY_PROVIDER,
+            "gemini-4-neon"
+        )));
+        assert!(!has_original(&ModelRef::new(
+            "claude-code",
+            "claude-opus-5-5"
+        )));
     }
 
     #[test]
