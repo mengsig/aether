@@ -17,16 +17,18 @@ native and old arms come from the full run `rel-1-4-4`. Their binaries (the
 native CLIs and the published v1.4.3) did not change. The gate below is the
 harness's own `report` over the two runs combined (`rel-1-4-4-final`).
 
-The final code head is `f366f0f4a`, one review fix after `5250b1c15`. It
-changes only how `antigravity/...` chains are routed: for delegated children
-and on API sign-in changes. An agent or child that names no `antigravity/...`
-model takes the same path as on `5250b1c15`, and no bench arm uses one, so
-the bench result stands for it (see
+The final code head is `34ed8ec4b`, two review fixes after `5250b1c15`.
+`f366f0f4a` changes only how `antigravity/...` chains are routed: for
+delegated children and on API sign-in changes. `34ed8ec4b` changes only an
+agent's spawn schedules, which no bench arm creates. An agent or child that
+names no `antigravity/...` model takes the same path as on `5250b1c15`, and
+no bench arm uses one, so the bench result stands for it (see
 [Could 1.4.3..HEAD touch Claude Code or Codex runs?](#could-143head-touch-claude-code-or-codex-runs)).
 
 **CI: passed.** `CARGO_BUILD_JOBS=6 make ci` passed on the final head
-`f366f0f4a` (tree `7663ce652d57`): `CI passed: lint test binary`; nextest
-6906 tests, 6906 passed, 48 skipped, no flaky test. On `5250b1c15` it also
+`34ed8ec4b` (tree `77a079211975`): `CI passed: lint test binary`; nextest
+6911 tests, 6911 passed, 48 skipped, no flaky test. On `f366f0f4a` it passed
+with 6906 of 6906 and no flaky test. On `5250b1c15` it also
 passed, with 2 flaky tests that then passed 5 of 5 isolated reruns each (see
 [make ci](#make-ci)).
 
@@ -130,6 +132,11 @@ Not in a way that can change what the model does:
   before policy admission, and reads the API sign-ins again before routing a
   parked agent's `antigravity/...` chain. Both steps return at once for a
   chain with no `antigravity/...` model, before reading anything.
+- **Spawn schedule fix (34ed8ec4b)** changes only an agent's spawn schedules:
+  their child is routed once under the creator's policy, the engine checks
+  use that route, and an occurrence of an `antigravity/...` template waits
+  for fresh sign-ins. The parked-agent step only moved into a shared helper,
+  with the same behaviour. No bench arm creates a schedule.
 - **Startup ordering (ebdf825e8, 63d005115)** changes when antigravity is
   probed: after Claude Code and Codex are detected, not alongside them.
   Detection of those two engines is unchanged. The startup probes now also
@@ -178,6 +185,12 @@ unchanged path is about the size of the warning.
     and nothing routes a child again later. Before routing a parked agent's
     secondary chain, the scheduler reads the API sign-ins again when the last
     read is over 2 s old, so `aether login` or `aether logout` counts.
+  - 34ed8ec4b: an agent's spawn schedule routes its child with the same
+    policy-aware step as `delegate`, and checks the engine of that route,
+    not the template's raw model, at creation, in the tool's check and at each
+    firing. An occurrence of an `antigravity/...` template waits while the
+    API sign-ins were last read over 2 s ago, so a login or logout between
+    creation and firing counts.
 
 ## How it was run
 
@@ -259,11 +272,14 @@ trials at the default `BUDGET=20` and spent USD 2.70.
 
 ## make ci
 
-`CARGO_BUILD_JOBS=6 make ci` on the final head `f366f0f4a` (tree
-`7663ce652d57816eb3f195a9ee71442036e6d3e5`): **passed**, `CI passed: lint
-test binary`. Nextest ran 6906 tests: 6906 passed, 48 skipped, and no test
+`CARGO_BUILD_JOBS=6 make ci` on the final head `34ed8ec4b` (tree
+`77a0792119759b914327c7fd26f8540033e947cf`): **passed**, `CI passed: lint
+test binary`. Nextest ran 6911 tests: 6911 passed, 48 skipped, and no test
 needed its retry. The release build, e2e, budgets, process measurements,
 install check and TUI captures passed.
+
+Before it, `CARGO_BUILD_JOBS=6 make ci` on `f366f0f4a` (tree
+`7663ce652d57`): **passed**, 6906 tests, 6906 passed, 48 skipped, no flaky test.
 
 Before it, `CARGO_BUILD_JOBS=6 make ci` on `5250b1c15` (tree `0e6cee9e99da`): **passed**.
 Nextest ran 6901 tests: 6901 passed, 48 skipped. Two were flaky and passed on
