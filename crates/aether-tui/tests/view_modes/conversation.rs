@@ -179,7 +179,7 @@ fn assert_parity(enter: fn(&mut App)) {
     assert_eq!(drawn_entries(&fresh), expected, "fresh launch");
     let (live, fresh) = (render_to(&live, 100, 30), render_to(&fresh, 100, 30));
     assert_eq!(live, fresh);
-    for hidden in ["Trigger from archon", "Progress", "qi_1"] {
+    for hidden in ["Trigger · archon", "Progress", "qi_1"] {
         assert!(!fresh.contains(hidden), "{hidden}: {fresh}");
     }
 }
@@ -202,7 +202,7 @@ fn the_default_view_still_draws_the_trigger_and_the_plain_note() {
     let (fresh, _) = fresh_app();
     let screen = render_to(&fresh, 100, 30);
     for shown in [
-        "Trigger from archon",
+        "Trigger · archon",
         "Progress",
         "Item shipped",
         "ship the fix",
