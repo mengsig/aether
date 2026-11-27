@@ -22,7 +22,7 @@ TypeScript clients are 1.4.4.
   variant.
   - *Enabling it:* install `agy` 1.5.18 or newer and run `agy` once to sign
     in; `aether doctor` then reports the engine, or says that agy is not
-    signed in. Aether never reads agy's credentials or keyring and never
+    signed in, or shows agy's own error when `agy models` fails otherwise. Aether never reads agy's credentials or keyring and never
     edits its global config. agy is probed after Claude Code and Codex, so
     it never delays the daemon's start.
   - *Opt-in:* the Google models carry no tier and no price, so they are never
@@ -33,8 +33,11 @@ TypeScript clients are 1.4.4.
     (`antigravity/claude-opus-5-5`, `antigravity/claude-sonnet-5-5`,
     `antigravity/gpt-oss-120b`) are secondary routes. When an agent is
     created on one, or names one as a fallback, Aether uses the vendor's own
-    engine (`claude-code` or `codex`) whenever it is usable, and keeps the
-    route through agy only when it is not.
+    provider whenever it is usable: its engine (`claude-code` or `codex`)
+    first, else its signed-in API (`anthropic` or `openai`). It keeps the
+    route through agy only when neither is usable, or when the API would put
+    a fallback of a subscription agent on a separate bill. An agent that has
+    not started an agy session yet is moved to the original before its turn.
   - Antigravity turns take no mid-turn messages and have no native
     compaction, and a scope that denies network access is refused, because
     agy has no network sandbox. See [docs/engines.md](docs/engines.md).
