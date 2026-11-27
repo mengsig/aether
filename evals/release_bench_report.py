@@ -194,16 +194,29 @@ def _load_lines(records, arms, load_control):
     return lines
 
 
-def _archon_sections(records, models, settings, expected, seed, gaps):
-    """The Archon gate (archon-new vs archon-old) and parity (archon-new vs new); ([lines], verdict, gates, parities)."""
+OFF_TARGET_NOTE = " (gate passed on an off-target set)"
+
+
+def on_target_verdict(verdict, on_target):
+    """A product's release verdict: on an off-target set a PASS is INCONCLUSIVE, a FAIL still counts."""
+    assert verdict in (None, "PASS", "FAIL", "INCONCLUSIVE"), f"unknown release verdict {verdict}"
+    assert isinstance(on_target, bool), "on_target is the set's acceptance flag"
+    return "INCONCLUSIVE" if verdict == "PASS" and not on_target else verdict
+
+
+def _archon_sections(records, models, settings, expected, seed, gaps, on_target=True):
+    """The Archon gate (archon-new vs archon-old) and parity (archon-new vs new); ([lines], verdict, gates,
+    parities), the verdict as the gate gave it, before an off-target set downgrades its PASS."""
     planned = set(expected["arms"])
     gates = gate_verdicts(records, models, settings, expected, seed, "archon-old", "archon-new")
     parities = {model: parity(records, model) for model in models
                 if {f"{model}/new", f"{model}/archon-new"} <= planned}
-    verdict = archon_verdict(gates, parities, gaps)
-    if verdict is None:
+    passed = archon_verdict(gates, parities, gaps)
+    if passed is None:
         return [], None, gates, parities
-    lines = [f"## Archon release gate: {verdict}", "",
+    verdict = on_target_verdict(passed, on_target)
+    note = OFF_TARGET_NOTE if verdict != passed else ""
+    lines = [f"## Archon release gate: {verdict}{note}", "",
              "Archon passes when archon-new is no worse than archon-old (the same gate as Aether's) "
              "and, on every tier, archon-new passes at least as often as plain Aether's new.", "",
              "### Parity (archon-new vs new)", ""]
@@ -211,23 +224,26 @@ def _archon_sections(records, models, settings, expected, seed, gaps):
     lines.append("")
     for model, gate_result in gates.items():
         lines += _gate_lines(model, gate_result, "archon candidate vs archon old") + [""]
-    return lines, verdict, gates, parities
+    return lines, passed, gates, parities
 
 
-def render(records, header, models, settings, expected, seed=0, load_control=None):
+def render(records, header, models, settings, expected, seed=0, load_control=None, on_target=True):
     """The full report as {"text", "overall", "products", "verdicts", "archon_verdicts", "parity", "gaps",
-    "digest"}; `header` is a list of "- key: value" provenance lines, `expected` the planned matrix."""
+    "digest"}; `header` is a list of "- key: value" provenance lines, `expected` the planned matrix.
+    On an off-target set (`on_target` False) no product and so no run can PASS."""
     assert records, "a report needs at least one trial"
     arms = sorted(expected["arms"])
     verdicts = gate_verdicts(records, models, settings, expected, seed)
     gaps = matrix_gaps(records, expected)
-    aether = overall_verdict(verdicts, gaps) if verdicts else None
-    archon_lines, archon, archon_gates, parities = _archon_sections(records, models, settings, expected, seed, gaps)
-    products = {"aether": aether, "archon": archon}
-    overall = combined_verdict(products)
+    archon_lines, archon_passed, archon_gates, parities = _archon_sections(records, models, settings, expected,
+                                                                           seed, gaps, on_target)
+    gated = {"aether": overall_verdict(verdicts, gaps) if verdicts else None, "archon": archon_passed}
+    products = {name: on_target_verdict(verdict, on_target) for name, verdict in gated.items()}
+    overall, aether = combined_verdict(products), products["aether"]
+    title_note = OFF_TARGET_NOTE if products != gated and overall == "INCONCLUSIVE" else ""
     digest = failure_digest(records, arms)
     planned = len(expected["tasks"]) * expected["repeats"]
-    lines = [f"# Release bench: {overall}", "",
+    lines = [f"# Release bench: {overall}{title_note}", "",
              *[f"- {name.capitalize()} release: **{verdict}**" for name, verdict in products.items() if verdict],
              *header, "", "## Arms", "",
              *_arm_table([arm_summary(records, arm, seed) for arm in arms], planned), "",
@@ -235,7 +251,8 @@ def render(records, header, models, settings, expected, seed=0, load_control=Non
     if gaps:
         lines += ["The planned matrix did not finish, so the run cannot pass:", "",
                   *[f"- {gap}" for gap in gaps], ""]
-    lines += ["## Aether release gate" + (f": {aether}" if aether else ""), ""]
+    aether_note = OFF_TARGET_NOTE if aether != gated["aether"] else ""
+    lines += ["## Aether release gate" + (f": {aether}{aether_note}" if aether else ""), ""]
     if not verdicts:
         lines += ["No model tier ran both an old and a candidate arm, so there is no verdict.", ""]
     for model, verdict in verdicts.items():

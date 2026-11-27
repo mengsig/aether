@@ -102,6 +102,8 @@ Caps per trial:
   the root's session in its first line, so the guard follows those logs too,
   and the trial's final cost adds them to the root's. A native Codex trial
   whose root session log cannot be found stays unpriced.
+  When a trial ends, any of its processes still alive (a daemon whose stop
+  failed, say) is stopped the same way and listed in `leftover_pids`.
   A stopped trial counts as a failure of its arm. Unknown spend is not taken
   as zero: when the guard has no usage to read for 30 s (Codex's session log
   cannot be found, say, or the store cannot be read), it stops the trial too.
@@ -349,6 +351,8 @@ only an accepted set, unless `ACCEPT_OFF_TARGET=1`. A set frozen that way
 records `accepted: false` in its manifest, and `make bench-release` refuses it
 without `ALLOW_OFF_TARGET=1`. Even then, the overall verdict is at most
 INCONCLUSIVE, so an off-target set can show a FAIL but never pass a release.
+The same holds per product: on such a set, an Aether or Archon gate that
+passes reads INCONCLUSIVE in `report.md` and in `verdict.json`.
 
 Two options save a full recalibration (pass them through `EXTRA`):
 

@@ -2,6 +2,8 @@
 parallel scheduler. No test calls a model."""
 import contextlib
 import io
+import os
+import subprocess
 import tempfile
 import threading
 import time
@@ -25,6 +27,7 @@ from release_bench_arms import ARCHON_DEFAULTS, build_arm
 from release_bench_calibrate import SELECTION_DEFAULTS, release_minutes, task_rates
 from release_bench_pool import Gates, run_pool, schedule
 from release_bench_report import archon_verdict, combined_verdict, render
+from release_bench_spend import MARKER
 
 MODELS = ("haiku", "luna")
 
@@ -111,9 +114,9 @@ ALL_HAIKU = ("haiku/native", "haiku/old", "haiku/new", "haiku/archon-old", "haik
 
 
 class ProductVerdictTests(unittest.TestCase):
-    def _render(self, outcomes, arms=ALL_HAIKU):
+    def _render(self, outcomes, arms=ALL_HAIKU, on_target=True):
         records = matrix(outcomes)
-        return render(records, ["- header"], MODELS, {}, plan(arms))
+        return render(records, ["- header"], MODELS, {}, plan(arms), on_target=on_target)
 
     def test_one_run_judges_both_products(self):
         same = lambda i: i % 2 == 0  # noqa: E731
@@ -144,6 +147,24 @@ class ProductVerdictTests(unittest.TestCase):
         report = self._render({arm: (lambda i: True) for arm in arms}, arms)
         self.assertEqual(report["products"], {"aether": "PASS", "archon": None})
         self.assertNotIn("Archon release gate", report["text"])
+
+    def test_an_off_target_set_passes_no_product(self):
+        same = lambda i: i % 2 == 0  # noqa: E731
+        report = self._render({arm: same for arm in ALL_HAIKU}, on_target=False)
+        self.assertEqual(report["products"], {"aether": "INCONCLUSIVE", "archon": "INCONCLUSIVE"})
+        self.assertEqual(report["overall"], "INCONCLUSIVE")
+        self.assertTrue(report["text"].startswith("# Release bench: INCONCLUSIVE (gate passed on an off-target set)"))
+        self.assertNotIn("release: **PASS**", report["text"])
+        self.assertIn("## Archon release gate: INCONCLUSIVE (gate passed", report["text"])
+
+    def test_an_off_target_set_still_shows_a_failure_and_passes_nothing_else(self):
+        outcomes = {arm: (lambda i: i < 12) for arm in ALL_HAIKU}
+        outcomes["haiku/archon-old"] = outcomes["haiku/archon-new"] = lambda i: i < 11
+        report = self._render(outcomes, on_target=False)
+        self.assertEqual(report["products"], {"aether": "INCONCLUSIVE", "archon": "FAIL"})
+        self.assertEqual(report["overall"], "FAIL")
+        self.assertTrue(report["text"].startswith("# Release bench: FAIL\n"))
+        self.assertIn("- Aether release: **INCONCLUSIVE**", report["text"])
 
     def test_parity_alone_cannot_pass_an_archon_release(self):
         gates, met = {}, {"haiku": {"status": "MET"}}
@@ -212,6 +233,31 @@ class SchedulerTests(unittest.TestCase):
         lines = release_bench._speed_lines(records, [{"wall_seconds": 20, "trials_run": 6, "jobs": 3}])
         self.assertIn("3.00x", lines[0])
         self.assertEqual(release_bench._speed_lines(records, [{"wall_seconds": 20, "trials_run": 5, "jobs": 3}]), [])
+
+
+class LeftoverProcessTests(unittest.TestCase):
+    def test_a_process_that_outlives_its_harness_is_stopped_and_recorded(self):
+        marker = f"test-leftover-{time.monotonic_ns()}"
+        started = []
+
+        def leave_a_daemon(*args):
+            started.append(subprocess.Popen(["sleep", "30"], env={**os.environ, MARKER: marker}))
+
+        result = {}
+        with unittest.mock.patch.object(release_bench_trial, "_guarded_solve", leave_a_daemon):
+            release_bench_trial._solve_in({}, "", "", "", {}, result, marker, {})
+        try:
+            self.assertEqual(result["leftover_pids"], [started[0].pid])
+            self.assertIsNotNone(started[0].wait(timeout=10), "the leftover process was stopped")
+        finally:
+            started[0].kill()
+            started[0].wait()
+
+    def test_a_clean_trial_records_no_leftover(self):
+        result = {}
+        with unittest.mock.patch.object(release_bench_trial, "_guarded_solve", lambda *args: None):
+            release_bench_trial._solve_in({}, "", "", "", {}, result, f"test-clean-{time.monotonic_ns()}", {})
+        self.assertNotIn("leftover_pids", result)
 
 
 class ArchonSideTests(unittest.TestCase):

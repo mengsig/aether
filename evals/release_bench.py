@@ -496,12 +496,9 @@ def _write_report(run_dir, config, records, stop_reason, started=None):
         raise SystemExit("no trial finished; nothing to report")
     expected = {"arms": config["arms"], "tasks": config["set"]["task_ids"], "repeats": config["repeats"]}
     header = _header(config, records, stop_reason, started, read_invocations(str(run_dir)))
-    report = render(records, header, MODELS, config["gate"], expected, load_control=load_control(config))
+    report = render(records, header, MODELS, config["gate"], expected, load_control=load_control(config),
+                    on_target=bool(config["set"]["accepted"]))
     text, overall = report["text"], report["overall"]
-    if overall == "PASS" and not config["set"]["accepted"]:
-        overall = "INCONCLUSIVE"
-        text = text.replace("# Release bench: PASS",
-                            "# Release bench: INCONCLUSIVE (gate passed on an off-target set)", 1)
     (run_dir / "report.md").write_text(text)
     (run_dir / "failure-digest.md").write_text(digest_document(report["digest"], _digest_provenance(config)))
     save_json(str(run_dir / "verdict.json"), _verdict_json(report, overall, stop_reason))

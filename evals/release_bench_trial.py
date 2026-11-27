@@ -27,6 +27,7 @@ from release_bench_spend import (
     ClaudeStreamProbe,
     CodexRolloutProbe,
     SpendGuard,
+    stop_marked,
     price_of,
 )
 from release_bench_tasks import materialize
@@ -90,6 +91,16 @@ def _solve(arm, task_text, workspace, trial_dir, context, result, marker):
 
 
 def _solve_in(arm, task_text, workspace, trial_dir, context, result, marker, env):
+    try:
+        _guarded_solve(arm, task_text, workspace, trial_dir, context, result, marker, env)
+    finally:
+        # Whatever outlived its harness, such as a daemon a failed stop left behind, must not run unguarded.
+        leftover = stop_marked(marker)
+        if leftover:
+            result["leftover_pids"] = leftover
+
+
+def _guarded_solve(arm, task_text, workspace, trial_dir, context, result, marker, env):
     condition, timeout = arm["condition"], context["timeout"]
     with _guard(arm, trial_dir, context, marker) as guard:
         if arm["harness"] == "native":
