@@ -61,7 +61,8 @@ def _pool_options(parser, budget):
                         help=f"start no trial above this 1-minute load (default {load_max:g} on this host)")
     parser.add_argument("--mem-min-gb", type=float, default=2.0, help="start no trial below this free memory")
     parser.add_argument("--budget", type=float, default=budget, help="stop admitting trials at this spend (USD)")
-    parser.add_argument("--timeout", type=int, default=TRIAL_TIMEOUT_SECONDS, help="seconds per trial")
+    parser.add_argument("--timeout", type=int, help=f"seconds per trial (default: the set's own trial timeout, "
+                        f"else {TRIAL_TIMEOUT_SECONDS})")
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--run-id", help="resume or name a run (default: a new id)")
@@ -140,7 +141,7 @@ def _selection_flags(parser):
     defaults = SELECTION_DEFAULTS
     for name in ("min_size", "max_size", "min_repeats", "release_jobs", "max_release_minutes"):
         parser.add_argument("--" + name.replace("_", "-"), type=int, default=defaults[name])
-    for name in ("haiku_target", "luna_target", "haiku_tolerance"):
+    for name in ("haiku_target", "luna_target", "haiku_tolerance", "max_template_share"):
         parser.add_argument("--" + name.replace("_", "-"), type=float, default=defaults[name])
     parser.add_argument("--haiku-band", type=_band, default=defaults["haiku_band"],
                         help="eligible per-task Haiku pass rates on --select-harness, LOW,HIGH (default 0.2,0.8)")
@@ -184,9 +185,12 @@ def archon_sides(args):
 def selection_settings(args):
     """The calibration's selection and acceptance settings, from its flags."""
     keys = ("min_size", "max_size", "min_repeats", "release_jobs", "max_release_minutes", "haiku_target",
-            "luna_target", "haiku_tolerance", "haiku_band", "luna_band", "select_harness", "release_arms")
+            "luna_target", "haiku_tolerance", "max_template_share", "haiku_band", "luna_band", "select_harness",
+            "release_arms")
     settings = {**SELECTION_DEFAULTS, **{key: getattr(args, key) for key in keys}}
     assert settings["min_size"] <= settings["max_size"], "the set's size bounds are ordered"
+    if not 0 < settings["max_template_share"] <= 1:
+        raise SystemExit("--max-template-share is a fraction in (0, 1]")
     return settings
 
 
@@ -242,14 +246,20 @@ def _work_dir(work_root, run_dir):
     return str(path)
 
 
-def _config_check(run_dir, config):
-    """Pin a run's configuration; resuming with a different one is refused, not silently mixed."""
+def _config_check(run_dir, config, reselect=()):
+    """Pin a run's configuration; resuming with a different one is refused, not silently mixed.
+
+    Keys in `reselect` only choose among finished trials, so a resume may change them, and the
+    configuration then records the latest."""
     path = run_dir / "config.json"
     if path.exists():
         previous = json.loads(path.read_text())
-        if previous != json.loads(json.dumps(config, default=str)):
+        current = json.loads(json.dumps(config, default=str))
+        if {key: value for key, value in previous.items() if key not in reselect} != \
+                {key: value for key, value in current.items() if key not in reselect}:
             raise SystemExit(f"{run_dir} was started with a different configuration; use a new --run-id")
-        return
+        if previous == current:
+            return
     save_json(str(path), config)
 
 
@@ -423,6 +433,7 @@ def _versions(binaries, archons):
 def command_run(args):
     manifest, specs = load_set(args.set)
     accepted = _accepted(manifest, args)
+    args.timeout = trial_timeout(args.timeout, manifest)
     specs = sorted(specs, key=lambda spec: spec["id"])[:args.limit] if args.limit else specs
     try:
         arm_keys = parse_arms(args.arms, archon_sides(args))
@@ -540,6 +551,15 @@ def recorded_selection(config):
     return settings
 
 
+def trial_timeout(requested, manifest=None):
+    """Seconds per trial: the one asked for, else the frozen set's own, else the bench default."""
+    timeout = requested or (manifest or {}).get("trial_timeout_seconds") or TRIAL_TIMEOUT_SECONDS
+    assert type(timeout) is int, "a trial timeout is whole seconds"
+    if timeout < 60:
+        raise SystemExit(f"a trial timeout of {timeout}s is too short for any harness to start")
+    return timeout
+
+
 def _verified_candidates(args):
     templates = args.templates.split(",") if args.templates else None
     specs = families.candidates(args.count, args.first_seed, templates)
@@ -564,6 +584,7 @@ def carried(path, recalibrated):
 
 
 def command_calibrate(args):
+    args.timeout = trial_timeout(args.timeout)
     specs = _verified_candidates(args)
     log(f"{len(specs)} candidates verified")
     templates = set(args.templates.split(",")) if args.templates else None
@@ -582,7 +603,7 @@ def command_calibrate(args):
               "archon": {side: {"sha256": archon_sha} for side, (_, archon_sha) in archons.items()},
               "archon_options": archon_options(args) if archons else None,
               "versions": _versions({"new": binary}, {side: path for side, (path, _) in archons.items()})}
-    _config_check(run_dir, config)
+    _config_check(run_dir, config, reselect=("selection", "haiku_band"))
     log(f"calibration directory {run_dir}")
     context = {"run_dir": str(run_dir), "work_dir": _work_dir(args.work_root, run_dir), "binaries": {"new": binary},
                "timeout": args.timeout, "real_claude": shutil.which("claude"),
@@ -625,7 +646,8 @@ def _write_calibration(run_dir, config, records, settings, freeze, accept_off_ta
     chosen_specs = [spec for spec in specs if spec["id"] in set(chosen)]
     stats = {task: calibration_stats(rates[task]) for task in chosen}
     write_set(directory, chosen_specs, {"version": directory.name, "calibration": stats, "acceptance": verdict,
-                                        "calibration_config": config, "selection": settings})
+                                        "calibration_config": config, "selection": settings,
+                                        "trial_timeout_seconds": config["timeout"]})
     shutil.copy(run_dir / "calibration.md", directory / "calibration.md")
     log(f"froze {len(chosen_specs)} tasks into {directory}")
     return 0

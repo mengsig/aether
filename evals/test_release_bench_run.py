@@ -548,7 +548,7 @@ elif args[:2] == ["daemon", "run"]:
 elif args[:2] == ["repo", "add"]:
     state["repo"] = args[2]
 elif args[:2] == ["queue", "add"]:
-    state["budget"] = args[args.index("--budget-usd") + 1]
+    state["budget"] = args[args.index("--budget-usd") + 1] if "--budget-usd" in args else None
     out = {"item": {"id": "qi_fake"}}
 elif args[:2] == ["queue", "wait"]:
     code = int(os.environ.get("FAKE_WAIT_CODE", "0"))
@@ -581,7 +581,7 @@ class ArchonLauncherTests(unittest.TestCase):
             "files": {"a.py": "x = 1\n"}, "history": [], "tags": {}, "meta": {}, "hidden": "import unittest\n",
             "checks": 2, "solution": {"a.py": "x = 2\n"}}
 
-    def _run(self, directory, wait_code="0"):
+    def _run(self, directory, wait_code="0", model="haiku"):
         root = Path(directory)
         fake = root / "archon"
         fake.write_text(f"#!{sys.executable}\n{FAKE_ARCHON}")
@@ -592,12 +592,20 @@ class ArchonLauncherTests(unittest.TestCase):
         workspace, trial_dir = root / "work" / "workspace", root / "trial"
         materialize(self.SPEC, workspace)
         trial_dir.mkdir()
-        condition = build_arm("haiku", "archon")["condition"]
+        condition = build_arm(model, "archon")["condition"]
         result = {}
         run_archon_trial(fake, candidate, condition, "fix it", workspace, 30, str(trial_dir), result,
                          {"FAKE_WAIT_CODE": wait_code}, price_of(PRICE_TABLE, "haiku"))
         state = json.loads(Path(archon_layout(str(trial_dir))["data"], "fake-state.json").read_text())
         return result, state, workspace, candidate
+
+    def test_a_codex_item_has_no_dollar_budget_as_codex_reports_no_dollar_cost(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, state, _, _ = self._run(directory, model="luna")
+            self.assertEqual(result["workflow_status"], "completed")
+            self.assertIsNone(state["budget"], "Archon refuses a reviewed, budgeted item on Codex")
+            add = next(call for call in state["calls"] if call[:2] == ["queue", "add"])
+            self.assertEqual(add[add.index("--review") + 1], "standard")
 
     def test_a_task_runs_on_a_private_archon_bound_to_the_candidate(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -611,7 +619,7 @@ class ArchonLauncherTests(unittest.TestCase):
             self.assertEqual(state["budget"], f"{ALLOWANCE_USD['haiku'] * factor:.2f}")
             add = next(call for call in state["calls"] if call[:2] == ["queue", "add"])
             self.assertEqual(add[add.index("--review") + 1], "standard")
-            self.assertEqual(add[add.index("--pipeline") + 1], "direct")
+            self.assertEqual(add[add.index("--pipeline") + 1], "adaptive")
             self.assertEqual((workspace / "fixed.txt").read_text(), "done\n")
             self.assertEqual(result["archon_result_ref"], "archon/fake")
             self.assertEqual(state["calls"][-1], ["daemon", "stop", "--json"])

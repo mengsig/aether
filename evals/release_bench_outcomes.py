@@ -14,11 +14,14 @@ from collections import Counter
 from release_bench_stats import paired_cells
 
 REVIEW_CAP = re.compile(r"review round cap", re.IGNORECASE)
+# An Archon stage that hands the work back (ESCALATE:) or names a missing prerequisite (BLOCKED:).
+HANDED_BACK = re.compile(r"\b(ESCALATE|BLOCKED):")
 DIGEST_CATEGORIES = (
     "excluded: infrastructure or provider outage",
     "spend allowance reached",
     "timeout",
     "review rounds exhausted",
+    "escalated or blocked",
     "harness error (crash, no model output, cleanup)",
     "run ended in error, its workspace graded",
     "result not gradable",
@@ -71,14 +74,17 @@ def failure_category(item):
         return DIGEST_CATEGORIES[1]
     if item.get("workflow") == "timeout":
         return DIGEST_CATEGORIES[2]
-    if REVIEW_CAP.search(item.get("workflow_error") or ""):
+    error = item.get("workflow_error") or ""
+    if REVIEW_CAP.search(error):
         return DIGEST_CATEGORIES[3]
-    if failure:
+    if HANDED_BACK.search(error):
         return DIGEST_CATEGORIES[4]
-    if item.get("workflow") == "failed":
+    if failure:
         return DIGEST_CATEGORIES[5]
-    if item.get("grade_error"):
+    if item.get("workflow") == "failed":
         return DIGEST_CATEGORIES[6]
+    if item.get("grade_error"):
+        return DIGEST_CATEGORIES[7]
     return _wrong_result(item)
 
 
@@ -86,8 +92,8 @@ def _wrong_result(item):
     total, passed = item["checks_total"], item["checks_passed"]
     assert total > 0 and 0 <= passed <= total, "a graded trial has checks"
     if passed == 0:
-        return DIGEST_CATEGORIES[7]
-    return DIGEST_CATEGORIES[8] if passed * 2 < total else DIGEST_CATEGORIES[9]
+        return DIGEST_CATEGORIES[8]
+    return DIGEST_CATEGORIES[9] if passed * 2 < total else DIGEST_CATEGORIES[10]
 
 
 def failure_digest(records, arms):

@@ -1,0 +1,310 @@
+{
+  "acceptance": {
+    "accepted": true,
+    "haiku_pass": 0.45,
+    "luna_pass": 0.45,
+    "reasons": [],
+    "release_minutes": 78.93171416666668,
+    "tasks": 20,
+    "templates": {
+      "bundle": 20
+    }
+  },
+  "calibration": {
+    "bundle-1": {
+      "haiku": 0.0,
+      "haiku_n": 2,
+      "haiku_new_seconds": 159.747,
+      "haiku_seconds": 159.747,
+      "luna": 0.5,
+      "luna_n": 2,
+      "luna_new_seconds": 145.136,
+      "luna_seconds": 145.136
+    },
+    "bundle-10": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "haiku_new_seconds": 113.957,
+      "haiku_seconds": 113.957,
+      "luna": 0.0,
+      "luna_n": 2,
+      "luna_new_seconds": 219.44099999999997,
+      "luna_seconds": 219.44099999999997
+    },
+    "bundle-11": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "haiku_new_seconds": 151.539,
+      "haiku_seconds": 151.539,
+      "luna": 0.0,
+      "luna_n": 2,
+      "luna_new_seconds": 114.64150000000001,
+      "luna_seconds": 114.64150000000001
+    },
+    "bundle-13": {
+      "haiku": 0.5,
+      "haiku_n": 2,
+      "haiku_new_seconds": 194.062,
+      "haiku_seconds": 194.062,
+      "luna": 0.5,
+      "luna_n": 2,
+      "luna_new_seconds": 134.597,
+      "luna_seconds": 134.597
+    },
+    "bundle-14": {
+      "haiku": 0.5,
+      "haiku_n": 2,
+      "haiku_new_seconds": 120.32900000000001,
+      "haiku_seconds": 120.32900000000001,
+      "luna": 0.0,
+      "luna_n": 2,
+      "luna_new_seconds": 181.1405,
+      "luna_seconds": 181.1405
+    },
+    "bundle-15": {
+      "haiku": 0.0,
+      "haiku_n": 2,
+      "haiku_new_seconds": 157.127,
+      "haiku_seconds": 157.127,
+      "luna": 0.5,
+      "luna_n": 2,
+      "luna_new_seconds": 269.544,
+      "luna_seconds": 269.544
+    },
+    "bundle-17": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "haiku_new_seconds": 165.443,
+      "haiku_seconds": 165.443,
+      "luna": 0.5,
+      "luna_n": 2,
+      "luna_new_seconds": 182.2285,
+      "luna_seconds": 182.2285
+    },
+    "bundle-18": {
+      "haiku": 0.0,
+      "haiku_n": 2,
+      "haiku_new_seconds": 178.002,
+      "haiku_seconds": 178.002,
+      "luna": 0.5,
+      "luna_n": 2,
+      "luna_new_seconds": 166.19650000000001,
+      "luna_seconds": 166.19650000000001
+    },
+    "bundle-19": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "haiku_new_seconds": 221.368,
+      "haiku_seconds": 221.368,
+      "luna": 1.0,
+      "luna_n": 2,
+      "luna_new_seconds": 266.508,
+      "luna_seconds": 266.508
+    },
+    "bundle-20": {
+      "haiku": 0.0,
+      "haiku_n": 2,
+      "haiku_new_seconds": 142.99099999999999,
+      "haiku_seconds": 142.99099999999999,
+      "luna": 0.5,
+      "luna_n": 2,
+      "luna_new_seconds": 206.19,
+      "luna_seconds": 206.19
+    },
+    "bundle-21": {
+      "haiku": 0.0,
+      "haiku_n": 2,
+      "haiku_new_seconds": 182.526,
+      "haiku_seconds": 182.526,
+      "luna": 1.0,
+      "luna_n": 2,
+      "luna_new_seconds": 160.5285,
+      "luna_seconds": 160.5285
+    },
+    "bundle-22": {
+      "haiku": 0.0,
+      "haiku_n": 2,
+      "haiku_new_seconds": 117.033,
+      "haiku_seconds": 117.033,
+      "luna": 0.5,
+      "luna_n": 2,
+      "luna_new_seconds": 168.6505,
+      "luna_seconds": 168.6505
+    },
+    "bundle-23": {
+      "haiku": 0.5,
+      "haiku_n": 2,
+      "haiku_new_seconds": 160.675,
+      "haiku_seconds": 160.675,
+      "luna": 1.0,
+      "luna_n": 2,
+      "luna_new_seconds": 252.5145,
+      "luna_seconds": 252.5145
+    },
+    "bundle-3": {
+      "haiku": 0.0,
+      "haiku_n": 2,
+      "haiku_new_seconds": 158.9025,
+      "haiku_seconds": 158.9025,
+      "luna": 0.5,
+      "luna_n": 2,
+      "luna_new_seconds": 163.5985,
+      "luna_seconds": 163.5985
+    },
+    "bundle-4": {
+      "haiku": 0.5,
+      "haiku_n": 2,
+      "haiku_new_seconds": 108.542,
+      "haiku_seconds": 108.542,
+      "luna": 0.5,
+      "luna_n": 2,
+      "luna_new_seconds": 145.93599999999998,
+      "luna_seconds": 145.93599999999998
+    },
+    "bundle-5": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "haiku_new_seconds": 154.0605,
+      "haiku_seconds": 154.0605,
+      "luna": 0.0,
+      "luna_n": 2,
+      "luna_new_seconds": 159.0205,
+      "luna_seconds": 159.0205
+    },
+    "bundle-6": {
+      "haiku": 0.0,
+      "haiku_n": 2,
+      "haiku_new_seconds": 137.6405,
+      "haiku_seconds": 137.6405,
+      "luna": 0.0,
+      "luna_n": 2,
+      "luna_new_seconds": 166.9395,
+      "luna_seconds": 166.9395
+    },
+    "bundle-7": {
+      "haiku": 0.0,
+      "haiku_n": 2,
+      "haiku_new_seconds": 166.5075,
+      "haiku_seconds": 166.5075,
+      "luna": 0.5,
+      "luna_n": 2,
+      "luna_new_seconds": 211.089,
+      "luna_seconds": 211.089
+    },
+    "bundle-8": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "haiku_new_seconds": 160.1755,
+      "haiku_seconds": 160.1755,
+      "luna": 0.5,
+      "luna_n": 2,
+      "luna_new_seconds": 183.20600000000002,
+      "luna_seconds": 183.20600000000002
+    },
+    "bundle-9": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "haiku_new_seconds": 139.481,
+      "haiku_seconds": 139.481,
+      "luna": 0.5,
+      "luna_n": 2,
+      "luna_new_seconds": 178.361,
+      "luna_seconds": 178.361
+    }
+  },
+  "calibration_config": {
+    "archon": {},
+    "archon_options": null,
+    "arms": [
+      "haiku/new",
+      "luna/new"
+    ],
+    "candidates": {
+      "count": 24,
+      "first_seed": 0,
+      "templates": "bundle"
+    },
+    "carry": null,
+    "haiku_band": [
+      0.0,
+      1.0
+    ],
+    "jobs": 8,
+    "price_binary_sha256": "3a795ff2a718e8c227ac66ad6bbefd2cfe1838bfcbf77b37eac10e56ca3cc923",
+    "repeats": 2,
+    "seed": 0,
+    "selection": {
+      "haiku_band": [
+        0.0,
+        1.0
+      ],
+      "haiku_target": 0.5,
+      "haiku_tolerance": 0.2,
+      "luna_band": [
+        0.3,
+        0.7
+      ],
+      "luna_target": 0.5,
+      "max_release_minutes": 90,
+      "max_size": 24,
+      "max_template_share": 1.0,
+      "min_repeats": 2,
+      "min_size": 20,
+      "release_arms": "shared",
+      "release_jobs": 10,
+      "select_harness": "new"
+    },
+    "timeout": 900,
+    "versions": {
+      "aether-new": "aether 1.4.3"
+    }
+  },
+  "format": 1,
+  "selection": {
+    "haiku_band": [
+      0.0,
+      1.0
+    ],
+    "haiku_target": 0.5,
+    "haiku_tolerance": 0.2,
+    "luna_band": [
+      0.3,
+      0.7
+    ],
+    "luna_target": 0.5,
+    "max_release_minutes": 90,
+    "max_size": 24,
+    "max_template_share": 1.0,
+    "min_repeats": 2,
+    "min_size": 20,
+    "release_arms": "shared",
+    "release_jobs": 10,
+    "select_harness": "new"
+  },
+  "set_sha256": "c7b73a1c7530a7a366d511d904b1d655ca09e515336eaa420f8f7af3d2be435e",
+  "task_count": 20,
+  "task_hashes": {
+    "bundle-1": "71d178a7315f425c5e47aef2cee4d5edf0e251ffab1c1bc4f144b8209bc43608",
+    "bundle-10": "c59820a9615ec7d76a32ee06807ac7e9a18d220413be91fe31a4a0acbd3e106a",
+    "bundle-11": "17f082436b999c34ced58638e8ca4be8f1766dbee59989c80e2acf5c5e97fa0a",
+    "bundle-13": "6af078937c38ed6b8e747756d42e7c177da0ff0f4fdf0396f634966c6ce25982",
+    "bundle-14": "81257fb2588de60d49e2654e5dcae555cdd664d664c2310aa7915ebea6a01537",
+    "bundle-15": "3b3a58d02cd8c49c5747d4f7325b85a7f4f84c648804b2b08e054c789b40a1db",
+    "bundle-17": "452b98bc7cdc3dfcc9f6a82b6909d285fbedb61f2bb29941ce14e2bef76d8d5e",
+    "bundle-18": "3c30eba6ae0c170bd308c61d0525fc3ad50f8ab5a50d663b806139dd976c9a99",
+    "bundle-19": "848fc771e3ed6fe4cc68357a494b2555dcb4087a117de0f67062f1ed631dca4f",
+    "bundle-20": "4b1736529fddbf724dea4f849953330bf21e6efea615fa77fe3a38d4f93270c5",
+    "bundle-21": "441ce17cd03cc81f05705b3ad5d177c49306f468f10f0dc737ef6b440bc71322",
+    "bundle-22": "2729c750a07f0c0030785251a3e4b988b4052b3c3f1cc58c222ee8de88dcd23a",
+    "bundle-23": "d485a48fddf816789a2268f49a41683c667fe72e646d41172f0969615f076b68",
+    "bundle-3": "fd8d36c492aabe65ebdda9c13a9c30bf5e06735575565390dcd976eea33bdc9e",
+    "bundle-4": "230208c78a1737c263b194d333ad21678a7748ccce739ed647983e4343140529",
+    "bundle-5": "a69b0866633daa5a4fdfdf0a71d67dbdc4992413dcdc7bf756404428fb1a0657",
+    "bundle-6": "311670e55a259af88053f76515e49b319fd987f126f4d38e3dbf20407fe2dcb5",
+    "bundle-7": "de323c1d4d9378d8b85cae41bd59afd7536b42ea8b1543625bd7662fe9b9e5d5",
+    "bundle-8": "fc445c04c33f87a458f471cc9dc213288eac0878f48c68687a56b2a6c203a1c2",
+    "bundle-9": "dc7caf71a6ea28bbdb4634ed5c721b451f1b95f968c8b7346a780d00d68a174e"
+  },
+  "trial_timeout_seconds": 900,
+  "version": "v3"
+}

@@ -30,7 +30,11 @@ CONDITION_KEYS = {"haiku": ("native-haiku-low", "aether-single-haiku-low"),
 RELEASE_LABEL = re.compile(r"v\d+\.\d+\.\d+")
 ARCHON_REVIEWS = ("none", "standard", "strict")
 # Archon runs its own reviewers on the arm's model; budget_factor scales the arm's spend allowance to pay for them.
-ARCHON_DEFAULTS = {"pipeline": "direct", "review": "standard", "budget_factor": 2.0}
+# `adaptive` by default: `direct` escalates risky work (migrations, concurrency) rather than doing it.
+ARCHON_DEFAULTS = {"pipeline": "adaptive", "review": "standard", "budget_factor": 2.0}
+# Archon caps an item in dollars only on a provider that reports dollar cost (Claude Code), and refuses a
+# reviewed, budgeted item on Codex. The bench's spend guard caps every arm whether or not Archon does.
+ARCHON_DOLLAR_BUDGET_MODELS = ("haiku",)
 # A reviewed Archon stage must delegate its reviewer, so the work-alone rule names that one exception.
 REVIEWED_SOLO_SUFFIX = COMMON_SUFFIX + (
     " Do the work yourself, without sub-agents; the only agent you may start is the reviewer your stage requires.")
@@ -108,7 +112,8 @@ def _archon_arm(key, model, harness, allow_delegation, archon_options):
     side = archon_side(harness)
     return {"key": key, "model": model, "harness": harness, "binary_role": side, "archon_role": side,
             "max_agents": cap, "allowance_usd": allowance,
-            "condition": {"kind": "archon", "model": model_ref, "effort": "low", "budget_usd": allowance,
+            "condition": {"kind": "archon", "model": model_ref, "effort": "low",
+                          "budget_usd": allowance if model in ARCHON_DOLLAR_BUDGET_MODELS else None,
                           "max_concurrent_turns": cap, "pipeline": options["pipeline"],
                           "review": options["review"], "suffix": _archon_suffix(allow_delegation, reviewed)}}
 

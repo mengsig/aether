@@ -6,6 +6,15 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Added
+
+- **One release bench for Aether and Archon.** `make bench-release` takes
+  `ARCHON_OLD` and `ARCHON_NEW` and runs the native CLIs, Aether old and new,
+  and Archon old and new on the same tasks in one parallel run, sized to the
+  host. The report gates both releases, holds Archon to at least plain
+  Aether's pass rate (the parity line), and adds a failure digest by category
+  that names no task. A harder task set is added beside the default one.
+
 ### Fixed
 
 - **`wait_for` refuses a wait on yourself.** A `tasks` list holding the

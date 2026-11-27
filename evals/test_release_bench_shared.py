@@ -80,12 +80,13 @@ class DigestTests(unittest.TestCase):
             DIGEST_CATEGORIES[1]: {"harness_failure": "spend guard: allowance reached"},
             DIGEST_CATEGORIES[2]: {"workflow": "timeout"},
             DIGEST_CATEGORIES[3]: {"workflow": "failed", "workflow_error": "review round cap reached; stopping"},
-            DIGEST_CATEGORIES[4]: {"harness_failure": "no model output: exit 1", "workflow": "failed"},
-            DIGEST_CATEGORIES[5]: {"workflow": "failed", "workflow_error": "item failed"},
-            DIGEST_CATEGORIES[6]: {"grade_error": "grading exceeded 120s", "checks_passed": 0},
-            DIGEST_CATEGORIES[7]: {"checks_passed": 0},
-            DIGEST_CATEGORIES[8]: {"checks_passed": 1, "checks_total": 3},
-            DIGEST_CATEGORIES[9]: {"checks_passed": 2, "checks_total": 3},
+            DIGEST_CATEGORIES[4]: {"workflow": "failed", "workflow_error": "stage build: ESCALATE: too risky here"},
+            DIGEST_CATEGORIES[5]: {"harness_failure": "no model output: exit 1", "workflow": "failed"},
+            DIGEST_CATEGORIES[6]: {"workflow": "failed", "workflow_error": "item failed"},
+            DIGEST_CATEGORIES[7]: {"grade_error": "grading exceeded 120s", "checks_passed": 0},
+            DIGEST_CATEGORIES[8]: {"checks_passed": 0},
+            DIGEST_CATEGORIES[9]: {"checks_passed": 1, "checks_total": 3},
+            DIGEST_CATEGORIES[10]: {"checks_passed": 2, "checks_total": 3},
         }
         self.assertEqual(set(cases), set(DIGEST_CATEGORIES))
         for category, extra in cases.items():
@@ -282,6 +283,24 @@ class CandidateCalibrationTests(unittest.TestCase):
         for arms in ("haiku/old", "haiku/archon-new", "haiku/native"):
             with self.subTest(arms=arms), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 release_bench.parse_args([*base, "--arms", arms])
+
+    def test_a_frozen_set_s_trial_timeout_applies_unless_one_is_asked_for(self):
+        self.assertEqual(release_bench.trial_timeout(None, {"trial_timeout_seconds": 1200}), 1200)
+        self.assertEqual(release_bench.trial_timeout(700, {"trial_timeout_seconds": 1200}), 700)
+        self.assertEqual(release_bench.trial_timeout(None, {}), release_bench.TRIAL_TIMEOUT_SECONDS)
+        with self.assertRaises(SystemExit):
+            release_bench.trial_timeout(5)
+
+    def test_a_resumed_calibration_may_reselect_but_not_rerun_differently(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            release_bench._config_check(run_dir, {"arms": ["haiku/new"], "selection": {"min_size": 20}})
+            release_bench._config_check(run_dir, {"arms": ["haiku/new"], "selection": {"min_size": 22}},
+                                        reselect=("selection",))
+            self.assertIn('"min_size": 22', (run_dir / "config.json").read_text())
+            with self.assertRaises(SystemExit):
+                release_bench._config_check(run_dir, {"arms": ["luna/new"], "selection": {"min_size": 22}},
+                                            reselect=("selection",))
 
     def test_a_recorded_selection_is_restored_with_its_bands_as_tuples(self):
         settings = release_bench.recorded_selection({"selection": {"luna_band": [0.3, 0.7], "select_harness": "new"}})

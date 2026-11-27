@@ -442,7 +442,7 @@ class ArmTests(unittest.TestCase):
         for side in ("old", "new"):
             arm = build_arm("haiku", f"archon-{side}")
             self.assertEqual((arm["binary_role"], arm["archon_role"]), (side, side))
-            self.assertEqual((arm["condition"]["pipeline"], arm["condition"]["review"]), ("direct", "standard"))
+            self.assertEqual((arm["condition"]["pipeline"], arm["condition"]["review"]), ("adaptive", "standard"))
         legacy = build_arm("luna", "archon", archon_options={"review": "none", "budget_factor": 1.0})
         self.assertEqual((legacy["archon_role"], legacy["condition"]["review"]), ("new", "none"))
         self.assertEqual(legacy["allowance_usd"], build_arm("luna", "new")["allowance_usd"])

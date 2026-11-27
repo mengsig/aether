@@ -8,9 +8,10 @@ dedicated mode, so it starts its own aetherd from the first `aether` on PATH,
 a link to its side's pinned Aether binary, with its config seeded from an
 operator config that holds only the trial's cap on model turns at once:
 nothing from the machine's Archon or Aether is read or reached. The task goes
-in as one item of the arm's pipeline and review family (`direct` with
+in as one item of the arm's pipeline and review family (`adaptive` with
 `standard` review by default), on the arm's model at low effort for every
-agent, reviewers included, with Archon's own budget cap. Archon ships it locally, and the
+agent, reviewers included, with Archon's own budget cap where the provider
+reports dollar cost. Archon ships it locally, and the
 newest run branch holding commits becomes the graded workspace. Usage is read
 from every agent in the private Aether store and priced on the run's table.
 """
@@ -118,16 +119,17 @@ def enqueue(archon_bin, env, log, condition, task_text, workspace, budget_usd, l
     base = _git(workspace, "symbolic-ref", "--short", "HEAD")
     archon(archon_bin, env, ["repo", "add", str(workspace), "--name", "task", "--ship", "local", "--base", base,
                              "--json"], log)
-    pipeline, review = condition.get("pipeline", "direct"), condition.get("review", "none")
+    pipeline, review = condition["pipeline"], condition["review"]
     if pipeline not in PIPELINE_STAGES:
         raise ArchonError(f"the bench has no model plan for pipeline {pipeline!r}")
     brief, plan = layout["root"] / "brief.md", layout["root"] / "model-plan.json"
     brief.write_text(task_text, encoding="utf-8")
     choice = [{"model": condition["model"], "effort": condition["effort"]}]
     plan.write_text(json.dumps({stage: choice for stage in PIPELINE_STAGES[pipeline]}), encoding="utf-8")
+    budget = ["--budget-usd", f"{budget_usd:.2f}"] if budget_usd is not None else []
     _, out = archon(archon_bin, env, [
         "queue", "add", "--json", "--title", "release-bench task", "--repo", "task", "--pipeline", pipeline,
-        "--brief-file", str(brief), "--model-plan-file", str(plan), "--budget-usd", f"{budget_usd:.2f}",
+        "--brief-file", str(brief), "--model-plan-file", str(plan), *budget,
         "--review", review, "--report", "off", "--proposal", "off", "--merge", "manual"], log)
     added = _json(out, "archon queue add")
     item = added.get("id") or (added.get("item") or {}).get("id")
@@ -211,7 +213,8 @@ def _session(archon_bin, env, log, condition, task_text, workspace, timeout, tri
 def run_archon_trial(archon_bin, aether_binary, condition, task_text, workspace, timeout, trial_dir, result,
                      extra_env, price):
     """Run one task through a private Archon on its side's Aether; fills `result` like the other arms."""
-    assert condition["kind"] == "archon" and condition["budget_usd"] > 0, "an Archon arm carries its budget"
+    assert condition["kind"] == "archon", "an Archon arm runs through Archon"
+    assert condition["budget_usd"] is None or condition["budget_usd"] > 0, "an Archon item budget is positive"
     layout = archon_layout(trial_dir)
     prepare(layout, aether_binary, condition["model"], condition["max_concurrent_turns"])
     env, stripped = archon_env(layout, extra_env)
