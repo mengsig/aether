@@ -6,6 +6,14 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Fixed
+
+- **`wait_for` refuses a wait on yourself.** A `tasks` list holding the
+  caller's own task id, or a `message_from` of its own agent id, is refused at
+  once with an error saying to finish the task with `complete_task` or wait on
+  a child's task id. Before, the agent slept until its deadline, since its own
+  task cannot finish while it waits.
+
 ## 1.4.4
 
 Released 2026-11-27. A new, opt-in engine: Antigravity, Google's `agy` CLI

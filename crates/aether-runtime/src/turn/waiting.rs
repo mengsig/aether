@@ -36,6 +36,9 @@ pub(crate) fn validate_wait(
              specific (`message_from`, `tasks`, `timeout_seconds`/`wake_at`).",
         )));
     }
+    if let Some(refusal) = self_wait_refusal(ctx, condition) {
+        return Ok(Some(refusal));
+    }
     for id in condition.task_ids() {
         let found = runtime.store.task(id)?;
         let in_scope = match &found {
@@ -72,6 +75,32 @@ pub(crate) fn validate_wait(
         }
     }
     Ok(None)
+}
+
+/// A wait on the caller's own task or own messages can never be met while
+/// it waits, so it would sleep until its deadline: refuse it at once.
+fn self_wait_refusal(ctx: &TurnCtx, condition: &WaitCondition) -> Option<ToolOutcome> {
+    let own_task = ctx
+        .task
+        .as_ref()
+        .map(|task| task.id)
+        .or(ctx.agent.current_task);
+    if let Some(own) = own_task.filter(|own| condition.task_ids().contains(own)) {
+        return Some(ToolOutcome::error(format!(
+            "wait_for.tasks contains `{own}`, your own task: you cannot wait for your own \
+             task, it cannot finish while you wait. Finish it with `complete_task` (or \
+             `fail_task`), or wait on a child's task id from delegate.task_id."
+        )));
+    }
+    if condition.message_senders().contains(&ctx.agent.id) {
+        return Some(ToolOutcome::error(format!(
+            "wait_for.message_from is `{}`, your own agent id: you cannot wait for a \
+             message from yourself. Wait on a child's or your parent's agent id, or on a \
+             child's task id from delegate.task_id.",
+            ctx.agent.id
+        )));
+    }
+    None
 }
 
 /// Why an asking turn may not also end the task: a question nobody waits on
