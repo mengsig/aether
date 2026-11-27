@@ -1,91 +1,38 @@
-<!doctype html><html lang=en><head><meta charset=utf-8><title>Aether 1.4.4 release bench: v1.4.4 vs v1.4.3 vs native</title><style>body{font-family:system-ui,sans-serif;max-width:1100px;margin:2em auto;padding:0 1em;color:#1d1d1f}.banner{padding:1em;border-radius:6px;font-size:1.3em;font-weight:600}.good{background:#dff3e3;color:#145a26}.bad{background:#fbe0e0;color:#7a1414}table{border-collapse:collapse;margin:.5em 0 1.5em}td,th{border:1px solid #ccc;padding:.3em .7em;text-align:right}td:first-child,th:first-child{text-align:left}td.new{color:#145a26}td.old{color:#7a1414}pre{background:#f5f5f7;padding:1em;overflow:auto;font-size:.85em}</style></head><body><div class='banner good'>Verdict: INCONCLUSIVE (gate passed on an off-target set): Haiku PASS, Luna PASS</div><h1>Aether 1.4.4 release bench: v1.4.4 vs v1.4.3 vs native</h1><h2>Haiku tier</h2><table><tr><th>Arm</th><th>Passed</th><th>Pass rate</th><th>Cost total (USD)</th><th>Cost / trial</th><th>Trial minutes (sum)</th><th>Median s</th><th>Infra / harness</th></tr>
-<tr><td>haiku/old</td><td>108/110</td><td>98%</td><td>1.99</td><td>0.0181</td><td>131</td><td>44</td><td>0 / 0</td></tr>
-<tr><td>haiku/new</td><td>103/110</td><td>94%</td><td>1.85</td><td>0.0168</td><td>135</td><td>43</td><td>0 / 0</td></tr>
-<tr><td>haiku/native</td><td>105/110</td><td>95%</td><td>1.66</td><td>0.0150</td><td>111</td><td>38</td><td>0 / 0</td></tr>
-</table>
-<h3>haiku: tasks that differ between old and new (7)</h3>
-<table><tr><th>Task</th><th>Passed on</th><th>Checks in the failing arm</th></tr>
-<tr><td>exporters-1</td><td class=old>old only</td><td>5/6</td></tr>
-<tr><td>exporters-6</td><td class=old>old only</td><td>5/6</td></tr>
-<tr><td>exporters-8</td><td class=old>old only</td><td>5/6</td></tr>
-<tr><td>ledger-9</td><td class=new>new only</td><td>9/11</td></tr>
-<tr><td>query-1</td><td class=old>old only</td><td>11/12</td></tr>
-<tr><td>query-10</td><td class=old>old only</td><td>11/12</td></tr>
-<tr><td>versions-9</td><td class=old>old only</td><td>7/11</td></tr>
-</table><h2>Luna tier</h2><table><tr><th>Arm</th><th>Passed</th><th>Pass rate</th><th>Cost total (USD)</th><th>Cost / trial</th><th>Trial minutes (sum)</th><th>Median s</th><th>Infra / harness</th></tr>
-<tr><td>luna/old</td><td>50/110</td><td>45%</td><td>0.50</td><td>0.0046</td><td>119</td><td>50</td><td>0 / 0</td></tr>
-<tr><td>luna/new</td><td>47/110</td><td>43%</td><td>0.54</td><td>0.0049</td><td>121</td><td>50</td><td>0 / 0</td></tr>
-<tr><td>luna/native</td><td>43/110</td><td>39%</td><td>0.40</td><td>0.0036</td><td>95</td><td>45</td><td>0 / 0</td></tr>
-</table>
-<h3>luna: tasks that differ between old and new (27)</h3>
-<table><tr><th>Task</th><th>Passed on</th><th>Checks in the failing arm</th></tr>
-<tr><td>batching-7</td><td class=old>old only</td><td>2/9</td></tr>
-<tr><td>bucket-0</td><td class=new>new only</td><td>7/8</td></tr>
-<tr><td>bucket-5</td><td class=old>old only</td><td>7/8</td></tr>
-<tr><td>config-1</td><td class=old>old only</td><td>13/14</td></tr>
-<tr><td>diff-5</td><td class=new>new only</td><td>7/10</td></tr>
-<tr><td>duration-1</td><td class=old>old only</td><td>13/14</td></tr>
-<tr><td>duration-2</td><td class=old>old only</td><td>12/14</td></tr>
-<tr><td>duration-3</td><td class=new>new only</td><td>12/14</td></tr>
-<tr><td>duration-4</td><td class=old>old only</td><td>10/14</td></tr>
-<tr><td>duration-5</td><td class=new>new only</td><td>11/14</td></tr>
-<tr><td>duration-7</td><td class=new>new only</td><td>8/13</td></tr>
-<tr><td>duration-8</td><td class=old>old only</td><td>6/14</td></tr>
-<tr><td>exporters-0</td><td class=new>new only</td><td>5/6</td></tr>
-<tr><td>exporters-1</td><td class=old>old only</td><td>5/6</td></tr>
-<tr><td>exporters-3</td><td class=new>new only</td><td>4/5</td></tr>
-<tr><td>ledger-0</td><td class=new>new only</td><td>8/11</td></tr>
-<tr><td>ledger-2</td><td class=old>old only</td><td>1/11</td></tr>
-<tr><td>ledger-4</td><td class=new>new only</td><td>6/11</td></tr>
-<tr><td>pricing-1</td><td class=old>old only</td><td>8/10</td></tr>
-<tr><td>pricing-2</td><td class=old>old only</td><td>0/10</td></tr>
-<tr><td>pricing-4</td><td class=old>old only</td><td>8/10</td></tr>
-<tr><td>pricing-6</td><td class=new>new only</td><td>7/10</td></tr>
-<tr><td>pricing-8</td><td class=old>old only</td><td>7/10</td></tr>
-<tr><td>pricing-9</td><td class=new>new only</td><td>7/10</td></tr>
-<tr><td>protocol-6</td><td class=old>old only</td><td>1/5</td></tr>
-<tr><td>ranges-8</td><td class=new>new only</td><td>8/9</td></tr>
-<tr><td>versions-1</td><td class=old>old only</td><td>6/11</td></tr>
-</table><h2>make ci</h2><pre>CARGO_BUILD_JOBS=6 make ci on 63d005115 (tree cc9ed8f61b3f): PASSED (&quot;CI passed: lint test binary&quot;).
-nextest: 6895 tests run, 6895 passed (2 flaky, passed on retry), 48 skipped.
-  flaky: aether::cli_regressions memory_v2_cli_tests::export_writes_the_artifact_whole_and_import_sends_it_back_as_a_dry_run
-  flaky: aether::cli_regressions command_polish::malformed_config_fails_auto_start_before_creating_the_store
-Release build, e2e, 9.8 budgets and process measurements, release install check and TUI captures: passed.
-
-Bench runs: invocation 1 (BUDGET=20, default) ran 655/660 trials, $6.82, and stopped before workstreams-8
-(its delegation reservation did not fit). Resumed the same run (--run-id=rel-1-4-4) with BUDGET=40, with the
-orchestrator&#x27;s approval: 5 trials, $0.12. 660/660 trials, 0 infra errors, 0 harness failures.
-</pre><h2>Full harness report</h2><pre># Release bench: INCONCLUSIVE (gate passed on an off-target set)
+<!doctype html><html lang=en><head><meta charset=utf-8><title>Aether 1.4.4 release bench</title><style>body{font-family:system-ui,sans-serif;max-width:1100px;margin:2em auto;padding:0 1em;color:#1d1d1f}.banner{padding:1em;border-radius:6px;font-size:1.3em;font-weight:600}.good{background:#dff3e3;color:#145a26}.bad{background:#fbe0e0;color:#7a1414}table{border-collapse:collapse;margin:.5em 0 1.5em}td,th{border:1px solid #ccc;padding:.3em .7em;text-align:right}td:first-child,th:first-child{text-align:left}td.new{color:#145a26}td.old{color:#7a1414}pre{background:#f5f5f7;padding:1em;overflow:auto;font-size:.85em}</style></head><body><div class='banner good'>Verdict: Release bench: INCONCLUSIVE (gate passed on an off-target set): Haiku PASS, Luna PASS (cost point estimate x1.16 is above x1.15)</div><h1>Aether 1.4.4 release bench: v1.4.4 vs v1.4.3 vs native</h1><p>Final candidate: 5250b1c15. Its haiku/new and luna/new arms were run again on it (run <code>rel-1-4-4-new2</code>); the native and old arms are from run <code>rel-1-4-4</code>, unchanged binaries. The first candidate's new arms (63d005115) are shown for comparison.</p><h2>Haiku tier</h2><table><tr><th>Arm</th><th>Passed</th><th>Pass rate</th><th>Cost total (USD)</th><th>Cost / trial</th><th>Trial minutes (sum)</th><th>Median s</th><th>Infra / harness</th></tr><tr><td>haiku/old (v1.4.3)</td><td>108/110</td><td>98%</td><td>1.99</td><td>0.0181</td><td>131</td><td>44</td><td>0 / 0</td></tr><tr><td>haiku/new (5250b1c15)</td><td>104/110</td><td>95%</td><td>2.12</td><td>0.0192</td><td>139</td><td>45</td><td>0 / 0</td></tr><tr><td>haiku/native</td><td>105/110</td><td>95%</td><td>1.66</td><td>0.0150</td><td>111</td><td>38</td><td>0 / 0</td></tr><tr><td>haiku/new, first run (63d005115)</td><td>103/110</td><td>94%</td><td>1.85</td><td>0.0168</td><td>135</td><td>43</td><td>0 / 0</td></tr></table><h3>haiku: tasks that differ between old and new (6)</h3><table><tr><th>Task</th><th>Passed on</th><th>Checks in the failing arm</th><th>Native</th></tr><tr><td>exporters-1</td><td class=old>old only</td><td>5/6</td><td>pass</td></tr><tr><td>exporters-6</td><td class=old>old only</td><td>5/6</td><td>fail</td></tr><tr><td>exporters-7</td><td class=old>old only</td><td>4/5</td><td>pass</td></tr><tr><td>ledger-9</td><td class=new>new only</td><td>9/11</td><td>pass</td></tr><tr><td>query-1</td><td class=old>old only</td><td>11/12</td><td>pass</td></tr><tr><td>query-10</td><td class=old>old only</td><td>11/12</td><td>pass</td></tr></table><h2>Luna tier</h2><table><tr><th>Arm</th><th>Passed</th><th>Pass rate</th><th>Cost total (USD)</th><th>Cost / trial</th><th>Trial minutes (sum)</th><th>Median s</th><th>Infra / harness</th></tr><tr><td>luna/old (v1.4.3)</td><td>50/110</td><td>45%</td><td>0.50</td><td>0.0046</td><td>119</td><td>50</td><td>0 / 0</td></tr><tr><td>luna/new (5250b1c15)</td><td>48/110</td><td>44%</td><td>0.59</td><td>0.0053</td><td>142</td><td>52</td><td>0 / 0</td></tr><tr><td>luna/native</td><td>43/110</td><td>39%</td><td>0.40</td><td>0.0036</td><td>95</td><td>45</td><td>0 / 0</td></tr><tr><td>luna/new, first run (63d005115)</td><td>47/110</td><td>43%</td><td>0.54</td><td>0.0049</td><td>121</td><td>50</td><td>0 / 0</td></tr></table><h3>luna: tasks that differ between old and new (32)</h3><table><tr><th>Task</th><th>Passed on</th><th>Checks in the failing arm</th><th>Native</th></tr><tr><td>batching-7</td><td class=old>old only</td><td>2/9</td><td>pass</td></tr><tr><td>bucket-7</td><td class=old>old only</td><td>7/8</td><td>fail</td></tr><tr><td>config-1</td><td class=old>old only</td><td>13/14</td><td>pass</td></tr><tr><td>config-4</td><td class=old>old only</td><td>11/13</td><td>pass</td></tr><tr><td>cron-0</td><td class=new>new only</td><td>11/13</td><td>fail</td></tr><tr><td>cron-6</td><td class=new>new only</td><td>11/13</td><td>fail</td></tr><tr><td>diff-5</td><td class=new>new only</td><td>7/10</td><td>pass</td></tr><tr><td>diff-6</td><td class=new>new only</td><td>7/10</td><td>fail</td></tr><tr><td>duration-10</td><td class=new>new only</td><td>11/13</td><td>fail</td></tr><tr><td>duration-2</td><td class=old>old only</td><td>12/14</td><td>fail</td></tr><tr><td>duration-7</td><td class=new>new only</td><td>8/13</td><td>fail</td></tr><tr><td>duration-8</td><td class=old>old only</td><td>13/14</td><td>pass</td></tr><tr><td>exporters-1</td><td class=old>old only</td><td>5/6</td><td>fail</td></tr><tr><td>exporters-3</td><td class=new>new only</td><td>4/5</td><td>fail</td></tr><tr><td>exporters-5</td><td class=old>old only</td><td>4/5</td><td>fail</td></tr><tr><td>exporters-6</td><td class=new>new only</td><td>5/6</td><td>pass</td></tr><tr><td>exporters-7</td><td class=new>new only</td><td>4/5</td><td>pass</td></tr><tr><td>exporters-8</td><td class=new>new only</td><td>4/6</td><td>fail</td></tr><tr><td>ledger-0</td><td class=new>new only</td><td>8/11</td><td>pass</td></tr><tr><td>ledger-2</td><td class=old>old only</td><td>7/11</td><td>fail</td></tr><tr><td>ledger-4</td><td class=new>new only</td><td>6/11</td><td>pass</td></tr><tr><td>pricing-0</td><td class=old>old only</td><td>8/10</td><td>pass</td></tr><tr><td>pricing-1</td><td class=old>old only</td><td>8/10</td><td>fail</td></tr><tr><td>pricing-10</td><td class=old>old only</td><td>8/10</td><td>fail</td></tr><tr><td>pricing-2</td><td class=old>old only</td><td>7/10</td><td>pass</td></tr><tr><td>pricing-9</td><td class=new>new only</td><td>7/10</td><td>fail</td></tr><tr><td>protocol-6</td><td class=old>old only</td><td>1/5</td><td>fail</td></tr><tr><td>ranges-0</td><td class=new>new only</td><td>8/9</td><td>pass</td></tr><tr><td>ranges-4</td><td class=old>old only</td><td>8/9</td><td>pass</td></tr><tr><td>ranges-9</td><td class=old>old only</td><td>2/9</td><td>pass</td></tr><tr><td>versions-1</td><td class=old>old only</td><td>3/11</td><td>fail</td></tr><tr><td>versions-4</td><td class=new>new only</td><td>7/11</td><td>fail</td></tr></table><h2>make ci</h2><p><b>Passed</b> on the final head <code>5250b1c15</code> (tree <code>0e6cee9e99da</code>): <code>CARGO_BUILD_JOBS=6 make ci</code> printed <code>CI passed: lint test binary</code>. Nextest: 6901 tests, 6901 passed, 48 skipped, 2 flaky that passed on retry. The release build, e2e, budgets, process measurements, install check and TUI captures passed.</p>
+<table><tr><th>Flaky test</th><th>Failure under the full suite</th><th>Isolated reruns</th></tr>
+<tr><td>cli_regressions command_polish::malformed_config_fails_auto_start_before_creating_the_store</td><td>daemon did not answer within 10 s</td><td>5 / 5 passed</td></tr>
+<tr><td>startup_probes hello_is_answered_while_engine_probes_run_and_engine_requests_wait</td><td>hello took 2.2 s, host stalled 680 ms</td><td>5 / 5 passed</td></tr></table>
+<h2>Full harness report</h2><pre># Release bench: INCONCLUSIVE (gate passed on an off-target set)
 
 - Task set: `bench/release-set/v2` (110 tasks, sha256 `7f3166c96e35e2ad`) **(off target: not a release verdict)**
-- Old: `3a795ff2a718e8c2`, candidate: `65d49a77067ef75e`
+- Old: `3a795ff2a718e8c2`, candidate: `66d8ec94fab36062`
 - Native CLIs: claude 2.1.332 (Claude Code), codex codex-cli 0.172.0
 - Arms: haiku/native, haiku/old, haiku/new, luna/native, luna/old, luna/new; repeats 1; jobs 6; timeout 600s
-- Trials: 660; priced spend $6.94 API-equivalent
-- Wall time this invocation: 1.3 min
+- Trials: 660; priced spend $7.25 API-equivalent
 
 ## Arms
 
 | Arm | Trials / planned | Infra errors | Harness failures | Pass rate [95% CI] | Check fraction | Cost / trial | Total cost | Median time |
 |---|---:|---:|---:|---|---:|---:|---:|---:|
 | haiku/native | 110 / 110 | 0 | 0 | 95% [91%, 99%] | 99% | $0.015 | $1.655 | 38s |
-| haiku/new | 110 / 110 | 0 | 0 | 94% [89%, 97%] | 99% | $0.017 | $1.850 | 43s |
+| haiku/new | 110 / 110 | 0 | 0 | 95% [90%, 98%] | 99% | $0.019 | $2.116 | 45s |
 | haiku/old | 110 / 110 | 0 | 0 | 98% [95%, 100%] | 100% | $0.018 | $1.993 | 44s |
 | luna/native | 110 / 110 | 0 | 0 | 39% [30%, 48%] | 80% | $0.004 | $0.398 | 45s |
-| luna/new | 110 / 110 | 0 | 0 | 43% [34%, 52%] | 81% | $0.005 | $0.537 | 50s |
+| luna/new | 110 / 110 | 0 | 0 | 44% [35%, 53%] | 84% | $0.005 | $0.587 | 52s |
 | luna/old | 110 / 110 | 0 | 0 | 45% [35%, 55%] | 85% | $0.005 | $0.505 | 50s |
 
 ## Release gate
 
 ### haiku: **PASS**
 
-- **candidate vs old** (haiku/new vs haiku/old, 110 tasks, 110 pairs): pass -4.5% [-9.1%, -0.9%], check fraction -0.8% [-1.6%, -0.1%], cost x0.93 [x0.83, x1.03]; McNemar old-only 6 / new-only 1, p = 0.125
+- **candidate vs old** (haiku/new vs haiku/old, 110 tasks, 110 pairs): pass -3.6% [-7.3%, +0.0%], check fraction -0.5% [-1.0%, +0.1%], cost x1.06 [x0.93, x1.21]; McNemar old-only 5 / new-only 1, p = 0.219
 - Infra error rate: haiku/old 0.0%, haiku/new 0.0%
 
 ### luna: **PASS**
 
-- **candidate vs old** (luna/new vs luna/old, 110 tasks, 110 pairs): pass -2.7% [-10.9%, +4.6%], check fraction -3.8% [-7.7%, -0.1%], cost x1.06 [x0.92, x1.22]; McNemar old-only 15 / new-only 12, p = 0.701
+- **candidate vs old** (luna/new vs luna/old, 110 tasks, 110 pairs): pass -1.8% [-10.0%, +7.3%], check fraction -0.8% [-4.4%, +2.6%], cost x1.16 [x1.00, x1.35]; McNemar old-only 17 / new-only 15, p = 0.860
 - Infra error rate: luna/old 0.0%, luna/new 0.0%
+- Warning: cost point estimate x1.16 is above x1.15
 
 ## Drift reference (Aether old release vs the native CLI)
 
@@ -98,13 +45,13 @@ A large change here between two reports means the models or native CLIs moved, n
 
 | Family | haiku/native | haiku/new | haiku/old | luna/native | luna/new | luna/old |
 |---|---:|---:|---:|---:|---:|---:|
-| algo | 100% | 100% | 100% | 75% | 75% | 75% |
+| algo | 100% | 100% | 100% | 75% | 88% | 75% |
 | delegation | 100% | 100% | 100% | 100% | 100% | 100% |
-| docspec | 98% | 93% | 100% | 21% | 31% | 38% |
-| edgecase | 95% | 100% | 100% | 48% | 33% | 29% |
+| docspec | 98% | 95% | 100% | 21% | 38% | 38% |
+| edgecase | 95% | 100% | 100% | 48% | 19% | 29% |
 | longctx | 100% | 100% | 100% | 0% | 0% | 14% |
 | multibug | 100% | 100% | 100% | 100% | 100% | 100% |
-| port | 100% | 100% | 100% | 36% | 45% | 64% |
-| refactor | 62% | 50% | 88% | 38% | 50% | 38% |
+| port | 100% | 100% | 100% | 36% | 36% | 64% |
+| refactor | 62% | 50% | 88% | 38% | 62% | 38% |
 | traceback | 100% | 100% | 80% | 60% | 80% | 60% |
 </pre></body></html>
