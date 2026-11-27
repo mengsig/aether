@@ -41,7 +41,9 @@ TypeScript clients are 1.4.4.
     with the API sign-ins read again, so an `aether login` or `aether logout`
     in between counts. A delegated child runs the route its parent's
     delegation policy admitted: if the policy names only the agy model, the
-    child stays on agy.
+    child stays on agy. An agent's spawn schedule routes each occurrence's
+    child the same way when it fires, on freshly read sign-ins, and checks
+    the engine of that route, not of the model the template names.
   - Antigravity turns take no mid-turn messages and have no native
     compaction, and a scope that denies network access is refused, because
     agy has no network sandbox. See [docs/engines.md](docs/engines.md).

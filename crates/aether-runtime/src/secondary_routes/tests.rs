@@ -375,3 +375,5 @@ async fn a_delegated_child_is_not_routed_again_before_its_turn() {
     );
     runtime.shutdown().await;
 }
+
+mod schedules;

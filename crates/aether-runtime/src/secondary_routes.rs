@@ -56,6 +56,16 @@ impl Runtime {
             .is_some_and(|(_, ended)| ended.elapsed() < SIGN_IN_FRESH_FOR)
     }
 
+    /// Whether routing must wait for the API sign-ins to be read again, which
+    /// this asks the scheduler for: an old read misses a login or logout.
+    pub(crate) fn hold_for_sign_ins(&self) -> bool {
+        if self.sign_ins_are_fresh() {
+            return false;
+        }
+        self.sign_in_read_wanted.store(true, Ordering::Release);
+        true
+    }
+
     /// Test hook: forget when the sign-ins were read, as if they were old.
     #[cfg(test)]
     pub(crate) fn age_sign_ins(&self) {
@@ -169,8 +179,7 @@ pub(crate) fn route_before_turn(runtime: &Runtime, agent: Agent) -> Result<Optio
     {
         return Ok(Some(agent));
     }
-    if !runtime.sign_ins_are_fresh() {
-        runtime.sign_in_read_wanted.store(true, Ordering::Release);
+    if runtime.hold_for_sign_ins() {
         return Ok(None);
     }
     let (model, fallbacks) = rerouted(runtime, &agent);

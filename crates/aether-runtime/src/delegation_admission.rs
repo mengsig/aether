@@ -402,15 +402,15 @@ pub(crate) fn child_spec(parent: &Agent, request: ChildRequest) -> CreateAgentSp
 
 /// Everything `delegate` decides before the hold, for a child that shares its
 /// parent's workspace: the policy's verdict, then the agent, unwritten. The
-/// caller admits it with `Runtime::admit_prepared` under its own hold.
+/// caller routes `request` first, with [`route_request`], and admits the
+/// result with `Runtime::admit_prepared` under its own hold.
 pub(crate) fn prepare_child(
     runtime: &Runtime,
     parent: &Agent,
-    mut request: ChildRequest,
+    request: ChildRequest,
     by: &Actor,
     slots: Slots,
 ) -> Result<PreparedAgent> {
-    route_request(runtime, parent, &mut request, slots)?;
     if let Some(refusal) = policy_refusal(runtime, parent, &request, slots)? {
         return Err(RuntimeError::Invalid(refusal));
     }

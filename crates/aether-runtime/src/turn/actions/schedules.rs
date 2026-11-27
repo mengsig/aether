@@ -12,20 +12,30 @@ async fn spawn_refusal(
         Ok(parent) => parent,
         Err(refusal) => return Ok(Some(refusal)),
     };
-    // A template without a model is refused by the runtime, with the reason.
-    let Some(model) = &template.model else {
-        return Ok(None);
-    };
-    let network = template
-        .scope
+    if template
+        .model
         .as_ref()
-        .map_or(parent.scope.network, |scope| scope.network);
-    // The occurrence's child runs where its spawn routes it, so check that route.
-    if aether_model::secondary::has_original(model) {
+        .is_some_and(aether_model::secondary::has_original)
+    {
         runtime.refresh_signed_in_originals().await;
     }
-    let routed = runtime.prefer_original(model.clone());
-    let checked = delegation::check_delegation_target(runtime, &routed, network, &parent).await?;
+    // Check the route the child runs under the caller's policy, as `delegate` does.
+    let objective = template.objective.clone();
+    let request = match crate::schedules::routed_request(
+        runtime,
+        template,
+        objective,
+        &parent,
+        crate::delegation_admission::Slots::Counted,
+    ) {
+        Ok(request) => request,
+        // A template `delegate` could not stand for is refused by the runtime, with the reason.
+        Err(RuntimeError::Invalid(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let network = request.network(&parent);
+    let checked =
+        delegation::check_delegation_target(runtime, &request.model, network, &parent).await?;
     Ok(checked.err())
 }
 

@@ -410,3 +410,108 @@ async fn spawn_schedule_admission_rechecks_the_current_policy() {
     assert!(matches!(jobs[0].status, ScheduleStatus::Paused { .. }));
     h.runtime.shutdown().await;
 }
+
+/// A CLI engine of `kind` that can run a child without network access only
+/// when `offline` holds.
+struct TestCli {
+    kind: aether_engine::EngineKind,
+    offline: bool,
+}
+
+#[async_trait::async_trait]
+impl aether_engine::Engine for TestCli {
+    fn kind(&self) -> aether_engine::EngineKind {
+        self.kind
+    }
+
+    fn adapter(&self) -> String {
+        "test-cli".into()
+    }
+
+    fn validate_network_policy(
+        &self,
+        network_access: bool,
+    ) -> std::result::Result<(), aether_engine::EngineError> {
+        if network_access || self.offline {
+            return Ok(());
+        }
+        Err(aether_engine::EngineError::Unsupported(
+            "it cannot run offline".into(),
+        ))
+    }
+
+    async fn run(
+        &self,
+        _turn: aether_engine::EngineTurn,
+        _cancel: CancellationToken,
+    ) -> std::result::Result<aether_engine::EngineRun, aether_engine::EngineError> {
+        Err(aether_engine::EngineError::Unsupported(
+            "a test engine".into(),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn a_spawn_schedule_checks_the_agy_route_its_policy_admits() {
+    use aether_core::delegation::{DelegationPolicy, WorkerChoice};
+    use aether_engine::EngineKind;
+    let only_agy = ModelRef::new("antigravity", "claude-sonnet-5-5");
+    let policy = DelegationPolicy {
+        workers: vec![WorkerChoice {
+            model: Some(only_agy.clone()),
+            tier: None,
+            effort: None,
+        }],
+        ..DelegationPolicy::default()
+    };
+    let (mut h, _dir) = lead_harness(policy).await;
+    h.ctx.base_actor = Actor::agent(h.ctx.agent.id);
+    // The original's engine would be preferred, but it cannot run an offline
+    // child, and the policy admits only the agy route, which can.
+    let engines = &h.runtime.engines;
+    let (claude, agy) = (EngineKind::CLAUDE_CODE, EngineKind::ANTIGRAVITY);
+    engines.mark_usable(
+        claude,
+        Arc::new(TestCli {
+            kind: claude,
+            offline: false,
+        }),
+    );
+    engines.mark_usable(
+        agy,
+        Arc::new(TestCli {
+            kind: agy,
+            offline: true,
+        }),
+    );
+    let mut action = spawn_schedule(&only_agy.to_string(), Effort::Low);
+    let HarnessAction::CreateSchedule { spec } = &mut action else {
+        unreachable!("a schedule action");
+    };
+    let ScheduleTarget::Spawn(template) = &mut spec.target else {
+        unreachable!("a spawn schedule");
+    };
+    template.scope = Some(aether_core::agent::Scope {
+        network: aether_core::agent::NetworkPolicy::Denied,
+        ..h.ctx.agent.scope.clone()
+    });
+    let created = run(&mut h, action).await;
+    assert!(!created.is_error, "{}", created.content);
+    let reply: serde_json::Value = serde_json::from_str(&created.content).expect("json");
+    let job: Schedule = serde_json::from_value(reply["schedule"].clone()).expect("schedule");
+
+    let due = job.status.next_due().expect("active");
+    crate::schedules::tick(&h.runtime, due).expect("tick");
+    if children(&h).is_empty() {
+        // A slow test may outlast the sign-in read the tool made.
+        h.runtime.refresh_signed_in_originals().await;
+        crate::schedules::tick(&h.runtime, due).expect("tick");
+    }
+    let born = children(&h);
+    assert_eq!(born.len(), 1, "the occurrence spawned its child");
+    assert_eq!(
+        born[0].model, only_agy,
+        "it runs the route that was checked"
+    );
+    h.runtime.shutdown().await;
+}

@@ -357,6 +357,11 @@ A delegated child's chain is routed once, when it is delegated, and the
 parent's delegation policy admits the route the child will run. If the policy
 admits only the requested agy model, the child stays on agy. The child is not
 routed again later, so nothing moves it outside what the policy admitted.
+An agent's spawn schedule routes its child the same way: when the schedule is
+created, and again for each occurrence when it fires, after reading the API
+sign-ins again when the last read is more than 2 seconds old. The engine
+checks at creation and at firing are for that route, not for the model the
+template names.
 
 The opt-in live test runs one tiny `gemini-3.8-flash` low turn:
 `cargo test -p aether-engine antigravity_live -- --ignored`.
