@@ -367,10 +367,12 @@ def _speed_lines(records, invocations):
 
 def load_control(config):
     """How the run kept wall times comparable across arms, for the report."""
-    return (f"Load control: the arms of one (task, repeat) run as one adjacent block, so with {config['jobs']} "
-            f"workers they run side by side under the same load; old/new and archon-old/archon-new alternate "
-            f"which starts first per block; no trial starts above a 1-minute load of {config.get('load_max', '?')} "
-            "or below the free-memory floor.")
+    jobs = config["jobs"]
+    together = (f"so with {jobs} workers they run side by side under the same load" if jobs > 1
+                else "and with 1 worker they run one at a time")
+    return (f"Load control: the arms of one (task, repeat) run as one adjacent block, {together}; old/new and "
+            f"archon-old/archon-new alternate which starts first per block; no trial starts above a 1-minute "
+            f"load of {config.get('load_max', '?')} or below the free-memory floor.")
 
 
 def _gate_settings(args):

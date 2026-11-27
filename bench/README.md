@@ -29,8 +29,10 @@ make bench-release SET=bench/release-set/v3 \
 
 That runs ten arms per task: `<model>/native`, `/old`, `/new`, `/archon-old`
 and `/archon-new` for both models. `archon-old` runs on the `OLD` Aether,
-`archon-new` on `NEW`. The Archon arms run Archon's `direct` pipeline with
-`standard` review, and the reviewer runs on the arm's model.
+`archon-new` on `NEW`. The Archon arms run Archon's `adaptive` pipeline with
+`standard` review, and the reviewer runs on the arm's model. `direct` hands
+risky work, such as a migration, back to the orchestrator rather than doing
+it, and with no orchestrator to take it back that would count as a failure.
 `ARCHON_PIPELINE` and `ARCHON_REVIEW` override that, and the report records
 the values. `ARCHON_REVIEW=none` is for ablations only; it is not a release
 run. `ARCHON_BIN` still works as another name for `ARCHON_NEW`.
@@ -56,7 +58,8 @@ Trials run at once up to `JOBS`, and none starts above `LOAD_MAX` (the
 and new arm of each pair alternate in which starts first. So host load falls on
 both sides of a comparison alike. The report's "Load and wall time" section
 gives the 1-minute load each arm started under, and the speed-up of the run
-over the same trials run one at a time.
+over the same trials run one at a time. On 9 Haiku trials of v2, one job took
+397 s and nine jobs took 58 s: a 6.8x speed-up.
 
 `BUDGET` caps spend, and it also limits parallelism. Each running trial
 reserves its worst case against `BUDGET`: up to USD 9 for a Haiku Archon trial
@@ -87,14 +90,23 @@ A FAIL on either gate, or a parity miss, stops that product's release.
 
 The calibration of `release-set/v3` measured plain Aether (`new`) on the
 candidate tasks, because the set's target was a 30–70 % pass rate for `new`
-on both models:
+on both models. This is the command that froze it:
 
 ```sh
-python3 evals/release_bench.py calibrate --templates <hard templates> --count <N> \
-  --price-binary ~/.local/bin/aether --arms haiku/new,luna/new --select-harness new \
-  --haiku-target 0.5 --haiku-tolerance 0.2 --luna-target 0.5 --luna-band 0.3,0.7 \
-  --release-arms shared --release-jobs 10 --max-release-minutes 90 --freeze bench/release-set/v3
+python3 evals/release_bench.py calibrate --count 24 --templates bundle \
+  --price-binary ~/.local/bin/aether --arms haiku/new,luna/new --select-harness new --repeats 2 \
+  --min-repeats 2 --haiku-band 0.0,1.0 --min-size 20 --max-size 24 --haiku-target 0.5 \
+  --haiku-tolerance 0.2 --luna-target 0.5 --luna-band 0.3,0.7 --max-template-share 1 \
+  --release-arms shared --release-jobs 10 --max-release-minutes 90 --jobs 8 --budget 60 \
+  --timeout 900 --freeze bench/release-set/v3
 ```
+
+Every v3 task is a `bundle`: three different hard tasks in one repository,
+each with its own package and doc, and all to be fixed. Single hard tasks
+passed about 90 % on Haiku in a pilot, too easy to show a gain. Bundling adds
+breadth, not trick checks: every part keeps its own verified checks. So
+`--max-template-share 1` lifts the 20 % rule, which cannot apply to a set of
+one template; the parts mix all six hard templates.
 
 `--release-arms shared` sizes the set for the ten-arm run. `--arms` also
 takes `native` and `archon-new` arms, with `--archon-new`.

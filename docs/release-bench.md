@@ -25,7 +25,11 @@ The release bench is a release-time regression check, not a calibrated gate.
   the release candidate. Never run it per item, per pull request or in CI;
   batch work into releases instead. CI (`scripts/ci.sh`) runs only the bench's
   unit tests, which call no model.
-- **The set is off target.** On the default set, v2, native Haiku passes about
+- **A hard set, v3, exists beside the default.** On v3 plain Aether (`new`)
+  passed 45 % on Haiku and on Luna in calibration ([set v3](#set-v3)). Each
+  v3 task bundles three hard tasks. The default `SET` stays v2 until v3 is
+  adopted.
+- **The default set is off target.** On the default set, v2, native Haiku passes about
   95 % of the tasks and native Luna about 30 %. The goal was about 50 % for
   Haiku. Fair tasks of 5–15 tool calls with deterministic checks do not
   stretch Haiku 5.5 at low effort ([set v1](#set-v1), [set v2](#set-v2)), so
@@ -82,7 +86,9 @@ neither binary systematically gets the warmer cache or the quieter minute.
 
 Caps per trial:
 
-- A 600 s timeout.
+- A 600 s timeout, or the set's own: v3's manifest sets 900 s
+  (`trial_timeout_seconds`), since its tasks are three times v2's size.
+  `--timeout` overrides both.
 - A spend allowance of USD 0.50 on Haiku arms and USD 0.15 on Luna arms,
   twice that on Archon arms (`--archon-budget-factor`), whose orchestrator and
   reviewer spend too. The
@@ -242,7 +248,7 @@ mix the two.
 | `REPEATS` | 1 | runs of every (task, arm) |
 | `ARCHON_OLD` | unset | `archon` of the last Archon release; adds `<model>/archon-old`, run over `OLD` |
 | `ARCHON_NEW` | `ARCHON_BIN` | the Archon candidate; adds `<model>/archon-new`, run over `NEW` |
-| `ARCHON_PIPELINE` | `direct` | the pipeline of the Archon arms (`direct` or `adaptive`) |
+| `ARCHON_PIPELINE` | `adaptive` | the pipeline of the Archon arms (`adaptive` or `direct`) |
 | `ARCHON_REVIEW` | `standard` | the Archon arms' review: `standard`, `strict`, or `none` for ablations |
 | `EARLY_STOP` | unset | `1` turns on the interim looks |
 | `ALLOW_OFF_TARGET` | unset | `1` runs a set whose calibration missed its targets; its verdict is then at most INCONCLUSIVE |
@@ -300,6 +306,14 @@ hundreds of generated inputs. The inputs always stay inside the documented
 rules.
 
 ### Calibrating a new set
+
+[bench/README.md](../bench/README.md) has the exact command that calibrated v3.
+`--arms` takes `new` and `archon-new` arms besides the native ones, and
+`--select-harness` names the arm whose pass rates choose and accept the set.
+`--release-arms shared` sizes the set for the ten-arm run. `--luna-band`,
+`--haiku-target`, `--haiku-tolerance`, `--min-repeats` and
+`--max-template-share` change the targets. A resumed calibration may change
+these selection flags, but not anything that shapes its trials.
 
 ```sh
 make bench-calibrate FREEZE=bench/release-set/v3   # NEW's price table; CAL_BUDGET=25, CAL_REPEATS=3
@@ -575,11 +589,14 @@ versions are recorded in the run's configuration and the report.
   trial's data directory and beside the trial's socket.
 - **One item.** `archon setup` and `archon daemon run --detach` start Archon.
   The workspace is registered as a repository that ships locally, and the task
-  text is queued as one item of the `ARCHON_PIPELINE` pipeline (`direct` by
-  default) with `ARCHON_REVIEW` review (`standard` by default). The model plan
+  text is queued as one item of the `ARCHON_PIPELINE` pipeline (`adaptive` by
+  default, since `direct` hands risky work such as a migration back instead
+  of doing it) with `ARCHON_REVIEW` review (`standard` by default). The model plan
   pins every stage to the arm's model at low effort, the orchestrator too, and
-  the stage starts its reviewer on that model. The arm's allowance (twice the
-  tier's) is Archon's item budget, so it covers the reviewer. On a solo task
+  the stage starts its reviewer on that model. On Haiku the arm's allowance
+  (twice the tier's) is Archon's item budget, so it covers the reviewer. Luna
+  items get no item budget: Codex reports no dollar cost, and Archon refuses
+  review under a dollar budget there. The spend guard caps both. On a solo task
   the work-alone instruction excepts that one reviewer. Report, proposal and
   merge are off. `ARCHON_REVIEW=none` runs without review, for ablations only.
 - **Result.** `archon queue wait` bounds the item by the trial timeout, and a
