@@ -1,22 +1,30 @@
 ── unicode 80 compact
-• Trigger from github · {"kind":"issue","number":42,"text":"the build is red ag…
+╌╌ Trigger · github ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+│ {"kind":"issue","number":42,"text":"the build is red again the build is red a…
 ── unicode 80 detail
-• Trigger from github · {"kind":"issue","number":42,"text":"the build is red
-  again the build is red again the build is red again the build is red again the
-  build is red again the build is red again"}
+╌╌ Trigger · github ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+│ {"kind":"issue","number":42,"text":"the build is red again the build is red
+│ again the build is red again the build is red again the build is red again the
+│ build is red again"}
 ── unicode 120 compact
-• Trigger from github · {"kind":"issue","number":42,"text":"the build is red again the build is red again the build is …
+╌╌ Trigger · github ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+│ {"kind":"issue","number":42,"text":"the build is red again the build is red again the build is red again the build is…
 ── unicode 120 detail
-• Trigger from github · {"kind":"issue","number":42,"text":"the build is red again the build is red again the build is
-  red again the build is red again the build is red again the build is red again"}
+╌╌ Trigger · github ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+│ {"kind":"issue","number":42,"text":"the build is red again the build is red again the build is red again the build is
+│ red again the build is red again the build is red again"}
 ── ascii 80 compact
-* Trigger from github | {"kind":"issue","number":42,"text":"the build is red ag~
+.. Trigger | github ............................................................
+| {"kind":"issue","number":42,"text":"the build is red again the build is red a~
 ── ascii 80 detail
-* Trigger from github | {"kind":"issue","number":42,"text":"the build is red
-  again the build is red again the build is red again the build is red again the
-  build is red again the build is red again"}
+.. Trigger | github ............................................................
+| {"kind":"issue","number":42,"text":"the build is red again the build is red
+| again the build is red again the build is red again the build is red again the
+| build is red again"}
 ── ascii 120 compact
-* Trigger from github | {"kind":"issue","number":42,"text":"the build is red again the build is red again the build is ~
+.. Trigger | github ....................................................................................................
+| {"kind":"issue","number":42,"text":"the build is red again the build is red again the build is red again the build is~
 ── ascii 120 detail
-* Trigger from github | {"kind":"issue","number":42,"text":"the build is red again the build is red again the build is
-  red again the build is red again the build is red again the build is red again"}
+.. Trigger | github ....................................................................................................
+| {"kind":"issue","number":42,"text":"the build is red again the build is red again the build is red again the build is
+| red again the build is red again the build is red again"}

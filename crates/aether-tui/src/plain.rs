@@ -765,6 +765,7 @@ fn undraw(c: char) -> Option<&'static str> {
         '├' => "|-",
         '━' => "=",
         '─' => "-",
+        '╌' => ".",
         '◌' => "~",
         '○' => "o",
         '◆' => "!",
@@ -1185,6 +1186,26 @@ mod tests {
             "{}",
             summary(&app, agent)
         );
+    }
+
+    #[test]
+    fn a_posted_notice_prints_under_its_dashed_header_in_ascii() {
+        let cell = Cell {
+            id: crate::app::transcript::CellId(1),
+            revision: Default::default(),
+            at: aether_core::time::now(),
+            model: CellModel::Notice {
+                kind: crate::app::transcript::NoticeKind::Note(aether_core::note::NoteLevel::Info),
+                text: "Outcome (qi_01EXAMPLE): Done: shipped".into(),
+            },
+        };
+        let lines = describe(&cell);
+        assert!(
+            lines[0].starts_with(".. Outcome - qi_01EXAMPLE ."),
+            "{lines:?}"
+        );
+        assert!(lines.iter().all(|line| line.is_ascii()), "{lines:?}");
+        assert_eq!(lines[1], "| Done: shipped");
     }
 
     #[test]

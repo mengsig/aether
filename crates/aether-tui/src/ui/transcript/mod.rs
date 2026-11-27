@@ -379,6 +379,7 @@ fn rows_for<'a>(
             model,
         }
     });
+    let unseen = app.arrivals.shown(agent, transcript, policy);
     Rows {
         visible: projection.committed,
         pending: projection.pending,
@@ -397,6 +398,7 @@ fn rows_for<'a>(
         tree: &app.tree,
         schedules: &app.schedules.jobs,
         names: app.names_version,
+        unseen,
     }
 }
 

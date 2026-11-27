@@ -166,21 +166,20 @@ fn a_schedule_delivery_names_its_schedule_and_details_keep_the_id() {
         lists(&app.reduce(delivered(10))),
         "an unlisted schedule is looked up"
     );
-    let unknown = format!("Trigger from schedule:{} · hello tick", job.id);
+    let unknown = format!("Trigger · schedule:{}", job.id);
     assert!(screen(&app).contains(&unknown), "{}", screen(&app));
 
     app.on_reply(Then::Schedules, Ok(Reply::Schedules(vec![job.clone()])));
     let named = screen(&app);
-    assert!(
-        named.contains("Trigger from schedule bf4-tick · hello tick"),
-        "{named}"
-    );
+    assert!(named.contains("Trigger · schedule bf4-tick"), "{named}");
+    assert!(named.contains("│ hello tick"), "{named}");
     assert!(!named.contains(&job.id.to_string()), "{named}");
 
     app.reduce(ctrl_key(KeyCode::Char('t')));
     let details = screen(&app);
-    let with_id = format!("Trigger from schedule bf4-tick ({}) · hello tick", job.id);
+    let with_id = format!("Trigger · schedule bf4-tick ({})", job.id);
     assert!(details.contains(&with_id), "{details}");
+    assert!(details.contains("│ hello tick"), "{details}");
 
     assert!(
         !lists(&app.reduce(delivered(11))),
@@ -192,10 +191,7 @@ fn a_schedule_delivery_names_its_schedule_and_details_keep_the_id() {
     renamed.name = "renamed-tick".into();
     app.on_reply(Then::Schedules, Ok(Reply::Schedules(vec![renamed])));
     let text = screen(&app);
-    assert!(
-        text.contains("Trigger from schedule renamed-tick · hello tick"),
-        "{text}"
-    );
+    assert!(text.contains("Trigger · schedule renamed-tick"), "{text}");
     assert!(!text.contains("bf4-tick"), "{text}");
     app.on_reply(Then::Schedules, Ok(Reply::Schedules(vec![])));
     assert!(screen(&app).contains(&unknown));

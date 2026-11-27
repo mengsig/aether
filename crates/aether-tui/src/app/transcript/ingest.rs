@@ -279,7 +279,7 @@ impl AgentTranscript {
 
     /// Append a committed cell. An open explore group closes; an open wait
     /// stays live below it (child results land while their parent waits).
-    fn push(&mut self, at: Timestamp, model: CellModel) -> CellId {
+    pub(crate) fn push(&mut self, at: Timestamp, model: CellModel) -> CellId {
         if !matches!(
             self.active.as_ref().map(|c| &c.model),
             Some(CellModel::Waiting { .. })

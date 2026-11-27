@@ -202,6 +202,8 @@ pub struct App {
     pub details: bool,
     /// Scroll intents for `ui::transcript` to resolve at draw time.
     pub scroll_log: transcript::ScrollLog,
+    /// Cells that arrived since the operator last gave input.
+    pub arrivals: arrivals::Arrivals,
     pub board: board::BoardState,
     pub viewer: crate::viewer::Viewer,
     pub bottom: crate::ui::bottom::BottomPane,
@@ -254,6 +256,7 @@ mod accounting;
 mod agents;
 pub mod approval_flow;
 pub(crate) mod approvals;
+pub mod arrivals;
 mod artifacts;
 mod backfill;
 pub mod board;

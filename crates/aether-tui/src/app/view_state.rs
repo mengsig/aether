@@ -126,6 +126,7 @@ impl App {
             branches: HashMap::new(),
             details: false,
             scroll_log: Default::default(),
+            arrivals: Default::default(),
             board: Default::default(),
             viewer: Default::default(),
             bottom: Default::default(),

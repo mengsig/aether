@@ -20,6 +20,13 @@ impl App {
         // Compact search previews also change when the terminal resizes.
         let track_find = !matches!(event, AppEvent::Tick { .. } | AppEvent::Focus(_));
         let selection = self.selected;
+        let interacted = matches!(
+            event,
+            AppEvent::Key(_)
+                | AppEvent::Paste(_)
+                | AppEvent::TerminalImagePaste
+                | AppEvent::ImagePathPasted { .. }
+        );
         let pasted = matches!(
             event,
             AppEvent::Paste(_) | AppEvent::TerminalImagePaste | AppEvent::ImagePathPasted { .. }
@@ -30,6 +37,7 @@ impl App {
             Vec::new()
         };
         effects.extend(self.reduce_inner(event));
+        self.track_arrivals(interacted);
         self.end_orphaned_theme_preview();
         if track_find {
             self.track_find();

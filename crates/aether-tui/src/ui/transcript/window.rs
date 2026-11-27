@@ -87,6 +87,8 @@ pub struct Rows<'a> {
     pub tree: &'a AgentTree,
     pub schedules: &'a [Schedule],
     pub names: u64,
+    /// The `N new` divider goes above this cell.
+    pub unseen: Option<crate::app::arrivals::Unseen>,
 }
 
 impl<'a> Rows<'a> {
@@ -159,6 +161,10 @@ impl<'a> Rows<'a> {
             names: self.names,
             presentation: self.presentation,
             compact: self.policy.compact(&cell.model),
+            unseen: self
+                .unseen
+                .filter(|unseen| unseen.first == cell.id)
+                .map_or(0, |unseen| unseen.count),
         }
     }
 
@@ -188,7 +194,9 @@ impl<'a> Rows<'a> {
         if self.policy.compact(&cell.model)
             && let Some(line) = crate::ui::cells::compact::line(&cell.model, self.width, self.theme)
         {
-            let layout = Arc::new(crate::ui::cells::text::Layout::unmapped(vec![line]));
+            let layout = Arc::new(
+                self.under_divider(&key, crate::ui::cells::text::Layout::unmapped(vec![line])),
+            );
             cache.insert(key, Arc::clone(&layout));
             return ItemLines::Cell(layout);
         }
@@ -237,9 +245,20 @@ impl<'a> Rows<'a> {
                 }
             }
         }
-        let layout = Arc::new(layout);
+        let layout = Arc::new(self.under_divider(&key, layout));
         cache.insert(key, Arc::clone(&layout));
         ItemLines::Cell(layout)
+    }
+
+    /// `layout` below the `N new` divider when `key`'s cell is the first unseen one.
+    fn under_divider(&self, key: &LayoutKey, layout: Layout) -> Layout {
+        if key.unseen == 0 {
+            return layout;
+        }
+        let divider = crate::ui::cells::separator::new_divider(key.unseen, self.width, self.theme);
+        let mut with = Layout::unmapped(vec![divider]);
+        with.append(layout);
+        with
     }
 
     pub fn height(&self, item: usize, cache: &mut LayoutCache) -> usize {

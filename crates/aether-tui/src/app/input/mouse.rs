@@ -39,6 +39,14 @@ impl App {
             return Vec::new();
         }
         selection::validate(self, cache);
+        // A click is hit-tested against the frame as painted, so only the wheel
+        // counts as input: dropping the divider would shift the rows under it.
+        if matches!(
+            mouse.kind,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        ) {
+            self.note_mouse_input();
+        }
         match mouse.kind {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 let pane = cache
