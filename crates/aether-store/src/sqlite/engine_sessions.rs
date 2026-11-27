@@ -8,20 +8,12 @@ pub(super) fn record(
     record: EngineSessionOwnership,
     tally: &mut WriteTally,
 ) -> Result<()> {
-    if record.expired_owner.is_some()
-        || !matches!(record.engine.as_str(), "claude-code" | "codex")
-        || record.session_id.trim().is_empty()
-        || record.log_paths.iter().any(|path| {
-            !path.is_absolute()
-                || path
-                    .components()
-                    .any(|part| matches!(part, std::path::Component::ParentDir))
-        })
-    {
-        return Err(StoreError::Corrupt(
-            "invalid engine session ownership evidence".into(),
-        ));
-    }
+    validate(&record).map_err(|why| {
+        StoreError::OwnershipRefused(format!(
+            "invalid {} session ownership evidence: {why}",
+            record.engine
+        ))
+    })?;
     let existing: Option<String> = tx
         .query_row(
             "SELECT body FROM engine_session_ownership WHERE engine=?1 AND session_id=?2",
@@ -32,9 +24,10 @@ pub(super) fn record(
     if let Some(body) = existing {
         let previous: EngineSessionOwnership = serde_json::from_str(&body)?;
         if previous.agent_id != record.agent_id || previous.log_paths != record.log_paths {
-            return Err(StoreError::Corrupt(
-                "conflicting engine session ownership evidence".into(),
-            ));
+            return Err(StoreError::OwnershipRefused(format!(
+                "{} session {} is already owned by agent {} with other evidence",
+                record.engine, record.session_id, previous.agent_id
+            )));
         }
         return Ok(());
     }
@@ -47,6 +40,53 @@ pub(super) fn record(
         ],
     )?;
     Ok(())
+}
+
+/// Each engine's evidence form. A new engine needs its own form here: an
+/// unknown one is refused rather than trusted with the loosest rules.
+fn validate(record: &EngineSessionOwnership) -> std::result::Result<(), String> {
+    if record.expired_owner.is_some() {
+        return Err("only history expiry may record an expired owner".into());
+    }
+    if record.session_id.trim().is_empty() {
+        return Err("the session id is empty".into());
+    }
+    match record.engine.as_str() {
+        "claude-code" | "codex" => {
+            let unsafe_path = record.log_paths.iter().find(|path| {
+                !path.is_absolute()
+                    || path
+                        .components()
+                        .any(|part| matches!(part, std::path::Component::ParentDir))
+            });
+            match unsafe_path {
+                Some(path) => Err(format!(
+                    "log path {} is not absolute and normalized",
+                    path.display()
+                )),
+                None => Ok(()),
+            }
+        }
+        // `agy acp` names sessions by lowercase UUID and keeps them in a
+        // database Aether cannot verify, so no log path may be claimed.
+        "antigravity" if !is_lowercase_uuid(&record.session_id) => Err(format!(
+            "session id {:?} is not a lowercase UUID",
+            record.session_id
+        )),
+        "antigravity" if !record.log_paths.is_empty() => {
+            Err("antigravity sessions have no verifiable log paths".into())
+        }
+        "antigravity" => Ok(()),
+        other => Err(format!("engine {other:?} has no ownership evidence form")),
+    }
+}
+
+fn is_lowercase_uuid(id: &str) -> bool {
+    id.len() == 36
+        && id.bytes().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => matches!(byte, b'0'..=b'9' | b'a'..=b'f'),
+        })
 }
 
 pub(super) fn preserve_expired_owners(tx: &Transaction<'_>, run: &str) -> Result<()> {

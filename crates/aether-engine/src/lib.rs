@@ -1,5 +1,5 @@
 //! External agent engines: official CLIs that run inference under the user's
-//! own subscription login (Claude Code, Codex).
+//! own subscription login (Claude Code, Codex, Antigravity).
 //!
 //! An engine owns the model loop and its built-in tools. Aether stays the
 //! authority on tasks, delegation, waits, events, approvals and cost: it
@@ -7,6 +7,7 @@
 //! engine over MCP through [`bridge`], records everything the engine streams
 //! back, and resumes the engine's session on the next turn.
 
+pub mod antigravity;
 pub mod bridge;
 pub mod claude_code;
 pub mod codex;
@@ -34,6 +35,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 pub use aether_spawn::SpawnGate;
+pub use antigravity::AntigravityEngine;
 pub use claude_code::ClaudeCodeEngine;
 pub use codex::CodexEngine;
 pub use codex_app::CodexAppEngine;
@@ -63,6 +65,7 @@ pub struct EngineKind(&'static str);
 impl EngineKind {
     pub const CLAUDE_CODE: Self = Self("claude-code");
     pub const CODEX: Self = Self("codex");
+    pub const ANTIGRAVITY: Self = Self("antigravity");
 
     /// Name an engine. Static because the name identifies the engine for the
     /// life of the process: it keys the runtime's engine table and lands in

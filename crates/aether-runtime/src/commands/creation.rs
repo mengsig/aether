@@ -258,6 +258,12 @@ impl Runtime {
                 .unwrap_or_default(),
             (true, true) => Vec::new(),
         };
+        // A delegated chain was routed before its policy admitted it.
+        let (model, fallbacks) = match preflight.delegating_parent {
+            Some(_) => (model, fallbacks),
+            None => self.preferred_chain(model, fallbacks),
+        };
+        self.models.resolve(&model)?;
         for link in &fallbacks {
             self.models.resolve(link)?;
         }

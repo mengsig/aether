@@ -112,6 +112,7 @@ pub(crate) fn engine_kind(protocol: Protocol) -> Option<EngineKind> {
     match protocol {
         Protocol::ClaudeCode => Some(EngineKind::CLAUDE_CODE),
         Protocol::Codex => Some(EngineKind::CODEX),
+        Protocol::Antigravity => Some(EngineKind::ANTIGRAVITY),
         _ => None,
     }
 }

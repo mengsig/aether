@@ -405,6 +405,9 @@ fn priced(mut model: ModelDef, cost: ModelCost) -> ModelDef {
     model
 }
 
+/// Gemini models have a 1M-token window.
+const ANTIGRAVITY_CONTEXT: u32 = 1_048_576;
+
 /// Every current Claude model has a 1M-token window.
 const CLAUDE_CONTEXT: u32 = 1_000_000;
 
@@ -583,6 +586,48 @@ fn codex_cli() -> ProviderDef {
     }
 }
 
+/// Google models through the Antigravity CLI (`agy`). No model carries a
+/// tier or a price, so none can become a default or a fallback; the CLI picks
+/// the effort variant of each family itself.
+fn antigravity() -> ProviderDef {
+    let model = |id: &str, name: &str| engine_model(id, name, ANTIGRAVITY_CONTEXT, 65_536);
+    ProviderDef {
+        id: "antigravity".into(),
+        name: "Antigravity (Google subscription)".into(),
+        protocol: Protocol::Antigravity,
+        base_url: String::new(),
+        auth: AuthMethods::cli(crate::auth::cli::CliAuth {
+            program: "agy".into(),
+            status: vec!["models".into()],
+            login: Vec::new(),
+            logout: Vec::new(),
+            logged_in_markers: vec!["gemini-".into(), "claude-".into(), "gpt-".into()],
+            label: "Google subscription via Antigravity".into(),
+            credential_file: None,
+            credential_dir_env: None,
+        }),
+        headers: BTreeMap::new(),
+        models: vec![
+            model("gemini-4-hydrogen", "Gemini 4 Hydrogen"),
+            model("gemini-4-neon", "Gemini 4 Neon"),
+            model("gemini-4-carbon", "Gemini 4 Carbon"),
+            model("gemini-4-argon", "Gemini 4 Argon"),
+            model("gemini-3.8-flash", "Gemini 3.8 Flash"),
+            // Secondary routes: other vendors' models served through agy, used
+            // only when their own provider is not (see `crate::secondary`).
+            model("claude-opus-5-5", "Claude Opus 5.5 (via Antigravity)"),
+            model("claude-sonnet-5-5", "Claude Sonnet 5.5 (via Antigravity)"),
+            model("gpt-oss-120b", "GPT-OSS 120B (via Antigravity)"),
+        ],
+        default_capabilities: Some(engine_profile(ANTIGRAVITY_CONTEXT, 65_536)),
+        flags: ProviderFlags::default(),
+        max_concurrent: None,
+        family: None,
+        enabled: true,
+        usage_probe: Default::default(),
+    }
+}
+
 pub fn providers() -> Vec<ProviderDef> {
     let mut openrouter = compat(
         "openrouter",
@@ -616,6 +661,7 @@ pub fn providers() -> Vec<ProviderDef> {
     vec![
         claude_code(),
         codex_cli(),
+        antigravity(),
         anthropic(),
         openai(),
         openai_responses(),

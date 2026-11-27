@@ -42,6 +42,8 @@ protocols! {
     ClaudeCode => "claude-code",
     /// Inference runs through the Codex CLI (ChatGPT login).
     Codex => "codex",
+    /// Inference runs through the Antigravity CLI (Google sign-in).
+    Antigravity => "antigravity",
 }
 
 impl Protocol {
@@ -55,6 +57,7 @@ impl Protocol {
             Self::Codex | Self::ClaudeCode | Self::AnthropicMessages => {
                 &[Low, Medium, High, XHigh, Max]
             }
+            Self::Antigravity => &[Low, Medium, High, XHigh],
             Self::OpenaiChatCompletions | Self::OpenaiResponses | Self::OpenaiCodexResponses => {
                 &[Low, Medium, High]
             }
@@ -79,14 +82,14 @@ impl Protocol {
     pub fn reports_cost(self, capabilities: &CapabilityProfile) -> bool {
         match self {
             Self::ClaudeCode => true,
-            Self::Codex => false,
+            Self::Codex | Self::Antigravity => false,
             _ => capabilities.cost.is_some(),
         }
     }
 
     /// Engines are driven by the runtime, not by an HTTP adapter.
     pub fn is_engine(self) -> bool {
-        matches!(self, Self::ClaudeCode | Self::Codex)
+        matches!(self, Self::ClaudeCode | Self::Codex | Self::Antigravity)
     }
 
     /// The API provider whose price list covers this subscription route's

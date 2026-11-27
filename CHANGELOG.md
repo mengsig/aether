@@ -6,6 +6,48 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+## 1.4.4
+
+Released 2026-11-27. A new, opt-in engine: Antigravity, Google's `agy` CLI
+(#468, with its session-ownership fix #469). The workspace and Python and
+TypeScript clients are 1.4.4.
+
+### Added
+
+- **Antigravity engine.** Aether drives Google's `agy` CLI (1.5.18 or newer)
+  over its Agent Client Protocol server (`agy acp`), with Aether's harness
+  tools, approvals, resume, interrupt and token usage. It adds the Google
+  models `antigravity/gemini-4-hydrogen`, `gemini-4-neon`, `gemini-4-carbon`,
+  `gemini-4-argon` and `gemini-3.8-flash`, where effort picks agy's matching
+  variant.
+  - *Enabling it:* install `agy` 1.5.18 or newer and run `agy` once to sign
+    in; `aether doctor` then reports the engine, or says that agy is not
+    signed in, or shows agy's own error when `agy models` fails otherwise. Aether never reads agy's credentials or keyring and never
+    edits its global config. agy is probed after Claude Code and Codex, so
+    it never delays the daemon's start.
+  - *Opt-in:* the Google models carry no tier and no price, so they are never
+    an automatic default or fallback. An agent runs on one only when it names
+    it, for example `aether run "Your task" --model
+    antigravity/gemini-3.8-flash`.
+  - *The original provider comes first:* agy's Claude and GPT models
+    (`antigravity/claude-opus-5-5`, `antigravity/claude-sonnet-5-5`,
+    `antigravity/gpt-oss-120b`) are secondary routes. When an agent is
+    created on one, or names one as a fallback, Aether uses the vendor's own
+    provider whenever it is usable: its engine (`claude-code` or `codex`)
+    first, else its signed-in API (`anthropic` or `openai`). It keeps the
+    route through agy only when neither is usable, or when the API would put
+    a fallback of a subscription agent on a separate bill. An agent that has
+    not started an agy session yet is moved to the original before its turn,
+    with the API sign-ins read again, so an `aether login` or `aether logout`
+    in between counts. A delegated child runs the route its parent's
+    delegation policy admitted: if the policy names only the agy model, the
+    child stays on agy. An agent's spawn schedule routes each occurrence's
+    child the same way when it fires, on freshly read sign-ins, and checks
+    the engine of that route, not of the model the template names.
+  - Antigravity turns take no mid-turn messages and have no native
+    compaction, and a scope that denies network access is refused, because
+    agy has no network sandbox. See [docs/engines.md](docs/engines.md).
+
 ## 1.4.3
 
 The workspace and Python and TypeScript clients are 1.4.3.

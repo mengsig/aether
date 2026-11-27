@@ -122,6 +122,20 @@ pub enum DetectError {
         capability: String,
         detail: String,
     },
+    /// A probe beyond the version check (`agy models`) exited non-zero for a
+    /// reason not recognised; `detail` is the CLI's own words.
+    ProbeFailed {
+        program: String,
+        probe: String,
+        detail: String,
+    },
+    /// The CLI works but has no signed-in account; `sign_in` is the command
+    /// that signs in, `detail` the CLI's own words.
+    SignedOut {
+        program: String,
+        sign_in: String,
+        detail: String,
+    },
 }
 
 impl std::fmt::Display for DetectError {
@@ -168,6 +182,22 @@ impl std::fmt::Display for DetectError {
                 f,
                 "{program} does not support {capability} ({detail}); upgrade {program}"
             ),
+            Self::ProbeFailed {
+                program,
+                probe,
+                detail,
+            } => write!(
+                f,
+                "`{program} {probe}` failed ({detail}); check that it works from a terminal, then retry"
+            ),
+            Self::SignedOut {
+                program,
+                sign_in,
+                detail,
+            } => write!(
+                f,
+                "{program} is not signed in ({detail}); run `{sign_in}` once to sign in"
+            ),
         }
     }
 }
@@ -182,6 +212,8 @@ pub fn missing_cli(kind: crate::EngineKind) -> Option<DetectError> {
         "claude"
     } else if kind == crate::EngineKind::CODEX {
         "codex"
+    } else if kind == crate::EngineKind::ANTIGRAVITY {
+        "agy"
     } else {
         return None;
     };
@@ -243,6 +275,37 @@ async fn probe_version_with_args(
 /// Run `<program> <capability_args>` (optionally on `path`) and report
 /// whether it answered - the structural check for a subcommand an older CLI
 /// may not have (codex-app's `app-server --help`).
+/// Run `program args` and return its stdout when it exits zero; a non-zero
+/// exit is the missing `capability`, with the CLI's own words as detail.
+pub(crate) async fn probe_output(
+    program: &str,
+    args: &[&str],
+    capability: &str,
+    path: Option<&Path>,
+) -> Result<String, DetectError> {
+    assert!(!args.is_empty(), "a capability probe runs a subcommand");
+    let output = run_probe(program, args, path, None)
+        .await?
+        .ok_or_else(|| DetectError::TimedOut {
+            program: program.to_owned(),
+            probe: args.join(" "),
+        })?
+        .map_err(|e| DetectError::NotInstalled {
+            program: program.to_owned(),
+            os_error: e.to_string(),
+        })?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DetectError::MissingCapability {
+            program: program.to_owned(),
+            capability: capability.to_owned(),
+            detail: bounded(&format!("{stdout} {stderr}")),
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 pub(crate) async fn probe_capability(
     program: &str,
     capability_args: &[&str],
