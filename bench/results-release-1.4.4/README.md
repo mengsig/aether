@@ -17,10 +17,18 @@ native and old arms come from the full run `rel-1-4-4`. Their binaries (the
 native CLIs and the published v1.4.3) did not change. The gate below is the
 harness's own `report` over the two runs combined (`rel-1-4-4-final`).
 
-**CI: passed.** `CARGO_BUILD_JOBS=6 make ci` passed on `5250b1c15` (tree
-`0e6cee9e99da`): `CI passed: lint test binary`; nextest 6901 tests, 6901
-passed, 2 flaky that passed on their retry, 48 skipped. Each flaky test then
-passed 5 of 5 isolated reruns (see [make ci](#make-ci)).
+The final code head is `f366f0f4a`, one review fix after `5250b1c15`. It
+changes only how `antigravity/...` chains are routed: for delegated children
+and on API sign-in changes. An agent or child that names no `antigravity/...`
+model takes the same path as on `5250b1c15`, and no bench arm uses one, so
+the bench result stands for it (see
+[Could 1.4.3..HEAD touch Claude Code or Codex runs?](#could-143head-touch-claude-code-or-codex-runs)).
+
+**CI: passed.** `CARGO_BUILD_JOBS=6 make ci` passed on the final head
+`f366f0f4a` (tree `7663ce652d57`): `CI passed: lint test binary`; nextest
+6906 tests, 6906 passed, 48 skipped, no flaky test. On `5250b1c15` it also
+passed, with 2 flaky tests that then passed 5 of 5 isolated reruns each (see
+[make ci](#make-ci)).
 
 ## Gate: v1.4.4 (5250b1c15) against v1.4.3
 
@@ -118,6 +126,10 @@ Not in a way that can change what the model does:
   `antigravity/...` secondary model, it returns the agent unchanged before
   reading anything. Creation's `preferred_chain` likewise leaves any
   non-secondary model as it is.
+- **Delegation and sign-in fix (f366f0f4a)** routes a delegated chain once,
+  before policy admission, and reads the API sign-ins again before routing a
+  parked agent's `antigravity/...` chain. Both steps return at once for a
+  chain with no `antigravity/...` model, before reading anything.
 - **Startup ordering (ebdf825e8, 63d005115)** changes when antigravity is
   probed: after Claude Code and Codex are detected, not alongside them.
   Detection of those two engines is unchanged. The startup probes now also
@@ -160,6 +172,12 @@ unchanged path is about the size of the warning.
     bill.
   - 5250b1c15: a failed `agy models` is "not signed in" only when agy's words
     name a sign-in; any other failure keeps agy's own words.
+  - f366f0f4a: a delegated child's chain is routed once, before its parent's
+    delegation policy admits it, and the policy and preflight check that
+    route. If the policy admits only the agy model, the child stays on agy,
+    and nothing routes a child again later. Before routing a parked agent's
+    secondary chain, the scheduler reads the API sign-ins again when the last
+    read is over 2 s old, so `aether login` or `aether logout` counts.
 
 ## How it was run
 
@@ -241,7 +259,13 @@ trials at the default `BUDGET=20` and spent USD 2.70.
 
 ## make ci
 
-`CARGO_BUILD_JOBS=6 make ci` on `5250b1c15` (tree `0e6cee9e99da`): **passed**.
+`CARGO_BUILD_JOBS=6 make ci` on the final head `f366f0f4a` (tree
+`7663ce652d57816eb3f195a9ee71442036e6d3e5`): **passed**, `CI passed: lint
+test binary`. Nextest ran 6906 tests: 6906 passed, 48 skipped, and no test
+needed its retry. The release build, e2e, budgets, process measurements,
+install check and TUI captures passed.
+
+Before it, `CARGO_BUILD_JOBS=6 make ci` on `5250b1c15` (tree `0e6cee9e99da`): **passed**.
 Nextest ran 6901 tests: 6901 passed, 48 skipped. Two were flaky and passed on
 retry. Each was then run 5 times in isolation on the same tree, and passed 5
 of 5:
