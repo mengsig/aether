@@ -2,7 +2,9 @@
 
 `make bench-release` compares the last release of Aether with a release
 candidate, and both with the plain native CLIs, on a frozen set of short coding
-tasks. It runs trials in parallel, stops starting them at `BUDGET` (USD 20
+tasks. Given `ARCHON_OLD` and `ARCHON_NEW`, the same run also compares the last
+Archon release with its candidate, so one run gates both products
+([bench/README.md](../bench/README.md) has the commands). It runs trials in parallel, stops starting them at `BUDGET` (USD 20
 API-equivalent), and prints a Markdown report that ends in a PASS, FAIL or
 INCONCLUSIVE verdict.
 
@@ -65,21 +67,25 @@ cache and state, and, for Aether arms, its own daemon, config, data directory
 and socket. Its TMPDIR is a fresh, short directory under `/var/tmp`
 (`RELEASE_BENCH_TMP_ROOT`), removed when the trial ends. A short TMPDIR matters
 because harnesses bind Unix sockets under it, and socket paths must fit in 108
-bytes. Trials therefore run side by side, 6 at once by default (`JOBS`), a
-level this 12-core host takes beside other work.
-A trial starts only while the 1-minute load is at most `LOAD_MAX` (16) and at
-least 2 GB of memory is free. A trial that waited for budget headroom checks
+bytes. Trials therefore run side by side. `JOBS` defaults to the host's cores
+minus two, at most one per 1.2 GB of memory, from 2 to 10 (10 on a 12-core,
+15 GB host). A trial starts only while the 1-minute load is at most
+`LOAD_MAX` (1.25 per core by default, 15 on 12 cores) and at least 2 GB of
+memory is free. Each trial records the load it started under, and the report
+gives it per arm. A trial that waited for budget headroom checks
 the host again before it starts, since the load may have risen meanwhile.
 
 Every (task, repeat) is one block: its arms run back to back, in a shuffled
 order. Within each model tier, `old` runs before `new` in exactly half of the
-blocks, alternating, so neither binary systematically gets the warmer cache or
-the quieter minute.
+blocks, alternating, and `archon-old` before `archon-new` the same way, so
+neither binary systematically gets the warmer cache or the quieter minute.
 
 Caps per trial:
 
 - A 600 s timeout.
-- A spend allowance of USD 0.50 on Haiku arms and USD 0.15 on Luna arms. The
+- A spend allowance of USD 0.50 on Haiku arms and USD 0.15 on Luna arms,
+  twice that on Archon arms (`--archon-budget-factor`), whose orchestrator and
+  reviewer spend too. The
   harness's own cap applies where it has one: `--max-budget-usd` for Claude
   Code, `cost_budget` for Aether on Claude, Archon's item budget. Codex and
   Aether on Codex have none, so every arm also runs under a spend guard. The
@@ -101,7 +107,7 @@ Caps per trial:
   | Arm | Agents at once (solo task, delegation task) | Installed as |
   | --- | --- | --- |
   | Aether `old`, `new` | 1, 5 | `[scheduler] max_concurrent_turns` in the trial daemon's `config.toml`, engine turns included |
-  | Archon | 2, 6 (the orchestrator counts) | the same key in the operator config Archon seeds its Aether from |
+  | Archon `archon-old`, `archon-new` | 3, 7 (the orchestrator and the reviewer count; 2, 6 with `ARCHON_REVIEW=none`) | the same key in the operator config Archon seeds its Aether from |
   | Claude Code | 2, 5 | `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` of 1 or 4, beside the root |
   | Codex | 2, 5 | `max_concurrent_threads_per_session` of 1 or 4, under both `agents` and `features.multi_agent_v2` (Codex reads the one its multi-agent version uses) |
 
@@ -112,10 +118,11 @@ Caps per trial:
   `BUDGET`: the allowance plus two calls at the model's largest possible
   price for each agent the limit above lets it run at once (a full context
   window and a full output). Those two calls are one finished between two
-  polls and one in flight at the stop. On Haiku that is USD 1.54 for a solo
-  Aether trial and USD 2.58 for a solo native or Archon trial; on Luna, USD
-  0.35 and USD 0.54. Delegation tasks reserve more, up to USD 6.74 for Archon
-  on Haiku. The run stops starting trials when a reservation no longer fits.
+  polls and one in flight at the stop. On the Aether 1.4.3 price table that is,
+  for a solo task on Haiku, USD 3.14 for Aether, USD 5.78 for native and USD
+  8.92 for a reviewed Archon trial; on Luna, USD 0.35, 0.54 and 0.89. A
+  free worker waits while its reservation does not fit, so `BUDGET` bounds
+  parallelism too: a ten-arm run on 10 workers needs `BUDGET=100`.
 - A trial whose usage cannot be priced is charged its whole reservation. The
   exception is an Aether turn that recorded no tokens, because it failed or
   ended before any model call (a sandbox that did not start, say). Such a turn
@@ -150,8 +157,27 @@ reported too.
     task is the unit of resampling. Cost is paired the same way.
   - An exact McNemar test on the discordant pass/fail pairs.
   - The cost ratio new/old, with its bound.
+- **Per model:** pass rate, mean cost and mean wall time of every harness
+  side by side (native, old, new, archon-old, archon-new).
+- **Archon release gate** (with Archon arms): `archon-new` against
+  `archon-old`, the same gate as Aether's, and the **parity** line per tier:
+  `PARITY MET` when `archon-new` passes at least as often as `new` on the
+  (task, repeat) cells both counted, else `PARITY MISSED` with the tasks `new`
+  passed more often. A gate FAIL or a parity miss fails the Archon release.
+  Archon may cost more and take longer than plain Aether.
 - **Drift:** `old` against `native`, for reference only.
-- **Per family:** pass rates by task family.
+- **Failure digest:** per arm, how many trials did not pass and why, by
+  category only: excluded outage, spend allowance, timeout, review rounds
+  exhausted, harness error, failed run, ungradable result, and wrong results
+  by share of checks passed. It is also written to `failure-digest.md` without
+  task names or the set's path, so it can go to whoever fixes the harness.
+- **Load and wall time:** the 1-minute load each arm's trials started under,
+  and the run's speed-up: summed trial seconds over wall seconds.
+- **Per family** and **per task:** pass rates by family, then every task's
+  pass rate, cost and time on every arm.
+
+`verdict.json` holds the overall verdict, the Aether and Archon verdicts, the
+per-tier gates and the parity results.
 
 Trials end in one of three ways:
 
@@ -210,11 +236,14 @@ mix the two.
 | `NEW` | `target/release/aether` | aether binary of the candidate |
 | `SET` | `bench/release-set/v2` | frozen task set |
 | `ARMS` | `all` | `all`, `haiku`, `luna`, or comma-separated arm keys |
-| `JOBS` | 6 | trials at once |
-| `LOAD_MAX` | 16 | start no trial above this 1-minute load |
+| `JOBS` | host: cores − 2, ≤ 1 per 1.2 GB, 2–10 | trials at once |
+| `LOAD_MAX` | host: 1.25 × cores | start no trial above this 1-minute load |
 | `BUDGET` | 20 | USD API-equivalent; stop starting trials beyond it |
 | `REPEATS` | 1 | runs of every (task, arm) |
-| `ARCHON_BIN` | unset | an `archon` executable; adds an Archon arm per tier (below) |
+| `ARCHON_OLD` | unset | `archon` of the last Archon release; adds `<model>/archon-old`, run over `OLD` |
+| `ARCHON_NEW` | `ARCHON_BIN` | the Archon candidate; adds `<model>/archon-new`, run over `NEW` |
+| `ARCHON_PIPELINE` | `direct` | the pipeline of the Archon arms (`direct` or `adaptive`) |
+| `ARCHON_REVIEW` | `standard` | the Archon arms' review: `standard`, `strict`, or `none` for ablations |
 | `EARLY_STOP` | unset | `1` turns on the interim looks |
 | `ALLOW_OFF_TARGET` | unset | `1` runs a set whose calibration missed its targets; its verdict is then at most INCONCLUSIVE |
 | `EXTRA` | unset | more `release_bench.py run` options, such as `--limit 10` |
@@ -529,11 +558,14 @@ it, because this host stalls when heavy jobs overlap. `BUDGET=30` would leave
 room for 10 Haiku trials plus a delegation trial to the end of the run. It does
 not change what a run costs, only the worst case it may reach.
 
-## The Archon arm
+## The Archon arms
 
-`ARCHON_BIN=/path/to/archon` adds `haiku/archon` and `luna/archon`. Each trial
-runs its task through a private Archon whose Aether is the candidate binary
-(`NEW`):
+`ARCHON_OLD=/path/to/archon` adds `haiku/archon-old` and `luna/archon-old`, and
+`ARCHON_NEW` (or its old name `ARCHON_BIN`) adds `haiku/archon-new` and
+`luna/archon-new`. An arm named `<model>/archon` is `<model>/archon-new`. Each
+trial runs its task through a private Archon of its side whose Aether is that
+side's binary: `archon-old` over `OLD`, `archon-new` over `NEW`. Both
+versions are recorded in the run's configuration and the report.
 
 - **Isolated state.** The trial gets its own `ARCHON_CONFIG_DIR`,
   `ARCHON_DATA_DIR` and `ARCHON_SOCKET`, and an `AETHER_CONFIG_DIR` as the
@@ -543,22 +575,27 @@ runs its task through a private Archon whose Aether is the candidate binary
   trial's data directory and beside the trial's socket.
 - **One item.** `archon setup` and `archon daemon run --detach` start Archon.
   The workspace is registered as a repository that ships locally, and the task
-  text is queued as one item of the `direct` pipeline. The item runs on the
-  arm's model at low effort (the orchestrator too), with the arm's allowance as
-  Archon's item budget. Review, report, proposal and merge are all off.
+  text is queued as one item of the `ARCHON_PIPELINE` pipeline (`direct` by
+  default) with `ARCHON_REVIEW` review (`standard` by default). The model plan
+  pins every stage to the arm's model at low effort, the orchestrator too, and
+  the stage starts its reviewer on that model. The arm's allowance (twice the
+  tier's) is Archon's item budget, so it covers the reviewer. On a solo task
+  the work-alone instruction excepts that one reviewer. Report, proposal and
+  merge are off. `ARCHON_REVIEW=none` runs without review, for ablations only.
 - **Result.** `archon queue wait` bounds the item by the trial timeout, and a
   timed-out item is cancelled. The newest run branch that holds commits
   becomes the graded workspace. Without one, the starting commit is graded.
   `archon daemon stop` then stops both daemons.
 - **Usage.** Usage comes from every agent in the trial's Aether store,
-  orchestrator included, priced on the run's table. The same store feeds the
+  orchestrator and reviewer included, priced on the run's table. The same store feeds the
   spend guard while the item runs.
 
 The commands and their exit codes are kept in the trial directory as
 `archon-commands.json`, and the item with its runs as `archon-item.json`. A
 failed item, or a failing `archon` command, is graded on whatever the
 workspace holds. It is a harness failure when no model output came first, and
-so is a failure to stop.
+so is a failure to stop. The record keeps the first 300 characters of the
+item's error, which the failure digest reads to count review rounds exhausted.
 
 A smoke run on 2026-10-18 used Archon 1.2.5 with Aether 1.1.0 as the
 candidate. It ran one `batching` task of set v1 on `haiku/new` and `haiku/archon`
@@ -594,7 +631,13 @@ These tests cover:
 - frozen-set integrity, arm caps and trial records;
 - the agent limit each arm installs (Aether's config, Archon's seed, the
   native CLIs' settings) and that the reservation counts the same limit;
-- the Archon launcher, against a fake `archon`;
+- the Archon launcher, against a fake `archon`, and each Archon side running
+  its own Archon over its own Aether;
+- arm parsing with Archon sides and the `--archon-bin` alias, the Archon
+  parity rule, the failure digest's categories, the Archon and combined
+  verdicts, concurrent trials under `--jobs`, and the host defaults;
+- calibration on the `new` and `archon-new` arms and the ten-arm release-time
+  estimate;
 - one generated task per template, and the harness templates' checks against
   partial and quirk-dropping solutions.
 

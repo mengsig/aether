@@ -18,7 +18,7 @@ from harness_bench import run_aether_trial, run_native_trial, save_json
 from harness_bench_report import trial_summary
 from harness_bench_reprice import rebuild_trial_usage
 from release_bench_archon import run_archon_trial
-from release_bench_arms import is_release_label
+from release_bench_arms import archon_side, is_archon, is_release_label, known_harness
 from release_bench_grade import grade
 from release_bench_spend import (
     ALLOWANCE_USD,
@@ -68,11 +68,13 @@ def _guard(arm, trial_dir, context, marker):
     if harness == "native":
         stdout = Path(trial_dir, "native-stdout.jsonl")
         probe = ClaudeStreamProbe(stdout, price) if model == "haiku" else CodexRolloutProbe(stdout, price)
-    elif harness == "archon":
+    elif is_archon(harness):
         probe = AetherStoreProbe(Path(trial_dir, "archon", "data", "aether"), price)
     else:
         probe = AetherStoreProbe(Path(trial_dir, "data"), price)
-    return SpendGuard(probe, ALLOWANCE_USD[model], marker)
+    allowance = arm.get("allowance_usd", ALLOWANCE_USD[model])
+    assert allowance >= ALLOWANCE_USD[model], "no arm runs under less than its tier's allowance"
+    return SpendGuard(probe, allowance, marker)
 
 
 def _solve(arm, task_text, workspace, trial_dir, context, result, marker):
@@ -92,10 +94,11 @@ def _solve_in(arm, task_text, workspace, trial_dir, context, result, marker, env
     with _guard(arm, trial_dir, context, marker) as guard:
         if arm["harness"] == "native":
             run_native_trial(condition, task_text, workspace, timeout, trial_dir, result, extra_env=env)
-        elif arm["harness"] == "archon":
+        elif is_archon(arm["harness"]):
+            side = archon_side(arm["harness"])
             price = price_of(context["price_manifest"]["price_table"], arm["model"])
-            run_archon_trial(context["archon_bin"], context["binaries"]["new"], condition, task_text, workspace,
-                             timeout, trial_dir, result, env, price)
+            run_archon_trial(context["archon_bins"][side], context["binaries"][side], condition, task_text,
+                             workspace, timeout, trial_dir, result, env, price)
         else:
             binary = context["binaries"][arm["binary_role"]]
             run_aether_trial(binary, condition, task_text, workspace, timeout, trial_dir, context["real_claude"],
@@ -108,7 +111,7 @@ def _solve_in(arm, task_text, workspace, trial_dir, context, result, marker, env
 
 def _price(row, arm, context):
     """(cost in USD or None, tokens or None) of a finished trial, priced on the run's one price table."""
-    if arm["harness"] == "archon":
+    if is_archon(arm["harness"]):
         usage = row.get("archon_usage") or {}
         return usage.get("api_equivalent_usd"), usage.get("total_tokens")
     rebuild_trial_usage(row, context["price_manifest"])
@@ -187,7 +190,7 @@ def infra_error(row, harness):
     Only the bench's own steps, provider outages and (on the native drift
     reference) a CLI that never produced output are excluded. A failure of an
     Aether or Archon arm is the harness's own: see `harness_failure`."""
-    assert harness in ("native", "old", "new", "archon") or is_release_label(harness), f"unknown harness {harness!r}"
+    assert known_harness(harness), f"unknown harness {harness!r}"
     if row.get("bench_error"):
         return f"bench: {str(row['bench_error'])[:300]}"
     if row.get("spend_stop"):
@@ -233,6 +236,7 @@ def record(spec, arm, repeat, row, grade_result, cost, tokens):
             "fraction": grade_result["passed"] / grade_result["total"], "grade_error": grade_result["error"],
             "cost_usd": cost, "tokens": tokens, "seconds": row.get("solve_seconds"),
             "workflow": row.get("workflow_status"), "infra_error": error, "harness_failure": failure,
+            "workflow_error": str(row["workflow_error"])[:300] if row.get("workflow_error") else None,
             "children": _children(row), "trial_dir": row["trial_dir"],
             "started_at": row["started_at"]}
 
@@ -265,7 +269,7 @@ def run_release_trial(spec, arm, repeat, context):
     trial_dir.mkdir(parents=True, exist_ok=False)
     workspace = Path(context["work_dir"], name, "workspace")
     _fresh_path(workspace.parent)
-    row = {"condition": "archon" if arm["harness"] == "archon" else _condition_name(arm),
+    row = {"condition": "archon" if is_archon(arm["harness"]) else _condition_name(arm),
            "case": spec["id"], "run": repeat, "trial_dir": str(trial_dir), "workspace": str(workspace),
            "requested_treatment": arm["condition"], "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     grade_result = {"passed": 0, "total": spec["checks"], "failed": ["*"], "error": "not graded"}

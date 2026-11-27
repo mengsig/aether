@@ -64,11 +64,15 @@ def max_call_usd(table, model):
     return (capabilities["context_window"] * input_rate + capabilities["max_output_tokens"] * output_rate) / 1e6
 
 
-def reservation_usd(table, model, agents=1):
-    """What the run's budget holds for one trial: its allowance plus the bounded overshoot."""
+def reservation_usd(table, model, agents=1, allowance_usd=None):
+    """What the run's budget holds for one trial: its allowance plus the bounded overshoot.
+
+    `allowance_usd` is the arm's own allowance where it exceeds its tier's (Archon with reviewers)."""
     assert agents >= 1, "a trial runs at least one agent"
-    reserve = ALLOWANCE_USD[model] + OVERSHOOT_CALLS * agents * max_call_usd(table, model)
-    assert reserve > ALLOWANCE_USD[model], "a reservation covers more than the allowance"
+    allowance = ALLOWANCE_USD[model] if allowance_usd is None else allowance_usd
+    assert allowance >= ALLOWANCE_USD[model], "no arm reserves less than its tier's allowance"
+    reserve = allowance + OVERSHOOT_CALLS * agents * max_call_usd(table, model)
+    assert reserve > allowance, "a reservation covers more than the allowance"
     return reserve
 
 

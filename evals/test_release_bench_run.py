@@ -19,7 +19,7 @@ import release_bench_pool
 import release_bench_trial
 from harness_bench_config import scheduler_config_toml
 from release_bench_archon import archon_layout, run_archon_trial
-from release_bench_arms import agent_cap, build_arm
+from release_bench_arms import ARCHON_DEFAULTS, agent_cap, build_arm
 from release_bench_pool import Gates, read_attempts, read_results, run_pool, schedule
 from release_bench_spend import (
     ALLOWANCE_USD,
@@ -482,10 +482,11 @@ class AgentCapTests(unittest.TestCase):
             release_bench.execute([self.SOLO, self.DELEGATION], keys, args, Path(directory), context)
         self.assertEqual(len(seen["reserve"]), 6)
         for triple, arm in seen["arms"].items():
-            self.assertEqual(seen["reserve"][triple], reservation_usd(PRICE_TABLE, "haiku", arm["max_agents"]))
+            self.assertEqual(seen["reserve"][triple],
+                             reservation_usd(PRICE_TABLE, "haiku", arm["max_agents"], arm["allowance_usd"]))
         caps = {(task, key): arm["max_agents"] for (task, _, key), arm in seen["arms"].items()}
         self.assertEqual(caps[("team-0", "haiku/old")], 5)
-        self.assertEqual(caps[("solo-0", "haiku/archon")], 2)
+        self.assertEqual(caps[("solo-0", "haiku/archon")], 3, "orchestrator, stage agent and its reviewer")
 
     def test_an_aether_trial_s_daemon_starts_under_the_cap(self):
         condition = build_arm("haiku", "new", allow_delegation=True)["condition"]
@@ -604,9 +605,13 @@ class ArchonLauncherTests(unittest.TestCase):
             self.assertEqual(result["workflow_status"], "completed")
             self.assertEqual(state["aether"], str(candidate.resolve()))
             self.assertEqual(state["aether_env"], ["AETHER_CONFIG_DIR"])
-            self.assertEqual(state["operator_config"], "[scheduler]\nmax_concurrent_turns = 2\n",
-                             "Archon seeds its Aether with the orchestrator and the stage agent as the turn cap")
-            self.assertEqual(state["budget"], f"{ALLOWANCE_USD['haiku']:.2f}")
+            self.assertEqual(state["operator_config"], "[scheduler]\nmax_concurrent_turns = 3\n",
+                             "Archon seeds its Aether with the orchestrator, the stage agent and its reviewer")
+            factor = ARCHON_DEFAULTS["budget_factor"]
+            self.assertEqual(state["budget"], f"{ALLOWANCE_USD['haiku'] * factor:.2f}")
+            add = next(call for call in state["calls"] if call[:2] == ["queue", "add"])
+            self.assertEqual(add[add.index("--review") + 1], "standard")
+            self.assertEqual(add[add.index("--pipeline") + 1], "direct")
             self.assertEqual((workspace / "fixed.txt").read_text(), "done\n")
             self.assertEqual(result["archon_result_ref"], "archon/fake")
             self.assertEqual(state["calls"][-1], ["daemon", "stop", "--json"])
@@ -634,7 +639,7 @@ class ArchonLauncherTests(unittest.TestCase):
             context = {"price_manifest": {"price_table": PRICE_TABLE}}
             guard = _guard(build_arm("haiku", "archon"), directory, context, "m")
             self.assertEqual(guard.probe.database.parent.resolve(), archon_layout(directory)["aether_data"])
-            self.assertEqual(guard.allowance_usd, ALLOWANCE_USD["haiku"])
+            self.assertEqual(guard.allowance_usd, ALLOWANCE_USD["haiku"] * ARCHON_DEFAULTS["budget_factor"])
 
 if __name__ == "__main__":
     unittest.main()
