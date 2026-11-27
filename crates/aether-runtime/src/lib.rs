@@ -134,6 +134,7 @@ mod config;
 mod engine_access;
 mod provider_health;
 mod provider_refresh;
+mod secondary_routes;
 
 pub use config::{
     BridgeConfig, DEFAULT_ENGINE_PARK_GRACE, DEFAULT_ENGINE_STALL_TIMEOUT,
@@ -309,6 +310,9 @@ pub struct Runtime {
     /// Model used for agents created without one; resolved lazily so a login
     /// after daemon start is picked up without a restart.
     pub(crate) default_model: parking_lot::RwLock<Option<ModelRef>>,
+    /// API providers serving a secondary route first-hand whose sign-in was
+    /// found, as last read by [`Runtime::refresh_signed_in_originals`].
+    pub(crate) signed_in_originals: parking_lot::RwLock<std::collections::HashSet<String>>,
     /// Test hook: bypass provider resolution and use this client for every turn.
     pub(crate) client_override: Option<Arc<dyn ModelClient>>,
     /// External engines found on this machine, once detection finishes.
@@ -464,6 +468,7 @@ impl Runtime {
                 None => memory,
             },
             default_model: parking_lot::RwLock::new(config.default_model.clone()),
+            signed_in_originals: parking_lot::RwLock::new(std::collections::HashSet::new()),
             client_override,
             engines,
             engine_turns: parking_lot::Mutex::new(HashMap::new()),

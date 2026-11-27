@@ -185,7 +185,7 @@ impl Runtime {
     /// an engine protocol is the whole test for whether the primary is on a
     /// seat. A link is on some other bill unless it is an engine too, or a
     /// link nobody is billed for - see [`Self::bills_nobody`].
-    pub(super) fn check_billing_class(
+    pub(crate) fn check_billing_class(
         &self,
         model: &ModelRef,
         fallbacks: &[ModelRef],

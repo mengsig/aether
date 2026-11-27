@@ -367,6 +367,12 @@ pub(super) async fn check_delegation_target(
     network: NetworkPolicy,
     parent: &Agent,
 ) -> Checked<()> {
+    // The child runs where creation routes it, so check that route.
+    if aether_model::secondary::has_original(requested) {
+        runtime.refresh_signed_in_originals().await;
+    }
+    let routed = runtime.prefer_original(requested.clone());
+    let requested = &routed;
     let resolved = match runtime.models.resolve(requested) {
         Ok(resolved) => resolved,
         Err(error) => {

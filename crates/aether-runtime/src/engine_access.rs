@@ -367,6 +367,14 @@ impl EngineCatalog {
         self.detected.write().record(kind, Ok(engine));
     }
 
+    /// End a detection still running, as startup does, with `engine` usable for `kind`.
+    #[cfg(test)]
+    pub(crate) fn finish_with(&self, kind: EngineKind, engine: Arc<dyn Engine>) {
+        let mut found = DetectedEngines::default();
+        found.record(kind, Ok(engine));
+        self.finish(found);
+    }
+
     /// Record a usable `kind` as suspect for `reason`, as one failed probe would.
     #[cfg(test)]
     pub(crate) fn mark_suspect(&self, kind: EngineKind, reason: &str) {
@@ -408,14 +416,18 @@ pub(super) fn spawn_startup_probes(
     tokio::spawn(async move {
         let started = std::time::Instant::now();
         let models = detecting.models.clone();
-        let (found, default_model) =
-            tokio::join!(tokio::spawn(detect_engines(prompt_cache_ttl)), async move {
+        let (found, default_model, ()) = tokio::join!(
+            tokio::spawn(detect_engines(prompt_cache_ttl)),
+            async move {
                 if resolve_default {
                     Some(models.default_model().await)
                 } else {
                     None
                 }
-            });
+            },
+            // Read before detection finishes, so no turn is routed without it.
+            detecting.refresh_signed_in_originals(),
+        );
         match default_model {
             Some(None) => tracing::warn!(
                 "no model is configured; sign in from your client before running agents"
@@ -672,29 +684,6 @@ impl Runtime {
             "model {model} runs on the {kind} engine, which this daemon cannot use: {}",
             unavailable_text(kind, &resolved.provider.id, Some(reason))
         )))
-    }
-
-    /// `model`, or its first-hand route when it is a secondary one
-    /// (`antigravity/claude-opus-5-5`) and the vendor's own engine is usable.
-    /// API-key originals are not consulted here: reading their sign-in is async.
-    pub(crate) fn prefer_original(&self, model: ModelRef) -> ModelRef {
-        let Ok(detected) = self.engines.now() else {
-            return model;
-        };
-        let registry = self.models.registry();
-        let usable = |provider: &str| {
-            registry
-                .provider(provider)
-                .and_then(|def| turn_engine::engine_kind(def.protocol))
-                .is_some_and(|kind| detected.launchable(&kind).is_some())
-        };
-        match aether_model::secondary::original_route(registry, &model, usable) {
-            Some(original) => {
-                tracing::info!(%model, %original, "using the original provider over a secondary route");
-                original
-            }
-            None => model,
-        }
     }
 
     /// Whether the startup probes, engine detection and the default model,

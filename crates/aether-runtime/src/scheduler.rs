@@ -296,6 +296,7 @@ fn prepare_agent(
     agent: Agent,
     canaries: &std::collections::HashMap<String, aether_core::id::AgentId>,
 ) -> Result<Option<Runnable>> {
+    let agent = crate::secondary_routes::route_before_turn(runtime, agent)?;
     let woken = match &agent.status {
         // Limit 1 outranks the gate: a person's words reach an agent the
         // scheduler is holding back, and the gate re-applies after the

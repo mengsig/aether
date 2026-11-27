@@ -337,11 +337,18 @@ refused, because agy has no network sandbox.
 agy also serves other vendors' models, exposed as
 `antigravity/claude-opus-5-5`, `antigravity/claude-sonnet-5-5` and
 `antigravity/gpt-oss-120b`. When an agent is created on one of them, or names
-one as a fallback, Aether uses the vendor's own engine instead whenever that
-engine is usable (`claude-code` for Claude models, `codex` for GPT models that
-Codex lists). The Antigravity route is kept only when it is not, for example
-on a machine signed in to Antigravity alone. API-key providers are not
-consulted for this choice.
+one as a fallback, Aether uses the vendor's own provider instead whenever it
+is usable: first its engine (`claude-code` for Claude models, `codex` for GPT
+models that Codex lists), then its API provider (`anthropic` or `openai`)
+when that is signed in. A fallback stays on agy when the API route would put
+an agent that runs on a subscription onto a separate bill. The Antigravity
+route is kept only when no original is usable, for example on a machine
+signed in to Antigravity alone.
+
+The choice is made at creation and again before each turn, so an agent
+created before an original was usable moves to it before its first agy
+session. An agent that already holds an agy session keeps its primary model,
+so its conversation is not handed off mid-flight; its fallbacks still move.
 
 The opt-in live test runs one tiny `gemini-3.8-flash` low turn:
 `cargo test -p aether-engine antigravity_live -- --ignored`.

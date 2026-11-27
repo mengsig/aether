@@ -99,6 +99,14 @@ async fn create_agent(
     if rt.default_model().is_none() && req.model.is_none() {
         rt.set_default_model(daemon.models.default_model().await);
     }
+    if req
+        .model
+        .iter()
+        .chain(&req.fallbacks)
+        .any(aether_model::secondary::has_original)
+    {
+        rt.refresh_signed_in_originals().await;
+    }
     // A parked agent may wait for its CLI to be installed; one started now cannot.
     if req.start {
         // A retry of a creation that succeeded is answered, not checked again.
