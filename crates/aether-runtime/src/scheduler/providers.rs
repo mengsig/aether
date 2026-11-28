@@ -177,6 +177,33 @@ pub(crate) fn record_error(runtime: &Runtime, provider: &str, class: ModelErrorC
         .record(class, now());
 }
 
+/// The provider refused a sign-in and a turn suspended on it. The first
+/// refusal of an episode keeps its time; later ones do not move it.
+pub(crate) fn mark_auth_failed(runtime: &Runtime, provider: &str) {
+    debug_assert!(!provider.is_empty(), "a refused sign-in names its provider");
+    runtime
+        .sched
+        .lock()
+        .auth_failed
+        .entry(provider.to_owned())
+        .or_insert_with(now);
+}
+
+/// A turn on `provider` was answered, so its sign-in works again.
+pub(crate) fn clear_auth_failed(runtime: &Runtime, provider: &str) {
+    if runtime.sched.lock().auth_failed.remove(provider).is_some() {
+        tracing::info!(%provider, "provider sign-in answered again");
+    }
+}
+
+/// Since when `provider`'s sign-in has been refused, while it still is.
+pub(crate) fn auth_failed_since(
+    runtime: &Runtime,
+    provider: &str,
+) -> Option<aether_core::time::Timestamp> {
+    runtime.sched.lock().auth_failed.get(provider).copied()
+}
+
 /// Remember where a turn went after giving up on `from`, so a projection can
 /// show the chain move without replaying the event log.
 pub(crate) fn record_fallback(

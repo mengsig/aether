@@ -92,8 +92,8 @@ const TRANSIENT_SPAWN_SIGNALS: [&str; 6] = [
 ];
 
 /// A sign-in the provider refused, as Claude Code (its API error types, its
-/// `/login` hint, the 401 its result reports) and Codex word it.
-const AUTH_SIGNALS: [&str; 11] = [
+/// `/login` hint, the 401 its result reports, a failed OAuth refresh) and Codex word it.
+const AUTH_SIGNALS: [&str; 15] = [
     "authentication_error",
     "invalid api key",
     "invalid x-api-key",
@@ -105,6 +105,10 @@ const AUTH_SIGNALS: [&str; 11] = [
     "status code 401",
     "401 unauthorized",
     "access token could not be refreshed",
+    "failed to authenticate",
+    "token could not be refreshed",
+    "oauth session expired",
+    "oauth token refresh failed",
 ];
 
 /// Connectivity failures as Claude Code (Node errno and its own prose) and
@@ -299,6 +303,18 @@ mod tests {
             ),
             ("Request failed with status code 401", ModelErrorClass::Auth),
             ("session expired: please log in", ModelErrorClass::Unknown),
+            // The overnight forms: a bare refusal and a failed OAuth refresh.
+            ("Failed to authenticate", ModelErrorClass::Auth),
+            (
+                "OAuth token for this account could not be refreshed: socket hang up",
+                ModelErrorClass::Auth,
+            ),
+            (
+                "Your OAuth session expired. Please run /login",
+                ModelErrorClass::Auth,
+            ),
+            ("OAuth session expired", ModelErrorClass::Auth),
+            ("OAuth token refresh failed (500)", ModelErrorClass::Auth),
         ] {
             assert_eq!(engine_error_class(error), class, "{error}");
         }

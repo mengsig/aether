@@ -18,7 +18,7 @@ pub use config::{
     AgentConfig, ApprovalDefault, ApprovalPolicy, DeadlineUpdate, ExecutionBackend, HostContext,
     NetworkPolicy, Scope,
 };
-pub use status::{AgentStatus, AgentStatusKind, BlockReason, ExhaustionClass};
+pub use status::{AgentStatus, AgentStatusKind, BlockReason, ExhaustionClass, PROVIDER_AUTH};
 pub use wait::{WaitCondition, WaitOracle};
 
 /// Opaque role label; an orchestration layer gives it meaning.

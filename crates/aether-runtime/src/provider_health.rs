@@ -20,8 +20,12 @@ impl Runtime {
     }
 
     /// All enabled providers, including subscriptions with no observation yet.
-    pub fn provider_usage(&self) -> serde_json::Value {
+    /// A provider whose sign-in is refused carries `auth`, until a turn on it
+    /// is answered.
+    pub fn provider_usage(&self) -> Result<serde_json::Value> {
         let at = now();
+        // Read before the lock: the store is I/O and the scheduler waits on it.
+        let refused = self.auth_failures()?;
         let sched = self.sched.lock();
         let providers: Vec<_> = self
             .models
@@ -30,13 +34,51 @@ impl Runtime {
             .iter()
             .filter(|provider| provider.enabled)
             .map(|provider| {
-                serde_json::json!({
+                let mut row = serde_json::json!({
                     "provider": provider.id,
                     "headroom": self.provider_headroom(sched.quotas.get(&provider.id), at),
-                })
+                });
+                if let Some(since) = refused.get(&provider.id) {
+                    row["auth"] = auth_failed(*since);
+                }
+                row
             })
             .collect();
-        serde_json::json!({"providers": providers})
+        Ok(serde_json::json!({"providers": providers}))
+    }
+
+    /// The `auth` entry `provider_usage` and `inspect_state` show for a
+    /// provider whose sign-in is refused, `None` while it works.
+    pub(crate) fn provider_auth(&self, provider: &str) -> Result<Option<serde_json::Value>> {
+        Ok(self.auth_failures()?.get(provider).map(|since| auth_failed(*since)))
+    }
+
+    /// Providers whose sign-in is refused, since when: the scheduler's mark,
+    /// or an agent suspended on it, whose row survives a restart.
+    fn auth_failures(&self) -> Result<HashMap<String, Timestamp>> {
+        let mut refused = self.sched.lock().auth_failed.clone();
+        for agent in self.store.agents(&aether_store::AgentFilter {
+            live_only: true,
+            statuses: vec![aether_core::agent::AgentStatusKind::Blocked],
+            ..Default::default()
+        })? {
+            let aether_core::agent::AgentStatus::Blocked {
+                reason:
+                    aether_core::agent::BlockReason::Exhausted {
+                        model,
+                        class: aether_core::agent::ExhaustionClass::Credentials,
+                        since,
+                        ..
+                    },
+            } = &agent.status
+            else {
+                continue;
+            };
+            let earliest = refused.entry(model.provider.clone()).or_insert(*since);
+            *earliest = (*earliest).min(*since);
+        }
+        debug_assert!(refused.keys().all(|provider| !provider.is_empty()));
+        Ok(refused)
     }
 
     /// What each provider is carrying, what it may carry, whether the
@@ -133,4 +175,12 @@ impl Runtime {
             provider: provider.to_owned(),
         }
     }
+}
+
+fn auth_failed(since: Timestamp) -> serde_json::Value {
+    serde_json::json!({
+        "status": "auth_failed",
+        "kind": aether_core::agent::PROVIDER_AUTH,
+        "since": since,
+    })
 }

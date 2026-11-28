@@ -61,11 +61,31 @@ pub(super) fn retry_for(
     cancelled: bool,
     session_known: bool,
 ) -> Retry {
+    if !crate::exhaustion::native_transient(class) {
+        return Retry::No;
+    }
+    retry_run(
+        run,
+        class == ModelErrorClass::Overloaded,
+        pending_request,
+        cancelled,
+        session_known,
+    )
+}
+
+/// How a failed run of any retryable class re-enters the engine. `refused`: the
+/// provider turned the request away whole, so the prompt may be resent as is.
+pub(super) fn retry_run(
+    run: &DriveResult,
+    refused: bool,
+    pending_request: bool,
+    cancelled: bool,
+    session_known: bool,
+) -> Retry {
     let outcome = &run.outcome;
     // `session_lost` is no bar: a session that could not be reopened for a
     // transient reason still holds its context, so it is retried as it is.
-    if !crate::exhaustion::native_transient(class)
-        || !outcome.is_error
+    if !outcome.is_error
         || outcome.interrupted
         || run.park.is_some()
         || run.budget_stop.is_some()
@@ -78,7 +98,7 @@ pub(super) fn retry_for(
     // proof, or the provider refusing it for capacity, lets it be resent as is.
     let resume = if !run.unanswered() {
         Resume::Continue
-    } else if outcome.prompt_not_submitted || class == ModelErrorClass::Overloaded {
+    } else if outcome.prompt_not_submitted || refused {
         Resume::Replay
     } else {
         Resume::Recheck

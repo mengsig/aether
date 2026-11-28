@@ -405,6 +405,27 @@ pub(crate) fn prepare_native_failure(
     Ok(true)
 }
 
+/// A task's structured failure when the runtime's own engine or model failure
+/// text is a refused sign-in: `kind` and `provider` for clients to match.
+pub(crate) fn provider_auth_failure(agent: &Agent, error: &str) -> Option<Value> {
+    let lower = error.to_lowercase();
+    if !MODEL_FAILURE_PREFIXES
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+    {
+        return None;
+    }
+    if engine_error_class(error) != aether_core::model::ModelErrorClass::Auth {
+        return None;
+    }
+    debug_assert!(!agent.model.provider.is_empty(), "an agent names its provider");
+    Some(json!({
+        "kind": aether_core::agent::PROVIDER_AUTH,
+        "provider": agent.model.provider,
+        "class": "auth",
+    }))
+}
+
 /// A spent final link, as the turn saw it. Carried to `finish`, which is where
 /// the suspension is committed under the row fence.
 #[derive(Debug, Clone)]
@@ -640,6 +661,12 @@ pub(crate) fn record(
         "probes": probes,
         "detail": detail,
     });
+    if let Some(kind) = cause.class.failure_kind() {
+        payload["kind"] = json!(kind);
+    }
+    if cause.class == ExhaustionClass::Credentials {
+        crate::scheduler::mark_auth_failed(runtime, &cause.model.provider);
+    }
     if !suspension.new_episode {
         commit.push_event(custom(agent, by, "exhaustion.probe_failed", payload));
         return Ok(());

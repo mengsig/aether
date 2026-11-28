@@ -218,6 +218,9 @@ pub(crate) struct SchedulerState {
     pub errors: HashMap<String, ErrorWindow>,
     /// Where a turn last went after giving up on each provider.
     pub fallbacks: HashMap<String, FallbackRecord>,
+    /// Providers whose sign-in was refused, since when, until a turn on one
+    /// is answered. While set, a refused turn suspends without relaunching.
+    pub auth_failed: HashMap<String, Timestamp>,
     /// When the orphan sweep last ran; `None` before the first.
     pub last_orphan_sweep: Option<Timestamp>,
     /// Scheduler steps that panicked and were contained since startup.

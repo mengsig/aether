@@ -23,6 +23,14 @@ pub const DEFAULT_ENGINE_TRANSIENT_RETRY_WINDOW: Duration = Duration::from_secs(
 /// First wait after a transient native engine failure; each later one doubles.
 pub const DEFAULT_ENGINE_TRANSIENT_RETRY_FLOOR: Duration = Duration::from_secs(15);
 
+/// Fresh launches a Claude Code turn gets after its sign-in was refused,
+/// before the agent suspends on the provider's credentials.
+pub const DEFAULT_ENGINE_AUTH_RETRIES: u32 = 4;
+
+/// Base of the jittered waits between those launches: 1x, 3x, 6x and 8x it,
+/// about three minutes in all at the default.
+pub const DEFAULT_ENGINE_AUTH_RETRY_FLOOR: Duration = Duration::from_secs(10);
+
 /// How long a native engine turn may stay silent, with no tool running,
 /// before the stall watchdog interrupts it.
 pub const DEFAULT_ENGINE_STALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
@@ -111,6 +119,11 @@ pub struct RuntimeConfig {
     /// First backoff after a transient native failure; doubles per retry up
     /// to a five minute cap.
     pub engine_transient_retry_floor: Duration,
+    /// Fresh launches a Claude Code turn gets after a refused sign-in, before
+    /// it suspends; zero suspends on the first refusal.
+    pub engine_auth_retries: u32,
+    /// Base of the jittered waits between those launches.
+    pub engine_auth_retry_floor: Duration,
     /// Silence, with no tool running, after which a native engine turn is
     /// interrupted and resumed. Zero turns the watchdog off.
     pub engine_stall_timeout: Duration,
@@ -205,6 +218,8 @@ impl Default for RuntimeConfig {
             exhaustion_probe_floor: DEFAULT_EXHAUSTION_PROBE_FLOOR,
             engine_transient_retry_window: DEFAULT_ENGINE_TRANSIENT_RETRY_WINDOW,
             engine_transient_retry_floor: DEFAULT_ENGINE_TRANSIENT_RETRY_FLOOR,
+            engine_auth_retries: DEFAULT_ENGINE_AUTH_RETRIES,
+            engine_auth_retry_floor: DEFAULT_ENGINE_AUTH_RETRY_FLOOR,
             engine_stall_timeout: DEFAULT_ENGINE_STALL_TIMEOUT,
             tool_call_bound: LONGEST_FOREGROUND_COMMAND.saturating_add(TOOL_CALL_GRACE),
             native_job_wake_after: DEFAULT_NATIVE_JOB_WAKE_AFTER,

@@ -333,6 +333,7 @@ pub(crate) fn close_exhaustion_episode(
         return Ok(());
     }
     ctx.recovery_checked_for = Some(answered.clone());
+    crate::scheduler::clear_auth_failed(runtime, &answered.provider);
     let Some(provider) = crate::exhaustion::record_recovery(
         runtime,
         hold,

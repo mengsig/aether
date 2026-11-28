@@ -321,6 +321,36 @@ async fn ordinary_failures_keep_immediate_parent_behavior() {
     rt.shutdown().await;
 }
 
+/// A task that does fail on a refused sign-in names `provider_auth`, and only
+/// the runtime's own engine or model failure text does.
+#[tokio::test]
+async fn a_task_failed_on_a_refused_sign_in_carries_the_provider_auth_kind() {
+    let dir = tempfile::tempdir().unwrap();
+    let store: Arc<dyn Store> = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let rt = runtime(store.clone(), dir.path()).await;
+    let root = create(&rt, None);
+    for (error, kind) in [
+        ("claude-code failed: Failed to authenticate", Some("provider_auth")),
+        ("model error: Auth: invalid x-api-key", Some("provider_auth")),
+        ("claude-code failed: process failed", None),
+        ("Failed to authenticate with the package registry", None),
+    ] {
+        let child = create(&rt, Some(root.id));
+        let task = child.current_task.expect("an objective makes a task");
+        end(&rt, child.clone(), error);
+        let TaskStatus::Failed { structured, .. } = store.task(task).unwrap().unwrap().status
+        else {
+            panic!("{error}: the task must fail");
+        };
+        let structured = structured.unwrap_or_default();
+        assert_eq!(structured["kind"].as_str(), kind, "{error}");
+        if kind.is_some() {
+            assert_eq!(structured["provider"], child.model.provider, "{error}");
+        }
+    }
+    rt.shutdown().await;
+}
+
 /// Classification needs provenance from the failing turn itself: agent
 /// prose, untyped model text and an older turn's exhaustion are ordinary.
 #[tokio::test]

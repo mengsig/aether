@@ -153,6 +153,7 @@ mod driver;
 mod native_wait;
 mod overdue;
 mod stall;
+mod auth_retry;
 mod transient;
 use driver::{DriveResult, drive};
 mod budget_stop;
