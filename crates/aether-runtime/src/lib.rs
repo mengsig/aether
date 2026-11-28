@@ -221,6 +221,9 @@ pub(crate) struct SchedulerState {
     /// Providers whose sign-in was refused, since when, until a turn on one
     /// is answered. While set, a refused turn suspends without relaunching.
     pub auth_failed: HashMap<String, Timestamp>,
+    /// When a turn on each provider was last answered. A suspended row
+    /// older than that no longer says the provider refuses its sign-in.
+    pub auth_answered: HashMap<String, Timestamp>,
     /// When the orphan sweep last ran; `None` before the first.
     pub last_orphan_sweep: Option<Timestamp>,
     /// Scheduler steps that panicked and were contained since startup.
@@ -353,6 +356,9 @@ pub struct Runtime {
     /// scheduler loop waits on: sharing it would let a queued turn swallow a
     /// dispatch wake-up.
     pub(crate) engine_slot: Notify,
+    /// Woken when a provider is marked as refusing its sign-in, so turns
+    /// waiting to relaunch on it suspend instead.
+    pub(crate) auth_refused: Notify,
     pub(crate) shutdown: CancellationToken,
     pub(crate) started_at: Timestamp,
     commit_lock: aether_store::WriteGate,
@@ -495,6 +501,7 @@ impl Runtime {
             sched: parking_lot::Mutex::new(SchedulerState::default()),
             notify: Notify::new(),
             engine_slot: Notify::new(),
+            auth_refused: Notify::new(),
             shutdown: CancellationToken::new(),
             started_at: now(),
             commit_lock,

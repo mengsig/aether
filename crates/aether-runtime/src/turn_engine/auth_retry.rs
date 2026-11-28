@@ -2,6 +2,8 @@
 //! times before it suspends: CLIs sharing one login race on its refresh.
 use std::time::Duration;
 
+use aether_core::{agent::Agent, model::ModelRef};
+
 use super::{
     CancellationToken, Commit, EngineKind, EventKind, MAX_ENGINE_ERROR, ModelErrorClass, Result,
     Runtime, TurnCtx, clamp, json, now,
@@ -32,19 +34,26 @@ impl AuthRetry {
         }
     }
 
-    /// Whether this failure is one a fresh launch may fix. Once a turn on
-    /// the provider gave up and suspended, the others suspend at once and
-    /// leave the canary probe to find out when the sign-in works again.
+    /// Whether this failure is one a fresh launch may fix. Once the provider
+    /// is known to refuse the sign-in - a turn on it gave up, or an agent is
+    /// still suspended on it from before a restart - or this turn is itself a
+    /// probe of a suspension, it suspends at once and the canary finds out
+    /// when the sign-in works again.
     pub(super) fn applies(
         &self,
         runtime: &Runtime,
+        agent: &Agent,
         engine: EngineKind,
-        provider: &str,
+        link: &ModelRef,
         class: ModelErrorClass,
-    ) -> bool {
-        class == ModelErrorClass::Auth
-            && engine == EngineKind::CLAUDE_CODE
-            && crate::scheduler::auth_failed_since(runtime, provider).is_none()
+    ) -> Result<bool> {
+        if class != ModelErrorClass::Auth || engine != EngineKind::CLAUDE_CODE {
+            return Ok(false);
+        }
+        if runtime.provider_auth(&link.provider)?.is_some() {
+            return Ok(false);
+        }
+        Ok(!crate::exhaustion::episode_open(runtime, agent, link)?)
     }
 
     /// The next jittered wait, or `None` once the relaunches are spent.
@@ -64,6 +73,15 @@ impl AuthRetry {
         Some(delay)
     }
 
+    /// The terminal error's account of a wait another turn's refusal ended.
+    pub(super) fn refused_elsewhere(&self) -> String {
+        debug_assert!(self.waits > 0, "only a wait is ended by another turn");
+        format!(
+            "the provider refused the sign-in to this turn ({} launches) and to another",
+            self.waits
+        )
+    }
+
     /// The terminal error's account of the relaunches, once they ran out.
     pub(super) fn gave_up(&self) -> String {
         format!(
@@ -73,16 +91,26 @@ impl AuthRetry {
     }
 }
 
-/// Announce the wait, then sleep it unless the turn is cancelled first.
-/// Returns false when cancelled.
+/// How a wait before a relaunch ended.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Waited {
+    Relaunch,
+    Cancelled,
+    /// Another turn on the provider gave up and suspended meanwhile.
+    Refused,
+}
+
+/// Announce the wait, then sleep it unless the turn is cancelled or another
+/// turn marks the provider refused first.
 pub(super) async fn wait(
     runtime: &Runtime,
     ctx: &TurnCtx,
     retry: &AuthRetry,
+    provider: &str,
     error: &str,
     delay: Duration,
     cancel: &CancellationToken,
-) -> Result<bool> {
+) -> Result<Waited> {
     debug_assert!(retry.waits > 0, "a wait follows a counted failure");
     let next_at =
         now() + chrono::Duration::from_std(delay).unwrap_or_else(|_| chrono::Duration::zero());
@@ -91,6 +119,7 @@ pub(super) async fn wait(
         payload: json!({
             "engine": EngineKind::CLAUDE_CODE.as_str(),
             "kind": aether_core::agent::PROVIDER_AUTH,
+            "provider": provider,
             "attempt": retry.waits,
             "attempts": retry.limit,
             "delay_ms": u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
@@ -100,10 +129,26 @@ pub(super) async fn wait(
     })))?;
     tracing::warn!(agent = %ctx.agent.id, attempt = retry.waits, ?delay,
         "sign-in refused; relaunching the engine after a wait");
-    tokio::select! {
-        () = cancel.cancelled() => Ok(false),
-        () = tokio::time::sleep(delay) => Ok(true),
+    let sleep = tokio::time::sleep(delay);
+    tokio::pin!(sleep);
+    loop {
+        // Armed before the mark is read, so a mark set in between still wakes it.
+        let marked = runtime.auth_refused.notified();
+        tokio::pin!(marked);
+        marked.as_mut().enable();
+        if crate::scheduler::auth_marked(runtime, provider) {
+            return Ok(Waited::Refused);
+        }
+        tokio::select! {
+            () = cancel.cancelled() => return Ok(Waited::Cancelled),
+            () = &mut sleep => break,
+            () = &mut marked => {}
+        }
     }
+    if crate::scheduler::auth_marked(runtime, provider) {
+        return Ok(Waited::Refused);
+    }
+    Ok(Waited::Relaunch)
 }
 
 #[cfg(test)]

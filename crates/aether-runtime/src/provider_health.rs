@@ -57,9 +57,13 @@ impl Runtime {
     }
 
     /// Providers whose sign-in is refused, since when: the scheduler's mark,
-    /// or an agent suspended on it, whose row survives a restart.
+    /// or an agent suspended on it - whose row survives a restart - unless a
+    /// turn on the provider was answered after that suspension began.
     fn auth_failures(&self) -> Result<HashMap<String, Timestamp>> {
-        let mut refused = self.sched.lock().auth_failed.clone();
+        let (mut refused, answered) = {
+            let sched = self.sched.lock();
+            (sched.auth_failed.clone(), sched.auth_answered.clone())
+        };
         for agent in self.store.agents(&aether_store::AgentFilter {
             live_only: true,
             statuses: vec![aether_core::agent::AgentStatusKind::Blocked],
@@ -77,6 +81,9 @@ impl Runtime {
             else {
                 continue;
             };
+            if answered.get(&model.provider).is_some_and(|at| at >= since) {
+                continue;
+            }
             let earliest = refused.entry(model.provider.clone()).or_insert(*since);
             *earliest = (*earliest).min(*since);
         }

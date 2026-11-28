@@ -333,7 +333,12 @@ pub(crate) fn close_exhaustion_episode(
         return Ok(());
     }
     ctx.recovery_checked_for = Some(answered.clone());
-    crate::scheduler::clear_auth_failed(runtime, &answered.provider);
+    // Read before the answer is recorded, which hides every older refusal.
+    let was_refused = runtime.provider_auth(&answered.provider)?.is_some();
+    crate::scheduler::record_auth_answer(runtime, &answered.provider);
+    if was_refused {
+        crate::scheduler::lift_credentials_bench(runtime, commit, &answered.provider);
+    }
     let Some(provider) = crate::exhaustion::record_recovery(
         runtime,
         hold,
@@ -343,6 +348,17 @@ pub(crate) fn close_exhaustion_episode(
         &ctx.base_actor,
     )?
     else {
+        // A turn outside the episode answered: the sign-in works for the
+        // agents suspended on it as well.
+        if was_refused {
+            return crate::scheduler::provider_recovered_by_probe(
+                runtime,
+                hold,
+                commit,
+                &answered.provider,
+                ctx.agent.id,
+            );
+        }
         return Ok(());
     };
     // The claim guarded a provider that had said no; it has now said yes, so

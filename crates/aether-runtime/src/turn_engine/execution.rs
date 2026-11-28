@@ -454,7 +454,7 @@ pub(crate) async fn execute(
             runtime.apply_held(hold, Commit::new().mutate(Mutation::UpsertAgent(row)))?;
             continue;
         }
-        let auth = auth_retry.applies(runtime, engine.kind(), &resolved.provider.id, class);
+        let auth = auth_retry.applies(runtime, &ctx.agent, engine.kind(), model, class)?;
         let session_known = ctx.agent.engine_session.is_some();
         let retry = if auth {
             super::transient::retry_run(
@@ -517,8 +517,24 @@ pub(crate) async fn execute(
             Uncommitted::default(),
         )?;
         if let Some(delay) = auth_delay {
-            if !super::auth_retry::wait(runtime, ctx, &auth_retry, &error, delay, &cancel).await? {
-                break run;
+            let provider = &resolved.provider.id;
+            match super::auth_retry::wait(
+                runtime,
+                ctx,
+                &auth_retry,
+                provider,
+                &error,
+                delay,
+                &cancel,
+            )
+            .await?
+            {
+                super::auth_retry::Waited::Relaunch => {}
+                super::auth_retry::Waited::Cancelled => break run,
+                super::auth_retry::Waited::Refused => {
+                    gave_up = Some(auth_retry.refused_elsewhere());
+                    break run;
+                }
             }
         } else {
             let failure = super::transient::Failure {

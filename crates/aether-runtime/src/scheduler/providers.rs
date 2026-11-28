@@ -179,6 +179,7 @@ pub(crate) fn record_error(runtime: &Runtime, provider: &str, class: ModelErrorC
 
 /// The provider refused a sign-in and a turn suspended on it. The first
 /// refusal of an episode keeps its time; later ones do not move it.
+/// Turns waiting to relaunch on the provider are woken to suspend too.
 pub(crate) fn mark_auth_failed(runtime: &Runtime, provider: &str) {
     debug_assert!(!provider.is_empty(), "a refused sign-in names its provider");
     runtime
@@ -187,21 +188,25 @@ pub(crate) fn mark_auth_failed(runtime: &Runtime, provider: &str) {
         .auth_failed
         .entry(provider.to_owned())
         .or_insert_with(now);
+    runtime.auth_refused.notify_waiters();
 }
 
-/// A turn on `provider` was answered, so its sign-in works again.
-pub(crate) fn clear_auth_failed(runtime: &Runtime, provider: &str) {
-    if runtime.sched.lock().auth_failed.remove(provider).is_some() {
+/// Whether a turn on `provider` suspended on a refused sign-in since its last answer.
+pub(crate) fn auth_marked(runtime: &Runtime, provider: &str) -> bool {
+    runtime.sched.lock().auth_failed.contains_key(provider)
+}
+
+/// A turn on `provider` was answered, so its sign-in works: the mark goes,
+/// and the answer outranks every suspended row older than it.
+pub(crate) fn record_auth_answer(runtime: &Runtime, provider: &str) {
+    debug_assert!(!provider.is_empty(), "an answer names its provider");
+    let mut sched = runtime.sched.lock();
+    sched.auth_answered.insert(provider.to_owned(), now());
+    let was_refused = sched.auth_failed.remove(provider).is_some();
+    drop(sched);
+    if was_refused {
         tracing::info!(%provider, "provider sign-in answered again");
     }
-}
-
-/// Since when `provider`'s sign-in has been refused, while it still is.
-pub(crate) fn auth_failed_since(
-    runtime: &Runtime,
-    provider: &str,
-) -> Option<aether_core::time::Timestamp> {
-    runtime.sched.lock().auth_failed.get(provider).copied()
 }
 
 /// Remember where a turn went after giving up on `from`, so a projection can
@@ -288,6 +293,32 @@ pub(crate) fn clear_bench(runtime: &Runtime, provider: &str) -> Result<()> {
         },
     )))?;
     Ok(())
+}
+
+/// The provider answered, so the bench its refused sign-in put up comes
+/// down; a bench for any other reason stands. Recorded in the caller's commit.
+pub(crate) fn lift_credentials_bench(runtime: &Runtime, commit: &mut Commit, provider: &str) {
+    let reason = format!(
+        "{} from the provider",
+        aether_core::agent::ExhaustionClass::Credentials.as_str()
+    );
+    let mut sched = runtime.sched.lock();
+    if sched
+        .backoff
+        .get(provider)
+        .is_none_or(|bench| bench.reason != reason)
+    {
+        return;
+    }
+    sched.backoff.remove(provider);
+    drop(sched);
+    tracing::info!(%provider, "provider sign-in answered; its bench is lifted");
+    commit.push_event(EventDraft::new(
+        Actor::Scheduler,
+        EventKind::ProviderRecovered {
+            provider: provider.to_owned(),
+        },
+    ));
 }
 
 /// A subscription window near its limit is provider feedback like a 429:

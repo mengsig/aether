@@ -238,3 +238,161 @@ async fn a_sign_in_refused_on_every_relaunch_suspends_as_provider_auth_until_a_p
     assert!(claude_auth(&h).is_null(), "{}", claude_auth(&h));
     h.runtime.shutdown().await;
 }
+
+fn blocked_on_credentials(agent: &aether_core::agent::Agent) -> bool {
+    matches!(
+        agent.status,
+        AgentStatus::Blocked {
+            reason: BlockReason::Exhausted {
+                class: ExhaustionClass::Credentials,
+                ..
+            }
+        }
+    )
+}
+
+async fn send_and_suspend(h: &Harness, id: AgentId) {
+    h.runtime
+        .send_message(id, vec![ContentBlock::text("go")], Actor::user())
+        .unwrap();
+    wait_for(h.store.as_ref(), id, blocked_on_credentials).await;
+}
+
+/// Any turn answered on the provider ends what every suspended row says
+/// about its sign-in, and releases those agents to probe now.
+#[tokio::test]
+async fn an_unrelated_answer_clears_the_refusal_and_releases_every_suspended_agent() {
+    let engine = QueuedEngine::new(vec![
+        refused(),
+        refused(),
+        answered("an unrelated turn"),
+        answered("first probe"),
+        answered("second probe"),
+    ]);
+    let h = harness_with_engine_config(engine.clone(), |config| {
+        config.engine_auth_retries = 0;
+        config.exhaustion_probe_floor = Duration::from_secs(600);
+    })
+    .await;
+    let (first, second, unrelated) = (chat_agent(&h), chat_agent(&h), chat_agent(&h));
+    send_and_suspend(&h, first).await;
+    send_and_suspend(&h, second).await;
+    assert_eq!(claude_auth(&h)["status"], "auth_failed");
+    h.runtime
+        .send_message(unrelated, vec![ContentBlock::text("go")], Actor::user())
+        .unwrap();
+    wait_for(h.store.as_ref(), unrelated, |a| {
+        a.stats.turns > 0 && a.status.kind() == AgentStatusKind::Waiting
+    })
+    .await;
+    assert!(claude_auth(&h).is_null(), "{}", claude_auth(&h));
+    for id in [first, second] {
+        // Without the release their next probe is ten minutes away.
+        wait_for(h.store.as_ref(), id, |a| {
+            custom_events(&h, a.id, "exhaustion.recovered") == 1
+                && a.status.kind() == AgentStatusKind::Waiting
+        })
+        .await;
+    }
+    assert_eq!(engine.prompts.lock().unwrap().len(), 5);
+    h.runtime.shutdown().await;
+}
+
+/// After a restart the suspended row still says the sign-in is refused, so
+/// the canary's refused probe suspends again without relaunching.
+#[tokio::test]
+async fn after_a_restart_a_refused_probe_suspends_without_relaunching() {
+    let store: Arc<dyn Store> = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let before = QueuedEngine::new(vec![refused()]);
+    let h = build_harness(
+        before.clone(),
+        Arc::default(),
+        Arc::default(),
+        None,
+        None,
+        Some(store.clone()),
+        |config| {
+            config.engine_auth_retries = 0;
+            config.exhaustion_probe_floor = Duration::from_millis(800);
+        },
+    )
+    .await;
+    let id = chat_agent(&h);
+    send_and_suspend(&h, id).await;
+    h.runtime.shutdown().await;
+
+    let after = QueuedEngine::new(vec![refused(), refused(), refused()]);
+    let h = build_harness(
+        after.clone(),
+        Arc::default(),
+        Arc::default(),
+        None,
+        None,
+        Some(store),
+        |config| config.exhaustion_probe_floor = Duration::from_secs(600),
+    )
+    .await;
+    assert_eq!(
+        claude_auth(&h)["status"],
+        "auth_failed",
+        "read from the row"
+    );
+    wait_for(h.store.as_ref(), id, |a| {
+        custom_events(&h, a.id, "exhaustion.probe_failed") == 1 && blocked_on_credentials(a)
+    })
+    .await;
+    assert_eq!(
+        after.prompts.lock().unwrap().len(),
+        1,
+        "the probe launched once"
+    );
+    assert!(custom_payloads(&h, id, "engine.auth_retry").is_empty());
+    h.runtime.shutdown().await;
+}
+
+/// A turn waiting to relaunch suspends as soon as another turn on the
+/// provider gives up, instead of sleeping out its wait and launching again.
+#[tokio::test]
+async fn a_waiting_relaunch_suspends_once_another_turn_gives_up() {
+    let usage_limit = vec![EngineEvent::Done(EngineOutcome {
+        is_error: true,
+        error: Some("You've hit your usage limit".into()),
+        ..Default::default()
+    })];
+    // The prober's usage limit, the waiter's refusal, then the prober's refused probe.
+    let engine = QueuedEngine::new(vec![usage_limit, refused(), refused(), refused()]);
+    let h = harness_with_engine_config(engine.clone(), |config| {
+        config.engine_auth_retry_floor = Duration::from_secs(8);
+        config.exhaustion_probe_floor = Duration::from_millis(1500);
+    })
+    .await;
+    let (prober, waiter) = (chat_agent(&h), chat_agent(&h));
+    h.runtime
+        .send_message(prober, vec![ContentBlock::text("go")], Actor::user())
+        .unwrap();
+    wait_for(h.store.as_ref(), prober, |a| {
+        a.status.kind() == AgentStatusKind::Blocked
+    })
+    .await;
+    let started = std::time::Instant::now();
+    h.runtime
+        .send_message(waiter, vec![ContentBlock::text("go")], Actor::user())
+        .unwrap();
+    // Waiting at least 5.6 s to relaunch when the probe is refused at about 1.5 s.
+    wait_for(h.store.as_ref(), waiter, blocked_on_credentials).await;
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(blocked_on_credentials(
+        &h.store.agent(prober).unwrap().unwrap()
+    ));
+    assert_eq!(custom_payloads(&h, waiter, "engine.auth_retry").len(), 1);
+    assert_eq!(
+        engine.prompts.lock().unwrap().len(),
+        3,
+        "no relaunch after the wait"
+    );
+    h.runtime.shutdown().await;
+}

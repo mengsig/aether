@@ -34,9 +34,9 @@ use hard_stop::enforce_hard_stops;
 use lineage::Lineage;
 pub(crate) use lineage::{CapHolder, ResumeLimits, cap_holder, on_provider_descendants};
 pub(crate) use providers::{
-    QUOTA_BACKOFF, auth_failed_since, backoff, clear_auth_failed, clear_bench, clear_probe_claim,
-    mark_auth_failed, provider_recovered_by_probe, record_error, record_fallback, record_quota,
-    release_probe_claim_of,
+    QUOTA_BACKOFF, auth_marked, backoff, clear_bench, clear_probe_claim, lift_credentials_bench,
+    mark_auth_failed, provider_recovered_by_probe, record_auth_answer, record_error,
+    record_fallback, record_quota, release_probe_claim_of,
 };
 use providers::{due_canaries, expire_backoff};
 pub(crate) use wake::{has_transcript_work, has_unread_inbox, has_work, urgent_inbox};

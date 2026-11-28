@@ -1059,8 +1059,10 @@ after jittered waits of about 10, 30, 60 and 80 seconds (±30%, about three
 minutes in all), each announced by an `engine.auth_retry` event: CLIs that
 share one login can read a refresh token another just rotated, and a new
 launch reads the current one. Once one turn on the provider has given up,
-others refused on it suspend at once and the canary probe alone tests the
-sign-in. A [long-lived token](configuration.md#claude-long-lived-token)
+others refused on it suspend at once, a turn waiting to relaunch on it
+suspends without relaunching, and the canary probe alone tests the sign-in. A
+probe is never relaunched, and after a daemon restart an agent still suspended
+on the provider counts as a turn that gave up. A [long-lived token](configuration.md#claude-long-lived-token)
 avoids the shared refresh altogether.
 
 Clients match a refused sign-in on the stable kind `provider_auth`:
@@ -1075,10 +1077,13 @@ Clients match a refused sign-in on the stable kind `provider_auth`:
   the same as `provider_auth` for the agent's own provider, until a turn on
   that provider is answered;
 - a task that fails on a refused sign-in where it cannot suspend carries
-  `structured: {"kind": "provider_auth", "provider": …, "class": "auth"}` in
-  its `failed` status, `task.failed` event and `TaskFailed` inbox item. Once the CLI is signed in
-again, the next probe answers and every agent suspended on that provider is
-released. A configured fallback link takes the turn first, as for an exhausted
+  `structured: {"kind": "provider_auth", "provider": …, "model": …,
+  "class": "auth"}` in its `failed` status, `task.failed` event and
+  `TaskFailed` inbox item, naming the link whose typed failure ended the turn.
+
+Once the CLI is signed in again, the next probe - or any other turn on that
+provider - answers, the provider's credentials bench is lifted, and every
+agent suspended on it is released. A configured fallback link takes the turn first, as for an exhausted
 quota, and the engine it leaves is benched for a minute (as an HTTP provider
 is), so other turns go straight to their fallback instead of relaunching it. A stalled engine that names a refused sign-in or a spent plan as it is
 stopped is suspended on that, not retried as a stall. Models reached over HTTP

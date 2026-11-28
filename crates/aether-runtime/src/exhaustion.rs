@@ -561,6 +561,11 @@ fn link_answered_since(
         }))
 }
 
+/// Whether `agent` is suspended on `link`, or probing it: its episode is open.
+pub(crate) fn episode_open(runtime: &Runtime, agent: &Agent, link: &ModelRef) -> Result<bool> {
+    Ok(open_episode(runtime, agent, link)?.is_some())
+}
+
 /// The exhaustion episode this agent is still in **on `link`**, if any. An
 /// episode is keyed by the spent link, not by the agent's turn: open means the
 /// newest suspension-lifecycle event naming `link` suspended it and `link` itself has

@@ -987,8 +987,11 @@ pub(super) async fn drive(
     }
     let class = crate::exhaustion::engine_error_class(outcome.error.as_deref().unwrap_or(""));
     let mut cleaned_up = false;
+    // A refused sign-in may be relaunched too, so it waits for cleanup as well.
+    let relaunchable = crate::exhaustion::native_transient(class)
+        || class == aether_core::model::ModelErrorClass::Auth;
     if outcome.is_error
-        && (stalled.is_some() || crate::exhaustion::native_transient(class))
+        && (stalled.is_some() || relaunchable)
         && park.is_none()
         && budget_stop.is_none()
         && !outcome.interrupted
