@@ -418,7 +418,10 @@ pub(crate) fn provider_auth_failure(agent: &Agent, error: &str) -> Option<Value>
     if engine_error_class(error) != aether_core::model::ModelErrorClass::Auth {
         return None;
     }
-    debug_assert!(!agent.model.provider.is_empty(), "an agent names its provider");
+    debug_assert!(
+        !agent.model.provider.is_empty(),
+        "an agent names its provider"
+    );
     Some(json!({
         "kind": aether_core::agent::PROVIDER_AUTH,
         "provider": agent.model.provider,

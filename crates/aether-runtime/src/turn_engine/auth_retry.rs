@@ -47,10 +47,6 @@ impl AuthRetry {
             && crate::scheduler::auth_failed_since(runtime, provider).is_none()
     }
 
-    pub(super) fn waits(&self) -> u32 {
-        self.waits
-    }
-
     /// The next jittered wait, or `None` once the relaunches are spent.
     pub(super) fn next_delay(&mut self) -> Option<Duration> {
         self.next_delay_with(rand::random_range(JITTER))
@@ -121,12 +117,15 @@ mod tests {
         let lows: Vec<_> = (0..4).map(|_| low.next_delay_with(0.7).unwrap()).collect();
         let highs: Vec<_> = (0..4).map(|_| high.next_delay_with(1.3).unwrap()).collect();
         assert_eq!(low.next_delay_with(1.0), None, "the relaunches are spent");
-        assert_eq!(low.waits(), 4);
+        assert_eq!(low.waits, 4);
         let total = |delays: &[Duration]| delays.iter().sum::<Duration>().as_secs_f64();
         assert!((125.0..=127.0).contains(&total(&lows)), "{lows:?}");
         assert!((233.0..=235.0).contains(&total(&highs)), "{highs:?}");
         assert!(lows.windows(2).all(|pair| pair[0] < pair[1]), "{lows:?}");
-        assert_eq!(low.gave_up(), "the provider refused the sign-in on 5 launches");
+        assert_eq!(
+            low.gave_up(),
+            "the provider refused the sign-in on 5 launches"
+        );
     }
 
     #[test]
@@ -136,9 +135,15 @@ mod tests {
             for step in STEPS {
                 let delay = retry.next_delay().unwrap();
                 let base = Duration::from_secs(10 * u64::from(step));
-                assert!(delay >= base.mul_f64(0.7) && delay <= base.mul_f64(1.3), "{delay:?}");
+                assert!(
+                    delay >= base.mul_f64(0.7) && delay <= base.mul_f64(1.3),
+                    "{delay:?}"
+                );
             }
         }
-        assert_eq!(AuthRetry::new(0, Duration::from_secs(10)).next_delay(), None);
+        assert_eq!(
+            AuthRetry::new(0, Duration::from_secs(10)).next_delay(),
+            None
+        );
     }
 }

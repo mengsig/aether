@@ -50,7 +50,10 @@ impl Runtime {
     /// The `auth` entry `provider_usage` and `inspect_state` show for a
     /// provider whose sign-in is refused, `None` while it works.
     pub(crate) fn provider_auth(&self, provider: &str) -> Result<Option<serde_json::Value>> {
-        Ok(self.auth_failures()?.get(provider).map(|since| auth_failed(*since)))
+        Ok(self
+            .auth_failures()?
+            .get(provider)
+            .map(|since| auth_failed(*since)))
     }
 
     /// Providers whose sign-in is refused, since when: the scheduler's mark,

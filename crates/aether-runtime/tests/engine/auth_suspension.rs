@@ -159,7 +159,11 @@ async fn a_refused_sign_in_relaunches_a_fresh_engine_and_continues_when_it_answe
         "{:?}",
         done.status
     );
-    assert_eq!(engine.prompts.lock().unwrap().len(), 2, "one fresh relaunch");
+    assert_eq!(
+        engine.prompts.lock().unwrap().len(),
+        2,
+        "one fresh relaunch"
+    );
     let retries = custom_payloads(&h, id, "engine.auth_retry");
     assert_eq!(retries.len(), 1, "{retries:?}");
     assert_eq!(retries[0]["kind"], "provider_auth");
@@ -190,18 +194,35 @@ async fn a_sign_in_refused_on_every_relaunch_suspends_as_provider_auth_until_a_p
         unreachable!("waited for blocked");
     };
     assert!(
-        matches!(reason, BlockReason::Exhausted { class: ExhaustionClass::Credentials, .. }),
+        matches!(
+            reason,
+            BlockReason::Exhausted {
+                class: ExhaustionClass::Credentials,
+                ..
+            }
+        ),
         "{reason:?}"
     );
-    assert!(reason.describe().starts_with("provider_auth: claude-code"), "{}", reason.describe());
-    assert_eq!(engine.prompts.lock().unwrap().len(), 5, "four relaunches, then suspend");
+    assert!(
+        reason.describe().starts_with("provider_auth: claude-code"),
+        "{}",
+        reason.describe()
+    );
+    assert_eq!(
+        engine.prompts.lock().unwrap().len(),
+        5,
+        "four relaunches, then suspend"
+    );
     assert_eq!(custom_payloads(&h, id, "engine.auth_retry").len(), 4);
     let notice = custom_payloads(&h, id, "exhaustion.suspended");
     assert_eq!(notice.len(), 1);
     assert_eq!(notice[0]["kind"], "provider_auth");
     assert_eq!(notice[0]["provider"], "claude-code");
     let detail = notice[0]["detail"].as_str().unwrap();
-    assert!(detail.contains("refused the sign-in on 5 launches"), "{detail}");
+    assert!(
+        detail.contains("refused the sign-in on 5 launches"),
+        "{detail}"
+    );
     assert_eq!(claude_auth(&h)["kind"], "provider_auth");
     assert_eq!(claude_auth(&h)["status"], "auth_failed");
     wait_for(h.store.as_ref(), id, |a| {

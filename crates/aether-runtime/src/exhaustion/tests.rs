@@ -330,8 +330,14 @@ async fn a_task_failed_on_a_refused_sign_in_carries_the_provider_auth_kind() {
     let rt = runtime(store.clone(), dir.path()).await;
     let root = create(&rt, None);
     for (error, kind) in [
-        ("claude-code failed: Failed to authenticate", Some("provider_auth")),
-        ("model error: Auth: invalid x-api-key", Some("provider_auth")),
+        (
+            "claude-code failed: Failed to authenticate",
+            Some("provider_auth"),
+        ),
+        (
+            "model error: Auth: invalid x-api-key",
+            Some("provider_auth"),
+        ),
         ("claude-code failed: process failed", None),
         ("Failed to authenticate with the package registry", None),
     ] {

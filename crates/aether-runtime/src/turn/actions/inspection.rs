@@ -240,7 +240,10 @@ async fn refresh_provider_usage(
 }
 
 fn provider_usage(runtime: &Arc<Runtime>) -> Result<ToolOutcome> {
-    Ok(crate::inspection::outcome(runtime, runtime.provider_usage()?))
+    Ok(crate::inspection::outcome(
+        runtime,
+        runtime.provider_usage()?,
+    ))
 }
 
 /// Read-only listing and inspection actions.
