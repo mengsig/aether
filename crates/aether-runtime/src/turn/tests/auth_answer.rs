@@ -76,7 +76,8 @@ async fn a_rebuilt_answer_commit_still_releases_the_suspended_agents() {
     // The first attempt is built, then lost to a locked database.
     let hold = runtime.hold();
     let mut lost = Commit::new();
-    let first = close_exhaustion_episode(&runtime, &mut ctx, &hold, &mut lost, &answered).unwrap();
+    let first =
+        close_exhaustion_episode(&runtime, &mut ctx, &hold, &mut lost, &answered, now()).unwrap();
     drop((hold, lost));
     assert_eq!(
         first.as_ref().map(|(p, _)| p.as_str()),
@@ -91,7 +92,7 @@ async fn a_rebuilt_answer_commit_still_releases_the_suspended_agents() {
     let hold = runtime.hold();
     let mut commit = Commit::new();
     let retried =
-        close_exhaustion_episode(&runtime, &mut ctx, &hold, &mut commit, &answered).unwrap();
+        close_exhaustion_episode(&runtime, &mut ctx, &hold, &mut commit, &answered, now()).unwrap();
     runtime.apply_held(hold, commit).unwrap();
     let (settled, at) = retried.expect("the retry decides the same");
     crate::scheduler::settle_auth_answer(&runtime, &settled, at);
@@ -148,5 +149,150 @@ async fn a_refusal_after_the_answer_survives_its_settlement() {
         runtime.provider_auth(&provider).unwrap().is_none(),
         "an answer after every refusal clears it"
     );
+    runtime.shutdown().await;
+}
+
+/// Suspend `agent` on a refused sign-in as a turn does: planned against the
+/// episode it may continue, recorded with its events. Returns the row.
+fn suspend_through_plan(runtime: &Runtime, agent: &Agent) -> Agent {
+    let cause = crate::exhaustion::Exhausted {
+        model: agent.model.clone(),
+        class: ExhaustionClass::Credentials,
+        detail: "claude-code failed: Failed to authenticate".into(),
+        retry_after: None,
+    };
+    let suspension = crate::exhaustion::plan(runtime, agent, &cause).unwrap();
+    let mut row = agent.clone();
+    row.status = AgentStatus::Blocked {
+        reason: suspension.reason.clone(),
+    };
+    let hold = runtime.hold();
+    let mut commit = Commit::new();
+    crate::exhaustion::record(
+        runtime,
+        &hold,
+        &mut commit,
+        &row,
+        &cause,
+        &suspension,
+        &Actor::Scheduler,
+    )
+    .unwrap();
+    commit.push_mutation(Mutation::UpsertAgent(row.clone()));
+    runtime.apply_held(hold, commit).unwrap();
+    crate::scheduler::mark_auth_failed(runtime, &agent.model.provider);
+    row
+}
+
+fn since_of(row: &Agent) -> aether_core::time::Timestamp {
+    let AgentStatus::Blocked {
+        reason: BlockReason::Exhausted { since, .. },
+    } = &row.status
+    else {
+        panic!("suspended: {:?}", row.status);
+    };
+    *since
+}
+
+/// Record and settle an answer on `answering`'s provider read at `at`.
+fn answer(runtime: &Runtime, answering: Agent, at: aether_core::time::Timestamp) {
+    let mut ctx = ctx_for(answering);
+    let model = ctx.agent.model.clone();
+    let hold = runtime.hold();
+    let mut commit = Commit::new();
+    let answered =
+        close_exhaustion_episode(runtime, &mut ctx, &hold, &mut commit, &model, at).unwrap();
+    runtime.apply_held(hold, commit).unwrap();
+    let (provider, at) = answered.expect("the provider was refused");
+    crate::scheduler::settle_auth_answer(runtime, &provider, at);
+}
+
+#[tokio::test]
+async fn a_failed_probe_after_the_answer_stays_refused_across_a_restart() {
+    let store = Arc::new(aether_store::SqliteStore::open_in_memory().unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    let (runtime, dir) = crate::test_runtime_on(store.clone(), dir, |_| {}).await;
+    let parked = suspend_through_plan(&runtime, &create(&runtime));
+    let provider = parked.model.provider.clone();
+    let first_since = since_of(&parked);
+    answer(&runtime, create(&runtime), now());
+    assert!(runtime.provider_auth(&provider).unwrap().is_none());
+
+    // Its probe is refused again: the episode goes on, the refusal is new.
+    let probed = suspend_through_plan(&runtime, &parked);
+    let fence = runtime.auth_answer_fence(&provider).unwrap().unwrap();
+    assert!(since_of(&probed) > fence && fence >= first_since);
+    assert!(runtime.provider_auth(&provider).unwrap().is_some());
+    runtime.shutdown().await;
+
+    let (restarted, _dir) = crate::test_runtime_on(store, dir, |_| {}).await;
+    assert!(
+        restarted.provider_auth(&provider).unwrap().is_some(),
+        "the refusal after the answer is still reported"
+    );
+    restarted.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_answer_fence_outlives_its_run_and_a_restart() {
+    let store = Arc::new(aether_store::SqliteStore::open_in_memory().unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    let (runtime, dir) = crate::test_runtime_on(store.clone(), dir, |_| {}).await;
+    let parked = suspend_through_plan(&runtime, &create(&runtime));
+    let provider = parked.model.provider.clone();
+    let answering = create(&runtime);
+    assert_ne!(answering.run, parked.run, "each root agent has its own run");
+    answer(&runtime, answering.clone(), now());
+
+    let mut finished = runtime.store.agent(answering.id).unwrap().unwrap();
+    finished.status = AgentStatus::Completed { summary: None };
+    runtime
+        .apply(Commit::new().mutate(Mutation::UpsertAgent(finished)))
+        .unwrap();
+    let expiry = runtime
+        // A cutoff past everything the run wrote, as if its retention had passed.
+        .expire_run_history(answering.run, now() + chrono::Duration::minutes(1))
+        .unwrap();
+    assert!(
+        matches!(expiry, aether_store::RunExpiry::Expired { .. }),
+        "{expiry:?}"
+    );
+    assert!(runtime.store.agent(answering.id).unwrap().is_none());
+    runtime.shutdown().await;
+
+    let (restarted, _dir) = crate::test_runtime_on(store, dir, |_| {}).await;
+    assert!(
+        restarted.store.agent(parked.id).unwrap().is_some(),
+        "the older suspension is still on record"
+    );
+    assert!(
+        restarted.provider_auth(&provider).unwrap().is_none(),
+        "the surviving fence says the provider answered after it"
+    );
+    restarted.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_answer_read_before_a_refusal_does_not_clear_it() {
+    let (runtime, _dir) = crate::test_runtime(|_| {}).await;
+    let parked = suspend_through_plan(&runtime, &create(&runtime));
+    let provider = parked.model.provider.clone();
+    let mut ctx = ctx_for(create(&runtime));
+    let model = ctx.agent.model.clone();
+    // The answer is read, then another turn is refused before its commit holds.
+    let answered_at = now();
+    std::thread::sleep(Duration::from_millis(2));
+    crate::scheduler::mark_auth_failed(&runtime, &provider);
+    let hold = runtime.hold();
+    let mut commit = Commit::new();
+    let answered =
+        close_exhaustion_episode(&runtime, &mut ctx, &hold, &mut commit, &model, answered_at)
+            .unwrap();
+    runtime.apply_held(hold, commit).unwrap();
+    let (settled, at) = answered.expect("the provider was refused");
+    assert_eq!(at, answered_at, "the fence is the time the answer was read");
+    crate::scheduler::settle_auth_answer(&runtime, &settled, at);
+    assert!(crate::scheduler::auth_marked(&runtime, &provider));
+    assert!(runtime.provider_auth(&provider).unwrap().is_some());
     runtime.shutdown().await;
 }

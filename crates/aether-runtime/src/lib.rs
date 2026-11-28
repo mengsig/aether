@@ -907,6 +907,18 @@ pub(crate) async fn test_runtime_in(
     config_dir: tempfile::TempDir,
     configure: impl FnOnce(&mut RuntimeConfig),
 ) -> (Arc<Runtime>, tempfile::TempDir) {
+    let store = Arc::new(aether_store::SqliteStore::open_in_memory().expect("store"));
+    test_runtime_on(store, config_dir, configure).await
+}
+
+/// [`test_runtime_in`] over a store the caller keeps, so a test can start a
+/// second runtime on it as a daemon restart would.
+#[cfg(test)]
+pub(crate) async fn test_runtime_on(
+    store: Arc<aether_store::SqliteStore>,
+    config_dir: tempfile::TempDir,
+    configure: impl FnOnce(&mut RuntimeConfig),
+) -> (Arc<Runtime>, tempfile::TempDir) {
     let mut config = RuntimeConfig {
         holder: "unit-test".into(),
         max_concurrent_turns: 4,
@@ -916,7 +928,7 @@ pub(crate) async fn test_runtime_in(
     configure(&mut config);
     let runtime = Runtime::start_with_engines(
         config,
-        Arc::new(aether_store::SqliteStore::open_in_memory().expect("store")),
+        store,
         Arc::new(
             aether_model::Models::load(Some(config_dir.path().to_path_buf())).expect("models"),
         ),

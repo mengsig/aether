@@ -9,7 +9,7 @@ use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::AgentId;
 use aether_core::inbox::InboxKind;
 use aether_core::model::{ModelErrorClass, ModelRef};
-use aether_core::time::now;
+use aether_core::time::{Timestamp, now};
 use aether_store::{AgentFilter, Commit, EventFilter};
 use serde_json::{Value, json};
 
@@ -614,6 +614,30 @@ pub(crate) struct Suspension {
     new_episode: bool,
 }
 
+/// When the episode a suspension at `at` belongs to began. A refused sign-in
+/// after the provider answered starts again at `at`: its row then outlives
+/// the answer's fence across a restart, as the refusal it records is newer.
+fn episode_since(
+    runtime: &Runtime,
+    previous: Option<&BlockReason>,
+    cause: &Exhausted,
+    at: Timestamp,
+) -> Result<Timestamp> {
+    let Some(BlockReason::Exhausted { since, .. }) = previous else {
+        return Ok(at);
+    };
+    debug_assert!(*since <= at, "an episode begins before its suspensions");
+    if cause.class != ExhaustionClass::Credentials {
+        return Ok(*since);
+    }
+    let answered = runtime.auth_answer_fence(&cause.model.provider)?;
+    Ok(if answered.is_some_and(|fence| fence >= *since) {
+        at
+    } else {
+        *since
+    })
+}
+
 /// Plan where a spent link parks the agent: a first suspension on that link
 /// starts an episode at the floor, a failed probe continues the one it belongs
 /// to - including across turns a fallback carried in between.
@@ -623,10 +647,7 @@ pub(crate) fn plan(runtime: &Runtime, agent: &Agent, cause: &Exhausted) -> Resul
     let reason = BlockReason::Exhausted {
         model: cause.model.clone(),
         class: cause.class,
-        since: match &previous {
-            Some(BlockReason::Exhausted { since, .. }) => *since,
-            _ => at,
-        },
+        since: episode_since(runtime, previous.as_ref(), cause, at)?,
         reported_reset: cause.retry_after.and_then(|after| {
             let bounded = reported_interval(after, runtime.config.exhaustion_probe_floor);
             chrono::Duration::from_std(bounded)

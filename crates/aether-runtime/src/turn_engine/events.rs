@@ -585,8 +585,14 @@ pub(super) fn handle_event(
                 state.accounting.drain_into(ctx, &mut commit);
             }
             let answered = snapshot.model.clone();
-            let refused =
-                crate::turn::close_exhaustion_episode(runtime, ctx, &hold, &mut commit, &answered)?;
+            let refused = crate::turn::close_exhaustion_episode(
+                runtime,
+                ctx,
+                &hold,
+                &mut commit,
+                &answered,
+                at,
+            )?;
             runtime.apply_held_through_lock(hold, commit, ctx.agent.id, "the engine's message")?;
             if let Some((provider, at)) = refused {
                 crate::scheduler::settle_auth_answer(runtime, &provider, at);

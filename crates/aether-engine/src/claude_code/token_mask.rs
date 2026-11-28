@@ -10,8 +10,8 @@ use aether_core::redact::KNOWN_SECRET_MASK;
 use crate::EngineEvent;
 
 /// `line` with `token` replaced. The token's characters are never escaped by
-/// a JSON writer, but any character may be written as `\u` escape, so a line
-/// holding one is decoded and masked again if the decoded form holds the token.
+/// a JSON writer, but any character may be written as `\u` escape, so those
+/// escapes are written out as plain characters before the token is looked for.
 pub(super) fn mask_line<'a>(token: &str, line: &'a str) -> Cow<'a, str> {
     debug_assert!(!token.is_empty(), "a token is never empty");
     let line: Cow<'a, str> = if line.contains(token) {
@@ -19,20 +19,78 @@ pub(super) fn mask_line<'a>(token: &str, line: &'a str) -> Cow<'a, str> {
     } else {
         Cow::Borrowed(line)
     };
-    if !line.contains("\\u") {
+    let plain = unescape_plain(&line);
+    if !plain.contains(token) {
         return line;
     }
-    // A line that is not JSON is passed on: the parser refuses it as well.
-    let Ok(decoded) = serde_json::from_str::<serde_json::Value>(&line) else {
-        return line;
-    };
-    let normalized = decoded.to_string();
-    if !normalized.contains(token) {
-        return line;
-    }
-    let masked = normalized.replace(token, KNOWN_SECRET_MASK);
+    let masked = plain.replace(token, KNOWN_SECRET_MASK);
     debug_assert!(!masked.contains(token));
     Cow::Owned(masked)
+}
+
+/// `text` with every JSON escape of a character that needs none written as
+/// that character. Nothing is parsed, so duplicate keys and invalid JSON stay
+/// as written; only `"`, `\\` and control characters stay escaped.
+fn unescape_plain(text: &str) -> Cow<'_, str> {
+    if !text.contains('\\') {
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('\\') {
+        out.push_str(&rest[..at]);
+        let (written, consumed) = unescape_one(&rest[at..]);
+        debug_assert!(consumed >= 1 && consumed <= rest.len() - at);
+        match written {
+            Some(c) => out.push(c),
+            None => out.push_str(&rest[at..at + consumed]),
+        }
+        rest = &rest[at + consumed..];
+    }
+    out.push_str(rest);
+    Cow::Owned(out)
+}
+
+/// The escape that starts `text` (at a backslash): the plain character it can
+/// be written as, if any, and how many bytes it spans.
+fn unescape_one(text: &str) -> (Option<char>, usize) {
+    debug_assert!(text.starts_with('\\'));
+    let bytes = text.as_bytes();
+    match bytes.get(1) {
+        Some(b'/') => (Some('/'), 2),
+        Some(b'u') => unescape_unicode(text),
+        Some(next) if next.is_ascii() => (None, 2),
+        // A backslash before a multi-byte character: keep only the backslash.
+        _ => (None, 1),
+    }
+}
+
+fn unescape_unicode(text: &str) -> (Option<char>, usize) {
+    let Some(high) = hex4(text, 2) else {
+        return (None, 2);
+    };
+    let (code, consumed) = if (0xD800..0xDC00).contains(&high) {
+        match text.get(6..8).filter(|s| *s == "\\u").and(hex4(text, 8)) {
+            Some(low) if (0xDC00..0xE000).contains(&low) => {
+                (0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00), 12)
+            }
+            _ => return (None, 6),
+        }
+    } else {
+        (high, 6)
+    };
+    match char::from_u32(code) {
+        Some(c) if c != '"' && c != '\\' && !c.is_control() => (Some(c), consumed),
+        _ => (None, consumed),
+    }
+}
+
+fn hex4(text: &str, start: usize) -> Option<u32> {
+    let digits = text.get(start..start + 4)?;
+    if !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(digits, 16).ok()
 }
 
 /// The kinds of streamed block text a token can be split across.
@@ -172,23 +230,9 @@ fn release(token: &str, piece: Piece, held: String) -> String {
     }
 }
 
-/// A block's whole tool input with `token` masked, however its JSON escapes
-/// it. Input that does not parse and may hide an escaped token is withheld.
+/// A block's whole tool input with `token` masked, however its JSON escapes it.
 fn mask_tool_input(token: &str, input: &str) -> String {
-    let literal = input.replace(token, KNOWN_SECRET_MASK);
-    if !literal.contains("\\u") {
-        return literal;
-    }
-    let Ok(decoded) = serde_json::from_str::<serde_json::Value>(&literal) else {
-        return KNOWN_SECRET_MASK.to_owned();
-    };
-    let normalized = decoded.to_string();
-    if !normalized.contains(token) {
-        return literal;
-    }
-    let masked = normalized.replace(token, KNOWN_SECRET_MASK);
-    debug_assert!(!masked.contains(token));
-    masked
+    mask_line(token, input).into_owned()
 }
 
 /// Bytes at the end of `text` that are a proper prefix of `token`, longest first.
@@ -313,6 +357,36 @@ mod tests {
             mask_tool_input(TOKEN, r#"{"a":"é is no token"}"#),
             r#"{"a":"é is no token"}"#,
             "input without the token is passed on as written"
+        );
+    }
+
+    #[test]
+    fn an_escaped_token_under_a_duplicate_key_is_masked() {
+        let escaped = TOKEN.replace('p', "\\u0070");
+        let input = format!(r#"{{"x":"{escaped}","x":"safe"}}"#);
+        let masked = mask_tool_input(TOKEN, &input);
+        assert_eq!(
+            masked,
+            format!(r#"{{"x":"{KNOWN_SECRET_MASK}","x":"safe"}}"#)
+        );
+        let line = format!(r#"{{"text":"{escaped}","text":"safe"}}"#);
+        assert!(!unescape_plain(&mask_line(TOKEN, &line)).contains(TOKEN));
+    }
+
+    #[test]
+    fn only_escapes_of_plain_characters_are_written_out() {
+        assert_eq!(unescape_plain(r#"ap\/b"#), "ap/b");
+        assert_eq!(
+            unescape_plain(r#"\\u0070"#),
+            r#"\\u0070"#,
+            "an escaped backslash"
+        );
+        assert_eq!(unescape_plain(r#""\\u000a\n"#), r#""\\u000a\n"#);
+        assert_eq!(unescape_plain(r#"😀 \ud83d x"#), "😀 \\ud83d x");
+        assert_eq!(
+            unescape_plain(r#"\u00zz\"#),
+            r#"\u00zz\"#,
+            "malformed stays"
         );
     }
 

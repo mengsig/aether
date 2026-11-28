@@ -324,18 +324,21 @@ pub(super) fn after_end(runtime: &Runtime, ctx: &TurnCtx, ended: Ended) -> Resul
 /// engine path commits its own invocations. Returns the provider whose refused
 /// sign-in this answer ends and when: the caller settles it once the commit
 /// landed, so a commit rebuilt after contention decides the same again.
+/// `answered_at` is when the answer was read, before any wait for the hold,
+/// so a refusal recorded during that wait is newer than it.
 pub(crate) fn close_exhaustion_episode(
     runtime: &Runtime,
     ctx: &mut TurnCtx,
     hold: &CommitHold<'_>,
     commit: &mut Commit,
     answered: &ModelRef,
+    answered_at: Timestamp,
 ) -> Result<Option<(String, Timestamp)>> {
     if ctx.recovery_checked_for.as_ref() == Some(answered) {
         return Ok(None);
     }
     ctx.recovery_checked_for = Some(answered.clone());
-    let refused = record_auth_answer(runtime, ctx, commit, &answered.provider)?;
+    let refused = record_auth_answer(runtime, ctx, commit, &answered.provider, answered_at)?;
     let Some(provider) = crate::exhaustion::record_recovery(
         runtime,
         hold,
@@ -375,12 +378,13 @@ fn record_auth_answer(
     ctx: &TurnCtx,
     commit: &mut Commit,
     provider: &str,
+    at: Timestamp,
 ) -> Result<Option<(String, Timestamp)>> {
     debug_assert!(!provider.is_empty(), "an answer names its provider");
+    debug_assert!(at <= now(), "an answer is read before it is recorded");
     if runtime.provider_auth(provider)?.is_none() {
         return Ok(None);
     }
-    let at = now();
     let fence = aether_core::event::EventDraft::new(
         aether_core::event::Actor::Scheduler,
         EventKind::Custom {

@@ -99,7 +99,7 @@ impl Runtime {
 
     /// When a turn on `provider` last answered while it was known refused:
     /// from the store once per daemon, so it holds across a restart.
-    fn auth_answer_fence(&self, provider: &str) -> Result<Option<Timestamp>> {
+    pub(crate) fn auth_answer_fence(&self, provider: &str) -> Result<Option<Timestamp>> {
         if let Some(fence) = self.sched.lock().auth_answered.get(provider) {
             return Ok(*fence);
         }

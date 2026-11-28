@@ -713,7 +713,8 @@ pub(super) async fn run_link(
         let mut commit = commit.clone();
         ctx.recovery_checked_for.clone_from(&checked);
         commit.push_mutation(Mutation::UpsertAgent(agent_row(runtime, ctx, &hold)?));
-        answered_refused = close_exhaustion_episode(runtime, ctx, &hold, &mut commit, model)?;
+        answered_refused =
+            close_exhaustion_episode(runtime, ctx, &hold, &mut commit, model, finished_at)?;
         runtime.apply_held(hold, commit)
     })
     .await?;
