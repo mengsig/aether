@@ -417,6 +417,7 @@ impl ClaudeCodeEngine {
         let cwd: PathBuf = turn.cwd.clone();
         let mut state = ParseState::for_turn(&turn);
         let outstanding = state.outstanding.clone();
+        let mut held = token_mask::HeldDeltas::default();
         let mut environment = telemetry::environment(context.as_ref(), &turn.hidden_env);
         let token = self
             .oauth_token_file
@@ -445,7 +446,10 @@ impl ClaudeCodeEngine {
             Some(input::interrupt_line()),
             cancel.clone(),
             move |line| match &token {
-                Some(token) => parse_line(&token.mask(line), &mut state),
+                Some(token) => {
+                    let events = parse_line(&token.mask_line(line), &mut state);
+                    token.mask_events(&mut held, events)
+                }
                 None => parse_line(line, &mut state),
             },
         )
@@ -478,6 +482,7 @@ mod input;
 mod ownership;
 mod telemetry;
 mod token_file;
+mod token_mask;
 use ownership::session_log_paths;
 mod session_cost;
 mod stream;

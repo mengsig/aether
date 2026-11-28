@@ -203,10 +203,16 @@ async fn a_short_or_quoted_token_is_refused() {
     let file = work.path().join("token");
     write_token(&file, "short", 0o600);
     assert!(refusal(&file).await.contains("fewer than 8 characters"));
-    write_token(&file, "has \"quote\" inside", 0o600);
-    assert!(
-        refusal(&file)
-            .await
-            .contains("characters a token never has")
-    );
+    for odd in [
+        "has \"quote\" inside",
+        "slash/in-the-token",
+        "unicode-t\u{f6}kenvalue",
+    ] {
+        write_token(&file, odd, 0o600);
+        let message = refusal(&file).await;
+        assert!(
+            message.contains("characters a token never has"),
+            "{message}"
+        );
+    }
 }

@@ -7,9 +7,9 @@ use std::io::Read as _;
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::Path;
 
-use aether_core::redact::{KNOWN_SECRET_MASK, MIN_KNOWN_SECRET_CHARS, Redactor};
+use aether_core::redact::{MIN_KNOWN_SECRET_CHARS, Redactor};
 
-use crate::EngineError;
+use crate::{EngineError, EngineEvent};
 
 pub(super) const TOKEN_ENV: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 /// A real token is far below this; a larger file is not a token file.
@@ -48,15 +48,18 @@ impl Token {
             .map_err(|_| EngineError::Unsupported("the Claude OAuth token cannot be masked".into()))
     }
 
-    /// `line` with the token replaced. Its characters need no JSON escaping,
-    /// so this spelling is the only one the child's JSON output can carry.
-    pub(super) fn mask<'a>(&self, line: &'a str) -> Cow<'a, str> {
-        if !line.contains(self.0.as_str()) {
-            return Cow::Borrowed(line);
-        }
-        let masked = line.replace(self.0.as_str(), KNOWN_SECRET_MASK);
-        debug_assert!(!masked.contains(self.0.as_str()));
-        Cow::Owned(masked)
+    /// `line` with the token masked, however JSON escapes it.
+    pub(super) fn mask_line<'a>(&self, line: &'a str) -> Cow<'a, str> {
+        super::token_mask::mask_line(&self.0, line)
+    }
+
+    /// `events` with the token masked, even where deltas split it.
+    pub(super) fn mask_events(
+        &self,
+        held: &mut super::token_mask::HeldDeltas,
+        events: Vec<EngineEvent>,
+    ) -> Vec<EngineEvent> {
+        held.mask(&self.0, events)
     }
 }
 
@@ -117,10 +120,10 @@ fn parse_token(path: &Path, raw: &str) -> Result<String, EngineError> {
             format!("holds fewer than {MIN_KNOWN_SECRET_CHARS} characters"),
         ));
     }
-    // A quote, backslash or space has a second spelling in JSON output.
+    // Characters a JSON writer never escapes, so masking knows its spellings.
     if !token
         .chars()
-        .all(|c| c.is_ascii_graphic() && c != '"' && c != '\\')
+        .all(|c| c.is_ascii_alphanumeric() || "-_.~+=".contains(c))
     {
         return Err(refuse(path, "holds characters a token never has"));
     }
