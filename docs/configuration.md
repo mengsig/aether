@@ -154,9 +154,12 @@ means `$HOME`; any other path must be absolute. Unset, nothing changes.
 
 A launch is refused, naming the path and never the content, when the file is
 missing, is a symlink or not a regular file, belongs to another user, is
-readable by group or others (use mode `0600` or `0400`), or is empty or
-multi-line. Listing `CLAUDE_CODE_OAUTH_TOKEN` in the hidden environment
-variables keeps it out of the child.
+readable by group or others (use mode `0600` or `0400`), or is empty,
+multi-line, shorter than 8 characters, or holds spaces, quotes or backslashes.
+Whatever that child prints is masked: the token reads `[REDACTED:known_secret]`
+in its output, errors and the events kept of them. Listing
+`CLAUDE_CODE_OAUTH_TOKEN` in the hidden environment variables keeps it out of
+the child.
 
 ### Run hard stop
 

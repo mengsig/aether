@@ -6,6 +6,7 @@
 //! echo is the acknowledgement the runtime waits for before recording the
 //! message as consumed.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
@@ -417,9 +418,18 @@ impl ClaudeCodeEngine {
         let mut state = ParseState::for_turn(&turn);
         let outstanding = state.outstanding.clone();
         let mut environment = telemetry::environment(context.as_ref(), &turn.hidden_env);
-        if let Some(path) = &self.oauth_token_file {
-            environment.push(token_file::environment(path)?);
-        }
+        let token = self
+            .oauth_token_file
+            .as_deref()
+            .map(token_file::Token::read)
+            .transpose()?;
+        let redactor = match &token {
+            Some(token) => {
+                environment.push(token.environment());
+                Cow::Owned(token.redactor(turn.redactor.clone())?)
+            }
+            None => Cow::Borrowed(&turn.redactor),
+        };
         let mut process = run_process_with_env(
             &self.program,
             args,
@@ -429,12 +439,15 @@ impl ClaudeCodeEngine {
             &turn.build_env,
             &environment,
             context.as_ref(),
-            &turn.redactor,
+            &redactor,
             user_message_line(&turn.prompt, &turn.images),
             true,
             Some(input::interrupt_line()),
             cancel.clone(),
-            move |line| parse_line(line, &mut state),
+            move |line| match &token {
+                Some(token) => parse_line(&token.mask(line), &mut state),
+                None => parse_line(line, &mut state),
+            },
         )
         .await?;
         if let Err(error) =

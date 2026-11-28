@@ -1,10 +1,13 @@
 //! Reads the operator's long-lived Claude Code OAuth token file.
 //! Errors name the path and the problem, never the file's content.
 
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::io::Read as _;
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::Path;
+
+use aether_core::redact::{KNOWN_SECRET_MASK, MIN_KNOWN_SECRET_CHARS, Redactor};
 
 use crate::EngineError;
 
@@ -19,16 +22,42 @@ fn refuse(path: &Path, problem: impl std::fmt::Display) -> EngineError {
     ))
 }
 
-/// The environment entry that hands the token in `path` to one child.
-/// Read at every spawn so a rotated file takes effect without a restart.
-pub(super) fn environment(path: &Path) -> Result<(OsString, OsString), EngineError> {
-    debug_assert!(
-        !path.as_os_str().is_empty(),
-        "the config rejects an empty path"
-    );
-    let token = read_token(path)?;
-    debug_assert!(!token.is_empty() && !token.contains('\n'));
-    Ok((TOKEN_ENV.into(), token.into()))
+/// One spawn's token. Not `Debug`, so it never reaches a log by accident.
+pub(super) struct Token(String);
+
+impl Token {
+    /// Read at every spawn so a rotated file takes effect without a restart.
+    pub(super) fn read(path: &Path) -> Result<Self, EngineError> {
+        debug_assert!(
+            !path.as_os_str().is_empty(),
+            "the config rejects an empty path"
+        );
+        let token = read_token(path)?;
+        debug_assert!(token.len() >= MIN_KNOWN_SECRET_CHARS && !token.contains('\n'));
+        Ok(Self(token))
+    }
+
+    /// The environment entry that hands the token to the child.
+    pub(super) fn environment(&self) -> (OsString, OsString) {
+        (TOKEN_ENV.into(), self.0.as_str().into())
+    }
+
+    /// `base` that also masks the token, for everything the child prints.
+    pub(super) fn redactor(&self, base: Redactor) -> Result<Redactor, EngineError> {
+        base.with_known_secret(&self.0)
+            .map_err(|_| EngineError::Unsupported("the Claude OAuth token cannot be masked".into()))
+    }
+
+    /// `line` with the token replaced. Its characters need no JSON escaping,
+    /// so this spelling is the only one the child's JSON output can carry.
+    pub(super) fn mask<'a>(&self, line: &'a str) -> Cow<'a, str> {
+        if !line.contains(self.0.as_str()) {
+            return Cow::Borrowed(line);
+        }
+        let masked = line.replace(self.0.as_str(), KNOWN_SECRET_MASK);
+        debug_assert!(!masked.contains(self.0.as_str()));
+        Cow::Owned(masked)
+    }
 }
 
 fn read_token(path: &Path) -> Result<String, EngineError> {
@@ -81,6 +110,19 @@ fn parse_token(path: &Path, raw: &str) -> Result<String, EngineError> {
     }
     if token.contains(['\n', '\r']) {
         return Err(refuse(path, "must hold the token on a single line"));
+    }
+    if token.chars().count() < MIN_KNOWN_SECRET_CHARS {
+        return Err(refuse(
+            path,
+            format!("holds fewer than {MIN_KNOWN_SECRET_CHARS} characters"),
+        ));
+    }
+    // A quote, backslash or space has a second spelling in JSON output.
+    if !token
+        .chars()
+        .all(|c| c.is_ascii_graphic() && c != '"' && c != '\\')
+    {
+        return Err(refuse(path, "holds characters a token never has"));
     }
     Ok(token.to_owned())
 }

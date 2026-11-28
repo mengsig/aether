@@ -32,6 +32,9 @@ pub struct Redactor {
 /// mask ordinary words that happen to equal it.
 pub const MIN_KNOWN_SECRET_CHARS: usize = 8;
 
+/// What a known secret value is replaced with.
+pub const KNOWN_SECRET_MASK: &str = "[REDACTED:known_secret]";
+
 /// Not derived: a known-secret rule's pattern is the secret itself.
 impl std::fmt::Debug for Redactor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -195,9 +198,7 @@ impl Redactor {
             redactor.known_bytes = Some(bytes);
         }
         // First, before a shape rule rewrites part of a value and hides the rest from it.
-        redactor
-            .patterns
-            .insert(0, (rule, "[REDACTED:known_secret]"));
+        redactor.patterns.insert(0, (rule, KNOWN_SECRET_MASK));
         redactor.multiline_known = known
             .iter()
             .filter(|value| value.contains('\n'))
@@ -205,6 +206,31 @@ impl Redactor {
             .collect();
         debug_assert_eq!(redactor.patterns.len(), RULE_COUNT + 1);
         Ok(redactor)
+    }
+
+    /// This redactor plus one more known single-line secret, such as a
+    /// credential handed to one child process, masked before every other rule.
+    pub fn with_known_secret(mut self, value: &str) -> Result<Self, KnownSecretsError> {
+        assert!(
+            value.chars().count() >= MIN_KNOWN_SECRET_CHARS && !value.contains(['\n', '\r']),
+            "a known secret is one line of at least {MIN_KNOWN_SECRET_CHARS} characters"
+        );
+        let escaped = json_escaped(value);
+        let mut spellings = vec![value, escaped.as_str()];
+        spellings.sort_unstable_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
+        spellings.dedup();
+        let alternation = spellings
+            .iter()
+            .map(|spelling| regex::escape(spelling))
+            .collect::<Vec<_>>()
+            .join("|");
+        let rule = Regex::new(&alternation).map_err(|_| KnownSecretsError { values: 1 })?;
+        let rules = self.patterns.len();
+        self.patterns.insert(0, (rule, KNOWN_SECRET_MASK));
+        self.longest_known = self.longest_known.max(spellings[0].len());
+        debug_assert_eq!(self.patterns.len(), rules + 1);
+        debug_assert!(self.shortest_match <= MIN_KNOWN_SECRET_CHARS);
+        Ok(self)
     }
 
     pub fn redact<'a>(&self, text: &'a str) -> Cow<'a, str> {
@@ -607,6 +633,26 @@ mod tests {
         let endless = "log\n-----BEGIN PRIVATE KEY-----\nZm9vYmFy\nYmF6cXV4";
         let out = r.redact(endless);
         assert!(!out.contains("Zm9vYmFy") && out.starts_with("log"), "{out}");
+    }
+
+    #[test]
+    fn an_added_known_secret_is_masked_alongside_the_existing_ones() {
+        let fleet = "fleet-token-0123456789abcdef";
+        let child = "plain-child-credential-42";
+        let r = Redactor::with_known_secrets([fleet])
+            .unwrap()
+            .with_known_secret(child)
+            .unwrap();
+        let text =
+            format!("a={fleet} b={child} c=\"{child}\" key=sk-proj-abcdefghijklmnopqrstuvwxyz");
+        let out = r.redact(&text);
+        assert!(!out.contains(fleet) && !out.contains(child), "{out}");
+        assert_eq!(out.matches(KNOWN_SECRET_MASK).count(), 3, "{out}");
+        assert!(
+            !out.contains("sk-proj-"),
+            "the default rules still apply: {out}"
+        );
+        assert_eq!(r.redact("nothing secret").as_ref(), "nothing secret");
     }
 
     #[test]

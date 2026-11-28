@@ -164,3 +164,49 @@ async fn empty_multiline_and_missing_token_files_are_refused() {
     assert!(refusal(&file).await.contains("single line"));
     refusal(&work.path().join("absent")).await;
 }
+
+#[tokio::test]
+async fn a_token_the_child_prints_is_masked_in_its_output_and_error() {
+    // No built-in rule knows this shape: only the per-spawn mask hides it.
+    const PLAIN: &str = "plain-oauth-value-0123456789";
+    let work = tempfile::tempdir().unwrap();
+    let file = work.path().join("token");
+    write_token(&file, PLAIN, 0o600);
+    let dir = fake_claude(concat!(
+        "cat >/dev/null &\n",
+        "printf '{\"type\":\"assistant\",\"message\":{\"id\":\"m\",\"model\":\"m\",",
+        "\"content\":[{\"type\":\"text\",\"text\":\"env %s\"}],\"usage\":{}}}\\n' ",
+        "\"$CLAUDE_CODE_OAUTH_TOKEN\"\n",
+        "echo \"token=$CLAUDE_CODE_OAUTH_TOKEN\" >&2\n",
+        "exit 1",
+    ));
+    let mut t = turn();
+    t.cwd = dir.path().into();
+    let mut run = engine_for(&dir, Some(&file))
+        .run(t, CancellationToken::new())
+        .await
+        .unwrap();
+    let mut events = Vec::new();
+    while let Some(event) = run.events.recv().await {
+        events.push(event);
+    }
+    let seen = format!("{events:?}");
+    assert!(!seen.contains(PLAIN), "{seen}");
+    let masked = aether_core::redact::KNOWN_SECRET_MASK;
+    assert!(seen.contains(&format!("env {masked}")), "stdout: {seen}");
+    assert!(seen.contains(&format!("token={masked}")), "stderr: {seen}");
+}
+
+#[tokio::test]
+async fn a_short_or_quoted_token_is_refused() {
+    let work = tempfile::tempdir().unwrap();
+    let file = work.path().join("token");
+    write_token(&file, "short", 0o600);
+    assert!(refusal(&file).await.contains("fewer than 8 characters"));
+    write_token(&file, "has \"quote\" inside", 0o600);
+    assert!(
+        refusal(&file)
+            .await
+            .contains("characters a token never has")
+    );
+}
