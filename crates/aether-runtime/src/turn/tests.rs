@@ -1,6 +1,7 @@
 use super::*;
 use aether_core::id::TaskId;
 
+mod auth_answer;
 mod compaction;
 mod delegation_policy;
 mod heartbeat;

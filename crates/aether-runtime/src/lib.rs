@@ -221,9 +221,10 @@ pub(crate) struct SchedulerState {
     /// Providers whose sign-in was refused, since when, until a turn on one
     /// is answered. While set, a refused turn suspends without relaunching.
     pub auth_failed: HashMap<String, Timestamp>,
-    /// When a turn on each provider was last answered. A suspended row
+    /// When a turn on each provider last answered while it was known
+    /// refused, read once from the store (`None`: never). A suspended row
     /// older than that no longer says the provider refuses its sign-in.
-    pub auth_answered: HashMap<String, Timestamp>,
+    pub auth_answered: HashMap<String, Option<Timestamp>>,
     /// When the orphan sweep last ran; `None` before the first.
     pub last_orphan_sweep: Option<Timestamp>,
     /// Scheduler steps that panicked and were contained since startup.

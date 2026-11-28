@@ -396,3 +396,54 @@ async fn a_waiting_relaunch_suspends_once_another_turn_gives_up() {
     );
     h.runtime.shutdown().await;
 }
+
+/// The answer that ended a refusal is durable: after a restart, a row still
+/// suspended from before it says nothing about the sign-in.
+#[tokio::test]
+async fn an_answer_still_fences_older_suspended_rows_after_a_restart() {
+    let store: Arc<dyn Store> = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let engine = QueuedEngine::new(vec![refused(), answered("an unrelated turn")]);
+    let h = build_harness(
+        engine.clone(),
+        Arc::default(),
+        Arc::default(),
+        None,
+        None,
+        Some(store.clone()),
+        |config| {
+            config.engine_auth_retries = 0;
+            config.exhaustion_probe_floor = Duration::from_secs(600);
+        },
+    )
+    .await;
+    let (parked, unrelated) = (chat_agent(&h), chat_agent(&h));
+    send_and_suspend(&h, parked).await;
+    // Paused, so the release cannot let it probe before the restart.
+    h.runtime.pause_agent(parked, false, Actor::user()).unwrap();
+    assert_eq!(claude_auth(&h)["status"], "auth_failed");
+    h.runtime
+        .send_message(unrelated, vec![ContentBlock::text("go")], Actor::user())
+        .unwrap();
+    wait_for(h.store.as_ref(), unrelated, |a| {
+        a.stats.turns > 0 && a.status.kind() == AgentStatusKind::Waiting
+    })
+    .await;
+    assert!(claude_auth(&h).is_null(), "{}", claude_auth(&h));
+    h.runtime.shutdown().await;
+
+    let h = build_harness(
+        QueuedEngine::new(Vec::new()),
+        Arc::default(),
+        Arc::default(),
+        None,
+        None,
+        Some(store),
+        |_| {},
+    )
+    .await;
+    assert!(blocked_on_credentials(
+        &h.store.agent(parked).unwrap().unwrap()
+    ));
+    assert!(claude_auth(&h).is_null(), "{}", claude_auth(&h));
+    h.runtime.shutdown().await;
+}

@@ -1083,7 +1083,9 @@ Clients match a refused sign-in on the stable kind `provider_auth`:
 
 Once the CLI is signed in again, the next probe - or any other turn on that
 provider - answers, the provider's credentials bench is lifted, and every
-agent suspended on it is released. A configured fallback link takes the turn first, as for an exhausted
+agent suspended on it is released. That answer is recorded as a
+`provider.auth_answered.<provider>` event, so after a restart a row suspended
+before it no longer reports the provider refused. A configured fallback link takes the turn first, as for an exhausted
 quota, and the engine it leaves is benched for a minute (as an HTTP provider
 is), so other turns go straight to their fallback instead of relaunching it. A stalled engine that names a refused sign-in or a spent plan as it is
 stopped is suspended on that, not retried as a stall. Models reached over HTTP

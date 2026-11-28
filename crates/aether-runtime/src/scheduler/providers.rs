@@ -196,17 +196,46 @@ pub(crate) fn auth_marked(runtime: &Runtime, provider: &str) -> bool {
     runtime.sched.lock().auth_failed.contains_key(provider)
 }
 
-/// A turn on `provider` was answered, so its sign-in works: the mark goes,
-/// and the answer outranks every suspended row older than it.
-pub(crate) fn record_auth_answer(runtime: &Runtime, provider: &str) {
+/// The durable record that a turn on `provider` answered while its sign-in
+/// was known refused: suspended rows older than it say nothing any more.
+pub(crate) fn auth_answered_event(provider: &str) -> String {
+    debug_assert!(!provider.is_empty(), "an answer names its provider");
+    format!("provider.auth_answered.{provider}")
+}
+
+/// Whether the bench on `provider` is the one a refused sign-in put up.
+pub(crate) fn credentials_benched(runtime: &Runtime, provider: &str) -> bool {
+    runtime
+        .sched
+        .lock()
+        .backoff
+        .get(provider)
+        .is_some_and(|bench| bench.reason == credentials_bench_reason())
+}
+
+fn credentials_bench_reason() -> String {
+    format!(
+        "{} from the provider",
+        aether_core::agent::ExhaustionClass::Credentials.as_str()
+    )
+}
+
+/// After the commit recording an answer on a refused `provider` landed: the
+/// mark and the credentials bench go, and the answer fences older rows.
+pub(crate) fn settle_auth_answer(runtime: &Runtime, provider: &str) {
     debug_assert!(!provider.is_empty(), "an answer names its provider");
     let mut sched = runtime.sched.lock();
-    sched.auth_answered.insert(provider.to_owned(), now());
-    let was_refused = sched.auth_failed.remove(provider).is_some();
-    drop(sched);
-    if was_refused {
-        tracing::info!(%provider, "provider sign-in answered again");
+    sched.auth_failed.remove(provider);
+    sched.auth_answered.insert(provider.to_owned(), Some(now()));
+    let benched = sched
+        .backoff
+        .get(provider)
+        .is_some_and(|bench| bench.reason == credentials_bench_reason());
+    if benched {
+        sched.backoff.remove(provider);
     }
+    drop(sched);
+    tracing::info!(%provider, benched, "provider sign-in answered again");
 }
 
 /// Remember where a turn went after giving up on `from`, so a projection can
@@ -293,32 +322,6 @@ pub(crate) fn clear_bench(runtime: &Runtime, provider: &str) -> Result<()> {
         },
     )))?;
     Ok(())
-}
-
-/// The provider answered, so the bench its refused sign-in put up comes
-/// down; a bench for any other reason stands. Recorded in the caller's commit.
-pub(crate) fn lift_credentials_bench(runtime: &Runtime, commit: &mut Commit, provider: &str) {
-    let reason = format!(
-        "{} from the provider",
-        aether_core::agent::ExhaustionClass::Credentials.as_str()
-    );
-    let mut sched = runtime.sched.lock();
-    if sched
-        .backoff
-        .get(provider)
-        .is_none_or(|bench| bench.reason != reason)
-    {
-        return;
-    }
-    sched.backoff.remove(provider);
-    drop(sched);
-    tracing::info!(%provider, "provider sign-in answered; its bench is lifted");
-    commit.push_event(EventDraft::new(
-        Actor::Scheduler,
-        EventKind::ProviderRecovered {
-            provider: provider.to_owned(),
-        },
-    ));
 }
 
 /// A subscription window near its limit is provider feedback like a 429:

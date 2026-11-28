@@ -58,12 +58,10 @@ impl Runtime {
 
     /// Providers whose sign-in is refused, since when: the scheduler's mark,
     /// or an agent suspended on it - whose row survives a restart - unless a
-    /// turn on the provider was answered after that suspension began.
+    /// turn on the provider answered after that suspension began.
     fn auth_failures(&self) -> Result<HashMap<String, Timestamp>> {
-        let (mut refused, answered) = {
-            let sched = self.sched.lock();
-            (sched.auth_failed.clone(), sched.auth_answered.clone())
-        };
+        let mut refused = self.sched.lock().auth_failed.clone();
+        let mut fences: HashMap<String, Option<Timestamp>> = HashMap::new();
         for agent in self.store.agents(&aether_store::AgentFilter {
             live_only: true,
             statuses: vec![aether_core::agent::AgentStatusKind::Blocked],
@@ -81,7 +79,15 @@ impl Runtime {
             else {
                 continue;
             };
-            if answered.get(&model.provider).is_some_and(|at| at >= since) {
+            let fence = match fences.get(&model.provider) {
+                Some(fence) => *fence,
+                None => {
+                    let fence = self.auth_answer_fence(&model.provider)?;
+                    fences.insert(model.provider.clone(), fence);
+                    fence
+                }
+            };
+            if fence.is_some_and(|at| at >= *since) {
                 continue;
             }
             let earliest = refused.entry(model.provider.clone()).or_insert(*since);
@@ -89,6 +95,27 @@ impl Runtime {
         }
         debug_assert!(refused.keys().all(|provider| !provider.is_empty()));
         Ok(refused)
+    }
+
+    /// When a turn on `provider` last answered while it was known refused:
+    /// from the store once per daemon, so it holds across a restart.
+    fn auth_answer_fence(&self, provider: &str) -> Result<Option<Timestamp>> {
+        if let Some(fence) = self.sched.lock().auth_answered.get(provider) {
+            return Ok(*fence);
+        }
+        // Read outside the lock: the store is I/O and the scheduler waits on it.
+        let name = crate::scheduler::auth_answered_event(provider);
+        let stored = self.store.latest_custom_event(&[name.as_str()])?;
+        debug_assert!(stored.as_ref().is_none_or(
+            |event| matches!(&event.kind, aether_core::event::EventKind::Custom { name: n, .. } if *n == name)
+        ));
+        let mut sched = self.sched.lock();
+        // An answer settled meanwhile is newer than anything stored.
+        let fence = sched
+            .auth_answered
+            .entry(provider.to_owned())
+            .or_insert(stored.map(|event| event.at));
+        Ok(*fence)
     }
 
     /// What each provider is carrying, what it may carry, whether the
