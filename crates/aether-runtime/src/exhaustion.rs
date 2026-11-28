@@ -8,7 +8,7 @@ use aether_core::agent::{Agent, BlockReason, ExhaustionClass};
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::AgentId;
 use aether_core::inbox::InboxKind;
-use aether_core::model::ModelRef;
+use aether_core::model::{ModelErrorClass, ModelRef};
 use aether_core::time::now;
 use aether_store::{AgentFilter, Commit, EventFilter};
 use serde_json::{Value, json};
@@ -90,6 +90,21 @@ fn exhaustion_cause(
 /// completed invocation fences earlier failures, an older turn never counts,
 /// and only a typed class is trusted - message text is never reinterpreted.
 fn recorded_cause(runtime: &Runtime, agent: &Agent) -> Result<Option<ExhaustedCause>> {
+    let cause = turn_failure(runtime, agent, recoverable_by_fallback)?;
+    Ok(cause.map(|(class, detail, model)| ExhaustedCause {
+        category: class.as_str(),
+        detail,
+        model,
+    }))
+}
+
+/// The newest failed invocation of the agent's latest turn whose typed class
+/// `wanted` accepts, unanswered since: its class, error and the failing link.
+fn turn_failure(
+    runtime: &Runtime,
+    agent: &Agent,
+    wanted: impl Fn(ModelErrorClass) -> bool,
+) -> Result<Option<(ModelErrorClass, String, ModelRef)>> {
     let started = runtime.store.latest_events(
         1,
         &EventFilter {
@@ -124,12 +139,12 @@ fn recorded_cause(runtime: &Runtime, agent: &Agent) -> Result<Option<ExhaustedCa
         if row.turn != turn {
             break;
         }
-        if let Some(class) = class.filter(|class| recoverable_by_fallback(*class)) {
-            return Ok(Some(ExhaustedCause {
-                category: class.as_str(),
-                detail: error,
-                model: row.model,
-            }));
+        if let Some(class) = class.filter(|class| wanted(*class)) {
+            debug_assert!(
+                !row.model.provider.is_empty(),
+                "an invocation names its link"
+            );
+            return Ok(Some((class, error, row.model)));
         }
     }
     Ok(None)
@@ -405,6 +420,33 @@ pub(crate) fn prepare_native_failure(
     Ok(true)
 }
 
+/// A task's structured failure when the runtime's own engine or model failure
+/// ended on a refused sign-in: `kind` and the provider of the link that was
+/// refused, both from the turn's typed failure record, never from its text.
+pub(crate) fn provider_auth_failure(
+    runtime: &Runtime,
+    agent: &Agent,
+    error: &str,
+) -> Result<Option<Value>> {
+    if !MODEL_FAILURE_PREFIXES
+        .iter()
+        .any(|prefix| error.to_lowercase().starts_with(prefix))
+    {
+        return Ok(None);
+    }
+    // The newest typed failure decides: a refusal the chain moved past is not why it ended.
+    let newest = turn_failure(runtime, agent, |_| true)?;
+    let refused = newest.filter(|(class, _, _)| *class == ModelErrorClass::Auth);
+    Ok(refused.map(|(class, _, link)| {
+        json!({
+            "kind": aether_core::agent::PROVIDER_AUTH,
+            "provider": link.provider,
+            "model": link.model,
+            "class": class.as_str(),
+        })
+    }))
+}
+
 /// A spent final link, as the turn saw it. Carried to `finish`, which is where
 /// the suspension is committed under the row fence.
 #[derive(Debug, Clone)]
@@ -517,6 +559,11 @@ fn link_answered_since(
         .any(|event| {
             matches!(&event.kind, EventKind::InvocationCompleted { model, .. } if model == link)
         }))
+}
+
+/// Whether `agent` is suspended on `link`, or probing it: its episode is open.
+pub(crate) fn episode_open(runtime: &Runtime, agent: &Agent, link: &ModelRef) -> Result<bool> {
+    Ok(open_episode(runtime, agent, link)?.is_some())
 }
 
 /// The exhaustion episode this agent is still in **on `link`**, if any. An
@@ -640,6 +687,12 @@ pub(crate) fn record(
         "probes": probes,
         "detail": detail,
     });
+    if let Some(kind) = cause.class.failure_kind() {
+        payload["kind"] = json!(kind);
+    }
+    if cause.class == ExhaustionClass::Credentials {
+        crate::scheduler::mark_auth_failed(runtime, &cause.model.provider);
+    }
     if !suspension.new_episode {
         commit.push_event(custom(agent, by, "exhaustion.probe_failed", payload));
         return Ok(());

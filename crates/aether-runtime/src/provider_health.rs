@@ -20,8 +20,12 @@ impl Runtime {
     }
 
     /// All enabled providers, including subscriptions with no observation yet.
-    pub fn provider_usage(&self) -> serde_json::Value {
+    /// A provider whose sign-in is refused carries `auth`, until a turn on it
+    /// is answered.
+    pub fn provider_usage(&self) -> Result<serde_json::Value> {
         let at = now();
+        // Read before the lock: the store is I/O and the scheduler waits on it.
+        let refused = self.auth_failures()?;
         let sched = self.sched.lock();
         let providers: Vec<_> = self
             .models
@@ -30,13 +34,92 @@ impl Runtime {
             .iter()
             .filter(|provider| provider.enabled)
             .map(|provider| {
-                serde_json::json!({
+                let mut row = serde_json::json!({
                     "provider": provider.id,
                     "headroom": self.provider_headroom(sched.quotas.get(&provider.id), at),
-                })
+                });
+                if let Some(since) = refused.get(&provider.id) {
+                    row["auth"] = auth_failed(*since);
+                }
+                row
             })
             .collect();
-        serde_json::json!({"providers": providers})
+        Ok(serde_json::json!({"providers": providers}))
+    }
+
+    /// The `auth` entry `provider_usage` and `inspect_state` show for a
+    /// provider whose sign-in is refused, `None` while it works.
+    pub(crate) fn provider_auth(&self, provider: &str) -> Result<Option<serde_json::Value>> {
+        Ok(self
+            .auth_failures()?
+            .get(provider)
+            .map(|since| auth_failed(*since)))
+    }
+
+    /// Providers whose sign-in is refused, since when: the scheduler's mark,
+    /// or an agent suspended on it - whose row survives a restart - unless a
+    /// turn on the provider answered after that row's latest refusal.
+    fn auth_failures(&self) -> Result<HashMap<String, Timestamp>> {
+        let mut refused = self.sched.lock().auth_failed.clone();
+        let mut fences: HashMap<String, Option<Timestamp>> = HashMap::new();
+        for agent in self.store.agents(&aether_store::AgentFilter {
+            live_only: true,
+            statuses: vec![aether_core::agent::AgentStatusKind::Blocked],
+            ..Default::default()
+        })? {
+            let aether_core::agent::AgentStatus::Blocked {
+                reason:
+                    aether_core::agent::BlockReason::Exhausted {
+                        model,
+                        class: aether_core::agent::ExhaustionClass::Credentials,
+                        since,
+                        ..
+                    },
+            } = &agent.status
+            else {
+                continue;
+            };
+            let fence = match fences.get(&model.provider) {
+                Some(fence) => *fence,
+                None => {
+                    let fence = self.auth_answer_fence(&model.provider)?;
+                    fences.insert(model.provider.clone(), fence);
+                    fence
+                }
+            };
+            // A failed probe keeps its episode's `since` but enters Blocked
+            // again: `status_since` is when the row was last refused.
+            let refused_at = agent.status_since.map_or(*since, |at| at.max(*since));
+            if fence.is_some_and(|at| at >= refused_at) {
+                continue;
+            }
+            let earliest = refused.entry(model.provider.clone()).or_insert(*since);
+            *earliest = (*earliest).min(*since);
+        }
+        debug_assert!(refused.keys().all(|provider| !provider.is_empty()));
+        Ok(refused)
+    }
+
+    /// When a turn on `provider` last answered while it was known refused:
+    /// from the store once per daemon, so it holds across a restart.
+    pub(crate) fn auth_answer_fence(&self, provider: &str) -> Result<Option<Timestamp>> {
+        if let Some(fence) = self.sched.lock().auth_answered.get(provider) {
+            return Ok(*fence);
+        }
+        // Read outside the lock: the store is I/O and the scheduler waits on it.
+        let name = crate::scheduler::auth_answered_event(provider);
+        let stored = self.store.latest_custom_event(&[name.as_str()])?;
+        debug_assert!(stored.as_ref().is_none_or(
+            |event| matches!(&event.kind, aether_core::event::EventKind::Custom { name: n, .. } if *n == name)
+        ));
+        let stored_at = stored.map(|event| answered_at(&event));
+        let mut sched = self.sched.lock();
+        // An answer settled meanwhile is newer than anything stored.
+        let fence = sched
+            .auth_answered
+            .entry(provider.to_owned())
+            .or_insert(stored_at);
+        Ok(*fence)
     }
 
     /// What each provider is carrying, what it may carry, whether the
@@ -133,4 +216,25 @@ impl Runtime {
             provider: provider.to_owned(),
         }
     }
+}
+
+fn auth_failed(since: Timestamp) -> serde_json::Value {
+    serde_json::json!({
+        "status": "auth_failed",
+        "kind": aether_core::agent::PROVIDER_AUTH,
+        "since": since,
+    })
+}
+
+/// When a stored answer fence was taken: the time the answering turn read,
+/// which may be earlier than the commit that stored it.
+fn answered_at(event: &aether_core::event::Event) -> Timestamp {
+    let aether_core::event::EventKind::Custom { payload, .. } = &event.kind else {
+        debug_assert!(false, "an answer fence is a custom event");
+        return event.at;
+    };
+    let read = payload
+        .get("at")
+        .and_then(|at| serde_json::from_value::<Timestamp>(at.clone()).ok());
+    read.unwrap_or(event.at)
 }

@@ -241,6 +241,7 @@ async fn build_harness(
         // Transient retries back off in milliseconds and never probe the
         // real provider hosts; a test that needs either sets its own.
         engine_transient_retry_floor: Duration::from_millis(10),
+        engine_auth_retry_floor: Duration::from_millis(10),
         engine_probe_targets: Some(Vec::new()),
         ..Default::default()
     };

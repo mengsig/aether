@@ -641,6 +641,39 @@ pub struct ModelSection {
     pub profiles: ProfileSetting,
     /// Optional Claude Code cache-write tier; unset preserves native settings.
     pub prompt_cache_ttl: Option<aether_core::model::PromptCacheTtl>,
+    /// File holding a long-lived Claude Code OAuth token (`claude setup-token`),
+    /// passed to every Claude child. A leading `~/` is the home directory.
+    pub claude_oauth_token_file: Option<PathBuf>,
+}
+
+impl ModelSection {
+    /// `claude_oauth_token_file` with `~/` expanded; it must end up absolute.
+    pub fn claude_oauth_token_path(&self) -> Result<Option<PathBuf>, String> {
+        let Some(configured) = &self.claude_oauth_token_file else {
+            return Ok(None);
+        };
+        let shown = configured.display();
+        let expanded = match configured.strip_prefix("~") {
+            Ok(rest) if configured.starts_with("~/") => {
+                let home = std::env::var_os("HOME")
+                    .filter(|home| !home.is_empty())
+                    .ok_or_else(|| {
+                        format!(
+                            "model.claude_oauth_token_file `{shown}` needs $HOME, which is unset"
+                        )
+                    })?;
+                PathBuf::from(home).join(rest)
+            }
+            _ => configured.clone(),
+        };
+        if !expanded.is_absolute() {
+            return Err(format!(
+                "model.claude_oauth_token_file `{shown}` must be an absolute path or start with `~/`"
+            ));
+        }
+        debug_assert!(expanded.is_absolute());
+        Ok(Some(expanded))
+    }
 }
 
 /// `[models]`: per-model catalog overrides.
@@ -739,6 +772,7 @@ fn validate_config(config: &AetherConfig) -> Result<(), String> {
             ));
         }
     }
+    config.model.claude_oauth_token_path()?;
     config.models.validate()?;
     config.providers.validate()?;
     config.scheduler.wait_timeout()?;

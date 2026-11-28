@@ -306,6 +306,10 @@ pub(crate) async fn execute(
         runtime.config.engine_transient_retry_window,
         runtime.config.engine_transient_retry_floor,
     );
+    let mut auth_retry = super::auth_retry::AuthRetry::new(
+        runtime.config.engine_auth_retries,
+        runtime.config.engine_auth_retry_floor,
+    );
     let mut gave_up = None;
     // The final run was billed before its backoff; billing it again below
     // would count it twice.
@@ -452,13 +456,26 @@ pub(crate) async fn execute(
             runtime.apply_held(hold, Commit::new().mutate(Mutation::UpsertAgent(row)))?;
             continue;
         }
-        let resume = match super::transient::retry_for(
-            &run,
-            class,
-            pending_request,
-            cancel.is_cancelled(),
-            ctx.agent.engine_session.is_some(),
-        ) {
+        let auth = auth_retry.applies(runtime, &ctx.agent, engine.kind(), model, class)?;
+        let session_known = ctx.agent.engine_session.is_some();
+        let retry = if auth {
+            super::transient::retry_run(
+                &run,
+                true,
+                pending_request,
+                cancel.is_cancelled(),
+                session_known,
+            )
+        } else {
+            super::transient::retry_for(
+                &run,
+                class,
+                pending_request,
+                cancel.is_cancelled(),
+                session_known,
+            )
+        };
+        let resume = match retry {
             super::transient::Retry::No => break run,
             super::transient::Retry::Unconfirmed => {
                 gave_up = Some(super::transient::UNCONFIRMED_CLEANUP.to_owned());
@@ -466,11 +483,20 @@ pub(crate) async fn execute(
             }
             super::transient::Retry::Resume(resume) => resume,
         };
-        backoff.failed();
-        if backoff.spent() {
-            gave_up = Some(backoff.gave_up(class));
-            break run;
-        }
+        let auth_delay = if auth {
+            let Some(delay) = auth_retry.next_delay() else {
+                gave_up = Some(auth_retry.gave_up());
+                break run;
+            };
+            Some(delay)
+        } else {
+            backoff.failed();
+            if backoff.spent() {
+                gave_up = Some(backoff.gave_up(class));
+                break run;
+            }
+            None
+        };
         // Billed before the wait, so a grant its closing receipt crossed ends
         // the turn here instead of authorizing another launch.
         if !run.unanswered() {
@@ -492,20 +518,42 @@ pub(crate) async fn execute(
             true,
             Uncommitted::default(),
         )?;
-        let failure = super::transient::Failure {
-            engine: engine.kind(),
-            class,
-            error: &error,
-            resume,
-        };
-        match super::transient::wait(runtime, ctx, &failure, &mut backoff, &cancel).await? {
-            super::transient::Waited::Ready => {}
-            super::transient::Waited::Cancelled => break run,
-            // Its retryable record stands; the terminal one below records
-            // the decision to stop, which ancestors are notified from.
-            super::transient::Waited::WindowSpent => {
-                gave_up = Some(backoff.gave_up(class));
-                break run;
+        if let Some(delay) = auth_delay {
+            let provider = &resolved.provider.id;
+            match super::auth_retry::wait(
+                runtime,
+                ctx,
+                &auth_retry,
+                provider,
+                &error,
+                delay,
+                &cancel,
+            )
+            .await?
+            {
+                super::auth_retry::Waited::Relaunch => {}
+                super::auth_retry::Waited::Cancelled => break run,
+                super::auth_retry::Waited::Refused => {
+                    gave_up = Some(auth_retry.refused_elsewhere());
+                    break run;
+                }
+            }
+        } else {
+            let failure = super::transient::Failure {
+                engine: engine.kind(),
+                class,
+                error: &error,
+                resume,
+            };
+            match super::transient::wait(runtime, ctx, &failure, &mut backoff, &cancel).await? {
+                super::transient::Waited::Ready => {}
+                super::transient::Waited::Cancelled => break run,
+                // Its retryable record stands; the terminal one below records
+                // the decision to stop, which ancestors are notified from.
+                super::transient::Waited::WindowSpent => {
+                    gave_up = Some(backoff.gave_up(class));
+                    break run;
+                }
             }
         }
         // Descendants may have spent while this turn waited.

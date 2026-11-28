@@ -218,6 +218,16 @@ pub(crate) struct SchedulerState {
     pub errors: HashMap<String, ErrorWindow>,
     /// Where a turn last went after giving up on each provider.
     pub fallbacks: HashMap<String, FallbackRecord>,
+    /// Providers whose sign-in was refused, since when, until a turn on one
+    /// is answered. While set, a refused turn suspends without relaunching.
+    pub auth_failed: HashMap<String, Timestamp>,
+    /// When each provider last refused a sign-in: an answer older than that
+    /// does not clear the mark.
+    pub auth_refused_last: HashMap<String, Timestamp>,
+    /// When a turn on each provider last answered while it was known
+    /// refused, read once from the store (`None`: never). A suspended row
+    /// older than that no longer says the provider refuses its sign-in.
+    pub auth_answered: HashMap<String, Option<Timestamp>>,
     /// When the orphan sweep last ran; `None` before the first.
     pub last_orphan_sweep: Option<Timestamp>,
     /// Scheduler steps that panicked and were contained since startup.
@@ -350,6 +360,9 @@ pub struct Runtime {
     /// scheduler loop waits on: sharing it would let a queued turn swallow a
     /// dispatch wake-up.
     pub(crate) engine_slot: Notify,
+    /// Woken when a provider is marked as refusing its sign-in, so turns
+    /// waiting to relaunch on it suspend instead.
+    pub(crate) auth_refused: Notify,
     pub(crate) shutdown: CancellationToken,
     pub(crate) started_at: Timestamp,
     commit_lock: aether_store::WriteGate,
@@ -402,17 +415,23 @@ impl Runtime {
         tools: Arc<ToolRegistry>,
         client_override: Option<Arc<dyn ModelClient>>,
     ) -> Result<Arc<Self>> {
-        let prompt_cache_ttl = models.config().model.prompt_cache_ttl;
+        let model_section = &models.config().model;
+        let claude = engine_access::ClaudeSettings {
+            prompt_cache_ttl: model_section.prompt_cache_ttl,
+            oauth_token_file: model_section
+                .claude_oauth_token_path()
+                .map_err(RuntimeError::Invalid)?,
+        };
         let runtime = Self::start_with_engines_inner(
             config,
             store,
             models,
             tools,
             client_override,
-            engine_access::EngineCatalog::probing(prompt_cache_ttl),
+            engine_access::EngineCatalog::probing(claude.clone()),
         )
         .await?;
-        engine_access::spawn_startup_probes(&runtime, prompt_cache_ttl);
+        engine_access::spawn_startup_probes(&runtime, claude);
         Ok(runtime)
     }
 
@@ -486,6 +505,7 @@ impl Runtime {
             sched: parking_lot::Mutex::new(SchedulerState::default()),
             notify: Notify::new(),
             engine_slot: Notify::new(),
+            auth_refused: Notify::new(),
             shutdown: CancellationToken::new(),
             started_at: now(),
             commit_lock,
@@ -887,6 +907,18 @@ pub(crate) async fn test_runtime_in(
     config_dir: tempfile::TempDir,
     configure: impl FnOnce(&mut RuntimeConfig),
 ) -> (Arc<Runtime>, tempfile::TempDir) {
+    let store = Arc::new(aether_store::SqliteStore::open_in_memory().expect("store"));
+    test_runtime_on(store, config_dir, configure).await
+}
+
+/// [`test_runtime_in`] over a store the caller keeps, so a test can start a
+/// second runtime on it as a daemon restart would.
+#[cfg(test)]
+pub(crate) async fn test_runtime_on(
+    store: Arc<aether_store::SqliteStore>,
+    config_dir: tempfile::TempDir,
+    configure: impl FnOnce(&mut RuntimeConfig),
+) -> (Arc<Runtime>, tempfile::TempDir) {
     let mut config = RuntimeConfig {
         holder: "unit-test".into(),
         max_concurrent_turns: 4,
@@ -896,7 +928,7 @@ pub(crate) async fn test_runtime_in(
     configure(&mut config);
     let runtime = Runtime::start_with_engines(
         config,
-        Arc::new(aether_store::SqliteStore::open_in_memory().expect("store")),
+        store,
         Arc::new(
             aether_model::Models::load(Some(config_dir.path().to_path_buf())).expect("models"),
         ),

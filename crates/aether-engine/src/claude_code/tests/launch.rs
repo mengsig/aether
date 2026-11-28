@@ -881,6 +881,9 @@ async fn detect_reports_an_absent_program() {
 #[path = "telemetry.rs"]
 mod telemetry;
 
+#[path = "token_file.rs"]
+mod token_file;
+
 #[tokio::test]
 async fn run_reports_a_missing_workspace_not_a_missing_program() {
     let dir = tempfile::tempdir().unwrap();

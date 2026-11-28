@@ -506,6 +506,12 @@ for a 5-minute one. Claude Code reports the split per request, and Aether prices
 each tier at its own rate wherever it prices tokens itself: list-price costs,
 API-equivalent estimates, and tokens a closing receipt left out.
 
+To keep concurrent Claude children from racing on login refresh-token rotation,
+set `[model] claude_oauth_token_file` to a `0600` file holding a
+`claude setup-token` token. Each child launch reads it into
+`CLAUDE_CODE_OAUTH_TOKEN`. See
+[Claude long-lived token](configuration.md#claude-long-lived-token).
+
 ## How many engine turns run at once
 
 `[scheduler] max_concurrent_engine_turns = N` caps simultaneous engine turns
@@ -1041,13 +1047,47 @@ without waiting for the schedule.
 
 A native engine whose sign-in the provider refused is suspended the same way,
 with class `credentials`, instead of failing the agent. Claude Code's
-`authentication_error`, "Invalid API key", "Please run /login", "OAuth token
-has expired" and a result with `api_error_status` 401, and Codex's
-"401 Unauthorized" and "access token could not be refreshed" count. The
-operator is told once per episode, not once per probe, and the suspension
-names the fix (`claude auth login`, `codex login`). Once the CLI is signed in
-again, the next probe answers and every agent suspended on that provider is
-released. A configured fallback link takes the turn first, as for an exhausted
+`authentication_error`, "Failed to authenticate", "Invalid API key", "Please
+run /login", "OAuth token has expired", "OAuth session expired", an OAuth
+token that "could not be refreshed" and a result with `api_error_status` 401,
+and Codex's "401 Unauthorized" and "access token could not be refreshed"
+count. The operator is told once per episode, not once per probe, and the
+suspension names the fix (`claude auth login`, `codex login`).
+
+Before suspending, a Claude Code turn relaunches a fresh CLI up to four times
+after jittered waits of about 10, 30, 60 and 80 seconds (±30%, about three
+minutes in all), each announced by an `engine.auth_retry` event: CLIs that
+share one login can read a refresh token another just rotated, and a new
+launch reads the current one. Once one turn on the provider has given up,
+others refused on it suspend at once, a turn waiting to relaunch on it
+suspends without relaunching, and the canary probe alone tests the sign-in. A
+probe is never relaunched, and after a daemon restart an agent still suspended
+on the provider counts as a turn that gave up. A [long-lived token](configuration.md#claude-long-lived-token)
+avoids the shared refresh altogether.
+
+Clients match a refused sign-in on the stable kind `provider_auth`:
+
+- the `exhaustion.suspended` event and the `ChildSuspended` inbox detail
+  carry `"kind": "provider_auth"` and `"provider"` (for example
+  `"claude-code"`), beside `"class": "credentials"`;
+- the agent's block reason reads `provider_auth: <provider> refused the
+  sign-in; next probe HH:MM`, with `class: credentials` in its row;
+- `provider_usage` gives the provider an `auth` entry, `{"status":
+  "auth_failed", "kind": "provider_auth", "since": …}`, and `inspect_state`
+  the same as `provider_auth` for the agent's own provider, until a turn on
+  that provider is answered;
+- a task that fails on a refused sign-in where it cannot suspend carries
+  `structured: {"kind": "provider_auth", "provider": …, "model": …,
+  "class": "auth"}` in its `failed` status, `task.failed` event and
+  `TaskFailed` inbox item, naming the link whose typed failure ended the turn.
+
+Once the CLI is signed in again, the next probe - or any other turn on that
+provider - answers, the provider's credentials bench is lifted, and every
+agent suspended on it is released. That answer is recorded as a
+`provider.auth_answered.<provider>` event that belongs to no run, so expiring
+the answering run's history keeps it, and after a restart a row suspended
+before it no longer reports the provider refused. A refusal that comes after
+the answer was read keeps the provider marked refused. A configured fallback link takes the turn first, as for an exhausted
 quota, and the engine it leaves is benched for a minute (as an HTTP provider
 is), so other turns go straight to their fallback instead of relaunching it. A stalled engine that names a refused sign-in or a spent plan as it is
 stopped is suspended on that, not retried as a stall. Models reached over HTTP

@@ -167,8 +167,10 @@ impl Runtime {
             return Ok(PendingReap(agent.id));
         }
         let mut failure_notified = false;
+        let mut structured = None;
         let status = match status {
             AgentStatus::Failed { error } => {
+                structured = crate::exhaustion::provider_auth_failure(self, &agent, &error)?;
                 let error = if let Some(diagnostic) =
                     crate::exhaustion::prepare(self, hold, commit, &agent, &error, &by)?
                 {
@@ -251,16 +253,16 @@ impl Runtime {
                 AgentStatus::Failed { error } => (
                     TaskStatus::Failed {
                         error: error.clone(),
-                        structured: None,
+                        structured: structured.clone(),
                     },
                     EventKind::TaskFailed {
                         error: error.clone(),
-                        structured: None,
+                        structured: structured.clone(),
                     },
                     InboxKind::TaskFailed {
                         task: task_id,
                         error: error.clone(),
-                        structured: None,
+                        structured,
                     },
                 ),
                 AgentStatus::Cancelled { reason } => (

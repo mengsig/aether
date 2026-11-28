@@ -47,6 +47,7 @@ fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<ToolOutcome> {
         "model": agent.model,
         "fallbacks": agent.fallbacks,
         "model_tier": runtime.models.tier(&agent.model),
+        "provider_auth": runtime.provider_auth(&agent.model.provider)?,
         "effort": agent.config.effort,
         "task": ctx.task,
         "delegation": delegation_state(&agent),
@@ -238,8 +239,11 @@ async fn refresh_provider_usage(
     Ok(crate::inspection::outcome(runtime, data))
 }
 
-fn provider_usage(runtime: &Arc<Runtime>) -> ToolOutcome {
-    crate::inspection::outcome(runtime, runtime.provider_usage())
+fn provider_usage(runtime: &Arc<Runtime>) -> Result<ToolOutcome> {
+    Ok(crate::inspection::outcome(
+        runtime,
+        runtime.provider_usage()?,
+    ))
 }
 
 /// Read-only listing and inspection actions.
@@ -277,7 +281,7 @@ pub(super) async fn apply(
         HarnessAction::RefreshProviderUsage { provider } => {
             refresh_provider_usage(runtime, provider).await
         }
-        HarnessAction::ProviderUsage => Ok(provider_usage(runtime)),
+        HarnessAction::ProviderUsage => provider_usage(runtime),
         HarnessAction::InspectState => inspect_state(runtime, ctx),
         HarnessAction::ListModels { provider } => list_models(runtime, ctx, provider).await,
         other => unreachable!("not an inspection action: {other:?}"),

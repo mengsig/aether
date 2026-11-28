@@ -709,15 +709,20 @@ pub(super) async fn run_link(
     // is waited out. Each attempt takes its own hold: it is not `Send`. The
     // episode check is reset so a retry builds the same commit again.
     let checked = ctx.recovery_checked_for.clone();
+    let mut answered_refused = None;
     super::contention::write_through_lock(runtime, ctx.agent.id, "the model's response", || {
         let hold = runtime.hold();
         let mut commit = commit.clone();
         ctx.recovery_checked_for.clone_from(&checked);
         commit.push_mutation(Mutation::UpsertAgent(agent_row(runtime, ctx, &hold)?));
-        close_exhaustion_episode(runtime, ctx, &hold, &mut commit, model)?;
+        answered_refused =
+            close_exhaustion_episode(runtime, ctx, &hold, &mut commit, model, finished_at)?;
         runtime.apply_held(hold, commit)
     })
     .await?;
+    if let Some((provider, at)) = answered_refused {
+        crate::scheduler::settle_auth_answer(runtime, &provider, at);
+    }
 
     if let Some(StopReason::Refusal { category }) = &response.stop_reason {
         return Ok(LinkOutcome::Done(Next::Failed(format!(

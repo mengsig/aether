@@ -177,6 +177,90 @@ pub(crate) fn record_error(runtime: &Runtime, provider: &str, class: ModelErrorC
         .record(class, now());
 }
 
+/// The provider refused a sign-in and a turn suspended on it. The first
+/// refusal of an episode keeps its time; later ones do not move it.
+/// Turns waiting to relaunch on the provider are woken to suspend too.
+pub(crate) fn mark_auth_failed(runtime: &Runtime, provider: &str) {
+    debug_assert!(!provider.is_empty(), "a refused sign-in names its provider");
+    let at = now();
+    let mut sched = runtime.sched.lock();
+    sched.auth_failed.entry(provider.to_owned()).or_insert(at);
+    let last = sched
+        .auth_refused_last
+        .entry(provider.to_owned())
+        .or_insert(at);
+    *last = (*last).max(at);
+    drop(sched);
+    runtime.auth_refused.notify_waiters();
+}
+
+/// Whether a turn on `provider` suspended on a refused sign-in since its last answer.
+pub(crate) fn auth_marked(runtime: &Runtime, provider: &str) -> bool {
+    runtime.sched.lock().auth_failed.contains_key(provider)
+}
+
+/// The durable record that a turn on `provider` answered while its sign-in
+/// was known refused: suspended rows older than it say nothing any more.
+pub(crate) fn auth_answered_event(provider: &str) -> String {
+    debug_assert!(!provider.is_empty(), "an answer names its provider");
+    format!("provider.auth_answered.{provider}")
+}
+
+/// Whether the bench on `provider` is the one a refused sign-in put up.
+pub(crate) fn credentials_benched(runtime: &Runtime, provider: &str) -> bool {
+    runtime
+        .sched
+        .lock()
+        .backoff
+        .get(provider)
+        .is_some_and(|bench| bench.reason == credentials_bench_reason())
+}
+
+fn credentials_bench_reason() -> String {
+    format!(
+        "{} from the provider",
+        aether_core::agent::ExhaustionClass::Credentials.as_str()
+    )
+}
+
+/// After the commit recording an answer at `at` on a refused `provider`
+/// landed: the answer fences older rows, and the mark and the credentials
+/// bench go unless the provider refused again after `at`.
+pub(crate) fn settle_auth_answer(
+    runtime: &Runtime,
+    provider: &str,
+    at: aether_core::time::Timestamp,
+) {
+    debug_assert!(!provider.is_empty(), "an answer names its provider");
+    let mut sched = runtime.sched.lock();
+    let fence = sched
+        .auth_answered
+        .entry(provider.to_owned())
+        .or_insert(None);
+    *fence = Some(fence.map_or(at, |earlier| earlier.max(at)));
+    let refused_since = sched
+        .auth_refused_last
+        .get(provider)
+        .is_some_and(|last| *last > at);
+    if refused_since {
+        drop(sched);
+        tracing::info!(%provider, "a sign-in answered, but the provider refused one since");
+        return;
+    }
+    sched.auth_failed.remove(provider);
+    sched.auth_refused_last.remove(provider);
+    let benched = sched
+        .backoff
+        .get(provider)
+        .is_some_and(|bench| bench.reason == credentials_bench_reason());
+    if benched {
+        sched.backoff.remove(provider);
+    }
+    debug_assert!(!sched.auth_failed.contains_key(provider));
+    drop(sched);
+    tracing::info!(%provider, benched, "provider sign-in answered again");
+}
+
 /// Remember where a turn went after giving up on `from`, so a projection can
 /// show the chain move without replaying the event log.
 pub(crate) fn record_fallback(

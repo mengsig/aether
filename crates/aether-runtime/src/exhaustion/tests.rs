@@ -61,12 +61,24 @@ fn record_turn_failure(
     class: ModelErrorClass,
     error: &str,
 ) {
+    record_link_failure(store, agent, turn, &agent.model, class, error);
+}
+
+/// [`record_turn_failure`] on a chosen link of the agent's chain.
+fn record_link_failure(
+    store: &dyn Store,
+    agent: &Agent,
+    turn: u32,
+    link: &ModelRef,
+    class: ModelErrorClass,
+    error: &str,
+) {
     let invocation = Invocation {
         id: InvocationId::new(),
         snapshot_id: SnapshotId::new(),
         agent_id: agent.id,
         turn,
-        model: agent.model.clone(),
+        model: link.clone(),
         started_at: now(),
         finished_at: Some(now()),
         content: Vec::new(),
@@ -318,6 +330,74 @@ async fn ordinary_failures_keep_immediate_parent_behavior() {
         vec!["unknown engine error: quota"]
     );
     assert!(failures(store.as_ref(), root.id).is_empty());
+    rt.shutdown().await;
+}
+
+/// A task that does fail on a refused sign-in names `provider_auth` and the
+/// link refused, from the turn's typed record: never from the failure's text.
+#[tokio::test]
+async fn a_task_failed_on_a_refused_sign_in_carries_the_provider_auth_kind() {
+    let dir = tempfile::tempdir().unwrap();
+    let store: Arc<dyn Store> = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let rt = runtime(store.clone(), dir.path()).await;
+    let root = create(&rt, None);
+    let fallback = ModelRef {
+        provider: "fallback-provider".into(),
+        model: "fallback-model".into(),
+    };
+    let cases = [
+        // (typed class recorded, on the fallback link, terminal error, kind)
+        (
+            Some(ModelErrorClass::Auth),
+            false,
+            "model error: Auth: HTTP 401: {}",
+            true,
+        ),
+        (
+            Some(ModelErrorClass::Auth),
+            true,
+            "claude-code failed: Failed to authenticate",
+            true,
+        ),
+        (
+            Some(ModelErrorClass::Network),
+            false,
+            "model error: Network: reset",
+            false,
+        ),
+        (
+            None,
+            false,
+            "claude-code failed: Failed to authenticate",
+            false,
+        ),
+        (
+            Some(ModelErrorClass::Auth),
+            false,
+            "I could not authenticate to the registry",
+            false,
+        ),
+    ];
+    for (class, on_fallback, error, refused) in cases {
+        let child = create(&rt, Some(root.id));
+        let link = if on_fallback { &fallback } else { &child.model };
+        if let Some(class) = class {
+            record_link_failure(store.as_ref(), &child, 1, link, class, error);
+        }
+        let task = child.current_task.expect("an objective makes a task");
+        end(&rt, child.clone(), error);
+        let TaskStatus::Failed { structured, .. } = store.task(task).unwrap().unwrap().status
+        else {
+            panic!("{error}: the task must fail");
+        };
+        let structured = structured.unwrap_or_default();
+        let kind = refused.then_some("provider_auth");
+        assert_eq!(structured["kind"].as_str(), kind, "{error}");
+        if refused {
+            assert_eq!(structured["provider"], link.provider, "{error}");
+            assert_eq!(structured["model"], link.model, "{error}");
+        }
+    }
     rt.shutdown().await;
 }
 

@@ -25,6 +25,10 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # harness configuration. Supported overrides are "5m" and "1h".
 # prompt_cache_ttl = "5m"
 
+# Optional file with a long-lived Claude Code token from `claude setup-token`,
+# mode 0600, read at every Claude launch. See docs/configuration.md.
+# claude_oauth_token_file = "~/.config/aether/claude-oauth-token"
+
 # Optional TUI token customization; /theme preferences stay in ui.toml.
 # See docs/theme-overrides.md for colors, modifiers and all semantic tokens.
 # [theme.tokens.accent]

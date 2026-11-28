@@ -675,7 +675,7 @@ async fn providers_reply_and_usage_tool_share_unknown_headroom() {
     else {
         panic!("providers reply");
     };
-    let tool = daemon.runtime.provider_usage();
+    let tool = daemon.runtime.provider_usage().unwrap();
     let enabled = tool["providers"].as_array().unwrap();
     assert_eq!(enabled.len(), rows.iter().filter(|row| row.enabled).count());
     for provider in rows.iter().filter(|row| row.enabled) {

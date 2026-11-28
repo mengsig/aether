@@ -51,6 +51,10 @@ pub enum BlockReason {
     },
 }
 
+/// The failure kind of a provider that refused the engine's or API's sign-in,
+/// as suspensions, provider listings and task failures name it.
+pub const PROVIDER_AUTH: &str = "provider_auth";
+
 /// The subset of [`ModelErrorClass`] a probe can recover from. `ContextLimit`
 /// is deliberately unrepresentable: it is not credits, and waiting cannot fix it.
 /// `Credentials` is a sign-in the provider refused, which an operator renews.
@@ -70,6 +74,15 @@ impl ExhaustionClass {
             ModelErrorClass::UsageLimit => Some(Self::UsageLimit),
             ModelErrorClass::Auth => Some(Self::Credentials),
             _ => None,
+        }
+    }
+
+    /// The stable failure kind clients match a refused sign-in on; `None`
+    /// for spent allowances, which carry no kind of their own.
+    pub fn failure_kind(self) -> Option<&'static str> {
+        match self {
+            Self::Credentials => Some(PROVIDER_AUTH),
+            Self::QuotaExhausted | Self::UsageLimit => None,
         }
     }
 
@@ -96,12 +109,19 @@ impl BlockReason {
                 class,
                 next_probe,
                 ..
-            } => format!(
-                "exhausted: {} {}; next probe {}",
-                model.provider,
-                class.as_str(),
-                next_probe.format("%H:%M")
-            ),
+            } => match class.failure_kind() {
+                Some(kind) => format!(
+                    "{kind}: {} refused the sign-in; next probe {}",
+                    model.provider,
+                    next_probe.format("%H:%M")
+                ),
+                None => format!(
+                    "exhausted: {} {}; next probe {}",
+                    model.provider,
+                    class.as_str(),
+                    next_probe.format("%H:%M")
+                ),
+            },
         }
     }
 

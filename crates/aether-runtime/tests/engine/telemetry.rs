@@ -41,7 +41,7 @@ async fn provider_usage_keeps_every_reported_window_in_health_and_events() {
 }
 
 fn assert_headroom(runtime: &Runtime, health: &serde_json::Value) {
-    let usage = runtime.provider_usage();
+    let usage = runtime.provider_usage().unwrap();
     let headroom = &usage["providers"]
         .as_array()
         .unwrap()
@@ -120,7 +120,7 @@ async fn usage_includes_custom_enabled_providers_and_honors_freshness_config() {
         agent.stats.turns > 0 && agent.status.kind() == AgentStatusKind::Waiting
     })
     .await;
-    let usage = h.runtime.provider_usage();
+    let usage = h.runtime.provider_usage().unwrap();
     let providers = usage["providers"].as_array().unwrap();
     let extra = providers
         .iter()

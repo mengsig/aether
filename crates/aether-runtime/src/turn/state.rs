@@ -321,18 +321,24 @@ pub(super) fn after_end(runtime: &Runtime, ctx: &TurnCtx, ended: Ended) -> Resul
 /// fallback answering ends nothing: the episode belongs to the spent link.
 /// Committed with the invocation that answered, under the same hold,
 /// and only for the first completed invocation on that link. `pub(crate)`: the
-/// engine path commits its own invocations.
+/// engine path commits its own invocations. Returns the provider whose refused
+/// sign-in this answer ends and when: the caller settles it once the commit
+/// landed, so a commit rebuilt after contention decides the same again.
+/// `answered_at` is when the answer was read, before any wait for the hold,
+/// so a refusal recorded during that wait is newer than it.
 pub(crate) fn close_exhaustion_episode(
     runtime: &Runtime,
     ctx: &mut TurnCtx,
     hold: &CommitHold<'_>,
     commit: &mut Commit,
     answered: &ModelRef,
-) -> Result<()> {
+    answered_at: Timestamp,
+) -> Result<Option<(String, Timestamp)>> {
     if ctx.recovery_checked_for.as_ref() == Some(answered) {
-        return Ok(());
+        return Ok(None);
     }
     ctx.recovery_checked_for = Some(answered.clone());
+    let refused = record_auth_answer(runtime, ctx, commit, &answered.provider, answered_at)?;
     let Some(provider) = crate::exhaustion::record_recovery(
         runtime,
         hold,
@@ -342,14 +348,69 @@ pub(crate) fn close_exhaustion_episode(
         &ctx.base_actor,
     )?
     else {
-        return Ok(());
+        // A turn outside the episode answered: the sign-in works for the
+        // agents suspended on it as well.
+        if let Some((provider, _)) = &refused {
+            crate::scheduler::provider_recovered_by_probe(
+                runtime,
+                hold,
+                commit,
+                provider,
+                ctx.agent.id,
+            )?;
+        }
+        return Ok(refused);
     };
     // The claim guarded a provider that had said no; it has now said yes, so
     // the rest of this turn is no reason to keep everyone else waiting.
     crate::scheduler::release_probe_claim_of(&mut runtime.sched.lock(), ctx.agent.id);
     // Everyone else parked on this provider may try now; the tick still lets
     // them through one at a time.
-    crate::scheduler::provider_recovered_by_probe(runtime, hold, commit, &provider, ctx.agent.id)
+    crate::scheduler::provider_recovered_by_probe(runtime, hold, commit, &provider, ctx.agent.id)?;
+    Ok(refused)
+}
+
+/// When `provider` was known to refuse its sign-in, record durably that it
+/// answered, and that a credentials bench on it ends. Changes no state.
+/// The record names no run: expiring the answering run's history keeps it.
+fn record_auth_answer(
+    runtime: &Runtime,
+    ctx: &TurnCtx,
+    commit: &mut Commit,
+    provider: &str,
+    at: Timestamp,
+) -> Result<Option<(String, Timestamp)>> {
+    debug_assert!(!provider.is_empty(), "an answer names its provider");
+    debug_assert!(at <= now(), "an answer is read before it is recorded");
+    if runtime.provider_auth(provider)?.is_none() {
+        return Ok(None);
+    }
+    let fence = aether_core::event::EventDraft::new(
+        aether_core::event::Actor::Scheduler,
+        EventKind::Custom {
+            name: crate::scheduler::auth_answered_event(provider),
+            payload: serde_json::json!({
+                "provider": provider,
+                "kind": aether_core::agent::PROVIDER_AUTH,
+                "at": at,
+                "agent": ctx.agent.id,
+            }),
+        },
+    );
+    debug_assert!(
+        fence.run.is_none(),
+        "run history expiry must not take the fence"
+    );
+    commit.push_event(fence);
+    if crate::scheduler::credentials_benched(runtime, provider) {
+        commit.push_event(aether_core::event::EventDraft::new(
+            aether_core::event::Actor::Scheduler,
+            EventKind::ProviderRecovered {
+                provider: provider.to_owned(),
+            },
+        ));
+    }
+    Ok(Some((provider.to_owned(), at)))
 }
 
 pub(super) fn deadline_after(wait: Duration) -> Timestamp {

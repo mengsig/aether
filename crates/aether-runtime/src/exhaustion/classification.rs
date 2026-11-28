@@ -42,7 +42,9 @@ pub(crate) fn engine_error_class(error: &str) -> ModelErrorClass {
         || lower.contains("context window exceeded")
     {
         ModelErrorClass::ContextLimit
-    } else if AUTH_SIGNALS.iter().any(|signal| lower.contains(signal)) {
+    } else if AUTH_SIGNALS.iter().any(|signal| lower.contains(signal))
+        || token_refresh_failed(&lower)
+    {
         ModelErrorClass::Auth
     } else if lower.contains("codex app-server did not start the turn in time")
         || transient_spawn_failure(&lower)
@@ -92,8 +94,8 @@ const TRANSIENT_SPAWN_SIGNALS: [&str; 6] = [
 ];
 
 /// A sign-in the provider refused, as Claude Code (its API error types, its
-/// `/login` hint, the 401 its result reports) and Codex word it.
-const AUTH_SIGNALS: [&str; 11] = [
+/// `/login` hint, the 401 its result reports, a failed OAuth refresh) and Codex word it.
+const AUTH_SIGNALS: [&str; 13] = [
     "authentication_error",
     "invalid api key",
     "invalid x-api-key",
@@ -104,8 +106,18 @@ const AUTH_SIGNALS: [&str; 11] = [
     "unexpected status 401",
     "status code 401",
     "401 unauthorized",
-    "access token could not be refreshed",
+    "failed to authenticate",
+    "oauth session expired",
+    "oauth token refresh failed",
 ];
+
+/// "OAuth token for this account could not be refreshed" and its kin, whatever
+/// words sit between the token and the refusal.
+fn token_refresh_failed(lower: &str) -> bool {
+    lower
+        .find("token")
+        .is_some_and(|at| lower[at..].contains("could not be refreshed"))
+}
 
 /// Connectivity failures as Claude Code (Node errno and its own prose) and
 /// Codex report them while the host is offline.
@@ -299,6 +311,18 @@ mod tests {
             ),
             ("Request failed with status code 401", ModelErrorClass::Auth),
             ("session expired: please log in", ModelErrorClass::Unknown),
+            // The overnight forms: a bare refusal and a failed OAuth refresh.
+            ("Failed to authenticate", ModelErrorClass::Auth),
+            (
+                "OAuth token for this account could not be refreshed: socket hang up",
+                ModelErrorClass::Auth,
+            ),
+            (
+                "Your OAuth session expired. Please run /login",
+                ModelErrorClass::Auth,
+            ),
+            ("OAuth session expired", ModelErrorClass::Auth),
+            ("OAuth token refresh failed (500)", ModelErrorClass::Auth),
         ] {
             assert_eq!(engine_error_class(error), class, "{error}");
         }

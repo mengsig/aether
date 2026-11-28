@@ -94,6 +94,31 @@ fn prompt_cache_ttl_is_opt_in_and_rejects_unknown_values() {
     );
 }
 
+#[test]
+fn claude_oauth_token_file_is_opt_in_and_expands_home() {
+    let load = |toml: &str| {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("config.toml"), toml).expect("write");
+        load_config(dir.path())
+    };
+    let unset = load("").expect("empty config");
+    assert_eq!(unset.model.claude_oauth_token_path(), Ok(None));
+    let absolute =
+        load("[model]\nclaude_oauth_token_file = \"/home/user/token\"\n").expect("absolute");
+    assert_eq!(
+        absolute.model.claude_oauth_token_path(),
+        Ok(Some(std::path::PathBuf::from("/home/user/token")))
+    );
+    let tilde = load("[model]\nclaude_oauth_token_file = \"~/t\"\n").expect("tilde");
+    let expanded = tilde
+        .model
+        .claude_oauth_token_path()
+        .expect("home is set")
+        .expect("set");
+    assert!(expanded.is_absolute() && expanded.ends_with("t") && !expanded.starts_with("~"));
+    assert!(load("[model]\nclaude_oauth_token_file = \"relative/t\"\n").is_err());
+}
+
 /// An empty config leaves every family at the default its eval earned.
 #[test]
 fn an_unwritten_profiles_setting_is_the_recorded_defaults() {
