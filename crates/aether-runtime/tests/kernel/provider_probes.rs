@@ -73,21 +73,14 @@ fn child_resumptions(store: &dyn Store, id: AgentId) -> Vec<AgentId> {
 /// its own next turn, not by having this one cut short.
 #[tokio::test]
 async fn recovery_tells_the_suspensions_ancestors_without_interrupting_them() {
-    // Waking the parent must take an urgent item, not any item: it parks on a
-    // message from an agent that does not exist and so will never speak.
-    let silent = AgentId::new();
     let h = harness_configured(
-        vec![
-            ScriptedClient::tool_call(
-                "delegate",
-                json!({
-                    "model": "groq/openai/gpt-oss-120b", "effort": "low", "role": "worker",
-                    "objective": "do the sub task", "wait": true
-                }),
-            ),
-            // Woken by the urgent suspension, it parks again.
-            ScriptedClient::tool_call("wait_for", json!({"message_from": silent.to_string()})),
-        ],
+        vec![ScriptedClient::tool_call(
+            "delegate",
+            json!({
+                "model": "groq/openai/gpt-oss-120b", "effort": "low", "role": "worker",
+                "objective": "do the sub task", "wait": true
+            }),
+        )],
         |_| {},
         |config| {
             config.exhaustion_probe_floor = Duration::from_millis(20);
@@ -101,6 +94,24 @@ async fn recovery_tells_the_suspensions_ancestors_without_interrupting_them() {
         "groq",
         ScriptedClient::tool_call("wait_for", json!({"timeout_seconds": 3600})),
     );
+    // Waking the parent must take an urgent item, not any item: it parks on a
+    // message from an idle agent that is never asked anything, so never speaks.
+    let (silent, _) = h
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                objective: None,
+                name: Some("silent".into()),
+                ..spec("unused")
+            },
+            Actor::user(),
+        )
+        .expect("silent agent");
+    // Woken by the urgent suspension, it parks again.
+    h.client.push(ScriptedClient::tool_call(
+        "wait_for",
+        json!({"message_from": silent.id.to_string()}),
+    ));
     let (parent, _) = h
         .runtime
         .create_agent(spec("delegate and wait"), Actor::user())

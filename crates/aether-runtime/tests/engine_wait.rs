@@ -190,6 +190,23 @@ fn start_agent(h: &Harness, spec: CreateAgentSpec) -> AgentId {
     agent.id
 }
 
+/// A started agent with no task: alive, so it can still send a message.
+fn idle_agent(h: &Harness) -> AgentId {
+    let (agent, task) = h
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                role: "lead".into(),
+                start: true,
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .expect("idle agent");
+    assert!(task.is_none(), "an idle agent holds no task");
+    agent.id
+}
+
 fn coordinator_spec() -> CreateAgentSpec {
     CreateAgentSpec {
         role: "coordinator".into(),

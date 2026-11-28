@@ -29,14 +29,18 @@ pub(crate) fn validate_wait(
         && *condition == WaitCondition::Inbox
         && bare_wait_has_no_wake_source(runtime, &ctx.agent)?
     {
-        return Ok(Some(ToolOutcome::error(
+        return Ok(Some(ToolOutcome::error(format!(
             "Nothing can wake you: no children, pending tasks, timers or unread inbox items, \
              and your task is still assigned. Finish it (`complete_task`), give it up with \
              the reason (`fail_task`), delegate the remaining work, or wait for something \
-             specific (`message_from`, `tasks`, `timeout_seconds`/`wake_at`).",
-        )));
+             specific (`message_from`, `tasks`, `timeout_seconds`/`wake_at`).{}",
+            silent_parent_note(runtime, &ctx.agent)?
+        ))));
     }
     if let Some(refusal) = self_wait_refusal(ctx, condition) {
+        return Ok(Some(refusal));
+    }
+    if let Some(refusal) = silent_sender_refusal(runtime, ctx, condition)? {
         return Ok(Some(refusal));
     }
     for id in condition.task_ids() {
@@ -101,6 +105,93 @@ fn self_wait_refusal(ctx: &TurnCtx, condition: &WaitCondition) -> Option<ToolOut
         )));
     }
     None
+}
+
+/// A `message_from` naming an agent that can never send - unknown, never
+/// started (a passive run node) or finished - would sleep until the deadline.
+fn silent_sender_refusal(
+    runtime: &Runtime,
+    ctx: &TurnCtx,
+    condition: &WaitCondition,
+) -> Result<Option<ToolOutcome>> {
+    let senders = condition.message_senders();
+    if senders.is_empty() {
+        return Ok(None);
+    }
+    // A message it sent before it stopped still wakes the wait at once. A
+    // failed read is an error, never a guess that nothing was delivered.
+    let delivered: BTreeSet<AgentId> = runtime
+        .store
+        .inbox(ctx.agent.id, ctx.agent.inbox_cursor)?
+        .iter()
+        .filter_map(|item| match &item.kind {
+            InboxKind::Message {
+                from: Actor::Agent { id },
+                ..
+            } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    for sender in senders.difference(&delivered).copied() {
+        debug_assert_ne!(sender, ctx.agent.id, "self waits are refused before this");
+        let found = runtime.store.agent(sender)?;
+        let Some(why) = why_sender_is_silent(found.as_ref()) else {
+            continue;
+        };
+        debug_assert!(found.as_ref().is_none_or(|agent| agent.id == sender));
+        let whose = if ctx.agent.parent == Some(sender) {
+            "your parent "
+        } else {
+            ""
+        };
+        return Ok(Some(ToolOutcome::error(format!(
+            "wait_for.message_from names {whose}`{sender}`, which can never send you a message: \
+             it {why}. {NO_REPLY_INSTEAD}"
+        ))));
+    }
+    Ok(None)
+}
+
+/// For a refused bare wait: say so when the parent can never reply either,
+/// so the agent does not retry as `message_from` its parent.
+fn silent_parent_note(runtime: &Runtime, agent: &Agent) -> Result<String> {
+    let Some(parent) = agent.parent else {
+        return Ok(String::new());
+    };
+    debug_assert_ne!(parent, agent.id, "an agent is never its own parent");
+    let found = runtime.store.agent(parent)?;
+    Ok(match why_sender_is_silent(found.as_ref()) {
+        Some(why) => {
+            format!(" Your parent `{parent}` cannot answer either: it {why}. {NO_REPLY_INSTEAD}")
+        }
+        None => String::new(),
+    })
+}
+
+/// What to do when the agent you would ask cannot answer.
+const NO_REPLY_INSTEAD: &str = "Nobody will answer there. Instead, decide yourself and state \
+     the assumption, finish with `complete_task` or give up with `fail_task`, or ask through a \
+     question tool your host or instructions provide (such as an orchestrator's), if you have one.";
+
+/// Why `agent` can never send a message, or `None` while it can.
+fn why_sender_is_silent(agent: Option<&Agent>) -> Option<String> {
+    let Some(agent) = agent else {
+        return Some("is not a known agent".to_owned());
+    };
+    match agent.status.kind() {
+        AgentStatusKind::Created => Some(
+            "was never started and takes no turns (a passive node, such as a pipeline run node)"
+                .to_owned(),
+        ),
+        kind @ (AgentStatusKind::Completed
+        | AgentStatusKind::Failed
+        | AgentStatusKind::Cancelled
+        | AgentStatusKind::Imported) => Some(format!("has finished (status {kind})")),
+        AgentStatusKind::Ready
+        | AgentStatusKind::Running
+        | AgentStatusKind::Waiting
+        | AgentStatusKind::Blocked => None,
+    }
 }
 
 /// Why an asking turn may not also end the task: a question nobody waits on

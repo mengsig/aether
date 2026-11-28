@@ -199,7 +199,8 @@ impl Tool for WaitFor {
              With live native background jobs, the CLI session stays attached and a native \
              completion notification may also end the wait; no polling is needed. \
              A bare wait with nothing pending on an assigned task is refused for non-long-lived agents. \
-             To ask your parent: send_message the question to it, then wait_for message_from it.",
+             To ask your parent: send_message the question to it, then wait_for message_from it. \
+             message_from a sender that cannot reply (never started, finished, unknown) is refused.",
             json!({
                 "type": "object",
                 "properties": {

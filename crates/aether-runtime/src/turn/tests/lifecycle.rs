@@ -109,9 +109,18 @@ async fn a_new_user_input_voids_an_earlier_unrecorded_answer() {
 #[tokio::test]
 async fn direct_user_question_requires_visible_reply_before_waiting() {
     let (mut harness, _dir) = ComposeHarness::new().await;
-    let condition = WaitCondition::MessageFrom {
-        agent: AgentId::new(),
-    };
+    let (sender, _) = harness
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                role: "lead".into(),
+                start: true,
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .expect("live sender");
+    let condition = WaitCondition::MessageFrom { agent: sender.id };
     assert!(
         validate_wait(&harness.runtime, &harness.ctx, &condition, false)
             .expect("validate ordinary wait")
