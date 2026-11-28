@@ -1,4 +1,5 @@
 """Release bench execution without a model: scheduling, the pool, resume, spend caps and the Archon launcher."""
+import contextlib
 import json
 import os
 import sqlite3
@@ -17,6 +18,7 @@ import harness_bench as hb
 import release_bench
 import release_bench_archon
 import release_bench_pool
+import release_bench_spend
 import release_bench_trial
 from harness_bench_config import scheduler_config_toml
 from release_bench_archon import archon_layout, run_archon_trial
@@ -570,7 +572,9 @@ elif args[:2] == ["queue", "wait"]:
         db.execute("INSERT INTO events VALUES (?, ?)", (seq, json.dumps(body)))
     db.commit()
 elif args[:2] == ["daemon", "stop"] and os.environ.get("FAKE_STOP_FAILS"):
-    subprocess.Popen(["sleep", "30"], start_new_session=True, stdin=subprocess.DEVNULL,
+    survivor = ["sh", "-c", "trap '' TERM; exec sleep 30"] if os.environ.get("FAKE_STOP_FAILS") == "deaf" \
+        else ["sleep", "30"]
+    subprocess.Popen(survivor, start_new_session=True, stdin=subprocess.DEVNULL,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     code = 1
 elif args[:2] == ["queue", "show"]:
@@ -648,7 +652,8 @@ class ArchonLauncherTests(unittest.TestCase):
             self.assertIn("ArchonError", result["workflow_error"])
             self.assertEqual(state["calls"][-1], ["daemon", "stop", "--json"])
 
-    def test_a_failed_daemon_stop_is_cleaned_up_before_usage_is_read(self):
+    def _run_with_failed_stop(self, survivor, patches=()):
+        """Run a trial whose daemon stop fails and leaves a marked survivor; (result, marked pids at snapshot)."""
         marker = f"test-archon-stop-{time.monotonic_ns()}"
         alive_at_snapshot = []
         real_usage = release_bench_archon.store_usage
@@ -657,16 +662,56 @@ class ArchonLauncherTests(unittest.TestCase):
             alive_at_snapshot.append(marked_pids(marker))
             return real_usage(*args)
 
-        with tempfile.TemporaryDirectory() as directory, \
-                unittest.mock.patch.object(release_bench_archon, "store_usage", snapshot):
+        with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+            stack.enter_context(unittest.mock.patch.object(release_bench_archon, "store_usage", snapshot))
+            stack.enter_context(unittest.mock.patch.object(release_bench_spend, "STOP_GRACE_SECONDS", 0.5))
+            for patch in patches:
+                stack.enter_context(patch(marker))
             try:
-                result, _, _, _ = self._run(directory, extra_env={MARKER: marker, "FAKE_STOP_FAILS": "1"})
+                result, _, _, _ = self._run(directory, extra_env={MARKER: marker, "FAKE_STOP_FAILS": survivor})
             finally:
                 stop_marked(marker)
         self.assertIn("stopping archon", result["cleanup_error"])
         self.assertEqual(len(result["leftover_pids"]), 1, "the survivor of the failed stop was stopped")
+        return result, alive_at_snapshot
+
+    def test_a_failed_daemon_stop_is_cleaned_up_before_usage_is_read(self):
+        result, alive_at_snapshot = self._run_with_failed_stop("polite")
         self.assertEqual(alive_at_snapshot, [[]], "usage is read only once no trial process can spend")
         self.assertIsNotNone(result["archon_usage"]["api_equivalent_usd"])
+        self.assertNotIn("usage_unconfirmed", result)
+
+    def test_a_survivor_that_ignores_sigterm_is_killed_before_usage_is_read(self):
+        result, alive_at_snapshot = self._run_with_failed_stop("deaf")
+        self.assertEqual(alive_at_snapshot, [[]], "the SIGKILLed survivor had exited before the snapshot")
+        self.assertIsNotNone(result["archon_usage"]["api_equivalent_usd"])
+
+    def test_a_survivor_that_cannot_be_confirmed_dead_leaves_the_trial_unpriced(self):
+        real = release_bench_archon.marked_pids
+        immortal = lambda marker: unittest.mock.patch.object(  # noqa: E731
+            release_bench_archon, "marked_pids", lambda value: real(value) or [2 ** 22 + 1])
+        result, _ = self._run_with_failed_stop("polite", patches=(immortal,))
+        self.assertIn("after SIGKILL", result["usage_unconfirmed"])
+        self.assertIsNone(result["archon_usage"]["api_equivalent_usd"], "the pool charges the full reservation")
+
+    def test_stop_marked_returns_only_once_killed_processes_have_exited(self):
+        state = {"killed": False, "scans_after_kill": 0}
+
+        def scan(value):
+            if not state["killed"]:
+                return [7]  # Ignores SIGTERM.
+            state["scans_after_kill"] += 1
+            return [7] if state["scans_after_kill"] < 4 else []  # Takes a few polls to die after SIGKILL.
+
+        def signal_all(pids, number):
+            state["killed"] = state["killed"] or number == release_bench_spend.signal.SIGKILL
+
+        with unittest.mock.patch.object(release_bench_spend, "marked_pids", scan), \
+                unittest.mock.patch.object(release_bench_spend, "_signal_all", signal_all), \
+                unittest.mock.patch.object(release_bench_spend, "STOP_GRACE_SECONDS", 0.2):
+            self.assertEqual(release_bench_spend.stop_marked("m"), [7])
+        self.assertTrue(state["killed"])
+        self.assertEqual(state["scans_after_kill"], 4, "it polled until the killed process was gone")
 
     def test_the_guard_reads_the_archon_trial_s_own_store(self):
         with tempfile.TemporaryDirectory() as directory:

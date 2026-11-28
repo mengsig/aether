@@ -23,7 +23,7 @@ from pathlib import Path
 
 from harness_bench import isolated_socket_path, remove_socket_dir
 from harness_bench_config import scheduler_config_toml, strip_live_routing_env
-from release_bench_spend import MARKER, AetherStoreProbe, stop_marked
+from release_bench_spend import MARKER, AetherStoreProbe, marked_pids, stop_marked
 
 # The stages each supported pipeline runs; the model plan pins every one to the arm's model.
 PIPELINE_STAGES = {"direct": ("implement",), "adaptive": ("build",)}
@@ -232,6 +232,8 @@ def run_archon_trial(archon_bin, aether_binary, condition, task_text, workspace,
         _stop_survivors(extra_env, result)
         Path(trial_dir, "archon-commands.json").write_text(json.dumps(log, indent=2), encoding="utf-8")
     usage = store_usage(layout["aether_data"], price)
+    if result.get("usage_unconfirmed"):
+        usage["api_equivalent_usd"] = None  # Unpriced, so the pool charges the trial's whole reservation.
     result["archon_usage"] = usage
     result["usage_report"] = {"usage": {"output_tokens": usage.get("output_tokens")}}
     result["descendant_count"] = max(usage["agents"] - 2, 0)
@@ -248,6 +250,10 @@ def _stop_survivors(extra_env, result):
     assert not set(leftover) & {os.getpid()}, "the bench never stops itself"
     if leftover:
         result["leftover_pids"] = leftover
+    alive = marked_pids(marker)
+    if alive:
+        # A process that outlives SIGKILL may still write usage, so the store is no final price.
+        result["usage_unconfirmed"] = f"trial processes {alive} still ran after SIGKILL"
 
 
 def _stop(archon_bin, env, log, layout):

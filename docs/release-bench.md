@@ -103,7 +103,10 @@ Caps per trial:
   and the trial's final cost adds them to the root's. A native Codex trial
   whose root session log cannot be found stays unpriced.
   When a trial ends, any of its processes still alive (a daemon whose stop
-  failed, say) is stopped the same way and listed in `leftover_pids`.
+  failed, say) is stopped the same way and listed in `leftover_pids`. An
+  Archon trial does this before it reads its store, so no agent spends after
+  the reading. If one still runs after SIGKILL, the trial is left unpriced
+  (`usage_unconfirmed`) and charged its whole reservation.
   A stopped trial counts as a failure of its arm. Unknown spend is not taken
   as zero: when the guard has no usage to read for 30 s (Codex's session log
   cannot be found, say, or the store cannot be read), it stops the trial too.

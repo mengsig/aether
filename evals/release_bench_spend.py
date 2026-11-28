@@ -30,6 +30,7 @@ OVERSHOOT_CALLS = 2
 DELEGATION_AGENTS = 4
 UNOBSERVABLE_SECONDS = 30
 STOP_GRACE_SECONDS = 5
+KILL_CONFIRM_SECONDS = 5
 
 
 class ProbeError(RuntimeError):
@@ -297,17 +298,29 @@ def _signal_all(pids, signal_number):
             continue  # It exited between the scan and the signal.
 
 
+def _wait_unmarked(value, seconds):
+    """Wait up to `seconds` until no process carries the marker; True once none does."""
+    deadline = time.monotonic() + seconds
+    while marked_pids(value):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.1)
+    return True
+
+
 def stop_marked(value):
-    """SIGTERM every marked process, then SIGKILL whatever carries the marker after a grace period."""
+    """SIGTERM every marked process, SIGKILL whatever carries the marker after a grace period, then wait
+    up to KILL_CONFIRM_SECONDS for those to exit; returns every pid signalled. Callers that must know
+    nothing runs any more check `marked_pids` afterwards."""
     assert value and "\0" not in value, "a marker value is non-empty text"
     first = marked_pids(value)
     _signal_all(first, signal.SIGTERM)
-    deadline = time.monotonic() + STOP_GRACE_SECONDS
-    while time.monotonic() < deadline and marked_pids(value):
-        time.sleep(0.2)
+    _wait_unmarked(value, STOP_GRACE_SECONDS)
     # A second scan also catches children started after the first one.
     survivors = marked_pids(value)
     _signal_all(survivors, signal.SIGKILL)
+    if survivors:
+        _wait_unmarked(value, KILL_CONFIRM_SECONDS)
     return sorted(set(first) | set(survivors))
 
 
