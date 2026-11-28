@@ -182,12 +182,15 @@ pub(crate) fn record_error(runtime: &Runtime, provider: &str, class: ModelErrorC
 /// Turns waiting to relaunch on the provider are woken to suspend too.
 pub(crate) fn mark_auth_failed(runtime: &Runtime, provider: &str) {
     debug_assert!(!provider.is_empty(), "a refused sign-in names its provider");
-    runtime
-        .sched
-        .lock()
-        .auth_failed
+    let at = now();
+    let mut sched = runtime.sched.lock();
+    sched.auth_failed.entry(provider.to_owned()).or_insert(at);
+    let last = sched
+        .auth_refused_last
         .entry(provider.to_owned())
-        .or_insert_with(now);
+        .or_insert(at);
+    *last = (*last).max(at);
+    drop(sched);
     runtime.auth_refused.notify_waiters();
 }
 
@@ -220,13 +223,32 @@ fn credentials_bench_reason() -> String {
     )
 }
 
-/// After the commit recording an answer on a refused `provider` landed: the
-/// mark and the credentials bench go, and the answer fences older rows.
-pub(crate) fn settle_auth_answer(runtime: &Runtime, provider: &str) {
+/// After the commit recording an answer at `at` on a refused `provider`
+/// landed: the answer fences older rows, and the mark and the credentials
+/// bench go unless the provider refused again after `at`.
+pub(crate) fn settle_auth_answer(
+    runtime: &Runtime,
+    provider: &str,
+    at: aether_core::time::Timestamp,
+) {
     debug_assert!(!provider.is_empty(), "an answer names its provider");
     let mut sched = runtime.sched.lock();
+    let fence = sched
+        .auth_answered
+        .entry(provider.to_owned())
+        .or_insert(None);
+    *fence = Some(fence.map_or(at, |earlier| earlier.max(at)));
+    let refused_since = sched
+        .auth_refused_last
+        .get(provider)
+        .is_some_and(|last| *last > at);
+    if refused_since {
+        drop(sched);
+        tracing::info!(%provider, "a sign-in answered, but the provider refused one since");
+        return;
+    }
     sched.auth_failed.remove(provider);
-    sched.auth_answered.insert(provider.to_owned(), Some(now()));
+    sched.auth_refused_last.remove(provider);
     let benched = sched
         .backoff
         .get(provider)
@@ -234,6 +256,7 @@ pub(crate) fn settle_auth_answer(runtime: &Runtime, provider: &str) {
     if benched {
         sched.backoff.remove(provider);
     }
+    debug_assert!(!sched.auth_failed.contains_key(provider));
     drop(sched);
     tracing::info!(%provider, benched, "provider sign-in answered again");
 }

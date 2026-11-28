@@ -322,15 +322,15 @@ pub(super) fn after_end(runtime: &Runtime, ctx: &TurnCtx, ended: Ended) -> Resul
 /// Committed with the invocation that answered, under the same hold,
 /// and only for the first completed invocation on that link. `pub(crate)`: the
 /// engine path commits its own invocations. Returns the provider whose refused
-/// sign-in this answer ends: the caller settles it once the commit landed, so
-/// a commit rebuilt after contention decides the same again.
+/// sign-in this answer ends and when: the caller settles it once the commit
+/// landed, so a commit rebuilt after contention decides the same again.
 pub(crate) fn close_exhaustion_episode(
     runtime: &Runtime,
     ctx: &mut TurnCtx,
     hold: &CommitHold<'_>,
     commit: &mut Commit,
     answered: &ModelRef,
-) -> Result<Option<String>> {
+) -> Result<Option<(String, Timestamp)>> {
     if ctx.recovery_checked_for.as_ref() == Some(answered) {
         return Ok(None);
     }
@@ -347,7 +347,7 @@ pub(crate) fn close_exhaustion_episode(
     else {
         // A turn outside the episode answered: the sign-in works for the
         // agents suspended on it as well.
-        if let Some(provider) = &refused {
+        if let Some((provider, _)) = &refused {
             crate::scheduler::provider_recovered_by_probe(
                 runtime,
                 hold,
@@ -369,23 +369,35 @@ pub(crate) fn close_exhaustion_episode(
 
 /// When `provider` was known to refuse its sign-in, record durably that it
 /// answered, and that a credentials bench on it ends. Changes no state.
+/// The record names no run: expiring the answering run's history keeps it.
 fn record_auth_answer(
     runtime: &Runtime,
     ctx: &TurnCtx,
     commit: &mut Commit,
     provider: &str,
-) -> Result<Option<String>> {
+) -> Result<Option<(String, Timestamp)>> {
     debug_assert!(!provider.is_empty(), "an answer names its provider");
     if runtime.provider_auth(provider)?.is_none() {
         return Ok(None);
     }
-    commit.push_event(ctx.draft(EventKind::Custom {
-        name: crate::scheduler::auth_answered_event(provider),
-        payload: serde_json::json!({
-            "provider": provider,
-            "kind": aether_core::agent::PROVIDER_AUTH,
-        }),
-    }));
+    let at = now();
+    let fence = aether_core::event::EventDraft::new(
+        aether_core::event::Actor::Scheduler,
+        EventKind::Custom {
+            name: crate::scheduler::auth_answered_event(provider),
+            payload: serde_json::json!({
+                "provider": provider,
+                "kind": aether_core::agent::PROVIDER_AUTH,
+                "at": at,
+                "agent": ctx.agent.id,
+            }),
+        },
+    );
+    debug_assert!(
+        fence.run.is_none(),
+        "run history expiry must not take the fence"
+    );
+    commit.push_event(fence);
     if crate::scheduler::credentials_benched(runtime, provider) {
         commit.push_event(aether_core::event::EventDraft::new(
             aether_core::event::Actor::Scheduler,
@@ -394,7 +406,7 @@ fn record_auth_answer(
             },
         ));
     }
-    Ok(Some(provider.to_owned()))
+    Ok(Some((provider.to_owned(), at)))
 }
 
 pub(super) fn deadline_after(wait: Duration) -> Timestamp {

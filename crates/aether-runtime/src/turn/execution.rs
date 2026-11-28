@@ -717,8 +717,8 @@ pub(super) async fn run_link(
         runtime.apply_held(hold, commit)
     })
     .await?;
-    if let Some(provider) = answered_refused {
-        crate::scheduler::settle_auth_answer(runtime, &provider);
+    if let Some((provider, at)) = answered_refused {
+        crate::scheduler::settle_auth_answer(runtime, &provider, at);
     }
 
     if let Some(StopReason::Refusal { category }) = &response.stop_reason {

@@ -78,7 +78,10 @@ async fn a_rebuilt_answer_commit_still_releases_the_suspended_agents() {
     let mut lost = Commit::new();
     let first = close_exhaustion_episode(&runtime, &mut ctx, &hold, &mut lost, &answered).unwrap();
     drop((hold, lost));
-    assert_eq!(first.as_deref(), Some(provider.as_str()));
+    assert_eq!(
+        first.as_ref().map(|(p, _)| p.as_str()),
+        Some(provider.as_str())
+    );
     assert!(
         runtime.provider_auth(&provider).unwrap().is_some(),
         "nothing settled yet"
@@ -90,8 +93,8 @@ async fn a_rebuilt_answer_commit_still_releases_the_suspended_agents() {
     let retried =
         close_exhaustion_episode(&runtime, &mut ctx, &hold, &mut commit, &answered).unwrap();
     runtime.apply_held(hold, commit).unwrap();
-    let settled = retried.expect("the retry decides the same");
-    crate::scheduler::settle_auth_answer(&runtime, &settled);
+    let (settled, at) = retried.expect("the retry decides the same");
+    crate::scheduler::settle_auth_answer(&runtime, &settled, at);
 
     let row = runtime.store.agent(parked.id).unwrap().unwrap();
     let AgentStatus::Blocked {
@@ -113,12 +116,37 @@ async fn a_rebuilt_answer_commit_still_releases_the_suspended_agents() {
         |event| matches!(&event.kind, EventKind::ProviderRecovered { provider: p } if *p == provider)
     ));
     let fence = crate::scheduler::auth_answered_event(&provider);
+    let stored = runtime
+        .store
+        .latest_custom_event(&[fence.as_str()])
+        .unwrap()
+        .expect("the answer is stored");
+    // Expiring a finished run deletes the events naming it; the fence must outlive it.
+    assert!(stored.run.is_none(), "the fence belongs to no run");
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_refusal_after_the_answer_survives_its_settlement() {
+    let (runtime, _dir) = crate::test_runtime(|_| {}).await;
+    let parked = create(&runtime);
+    let provider = parked.model.provider.clone();
+    suspend_on_credentials(&runtime, parked);
+    let answered_at = aether_core::time::now() - chrono::Duration::seconds(1);
+    // Another turn is refused after the answer was read, before it settles.
+    crate::scheduler::mark_auth_failed(&runtime, &provider);
+    crate::scheduler::settle_auth_answer(&runtime, &provider, answered_at);
     assert!(
-        runtime
-            .store
-            .latest_custom_event(&[fence.as_str()])
-            .unwrap()
-            .is_some()
+        crate::scheduler::auth_marked(&runtime, &provider),
+        "the newer refusal stands"
+    );
+    assert!(runtime.provider_auth(&provider).unwrap().is_some());
+
+    crate::scheduler::settle_auth_answer(&runtime, &provider, aether_core::time::now());
+    assert!(!crate::scheduler::auth_marked(&runtime, &provider));
+    assert!(
+        runtime.provider_auth(&provider).unwrap().is_none(),
+        "an answer after every refusal clears it"
     );
     runtime.shutdown().await;
 }

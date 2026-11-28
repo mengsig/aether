@@ -109,12 +109,13 @@ impl Runtime {
         debug_assert!(stored.as_ref().is_none_or(
             |event| matches!(&event.kind, aether_core::event::EventKind::Custom { name: n, .. } if *n == name)
         ));
+        let stored_at = stored.map(|event| answered_at(&event));
         let mut sched = self.sched.lock();
         // An answer settled meanwhile is newer than anything stored.
         let fence = sched
             .auth_answered
             .entry(provider.to_owned())
-            .or_insert(stored.map(|event| event.at));
+            .or_insert(stored_at);
         Ok(*fence)
     }
 
@@ -220,4 +221,17 @@ fn auth_failed(since: Timestamp) -> serde_json::Value {
         "kind": aether_core::agent::PROVIDER_AUTH,
         "since": since,
     })
+}
+
+/// When a stored answer fence was taken: the time the answering turn read,
+/// which may be earlier than the commit that stored it.
+fn answered_at(event: &aether_core::event::Event) -> Timestamp {
+    let aether_core::event::EventKind::Custom { payload, .. } = &event.kind else {
+        debug_assert!(false, "an answer fence is a custom event");
+        return event.at;
+    };
+    let read = payload
+        .get("at")
+        .and_then(|at| serde_json::from_value::<Timestamp>(at.clone()).ok());
+    read.unwrap_or(event.at)
 }
