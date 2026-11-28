@@ -170,7 +170,7 @@ impl Runtime {
         let mut structured = None;
         let status = match status {
             AgentStatus::Failed { error } => {
-                structured = crate::exhaustion::provider_auth_failure(&agent, &error);
+                structured = crate::exhaustion::provider_auth_failure(self, &agent, &error)?;
                 let error = if let Some(diagnostic) =
                     crate::exhaustion::prepare(self, hold, commit, &agent, &error, &by)?
                 {

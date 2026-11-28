@@ -8,7 +8,7 @@ use aether_core::agent::{Agent, BlockReason, ExhaustionClass};
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::AgentId;
 use aether_core::inbox::InboxKind;
-use aether_core::model::ModelRef;
+use aether_core::model::{ModelErrorClass, ModelRef};
 use aether_core::time::now;
 use aether_store::{AgentFilter, Commit, EventFilter};
 use serde_json::{Value, json};
@@ -90,6 +90,21 @@ fn exhaustion_cause(
 /// completed invocation fences earlier failures, an older turn never counts,
 /// and only a typed class is trusted - message text is never reinterpreted.
 fn recorded_cause(runtime: &Runtime, agent: &Agent) -> Result<Option<ExhaustedCause>> {
+    let cause = turn_failure(runtime, agent, recoverable_by_fallback)?;
+    Ok(cause.map(|(class, detail, model)| ExhaustedCause {
+        category: class.as_str(),
+        detail,
+        model,
+    }))
+}
+
+/// The newest failed invocation of the agent's latest turn whose typed class
+/// `wanted` accepts, unanswered since: its class, error and the failing link.
+fn turn_failure(
+    runtime: &Runtime,
+    agent: &Agent,
+    wanted: impl Fn(ModelErrorClass) -> bool,
+) -> Result<Option<(ModelErrorClass, String, ModelRef)>> {
     let started = runtime.store.latest_events(
         1,
         &EventFilter {
@@ -124,12 +139,12 @@ fn recorded_cause(runtime: &Runtime, agent: &Agent) -> Result<Option<ExhaustedCa
         if row.turn != turn {
             break;
         }
-        if let Some(class) = class.filter(|class| recoverable_by_fallback(*class)) {
-            return Ok(Some(ExhaustedCause {
-                category: class.as_str(),
-                detail: error,
-                model: row.model,
-            }));
+        if let Some(class) = class.filter(|class| wanted(*class)) {
+            debug_assert!(
+                !row.model.provider.is_empty(),
+                "an invocation names its link"
+            );
+            return Ok(Some((class, error, row.model)));
         }
     }
     Ok(None)
@@ -406,26 +421,29 @@ pub(crate) fn prepare_native_failure(
 }
 
 /// A task's structured failure when the runtime's own engine or model failure
-/// text is a refused sign-in: `kind` and `provider` for clients to match.
-pub(crate) fn provider_auth_failure(agent: &Agent, error: &str) -> Option<Value> {
-    let lower = error.to_lowercase();
+/// ended on a refused sign-in: `kind` and the provider of the link that was
+/// refused, both from the turn's typed failure record, never from its text.
+pub(crate) fn provider_auth_failure(
+    runtime: &Runtime,
+    agent: &Agent,
+    error: &str,
+) -> Result<Option<Value>> {
     if !MODEL_FAILURE_PREFIXES
         .iter()
-        .any(|prefix| lower.starts_with(prefix))
+        .any(|prefix| error.to_lowercase().starts_with(prefix))
     {
-        return None;
+        return Ok(None);
     }
-    if engine_error_class(error) != aether_core::model::ModelErrorClass::Auth {
-        return None;
-    }
-    debug_assert!(
-        !agent.model.provider.is_empty(),
-        "an agent names its provider"
-    );
-    Some(json!({
-        "kind": aether_core::agent::PROVIDER_AUTH,
-        "provider": agent.model.provider,
-        "class": "auth",
+    // The newest typed failure decides: a refusal the chain moved past is not why it ended.
+    let newest = turn_failure(runtime, agent, |_| true)?;
+    let refused = newest.filter(|(class, _, _)| *class == ModelErrorClass::Auth);
+    Ok(refused.map(|(class, _, link)| {
+        json!({
+            "kind": aether_core::agent::PROVIDER_AUTH,
+            "provider": link.provider,
+            "model": link.model,
+            "class": class.as_str(),
+        })
     }))
 }
 
