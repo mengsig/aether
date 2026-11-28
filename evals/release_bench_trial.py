@@ -37,7 +37,9 @@ TRIAL_TIMEOUT_SECONDS = 600
 SHORT_TMP_ROOT = os.environ.get("RELEASE_BENCH_TMP_ROOT", "/var/tmp")
 SHORT_TMP_MAX = 40
 # Failures the harness under test is answerable for: a counted, failed trial on old, new and archon arms.
-HARNESS_FAILURE_KEYS = ("telemetry_error", "daemon_cleanup_error", "cleanup_error")
+HARNESS_FAILURE_KEYS = ("telemetry_error",)
+# Teardown errors: a flag beside a graded trial's verdict, an infra error when the trial could not be graded.
+CLEANUP_KEYS = ("daemon_cleanup_error", "cleanup_error", "tmpdir_cleanup_error")
 # A provider or network outage named in a failed run's error text says nothing about the harness.
 PROVIDER_OUTAGE = re.compile(r"overloaded|rate.?limit|too many requests|usage limit|service unavailable"
                              r"|bad gateway|gateway time-?out|connection reset|\b(429|502|503|504|529)\b",
@@ -212,8 +214,6 @@ def infra_error(row, harness):
         return outage
     if harness != "native":
         return None
-    if row.get("cleanup_error"):
-        return f"cleanup_error: {str(row['cleanup_error'])[:300]}"
     if row.get("workflow_status") == "failed" and not _model_output(row):
         return f"no model output: {str(row.get('workflow_error') or row.get('exit_code'))[:300]}"
     return None
@@ -235,10 +235,25 @@ def harness_failure(row, harness):
     return None
 
 
+def harness_cleanup(row):
+    """The teardown errors a trial recorded, as one text, or None when its teardown was clean."""
+    errors = [f"{key}: {str(row[key])[:300]}" for key in CLEANUP_KEYS if row.get(key)]
+    return "; ".join(errors) or None
+
+
+def cleanup_outcome(row, grade_result, harness):
+    """(infra error, cleanup flag) of a trial: a teardown error only drops a trial it kept from being graded."""
+    error = infra_error(row, harness)
+    cleanup = harness_cleanup(row)
+    if error is not None or cleanup is None or grade_result["error"] is None:
+        return error, cleanup
+    return f"cleanup prevented grading ({grade_result['error'][:200]}): {cleanup}", cleanup
+
+
 def record(spec, arm, repeat, row, grade_result, cost, tokens):
     """The compact line results.jsonl keeps per trial; the full row stays in the trial directory."""
     assert grade_result["total"] == spec["checks"], "a grade covers every hidden check of its task"
-    error = infra_error(row, arm["harness"])
+    error, cleanup = cleanup_outcome(row, grade_result, arm["harness"])
     failure = None if error else harness_failure(row, arm["harness"])
     passed = error is None and failure is None and grade_result["passed"] == grade_result["total"]
     return {"task": spec["id"], "family": spec["family"], "template": spec["template"], "arm": arm["key"],
@@ -247,6 +262,7 @@ def record(spec, arm, repeat, row, grade_result, cost, tokens):
             "fraction": grade_result["passed"] / grade_result["total"], "grade_error": grade_result["error"],
             "cost_usd": cost, "tokens": tokens, "seconds": row.get("solve_seconds"),
             "workflow": row.get("workflow_status"), "infra_error": error, "harness_failure": failure,
+            "harness_cleanup": cleanup,
             "workflow_error": str(row["workflow_error"])[:300] if row.get("workflow_error") else None,
             "children": _children(row), "trial_dir": row["trial_dir"],
             "started_at": row["started_at"]}
@@ -289,10 +305,10 @@ def run_release_trial(spec, arm, repeat, context):
         materialize(spec, workspace)
         task_text = spec["prompt"] + arm["condition"]["suffix"]
         _solve(arm, task_text, workspace, str(trial_dir), context, row, f"{context['run_dir']}::{name}")
-        grade_result = grade(workspace, spec["hidden"], spec["checks"], trial_dir / "grade")
     except Exception as error:
         row["bench_error"] = f"{type(error).__name__}: {error}"
         row["bench_traceback"] = traceback.format_exc()
+    grade_result = _grade_workspace(spec, workspace, trial_dir, row, grade_result)
     try:
         cost, tokens = _price(row, arm, context)
     except Exception as error:
@@ -301,6 +317,19 @@ def run_release_trial(spec, arm, repeat, context):
     row["grade"] = grade_result
     save_json(str(trial_dir / "result.json"), row)
     return record(spec, arm, repeat, row, grade_result, cost, tokens)
+
+
+def _grade_workspace(spec, workspace, trial_dir, row, ungraded):
+    """The workspace's grade, whatever its teardown did; `ungraded` when there is no workspace or grading crashed."""
+    assert ungraded["error"] and ungraded["passed"] == 0, "the fallback grade is a failed one"
+    if not workspace.is_dir():
+        return ungraded
+    try:
+        return grade(workspace, spec["hidden"], spec["checks"], trial_dir / "grade")
+    except Exception as error:
+        row["bench_error"] = row.get("bench_error") or f"grading: {type(error).__name__}: {error}"
+        row["bench_traceback"] = row.get("bench_traceback") or traceback.format_exc()
+        return ungraded
 
 
 def _condition_name(arm):

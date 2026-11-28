@@ -44,19 +44,21 @@ def arm_summary(records, arm, seed=0):
     pass_ci = bootstrap(tasks, lambda rows: mean(row["pass"] for row in rows), seed=seed) if tasks else None
     return {"arm": arm, "trials": len(mine), "infra": len(mine) - len(good), "tasks": len(tasks),
             "harness_failures": sum(1 for item in good if item.get("harness_failure")),
+            "cleanup_flags": sum(1 for item in good if item.get("harness_cleanup")),
             "pass": pass_ci, "fraction": mean(row["fraction"] for row in tasks),
             "cost_mean": mean(costs), "cost_total": sum(costs), "unpriced": len(good) - len(costs),
             "median_seconds": statistics.median(seconds) if seconds else None}
 
 
 def _arm_table(summaries, planned):
-    lines = ["| Arm | Trials / planned | Infra errors | Harness failures | Pass rate [95% CI] | Check fraction "
-             "| Cost / trial | Total cost | Median time |", "|---|---:|---:|---:|---|---:|---:|---:|---:|"]
+    lines = ["| Arm | Trials / planned | Infra errors | Harness failures | Cleanup flags | Pass rate [95% CI] "
+             "| Check fraction | Cost / trial | Total cost | Median time |",
+             "|---|---:|---:|---:|---:|---|---:|---:|---:|---:|"]
     for row in summaries:
         unpriced = f" ({row['unpriced']} unpriced)" if row["unpriced"] else ""
         seconds = "–" if row["median_seconds"] is None else f"{row['median_seconds']:.0f}s"
         lines.append(f"| {row['arm']} | {row['trials']} / {planned} | {row['infra']} | {row['harness_failures']} "
-                     f"| {_interval(row['pass'], _pct)} "
+                     f"| {row['cleanup_flags']} | {_interval(row['pass'], _pct)} "
                      f"| {_pct(row['fraction'])} | {_usd(row['cost_mean'])} | {_usd(row['cost_total'])}{unpriced} "
                      f"| {seconds} |")
     return lines

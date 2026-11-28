@@ -17,6 +17,13 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **A teardown error no longer fails a graded release-bench trial.** A
+  trial whose workspace passed every hidden check counted as failed when its
+  daemon's stop timed out. The workspace is now graded whatever teardown did,
+  the stop is retried once with a longer timeout, and a teardown error that
+  remains is a `harness_cleanup` flag, shown in the report and the failure
+  digest, that changes no grade. It drops the trial as an infrastructure
+  error only when the workspace could not be graded.
 - **`wait_for` refuses a wait on yourself.** A `tasks` list holding the
   caller's own task id, or a `message_from` of its own agent id, is refused at
   once with an error saying to finish the task with `complete_task` or wait on
