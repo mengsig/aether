@@ -576,6 +576,16 @@ it, because this host stalls when heavy jobs overlap. `BUDGET=30` would leave
 room for 10 Haiku trials plus a delegation trial to the end of the run. It does
 not change what a run costs, only the worst case it may reach.
 
+### Set v3
+
+Set v3 is the hard set, beside the default v2 until it is adopted. It holds 20
+tasks, and its calibration is **accepted**: in two repeats per task, plain
+Aether (`new`) passed a mean 45 % on Haiku and on Luna, inside the 30–70 %
+target. Twenty tasks keep one repeat of the ten-arm release run on 10
+workers at an estimated 79 minutes, within the 90-minute target. The task contents stay out of this document;
+[bench/README.md](../bench/README.md) gives the command that froze the set,
+and its [calibration.md](../bench/release-set/v3/calibration.md) the rates.
+
 ## The Archon arms
 
 `ARCHON_OLD=/path/to/archon` adds `haiku/archon-old` and `luna/archon-old`, and
