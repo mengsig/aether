@@ -130,6 +130,36 @@ async fn message_from_a_finished_or_unknown_agent_is_refused() {
     );
 }
 
+/// Every terminal status refuses, not only a cancellation.
+#[tokio::test]
+async fn message_from_a_completed_failed_or_imported_agent_is_refused() {
+    let (harness, _dir) = ComposeHarness::new().await;
+    for status in [
+        AgentStatus::Completed { summary: None },
+        AgentStatus::Failed {
+            error: "broke".into(),
+        },
+        AgentStatus::Imported {
+            was: AgentStatusKind::Completed,
+        },
+    ] {
+        let mut sender = live_agent(&harness.runtime, None);
+        let kind = status.kind();
+        sender.status = status;
+        harness
+            .runtime
+            .store
+            .commit(Commit::new().mutate(Mutation::UpsertAgent(sender.clone())))
+            .expect("store the terminal sender");
+        let wait = WaitCondition::MessageFrom { agent: sender.id };
+        assert_refused_naming(
+            refusal(&harness, &wait),
+            sender.id,
+            &format!("has finished (status {kind})"),
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_message_a_finished_sender_already_sent_still_wakes_the_wait() {
     let (harness, _dir) = ComposeHarness::new().await;

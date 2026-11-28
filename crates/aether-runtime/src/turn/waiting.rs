@@ -114,18 +114,26 @@ fn silent_sender_refusal(
     ctx: &TurnCtx,
     condition: &WaitCondition,
 ) -> Result<Option<ToolOutcome>> {
-    use aether_core::agent::WaitOracle as _;
-    let oracle = crate::wait::StoreOracle {
-        store: runtime.store.as_ref(),
-        agent: ctx.agent.id,
-        inbox_cursor: ctx.agent.inbox_cursor,
-    };
-    for sender in condition.message_senders() {
+    let senders = condition.message_senders();
+    if senders.is_empty() {
+        return Ok(None);
+    }
+    // A message it sent before it stopped still wakes the wait at once. A
+    // failed read is an error, never a guess that nothing was delivered.
+    let delivered: BTreeSet<AgentId> = runtime
+        .store
+        .inbox(ctx.agent.id, ctx.agent.inbox_cursor)?
+        .iter()
+        .filter_map(|item| match &item.kind {
+            InboxKind::Message {
+                from: Actor::Agent { id },
+                ..
+            } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    for sender in senders.difference(&delivered).copied() {
         debug_assert_ne!(sender, ctx.agent.id, "self waits are refused before this");
-        // A message it sent before it stopped still wakes the wait at once.
-        if oracle.has_unconsumed_message_from(sender) {
-            continue;
-        }
         let found = runtime.store.agent(sender)?;
         let Some(why) = why_sender_is_silent(found.as_ref()) else {
             continue;
