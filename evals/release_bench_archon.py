@@ -23,7 +23,7 @@ from pathlib import Path
 
 from harness_bench import isolated_socket_path, remove_socket_dir
 from harness_bench_config import scheduler_config_toml, strip_live_routing_env
-from release_bench_spend import AetherStoreProbe
+from release_bench_spend import MARKER, AetherStoreProbe, stop_marked
 
 # The stages each supported pipeline runs; the model plan pins every one to the arm's model.
 PIPELINE_STAGES = {"direct": ("implement",), "adaptive": ("build",)}
@@ -229,11 +229,25 @@ def run_archon_trial(archon_bin, aether_binary, condition, task_text, workspace,
     finally:
         result["solve_seconds"] = round(time.monotonic() - started, 3)
         result["cleanup_error"] = _stop(archon_bin, env, log, layout)
+        _stop_survivors(extra_env, result)
         Path(trial_dir, "archon-commands.json").write_text(json.dumps(log, indent=2), encoding="utf-8")
     usage = store_usage(layout["aether_data"], price)
     result["archon_usage"] = usage
     result["usage_report"] = {"usage": {"output_tokens": usage.get("output_tokens")}}
     result["descendant_count"] = max(usage["agents"] - 2, 0)
+
+
+def _stop_survivors(extra_env, result):
+    """Stop whatever outlived `_stop` (a daemon whose stop failed, say) before the usage snapshot, so no
+    agent can spend after it and leave the trial underpriced."""
+    marker = extra_env.get(MARKER)
+    assert marker is None or (marker and "\0" not in marker), "a trial marker is non-empty text"
+    if marker is None:
+        return  # A direct call outside the trial runner, as in unit tests: no marked processes exist.
+    leftover = stop_marked(marker)
+    assert not set(leftover) & {os.getpid()}, "the bench never stops itself"
+    if leftover:
+        result["leftover_pids"] = leftover
 
 
 def _stop(archon_bin, env, log, layout):

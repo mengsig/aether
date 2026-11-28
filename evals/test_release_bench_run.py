@@ -15,6 +15,7 @@ from pathlib import Path
 
 import harness_bench as hb
 import release_bench
+import release_bench_archon
 import release_bench_pool
 import release_bench_trial
 from harness_bench_config import scheduler_config_toml
@@ -28,6 +29,7 @@ from release_bench_spend import (
     CodexRolloutProbe,
     ProbeError,
     SpendGuard,
+    marked_pids,
     max_call_usd,
     price_of,
     reservation_usd,
@@ -567,6 +569,10 @@ elif args[:2] == ["queue", "wait"]:
         body = {"agent_id": agent, "kind": {"type": "agent.usage_updated", "total": total}}
         db.execute("INSERT INTO events VALUES (?, ?)", (seq, json.dumps(body)))
     db.commit()
+elif args[:2] == ["daemon", "stop"] and os.environ.get("FAKE_STOP_FAILS"):
+    subprocess.Popen(["sleep", "30"], start_new_session=True, stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    code = 1
 elif args[:2] == ["queue", "show"]:
     out = {"item": {"id": "qi_fake", "state": {"state": "succeeded"}},
            "runs": [{"branch": "archon/fake", "started_at": "2026-10-18T00:00:00Z", "cost_usd": 0.0045}]}
@@ -581,7 +587,7 @@ class ArchonLauncherTests(unittest.TestCase):
             "files": {"a.py": "x = 1\n"}, "history": [], "tags": {}, "meta": {}, "hidden": "import unittest\n",
             "checks": 2, "solution": {"a.py": "x = 2\n"}}
 
-    def _run(self, directory, wait_code="0", model="haiku"):
+    def _run(self, directory, wait_code="0", model="haiku", extra_env=None):
         root = Path(directory)
         fake = root / "archon"
         fake.write_text(f"#!{sys.executable}\n{FAKE_ARCHON}")
@@ -595,7 +601,7 @@ class ArchonLauncherTests(unittest.TestCase):
         condition = build_arm(model, "archon")["condition"]
         result = {}
         run_archon_trial(fake, candidate, condition, "fix it", workspace, 30, str(trial_dir), result,
-                         {"FAKE_WAIT_CODE": wait_code}, price_of(PRICE_TABLE, "haiku"))
+                         {"FAKE_WAIT_CODE": wait_code, **(extra_env or {})}, price_of(PRICE_TABLE, "haiku"))
         state = json.loads(Path(archon_layout(str(trial_dir))["data"], "fake-state.json").read_text())
         return result, state, workspace, candidate
 
@@ -641,6 +647,26 @@ class ArchonLauncherTests(unittest.TestCase):
             self.assertEqual(result["workflow_status"], "failed")
             self.assertIn("ArchonError", result["workflow_error"])
             self.assertEqual(state["calls"][-1], ["daemon", "stop", "--json"])
+
+    def test_a_failed_daemon_stop_is_cleaned_up_before_usage_is_read(self):
+        marker = f"test-archon-stop-{time.monotonic_ns()}"
+        alive_at_snapshot = []
+        real_usage = release_bench_archon.store_usage
+
+        def snapshot(*args):
+            alive_at_snapshot.append(marked_pids(marker))
+            return real_usage(*args)
+
+        with tempfile.TemporaryDirectory() as directory, \
+                unittest.mock.patch.object(release_bench_archon, "store_usage", snapshot):
+            try:
+                result, _, _, _ = self._run(directory, extra_env={MARKER: marker, "FAKE_STOP_FAILS": "1"})
+            finally:
+                stop_marked(marker)
+        self.assertIn("stopping archon", result["cleanup_error"])
+        self.assertEqual(len(result["leftover_pids"]), 1, "the survivor of the failed stop was stopped")
+        self.assertEqual(alive_at_snapshot, [[]], "usage is read only once no trial process can spend")
+        self.assertIsNotNone(result["archon_usage"]["api_equivalent_usd"])
 
     def test_the_guard_reads_the_archon_trial_s_own_store(self):
         with tempfile.TemporaryDirectory() as directory:
