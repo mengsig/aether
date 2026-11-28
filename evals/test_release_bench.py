@@ -424,9 +424,30 @@ class ArmTests(unittest.TestCase):
     def test_arm_shorthands(self):
         self.assertEqual(len(parse_arms("all")), 6)
         self.assertEqual(parse_arms("luna"), ["luna/native", "luna/old", "luna/new"])
-        self.assertEqual(parse_arms("haiku/new", archon=True), ["haiku/new", "haiku/archon"])
+        self.assertEqual(parse_arms("haiku/new", ("new",)), ["haiku/new"])
+        self.assertEqual(parse_arms("haiku", ("old", "new")),
+                         ["haiku/native", "haiku/old", "haiku/new", "haiku/archon-old", "haiku/archon-new"])
+        self.assertEqual(len(parse_arms("all", ("old", "new"))), 10)
+        self.assertEqual(parse_arms("luna", ("new",))[-1], "luna/archon-new")
         with self.assertRaises(AssertionError):
             parse_arms("opus/native")
+
+    def test_archon_arms_need_their_side_s_binary(self):
+        self.assertEqual(parse_arms("haiku/archon,haiku/new", ("new",)), ["haiku/archon-new", "haiku/new"])
+        for text, sides in (("haiku/archon-old", ("new",)), ("luna/archon-new", ("old",)), ("haiku/archon", ())):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                parse_arms(text, sides)
+
+    def test_each_archon_arm_runs_its_own_side_s_binaries(self):
+        for side in ("old", "new"):
+            arm = build_arm("haiku", f"archon-{side}")
+            self.assertEqual((arm["binary_role"], arm["archon_role"]), (side, side))
+            self.assertEqual((arm["condition"]["pipeline"], arm["condition"]["review"]), ("adaptive", "standard"))
+        legacy = build_arm("luna", "archon", archon_options={"review": "none", "budget_factor": 1.0})
+        self.assertEqual((legacy["archon_role"], legacy["condition"]["review"]), ("new", "none"))
+        self.assertEqual(legacy["allowance_usd"], build_arm("luna", "new")["allowance_usd"])
+        with self.assertRaises(AssertionError):
+            build_arm("haiku", "archon-new", archon_options={"review": "lenient"})
 
     def test_every_arm_is_capped(self):
         native = build_arm("haiku", "native")["condition"]

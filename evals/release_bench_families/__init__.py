@@ -19,6 +19,13 @@ from . import (
     edgecase_bucket,
     edgecase_ranges,
     edgecase_slug,
+    hard_bundle,
+    hard_jobgraph,
+    hard_migrate,
+    hard_pagination,
+    hard_prorate,
+    hard_reorder,
+    hard_stockbook,
     longctx_protocol,
     multibug_billing,
     port_pricing,
@@ -43,7 +50,23 @@ TEMPLATES = {
     "exporters": refactor_exporters.generate,
     "workstreams": delegation_workstreams.generate,
     "protocol": longctx_protocol.generate,
+    # The hard templates of set v3.
+    "reorder": hard_reorder.generate,
+    "migrate": hard_migrate.generate,
+    "stockbook": hard_stockbook.generate,
+    "pagination": hard_pagination.generate,
+    "prorate": hard_prorate.generate,
+    "jobgraph": hard_jobgraph.generate,
 }
+HARD_TEMPLATES = ("jobgraph", "migrate", "pagination", "prorate", "reorder", "stockbook")
+
+
+def _bundle(seed, rng):
+    return hard_bundle.generate(seed, rng, generate, HARD_TEMPLATES)
+
+
+# Several hard tasks in one repository, all to be fixed: the tasks of set v3.
+TEMPLATES["bundle"] = _bundle
 
 
 def generate(template, seed):

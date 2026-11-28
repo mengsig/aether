@@ -19,23 +19,28 @@ from harness_bench_process import terminate_owned_process_groups
 GATE_POLL_SECONDS = 5
 
 
+# Arm pairs whose wall times and costs the report compares: each alternates which side starts first.
+PAIRED_SIDES = (("old", "new"), ("archon-old", "archon-new"))
+
+
 def schedule(task_ids, arm_keys, repeats, seed):
     """(task, repeat, arm) triples: one block per (repeat, task) in seeded order, its arms adjacent.
 
-    Each block's arms are shuffled; then, per model tier, `old` runs before `new`
-    in alternate blocks, so neither binary systematically goes first."""
+    Each block's arms are shuffled; then, per model tier and per compared pair (old/new,
+    archon-old/archon-new), the old side runs first in alternate blocks, so neither binary
+    systematically goes first."""
     assert len(set(task_ids)) == len(task_ids) and task_ids, "schedule each task once"
     assert repeats > 0 and len(set(arm_keys)) == len(arm_keys) and arm_keys, "schedule distinct arms"
     rng = random.Random(seed)
     tasks = list(task_ids)
     rng.shuffle(tasks)
-    models = sorted({key.split("/")[0] for key in arm_keys})
+    pairs = [(f"{model}/{old}", f"{model}/{new}") for model in sorted({key.split("/")[0] for key in arm_keys})
+             for old, new in PAIRED_SIDES]
     order = []
     for block, (repeat, task) in enumerate((repeat, task) for repeat in range(repeats) for task in tasks):
         arms = list(arm_keys)
         rng.shuffle(arms)
-        for index, model in enumerate(models):
-            old, new = f"{model}/old", f"{model}/new"
+        for index, (old, new) in enumerate(pairs):
             if old in arms and new in arms:
                 i, j = arms.index(old), arms.index(new)
                 old_first = (block + index) % 2 == 0
@@ -200,7 +205,7 @@ def run_pool(order, run_one, reservation_of, *, jobs, gates, results_path, attem
         f"(${gates.spent_usd:.2f} spent), {len(pending)} to run on {jobs} worker(s)")
     state = {"records": records, "running": {}, "lock": threading.Lock(), "stop": threading.Event(),
              "gates": gates, "log": log, "reservation_of": reservation_of,
-             "held_seconds": {"host": 0.0, "budget": 0.0}}
+             "held_seconds": {"host": 0.0, "budget": 0.0}, "load_at_start": {}}
     with open(results_path, "a") as sink, open(attempts_path, "a") as journal, \
             ThreadPoolExecutor(max_workers=jobs) as pool:
         state["sink"] = sink
@@ -238,6 +243,7 @@ def _admit_all(pending, run_one, pool, journal, jobs, should_stop, state):
                                   "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}) + "\n")
         journal.flush()
         os.fsync(journal.fileno())
+        state["load_at_start"][tuple(triple)] = round(os.getloadavg()[0], 2)
         running[pool.submit(run_one, triple)] = triple
     return reason
 
@@ -270,6 +276,8 @@ def _collect(finished, state):
         triple = state["running"].pop(future)
         item = future.result()
         assert trial_key(item) == tuple(triple), f"record {trial_key(item)} does not match its trial {triple}"
+        # The 1-minute load when the trial started, so the report can show what load each arm ran under.
+        item.setdefault("load_at_start", state["load_at_start"].pop(tuple(triple), None))
         with state["lock"]:
             gates.settle(state["reservation_of"](tuple(triple)), item["cost_usd"])
             state["sink"].write(json.dumps(item, sort_keys=True) + "\n")

@@ -1,6 +1,8 @@
-"""The Markdown report of a release-bench run: arms, the release gate per model, and drift."""
+"""The Markdown report of a release-bench run: arms, the Aether and Archon gates per model, parity and drift."""
 import statistics
 from collections import defaultdict
+
+from release_bench_outcomes import digest_lines, failure_digest, parity, parity_line
 
 from release_bench_stats import (
     bootstrap,
@@ -68,9 +70,9 @@ def _comparison_lines(label, result):
             f"p = {result['mcnemar_p']:.3f}"]
 
 
-def _gate_lines(model, verdict):
+def _gate_lines(model, verdict, label="candidate vs old"):
     lines = [f"### {model}: **{verdict['verdict']}**", ""]
-    lines += _comparison_lines("candidate vs old", verdict["comparison"])
+    lines += _comparison_lines(label, verdict["comparison"])
     lines += ["- Infra error rate: " + ", ".join(f"{arm} {rate:.1%}" for arm, rate in verdict["infra_rate"].items())]
     label = "Fails because" if verdict["verdict"] == "FAIL" else "Inconclusive because"
     lines += [f"- {label}: {reason}" for reason in verdict["reasons"]]
@@ -93,14 +95,14 @@ def _family_table(records, arms):
     return lines
 
 
-def gate_verdicts(records, models, settings, expected, seed=0):
-    """{model: gate result} for every model tier the plan gave both an old and a new arm.
+def gate_verdicts(records, models, settings, expected, seed=0, old="old", new="new"):
+    """{model: gate result} for every model tier the plan gave both an `old` and a `new` arm.
 
     A tier that was planned but never ran is judged on no records, so it is INCONCLUSIVE, not left out."""
     planned = set(expected["arms"])
     assert {item["arm"] for item in records} <= planned, "every record belongs to a planned arm"
-    return {model: gate(records, f"{model}/old", f"{model}/new", settings, seed, expected)
-            for model in models if {f"{model}/old", f"{model}/new"} <= planned}
+    return {model: gate(records, f"{model}/{old}", f"{model}/{new}", settings, seed, expected)
+            for model in models if {f"{model}/{old}", f"{model}/{new}"} <= planned}
 
 
 def overall_verdict(verdicts, gaps=()):
@@ -113,31 +115,169 @@ def overall_verdict(verdicts, gaps=()):
     return "PASS" if outcomes == {"PASS"} and not gaps else "INCONCLUSIVE"
 
 
-def render(records, header, models, settings, expected, seed=0):
-    """The full report; `header` is a list of "- key: value" provenance lines, `expected` the planned matrix."""
+def archon_verdict(gates, parities, gaps=()):
+    """The Archon release: FAIL on a failed regression gate or a missed parity, PASS only when every
+    planned gate passes and every parity holds on a finished matrix, else INCONCLUSIVE; None if unplanned."""
+    if not gates and not parities:
+        return None
+    statuses = {result["status"] for result in parities.values()}
+    assert statuses <= {"MET", "MISSED", "UNKNOWN"}, f"unknown parity statuses: {statuses}"
+    if "MISSED" in statuses or any(verdict["verdict"] == "FAIL" for verdict in gates.values()):
+        return "FAIL"
+    complete = gates and set(gates) == set(parities) and statuses == {"MET"}
+    return "PASS" if complete and overall_verdict(gates, gaps) == "PASS" else "INCONCLUSIVE"
+
+
+def combined_verdict(products):
+    """FAIL when a judged product fails, PASS when every judged product passes, else INCONCLUSIVE."""
+    judged = {name: verdict for name, verdict in products.items() if verdict is not None}
+    if "FAIL" in judged.values():
+        return "FAIL"
+    return "PASS" if judged and set(judged.values()) == {"PASS"} else "INCONCLUSIVE"
+
+
+def _per_model_table(records, models, arms, seed):
+    """Pass rate, cost per trial and median wall of every planned arm, one row per model tier."""
+    harnesses = list(dict.fromkeys(arm.split("/")[1] for arm in arms))
+    lines = ["| Model | " + " | ".join(harnesses) + " |", "|---|" + "---|" * len(harnesses)]
+    for model in models:
+        cells = []
+        for harness in harnesses:
+            arm = f"{model}/{harness}"
+            if arm not in arms:
+                cells.append("–")
+                continue
+            row = arm_summary(records, arm, seed)
+            rate = None if row["pass"] is None else row["pass"][0]
+            wall = "–" if row["median_seconds"] is None else f"{row['median_seconds']:.0f}s"
+            cells.append(f"{_pct(rate)} · {_usd(row['cost_mean'])} · {wall}")
+        if any(cell != "–" for cell in cells):
+            lines.append(f"| {model} | " + " | ".join(cells) + " |")
+    return lines + ["", "Each cell: pass rate · mean cost per trial · median wall per trial."]
+
+
+def _per_task_table(records, model, arms):
+    """Per task, on one model tier: passes / counted trials, mean cost and median wall of each arm."""
+    mine = [arm for arm in arms if arm.startswith(f"{model}/")]
+    grouped = defaultdict(list)
+    for item in counted(records):
+        if item["arm"] in mine:
+            grouped[(item["task"], item["arm"])].append(item)
+    tasks = sorted({task for task, _ in grouped})
+    lines = ["| Task | " + " | ".join(arm.split("/")[1] for arm in mine) + " |", "|---|" + "---|" * len(mine)]
+    for task in tasks:
+        cells = [_task_cell(grouped.get((task, arm), [])) for arm in mine]
+        lines.append(f"| {task} | " + " | ".join(cells) + " |")
+    return lines
+
+
+def _task_cell(items):
+    if not items:
+        return "–"
+    costs = [item["cost_usd"] for item in items if item["cost_usd"] is not None]
+    seconds = [item["seconds"] for item in items if item["seconds"] is not None]
+    wall = f"{statistics.median(seconds):.0f}s" if seconds else "–"
+    return f"{sum(item['passed'] for item in items)}/{len(items)} · {_usd(mean(costs))} · {wall}"
+
+
+def _load_lines(records, arms, load_control):
+    """How load was controlled, and the load each arm's trials started under, so wall times can be compared."""
+    lines = [f"- {load_control}"] if load_control else []
+    lines += ["", "| Arm | Median 1-min load at start | Highest |", "|---|---:|---:|"]
+    for arm in arms:
+        loads = sorted(item["load_at_start"] for item in records
+                       if item["arm"] == arm and item.get("load_at_start") is not None)
+        if loads:
+            lines.append(f"| {arm} | {statistics.median(loads):.1f} | {loads[-1]:.1f} |")
+        else:
+            lines.append(f"| {arm} | – | – |")
+    return lines
+
+
+OFF_TARGET_NOTE = " (gate passed on an off-target set)"
+
+
+def on_target_verdict(verdict, on_target):
+    """A product's release verdict: on an off-target set a PASS is INCONCLUSIVE, a FAIL still counts."""
+    assert verdict in (None, "PASS", "FAIL", "INCONCLUSIVE"), f"unknown release verdict {verdict}"
+    assert isinstance(on_target, bool), "on_target is the set's acceptance flag"
+    return "INCONCLUSIVE" if verdict == "PASS" and not on_target else verdict
+
+
+def _archon_sections(records, models, settings, expected, seed, gaps, on_target=True):
+    """The Archon gate (archon-new vs archon-old) and parity (archon-new vs new); ([lines], verdict, gates,
+    parities), the verdict as the gate gave it, before an off-target set downgrades its PASS."""
+    planned = set(expected["arms"])
+    gates = gate_verdicts(records, models, settings, expected, seed, "archon-old", "archon-new")
+    parities = {model: parity(records, model) for model in models
+                if {f"{model}/new", f"{model}/archon-new"} <= planned}
+    passed = archon_verdict(gates, parities, gaps)
+    if passed is None:
+        return [], None, gates, parities
+    verdict = on_target_verdict(passed, on_target)
+    note = OFF_TARGET_NOTE if verdict != passed else ""
+    lines = [f"## Archon release gate: {verdict}{note}", "",
+             "Archon passes when archon-new is no worse than archon-old (the same gate as Aether's) "
+             "and, on every tier, archon-new passes at least as often as plain Aether's new.", "",
+             "### Parity (archon-new vs new)", ""]
+    lines += [parity_line(result) for result in parities.values()] or ["- no tier ran both new and archon-new"]
+    lines.append("")
+    for model, gate_result in gates.items():
+        lines += _gate_lines(model, gate_result, "archon candidate vs archon old") + [""]
+    return lines, passed, gates, parities
+
+
+def render(records, header, models, settings, expected, seed=0, load_control=None, on_target=True):
+    """The full report as {"text", "overall", "products", "verdicts", "archon_verdicts", "parity", "gaps",
+    "digest"}; `header` is a list of "- key: value" provenance lines, `expected` the planned matrix.
+    On an off-target set (`on_target` False) no product and so no run can PASS."""
     assert records, "a report needs at least one trial"
     arms = sorted(expected["arms"])
     verdicts = gate_verdicts(records, models, settings, expected, seed)
     gaps = matrix_gaps(records, expected)
-    overall = overall_verdict(verdicts, gaps)
+    archon_lines, archon_passed, archon_gates, parities = _archon_sections(records, models, settings, expected,
+                                                                           seed, gaps, on_target)
+    gated = {"aether": overall_verdict(verdicts, gaps) if verdicts else None, "archon": archon_passed}
+    products = {name: on_target_verdict(verdict, on_target) for name, verdict in gated.items()}
+    overall, aether = combined_verdict(products), products["aether"]
+    title_note = OFF_TARGET_NOTE if products != gated and overall == "INCONCLUSIVE" else ""
+    digest = failure_digest(records, arms)
     planned = len(expected["tasks"]) * expected["repeats"]
-    lines = [f"# Release bench: {overall}", "", *header, "", "## Arms", "",
-             *_arm_table([arm_summary(records, arm, seed) for arm in arms], planned), ""]
+    lines = [f"# Release bench: {overall}{title_note}", "",
+             *[f"- {name.capitalize()} release: **{verdict}**" for name, verdict in products.items() if verdict],
+             *header, "", "## Arms", "",
+             *_arm_table([arm_summary(records, arm, seed) for arm in arms], planned), "",
+             "## Per model", "", *_per_model_table(records, models, arms, seed), ""]
     if gaps:
         lines += ["The planned matrix did not finish, so the run cannot pass:", "",
                   *[f"- {gap}" for gap in gaps], ""]
-    lines += ["## Release gate", ""]
+    aether_note = OFF_TARGET_NOTE if aether != gated["aether"] else ""
+    lines += ["## Aether release gate" + (f": {aether}{aether_note}" if aether else ""), ""]
     if not verdicts:
         lines += ["No model tier ran both an old and a candidate arm, so there is no verdict.", ""]
     for model, verdict in verdicts.items():
         lines += _gate_lines(model, verdict) + [""]
+    lines += archon_lines
+    lines += _drift_lines(records, models, arms, seed)
+    lines += ["## Failure digest", "", "Why trials did not pass, by category; it names no task, so it can go "
+              "to whoever fixes the harness (also `failure-digest.md`).", "", *digest_lines(digest), "",
+              "## Load and wall time", "", *_load_lines(records, arms, load_control), "",
+              "## Pass rate by family", "", *_family_table(records, arms), ""]
+    for model in models:
+        if any(arm.startswith(f"{model}/") for arm in arms):
+            lines += [f"## Per task: {model}", "", "Each cell: passes / counted trials · mean cost · median wall.",
+                      "", *_per_task_table(records, model, arms), ""]
+    return {"text": "\n".join(lines), "overall": overall, "products": products, "verdicts": verdicts,
+            "archon_verdicts": archon_gates, "parity": parities, "gaps": gaps, "digest": digest}
+
+
+def _drift_lines(records, models, arms, seed):
     drift = [compare(records, f"{model}/native", f"{model}/old", seed=seed) for model in models
              if {f"{model}/native", f"{model}/old"} <= set(arms)]
-    if drift:
-        lines += ["## Drift reference (Aether old release vs the native CLI)", ""]
-        for result in drift:
-            lines += _comparison_lines(result["new"].split("/")[0], result)
-        lines += ["", "A large change here between two reports means the models or native CLIs moved, "
-                  "not Aether.", ""]
-    lines += ["## Pass rate by family", "", *_family_table(records, arms), ""]
-    return "\n".join(lines), overall, verdicts, gaps
+    if not drift:
+        return []
+    lines = ["## Drift reference (Aether old release vs the native CLI)", ""]
+    for result in drift:
+        lines += _comparison_lines(result["new"].split("/")[0], result)
+    return lines + ["", "A large change here between two reports means the models or native CLIs moved, "
+                    "not Aether.", ""]

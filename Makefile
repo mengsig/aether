@@ -16,24 +16,29 @@ install: ; cargo install --path crates/aether --locked
 PYTHON   ?= python3
 NEW      ?= $(or $(CARGO_TARGET_DIR),target)/release/aether
 SET      ?= bench/release-set/v2
+# ARCHON_OLD / ARCHON_NEW (ARCHON_BIN is ARCHON_NEW's old name) add the archon-old / archon-new arms,
+# each over its own side's aether, so one run gates both an Aether and an Archon release.
+# JOBS and LOAD_MAX default to the host's size (release_bench_host.py).
 ARMS     ?= all
-JOBS     ?= 6
-LOAD_MAX ?= 16
 BUDGET   ?= 20
 REPEATS  ?= 1
 COUNT    ?= 200
-BENCH_FLAGS = --jobs $(JOBS) --load-max $(LOAD_MAX) --budget $(BUDGET) --repeats $(REPEATS) \
+ARCHON_NEW ?= $(ARCHON_BIN)
+POOL_FLAGS = $(if $(JOBS),--jobs $(JOBS)) $(if $(LOAD_MAX),--load-max $(LOAD_MAX))
+BENCH_FLAGS = $(POOL_FLAGS) --budget $(BUDGET) --repeats $(REPEATS) \
 	$(if $(ALLOW_OFF_TARGET),--allow-off-target) $(if $(EARLY_STOP),--early-stop)
+ARCHON_FLAGS = $(if $(ARCHON_OLD),--archon-old "$(ARCHON_OLD)") $(if $(ARCHON_NEW),--archon-new "$(ARCHON_NEW)") \
+	$(if $(ARCHON_PIPELINE),--archon-pipeline $(ARCHON_PIPELINE)) $(if $(ARCHON_REVIEW),--archon-review $(ARCHON_REVIEW))
 
 bench-release:
 	$(if $(OLD),,$(error set OLD to the previous release's aether binary))
 	$(PYTHON) evals/release_bench.py run --set "$(SET)" --old "$(OLD)" --new "$(NEW)" --arms "$(ARMS)" \
-		$(BENCH_FLAGS) $(if $(ARCHON_BIN),--archon-bin "$(ARCHON_BIN)") $(EXTRA)
+		$(BENCH_FLAGS) $(ARCHON_FLAGS) $(EXTRA)
 
 bench-calibrate:
 	$(if $(FREEZE),,$(error set FREEZE to the new set's directory, such as bench/release-set/v3))
 	$(PYTHON) evals/release_bench.py calibrate --count $(COUNT) --price-binary "$(NEW)" --freeze "$(FREEZE)" \
-		--jobs $(JOBS) --load-max $(LOAD_MAX) --budget $(or $(CAL_BUDGET),25) --repeats $(or $(CAL_REPEATS),3) \
+		$(POOL_FLAGS) --budget $(or $(CAL_BUDGET),25) --repeats $(or $(CAL_REPEATS),3) \
 		$(if $(TEMPLATES),--templates "$(TEMPLATES)") $(if $(ACCEPT_OFF_TARGET),--accept-off-target) $(EXTRA)
 
 # Memory benchmark (docs/memory/BASELINE.md): deterministic, no model calls. Fails

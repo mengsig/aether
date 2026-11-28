@@ -1,12 +1,17 @@
-"""The Archon arm: one task, queued on a private Archon whose own Aether is the candidate binary.
+"""The Archon arms: one task, queued on a private Archon whose own Aether is its side's binary.
+
+`archon-new` pairs the Archon candidate with the candidate Aether, `archon-old` the
+last Archon release with the last Aether release.
 
 Each trial gets its own Archon config, data and socket. Archon runs in
 dedicated mode, so it starts its own aetherd from the first `aether` on PATH,
-a link to the pinned candidate binary, with its config seeded from an
+a link to its side's pinned Aether binary, with its config seeded from an
 operator config that holds only the trial's cap on model turns at once:
 nothing from the machine's Archon or Aether is read or reached. The task goes
-in as one `direct` pipeline item, on the arm's model at low effort with
-Archon's own budget cap. Archon ships it locally, and the
+in as one item of the arm's pipeline and review family (`adaptive` with
+`standard` review by default), on the arm's model at low effort for every
+agent, reviewers included, with Archon's own budget cap where the provider
+reports dollar cost. Archon ships it locally, and the
 newest run branch holding commits becomes the graded workspace. Usage is read
 from every agent in the private Aether store and priced on the run's table.
 """
@@ -18,10 +23,10 @@ from pathlib import Path
 
 from harness_bench import isolated_socket_path, remove_socket_dir
 from harness_bench_config import scheduler_config_toml, strip_live_routing_env
-from release_bench_spend import AetherStoreProbe
+from release_bench_spend import MARKER, AetherStoreProbe, marked_pids, stop_marked
 
-PIPELINE = "direct"
-STAGE = "implement"
+# The stages each supported pipeline runs; the model plan pins every one to the arm's model.
+PIPELINE_STAGES = {"direct": ("implement",), "adaptive": ("build",)}
 # `archon queue wait` exit codes (archon queue wait --help).
 WAIT_STATUS = {0: "completed", 3: "failed", 4: "timeout"}
 COMMAND_SECONDS = 120
@@ -114,14 +119,18 @@ def enqueue(archon_bin, env, log, condition, task_text, workspace, budget_usd, l
     base = _git(workspace, "symbolic-ref", "--short", "HEAD")
     archon(archon_bin, env, ["repo", "add", str(workspace), "--name", "task", "--ship", "local", "--base", base,
                              "--json"], log)
+    pipeline, review = condition["pipeline"], condition["review"]
+    if pipeline not in PIPELINE_STAGES:
+        raise ArchonError(f"the bench has no model plan for pipeline {pipeline!r}")
     brief, plan = layout["root"] / "brief.md", layout["root"] / "model-plan.json"
     brief.write_text(task_text, encoding="utf-8")
-    plan.write_text(json.dumps({STAGE: [{"model": condition["model"], "effort": condition["effort"]}]}),
-                    encoding="utf-8")
+    choice = [{"model": condition["model"], "effort": condition["effort"]}]
+    plan.write_text(json.dumps({stage: choice for stage in PIPELINE_STAGES[pipeline]}), encoding="utf-8")
+    budget = ["--budget-usd", f"{budget_usd:.2f}"] if budget_usd is not None else []
     _, out = archon(archon_bin, env, [
-        "queue", "add", "--json", "--title", "release-bench task", "--repo", "task", "--pipeline", PIPELINE,
-        "--brief-file", str(brief), "--model-plan-file", str(plan), "--budget-usd", f"{budget_usd:.2f}",
-        "--review", "none", "--report", "off", "--proposal", "off", "--merge", "manual"], log)
+        "queue", "add", "--json", "--title", "release-bench task", "--repo", "task", "--pipeline", pipeline,
+        "--brief-file", str(brief), "--model-plan-file", str(plan), *budget,
+        "--review", review, "--report", "off", "--proposal", "off", "--merge", "manual"], log)
     added = _json(out, "archon queue add")
     item = added.get("id") or (added.get("item") or {}).get("id")
     if not isinstance(item, str) or not item.startswith("qi_"):
@@ -203,8 +212,9 @@ def _session(archon_bin, env, log, condition, task_text, workspace, timeout, tri
 
 def run_archon_trial(archon_bin, aether_binary, condition, task_text, workspace, timeout, trial_dir, result,
                      extra_env, price):
-    """Run one task through a private Archon on the candidate Aether; fills `result` like the other arms."""
-    assert condition["kind"] == "archon" and condition["budget_usd"] > 0, "an Archon arm carries its budget"
+    """Run one task through a private Archon on its side's Aether; fills `result` like the other arms."""
+    assert condition["kind"] == "archon", "an Archon arm runs through Archon"
+    assert condition["budget_usd"] is None or condition["budget_usd"] > 0, "an Archon item budget is positive"
     layout = archon_layout(trial_dir)
     prepare(layout, aether_binary, condition["model"], condition["max_concurrent_turns"])
     env, stripped = archon_env(layout, extra_env)
@@ -219,11 +229,31 @@ def run_archon_trial(archon_bin, aether_binary, condition, task_text, workspace,
     finally:
         result["solve_seconds"] = round(time.monotonic() - started, 3)
         result["cleanup_error"] = _stop(archon_bin, env, log, layout)
+        _stop_survivors(extra_env, result)
         Path(trial_dir, "archon-commands.json").write_text(json.dumps(log, indent=2), encoding="utf-8")
     usage = store_usage(layout["aether_data"], price)
+    if result.get("usage_unconfirmed"):
+        usage["api_equivalent_usd"] = None  # Unpriced, so the pool charges the trial's whole reservation.
     result["archon_usage"] = usage
     result["usage_report"] = {"usage": {"output_tokens": usage.get("output_tokens")}}
     result["descendant_count"] = max(usage["agents"] - 2, 0)
+
+
+def _stop_survivors(extra_env, result):
+    """Stop whatever outlived `_stop` (a daemon whose stop failed, say) before the usage snapshot, so no
+    agent can spend after it and leave the trial underpriced."""
+    marker = extra_env.get(MARKER)
+    assert marker is None or (marker and "\0" not in marker), "a trial marker is non-empty text"
+    if marker is None:
+        return  # A direct call outside the trial runner, as in unit tests: no marked processes exist.
+    leftover = stop_marked(marker)
+    assert not set(leftover) & {os.getpid()}, "the bench never stops itself"
+    if leftover:
+        result["leftover_pids"] = leftover
+    alive = marked_pids(marker)
+    if alive:
+        # A process that outlives SIGKILL may still write usage, so the store is no final price.
+        result["usage_unconfirmed"] = f"trial processes {alive} still ran after SIGKILL"
 
 
 def _stop(archon_bin, env, log, layout):
