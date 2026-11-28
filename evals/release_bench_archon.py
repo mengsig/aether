@@ -30,6 +30,8 @@ PIPELINE_STAGES = {"direct": ("implement",), "adaptive": ("build",)}
 # `archon queue wait` exit codes (archon queue wait --help).
 WAIT_STATUS = {0: "completed", 3: "failed", 4: "timeout"}
 COMMAND_SECONDS = 120
+# A daemon stop that failed is retried once with a longer timeout before its error is flagged.
+STOP_RETRY_SECONDS = 2 * COMMAND_SECONDS
 WAIT_SLACK_SECONDS = 60
 
 
@@ -261,7 +263,10 @@ def _stop(archon_bin, env, log, layout):
     errors = []
     try:
         archon(archon_bin, env, ["daemon", "stop", "--json"], log)
-    except (ArchonError, subprocess.TimeoutExpired, OSError) as error:
-        errors.append(f"stopping archon: {error}")
+    except (ArchonError, subprocess.TimeoutExpired, OSError) as first:
+        try:
+            archon(archon_bin, env, ["daemon", "stop", "--json"], log, timeout=STOP_RETRY_SECONDS)
+        except (ArchonError, subprocess.TimeoutExpired, OSError) as error:
+            errors.append(f"stopping archon: {first}; retry after {STOP_RETRY_SECONDS}s: {error}")
     errors.append(remove_socket_dir(layout["socket_dir"]))
     return "; ".join(error for error in errors if error) or None

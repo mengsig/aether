@@ -571,11 +571,16 @@ elif args[:2] == ["queue", "wait"]:
         body = {"agent_id": agent, "kind": {"type": "agent.usage_updated", "total": total}}
         db.execute("INSERT INTO events VALUES (?, ?)", (seq, json.dumps(body)))
     db.commit()
+elif args[:2] == ["daemon", "stop"] and os.environ.get("FAKE_STOP_FAILS") == "once":
+    code = 0 if state.get("stop_failed") else 1
+    state["stop_failed"] = True
 elif args[:2] == ["daemon", "stop"] and os.environ.get("FAKE_STOP_FAILS"):
-    survivor = ["sh", "-c", "trap '' TERM; exec sleep 30"] if os.environ.get("FAKE_STOP_FAILS") == "deaf" \
-        else ["sleep", "30"]
-    subprocess.Popen(survivor, start_new_session=True, stdin=subprocess.DEVNULL,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if not state.get("survivor_started"):
+        survivor = ["sh", "-c", "trap '' TERM; exec sleep 30"] if os.environ.get("FAKE_STOP_FAILS") == "deaf" \
+            else ["sleep", "30"]
+        subprocess.Popen(survivor, start_new_session=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        state["survivor_started"] = True
     code = 1
 elif args[:2] == ["queue", "show"]:
     out = {"item": {"id": "qi_fake", "state": {"state": "succeeded"}},
@@ -672,8 +677,17 @@ class ArchonLauncherTests(unittest.TestCase):
             finally:
                 stop_marked(marker)
         self.assertIn("stopping archon", result["cleanup_error"])
+        self.assertIn("retry after", result["cleanup_error"], "a failed stop is retried before it is flagged")
         self.assertEqual(len(result["leftover_pids"]), 1, "the survivor of the failed stop was stopped")
         return result, alive_at_snapshot
+
+    def test_a_stop_that_succeeds_on_its_retry_is_no_cleanup_error(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                unittest.mock.patch.object(release_bench_archon, "STOP_RETRY_SECONDS", 7):
+            result, state, _, _ = self._run(directory, extra_env={"FAKE_STOP_FAILS": "once"})
+        stops = [call for call in state["calls"] if call[:2] == ["daemon", "stop"]]
+        self.assertEqual(len(stops), 2, "the failed stop was retried once")
+        self.assertIsNone(result["cleanup_error"])
 
     def test_a_failed_daemon_stop_is_cleaned_up_before_usage_is_read(self):
         result, alive_at_snapshot = self._run_with_failed_stop("polite")

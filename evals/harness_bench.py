@@ -242,18 +242,33 @@ def start_daemon(binary, env, workspace):
         raise
 
 
-def stop_daemon(binary, env, proc):
-    error = None
+# A graceful stop gets one retry with a longer timeout before the daemon's group is killed and flagged.
+STOP_TIMEOUTS_SECONDS = (10, 30)
+
+
+def _stop_attempt(binary, env, proc, timeout):
+    """One graceful `aether stop` and wait for the daemon to exit; returns any error text."""
+    assert timeout > 0, "a stop attempt needs a positive timeout"
     try:
         if os.path.exists(env["AETHER_SOCKET"]):
             stopped = subprocess.run([binary, "stop"], env=env, capture_output=True,
-                                     text=True, timeout=10, check=False)
+                                     text=True, timeout=timeout, check=False)
             if stopped.returncode:
-                error = f"daemon stop exited {stopped.returncode}: {stopped.stderr}"
+                return f"daemon stop exited {stopped.returncode}: {stopped.stderr}"
         if proc is not None:
-            proc.wait(timeout=10)
+            proc.wait(timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        error = str(exc)
+        return str(exc)
+    return None
+
+
+def stop_daemon(binary, env, proc):
+    error = None
+    try:
+        first = _stop_attempt(binary, env, proc, STOP_TIMEOUTS_SECONDS[0])
+        if first is not None:
+            retry = _stop_attempt(binary, env, proc, STOP_TIMEOUTS_SECONDS[1])
+            error = None if retry is None else f"{first}; retry after {STOP_TIMEOUTS_SECONDS[1]}s: {retry}"
     finally:
         if proc is not None:
             group_error = _terminate_process_group(proc)

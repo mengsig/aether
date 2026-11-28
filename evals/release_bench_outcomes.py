@@ -6,7 +6,9 @@ candidate (`new`) on the same (task, repeat) cells.
 
 The failure digest says, per arm, why its trials did not pass, by category
 only. It names no task, family, prompt or check, so it can be handed to the
-people fixing Aether or Archon without showing them the set.
+people fixing Aether or Archon without showing them the set. Beside the
+categories it counts counted trials whose teardown failed after grading: a
+flag on the harness, never a change to the trial's verdict.
 """
 import re
 from collections import Counter
@@ -22,7 +24,7 @@ DIGEST_CATEGORIES = (
     "timeout",
     "review rounds exhausted",
     "escalated or blocked",
-    "harness error (crash, no model output, cleanup)",
+    "harness error (crash, no model output, telemetry)",
     "run ended in error, its workspace graded",
     "result not gradable",
     "wrong result: no hidden check passes",
@@ -98,10 +100,12 @@ def _wrong_result(item):
 
 def failure_digest(records, arms):
     """{arm: {"trials", "passed", "categories": Counter}} for every planned arm, records or not."""
-    digest = {arm: {"trials": 0, "passed": 0, "categories": Counter()} for arm in arms}
+    digest = {arm: {"trials": 0, "passed": 0, "cleanup_flags": 0, "categories": Counter()} for arm in arms}
     for item in records:
         row = digest[item["arm"]]
         row["trials"] += 1
+        if item.get("harness_cleanup") and not item["infra_error"]:
+            row["cleanup_flags"] += 1
         category = failure_category(item)
         if category is None:
             row["passed"] += 1
@@ -114,11 +118,12 @@ def failure_digest(records, arms):
 
 def digest_lines(digest):
     """The digest as Markdown: arm, trials, passes and a count per category. No task content."""
-    lines = ["| Arm | Trials | Passed | Why the others did not pass |", "|---|---:|---:|---|"]
+    lines = ["| Arm | Trials | Passed | Teardown failed after grading | Why the others did not pass |",
+             "|---|---:|---:|---:|---|"]
     for arm, row in sorted(digest.items()):
         reasons = "; ".join(f"{category} {row['categories'][category]}" for category in DIGEST_CATEGORIES
                             if row["categories"][category]) or "–"
-        lines.append(f"| {arm} | {row['trials']} | {row['passed']} | {reasons} |")
+        lines.append(f"| {arm} | {row['trials']} | {row['passed']} | {row['cleanup_flags']} | {reasons} |")
     return lines
 
 

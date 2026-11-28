@@ -560,7 +560,8 @@ class TrialRecordTests(unittest.TestCase):
         self.assertIn("no model output", harness_failure(row, "new"))
         crashed = record(self.SPEC, self.ARM, 0, row, self.GRADE, 0.0, 0)
         self.assertEqual((crashed["passed"], crashed["infra_error"]), (False, None))
-        self.assertIn("cleanup_error", harness_failure(self._row(cleanup_error="socket left"), "old"))
+        self.assertIsNone(harness_failure(self._row(cleanup_error="socket left"), "old"),
+                          "a teardown error is a cleanup flag, not a harness failure")
 
     def test_only_outages_and_native_cli_failures_are_infra(self):
         silent = self._row(workflow_status="failed", usage_report={"usage": {"output_tokens": 0}}, exit_code=1)

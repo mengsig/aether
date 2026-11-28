@@ -286,6 +286,7 @@ def _collect(finished, state):
         cost = "unpriced" if item["cost_usd"] is None else f"${item['cost_usd']:.4f}"
         verdict = ("INFRA" if item["infra_error"] else "HARN" if item.get("harness_failure")
                    else "pass" if item["passed"] else "fail")
+        verdict += "+cleanup" if item.get("harness_cleanup") and not item["infra_error"] else ""
         state["log"](f"[{len(state['records'])}] {item['arm']:<12} {item['task']:<16} r{item['repeat']} "
-                     f"{verdict:<5} {item['checks_passed']}/{item['checks_total']} {cost} "
+                     f"{verdict:<13} {item['checks_passed']}/{item['checks_total']} {cost} "
                      f"{item['seconds'] or 0:.0f}s (spent ${gates.spent_usd:.2f})")

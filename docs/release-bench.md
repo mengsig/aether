@@ -180,7 +180,8 @@ reported too.
 - **Failure digest:** per arm, how many trials did not pass and why, by
   category only: excluded outage, spend allowance, timeout, review rounds
   exhausted, harness error, failed run, ungradable result, and wrong results
-  by share of checks passed. It is also written to `failure-digest.md` without
+  by share of checks passed, plus a count of counted trials whose teardown
+  failed after grading. It is also written to `failure-digest.md` without
   task names or the set's path, so it can go to whoever fixes the harness.
 - **Load and wall time:** the 1-minute load each arm's trials started under,
   and the run's speed-up: summed trial seconds over wall seconds.
@@ -194,14 +195,23 @@ Trials end in one of three ways:
 
 - **Counted:** graded by the hidden checks.
 - **Harness failure:** counted as a failed trial. On Aether and Archon arms
-  this covers a crash, an exit without model output, a telemetry or cleanup
-  error, or a root left blocked. On every arm it covers a stop by the spend
-  guard. The harness under test answers for all of these, so a candidate that
-  crashes loses those tasks.
+  this covers a crash, an exit without model output, a telemetry error, or a
+  root left blocked. On every arm it covers a stop by the spend guard. The
+  harness under test answers for all of these, so a candidate that crashes
+  loses those tasks.
 - **Infrastructure error:** excluded. That is a failure of the bench's own
   steps, or a provider outage named in the error (overloaded, rate limit, 429,
   5xx, connection reset). On the native drift reference, a CLI that produced
   no output at all is one too.
+
+The workspace is graded after the harness's teardown, whatever that teardown
+did. A daemon stop that fails is retried once with a longer timeout (10 s,
+then 30 s for `aether stop`; 120 s, then 240 s for `archon daemon stop`).
+When teardown still fails (`daemon_cleanup_error`, `cleanup_error` or
+`tmpdir_cleanup_error`), the trial keeps its grade and its record carries the
+error as `harness_cleanup`: the report's "Cleanup flags" column and the
+digest count it, and the run log marks it `+cleanup`. It is an
+infrastructure error only when the workspace could not be graded.
 
 The verdict for a tier is:
 
