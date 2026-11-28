@@ -148,9 +148,11 @@ fn request(
     {
         tools.retain(|tool| tool.name != "complete_task" && tool.name != "fail_task");
     }
+    let parent = crate::turn::waiting::load_parent(runtime, &ctx.agent)?;
     let assembled = runtime.context.assemble(ContextInputs {
         agent: &agent,
         task: ctx.task.as_ref(),
+        parent: parent.as_ref(),
         children: &state.children,
         child_tasks: &state.child_tasks,
         pending_inbox: &[],

@@ -17,7 +17,7 @@ async fn a_root_agent_reports_its_parent_relationship_across_restart() {
         )
         .expect("root");
     assert_eq!(root.parent, None);
-    let prompt = aether_context::render::role_task(&root, None);
+    let prompt = aether_context::render::role_task(&root, None, None);
     assert!(prompt.contains("Parent: none."), "{prompt}");
 
     let (child, _) = h
@@ -36,7 +36,7 @@ async fn a_root_agent_reports_its_parent_relationship_across_restart() {
             Actor::user(),
         )
         .expect("child");
-    let prompt = aether_context::render::role_task(&child, None);
+    let prompt = aether_context::render::role_task(&child, None, None);
     assert!(
         prompt.contains(&format!("Parent: {}.", root.id)),
         "{prompt}"

@@ -375,9 +375,11 @@ pub(super) async fn run_link(
     agent_for_link.config.effort = resolved.model.effort_for(ctx.agent.config.effort);
     let profile = runtime.model_profile(&resolved);
     let interruption_notes = crate::tool_interruption::resume_notes(runtime, ctx.agent.id)?;
+    let parent = crate::turn::waiting::load_parent(runtime, &ctx.agent)?;
     let assembled = runtime.context.assemble(ContextInputs {
         agent: &agent_for_link,
         task: ctx.task.as_ref(),
+        parent: parent.as_ref(),
         children: &children,
         child_tasks: &child_tasks,
         pending_inbox,

@@ -74,7 +74,7 @@ mod actions;
 pub(crate) use actions::apply_action;
 pub(crate) use waiting::validate_wait;
 pub(crate) mod reply_obligation;
-mod waiting;
+pub(crate) mod waiting;
 pub(crate) use waiting::has_direct_user_message;
 use waiting::*;
 pub(crate) use waiting::{

@@ -135,7 +135,7 @@ fn silent_sender_refusal(
     for sender in senders.difference(&delivered).copied() {
         debug_assert_ne!(sender, ctx.agent.id, "self waits are refused before this");
         let found = runtime.store.agent(sender)?;
-        let Some(why) = why_sender_is_silent(found.as_ref()) else {
+        let Some(why) = aether_core::agent::why_agent_is_silent(found.as_ref()) else {
             continue;
         };
         debug_assert!(found.as_ref().is_none_or(|agent| agent.id == sender));
@@ -160,39 +160,32 @@ fn silent_parent_note(runtime: &Runtime, agent: &Agent) -> Result<String> {
     };
     debug_assert_ne!(parent, agent.id, "an agent is never its own parent");
     let found = runtime.store.agent(parent)?;
-    Ok(match why_sender_is_silent(found.as_ref()) {
-        Some(why) => {
-            format!(" Your parent `{parent}` cannot answer either: it {why}. {NO_REPLY_INSTEAD}")
-        }
-        None => String::new(),
-    })
+    Ok(
+        match aether_core::agent::why_agent_is_silent(found.as_ref()) {
+            Some(why) => {
+                format!(
+                    " Your parent `{parent}` cannot answer either: it {why}. {NO_REPLY_INSTEAD}"
+                )
+            }
+            None => String::new(),
+        },
+    )
+}
+
+/// The stored record of the agent's parent, `None` for a root or a parent
+/// whose record is gone.
+pub(crate) fn load_parent(runtime: &Runtime, agent: &Agent) -> Result<Option<Agent>> {
+    let Some(parent) = agent.parent else {
+        return Ok(None);
+    };
+    debug_assert_ne!(parent, agent.id, "an agent is never its own parent");
+    Ok(runtime.store.agent(parent)?)
 }
 
 /// What to do when the agent you would ask cannot answer.
 const NO_REPLY_INSTEAD: &str = "Nobody will answer there. Instead, decide yourself and state \
      the assumption, finish with `complete_task` or give up with `fail_task`, or ask through a \
      question tool your host or instructions provide (such as an orchestrator's), if you have one.";
-
-/// Why `agent` can never send a message, or `None` while it can.
-fn why_sender_is_silent(agent: Option<&Agent>) -> Option<String> {
-    let Some(agent) = agent else {
-        return Some("is not a known agent".to_owned());
-    };
-    match agent.status.kind() {
-        AgentStatusKind::Created => Some(
-            "was never started and takes no turns (a passive node, such as a pipeline run node)"
-                .to_owned(),
-        ),
-        kind @ (AgentStatusKind::Completed
-        | AgentStatusKind::Failed
-        | AgentStatusKind::Cancelled
-        | AgentStatusKind::Imported) => Some(format!("has finished (status {kind})")),
-        AgentStatusKind::Ready
-        | AgentStatusKind::Running
-        | AgentStatusKind::Waiting
-        | AgentStatusKind::Blocked => None,
-    }
-}
 
 /// Why an asking turn may not also end the task: a question nobody waits on
 /// is one the operator cannot answer. `verb`/`done`, e.g. "fail"/"failed".

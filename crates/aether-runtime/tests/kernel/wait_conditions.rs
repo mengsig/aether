@@ -358,3 +358,65 @@ async fn wait_for_rejects_a_task_outside_the_callers_scope() {
     assert!(text.contains(&foreign.id.to_string()), "{text}");
     assert!(text.contains("may not wait on"), "{text}");
 }
+
+/// The silent-sender check reads the caller's inbox; when that read fails the
+/// wait is an error the model sees, never a guess that nothing was delivered.
+#[tokio::test]
+async fn a_failed_inbox_read_during_wait_validation_fails_the_turn_visibly() {
+    let inner: Arc<dyn Store> = Arc::new(SqliteStore::open_in_memory().expect("store"));
+    let store = Arc::new(CommitsMidPass::new(inner, Hook::InboxRead));
+    let h = harness_full(
+        Vec::new(),
+        |_| {},
+        |_| {},
+        None,
+        None,
+        Some(store.clone()),
+        |_| {},
+    )
+    .await;
+    let (node, _) = h
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                role: "pipeline:run".into(),
+                start: false,
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .expect("run node");
+    h.client.push(ScriptedClient::tool_call(
+        "wait_for",
+        json!({"message_from": node.id.to_string()}),
+    ));
+    let gate = h.client.hold_response_at(1);
+    let (agent, _) = h
+        .runtime
+        .create_agent(spec("wait on the node"), Actor::user())
+        .expect("create");
+    h.wait_for("the turn reached the model", || {
+        h.client.requests().len() == 1
+    })
+    .await;
+    store.fail_inbox_reads();
+    gate.cancel();
+
+    let events = wait_until_events(h.store.as_ref(), agent.id, |events| {
+        events.iter().any(|e| e.type_name() == "agent.failed")
+    })
+    .await;
+    let error = events
+        .iter()
+        .find_map(|e| match &e.kind {
+            EventKind::AgentFailed { error } => Some(error.clone()),
+            _ => None,
+        })
+        .expect("agent.failed");
+    assert!(error.contains("simulated inbox read failure"), "{error}");
+    assert!(store.read_failed());
+    assert!(
+        !events.iter().any(|e| e.type_name() == "tool.succeeded"),
+        "a failed read must not settle as a wait or a refusal"
+    );
+}

@@ -273,7 +273,7 @@ async fn a_delegated_child_is_told_how_to_ask_its_parent() {
         .runtime
         .create_agent(child_spec, Actor::user())
         .expect("child");
-    let prompt = aether_context::render::role_task(&child, None);
+    let prompt = aether_context::render::role_task(&child, None, Some(&root));
     assert!(
         prompt.contains(&format!("send_message to {}", root.id)),
         "{prompt}"

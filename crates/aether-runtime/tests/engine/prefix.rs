@@ -96,7 +96,7 @@ async fn agents_share_one_system_prefix_and_differ_only_in_the_user_turn() {
         let task_id = started.current_task.expect("the agent was given a task");
         let task = h.store.task(task_id).expect("task").expect("exists");
         // What used to sit in `--system-prompt` and now must not.
-        let moved = aether_context::render::role_task(&started, Some(&task));
+        let moved = aether_context::render::role_task(&started, Some(&task), None);
         tasks.push((name, objective, task_id, moved));
     }
 
@@ -213,7 +213,7 @@ async fn a_resumed_turn_carries_only_what_changed() {
         .task(started.current_task.expect("assigned"))
         .expect("task")
         .expect("exists");
-    let role_task = aether_context::render::role_task(&started, Some(&task));
+    let role_task = aether_context::render::role_task(&started, Some(&task), None);
 
     let turn = |text: &'static str| {
         let h = &h;
@@ -294,6 +294,110 @@ async fn a_resumed_turn_carries_only_what_changed() {
     assert!(
         !again.contains("four of five tables are migrated"),
         "and must not be re-asserted as the newest input every turn after: {again}"
+    );
+    h.runtime.shutdown().await;
+}
+
+fn child_under(parent: AgentId, name: &str) -> CreateAgentSpec {
+    CreateAgentSpec {
+        role: "assistant".into(),
+        name: Some(name.into()),
+        objective: Some(format!("work for {name}")),
+        parent: Some(parent),
+        start: true,
+        model: Some(ModelRef::new("claude-code", "haiku")),
+        config: Some(AgentConfig {
+            long_lived: true,
+            effort: Some(aether_core::model::Effort::Low),
+            approval: ApprovalPolicy::none(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+/// The asking guidance follows the parent's stored record through real
+/// context assembly: a live parent is named, a never-started run node is
+/// not, and a parent finishing later reaches a retained session.
+#[tokio::test]
+async fn asking_guidance_follows_the_parents_ability_to_answer() {
+    use aether_store::{Commit, Mutation};
+
+    let h = harness(Reply::Resumable).await;
+    let spawn =
+        |spec: CreateAgentSpec| h.runtime.create_agent(spec, Actor::user()).expect("create");
+    let (node, _) = spawn(CreateAgentSpec {
+        role: "pipeline:run".into(),
+        start: false,
+        ..Default::default()
+    });
+    let (live, _) = spawn(CreateAgentSpec {
+        role: "assistant".into(),
+        name: Some("live-parent".into()),
+        objective: Some("stay available".into()),
+        start: true,
+        model: Some(ModelRef::new("claude-code", "haiku")),
+        config: Some(AgentConfig {
+            long_lived: true,
+            approval: ApprovalPolicy::none(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    wait_for(h.store.as_ref(), live.id, |a| {
+        a.status.kind() == AgentStatusKind::Waiting
+    })
+    .await;
+    let (under_node, _) = spawn(child_under(node.id, "under-node"));
+    let (under_live, _) = spawn(child_under(live.id, "under-live"));
+    for id in [under_node.id, under_live.id] {
+        wait_for(h.store.as_ref(), id, |a| {
+            a.stats.turns >= 1 && a.status.kind() == AgentStatusKind::Waiting
+        })
+        .await;
+    }
+    let prompt_of = |name: &str| {
+        let prompts = h.prompts.lock().unwrap();
+        prompts
+            .iter()
+            .find(|p| p.contains(&format!("Name: {name}")))
+            .unwrap_or_else(|| panic!("no prompt for {name}"))
+            .clone()
+    };
+    let node_prompt = prompt_of("under-node");
+    assert!(
+        node_prompt.contains("nobody above you can answer"),
+        "{node_prompt}"
+    );
+    assert!(!node_prompt.contains("send_message to"), "{node_prompt}");
+    let live_prompt = prompt_of("under-live");
+    assert!(
+        live_prompt.contains(&format!("send_message to {}", live.id)),
+        "{live_prompt}"
+    );
+
+    let mut finished = h.store.agent(live.id).unwrap().expect("parent");
+    finished.status = AgentStatus::Completed { summary: None };
+    h.store
+        .commit(Commit::new().mutate(Mutation::UpsertAgent(finished)))
+        .expect("finish the parent");
+    let before = h.prompts.lock().unwrap().len();
+    h.runtime
+        .send_message(
+            under_live.id,
+            vec![ContentBlock::text("anyone there?")],
+            Actor::user(),
+        )
+        .expect("send");
+    wait_for(h.store.as_ref(), under_live.id, |a| a.stats.turns >= 2).await;
+    let resumed = h.prompts.lock().unwrap()[before..]
+        .iter()
+        .find(|p| p.contains("anyone there?"))
+        .expect("the resumed turn")
+        .clone();
+    assert!(
+        resumed.contains("nobody above you can answer") && !resumed.contains("send_message to"),
+        "a retained session is told its parent can no longer answer: {resumed}"
     );
     h.runtime.shutdown().await;
 }

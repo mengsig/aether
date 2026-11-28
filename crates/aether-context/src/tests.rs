@@ -113,6 +113,7 @@ fn inputs<'a>(
     ContextInputs {
         agent,
         task,
+        parent: None,
         children: &[],
         child_tasks: &[],
         pending_inbox: inbox,
