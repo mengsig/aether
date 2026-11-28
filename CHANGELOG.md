@@ -13,6 +13,14 @@ release is also the text of its GitHub release.
   once with an error saying to finish the task with `complete_task` or wait on
   a child's task id. Before, the agent slept until its deadline, since its own
   task cannot finish while it waits.
+- **`wait_for` refuses a sender that can never reply.** A `message_from`
+  naming an agent that was never started (such as a pipeline's run node),
+  has finished, or is unknown is refused at once, saying to decide and state
+  the assumption, finish the task, or ask through the host's question tool.
+  A refused bare wait also names a parent that cannot answer. Before, a stage
+  agent that asked its run node slept until its deadline. A message such a
+  sender already delivered still wakes the wait, and waits on a live agent
+  are unchanged.
 
 ## 1.4.4
 

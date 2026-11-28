@@ -8,6 +8,7 @@ mod lifecycle;
 mod prose_structured;
 mod resources;
 mod scheduled_children;
+mod silent_senders;
 mod stale_completion;
 mod subtree_reads;
 mod tool_results;

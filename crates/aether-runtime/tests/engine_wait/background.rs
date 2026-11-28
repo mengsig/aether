@@ -1,13 +1,18 @@
 use super::*;
 
-async fn background_wait(
-    input: Value,
-) -> (
+type BackgroundWait = (
     Harness,
     AgentId,
     TurnStarted,
     tokio::task::JoinHandle<aether_runtime::Result<(String, bool)>>,
-) {
+);
+
+async fn background_wait(input: Value) -> BackgroundWait {
+    background_wait_with(|_| input).await
+}
+
+/// `input` is built inside the harness, so it may name agents created there.
+async fn background_wait_with(input: impl FnOnce(&Harness) -> Value) -> BackgroundWait {
     let mut h = harness_full(
         Duration::from_millis(100),
         OnKill::Report(vec![cancelled_with(Usage::default())]),
@@ -19,6 +24,7 @@ async fn background_wait(
     .await;
     let parent = start_coordinator(&h);
     let turn = turn_of(&mut h, parent).await;
+    let input = input(&h);
     let runtime = h.runtime.clone();
     let token = turn.token.clone();
     let pending = tokio::spawn(async move {
@@ -815,8 +821,14 @@ async fn a_native_waiting_childs_question_reaches_its_held_parent() {
 /// A native `wait_for` on one sender that ends for another reason says the
 /// awaited message has not come, so the agent does not take it as answered.
 async fn assert_unanswered(release: impl AsyncFnOnce(&Harness, AgentId, &TurnStarted)) {
-    let awaited = AgentId::new();
-    let (h, agent, turn, pending) = background_wait(json!({"message_from": awaited})).await;
+    let mut awaited = None;
+    let (h, agent, turn, pending) = background_wait_with(|h| {
+        let sender = idle_agent(h);
+        awaited = Some(sender);
+        json!({"message_from": sender.to_string()})
+    })
+    .await;
+    let awaited = awaited.expect("the sender was created");
     release(&h, agent, &turn).await;
     let (reply, error) = tokio::time::timeout(Duration::from_secs(2), pending)
         .await

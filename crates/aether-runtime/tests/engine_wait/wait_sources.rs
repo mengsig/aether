@@ -244,12 +244,13 @@ async fn user_message_waking_a_wait_requires_visible_reply_before_another_wait()
 
 #[tokio::test]
 async fn explicit_waits_allow_an_assigned_task_without_other_pending_work() {
-    for input in [
-        json!({"message_from": AgentId::new()}),
-        json!({"timeout_seconds": 3600}),
-        json!({"wake_at": (now() + chrono::Duration::hours(1)).to_rfc3339()}),
-    ] {
+    for source in ["message_from", "timeout_seconds", "wake_at"] {
         let mut h = harness(Duration::from_secs(30)).await;
+        let input = match source {
+            "message_from" => json!({"message_from": idle_agent(&h).to_string()}),
+            "timeout_seconds" => json!({"timeout_seconds": 3600}),
+            _ => json!({"wake_at": (now() + chrono::Duration::hours(1)).to_rfc3339()}),
+        };
         let agent = start_agent(&h, assigned_worker_spec());
         let turn = turn_of(&mut h, agent).await;
         let (reply, is_error) = call(&h, &turn, "wait_for", input).await;
@@ -422,4 +423,60 @@ async fn bare_wait_counts_only_active_schedules_targeting_the_caller() {
         }
         h.runtime.shutdown().await;
     }
+}
+
+/// A stage agent under a pipeline run node (a root never started) asks its
+/// parent and waits: the bridge refuses both waits instead of parking.
+#[tokio::test]
+async fn waits_on_a_run_node_parent_are_refused_and_on_a_live_parent_park() {
+    let mut h = harness(Duration::from_secs(30)).await;
+    let (node, _) = h
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                role: "pipeline:run".into(),
+                start: false,
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .expect("run node");
+    let agent = start_agent(&h, stage_spec(node.id));
+    let turn = turn_of(&mut h, agent).await;
+    for input in [json!({"message_from": node.id.to_string()}), json!({})] {
+        let (reply, is_error) = call(&h, &turn, "wait_for", input).await;
+        assert!(is_error, "{reply}");
+        assert!(reply.contains(&node.id.to_string()), "{reply}");
+        assert!(reply.contains("never started"), "{reply}");
+        assert!(!turn.observed.stopped(), "a refused wait never parks");
+    }
+    let _ = turn.end.send(());
+    h.runtime.shutdown().await;
+
+    let mut h = harness(Duration::from_secs(30)).await;
+    let parent = idle_agent(&h);
+    let agent = start_agent(&h, stage_spec(parent));
+    let turn = turn_of(&mut h, agent).await;
+    let (reply, is_error) = call(
+        &h,
+        &turn,
+        "wait_for",
+        json!({"message_from": parent.to_string()}),
+    )
+    .await;
+    assert!(!is_error, "{reply}");
+    assert!(turn.observed.stopped());
+    let _ = turn.end.send(());
+    wait_for_park(&h, agent).await;
+    h.runtime.shutdown().await;
+}
+
+/// An assigned worker delegated under `parent`, as a pipeline stage is.
+fn stage_spec(parent: AgentId) -> CreateAgentSpec {
+    let mut spec = assigned_worker_spec();
+    let config = spec.config.as_mut().expect("worker config");
+    config.effort = Some(aether_core::model::Effort::Low);
+    config.long_lived = false;
+    spec.parent = Some(parent);
+    spec
 }

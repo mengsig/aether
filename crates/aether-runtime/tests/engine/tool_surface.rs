@@ -64,6 +64,8 @@ const REFERENCES_ADDED_BYTES: usize = 430;
 const DELEGATED_LEAF_ADDED_BYTES: usize = 300;
 /// What `send_message` and `wait_for` add to say how to ask a parent.
 const ASKING_ADDED_BYTES: usize = 200;
+/// What `wait_for` adds to say a sender that cannot reply is refused.
+const SILENT_SENDER_ADDED_BYTES: usize = 100;
 const DELEGATED_LEAD_ADDED_BYTES: usize = 470;
 /// What `create_schedule`'s `spawn` template adds to a surface that is not a leaf.
 const SCHEDULE_SPAWN_ADDED_BYTES: usize = 770;
@@ -234,6 +236,7 @@ async fn a_root_agent_sees_the_v1_1_0_surface_plus_only_the_playbook_and_notify(
                 + DELEGATION_POLICY_ADDED_BYTES
                 + REFERENCES_ADDED_BYTES
                 + ASKING_ADDED_BYTES
+                + SILENT_SENDER_ADDED_BYTES
                 + SCHEDULE_SPAWN_ADDED_BYTES,
         "{added}"
     );
@@ -267,7 +270,7 @@ async fn delegated_agents_see_list_peers_and_only_a_lead_sees_the_playbook() {
         "delegated surfaces: leaf {leaf_added}, non-leaf {lead_added} descriptor bytes beyond v1.1.0"
     );
     assert!(
-        leaf_added <= DELEGATED_LEAF_ADDED_BYTES + ASKING_ADDED_BYTES,
+        leaf_added <= DELEGATED_LEAF_ADDED_BYTES + ASKING_ADDED_BYTES + SILENT_SENDER_ADDED_BYTES,
         "{leaf_added}"
     );
     assert!(
@@ -278,6 +281,7 @@ async fn delegated_agents_see_list_peers_and_only_a_lead_sees_the_playbook() {
                 + DELEGATION_POLICY_ADDED_BYTES
                 + REFERENCES_ADDED_BYTES
                 + ASKING_ADDED_BYTES
+                + SILENT_SENDER_ADDED_BYTES
                 + SCHEDULE_SPAWN_ADDED_BYTES,
         "{lead_added}"
     );
