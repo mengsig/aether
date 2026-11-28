@@ -152,8 +152,8 @@ async fn a_refusal_after_the_answer_survives_its_settlement() {
     runtime.shutdown().await;
 }
 
-/// Suspend `agent` on a refused sign-in as a turn does: planned against the
-/// episode it may continue, recorded with its events. Returns the row.
+/// Suspend `agent` on a refused sign-in as a turn does: run, then planned
+/// against the episode it may continue and recorded with its events.
 fn suspend_through_plan(runtime: &Runtime, agent: &Agent) -> Agent {
     let cause = crate::exhaustion::Exhausted {
         model: agent.model.clone(),
@@ -163,9 +163,13 @@ fn suspend_through_plan(runtime: &Runtime, agent: &Agent) -> Agent {
     };
     let suspension = crate::exhaustion::plan(runtime, agent, &cause).unwrap();
     let mut row = agent.clone();
-    row.status = AgentStatus::Blocked {
+    if row.status.kind() != aether_core::agent::AgentStatusKind::Running {
+        row.transition(AgentStatus::Running, now()).unwrap();
+    }
+    let blocked = AgentStatus::Blocked {
         reason: suspension.reason.clone(),
     };
+    row.transition(blocked, now()).unwrap();
     let hold = runtime.hold();
     let mut commit = Commit::new();
     crate::exhaustion::record(
@@ -182,6 +186,11 @@ fn suspend_through_plan(runtime: &Runtime, agent: &Agent) -> Agent {
     runtime.apply_held(hold, commit).unwrap();
     crate::scheduler::mark_auth_failed(runtime, &agent.model.provider);
     row
+}
+
+fn refused_at(row: &Agent) -> aether_core::time::Timestamp {
+    row.status_since
+        .expect("a suspended row knows when it blocked")
 }
 
 fn since_of(row: &Agent) -> aether_core::time::Timestamp {
@@ -221,7 +230,8 @@ async fn a_failed_probe_after_the_answer_stays_refused_across_a_restart() {
     // Its probe is refused again: the episode goes on, the refusal is new.
     let probed = suspend_through_plan(&runtime, &parked);
     let fence = runtime.auth_answer_fence(&provider).unwrap().unwrap();
-    assert!(since_of(&probed) > fence && fence >= first_since);
+    assert_eq!(since_of(&probed), first_since, "one episode");
+    assert!(refused_at(&probed) > fence && fence >= refused_at(&parked));
     assert!(runtime.provider_auth(&provider).unwrap().is_some());
     runtime.shutdown().await;
 
@@ -295,4 +305,29 @@ async fn an_answer_read_before_a_refusal_does_not_clear_it() {
     assert!(crate::scheduler::auth_marked(&runtime, &provider));
     assert!(runtime.provider_auth(&provider).unwrap().is_some());
     runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_probe_refused_while_an_answer_waits_to_commit_survives_a_restart() {
+    let store = Arc::new(aether_store::SqliteStore::open_in_memory().unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    let (runtime, dir) = crate::test_runtime_on(store.clone(), dir, |_| {}).await;
+    let parked = suspend_through_plan(&runtime, &create(&runtime));
+    let provider = parked.model.provider.clone();
+    let answering = create(&runtime);
+    // The answer is read, then a probe is refused and lands before it commits.
+    let answered_at = now();
+    std::thread::sleep(Duration::from_millis(2));
+    let probed = suspend_through_plan(&runtime, &parked);
+    assert!(refused_at(&probed) > answered_at);
+    answer(&runtime, answering, answered_at);
+    assert!(crate::scheduler::auth_marked(&runtime, &provider));
+    runtime.shutdown().await;
+
+    let (restarted, _dir) = crate::test_runtime_on(store, dir, |_| {}).await;
+    assert!(
+        restarted.provider_auth(&provider).unwrap().is_some(),
+        "the probe refused after the answer was read is still reported"
+    );
+    restarted.shutdown().await;
 }

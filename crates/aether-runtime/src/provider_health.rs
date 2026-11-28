@@ -58,7 +58,7 @@ impl Runtime {
 
     /// Providers whose sign-in is refused, since when: the scheduler's mark,
     /// or an agent suspended on it - whose row survives a restart - unless a
-    /// turn on the provider answered after that suspension began.
+    /// turn on the provider answered after that row's latest refusal.
     fn auth_failures(&self) -> Result<HashMap<String, Timestamp>> {
         let mut refused = self.sched.lock().auth_failed.clone();
         let mut fences: HashMap<String, Option<Timestamp>> = HashMap::new();
@@ -87,7 +87,10 @@ impl Runtime {
                     fence
                 }
             };
-            if fence.is_some_and(|at| at >= *since) {
+            // A failed probe keeps its episode's `since` but enters Blocked
+            // again: `status_since` is when the row was last refused.
+            let refused_at = agent.status_since.map_or(*since, |at| at.max(*since));
+            if fence.is_some_and(|at| at >= refused_at) {
                 continue;
             }
             let earliest = refused.entry(model.provider.clone()).or_insert(*since);
