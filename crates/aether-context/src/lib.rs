@@ -43,6 +43,9 @@ pub use estimate::TokenEstimator;
 pub struct ContextInputs<'a> {
     pub agent: &'a Agent,
     pub task: Option<&'a Task>,
+    /// The stored record of `agent.parent`; `None` when it has no parent or
+    /// the record is gone.
+    pub parent: Option<&'a Agent>,
     pub children: &'a [Agent],
     /// Tasks owned by children or created by this agent.
     pub child_tasks: &'a [Task],
@@ -183,7 +186,7 @@ impl ContextManager {
         );
         push_text(
             LayerKind::RoleTask,
-            Some(render::role_task(inputs.agent, inputs.task)),
+            Some(render::role_task(inputs.agent, inputs.task, inputs.parent)),
             1,
         );
         let mut runtime_state = render::runtime_state(&inputs);

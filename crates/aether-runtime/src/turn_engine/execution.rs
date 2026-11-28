@@ -125,9 +125,11 @@ pub(crate) async fn execute(
     model.clone_into(&mut agent_for_link.model);
     agent_for_link.config.effort = resolved.model.effort_for(ctx.agent.config.effort);
     let profile = runtime.model_profile(resolved);
+    let parent = crate::turn::waiting::load_parent(runtime, &ctx.agent)?;
     let context_inputs = ContextInputs {
         agent: &agent_for_link,
         task: ctx.task.as_ref(),
+        parent: parent.as_ref(),
         children: &children,
         child_tasks: &child_tasks,
         pending_inbox,

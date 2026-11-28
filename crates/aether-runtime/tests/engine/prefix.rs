@@ -96,7 +96,7 @@ async fn agents_share_one_system_prefix_and_differ_only_in_the_user_turn() {
         let task_id = started.current_task.expect("the agent was given a task");
         let task = h.store.task(task_id).expect("task").expect("exists");
         // What used to sit in `--system-prompt` and now must not.
-        let moved = aether_context::render::role_task(&started, Some(&task));
+        let moved = aether_context::render::role_task(&started, Some(&task), None);
         tasks.push((name, objective, task_id, moved));
     }
 
@@ -213,7 +213,7 @@ async fn a_resumed_turn_carries_only_what_changed() {
         .task(started.current_task.expect("assigned"))
         .expect("task")
         .expect("exists");
-    let role_task = aether_context::render::role_task(&started, Some(&task));
+    let role_task = aether_context::render::role_task(&started, Some(&task), None);
 
     let turn = |text: &'static str| {
         let h = &h;

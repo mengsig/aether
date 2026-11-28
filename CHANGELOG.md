@@ -13,6 +13,12 @@ release is also the text of its GitHub release.
   once with an error saying to finish the task with `complete_task` or wait on
   a child's task id. Before, the agent slept until its deadline, since its own
   task cannot finish while it waits.
+- **An agent under a run node is no longer told to ask its parent.** The
+  asking guidance names the parent only while it is a live agent that can
+  answer. Under a never-started run node, a finished parent or a missing
+  record it says to decide, state the assumption, and finish or fail the
+  task, or use the host's question tool. Before, it still told the agent to
+  `send_message` the parent and `wait_for` its reply.
 - **`wait_for` refuses a sender that can never reply.** A `message_from`
   naming an agent that was never started (such as a pipeline's run node),
   has finished, or is unknown is refused at once, saying to decide and state

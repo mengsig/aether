@@ -74,6 +74,8 @@ pub enum Hook {
     RepositoryResolved,
     /// The fleet's usage total, which only `status` reads.
     FleetUsage,
+    /// Every inbox read once `fail_inbox_reads` is called.
+    InboxRead,
 }
 
 /// A write a concurrent actor makes, run against the underlying store.
@@ -116,6 +118,13 @@ impl CommitsMidPass {
 
     pub fn arm(&self, write: Armed) {
         *self.armed.lock().expect("armed") = Some(write);
+    }
+
+    /// From now on every inbox read returns an error.
+    pub fn fail_inbox_reads(&self) {
+        assert_eq!(self.hook, Hook::InboxRead);
+        self.fail_next_read
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Whether an armed read failure actually fired.
@@ -454,6 +463,17 @@ impl Store for CommitsMidPass {
         Ok(tasks)
     }
     fn inbox(&self, agent: AgentId, after: u64) -> Result<Vec<InboxItem>> {
+        if self.hook == Hook::InboxRead
+            && self
+                .fail_next_read
+                .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            self.read_failed
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            return Err(aether_store::StoreError::Corrupt(
+                "simulated inbox read failure".into(),
+            ));
+        }
         self.inner.inbox(agent, after)
     }
     fn lease(&self, agent: AgentId) -> Result<Option<Lease>> {

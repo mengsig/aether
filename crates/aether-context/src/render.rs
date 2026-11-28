@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::Path;
 
-use aether_core::agent::{Agent, AgentStatusKind, NetworkPolicy, WaitCondition};
+use aether_core::agent::{
+    Agent, AgentStatusKind, NetworkPolicy, WaitCondition, why_agent_is_silent,
+};
 use aether_core::attachment::{AttachmentRef, MAX_IMAGES_PER_MESSAGE, MAX_MESSAGE_IMAGE_BYTES};
 use aether_core::checkpoint::Checkpoint;
 use aether_core::event::Actor;
@@ -43,7 +45,7 @@ pub fn tree_position(agent: &Agent) -> String {
     }
 }
 
-pub fn role_task(agent: &Agent, task: Option<&Task>) -> String {
+pub fn role_task(agent: &Agent, task: Option<&Task>, parent: Option<&Agent>) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "{}", tree_position(agent));
     let _ = writeln!(out, "Role: {}", agent.role);
@@ -111,7 +113,7 @@ pub fn role_task(agent: &Agent, task: Option<&Task>) -> String {
         }
     );
     let _ = writeln!(out, "\n{scope_line}");
-    let _ = writeln!(out, "\n{}", asking_guidance(agent));
+    let _ = writeln!(out, "\n{}", asking_guidance(agent, parent));
     out.trim_end().to_owned()
 }
 
@@ -125,7 +127,7 @@ const WHEN_TO_ASK: &str = "Ask whenever the answer changes what gets built and i
 
 /// When and how to ask. A root talks to a person; a delegated agent asks
 /// its parent, which answers or forwards the question upward.
-pub fn asking_guidance(agent: &Agent) -> String {
+pub fn asking_guidance(agent: &Agent, parent_record: Option<&Agent>) -> String {
     let Some(parent) = agent.parent else {
         return format!(
             "Asking: when a message opens a conversation or ends in a check-in (\"Ok?\", \
@@ -137,6 +139,14 @@ pub fn asking_guidance(agent: &Agent) -> String {
         );
     };
     debug_assert_ne!(parent, agent.id, "an agent is never its own parent");
+    debug_assert!(parent_record.is_none_or(|record| record.id == parent));
+    if why_agent_is_silent(parent_record).is_some() {
+        return "Asking: nobody above you can answer a question. With a clear objective, keep \
+                acting; otherwise decide, state your assumption visibly, and finish with \
+                `complete_task` or give up with `fail_task`, or use the host's question tool if \
+                it provides one."
+            .to_owned();
+    }
     format!(
         "Asking: your parent ({parent}) answers your questions. With a clear objective, keep \
          acting. {WHEN_TO_ASK} To ask: send_message to {parent} with the question, keep doing \
@@ -786,7 +796,7 @@ mod tests {
     #[test]
     fn assignment_reports_parent_and_task_without_prescribing_workflow() {
         let root = agent(None, "assistant");
-        let text = role_task(&root, None);
+        let text = role_task(&root, None, None);
         assert!(text.contains("Parent: none."));
         assert!(text.contains("Task: none assigned."));
         assert!(!text.contains("delegate"));
@@ -794,7 +804,7 @@ mod tests {
 
         let parent = AgentId::new();
         let child = agent(Some(parent), "worker");
-        assert!(role_task(&child, None).contains(&format!("Parent: {parent}.")));
+        assert!(role_task(&child, None, None).contains(&format!("Parent: {parent}.")));
 
         let task = Task::new(
             "write a file",
@@ -802,14 +812,14 @@ mod tests {
             RunId::new(),
             now(),
         );
-        let text = role_task(&root, Some(&task));
+        let text = role_task(&root, Some(&task), None);
         assert!(text.contains("write a file"));
         assert!(!text.contains("Task: none assigned."));
     }
 
     #[test]
     fn a_root_gets_the_opener_rule_and_a_child_is_told_how_to_ask_its_parent() {
-        let root = role_task(&agent(None, "assistant"), None);
+        let root = role_task(&agent(None, "assistant"), None, None);
         assert!(
             root.contains("2-4 concrete options and one question"),
             "{root}"
@@ -821,7 +831,9 @@ mod tests {
         assert!(root.contains("always asks"), "{root}");
 
         let parent = AgentId::new();
-        let child = role_task(&agent(Some(parent), "worker"), None);
+        let mut parent_record = agent(None, "lead");
+        parent_record.id = parent;
+        let child = role_task(&agent(Some(parent), "worker"), None, Some(&parent_record));
         assert!(!child.contains("2-4 concrete options"), "{child}");
         assert!(
             child.contains("With a clear objective, keep acting"),
@@ -836,6 +848,34 @@ mod tests {
             "{child}"
         );
         assert!(child.contains("always asks"), "{child}");
+    }
+
+    fn child_text_with_parent_status(status: AgentStatus) -> String {
+        let mut parent_record = agent(None, "lead");
+        parent_record.status = status;
+        let child = agent(Some(parent_record.id), "worker");
+        role_task(&child, None, Some(&parent_record))
+    }
+
+    #[test]
+    fn a_child_of_a_run_node_or_finished_parent_is_not_told_to_ask_it() {
+        for status in [
+            AgentStatus::Created,
+            AgentStatus::Completed { summary: None },
+        ] {
+            let text = child_text_with_parent_status(status);
+            assert!(text.contains("nobody above you can answer"), "{text}");
+            assert!(text.contains("`fail_task`"), "{text}");
+            assert!(!text.contains("send_message to"), "{text}");
+            assert!(!text.contains("message_from"), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_child_whose_parent_record_is_missing_is_not_told_to_ask_it() {
+        let child = agent(Some(AgentId::new()), "worker");
+        let text = role_task(&child, None, None);
+        assert!(!text.contains("send_message to"), "{text}");
     }
 }
 
