@@ -76,8 +76,9 @@ impl Piece {
     }
 }
 
-/// Per streamed block, the tail of its text that could be the start of the
-/// token, held back until the next delta shows whether it is.
+/// Per streamed block, what is held back: for text, the tail that could be
+/// the start of the token until the next delta shows whether it is; for tool
+/// input, all of it until the block ends, since that JSON may escape the token.
 #[derive(Default)]
 pub(super) struct HeldDeltas {
     held: BTreeMap<usize, (Piece, String)>,
@@ -88,18 +89,26 @@ impl HeldDeltas {
     pub(super) fn mask(&mut self, token: &str, events: Vec<EngineEvent>) -> Vec<EngineEvent> {
         let mut out = Vec::with_capacity(events.len());
         for event in events {
-            let EngineEvent::Delta(stream) = &event else {
-                self.flush_all(&mut out);
-                out.push(event);
-                continue;
-            };
-            if let Some((piece, index, text)) = Piece::of(stream) {
+            if let EngineEvent::Delta(stream) = &event
+                && let Some((piece, index, text)) = Piece::of(stream)
+            {
                 self.push(token, piece, index, text, &mut out);
                 continue;
             }
-            match stream {
-                StreamEvent::BlockStop { index } => self.flush(*index, &mut out),
-                _ => self.flush_all(&mut out),
+            match &event {
+                EngineEvent::Delta(
+                    StreamEvent::BlockStop { index } | StreamEvent::BlockStart { index, .. },
+                ) => self.flush(token, *index, &mut out),
+                EngineEvent::Delta(
+                    StreamEvent::MessageStart { .. }
+                    | StreamEvent::MessageStop
+                    | StreamEvent::Stop { .. },
+                )
+                | EngineEvent::Assistant { .. }
+                | EngineEvent::Done(_) => self.flush_all(token, &mut out),
+                // Notes, usage and background tasks arrive between the deltas
+                // of a block that is still open: what it holds stays held.
+                _ => {}
             }
             out.push(event);
         }
@@ -120,6 +129,10 @@ impl HeldDeltas {
             .map(|(_, held)| held)
             .unwrap_or_default();
         joined.push_str(text);
+        if matches!(piece, Piece::ToolInput) {
+            self.held.insert(index, (piece, joined));
+            return;
+        }
         let masked = if joined.contains(token) {
             joined.replace(token, KNOWN_SECRET_MASK)
         } else {
@@ -136,18 +149,46 @@ impl HeldDeltas {
         }
     }
 
-    fn flush(&mut self, index: usize, out: &mut Vec<EngineEvent>) {
+    /// A text tail still held when its block ends is not the token: it goes
+    /// out. Held tool input goes out whole, decoded and masked.
+    fn flush(&mut self, token: &str, index: usize, out: &mut Vec<EngineEvent>) {
         if let Some((piece, held)) = self.held.remove(&index) {
-            out.push(piece.delta(index, held));
+            out.push(piece.delta(index, release(token, piece, held)));
         }
     }
 
-    /// A tail still held when its block ends is not the token: it goes out.
-    fn flush_all(&mut self, out: &mut Vec<EngineEvent>) {
+    fn flush_all(&mut self, token: &str, out: &mut Vec<EngineEvent>) {
         for (index, (piece, held)) in std::mem::take(&mut self.held) {
-            out.push(piece.delta(index, held));
+            out.push(piece.delta(index, release(token, piece, held)));
         }
+        debug_assert!(self.held.is_empty());
     }
+}
+
+fn release(token: &str, piece: Piece, held: String) -> String {
+    match piece {
+        Piece::ToolInput => mask_tool_input(token, &held),
+        Piece::Text | Piece::Thinking | Piece::Compaction => held,
+    }
+}
+
+/// A block's whole tool input with `token` masked, however its JSON escapes
+/// it. Input that does not parse and may hide an escaped token is withheld.
+fn mask_tool_input(token: &str, input: &str) -> String {
+    let literal = input.replace(token, KNOWN_SECRET_MASK);
+    if !literal.contains("\\u") {
+        return literal;
+    }
+    let Ok(decoded) = serde_json::from_str::<serde_json::Value>(&literal) else {
+        return KNOWN_SECRET_MASK.to_owned();
+    };
+    let normalized = decoded.to_string();
+    if !normalized.contains(token) {
+        return literal;
+    }
+    let masked = normalized.replace(token, KNOWN_SECRET_MASK);
+    debug_assert!(!masked.contains(token));
+    masked
 }
 
 /// Bytes at the end of `text` that are a proper prefix of `token`, longest first.
@@ -219,6 +260,60 @@ mod tests {
             let shown = format!("{event:?}");
             assert!(!shown.contains("in-oauth-val"), "{shown}");
         }
+    }
+
+    #[test]
+    fn a_background_task_between_two_deltas_keeps_the_prefix_held() {
+        let mut held = HeldDeltas::default();
+        let task = EngineEvent::BackgroundTask {
+            id: "t1".into(),
+            running: true,
+        };
+        let mut events = held.mask(TOKEN, vec![text(0, "env plain-oauth"), task.clone()]);
+        events.extend(held.mask(TOKEN, vec![text(0, "-value-0123456789 end")]));
+        events.extend(held.mask(
+            TOKEN,
+            vec![EngineEvent::Delta(StreamEvent::BlockStop { index: 0 })],
+        ));
+        assert!(events.contains(&task), "the notification still goes out");
+        assert_eq!(joined(&events), format!("env {KNOWN_SECRET_MASK} end"));
+        for event in &events {
+            let shown = format!("{event:?}");
+            assert!(!shown.contains("plain-oauth"), "{shown}");
+        }
+    }
+
+    #[test]
+    fn tool_input_escaping_the_token_across_deltas_is_masked() {
+        let escaped = TOKEN.replace('p', "\\u0070");
+        let input = format!(r#"{{"command":"echo {escaped}"}}"#);
+        let (first, second) = input.split_at(input.find("\\u0070").unwrap() + 3);
+        let mut held = HeldDeltas::default();
+        let mut events = Vec::new();
+        for part in [first, second] {
+            let delta = EngineEvent::Delta(StreamEvent::ToolInputDelta {
+                index: 1,
+                partial_json: part.into(),
+            });
+            events.extend(held.mask(TOKEN, vec![delta]));
+        }
+        assert!(events.is_empty(), "tool input is held until its block ends");
+        events.extend(held.mask(
+            TOKEN,
+            vec![EngineEvent::Delta(StreamEvent::BlockStop { index: 1 })],
+        ));
+        let Some(EngineEvent::Delta(StreamEvent::ToolInputDelta { partial_json, .. })) =
+            events.first()
+        else {
+            panic!("the held input goes out first: {events:?}");
+        };
+        let decoded: serde_json::Value = serde_json::from_str(partial_json).unwrap();
+        assert_eq!(decoded["command"], format!("echo {KNOWN_SECRET_MASK}"));
+        assert_eq!(
+            mask_tool_input(TOKEN, r#"{"a":"é is no token"}"#),
+            r#"{"a":"é is no token"}"#,
+            "input without the token is passed on as written"
+        );
     }
 
     #[test]

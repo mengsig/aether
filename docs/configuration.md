@@ -159,7 +159,8 @@ multi-line, shorter than 8 characters, or holds anything but letters, digits
 and `-_.~+=`. Whatever that child prints is masked: the token reads
 `[REDACTED:known_secret]` in its output and errors and in the events kept of
 them, also where the output escapes it as JSON `\u` sequences or streams it
-split across deltas. Listing
+split across deltas. Streamed tool input is held until its block ends, then
+sent whole, decoded and masked. Listing
 `CLAUDE_CODE_OAUTH_TOKEN` in the hidden environment variables keeps it out of
 the child.
 
