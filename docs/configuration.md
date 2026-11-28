@@ -116,6 +116,7 @@ section and key. Omitted settings use the shipped defaults.
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `model.default` | Balanced-tier model of the first ready provider (`claude-code/claude-sonnet-5-5`, `codex/gpt-6.1-terra`) | Choose the default `provider/model`. A malformed value fails config load; an unknown model is refused when an agent is created, naming the valid choices. It is never replaced silently. |
+| `model.claude_oauth_token_file` | Unset | File with a long-lived Claude Code token. See [Claude long-lived token](#claude-long-lived-token). |
 | `providers.usage_stale_after` | `900` | Seconds before cached provider usage is stale; zero marks reports stale as soon as time advances. |
 | `providers.usage_refresh_interval` | `600` | Minimum seconds between explicit refresh attempts for one provider; must be positive. |
 | `providers.usage_refresh_timeout` | `15` | Probe deadline in seconds; must be positive. |
@@ -126,6 +127,36 @@ section and key. Omitted settings use the shipped defaults.
 | `scheduler.run_hard_stop_tokens` | Unset | The same stop in total tokens, for engines that report no dollar cost. |
 | `approval.default` | `"yolo"` | `"ask"` gates external effects; local mutations need an explicit agent policy. |
 | `retention.completed_run_days` | `7` | Retain eligible completed runs this many days. |
+
+### Claude long-lived token
+
+Concurrent `claude -p` children that share one login file can race when the
+login's refresh token rotates. A long-lived token from `claude setup-token`
+never needs refreshing, so no child touches the login file.
+
+1. Run `claude setup-token` and copy the printed token.
+2. Save it to `~/.config/aether/claude-oauth-token` (the config directory
+   above), on one line.
+3. Run `chmod 600 ~/.config/aether/claude-oauth-token`.
+4. Set it in `config.toml`:
+
+   ```toml
+   [model]
+   claude_oauth_token_file = "~/.config/aether/claude-oauth-token"
+   ```
+
+5. Restart the daemon once for the setting to load.
+
+Aether reads the file at every Claude child launch and passes the token only as
+`CLAUDE_CODE_OAUTH_TOKEN` in that child's environment, never in arguments or
+settings. To rotate, rewrite the file; no restart is needed. A leading `~/`
+means `$HOME`; any other path must be absolute. Unset, nothing changes.
+
+A launch is refused, naming the path and never the content, when the file is
+missing, is a symlink or not a regular file, belongs to another user, is
+readable by group or others (use mode `0600` or `0400`), or is empty or
+multi-line. Listing `CLAUDE_CODE_OAUTH_TOKEN` in the hidden environment
+variables keeps it out of the child.
 
 ### Run hard stop
 

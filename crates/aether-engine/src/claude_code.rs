@@ -48,6 +48,7 @@ pub struct ClaudeCodeEngine {
     program: String,
     version: String,
     prompt_cache_ttl: Option<aether_core::model::PromptCacheTtl>,
+    oauth_token_file: Option<PathBuf>,
 }
 
 impl ClaudeCodeEngine {
@@ -56,7 +57,15 @@ impl ClaudeCodeEngine {
             program: program.into(),
             version: version.into(),
             prompt_cache_ttl: None,
+            oauth_token_file: None,
         }
+    }
+
+    /// Give every spawned `claude` the long-lived token in `path` as
+    /// `CLAUDE_CODE_OAUTH_TOKEN`, so children never refresh a shared login.
+    pub fn with_oauth_token_file(mut self, path: PathBuf) -> Self {
+        self.oauth_token_file = Some(path);
+        self
     }
 
     /// Override the cache-write tier every launched turn requests.
@@ -407,7 +416,10 @@ impl ClaudeCodeEngine {
         let cwd: PathBuf = turn.cwd.clone();
         let mut state = ParseState::for_turn(&turn);
         let outstanding = state.outstanding.clone();
-        let environment = telemetry::environment(context.as_ref(), &turn.hidden_env);
+        let mut environment = telemetry::environment(context.as_ref(), &turn.hidden_env);
+        if let Some(path) = &self.oauth_token_file {
+            environment.push(token_file::environment(path)?);
+        }
         let mut process = run_process_with_env(
             &self.program,
             args,
@@ -452,6 +464,7 @@ mod git_dir;
 mod input;
 mod ownership;
 mod telemetry;
+mod token_file;
 use ownership::session_log_paths;
 mod session_cost;
 mod stream;

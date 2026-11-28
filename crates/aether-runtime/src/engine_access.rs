@@ -218,9 +218,15 @@ struct AskedProbes {
 }
 
 /// What probing an engine again needs.
-#[derive(Clone, Copy)]
+#[derive(Clone, Default)]
+pub(crate) struct ClaudeSettings {
+    pub(crate) prompt_cache_ttl: Option<PromptCacheTtl>,
+    pub(crate) oauth_token_file: Option<std::path::PathBuf>,
+}
+
+#[derive(Clone)]
 struct Probing {
-    prompt_cache_ttl: Option<PromptCacheTtl>,
+    claude: ClaudeSettings,
 }
 
 impl EngineCatalog {
@@ -233,9 +239,9 @@ impl EngineCatalog {
     }
 
     /// A catalog that [`spawn_startup_probes`] fills by probing this machine.
-    pub(crate) fn probing(prompt_cache_ttl: Option<PromptCacheTtl>) -> Self {
+    pub(crate) fn probing(claude: ClaudeSettings) -> Self {
         Self {
-            probing: Some(Probing { prompt_cache_ttl }),
+            probing: Some(Probing { claude }),
             ..Self::default()
         }
     }
@@ -265,7 +271,7 @@ impl EngineCatalog {
             std::future::pending::<()>().await;
         }
         let detected = self.ready().await;
-        let Some(probing) = self.probing else {
+        let Some(probing) = &self.probing else {
             return detected;
         };
         if still_usable(&detected, kind) {
@@ -281,7 +287,7 @@ impl EngineCatalog {
         if recent {
             return self.suspect_if_removed(kind);
         }
-        let probe = detect_engine(kind, probing.prompt_cache_ttl).await;
+        let probe = detect_engine(kind, &probing.claude).await;
         let at = Instant::now();
         history.at = Some(at);
         let mut detected = self.detected.write();
@@ -403,10 +409,7 @@ impl EngineCatalog {
 /// without holding up startup: both run the providers' CLIs. The catalog is
 /// set last and on every path, a panicking probe included, so no reader
 /// waits forever or sees a default model still being resolved.
-pub(super) fn spawn_startup_probes(
-    runtime: &Arc<Runtime>,
-    prompt_cache_ttl: Option<PromptCacheTtl>,
-) {
+pub(super) fn spawn_startup_probes(runtime: &Arc<Runtime>, claude: ClaudeSettings) {
     debug_assert!(
         runtime.engines.now().is_err(),
         "detection runs only for a runtime started without engines"
@@ -417,7 +420,7 @@ pub(super) fn spawn_startup_probes(
         let started = std::time::Instant::now();
         let models = detecting.models.clone();
         let (found, default_model, ()) = tokio::join!(
-            tokio::spawn(detect_engines(prompt_cache_ttl)),
+            tokio::spawn(detect_engines(claude)),
             async move {
                 if resolve_default {
                     Some(models.default_model().await)
@@ -474,12 +477,12 @@ const OPT_IN_ENGINES: [EngineKind; 1] = [EngineKind::ANTIGRAVITY];
 /// machine cannot use is omitted, same as before this preflight; the reason
 /// is logged at `warn` and kept on [`Runtime`] so a turn that reaches it
 /// reports why rather than a generic "not installed".
-async fn detect_engines(prompt_cache_ttl: Option<PromptCacheTtl>) -> DetectedEngines {
+async fn detect_engines(claude: ClaudeSettings) -> DetectedEngines {
     // Independent CLIs: probing them together bounds the wait by the slower one.
     let [claude_kind, codex_kind] = STARTUP_ENGINES;
     let (claude, codex) = tokio::join!(
-        detect_engine(claude_kind, prompt_cache_ttl),
-        detect_engine(codex_kind, prompt_cache_ttl)
+        detect_engine(claude_kind, &claude),
+        detect_engine(codex_kind, &claude)
     );
     let mut detected = DetectedEngines::default();
     for (kind, probe) in [(claude_kind, claude), (codex_kind, codex)] {
@@ -497,9 +500,9 @@ async fn detect_engines(prompt_cache_ttl: Option<PromptCacheTtl>) -> DetectedEng
 }
 
 /// Probe one engine's CLI: usable, or why not.
-async fn detect_engine(kind: EngineKind, prompt_cache_ttl: Option<PromptCacheTtl>) -> Probe {
+async fn detect_engine(kind: EngineKind, claude: &ClaudeSettings) -> Probe {
     if kind == EngineKind::CLAUDE_CODE {
-        return detect_claude(prompt_cache_ttl).await;
+        return detect_claude(claude).await;
     }
     if kind == EngineKind::CODEX {
         return detect_codex().await;
@@ -528,7 +531,7 @@ fn inconclusive(reason: &aether_engine::detect::DetectError) -> bool {
     }
 }
 
-async fn detect_claude(prompt_cache_ttl: Option<PromptCacheTtl>) -> Probe {
+async fn detect_claude(settings: &ClaudeSettings) -> Probe {
     match aether_engine::ClaudeCodeEngine::detect_verbose().await {
         Ok(e) => {
             // Usable-with-a-limitation is not unavailable: it
@@ -536,8 +539,12 @@ async fn detect_claude(prompt_cache_ttl: Option<PromptCacheTtl>) -> Probe {
             if let Some(limitation) = e.limitation() {
                 tracing::warn!(engine = "claude-code", %limitation, "engine usable, with limits");
             }
-            let e = match prompt_cache_ttl {
+            let e = match settings.prompt_cache_ttl {
                 Some(ttl) => e.with_prompt_cache_ttl(ttl),
+                None => e,
+            };
+            let e = match &settings.oauth_token_file {
+                Some(path) => e.with_oauth_token_file(path.clone()),
                 None => e,
             };
             Probe {

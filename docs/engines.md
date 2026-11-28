@@ -506,6 +506,12 @@ for a 5-minute one. Claude Code reports the split per request, and Aether prices
 each tier at its own rate wherever it prices tokens itself: list-price costs,
 API-equivalent estimates, and tokens a closing receipt left out.
 
+To keep concurrent Claude children from racing on login refresh-token rotation,
+set `[model] claude_oauth_token_file` to a `0600` file holding a
+`claude setup-token` token. Each child launch reads it into
+`CLAUDE_CODE_OAUTH_TOKEN`. See
+[Claude long-lived token](configuration.md#claude-long-lived-token).
+
 ## How many engine turns run at once
 
 `[scheduler] max_concurrent_engine_turns = N` caps simultaneous engine turns
@@ -1054,7 +1060,7 @@ minutes in all), each announced by an `engine.auth_retry` event: CLIs that
 share one login can read a refresh token another just rotated, and a new
 launch reads the current one. Once one turn on the provider has given up,
 others refused on it suspend at once and the canary probe alone tests the
-sign-in. A [long-lived token](configuration.md#claude-code-long-lived-token)
+sign-in. A [long-lived token](configuration.md#claude-long-lived-token)
 avoids the shared refresh altogether.
 
 Clients match a refused sign-in on the stable kind `provider_auth`:

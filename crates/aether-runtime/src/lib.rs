@@ -405,17 +405,23 @@ impl Runtime {
         tools: Arc<ToolRegistry>,
         client_override: Option<Arc<dyn ModelClient>>,
     ) -> Result<Arc<Self>> {
-        let prompt_cache_ttl = models.config().model.prompt_cache_ttl;
+        let model_section = &models.config().model;
+        let claude = engine_access::ClaudeSettings {
+            prompt_cache_ttl: model_section.prompt_cache_ttl,
+            oauth_token_file: model_section
+                .claude_oauth_token_path()
+                .map_err(RuntimeError::Invalid)?,
+        };
         let runtime = Self::start_with_engines_inner(
             config,
             store,
             models,
             tools,
             client_override,
-            engine_access::EngineCatalog::probing(prompt_cache_ttl),
+            engine_access::EngineCatalog::probing(claude.clone()),
         )
         .await?;
-        engine_access::spawn_startup_probes(&runtime, prompt_cache_ttl);
+        engine_access::spawn_startup_probes(&runtime, claude);
         Ok(runtime)
     }
 
